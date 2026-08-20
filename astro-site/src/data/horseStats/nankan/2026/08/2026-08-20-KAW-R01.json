@@ -1,0 +1,5384 @@
+{
+  "version": 1,
+  "date": "2026-08-20",
+  "venue": "KAW",
+  "venueCode": "KAW",
+  "venueName": "川崎",
+  "raceNo": 1,
+  "raceNumber": 1,
+  "category": "nankan",
+  "dataType": "horseStats",
+  "source": "manual-fixture",
+  "sourceMeta": {
+    "sourceType": "manual-fixture",
+    "fixturePath": null,
+    "parsedAt": "2026-08-19T13:02:15.079Z",
+    "parserVersion": "uma-info-horse-stats-1"
+  },
+  "totalHorses": 12,
+  "horses": [
+    {
+      "horseNumber": 1,
+      "frameNumber": 1,
+      "horseName": "ハイウィルヘーズ",
+      "horseStatsNankan": {
+        "profile": {
+          "sire": "リアルインパクト",
+          "dam": "ダートムーア",
+          "damsire": "クロフネ",
+          "sex": "牝",
+          "age": 5,
+          "color": "鹿毛",
+          "birthDate": "21.2.1",
+          "jockey": "岡村裕",
+          "jockeyAffiliation": "川崎",
+          "carriedWeight": "54.0",
+          "trainer": "村田六",
+          "trainerAffiliation": "川崎",
+          "owner": "山邉浩",
+          "breeder": "ノーザンファーム"
+        },
+        "bestTimes": [
+          {
+            "label": null,
+            "raw": "大1165稍ダ 4",
+            "venue": "大井",
+            "venueAbbrev": "大",
+            "time": "1:16.5",
+            "timeRaw": "1165",
+            "trackCondition": "稍重",
+            "surface": "ダ",
+            "finish": 4
+          },
+          {
+            "label": null,
+            "raw": "大1323良ダ 2",
+            "venue": "大井",
+            "venueAbbrev": "大",
+            "time": "1:32.3",
+            "timeRaw": "1323",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "finish": 2
+          },
+          {
+            "label": null,
+            "raw": "川1341良ダ 4",
+            "venue": "川崎",
+            "venueAbbrev": "川",
+            "time": "1:34.1",
+            "timeRaw": "1341",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "finish": 4
+          }
+        ],
+        "finishStatsByDistance": [
+          {
+            "label": "1200",
+            "first": 0,
+            "second": 0,
+            "third": 1,
+            "out": 4
+          },
+          {
+            "label": "1400",
+            "first": 0,
+            "second": 1,
+            "third": 1,
+            "out": 8
+          },
+          {
+            "label": "川1400",
+            "first": 0,
+            "second": 0,
+            "third": 1,
+            "out": 8
+          }
+        ],
+        "finishStatsByVenue": [
+          {
+            "label": "船橋",
+            "first": 0,
+            "second": 0,
+            "third": 1,
+            "out": 0
+          },
+          {
+            "label": "大井",
+            "first": 0,
+            "second": 1,
+            "third": 0,
+            "out": 8
+          },
+          {
+            "label": "川崎",
+            "first": 0,
+            "second": 0,
+            "third": 1,
+            "out": 8
+          },
+          {
+            "label": "全成績",
+            "first": 0,
+            "second": 1,
+            "third": 2,
+            "out": 16
+          }
+        ],
+        "jockeyStats": {
+          "current": {
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 2,
+            "winRate": 0,
+            "winRateRaw": "0.0%",
+            "quinellaRate": 0,
+            "quinellaRateRaw": "0.0%"
+          },
+          "previous": {
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 2,
+            "winRate": 0,
+            "winRateRaw": "0.0%",
+            "quinellaRate": 0,
+            "quinellaRateRaw": "0.0%"
+          },
+          "all": {
+            "first": 0,
+            "second": 1,
+            "third": 2,
+            "out": 16,
+            "winRate": 0,
+            "winRateRaw": "0.0%",
+            "quinellaRate": 5.3,
+            "quinellaRateRaw": "5.3%"
+          }
+        },
+        "trackConditionStats": [
+          {
+            "label": "良",
+            "first": 0,
+            "second": 1,
+            "third": 1,
+            "out": 7
+          },
+          {
+            "label": "稍重",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 4
+          },
+          {
+            "label": "重",
+            "first": 0,
+            "second": 0,
+            "third": 1,
+            "out": 4
+          },
+          {
+            "label": "不良",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 1
+          }
+        ],
+        "intervalStats": [
+          {
+            "label": "10～19日",
+            "first": 0,
+            "second": 0,
+            "third": 2,
+            "out": 3
+          },
+          {
+            "label": "20～29日",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 3
+          },
+          {
+            "label": "30～59日",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 7
+          },
+          {
+            "label": "60日以上",
+            "first": 0,
+            "second": 1,
+            "third": 0,
+            "out": 2
+          }
+        ],
+        "sireStats": [
+          {
+            "label": "1200",
+            "winRate": 9.9,
+            "winRateRaw": "9.9%",
+            "quinellaRate": 18.5,
+            "quinellaRateRaw": "18.5%"
+          },
+          {
+            "label": "1300",
+            "winRate": 11,
+            "winRateRaw": "11.0%",
+            "quinellaRate": 18.6,
+            "quinellaRateRaw": "18.6%"
+          },
+          {
+            "label": "1400",
+            "winRate": 10.4,
+            "winRateRaw": "10.4%",
+            "quinellaRate": 22.7,
+            "quinellaRateRaw": "22.7%"
+          },
+          {
+            "label": "1500",
+            "winRate": 13.1,
+            "winRateRaw": "13.1%",
+            "quinellaRate": 23.6,
+            "quinellaRateRaw": "23.6%"
+          },
+          {
+            "label": "川1400",
+            "winRate": 8.3,
+            "winRateRaw": "8.3%",
+            "quinellaRate": 25,
+            "quinellaRateRaw": "25.0%"
+          }
+        ],
+        "seasonStats": [
+          {
+            "label": "1月～3月",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 3
+          },
+          {
+            "label": "4月～6月",
+            "first": 0,
+            "second": 0,
+            "third": 2,
+            "out": 3
+          },
+          {
+            "label": "7月～9月",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 7
+          },
+          {
+            "label": "10月～12月",
+            "first": 0,
+            "second": 1,
+            "third": 0,
+            "out": 3
+          }
+        ],
+        "jockeyCourseStats": [
+          {
+            "label": "1200",
+            "winRate": 0,
+            "winRateRaw": "0.0%",
+            "quinellaRate": 4,
+            "quinellaRateRaw": "4.0%"
+          },
+          {
+            "label": "1300",
+            "winRate": 0,
+            "winRateRaw": "0.0%",
+            "quinellaRate": 0,
+            "quinellaRateRaw": "0.0%"
+          },
+          {
+            "label": "1400",
+            "winRate": 4.4,
+            "winRateRaw": "4.4%",
+            "quinellaRate": 7.1,
+            "quinellaRateRaw": "7.1%"
+          },
+          {
+            "label": "1500",
+            "winRate": 4,
+            "winRateRaw": "4.0%",
+            "quinellaRate": 8,
+            "quinellaRateRaw": "8.0%"
+          },
+          {
+            "label": "川1400",
+            "winRate": 4.7,
+            "winRateRaw": "4.7%",
+            "quinellaRate": 7.7,
+            "quinellaRateRaw": "7.7%"
+          }
+        ],
+        "returnRates": {
+          "horse": {
+            "win": {
+              "value": 0,
+              "raw": "0.0%"
+            },
+            "place": {
+              "value": 60.5,
+              "raw": "60.5%"
+            }
+          },
+          "jockey": {
+            "win": {
+              "value": 76.3,
+              "raw": "76.3%"
+            },
+            "place": {
+              "value": 70.1,
+              "raw": "70.1%"
+            }
+          }
+        },
+        "recentRacesDetailed": [
+          {
+            "order": 1,
+            "finish": 4,
+            "venue": "川崎",
+            "date": "2026-07-28",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "distance": 1400,
+            "raceName": "Ｃ３(三)(四)",
+            "headCount": 9,
+            "horseNumberInRace": 1,
+            "popularity": 7,
+            "bodyWeight": 437,
+            "time": "1:34.1",
+            "margin": "0.2",
+            "jockey": "岡村裕",
+            "carriedWeight": "54.0",
+            "winnerOrRunnerUp": "シェナチチカカ",
+            "last3f": "41.2",
+            "last3fRank": 2,
+            "passingOrder": "5-4-4-5"
+          },
+          {
+            "order": 2,
+            "finish": 11,
+            "venue": "川崎",
+            "date": "2026-07-07",
+            "trackCondition": "重",
+            "surface": "ダ",
+            "distance": 1400,
+            "raceName": "Ｃ３(三)(四)",
+            "headCount": 12,
+            "horseNumberInRace": 7,
+            "popularity": 4,
+            "bodyWeight": 442,
+            "time": "1:36.6",
+            "margin": "2.2",
+            "jockey": "岡村裕",
+            "carriedWeight": "54.0",
+            "winnerOrRunnerUp": "コンペティティブ",
+            "last3f": "42.9",
+            "last3fRank": 10,
+            "passingOrder": "6-5-6-7"
+          },
+          {
+            "order": 3,
+            "finish": 3,
+            "venue": "川崎",
+            "date": "2026-06-15",
+            "trackCondition": "重",
+            "surface": "ダ",
+            "distance": 1400,
+            "raceName": "Ｃ３(三)",
+            "headCount": 12,
+            "horseNumberInRace": 2,
+            "popularity": 8,
+            "bodyWeight": 441,
+            "time": "1:34.7",
+            "margin": "1.3",
+            "jockey": "櫻井光",
+            "carriedWeight": "54.0",
+            "winnerOrRunnerUp": "キーファイン",
+            "last3f": "42.3",
+            "last3fRank": 3,
+            "passingOrder": "4-4-4-2"
+          },
+          {
+            "order": 4,
+            "finish": 3,
+            "venue": "船橋",
+            "date": "2026-06-01",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "distance": 1200,
+            "raceName": "Ｃ３(四)",
+            "headCount": 10,
+            "horseNumberInRace": 5,
+            "popularity": 7,
+            "bodyWeight": 435,
+            "time": "1:18.2",
+            "margin": "1.4",
+            "jockey": "本田紀",
+            "carriedWeight": "54.0",
+            "winnerOrRunnerUp": "デルマオペラ",
+            "last3f": "39.6",
+            "last3fRank": 5,
+            "passingOrder": "5-5-5"
+          },
+          {
+            "order": 5,
+            "finish": 10,
+            "venue": "川崎",
+            "date": "2026-05-13",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "distance": 1400,
+            "raceName": "２０２６川崎ジョッキーズカップ第２戦 Ｃ３ 選定馬",
+            "headCount": 14,
+            "horseNumberInRace": 14,
+            "popularity": 9,
+            "bodyWeight": 441,
+            "time": "1:34.2",
+            "margin": "1.2",
+            "jockey": null,
+            "carriedWeight": null,
+            "winnerOrRunnerUp": "リコースチェッキン",
+            "last3f": "42.3",
+            "last3fRank": 12,
+            "passingOrder": "1-3-3-4"
+          }
+        ],
+        "sourceMeta": {
+          "sourceType": "uma_info-html-fixture"
+        }
+      }
+    },
+    {
+      "horseNumber": 2,
+      "frameNumber": 2,
+      "horseName": "ピュアリヤン",
+      "horseStatsNankan": {
+        "profile": {
+          "sire": "ハッピースプリント",
+          "dam": "プリマビスティー",
+          "damsire": "プリサイスエンド",
+          "sex": "セ",
+          "age": 4,
+          "color": "鹿毛",
+          "birthDate": "22.5.3",
+          "jockey": "新原周",
+          "jockeyAffiliation": "川崎",
+          "carriedWeight": "56.0",
+          "trainer": "林隆之",
+          "trainerAffiliation": "川崎",
+          "owner": "鶴見芳子",
+          "breeder": "伏木田牧場"
+        },
+        "bestTimes": [
+          {
+            "label": null,
+            "raw": "大1163良ダ 3",
+            "venue": "大井",
+            "venueAbbrev": "大",
+            "time": "1:16.3",
+            "timeRaw": "1163",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "finish": 3
+          }
+        ],
+        "finishStatsByDistance": [
+          {
+            "label": "1200",
+            "first": 0,
+            "second": 0,
+            "third": 1,
+            "out": 4
+          }
+        ],
+        "finishStatsByVenue": [
+          {
+            "label": "大井",
+            "first": 0,
+            "second": 0,
+            "third": 1,
+            "out": 4
+          },
+          {
+            "label": "全成績",
+            "first": 0,
+            "second": 0,
+            "third": 1,
+            "out": 4
+          }
+        ],
+        "jockeyStats": {
+          "current": {
+            "first": null,
+            "second": null,
+            "third": null,
+            "out": null,
+            "winRate": 0,
+            "winRateRaw": "0.0%",
+            "quinellaRate": null,
+            "quinellaRateRaw": null
+          },
+          "previous": {
+            "first": 0,
+            "second": 0,
+            "third": 1,
+            "out": 4,
+            "winRate": 0,
+            "winRateRaw": "0.0%",
+            "quinellaRate": 0,
+            "quinellaRateRaw": "0.0%"
+          },
+          "all": {
+            "first": 0,
+            "second": 0,
+            "third": 1,
+            "out": 4,
+            "winRate": null,
+            "winRateRaw": null,
+            "quinellaRate": 0,
+            "quinellaRateRaw": "0.0%"
+          }
+        },
+        "trackConditionStats": [
+          {
+            "label": "良",
+            "first": 0,
+            "second": 0,
+            "third": 1,
+            "out": 1
+          },
+          {
+            "label": "稍重",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 3
+          }
+        ],
+        "intervalStats": [
+          {
+            "label": "10～19日",
+            "first": 0,
+            "second": 0,
+            "third": 1,
+            "out": 1
+          },
+          {
+            "label": "60日以上",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 2
+          }
+        ],
+        "sireStats": [
+          {
+            "label": "1200",
+            "winRate": 2.1,
+            "winRateRaw": "2.1%",
+            "quinellaRate": 16.7,
+            "quinellaRateRaw": "16.7%"
+          },
+          {
+            "label": "1300",
+            "winRate": 0,
+            "winRateRaw": "0.0%",
+            "quinellaRate": 0,
+            "quinellaRateRaw": "0.0%"
+          },
+          {
+            "label": "1400",
+            "winRate": 1.5,
+            "winRateRaw": "1.5%",
+            "quinellaRate": 4.4,
+            "quinellaRateRaw": "4.4%"
+          },
+          {
+            "label": "1500",
+            "winRate": 0,
+            "winRateRaw": "0.0%",
+            "quinellaRate": 6.3,
+            "quinellaRateRaw": "6.3%"
+          },
+          {
+            "label": "川1400",
+            "winRate": 0,
+            "winRateRaw": "0.0%",
+            "quinellaRate": 9.1,
+            "quinellaRateRaw": "9.1%"
+          }
+        ],
+        "seasonStats": [
+          {
+            "label": "1月～3月",
+            "first": 0,
+            "second": 0,
+            "third": 1,
+            "out": 1
+          },
+          {
+            "label": "7月～9月",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 2
+          },
+          {
+            "label": "10月～12月",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 1
+          }
+        ],
+        "jockeyCourseStats": [
+          {
+            "label": "1200",
+            "winRate": 6.6,
+            "winRateRaw": "6.6%",
+            "quinellaRate": 13.7,
+            "quinellaRateRaw": "13.7%"
+          },
+          {
+            "label": "1300",
+            "winRate": 0,
+            "winRateRaw": "0.0%",
+            "quinellaRate": 25,
+            "quinellaRateRaw": "25.0%"
+          },
+          {
+            "label": "1400",
+            "winRate": 9.8,
+            "winRateRaw": "9.8%",
+            "quinellaRate": 18.9,
+            "quinellaRateRaw": "18.9%"
+          },
+          {
+            "label": "1500",
+            "winRate": 8.4,
+            "winRateRaw": "8.4%",
+            "quinellaRate": 18.1,
+            "quinellaRateRaw": "18.1%"
+          },
+          {
+            "label": "川1400",
+            "winRate": 12.3,
+            "winRateRaw": "12.3%",
+            "quinellaRate": 24.7,
+            "quinellaRateRaw": "24.7%"
+          }
+        ],
+        "returnRates": {
+          "horse": {
+            "win": {
+              "value": 0,
+              "raw": "0.0%"
+            },
+            "place": {
+              "value": 46,
+              "raw": "46.0%"
+            }
+          },
+          "jockey": {
+            "win": {
+              "value": 103.5,
+              "raw": "103.5%"
+            },
+            "place": {
+              "value": 74,
+              "raw": "74.0%"
+            }
+          }
+        },
+        "recentRacesDetailed": [
+          {
+            "order": 1,
+            "finish": 15,
+            "venue": "大井",
+            "date": "2026-07-20",
+            "trackCondition": null,
+            "surface": "ダ",
+            "distance": 1200,
+            "raceName": "Ｃ３(六)(七)",
+            "headCount": 15,
+            "horseNumberInRace": 8,
+            "popularity": 8,
+            "bodyWeight": 480,
+            "time": "1:17.9",
+            "margin": "2.8",
+            "jockey": "笹川翼",
+            "carriedWeight": "56.0",
+            "winnerOrRunnerUp": "ハナヒラク",
+            "last3f": "41.2",
+            "last3fRank": 15,
+            "passingOrder": "10-8"
+          },
+          {
+            "order": 2,
+            "finish": 10,
+            "venue": "大井",
+            "date": "2026-07-01",
+            "trackCondition": null,
+            "surface": "ダ",
+            "distance": 1200,
+            "raceName": "Ｃ３(五)",
+            "headCount": 12,
+            "horseNumberInRace": 5,
+            "popularity": 3,
+            "bodyWeight": 481,
+            "time": "1:17.3",
+            "margin": "2.2",
+            "jockey": "笹川翼",
+            "carriedWeight": "56.0",
+            "winnerOrRunnerUp": "シューキング",
+            "last3f": "40.4",
+            "last3fRank": 10,
+            "passingOrder": "3-3"
+          },
+          {
+            "order": 3,
+            "finish": 3,
+            "venue": "大井",
+            "date": "2026-03-23",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "distance": 1200,
+            "raceName": "Ｃ３(九)",
+            "headCount": 11,
+            "horseNumberInRace": 1,
+            "popularity": 5,
+            "bodyWeight": 481,
+            "time": "1:16.3",
+            "margin": "0.5",
+            "jockey": "笹川翼",
+            "carriedWeight": "56.0",
+            "winnerOrRunnerUp": "マーカンエミーオ",
+            "last3f": "38.9",
+            "last3fRank": 4,
+            "passingOrder": "4-4"
+          },
+          {
+            "order": 4,
+            "finish": 8,
+            "venue": "大井",
+            "date": "2026-03-09",
+            "trackCondition": null,
+            "surface": "ダ",
+            "distance": 1200,
+            "raceName": "Ｃ３(九)",
+            "headCount": 14,
+            "horseNumberInRace": 2,
+            "popularity": 2,
+            "bodyWeight": 486,
+            "time": "1:17.4",
+            "margin": "1.2",
+            "jockey": "笹川翼",
+            "carriedWeight": "56.0",
+            "winnerOrRunnerUp": "ストロングフレイヤ",
+            "last3f": "40.0",
+            "last3fRank": 12,
+            "passingOrder": "4-4"
+          },
+          {
+            "order": 5,
+            "finish": 9,
+            "venue": "大井",
+            "date": "2025-10-08",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "distance": 1200,
+            "raceName": "３歳(五)(六)",
+            "headCount": 10,
+            "horseNumberInRace": 9,
+            "popularity": 1,
+            "bodyWeight": 510,
+            "time": "1:18.3",
+            "margin": "1.9",
+            "jockey": "笹川翼",
+            "carriedWeight": "56.0",
+            "winnerOrRunnerUp": "ヤマト",
+            "last3f": "41.7",
+            "last3fRank": 10,
+            "passingOrder": "3-3"
+          }
+        ],
+        "sourceMeta": {
+          "sourceType": "uma_info-html-fixture"
+        }
+      }
+    },
+    {
+      "horseNumber": 3,
+      "frameNumber": 3,
+      "horseName": "マイアイガー",
+      "horseStatsNankan": {
+        "profile": {
+          "sire": "コパノリッキー",
+          "dam": "ゴールデンアリー",
+          "damsire": "ラムタラ",
+          "sex": "牡",
+          "age": 7,
+          "color": "栗毛",
+          "birthDate": "19.5.20",
+          "jockey": "田中涼",
+          "jockeyAffiliation": "川崎",
+          "carriedWeight": "56.0",
+          "trainer": "加藤誠",
+          "trainerAffiliation": "川崎",
+          "owner": "北原大史",
+          "breeder": "服部牧場"
+        },
+        "bestTimes": [
+          {
+            "label": null,
+            "raw": "大1155稍ダ 1",
+            "venue": "大井",
+            "venueAbbrev": "大",
+            "time": "1:15.5",
+            "timeRaw": "1155",
+            "trackCondition": "稍重",
+            "surface": "ダ",
+            "finish": 1
+          },
+          {
+            "label": null,
+            "raw": "大1279重ダ 5",
+            "venue": "大井",
+            "venueAbbrev": "大",
+            "time": "1:27.9",
+            "timeRaw": "1279",
+            "trackCondition": "重",
+            "surface": "ダ",
+            "finish": 5
+          },
+          {
+            "label": null,
+            "raw": "船1433良ダ10",
+            "venue": "船橋",
+            "venueAbbrev": "船",
+            "time": "1:43.3",
+            "timeRaw": "1433",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "finish": 10
+          },
+          {
+            "label": null,
+            "raw": "川1335良ダ 2",
+            "venue": "川崎",
+            "venueAbbrev": "川",
+            "time": "1:33.5",
+            "timeRaw": "1335",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "finish": 2
+          }
+        ],
+        "finishStatsByDistance": [
+          {
+            "label": "1200",
+            "first": 1,
+            "second": 0,
+            "third": 0,
+            "out": 0
+          },
+          {
+            "label": "1400",
+            "first": 1,
+            "second": 1,
+            "third": 0,
+            "out": 8
+          },
+          {
+            "label": "1500",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 1
+          },
+          {
+            "label": "川1400",
+            "first": 0,
+            "second": 1,
+            "third": 0,
+            "out": 1
+          }
+        ],
+        "finishStatsByVenue": [
+          {
+            "label": "浦和",
+            "first": 0,
+            "second": 1,
+            "third": 0,
+            "out": 8
+          },
+          {
+            "label": "船橋",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 1
+          },
+          {
+            "label": "大井",
+            "first": 2,
+            "second": 0,
+            "third": 3,
+            "out": 25
+          },
+          {
+            "label": "川崎",
+            "first": 0,
+            "second": 1,
+            "third": 0,
+            "out": 2
+          },
+          {
+            "label": "全成績",
+            "first": 2,
+            "second": 2,
+            "third": 3,
+            "out": 36
+          }
+        ],
+        "jockeyStats": {
+          "current": {
+            "first": 0,
+            "second": 1,
+            "third": 0,
+            "out": 1,
+            "winRate": 0,
+            "winRateRaw": "0.0%",
+            "quinellaRate": 50,
+            "quinellaRateRaw": "50.0%"
+          },
+          "previous": {
+            "first": 0,
+            "second": 1,
+            "third": 0,
+            "out": 1,
+            "winRate": 0,
+            "winRateRaw": "0.0%",
+            "quinellaRate": 50,
+            "quinellaRateRaw": "50.0%"
+          },
+          "all": {
+            "first": 2,
+            "second": 2,
+            "third": 3,
+            "out": 36,
+            "winRate": 4.7,
+            "winRateRaw": "4.7%",
+            "quinellaRate": 9.3,
+            "quinellaRateRaw": "9.3%"
+          }
+        },
+        "trackConditionStats": [
+          {
+            "label": "良",
+            "first": 0,
+            "second": 1,
+            "third": 2,
+            "out": 16
+          },
+          {
+            "label": "稍重",
+            "first": 1,
+            "second": 0,
+            "third": 0,
+            "out": 7
+          },
+          {
+            "label": "重",
+            "first": 1,
+            "second": 1,
+            "third": 1,
+            "out": 7
+          },
+          {
+            "label": "不良",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 6
+          }
+        ],
+        "intervalStats": [
+          {
+            "label": "10～19日",
+            "first": 1,
+            "second": 0,
+            "third": 1,
+            "out": 9
+          },
+          {
+            "label": "20～29日",
+            "first": 0,
+            "second": 1,
+            "third": 1,
+            "out": 14
+          },
+          {
+            "label": "30～59日",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 10
+          },
+          {
+            "label": "60日以上",
+            "first": 0,
+            "second": 1,
+            "third": 1,
+            "out": 3
+          }
+        ],
+        "sireStats": [
+          {
+            "label": "1200",
+            "winRate": 10.1,
+            "winRateRaw": "10.1%",
+            "quinellaRate": 18.8,
+            "quinellaRateRaw": "18.8%"
+          },
+          {
+            "label": "1300",
+            "winRate": 11.8,
+            "winRateRaw": "11.8%",
+            "quinellaRate": 24.4,
+            "quinellaRateRaw": "24.4%"
+          },
+          {
+            "label": "1400",
+            "winRate": 14.5,
+            "winRateRaw": "14.5%",
+            "quinellaRate": 27,
+            "quinellaRateRaw": "27.0%"
+          },
+          {
+            "label": "1500",
+            "winRate": 11.6,
+            "winRateRaw": "11.6%",
+            "quinellaRate": 21.9,
+            "quinellaRateRaw": "21.9%"
+          },
+          {
+            "label": "川1400",
+            "winRate": 12.2,
+            "winRateRaw": "12.2%",
+            "quinellaRate": 28.3,
+            "quinellaRateRaw": "28.3%"
+          }
+        ],
+        "seasonStats": [
+          {
+            "label": "1月～3月",
+            "first": 0,
+            "second": 0,
+            "third": 1,
+            "out": 11
+          },
+          {
+            "label": "4月～6月",
+            "first": 0,
+            "second": 0,
+            "third": 1,
+            "out": 13
+          },
+          {
+            "label": "7月～9月",
+            "first": 1,
+            "second": 1,
+            "third": 1,
+            "out": 10
+          },
+          {
+            "label": "10月～12月",
+            "first": 1,
+            "second": 1,
+            "third": 0,
+            "out": 2
+          }
+        ],
+        "jockeyCourseStats": [
+          {
+            "label": "1200",
+            "winRate": 0,
+            "winRateRaw": "0.0%",
+            "quinellaRate": 0,
+            "quinellaRateRaw": "0.0%"
+          },
+          {
+            "label": "1300",
+            "winRate": 3.8,
+            "winRateRaw": "3.8%",
+            "quinellaRate": null,
+            "quinellaRateRaw": null
+          },
+          {
+            "label": "1400",
+            "winRate": 2.5,
+            "winRateRaw": "2.5%",
+            "quinellaRate": 8.1,
+            "quinellaRateRaw": "8.1%"
+          },
+          {
+            "label": "1500",
+            "winRate": 2.7,
+            "winRateRaw": "2.7%",
+            "quinellaRate": 10.2,
+            "quinellaRateRaw": "10.2%"
+          },
+          {
+            "label": "川1400",
+            "winRate": null,
+            "winRateRaw": null,
+            "quinellaRate": 7.6,
+            "quinellaRateRaw": "7.6%"
+          }
+        ],
+        "returnRates": {
+          "horse": {
+            "win": {
+              "value": 23.3,
+              "raw": "23.3%"
+            },
+            "place": {
+              "value": 40.7,
+              "raw": "40.7%"
+            }
+          },
+          "jockey": {
+            "win": {
+              "value": 85.1,
+              "raw": "85.1%"
+            },
+            "place": {
+              "value": 64.5,
+              "raw": "64.5%"
+            }
+          }
+        },
+        "recentRacesDetailed": [
+          {
+            "order": 1,
+            "finish": 2,
+            "venue": "川崎",
+            "date": "2026-07-31",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "distance": 1400,
+            "raceName": "Ｃ３(五)",
+            "headCount": 9,
+            "horseNumberInRace": 1,
+            "popularity": 4,
+            "bodyWeight": 526,
+            "time": "1:33.5",
+            "margin": "2.1",
+            "jockey": "田中涼",
+            "carriedWeight": "56.0",
+            "winnerOrRunnerUp": "マイブリッジ",
+            "last3f": "41.7",
+            "last3fRank": 3,
+            "passingOrder": "6-7-6-3"
+          },
+          {
+            "order": 2,
+            "finish": 4,
+            "venue": "川崎",
+            "date": "2026-07-10",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "distance": 1400,
+            "raceName": "Ｃ３(五)",
+            "headCount": 9,
+            "horseNumberInRace": 3,
+            "popularity": 5,
+            "bodyWeight": 526,
+            "time": "1:33.7",
+            "margin": "0.4",
+            "jockey": "藤江渉",
+            "carriedWeight": "56.0",
+            "winnerOrRunnerUp": "キーファイン",
+            "last3f": "40.8",
+            "last3fRank": 3,
+            "passingOrder": "7-6-4-4"
+          },
+          {
+            "order": 3,
+            "finish": 5,
+            "venue": "川崎",
+            "date": "2026-06-19",
+            "trackCondition": "重",
+            "surface": "ダ",
+            "distance": 2000,
+            "raceName": "ヴェルザンディ賞 Ｃ２Ｃ３ 選定馬",
+            "headCount": 10,
+            "horseNumberInRace": 1,
+            "popularity": 8,
+            "bodyWeight": 528,
+            "time": "2:18.9",
+            "margin": "2.9",
+            "jockey": "田中涼",
+            "carriedWeight": "55.0",
+            "winnerOrRunnerUp": "アイビーブリッツ",
+            "last3f": "43.7",
+            "last3fRank": 4,
+            "passingOrder": "10-10-6-6"
+          },
+          {
+            "order": 4,
+            "finish": 6,
+            "venue": "浦和",
+            "date": "2026-05-26",
+            "trackCondition": null,
+            "surface": "ダ",
+            "distance": 2000,
+            "raceName": "桶川べに花まつり賞 Ｃ３ 選抜馬イ",
+            "headCount": 11,
+            "horseNumberInRace": 2,
+            "popularity": 6,
+            "bodyWeight": 529,
+            "time": "2:17.3",
+            "margin": "2.5",
+            "jockey": "高橋哲",
+            "carriedWeight": "56.0",
+            "winnerOrRunnerUp": "ジャストザヴァルス",
+            "last3f": "40.1",
+            "last3fRank": 4,
+            "passingOrder": "10-9-8-7"
+          },
+          {
+            "order": 5,
+            "finish": 4,
+            "venue": "浦和",
+            "date": "2026-04-22",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "distance": 2000,
+            "raceName": "さいたま市ＵｒｂａｎＧａｒｄｅｎ賞 Ｃ３ 選抜馬ウ",
+            "headCount": 12,
+            "horseNumberInRace": 10,
+            "popularity": 5,
+            "bodyWeight": 533,
+            "time": "2:16.5",
+            "margin": "1.6",
+            "jockey": "高橋哲",
+            "carriedWeight": "56.0",
+            "winnerOrRunnerUp": "エクセルグラン",
+            "last3f": "41.0",
+            "last3fRank": 3,
+            "passingOrder": "8-9-4-4"
+          }
+        ],
+        "sourceMeta": {
+          "sourceType": "uma_info-html-fixture"
+        }
+      }
+    },
+    {
+      "horseNumber": 4,
+      "frameNumber": 4,
+      "horseName": "ゴームズ",
+      "horseStatsNankan": {
+        "profile": {
+          "sire": "モーニン",
+          "dam": "マキノクィーン",
+          "damsire": "牝4 鹿毛 22.3.8 中同名",
+          "sex": "牝",
+          "age": 4,
+          "color": "鹿毛",
+          "birthDate": "22.3.8",
+          "jockey": "藤本現",
+          "jockeyAffiliation": "大井",
+          "carriedWeight": "54.0",
+          "trainer": "佐々仁",
+          "trainerAffiliation": "大井",
+          "owner": "吉橋英隆",
+          "breeder": "神垣道弘"
+        },
+        "bestTimes": [
+          {
+            "label": null,
+            "raw": "Ｊ1157良ダ14",
+            "venue": "Ｊ",
+            "venueAbbrev": "Ｊ",
+            "time": "1:15.7",
+            "timeRaw": "1157",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "finish": 14
+          },
+          {
+            "label": null,
+            "raw": "佐1244稍ダ 2",
+            "venue": "佐賀",
+            "venueAbbrev": "佐",
+            "time": "1:24.4",
+            "timeRaw": "1244",
+            "trackCondition": "稍重",
+            "surface": "ダ",
+            "finish": 2
+          },
+          {
+            "label": null,
+            "raw": "Ｊ1280稍ダ 9",
+            "venue": "Ｊ",
+            "venueAbbrev": "Ｊ",
+            "time": "1:28.0",
+            "timeRaw": "1280",
+            "trackCondition": "稍重",
+            "surface": "ダ",
+            "finish": 9
+          },
+          {
+            "label": null,
+            "raw": "川1342稍ダ 2",
+            "venue": "川崎",
+            "venueAbbrev": "川",
+            "time": "1:34.2",
+            "timeRaw": "1342",
+            "trackCondition": "稍重",
+            "surface": "ダ",
+            "finish": 2
+          }
+        ],
+        "finishStatsByDistance": [
+          {
+            "label": "1200",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 1
+          },
+          {
+            "label": "1300",
+            "first": 0,
+            "second": 2,
+            "third": 0,
+            "out": 2
+          },
+          {
+            "label": "1400",
+            "first": 0,
+            "second": 2,
+            "third": 0,
+            "out": 5
+          },
+          {
+            "label": "川1400",
+            "first": 0,
+            "second": 1,
+            "third": 0,
+            "out": 1
+          }
+        ],
+        "finishStatsByVenue": [
+          {
+            "label": "川崎",
+            "first": 0,
+            "second": 1,
+            "third": 0,
+            "out": 2
+          },
+          {
+            "label": "全成績",
+            "first": 1,
+            "second": 4,
+            "third": 0,
+            "out": 10
+          }
+        ],
+        "jockeyStats": {
+          "current": {
+            "first": null,
+            "second": null,
+            "third": null,
+            "out": null,
+            "winRate": 0,
+            "winRateRaw": "0.0%",
+            "quinellaRate": null,
+            "quinellaRateRaw": null
+          },
+          "previous": {
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 1,
+            "winRate": 6.7,
+            "winRateRaw": "6.7%",
+            "quinellaRate": 0,
+            "quinellaRateRaw": "0.0%"
+          },
+          "all": {
+            "first": 1,
+            "second": 4,
+            "third": 0,
+            "out": 10,
+            "winRate": null,
+            "winRateRaw": null,
+            "quinellaRate": 33.3,
+            "quinellaRateRaw": "33.3%"
+          }
+        },
+        "trackConditionStats": [
+          {
+            "label": "良",
+            "first": 1,
+            "second": 1,
+            "third": 0,
+            "out": 6
+          },
+          {
+            "label": "稍重",
+            "first": 0,
+            "second": 2,
+            "third": 0,
+            "out": 2
+          },
+          {
+            "label": "重",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 1
+          },
+          {
+            "label": "不良",
+            "first": 0,
+            "second": 1,
+            "third": 0,
+            "out": 1
+          }
+        ],
+        "intervalStats": [
+          {
+            "label": "10～19日",
+            "first": 0,
+            "second": 3,
+            "third": 0,
+            "out": 4
+          },
+          {
+            "label": "30～59日",
+            "first": 0,
+            "second": 1,
+            "third": 0,
+            "out": 2
+          },
+          {
+            "label": "60日以上",
+            "first": 1,
+            "second": 0,
+            "third": 0,
+            "out": 3
+          }
+        ],
+        "sireStats": [
+          {
+            "label": "1200",
+            "winRate": 12.7,
+            "winRateRaw": "12.7%",
+            "quinellaRate": 25.4,
+            "quinellaRateRaw": "25.4%"
+          },
+          {
+            "label": "1300",
+            "winRate": 9.3,
+            "winRateRaw": "9.3%",
+            "quinellaRate": 20.7,
+            "quinellaRateRaw": "20.7%"
+          },
+          {
+            "label": "1400",
+            "winRate": 11.3,
+            "winRateRaw": "11.3%",
+            "quinellaRate": 23.8,
+            "quinellaRateRaw": "23.8%"
+          },
+          {
+            "label": "1500",
+            "winRate": 13.3,
+            "winRateRaw": "13.3%",
+            "quinellaRate": 23.8,
+            "quinellaRateRaw": "23.8%"
+          },
+          {
+            "label": "川1400",
+            "winRate": 13.3,
+            "winRateRaw": "13.3%",
+            "quinellaRate": 24.2,
+            "quinellaRateRaw": "24.2%"
+          }
+        ],
+        "seasonStats": [
+          {
+            "label": "1月～3月",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 2
+          },
+          {
+            "label": "4月～6月",
+            "first": 0,
+            "second": 1,
+            "third": 0,
+            "out": 0
+          },
+          {
+            "label": "7月～9月",
+            "first": 1,
+            "second": 2,
+            "third": 0,
+            "out": 3
+          },
+          {
+            "label": "10月～12月",
+            "first": 0,
+            "second": 1,
+            "third": 0,
+            "out": 5
+          }
+        ],
+        "jockeyCourseStats": [
+          {
+            "label": "1200",
+            "winRate": 7.5,
+            "winRateRaw": "7.5%",
+            "quinellaRate": 15.7,
+            "quinellaRateRaw": "15.7%"
+          },
+          {
+            "label": "1300",
+            "winRate": 0,
+            "winRateRaw": "0.0%",
+            "quinellaRate": 50,
+            "quinellaRateRaw": "50.0%"
+          },
+          {
+            "label": "1400",
+            "winRate": 6.5,
+            "winRateRaw": "6.5%",
+            "quinellaRate": 14,
+            "quinellaRateRaw": "14.0%"
+          },
+          {
+            "label": "1500",
+            "winRate": 4.6,
+            "winRateRaw": "4.6%",
+            "quinellaRate": 11.5,
+            "quinellaRateRaw": "11.5%"
+          },
+          {
+            "label": "川1400",
+            "winRate": 4.5,
+            "winRateRaw": "4.5%",
+            "quinellaRate": 11.2,
+            "quinellaRateRaw": "11.2%"
+          }
+        ],
+        "returnRates": {
+          "horse": {
+            "win": {
+              "value": 34.2,
+              "raw": "34.2%"
+            },
+            "place": {
+              "value": 67.5,
+              "raw": "67.5%"
+            }
+          },
+          "jockey": {
+            "win": {
+              "value": 70.4,
+              "raw": "70.4%"
+            },
+            "place": {
+              "value": 68.2,
+              "raw": "68.2%"
+            }
+          }
+        },
+        "recentRacesDetailed": [
+          {
+            "order": 1,
+            "finish": 6,
+            "venue": "川崎",
+            "date": "2026-07-31",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "distance": 1400,
+            "raceName": "Ｃ３(五)",
+            "headCount": 9,
+            "horseNumberInRace": 5,
+            "popularity": 3,
+            "bodyWeight": 479,
+            "time": "1:34.9",
+            "margin": "3.5",
+            "jockey": "菅原涼",
+            "carriedWeight": "54.0",
+            "winnerOrRunnerUp": "マイブリッジ",
+            "last3f": "43.4",
+            "last3fRank": 7,
+            "passingOrder": "1-3-3-6"
+          },
+          {
+            "order": 2,
+            "finish": 2,
+            "venue": "川崎",
+            "date": "2026-04-09",
+            "trackCondition": null,
+            "surface": "ダ",
+            "distance": 1400,
+            "raceName": "Ｃ３(三)(四)",
+            "headCount": 12,
+            "horseNumberInRace": 7,
+            "popularity": 3,
+            "bodyWeight": 473,
+            "time": "1:34.2",
+            "margin": "0.2",
+            "jockey": "野畑凌",
+            "carriedWeight": "54.0",
+            "winnerOrRunnerUp": "ニットウアクシア",
+            "last3f": "39.9",
+            "last3fRank": 3,
+            "passingOrder": "1-2-1-1"
+          },
+          {
+            "order": 3,
+            "finish": 8,
+            "venue": "川崎",
+            "date": "2026-03-02",
+            "trackCondition": null,
+            "surface": "ダ",
+            "distance": 900,
+            "raceName": "ミーアキャット賞 Ｃ３ 選定馬",
+            "headCount": 9,
+            "horseNumberInRace": 4,
+            "popularity": 3,
+            "bodyWeight": 474,
+            "time": "57.9",
+            "margin": "1.1",
+            "jockey": "野畑凌",
+            "carriedWeight": "54.0",
+            "winnerOrRunnerUp": "ナリノビスケッツ",
+            "last3f": "39.7",
+            "last3fRank": 9,
+            "passingOrder": "4-3-3"
+          },
+          {
+            "order": 4,
+            "finish": 2,
+            "venue": "佐賀",
+            "date": "2025-11-09",
+            "trackCondition": null,
+            "surface": "ダ",
+            "distance": 1300,
+            "raceName": "Ｃ２－１４組",
+            "headCount": 11,
+            "horseNumberInRace": 11,
+            "popularity": 3,
+            "bodyWeight": 472,
+            "time": "1:25.3",
+            "margin": "0.6",
+            "jockey": "出水拓",
+            "carriedWeight": "54.0",
+            "winnerOrRunnerUp": "ロイヤルカスタマー",
+            "last3f": "39.7",
+            "last3fRank": 6,
+            "passingOrder": "4-3-1-2"
+          },
+          {
+            "order": 5,
+            "finish": 4,
+            "venue": "佐賀",
+            "date": "2025-10-27",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "distance": 1400,
+            "raceName": "チャレンジシリーズ Ｃ２ (十四)",
+            "headCount": 10,
+            "horseNumberInRace": 7,
+            "popularity": 4,
+            "bodyWeight": 468,
+            "time": "1:34.1",
+            "margin": "1.0",
+            "jockey": "出水拓",
+            "carriedWeight": "54.0",
+            "winnerOrRunnerUp": "ファーレンジョー",
+            "last3f": "41.4",
+            "last3fRank": 8,
+            "passingOrder": "2-2-2-4"
+          }
+        ],
+        "sourceMeta": {
+          "sourceType": "uma_info-html-fixture"
+        }
+      }
+    },
+    {
+      "horseNumber": 5,
+      "frameNumber": 5,
+      "horseName": "クラダイリン",
+      "horseStatsNankan": {
+        "profile": {
+          "sire": "ベルシャザール",
+          "dam": "クラローザ",
+          "damsire": "ホリスキー",
+          "sex": "牝",
+          "age": 6,
+          "color": "鹿毛",
+          "birthDate": "20.5.4",
+          "jockey": "及川烈",
+          "jockeyAffiliation": "浦和",
+          "carriedWeight": "54.0",
+          "trainer": "長谷忍",
+          "trainerAffiliation": "浦和",
+          "owner": "倉見利弘",
+          "breeder": "倉見牧場"
+        },
+        "bestTimes": [
+          {
+            "label": null,
+            "raw": "門1137重ダ 2",
+            "venue": "門別",
+            "venueAbbrev": "門",
+            "time": "1:13.7",
+            "timeRaw": "1137",
+            "trackCondition": "重",
+            "surface": "ダ",
+            "finish": 2
+          },
+          {
+            "label": null,
+            "raw": "浦1244稍ダ 4",
+            "venue": "浦和",
+            "venueAbbrev": "浦",
+            "time": "1:24.4",
+            "timeRaw": "1244",
+            "trackCondition": "稍重",
+            "surface": "ダ",
+            "finish": 4
+          },
+          {
+            "label": null,
+            "raw": "浦1295重ダ 7",
+            "venue": "浦和",
+            "venueAbbrev": "浦",
+            "time": "1:29.5",
+            "timeRaw": "1295",
+            "trackCondition": "重",
+            "surface": "ダ",
+            "finish": 7
+          },
+          {
+            "label": null,
+            "raw": "浦1389良ダ 6",
+            "venue": "浦和",
+            "venueAbbrev": "浦",
+            "time": "1:38.9",
+            "timeRaw": "1389",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "finish": 6
+          },
+          {
+            "label": null,
+            "raw": "川1344良ダ 5",
+            "venue": "川崎",
+            "venueAbbrev": "川",
+            "time": "1:34.4",
+            "timeRaw": "1344",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "finish": 5
+          }
+        ],
+        "finishStatsByDistance": [
+          {
+            "label": "1200",
+            "first": 0,
+            "second": 2,
+            "third": 1,
+            "out": 10
+          },
+          {
+            "label": "1300",
+            "first": 0,
+            "second": 0,
+            "third": 1,
+            "out": 6
+          },
+          {
+            "label": "1400",
+            "first": 0,
+            "second": 1,
+            "third": 0,
+            "out": 31
+          },
+          {
+            "label": "1500",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 7
+          },
+          {
+            "label": "川1400",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 4
+          }
+        ],
+        "finishStatsByVenue": [
+          {
+            "label": "浦和",
+            "first": 0,
+            "second": 1,
+            "third": 1,
+            "out": 41
+          },
+          {
+            "label": "船橋",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 5
+          },
+          {
+            "label": "川崎",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 5
+          },
+          {
+            "label": "全成績",
+            "first": 1,
+            "second": 3,
+            "third": 2,
+            "out": 58
+          }
+        ],
+        "jockeyStats": {
+          "current": {
+            "first": 0,
+            "second": 0,
+            "third": 1,
+            "out": 6,
+            "winRate": 0,
+            "winRateRaw": "0.0%",
+            "quinellaRate": 0,
+            "quinellaRateRaw": "0.0%"
+          },
+          "previous": {
+            "first": 0,
+            "second": 0,
+            "third": 1,
+            "out": 6,
+            "winRate": 0,
+            "winRateRaw": "0.0%",
+            "quinellaRate": 0,
+            "quinellaRateRaw": "0.0%"
+          },
+          "all": {
+            "first": 1,
+            "second": 3,
+            "third": 2,
+            "out": 58,
+            "winRate": 1.6,
+            "winRateRaw": "1.6%",
+            "quinellaRate": 6.3,
+            "quinellaRateRaw": "6.3%"
+          }
+        },
+        "trackConditionStats": [
+          {
+            "label": "良",
+            "first": 1,
+            "second": 0,
+            "third": 1,
+            "out": 26
+          },
+          {
+            "label": "稍重",
+            "first": 0,
+            "second": 1,
+            "third": 0,
+            "out": 11
+          },
+          {
+            "label": "重",
+            "first": 0,
+            "second": 2,
+            "third": 1,
+            "out": 14
+          },
+          {
+            "label": "不良",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 7
+          }
+        ],
+        "intervalStats": [
+          {
+            "label": "10日未満",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 4
+          },
+          {
+            "label": "10～19日",
+            "first": 1,
+            "second": 2,
+            "third": 1,
+            "out": 16
+          },
+          {
+            "label": "20～29日",
+            "first": 0,
+            "second": 0,
+            "third": 1,
+            "out": 22
+          },
+          {
+            "label": "30～59日",
+            "first": 0,
+            "second": 1,
+            "third": 0,
+            "out": 14
+          },
+          {
+            "label": "60日以上",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 1
+          }
+        ],
+        "sireStats": [
+          {
+            "label": "1200",
+            "winRate": 4.8,
+            "winRateRaw": "4.8%",
+            "quinellaRate": 12.4,
+            "quinellaRateRaw": "12.4%"
+          },
+          {
+            "label": "1300",
+            "winRate": 6.5,
+            "winRateRaw": "6.5%",
+            "quinellaRate": 15,
+            "quinellaRateRaw": "15.0%"
+          },
+          {
+            "label": "1400",
+            "winRate": 6.6,
+            "winRateRaw": "6.6%",
+            "quinellaRate": 14.3,
+            "quinellaRateRaw": "14.3%"
+          },
+          {
+            "label": "1500",
+            "winRate": 7,
+            "winRateRaw": "7.0%",
+            "quinellaRate": 15,
+            "quinellaRateRaw": "15.0%"
+          },
+          {
+            "label": "川1400",
+            "winRate": 6.6,
+            "winRateRaw": "6.6%",
+            "quinellaRate": 15.1,
+            "quinellaRateRaw": "15.1%"
+          }
+        ],
+        "seasonStats": [
+          {
+            "label": "1月～3月",
+            "first": 0,
+            "second": 1,
+            "third": 0,
+            "out": 11
+          },
+          {
+            "label": "4月～6月",
+            "first": 0,
+            "second": 0,
+            "third": 1,
+            "out": 15
+          },
+          {
+            "label": "7月～9月",
+            "first": 1,
+            "second": 1,
+            "third": 0,
+            "out": 19
+          },
+          {
+            "label": "10月～12月",
+            "first": 0,
+            "second": 1,
+            "third": 1,
+            "out": 13
+          }
+        ],
+        "jockeyCourseStats": [
+          {
+            "label": "1200",
+            "winRate": 6.5,
+            "winRateRaw": "6.5%",
+            "quinellaRate": 10.1,
+            "quinellaRateRaw": "10.1%"
+          },
+          {
+            "label": "1300",
+            "winRate": 6.5,
+            "winRateRaw": "6.5%",
+            "quinellaRate": 13,
+            "quinellaRateRaw": "13.0%"
+          },
+          {
+            "label": "1400",
+            "winRate": 8.1,
+            "winRateRaw": "8.1%",
+            "quinellaRate": 17.2,
+            "quinellaRateRaw": "17.2%"
+          },
+          {
+            "label": "1500",
+            "winRate": 4.2,
+            "winRateRaw": "4.2%",
+            "quinellaRate": 9.1,
+            "quinellaRateRaw": "9.1%"
+          },
+          {
+            "label": "川1400",
+            "winRate": 0,
+            "winRateRaw": "0.0%",
+            "quinellaRate": 0,
+            "quinellaRateRaw": "0.0%"
+          }
+        ],
+        "returnRates": {
+          "horse": {
+            "win": {
+              "value": 58.8,
+              "raw": "58.8%"
+            },
+            "place": {
+              "value": 26.1,
+              "raw": "26.1%"
+            }
+          },
+          "jockey": {
+            "win": {
+              "value": 68.1,
+              "raw": "68.1%"
+            },
+            "place": {
+              "value": 58.8,
+              "raw": "58.8%"
+            }
+          }
+        },
+        "recentRacesDetailed": [
+          {
+            "order": 1,
+            "finish": 4,
+            "venue": "浦和",
+            "date": "2026-08-07",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "distance": 1300,
+            "raceName": "ランチタイム Ｃ３(六)(七)",
+            "headCount": 9,
+            "horseNumberInRace": 5,
+            "popularity": 5,
+            "bodyWeight": 530,
+            "time": "1:24.4",
+            "margin": "1.7",
+            "jockey": "及川烈",
+            "carriedWeight": "54.0",
+            "winnerOrRunnerUp": "マルノアンナ",
+            "last3f": "39.3",
+            "last3fRank": 4,
+            "passingOrder": "7-6-5-4"
+          },
+          {
+            "order": 2,
+            "finish": 4,
+            "venue": "浦和",
+            "date": "2026-07-13",
+            "trackCondition": null,
+            "surface": "ダ",
+            "distance": 1300,
+            "raceName": "ランチタイム Ｃ３(八)(九)",
+            "headCount": 10,
+            "horseNumberInRace": 5,
+            "popularity": 3,
+            "bodyWeight": 534,
+            "time": "1:24.4",
+            "margin": "0.9",
+            "jockey": "及川烈",
+            "carriedWeight": "54.0",
+            "winnerOrRunnerUp": "ヒロシゲクリスタル",
+            "last3f": "38.6",
+            "last3fRank": 2,
+            "passingOrder": "10-9-7-4"
+          },
+          {
+            "order": 3,
+            "finish": 3,
+            "venue": "浦和",
+            "date": "2026-06-22",
+            "trackCondition": "重",
+            "surface": "ダ",
+            "distance": 1300,
+            "raceName": "埼玉シリーズ開幕賞 Ｃ３(六)(七)",
+            "headCount": 7,
+            "horseNumberInRace": 6,
+            "popularity": 5,
+            "bodyWeight": 525,
+            "time": "1:24.7",
+            "margin": "1.9",
+            "jockey": "及川烈",
+            "carriedWeight": "54.0",
+            "winnerOrRunnerUp": "メイワシェリー",
+            "last3f": "39.1",
+            "last3fRank": 3,
+            "passingOrder": "6-5-5-4"
+          },
+          {
+            "order": 4,
+            "finish": 6,
+            "venue": "浦和",
+            "date": "2026-05-25",
+            "trackCondition": "重",
+            "surface": "ダ",
+            "distance": 1300,
+            "raceName": "Ｃ３(七)",
+            "headCount": 11,
+            "horseNumberInRace": 10,
+            "popularity": 7,
+            "bodyWeight": 530,
+            "time": "1:26.1",
+            "margin": "1.8",
+            "jockey": "及川烈",
+            "carriedWeight": "54.0",
+            "winnerOrRunnerUp": "ニシノテンカフブ",
+            "last3f": "39.3",
+            "last3fRank": 5,
+            "passingOrder": "11-11-10-8"
+          },
+          {
+            "order": 5,
+            "finish": 5,
+            "venue": "川崎",
+            "date": "2026-05-11",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "distance": 1400,
+            "raceName": "Ｃ３(五)",
+            "headCount": 12,
+            "horseNumberInRace": 4,
+            "popularity": 9,
+            "bodyWeight": 520,
+            "time": "1:34.4",
+            "margin": "1.3",
+            "jockey": "及川烈",
+            "carriedWeight": "54.0",
+            "winnerOrRunnerUp": "セクレトウェポン",
+            "last3f": "40.7",
+            "last3fRank": 2,
+            "passingOrder": "12-12-12-11"
+          }
+        ],
+        "sourceMeta": {
+          "sourceType": "uma_info-html-fixture"
+        }
+      }
+    },
+    {
+      "horseNumber": 6,
+      "frameNumber": null,
+      "horseName": "ニシノテンカフブ",
+      "horseStatsNankan": {
+        "profile": {
+          "sire": "ラブリーデイ",
+          "dam": "ニシノストーリー",
+          "damsire": "牡6 黒鹿毛 20.2.12 中同名",
+          "sex": "牡",
+          "age": 6,
+          "color": "黒鹿毛",
+          "birthDate": "20.2.12",
+          "jockey": "吉留孝",
+          "jockeyAffiliation": "浦和",
+          "carriedWeight": "56.0",
+          "trainer": "吉田正",
+          "trainerAffiliation": "浦和",
+          "owner": "冨田藤男",
+          "breeder": "佐藤鉄也"
+        },
+        "bestTimes": [
+          {
+            "label": null,
+            "raw": "船1177良ダ10",
+            "venue": "船橋",
+            "venueAbbrev": "船",
+            "time": "1:17.7",
+            "timeRaw": "1177",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "finish": 10
+          },
+          {
+            "label": null,
+            "raw": "浦1243重ダ 1",
+            "venue": "浦和",
+            "venueAbbrev": "浦",
+            "time": "1:24.3",
+            "timeRaw": "1243",
+            "trackCondition": "重",
+            "surface": "ダ",
+            "finish": 1
+          },
+          {
+            "label": null,
+            "raw": "浦1311良ダ 2",
+            "venue": "浦和",
+            "venueAbbrev": "浦",
+            "time": "1:31.1",
+            "timeRaw": "1311",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "finish": 2
+          },
+          {
+            "label": null,
+            "raw": "浦1354重ダ 2",
+            "venue": "浦和",
+            "venueAbbrev": "浦",
+            "time": "1:35.4",
+            "timeRaw": "1354",
+            "trackCondition": "重",
+            "surface": "ダ",
+            "finish": 2
+          },
+          {
+            "label": null,
+            "raw": "川1344稍ダ 3",
+            "venue": "川崎",
+            "venueAbbrev": "川",
+            "time": "1:34.4",
+            "timeRaw": "1344",
+            "trackCondition": "稍重",
+            "surface": "ダ",
+            "finish": 3
+          }
+        ],
+        "finishStatsByDistance": [
+          {
+            "label": "1200",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 2
+          },
+          {
+            "label": "1300",
+            "first": 1,
+            "second": 0,
+            "third": 0,
+            "out": 1
+          },
+          {
+            "label": "1400",
+            "first": 0,
+            "second": 4,
+            "third": 3,
+            "out": 12
+          },
+          {
+            "label": "1500",
+            "first": 0,
+            "second": 1,
+            "third": 0,
+            "out": 16
+          },
+          {
+            "label": "川1400",
+            "first": 0,
+            "second": 0,
+            "third": 1,
+            "out": 1
+          }
+        ],
+        "finishStatsByVenue": [
+          {
+            "label": "浦和",
+            "first": 1,
+            "second": 4,
+            "third": 1,
+            "out": 23
+          },
+          {
+            "label": "船橋",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 4
+          },
+          {
+            "label": "川崎",
+            "first": 0,
+            "second": 0,
+            "third": 1,
+            "out": 4
+          },
+          {
+            "label": "全成績",
+            "first": 2,
+            "second": 5,
+            "third": 3,
+            "out": 37
+          }
+        ],
+        "jockeyStats": {
+          "current": {
+            "first": 1,
+            "second": 2,
+            "third": 0,
+            "out": 13,
+            "winRate": 6.3,
+            "winRateRaw": "6.3%",
+            "quinellaRate": 18.8,
+            "quinellaRateRaw": "18.8%"
+          },
+          "previous": {
+            "first": 1,
+            "second": 2,
+            "third": 0,
+            "out": 13,
+            "winRate": 6.3,
+            "winRateRaw": "6.3%",
+            "quinellaRate": 18.8,
+            "quinellaRateRaw": "18.8%"
+          },
+          "all": {
+            "first": 2,
+            "second": 5,
+            "third": 3,
+            "out": 37,
+            "winRate": 4.3,
+            "winRateRaw": "4.3%",
+            "quinellaRate": 14.9,
+            "quinellaRateRaw": "14.9%"
+          }
+        },
+        "trackConditionStats": [
+          {
+            "label": "良",
+            "first": 0,
+            "second": 3,
+            "third": 1,
+            "out": 18
+          },
+          {
+            "label": "稍重",
+            "first": 1,
+            "second": 1,
+            "third": 2,
+            "out": 10
+          },
+          {
+            "label": "重",
+            "first": 1,
+            "second": 1,
+            "third": 0,
+            "out": 8
+          },
+          {
+            "label": "不良",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 1
+          }
+        ],
+        "intervalStats": [
+          {
+            "label": "10日未満",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 3
+          },
+          {
+            "label": "10～19日",
+            "first": 0,
+            "second": 1,
+            "third": 1,
+            "out": 12
+          },
+          {
+            "label": "20～29日",
+            "first": 1,
+            "second": 3,
+            "third": 1,
+            "out": 11
+          },
+          {
+            "label": "30～59日",
+            "first": 1,
+            "second": 0,
+            "third": 1,
+            "out": 10
+          },
+          {
+            "label": "60日以上",
+            "first": 0,
+            "second": 1,
+            "third": 0,
+            "out": 0
+          }
+        ],
+        "sireStats": [
+          {
+            "label": "1200",
+            "winRate": 7.3,
+            "winRateRaw": "7.3%",
+            "quinellaRate": 17.4,
+            "quinellaRateRaw": "17.4%"
+          },
+          {
+            "label": "1300",
+            "winRate": 8.3,
+            "winRateRaw": "8.3%",
+            "quinellaRate": 19.8,
+            "quinellaRateRaw": "19.8%"
+          },
+          {
+            "label": "1400",
+            "winRate": 8.4,
+            "winRateRaw": "8.4%",
+            "quinellaRate": 18.9,
+            "quinellaRateRaw": "18.9%"
+          },
+          {
+            "label": "1500",
+            "winRate": 7.8,
+            "winRateRaw": "7.8%",
+            "quinellaRate": 19.1,
+            "quinellaRateRaw": "19.1%"
+          },
+          {
+            "label": "川1400",
+            "winRate": 3,
+            "winRateRaw": "3.0%",
+            "quinellaRate": 13.9,
+            "quinellaRateRaw": "13.9%"
+          }
+        ],
+        "seasonStats": [
+          {
+            "label": "1月～3月",
+            "first": 0,
+            "second": 1,
+            "third": 0,
+            "out": 7
+          },
+          {
+            "label": "4月～6月",
+            "first": 1,
+            "second": 2,
+            "third": 0,
+            "out": 9
+          },
+          {
+            "label": "7月～9月",
+            "first": 0,
+            "second": 1,
+            "third": 1,
+            "out": 10
+          },
+          {
+            "label": "10月～12月",
+            "first": 1,
+            "second": 1,
+            "third": 2,
+            "out": 11
+          }
+        ],
+        "jockeyCourseStats": [
+          {
+            "label": "1200",
+            "winRate": 2.6,
+            "winRateRaw": "2.6%",
+            "quinellaRate": 2.6,
+            "quinellaRateRaw": "2.6%"
+          },
+          {
+            "label": "1300",
+            "winRate": 4,
+            "winRateRaw": "4.0%",
+            "quinellaRate": 16,
+            "quinellaRateRaw": "16.0%"
+          },
+          {
+            "label": "1400",
+            "winRate": 6.4,
+            "winRateRaw": "6.4%",
+            "quinellaRate": 15.1,
+            "quinellaRateRaw": "15.1%"
+          },
+          {
+            "label": "1500",
+            "winRate": 3,
+            "winRateRaw": "3.0%",
+            "quinellaRate": 7.9,
+            "quinellaRateRaw": "7.9%"
+          },
+          {
+            "label": "川1400",
+            "winRate": 6.5,
+            "winRateRaw": "6.5%",
+            "quinellaRate": 19.6,
+            "quinellaRateRaw": "19.6%"
+          }
+        ],
+        "returnRates": {
+          "horse": {
+            "win": {
+              "value": 344.3,
+              "raw": "344.3%"
+            },
+            "place": {
+              "value": 88.3,
+              "raw": "88.3%"
+            }
+          },
+          "jockey": {
+            "win": {
+              "value": 78.6,
+              "raw": "78.6%"
+            },
+            "place": {
+              "value": 81.4,
+              "raw": "81.4%"
+            }
+          }
+        },
+        "recentRacesDetailed": [
+          {
+            "order": 1,
+            "finish": 6,
+            "venue": "浦和",
+            "date": "2026-08-07",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "distance": 1400,
+            "raceName": "Ｃ３(六)(七)",
+            "headCount": 9,
+            "horseNumberInRace": 4,
+            "popularity": 9,
+            "bodyWeight": 475,
+            "time": "1:32.5",
+            "margin": "1.6",
+            "jockey": "吉留孝",
+            "carriedWeight": "56.0",
+            "winnerOrRunnerUp": "イチモクサン",
+            "last3f": "40.0",
+            "last3fRank": 3,
+            "passingOrder": "9-9-9-8"
+          },
+          {
+            "order": 2,
+            "finish": 11,
+            "venue": "浦和",
+            "date": "2026-07-13",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "distance": 1500,
+            "raceName": "Ｃ３(八)(九)",
+            "headCount": 12,
+            "horseNumberInRace": 5,
+            "popularity": 11,
+            "bodyWeight": 477,
+            "time": "1:38.9",
+            "margin": "1.5",
+            "jockey": "吉留孝",
+            "carriedWeight": "56.0",
+            "winnerOrRunnerUp": "メイワシェリー",
+            "last3f": "39.9",
+            "last3fRank": 11,
+            "passingOrder": "9-9-9-10"
+          },
+          {
+            "order": 3,
+            "finish": 6,
+            "venue": "浦和",
+            "date": "2026-06-24",
+            "trackCondition": null,
+            "surface": "ダ",
+            "distance": 1400,
+            "raceName": "本庄宿賞 Ｃ３(五)",
+            "headCount": 10,
+            "horseNumberInRace": 10,
+            "popularity": 2,
+            "bodyWeight": 477,
+            "time": "1:32.6",
+            "margin": "1.0",
+            "jockey": "吉留孝",
+            "carriedWeight": "56.0",
+            "winnerOrRunnerUp": "ピノモラーン",
+            "last3f": "39.5",
+            "last3fRank": 3,
+            "passingOrder": "10-10-10-9"
+          },
+          {
+            "order": 4,
+            "finish": 1,
+            "venue": "浦和",
+            "date": "2026-05-25",
+            "trackCondition": "重",
+            "surface": "ダ",
+            "distance": 1300,
+            "raceName": "Ｃ３(七)",
+            "headCount": 11,
+            "horseNumberInRace": 4,
+            "popularity": 5,
+            "bodyWeight": 475,
+            "time": "1:24.3",
+            "margin": "0.0",
+            "jockey": "吉留孝",
+            "carriedWeight": "56.0",
+            "winnerOrRunnerUp": "ララティーナ",
+            "last3f": "38.5",
+            "last3fRank": 1,
+            "passingOrder": "2-5-4-3"
+          },
+          {
+            "order": 5,
+            "finish": 5,
+            "venue": "浦和",
+            "date": "2026-04-20",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "distance": 1300,
+            "raceName": "Ｃ３(七)(八)",
+            "headCount": 10,
+            "horseNumberInRace": 2,
+            "popularity": 7,
+            "bodyWeight": 476,
+            "time": "1:26.1",
+            "margin": "1.0",
+            "jockey": "吉留孝",
+            "carriedWeight": "56.0",
+            "winnerOrRunnerUp": "マルノアンナ",
+            "last3f": "38.5",
+            "last3fRank": 5,
+            "passingOrder": "5-5-6-5"
+          }
+        ],
+        "sourceMeta": {
+          "sourceType": "uma_info-html-fixture"
+        }
+      }
+    },
+    {
+      "horseNumber": 7,
+      "frameNumber": 6,
+      "horseName": "トリニタリアニズム",
+      "horseStatsNankan": {
+        "profile": {
+          "sire": "エピファネイア",
+          "dam": "チュウワブロッサム",
+          "damsire": "セ8 栗毛 18.5.8 中同名",
+          "sex": "セ",
+          "age": 8,
+          "color": "栗毛",
+          "birthDate": "18.5.8",
+          "jockey": "西啓太",
+          "jockeyAffiliation": "大井",
+          "carriedWeight": "56.0",
+          "trainer": "藤原智",
+          "trainerAffiliation": "大井",
+          "owner": "平川三津",
+          "breeder": "（有）社台コーポレーション白老ファーム"
+        },
+        "bestTimes": [
+          {
+            "label": null,
+            "raw": "船1168良ダ 3",
+            "venue": "船橋",
+            "venueAbbrev": "船",
+            "time": "1:16.8",
+            "timeRaw": "1168",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "finish": 3
+          },
+          {
+            "label": null,
+            "raw": "浦1237良ダ 2",
+            "venue": "浦和",
+            "venueAbbrev": "浦",
+            "time": "1:23.7",
+            "timeRaw": "1237",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "finish": 2
+          },
+          {
+            "label": null,
+            "raw": "浦1318重ダ 2",
+            "venue": "浦和",
+            "venueAbbrev": "浦",
+            "time": "1:31.8",
+            "timeRaw": "1318",
+            "trackCondition": "重",
+            "surface": "ダ",
+            "finish": 2
+          },
+          {
+            "label": null,
+            "raw": "船1366重ダ 2",
+            "venue": "船橋",
+            "venueAbbrev": "船",
+            "time": "1:36.6",
+            "timeRaw": "1366",
+            "trackCondition": "重",
+            "surface": "ダ",
+            "finish": 2
+          },
+          {
+            "label": null,
+            "raw": "川1350稍ダ 5",
+            "venue": "川崎",
+            "venueAbbrev": "川",
+            "time": "1:35.0",
+            "timeRaw": "1350",
+            "trackCondition": "稍重",
+            "surface": "ダ",
+            "finish": 5
+          }
+        ],
+        "finishStatsByDistance": [
+          {
+            "label": "1200",
+            "first": 0,
+            "second": 0,
+            "third": 1,
+            "out": 2
+          },
+          {
+            "label": "1300",
+            "first": 0,
+            "second": 1,
+            "third": 0,
+            "out": 1
+          },
+          {
+            "label": "1400",
+            "first": 1,
+            "second": 3,
+            "third": 3,
+            "out": 5
+          },
+          {
+            "label": "1500",
+            "first": 2,
+            "second": 2,
+            "third": 1,
+            "out": 20
+          },
+          {
+            "label": "川1400",
+            "first": 0,
+            "second": 1,
+            "third": 0,
+            "out": 1
+          }
+        ],
+        "finishStatsByVenue": [
+          {
+            "label": "浦和",
+            "first": 1,
+            "second": 3,
+            "third": 4,
+            "out": 12
+          },
+          {
+            "label": "船橋",
+            "first": 2,
+            "second": 2,
+            "third": 1,
+            "out": 16
+          },
+          {
+            "label": "川崎",
+            "first": 0,
+            "second": 1,
+            "third": 0,
+            "out": 2
+          },
+          {
+            "label": "全成績",
+            "first": 3,
+            "second": 6,
+            "third": 5,
+            "out": 35
+          }
+        ],
+        "jockeyStats": {
+          "current": {
+            "first": 0,
+            "second": 1,
+            "third": 0,
+            "out": 0,
+            "winRate": 0,
+            "winRateRaw": "0.0%",
+            "quinellaRate": 100,
+            "quinellaRateRaw": "100.0%"
+          },
+          "previous": {
+            "first": 0,
+            "second": 1,
+            "third": 0,
+            "out": 0,
+            "winRate": 0,
+            "winRateRaw": "0.0%",
+            "quinellaRate": 100,
+            "quinellaRateRaw": "100.0%"
+          },
+          "all": {
+            "first": 3,
+            "second": 6,
+            "third": 5,
+            "out": 37,
+            "winRate": 5.9,
+            "winRateRaw": "5.9%",
+            "quinellaRate": 17.6,
+            "quinellaRateRaw": "17.6%"
+          }
+        },
+        "trackConditionStats": [
+          {
+            "label": "良",
+            "first": 3,
+            "second": 4,
+            "third": 3,
+            "out": 20
+          },
+          {
+            "label": "稍重",
+            "first": 0,
+            "second": 0,
+            "third": 1,
+            "out": 8
+          },
+          {
+            "label": "重",
+            "first": 0,
+            "second": 2,
+            "third": 0,
+            "out": 4
+          },
+          {
+            "label": "不良",
+            "first": 0,
+            "second": 0,
+            "third": 1,
+            "out": 3
+          }
+        ],
+        "intervalStats": [
+          {
+            "label": "10～19日",
+            "first": 0,
+            "second": 2,
+            "third": 1,
+            "out": 7
+          },
+          {
+            "label": "20～29日",
+            "first": 1,
+            "second": 2,
+            "third": 2,
+            "out": 16
+          },
+          {
+            "label": "30～59日",
+            "first": 1,
+            "second": 1,
+            "third": 2,
+            "out": 8
+          },
+          {
+            "label": "60日以上",
+            "first": 1,
+            "second": 1,
+            "third": 0,
+            "out": 5
+          }
+        ],
+        "sireStats": [
+          {
+            "label": "1200",
+            "winRate": 7.7,
+            "winRateRaw": "7.7%",
+            "quinellaRate": 15.2,
+            "quinellaRateRaw": "15.2%"
+          },
+          {
+            "label": "1300",
+            "winRate": 8.6,
+            "winRateRaw": "8.6%",
+            "quinellaRate": 18.3,
+            "quinellaRateRaw": "18.3%"
+          },
+          {
+            "label": "1400",
+            "winRate": 8.8,
+            "winRateRaw": "8.8%",
+            "quinellaRate": 19,
+            "quinellaRateRaw": "19.0%"
+          },
+          {
+            "label": "1500",
+            "winRate": 9.9,
+            "winRateRaw": "9.9%",
+            "quinellaRate": 20.8,
+            "quinellaRateRaw": "20.8%"
+          },
+          {
+            "label": "川1400",
+            "winRate": 7.7,
+            "winRateRaw": "7.7%",
+            "quinellaRate": 16.7,
+            "quinellaRateRaw": "16.7%"
+          }
+        ],
+        "seasonStats": [
+          {
+            "label": "1月～3月",
+            "first": 0,
+            "second": 2,
+            "third": 3,
+            "out": 9
+          },
+          {
+            "label": "4月～6月",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 10
+          },
+          {
+            "label": "7月～9月",
+            "first": 2,
+            "second": 2,
+            "third": 1,
+            "out": 8
+          },
+          {
+            "label": "10月～12月",
+            "first": 1,
+            "second": 2,
+            "third": 1,
+            "out": 10
+          }
+        ],
+        "jockeyCourseStats": [
+          {
+            "label": "1200",
+            "winRate": 9.4,
+            "winRateRaw": "9.4%",
+            "quinellaRate": 18.1,
+            "quinellaRateRaw": "18.1%"
+          },
+          {
+            "label": "1300",
+            "winRate": 33.3,
+            "winRateRaw": "33.3%",
+            "quinellaRate": 55.6,
+            "quinellaRateRaw": "55.6%"
+          },
+          {
+            "label": "1400",
+            "winRate": 9.1,
+            "winRateRaw": "9.1%",
+            "quinellaRate": 16.7,
+            "quinellaRateRaw": "16.7%"
+          },
+          {
+            "label": "1500",
+            "winRate": 6.2,
+            "winRateRaw": "6.2%",
+            "quinellaRate": 13.5,
+            "quinellaRateRaw": "13.5%"
+          },
+          {
+            "label": "川1400",
+            "winRate": 7.4,
+            "winRateRaw": "7.4%",
+            "quinellaRate": 14.7,
+            "quinellaRateRaw": "14.7%"
+          }
+        ],
+        "returnRates": {
+          "horse": {
+            "win": {
+              "value": 98.4,
+              "raw": "98.4%"
+            },
+            "place": {
+              "value": 58.6,
+              "raw": "58.6%"
+            }
+          },
+          "jockey": {
+            "win": {
+              "value": 74.6,
+              "raw": "74.6%"
+            },
+            "place": {
+              "value": 71.3,
+              "raw": "71.3%"
+            }
+          }
+        },
+        "recentRacesDetailed": [
+          {
+            "order": 1,
+            "finish": 2,
+            "venue": "浦和",
+            "date": "2026-08-07",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "distance": 1300,
+            "raceName": "ランチタイム Ｃ３(六)(七)",
+            "headCount": 9,
+            "horseNumberInRace": 1,
+            "popularity": 3,
+            "bodyWeight": 496,
+            "time": "1:23.7",
+            "margin": "1.0",
+            "jockey": "西啓太",
+            "carriedWeight": "56.0",
+            "winnerOrRunnerUp": "マルノアンナ",
+            "last3f": "39.2",
+            "last3fRank": 2,
+            "passingOrder": "4-4-3-2"
+          },
+          {
+            "order": 2,
+            "finish": null,
+            "venue": "浦和",
+            "date": "2026-07-23",
+            "trackCondition": null,
+            "surface": null,
+            "distance": 800,
+            "raceName": null,
+            "headCount": null,
+            "horseNumberInRace": null,
+            "popularity": null,
+            "bodyWeight": 488,
+            "time": null,
+            "margin": null,
+            "jockey": null,
+            "carriedWeight": null,
+            "winnerOrRunnerUp": null,
+            "last3f": null,
+            "last3fRank": null,
+            "passingOrder": null
+          },
+          {
+            "order": 3,
+            "finish": 4,
+            "venue": "浦和",
+            "date": "2026-01-06",
+            "trackCondition": null,
+            "surface": "ダ",
+            "distance": 1400,
+            "raceName": "Ｃ３(六)",
+            "headCount": 12,
+            "horseNumberInRace": 3,
+            "popularity": 2,
+            "bodyWeight": 507,
+            "time": "1:33.4",
+            "margin": "0.8",
+            "jockey": null,
+            "carriedWeight": null,
+            "winnerOrRunnerUp": "アンタゴニスタ",
+            "last3f": "40.8",
+            "last3fRank": 5,
+            "passingOrder": "6-6-4-4"
+          },
+          {
+            "order": 4,
+            "finish": 4,
+            "venue": "浦和",
+            "date": "2025-12-22",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "distance": 1400,
+            "raceName": "ランチタイムチャレンジ Ｃ３(四)",
+            "headCount": 12,
+            "horseNumberInRace": 2,
+            "popularity": 4,
+            "bodyWeight": 511,
+            "time": "1:32.5",
+            "margin": "1.4",
+            "jockey": null,
+            "carriedWeight": null,
+            "winnerOrRunnerUp": "ララティーナ",
+            "last3f": "40.3",
+            "last3fRank": 4,
+            "passingOrder": "8-7-6-4"
+          },
+          {
+            "order": 5,
+            "finish": 2,
+            "venue": "浦和",
+            "date": "2025-11-25",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "distance": 1400,
+            "raceName": "Ｃ３(四)",
+            "headCount": 12,
+            "horseNumberInRace": 4,
+            "popularity": 6,
+            "bodyWeight": 502,
+            "time": "1:32.1",
+            "margin": "0.4",
+            "jockey": null,
+            "carriedWeight": null,
+            "winnerOrRunnerUp": "スモモモモモモモモ",
+            "last3f": "39.1",
+            "last3fRank": 2,
+            "passingOrder": "6-5-5-2"
+          }
+        ],
+        "sourceMeta": {
+          "sourceType": "uma_info-html-fixture"
+        }
+      }
+    },
+    {
+      "horseNumber": 8,
+      "frameNumber": null,
+      "horseName": "コーリングヘニー",
+      "horseStatsNankan": {
+        "profile": {
+          "sire": "ヘニーヒューズ",
+          "dam": "コーリンベリー",
+          "damsire": "サウスヴィグラス",
+          "sex": "牡",
+          "age": 5,
+          "color": "栗毛",
+          "birthDate": "21.2.26",
+          "jockey": "神尾香",
+          "jockeyAffiliation": "川崎",
+          "carriedWeight": "54.0",
+          "trainer": "山田質",
+          "trainerAffiliation": "川崎",
+          "owner": "伊藤恵介",
+          "breeder": "前谷武志"
+        },
+        "bestTimes": [
+          {
+            "label": null,
+            "raw": "大1142重ダ 1",
+            "venue": "大井",
+            "venueAbbrev": "大",
+            "time": "1:14.2",
+            "timeRaw": "1142",
+            "trackCondition": "重",
+            "surface": "ダ",
+            "finish": 1
+          }
+        ],
+        "finishStatsByDistance": [
+          {
+            "label": "1200",
+            "first": 1,
+            "second": 1,
+            "third": 2,
+            "out": 5
+          }
+        ],
+        "finishStatsByVenue": [
+          {
+            "label": "大井",
+            "first": 1,
+            "second": 1,
+            "third": 2,
+            "out": 5
+          },
+          {
+            "label": "川崎",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 1
+          },
+          {
+            "label": "全成績",
+            "first": 1,
+            "second": 1,
+            "third": 2,
+            "out": 6
+          }
+        ],
+        "jockeyStats": {
+          "current": {
+            "first": null,
+            "second": null,
+            "third": null,
+            "out": null,
+            "winRate": 0,
+            "winRateRaw": "0.0%",
+            "quinellaRate": null,
+            "quinellaRateRaw": null
+          },
+          "previous": {
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 3,
+            "winRate": 10,
+            "winRateRaw": "10.0%",
+            "quinellaRate": 0,
+            "quinellaRateRaw": "0.0%"
+          },
+          "all": {
+            "first": 1,
+            "second": 1,
+            "third": 2,
+            "out": 6,
+            "winRate": null,
+            "winRateRaw": null,
+            "quinellaRate": 20,
+            "quinellaRateRaw": "20.0%"
+          }
+        },
+        "trackConditionStats": [
+          {
+            "label": "良",
+            "first": 0,
+            "second": 0,
+            "third": 1,
+            "out": 5
+          },
+          {
+            "label": "稍重",
+            "first": 0,
+            "second": 0,
+            "third": 1,
+            "out": 1
+          },
+          {
+            "label": "重",
+            "first": 1,
+            "second": 0,
+            "third": 0,
+            "out": 0
+          },
+          {
+            "label": "不良",
+            "first": 0,
+            "second": 1,
+            "third": 0,
+            "out": 0
+          }
+        ],
+        "intervalStats": [
+          {
+            "label": "10～19日",
+            "first": 0,
+            "second": 1,
+            "third": 0,
+            "out": 2
+          },
+          {
+            "label": "20～29日",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 2
+          },
+          {
+            "label": "30～59日",
+            "first": 1,
+            "second": 0,
+            "third": 0,
+            "out": 0
+          },
+          {
+            "label": "60日以上",
+            "first": 0,
+            "second": 0,
+            "third": 1,
+            "out": 2
+          }
+        ],
+        "sireStats": [
+          {
+            "label": "1200",
+            "winRate": 16.2,
+            "winRateRaw": "16.2%",
+            "quinellaRate": 28.2,
+            "quinellaRateRaw": "28.2%"
+          },
+          {
+            "label": "1300",
+            "winRate": 14.3,
+            "winRateRaw": "14.3%",
+            "quinellaRate": 28.9,
+            "quinellaRateRaw": "28.9%"
+          },
+          {
+            "label": "1400",
+            "winRate": 13.6,
+            "winRateRaw": "13.6%",
+            "quinellaRate": 24.5,
+            "quinellaRateRaw": "24.5%"
+          },
+          {
+            "label": "1500",
+            "winRate": 13.9,
+            "winRateRaw": "13.9%",
+            "quinellaRate": 23,
+            "quinellaRateRaw": "23.0%"
+          },
+          {
+            "label": "川1400",
+            "winRate": 13,
+            "winRateRaw": "13.0%",
+            "quinellaRate": 21.1,
+            "quinellaRateRaw": "21.1%"
+          }
+        ],
+        "seasonStats": [
+          {
+            "label": "1月～3月",
+            "first": 1,
+            "second": 0,
+            "third": 1,
+            "out": 1
+          },
+          {
+            "label": "4月～6月",
+            "first": 0,
+            "second": 1,
+            "third": 1,
+            "out": 1
+          },
+          {
+            "label": "7月～9月",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 3
+          },
+          {
+            "label": "10月～12月",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 1
+          }
+        ],
+        "jockeyCourseStats": [
+          {
+            "label": "1200",
+            "winRate": 4.8,
+            "winRateRaw": "4.8%",
+            "quinellaRate": 9.6,
+            "quinellaRateRaw": "9.6%"
+          },
+          {
+            "label": "1300",
+            "winRate": 0,
+            "winRateRaw": "0.0%",
+            "quinellaRate": 33.3,
+            "quinellaRateRaw": "33.3%"
+          },
+          {
+            "label": "1400",
+            "winRate": 4.2,
+            "winRateRaw": "4.2%",
+            "quinellaRate": 9.7,
+            "quinellaRateRaw": "9.7%"
+          },
+          {
+            "label": "1500",
+            "winRate": 5.1,
+            "winRateRaw": "5.1%",
+            "quinellaRate": 11.1,
+            "quinellaRateRaw": "11.1%"
+          },
+          {
+            "label": "川1400",
+            "winRate": 4.9,
+            "winRateRaw": "4.9%",
+            "quinellaRate": 10.8,
+            "quinellaRateRaw": "10.8%"
+          }
+        ],
+        "returnRates": {
+          "horse": {
+            "win": {
+              "value": 35,
+              "raw": "35.0%"
+            },
+            "place": {
+              "value": 73,
+              "raw": "73.0%"
+            }
+          },
+          "jockey": {
+            "win": {
+              "value": 94.5,
+              "raw": "94.5%"
+            },
+            "place": {
+              "value": 71.6,
+              "raw": "71.6%"
+            }
+          }
+        },
+        "recentRacesDetailed": [
+          {
+            "order": 1,
+            "finish": 7,
+            "venue": "川崎",
+            "date": "2026-07-30",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "distance": 900,
+            "raceName": "ヒラマサ賞 Ｃ３ 選定馬",
+            "headCount": 12,
+            "horseNumberInRace": 7,
+            "popularity": 2,
+            "bodyWeight": 545,
+            "time": "57.3",
+            "margin": "1.0",
+            "jockey": "野畑凌",
+            "carriedWeight": "56.0",
+            "winnerOrRunnerUp": "カウニスミエリ",
+            "last3f": "38.7",
+            "last3fRank": 6,
+            "passingOrder": "9-7-6"
+          },
+          {
+            "order": 2,
+            "finish": 7,
+            "venue": "大井",
+            "date": "2026-05-19",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "distance": 1200,
+            "raceName": "Ｃ３(四)(五)(六)",
+            "headCount": 12,
+            "horseNumberInRace": 7,
+            "popularity": 1,
+            "bodyWeight": 564,
+            "time": "1:16.2",
+            "margin": "1.3",
+            "jockey": "野畑凌",
+            "carriedWeight": "56.0",
+            "winnerOrRunnerUp": "コトブキエース",
+            "last3f": "40.1",
+            "last3fRank": 10,
+            "passingOrder": "3-3"
+          },
+          {
+            "order": 3,
+            "finish": 2,
+            "venue": "大井",
+            "date": "2026-04-27",
+            "trackCondition": null,
+            "surface": "ダ",
+            "distance": 1200,
+            "raceName": "Ｃ３(六)(七)",
+            "headCount": 14,
+            "horseNumberInRace": 1,
+            "popularity": 2,
+            "bodyWeight": 564,
+            "time": "1:15.7",
+            "margin": "0.5",
+            "jockey": "和田譲",
+            "carriedWeight": "56.0",
+            "winnerOrRunnerUp": "イントゥユー",
+            "last3f": "39.7",
+            "last3fRank": 7,
+            "passingOrder": "1-1"
+          },
+          {
+            "order": 4,
+            "finish": 3,
+            "venue": "大井",
+            "date": "2026-04-13",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "distance": 1200,
+            "raceName": "Ｃ３(六)(七)",
+            "headCount": 13,
+            "horseNumberInRace": 9,
+            "popularity": 3,
+            "bodyWeight": 564,
+            "time": "1:16.1",
+            "margin": "0.9",
+            "jockey": "和田譲",
+            "carriedWeight": "56.0",
+            "winnerOrRunnerUp": "ルカリリ",
+            "last3f": "39.4",
+            "last3fRank": 6,
+            "passingOrder": "4-4"
+          },
+          {
+            "order": 5,
+            "finish": 10,
+            "venue": "大井",
+            "date": "2025-10-05",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "distance": 1200,
+            "raceName": "Ｃ３(六)",
+            "headCount": 10,
+            "horseNumberInRace": 7,
+            "popularity": 5,
+            "bodyWeight": 585,
+            "time": "1:20.5",
+            "margin": "5.4",
+            "jockey": "野畑凌",
+            "carriedWeight": "56.0",
+            "winnerOrRunnerUp": "ルカリリ",
+            "last3f": "44.1",
+            "last3fRank": 10,
+            "passingOrder": "2-3"
+          }
+        ],
+        "sourceMeta": {
+          "sourceType": "uma_info-html-fixture"
+        }
+      }
+    },
+    {
+      "horseNumber": 9,
+      "frameNumber": 7,
+      "horseName": "カラルナ",
+      "horseStatsNankan": {
+        "profile": {
+          "sire": "セレン",
+          "dam": "エグランティエ",
+          "damsire": "アドマイヤジャパン",
+          "sex": "牝",
+          "age": 6,
+          "color": "栗毛",
+          "birthDate": "20.4.16",
+          "jockey": "池谷匠",
+          "jockeyAffiliation": "川崎",
+          "carriedWeight": "54.0",
+          "trainer": "林隆之",
+          "trainerAffiliation": "川崎",
+          "owner": "組）マージナルレーシング",
+          "breeder": "中村雅明"
+        },
+        "bestTimes": [
+          {
+            "label": null,
+            "raw": "浦1254良ダ 2",
+            "venue": "浦和",
+            "venueAbbrev": "浦",
+            "time": "1:25.4",
+            "timeRaw": "1254",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "finish": 2
+          },
+          {
+            "label": null,
+            "raw": "川1333良ダ 4",
+            "venue": "川崎",
+            "venueAbbrev": "川",
+            "time": "1:33.3",
+            "timeRaw": "1333",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "finish": 4
+          },
+          {
+            "label": null,
+            "raw": "浦1387重ダ 7",
+            "venue": "浦和",
+            "venueAbbrev": "浦",
+            "time": "1:38.7",
+            "timeRaw": "1387",
+            "trackCondition": "重",
+            "surface": "ダ",
+            "finish": 7
+          },
+          {
+            "label": null,
+            "raw": "川1333良ダ 4",
+            "venue": "川崎",
+            "venueAbbrev": "川",
+            "time": "1:33.3",
+            "timeRaw": "1333",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "finish": 4
+          }
+        ],
+        "finishStatsByDistance": [
+          {
+            "label": "1300",
+            "first": 0,
+            "second": 1,
+            "third": 0,
+            "out": 1
+          },
+          {
+            "label": "1400",
+            "first": 1,
+            "second": 1,
+            "third": 0,
+            "out": 24
+          },
+          {
+            "label": "1500",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 3
+          },
+          {
+            "label": "川1400",
+            "first": 1,
+            "second": 1,
+            "third": 0,
+            "out": 22
+          }
+        ],
+        "finishStatsByVenue": [
+          {
+            "label": "浦和",
+            "first": 0,
+            "second": 1,
+            "third": 0,
+            "out": 4
+          },
+          {
+            "label": "川崎",
+            "first": 1,
+            "second": 1,
+            "third": 0,
+            "out": 28
+          },
+          {
+            "label": "全成績",
+            "first": 1,
+            "second": 2,
+            "third": 0,
+            "out": 32
+          }
+        ],
+        "jockeyStats": {
+          "current": {
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 2,
+            "winRate": 0,
+            "winRateRaw": "0.0%",
+            "quinellaRate": 0,
+            "quinellaRateRaw": "0.0%"
+          },
+          "previous": {
+            "first": 0,
+            "second": 1,
+            "third": 0,
+            "out": 2,
+            "winRate": 0,
+            "winRateRaw": "0.0%",
+            "quinellaRate": 33.3,
+            "quinellaRateRaw": "33.3%"
+          },
+          "all": {
+            "first": 1,
+            "second": 2,
+            "third": 0,
+            "out": 32,
+            "winRate": 2.9,
+            "winRateRaw": "2.9%",
+            "quinellaRate": 8.6,
+            "quinellaRateRaw": "8.6%"
+          }
+        },
+        "trackConditionStats": [
+          {
+            "label": "良",
+            "first": 1,
+            "second": 2,
+            "third": 0,
+            "out": 20
+          },
+          {
+            "label": "稍重",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 6
+          },
+          {
+            "label": "重",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 6
+          }
+        ],
+        "intervalStats": [
+          {
+            "label": "10～19日",
+            "first": 0,
+            "second": 1,
+            "third": 0,
+            "out": 5
+          },
+          {
+            "label": "20～29日",
+            "first": 0,
+            "second": 1,
+            "third": 0,
+            "out": 14
+          },
+          {
+            "label": "30～59日",
+            "first": 1,
+            "second": 0,
+            "third": 0,
+            "out": 6
+          },
+          {
+            "label": "60日以上",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 6
+          }
+        ],
+        "sireStats": [
+          {
+            "label": "1200",
+            "winRate": 3.2,
+            "winRateRaw": "3.2%",
+            "quinellaRate": 12.9,
+            "quinellaRateRaw": "12.9%"
+          },
+          {
+            "label": "1300",
+            "winRate": 0,
+            "winRateRaw": "0.0%",
+            "quinellaRate": 6.3,
+            "quinellaRateRaw": "6.3%"
+          },
+          {
+            "label": "1400",
+            "winRate": 9.6,
+            "winRateRaw": "9.6%",
+            "quinellaRate": 18.3,
+            "quinellaRateRaw": "18.3%"
+          },
+          {
+            "label": "1500",
+            "winRate": 2.9,
+            "winRateRaw": "2.9%",
+            "quinellaRate": 8.6,
+            "quinellaRateRaw": "8.6%"
+          },
+          {
+            "label": "川1400",
+            "winRate": 3.1,
+            "winRateRaw": "3.1%",
+            "quinellaRate": 6.3,
+            "quinellaRateRaw": "6.3%"
+          }
+        ],
+        "seasonStats": [
+          {
+            "label": "1月～3月",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 10
+          },
+          {
+            "label": "4月～6月",
+            "first": 0,
+            "second": 1,
+            "third": 0,
+            "out": 5
+          },
+          {
+            "label": "7月～9月",
+            "first": 1,
+            "second": 0,
+            "third": 0,
+            "out": 9
+          },
+          {
+            "label": "10月～12月",
+            "first": 0,
+            "second": 1,
+            "third": 0,
+            "out": 8
+          }
+        ],
+        "jockeyCourseStats": [
+          {
+            "label": "1200",
+            "winRate": 3.4,
+            "winRateRaw": "3.4%",
+            "quinellaRate": 8.3,
+            "quinellaRateRaw": "8.3%"
+          },
+          {
+            "label": "1300",
+            "winRate": 0,
+            "winRateRaw": "0.0%",
+            "quinellaRate": 0,
+            "quinellaRateRaw": "0.0%"
+          },
+          {
+            "label": "1400",
+            "winRate": 5.2,
+            "winRateRaw": "5.2%",
+            "quinellaRate": 12.6,
+            "quinellaRateRaw": "12.6%"
+          },
+          {
+            "label": "1500",
+            "winRate": 3.7,
+            "winRateRaw": "3.7%",
+            "quinellaRate": 9.5,
+            "quinellaRateRaw": "9.5%"
+          },
+          {
+            "label": "川1400",
+            "winRate": 5.1,
+            "winRateRaw": "5.1%",
+            "quinellaRate": 12.4,
+            "quinellaRateRaw": "12.4%"
+          }
+        ],
+        "returnRates": {
+          "horse": {
+            "win": {
+              "value": 23.4,
+              "raw": "23.4%"
+            },
+            "place": {
+              "value": 16.6,
+              "raw": "16.6%"
+            }
+          },
+          "jockey": {
+            "win": {
+              "value": 70,
+              "raw": "70.0%"
+            },
+            "place": {
+              "value": 69.6,
+              "raw": "69.6%"
+            }
+          }
+        },
+        "recentRacesDetailed": [
+          {
+            "order": 1,
+            "finish": 7,
+            "venue": "川崎",
+            "date": "2026-07-31",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "distance": 1400,
+            "raceName": "Ｃ３(五)",
+            "headCount": 9,
+            "horseNumberInRace": 4,
+            "popularity": 7,
+            "bodyWeight": 452,
+            "time": "1:35.7",
+            "margin": "4.3",
+            "jockey": "新原周",
+            "carriedWeight": "54.0",
+            "winnerOrRunnerUp": "マイブリッジ",
+            "last3f": "40.9",
+            "last3fRank": 2,
+            "passingOrder": "9-9-9-9"
+          },
+          {
+            "order": 2,
+            "finish": 11,
+            "venue": "浦和",
+            "date": "2026-05-25",
+            "trackCondition": "重",
+            "surface": "ダ",
+            "distance": 1300,
+            "raceName": "Ｃ３(七)",
+            "headCount": 11,
+            "horseNumberInRace": 11,
+            "popularity": 4,
+            "bodyWeight": 464,
+            "time": "1:27.0",
+            "margin": "2.7",
+            "jockey": "櫻井光",
+            "carriedWeight": "54.0",
+            "winnerOrRunnerUp": "ニシノテンカフブ",
+            "last3f": "41.0",
+            "last3fRank": 10,
+            "passingOrder": "6-6-7-8"
+          },
+          {
+            "order": 3,
+            "finish": 9,
+            "venue": "川崎",
+            "date": "2026-05-11",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "distance": 1400,
+            "raceName": "Ｃ３(五)",
+            "headCount": 12,
+            "horseNumberInRace": 7,
+            "popularity": 5,
+            "bodyWeight": 461,
+            "time": "1:35.0",
+            "margin": "1.9",
+            "jockey": "櫻井光",
+            "carriedWeight": "54.0",
+            "winnerOrRunnerUp": "セクレトウェポン",
+            "last3f": "42.2",
+            "last3fRank": 7,
+            "passingOrder": "5-6-8-6"
+          },
+          {
+            "order": 4,
+            "finish": 2,
+            "venue": "浦和",
+            "date": "2026-04-20",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "distance": 1300,
+            "raceName": "Ｃ３(七)(八)",
+            "headCount": 10,
+            "horseNumberInRace": 10,
+            "popularity": 5,
+            "bodyWeight": 463,
+            "time": "1:25.4",
+            "margin": "0.3",
+            "jockey": "新原周",
+            "carriedWeight": "54.0",
+            "winnerOrRunnerUp": "マルノアンナ",
+            "last3f": "38.0",
+            "last3fRank": 1,
+            "passingOrder": "3-3-3-3"
+          },
+          {
+            "order": 5,
+            "finish": 5,
+            "venue": "川崎",
+            "date": "2026-04-07",
+            "trackCondition": "重",
+            "surface": "ダ",
+            "distance": 1400,
+            "raceName": "Ｃ３(五)(六)",
+            "headCount": 12,
+            "horseNumberInRace": 9,
+            "popularity": 9,
+            "bodyWeight": 464,
+            "time": "1:36.2",
+            "margin": "1.9",
+            "jockey": "新原周",
+            "carriedWeight": "54.0",
+            "winnerOrRunnerUp": "ナリノドリーム",
+            "last3f": "41.9",
+            "last3fRank": 5,
+            "passingOrder": "8-7-7-6"
+          }
+        ],
+        "sourceMeta": {
+          "sourceType": "uma_info-html-fixture"
+        }
+      }
+    },
+    {
+      "horseNumber": 10,
+      "frameNumber": null,
+      "horseName": "ブルーラジカル",
+      "horseStatsNankan": {
+        "profile": {
+          "sire": "ロージズインメイ",
+          "dam": "ブライトチェリー",
+          "damsire": "牡4 芦毛 22.5.22 中同名",
+          "sex": "牡",
+          "age": 4,
+          "color": "芦毛",
+          "birthDate": "22.5.22",
+          "jockey": "町田直",
+          "jockeyAffiliation": "川崎",
+          "carriedWeight": "56.0",
+          "trainer": "高月賢",
+          "trainerAffiliation": "川崎",
+          "owner": "（同）ＪＰＮ技研",
+          "breeder": "カナイシスタッド"
+        },
+        "bestTimes": [
+          {
+            "label": null,
+            "raw": "金1303良ダ 1",
+            "venue": "金沢",
+            "venueAbbrev": "金",
+            "time": "1:30.3",
+            "timeRaw": "1303",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "finish": 1
+          },
+          {
+            "label": null,
+            "raw": "金1372良ダ 2",
+            "venue": "金沢",
+            "venueAbbrev": "金",
+            "time": "1:37.2",
+            "timeRaw": "1372",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "finish": 2
+          },
+          {
+            "label": null,
+            "raw": "川1348重ダ 8",
+            "venue": "川崎",
+            "venueAbbrev": "川",
+            "time": "1:34.8",
+            "timeRaw": "1348",
+            "trackCondition": "重",
+            "surface": "ダ",
+            "finish": 8
+          }
+        ],
+        "finishStatsByDistance": [
+          {
+            "label": "1400",
+            "first": 3,
+            "second": 0,
+            "third": 1,
+            "out": 3
+          },
+          {
+            "label": "1500",
+            "first": 0,
+            "second": 1,
+            "third": 0,
+            "out": 0
+          },
+          {
+            "label": "川1400",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 2
+          }
+        ],
+        "finishStatsByVenue": [
+          {
+            "label": "川崎",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 2
+          },
+          {
+            "label": "全成績",
+            "first": 3,
+            "second": 1,
+            "third": 1,
+            "out": 4
+          }
+        ],
+        "jockeyStats": {
+          "current": {
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 2,
+            "winRate": 0,
+            "winRateRaw": "0.0%",
+            "quinellaRate": 0,
+            "quinellaRateRaw": "0.0%"
+          },
+          "previous": {
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 2,
+            "winRate": 0,
+            "winRateRaw": "0.0%",
+            "quinellaRate": 0,
+            "quinellaRateRaw": "0.0%"
+          },
+          "all": {
+            "first": 3,
+            "second": 1,
+            "third": 1,
+            "out": 6,
+            "winRate": 27.3,
+            "winRateRaw": "27.3%",
+            "quinellaRate": 36.4,
+            "quinellaRateRaw": "36.4%"
+          }
+        },
+        "trackConditionStats": [
+          {
+            "label": "良",
+            "first": 1,
+            "second": 1,
+            "third": 1,
+            "out": 1
+          },
+          {
+            "label": "稍重",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 1
+          },
+          {
+            "label": "重",
+            "first": 1,
+            "second": 0,
+            "third": 0,
+            "out": 1
+          },
+          {
+            "label": "不良",
+            "first": 1,
+            "second": 0,
+            "third": 0,
+            "out": 1
+          }
+        ],
+        "intervalStats": [
+          {
+            "label": "10～19日",
+            "first": 3,
+            "second": 1,
+            "third": 0,
+            "out": 0
+          },
+          {
+            "label": "30～59日",
+            "first": 0,
+            "second": 0,
+            "third": 1,
+            "out": 2
+          },
+          {
+            "label": "60日以上",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 3
+          }
+        ],
+        "sireStats": [
+          {
+            "label": "1200",
+            "winRate": 6.6,
+            "winRateRaw": "6.6%",
+            "quinellaRate": 15.5,
+            "quinellaRateRaw": "15.5%"
+          },
+          {
+            "label": "1300",
+            "winRate": 8.7,
+            "winRateRaw": "8.7%",
+            "quinellaRate": 15.7,
+            "quinellaRateRaw": "15.7%"
+          },
+          {
+            "label": "1400",
+            "winRate": 8.8,
+            "winRateRaw": "8.8%",
+            "quinellaRate": 17.8,
+            "quinellaRateRaw": "17.8%"
+          },
+          {
+            "label": "1500",
+            "winRate": 9.1,
+            "winRateRaw": "9.1%",
+            "quinellaRate": 16.1,
+            "quinellaRateRaw": "16.1%"
+          },
+          {
+            "label": "川1400",
+            "winRate": 7.2,
+            "winRateRaw": "7.2%",
+            "quinellaRate": 18.9,
+            "quinellaRateRaw": "18.9%"
+          }
+        ],
+        "seasonStats": [
+          {
+            "label": "1月～3月",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 3
+          },
+          {
+            "label": "4月～6月",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 2
+          },
+          {
+            "label": "7月～9月",
+            "first": 1,
+            "second": 0,
+            "third": 1,
+            "out": 1
+          },
+          {
+            "label": "10月～12月",
+            "first": 2,
+            "second": 1,
+            "third": 0,
+            "out": 0
+          }
+        ],
+        "jockeyCourseStats": [
+          {
+            "label": "1200",
+            "winRate": 5.1,
+            "winRateRaw": "5.1%",
+            "quinellaRate": 12,
+            "quinellaRateRaw": "12.0%"
+          },
+          {
+            "label": "1300",
+            "winRate": 25,
+            "winRateRaw": "25.0%",
+            "quinellaRate": 25,
+            "quinellaRateRaw": "25.0%"
+          },
+          {
+            "label": "1400",
+            "winRate": 12.4,
+            "winRateRaw": "12.4%",
+            "quinellaRate": 24.5,
+            "quinellaRateRaw": "24.5%"
+          },
+          {
+            "label": "1500",
+            "winRate": 12.1,
+            "winRateRaw": "12.1%",
+            "quinellaRate": 23,
+            "quinellaRateRaw": "23.0%"
+          },
+          {
+            "label": "川1400",
+            "winRate": 15.1,
+            "winRateRaw": "15.1%",
+            "quinellaRate": 28.6,
+            "quinellaRateRaw": "28.6%"
+          }
+        ],
+        "returnRates": {
+          "horse": {
+            "win": {
+              "value": 67.5,
+              "raw": "67.5%"
+            },
+            "place": {
+              "value": 72.5,
+              "raw": "72.5%"
+            }
+          },
+          "jockey": {
+            "win": {
+              "value": 62.5,
+              "raw": "62.5%"
+            },
+            "place": {
+              "value": 71.3,
+              "raw": "71.3%"
+            }
+          }
+        },
+        "recentRacesDetailed": [
+          {
+            "order": 1,
+            "finish": 8,
+            "venue": "川崎",
+            "date": "2026-03-05",
+            "trackCondition": "重",
+            "surface": "ダ",
+            "distance": 1400,
+            "raceName": "Ｃ３(一)(二)",
+            "headCount": 10,
+            "horseNumberInRace": 5,
+            "popularity": 4,
+            "bodyWeight": 477,
+            "time": "1:34.8",
+            "margin": "2.0",
+            "jockey": "町田直",
+            "carriedWeight": "56.0",
+            "winnerOrRunnerUp": "ヘヴンリーゴール",
+            "last3f": "41.2",
+            "last3fRank": 7,
+            "passingOrder": "8-8-9-9"
+          },
+          {
+            "order": 2,
+            "finish": 6,
+            "venue": "川崎",
+            "date": "2026-01-02",
+            "trackCondition": null,
+            "surface": "ダ",
+            "distance": 1400,
+            "raceName": "めんこ賞 Ｃ３(一)(二)",
+            "headCount": 14,
+            "horseNumberInRace": 6,
+            "popularity": 1,
+            "bodyWeight": 476,
+            "time": "1:35.0",
+            "margin": "1.8",
+            "jockey": "町田直",
+            "carriedWeight": "56.0",
+            "winnerOrRunnerUp": "マニーシーン",
+            "last3f": "42.3",
+            "last3fRank": 10,
+            "passingOrder": "3-3-3-4"
+          },
+          {
+            "order": 3,
+            "finish": null,
+            "venue": "川崎",
+            "date": "2025-12-15",
+            "trackCondition": "重",
+            "surface": "ダ",
+            "distance": 1400,
+            "raceName": "３歳(二)",
+            "headCount": 9,
+            "horseNumberInRace": 3,
+            "popularity": null,
+            "bodyWeight": null,
+            "time": null,
+            "margin": null,
+            "jockey": "町田直",
+            "carriedWeight": "56.0",
+            "winnerOrRunnerUp": null,
+            "last3f": null,
+            "last3fRank": null,
+            "passingOrder": null
+          },
+          {
+            "order": 4,
+            "finish": 1,
+            "venue": "金沢",
+            "date": "2025-11-10",
+            "trackCondition": null,
+            "surface": "ダ",
+            "distance": 1400,
+            "raceName": "翔ちゃん萌香ちゃん結婚おめでとう杯 Ｃ１(十四)",
+            "headCount": 7,
+            "horseNumberInRace": 2,
+            "popularity": 2,
+            "bodyWeight": 461,
+            "time": "1:30.8",
+            "margin": "0.2",
+            "jockey": "中島龍",
+            "carriedWeight": "57.0",
+            "winnerOrRunnerUp": "スナドケイ",
+            "last3f": "38.8",
+            "last3fRank": 1,
+            "passingOrder": "1-1-1-1"
+          },
+          {
+            "order": 5,
+            "finish": 2,
+            "venue": "金沢",
+            "date": "2025-10-25",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "distance": 1500,
+            "raceName": "新潟県畜産協会長賞 Ｃ１(十六)",
+            "headCount": 8,
+            "horseNumberInRace": 8,
+            "popularity": 1,
+            "bodyWeight": 463,
+            "time": "1:37.2",
+            "margin": "0.0",
+            "jockey": "中島龍",
+            "carriedWeight": "57.0",
+            "winnerOrRunnerUp": "メイショウコウシ",
+            "last3f": "40.3",
+            "last3fRank": 2,
+            "passingOrder": "2-2-1-1"
+          }
+        ],
+        "sourceMeta": {
+          "sourceType": "uma_info-html-fixture"
+        }
+      }
+    },
+    {
+      "horseNumber": 11,
+      "frameNumber": 8,
+      "horseName": "バーサズバラード",
+      "horseStatsNankan": {
+        "profile": {
+          "sire": "ダノンバラード",
+          "dam": "ソライロノハナ",
+          "damsire": "プリサイスエンド",
+          "sex": "牝",
+          "age": 6,
+          "color": "黒鹿毛",
+          "birthDate": "20.4.27",
+          "jockey": "伊藤裕",
+          "jockeyAffiliation": "川崎",
+          "carriedWeight": "54.0",
+          "trainer": "平田正",
+          "trainerAffiliation": "川崎",
+          "owner": "今中俊平",
+          "breeder": "小倉光博"
+        },
+        "bestTimes": [
+          {
+            "label": null,
+            "raw": "大1142重ダ 7",
+            "venue": "大井",
+            "venueAbbrev": "大",
+            "time": "1:14.2",
+            "timeRaw": "1142",
+            "trackCondition": "重",
+            "surface": "ダ",
+            "finish": 7
+          },
+          {
+            "label": null,
+            "raw": "浦1268重ダ 9",
+            "venue": "浦和",
+            "venueAbbrev": "浦",
+            "time": "1:26.8",
+            "timeRaw": "1268",
+            "trackCondition": "重",
+            "surface": "ダ",
+            "finish": 9
+          },
+          {
+            "label": null,
+            "raw": "大1341不ダ 9",
+            "venue": "大井",
+            "venueAbbrev": "大",
+            "time": "1:34.1",
+            "timeRaw": "1341",
+            "trackCondition": "不良",
+            "surface": "ダ",
+            "finish": 9
+          },
+          {
+            "label": null,
+            "raw": "川1450稍ダ13",
+            "venue": "川崎",
+            "venueAbbrev": "川",
+            "time": "1:45.0",
+            "timeRaw": "1450",
+            "trackCondition": "稍重",
+            "surface": "ダ",
+            "finish": 13
+          },
+          {
+            "label": null,
+            "raw": "川1363良ダ 9",
+            "venue": "川崎",
+            "venueAbbrev": "川",
+            "time": "1:36.3",
+            "timeRaw": "1363",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "finish": 9
+          }
+        ],
+        "finishStatsByDistance": [
+          {
+            "label": "1200",
+            "first": 1,
+            "second": 0,
+            "third": 1,
+            "out": 16
+          },
+          {
+            "label": "1300",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 2
+          },
+          {
+            "label": "1400",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 9
+          },
+          {
+            "label": "1500",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 1
+          },
+          {
+            "label": "川1400",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 8
+          }
+        ],
+        "finishStatsByVenue": [
+          {
+            "label": "浦和",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 2
+          },
+          {
+            "label": "大井",
+            "first": 1,
+            "second": 0,
+            "third": 1,
+            "out": 17
+          },
+          {
+            "label": "川崎",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 9
+          },
+          {
+            "label": "全成績",
+            "first": 1,
+            "second": 0,
+            "third": 1,
+            "out": 28
+          }
+        ],
+        "jockeyStats": {
+          "current": {
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 10,
+            "winRate": 0,
+            "winRateRaw": "0.0%",
+            "quinellaRate": 0,
+            "quinellaRateRaw": "0.0%"
+          },
+          "previous": {
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 10,
+            "winRate": 0,
+            "winRateRaw": "0.0%",
+            "quinellaRate": 0,
+            "quinellaRateRaw": "0.0%"
+          },
+          "all": {
+            "first": 1,
+            "second": 0,
+            "third": 1,
+            "out": 28,
+            "winRate": 3.3,
+            "winRateRaw": "3.3%",
+            "quinellaRate": 3.3,
+            "quinellaRateRaw": "3.3%"
+          }
+        },
+        "trackConditionStats": [
+          {
+            "label": "良",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 12
+          },
+          {
+            "label": "稍重",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 4
+          },
+          {
+            "label": "重",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 8
+          },
+          {
+            "label": "不良",
+            "first": 1,
+            "second": 0,
+            "third": 1,
+            "out": 4
+          }
+        ],
+        "intervalStats": [
+          {
+            "label": "10～19日",
+            "first": 1,
+            "second": 0,
+            "third": 0,
+            "out": 7
+          },
+          {
+            "label": "20～29日",
+            "first": 0,
+            "second": 0,
+            "third": 1,
+            "out": 12
+          },
+          {
+            "label": "30～59日",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 3
+          },
+          {
+            "label": "60日以上",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 5
+          }
+        ],
+        "sireStats": [
+          {
+            "label": "1200",
+            "winRate": 7.6,
+            "winRateRaw": "7.6%",
+            "quinellaRate": 13.9,
+            "quinellaRateRaw": "13.9%"
+          },
+          {
+            "label": "1300",
+            "winRate": 6.4,
+            "winRateRaw": "6.4%",
+            "quinellaRate": 19.1,
+            "quinellaRateRaw": "19.1%"
+          },
+          {
+            "label": "1400",
+            "winRate": 11.7,
+            "winRateRaw": "11.7%",
+            "quinellaRate": 23.1,
+            "quinellaRateRaw": "23.1%"
+          },
+          {
+            "label": "1500",
+            "winRate": 13.2,
+            "winRateRaw": "13.2%",
+            "quinellaRate": 25.8,
+            "quinellaRateRaw": "25.8%"
+          },
+          {
+            "label": "川1400",
+            "winRate": 14.5,
+            "winRateRaw": "14.5%",
+            "quinellaRate": 24.6,
+            "quinellaRateRaw": "24.6%"
+          }
+        ],
+        "seasonStats": [
+          {
+            "label": "1月～3月",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 7
+          },
+          {
+            "label": "4月～6月",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 11
+          },
+          {
+            "label": "7月～9月",
+            "first": 1,
+            "second": 0,
+            "third": 1,
+            "out": 9
+          },
+          {
+            "label": "10月～12月",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 1
+          }
+        ],
+        "jockeyCourseStats": [
+          {
+            "label": "1200",
+            "winRate": 2.7,
+            "winRateRaw": "2.7%",
+            "quinellaRate": 5.4,
+            "quinellaRateRaw": "5.4%"
+          },
+          {
+            "label": "1300",
+            "winRate": 0,
+            "winRateRaw": "0.0%",
+            "quinellaRate": 0,
+            "quinellaRateRaw": "0.0%"
+          },
+          {
+            "label": "1400",
+            "winRate": 5.3,
+            "winRateRaw": "5.3%",
+            "quinellaRate": 11.4,
+            "quinellaRateRaw": "11.4%"
+          },
+          {
+            "label": "1500",
+            "winRate": 2.9,
+            "winRateRaw": "2.9%",
+            "quinellaRate": 8.9,
+            "quinellaRateRaw": "8.9%"
+          },
+          {
+            "label": "川1400",
+            "winRate": 6,
+            "winRateRaw": "6.0%",
+            "quinellaRate": 11.8,
+            "quinellaRateRaw": "11.8%"
+          }
+        ],
+        "returnRates": {
+          "horse": {
+            "win": {
+              "value": 58.7,
+              "raw": "58.7%"
+            },
+            "place": {
+              "value": 22.3,
+              "raw": "22.3%"
+            }
+          },
+          "jockey": {
+            "win": {
+              "value": 57.5,
+              "raw": "57.5%"
+            },
+            "place": {
+              "value": 65.3,
+              "raw": "65.3%"
+            }
+          }
+        },
+        "recentRacesDetailed": [
+          {
+            "order": 1,
+            "finish": 9,
+            "venue": "川崎",
+            "date": "2026-07-31",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "distance": 1400,
+            "raceName": "Ｃ３(五)",
+            "headCount": 9,
+            "horseNumberInRace": 6,
+            "popularity": 9,
+            "bodyWeight": 426,
+            "time": "1:36.3",
+            "margin": "4.9",
+            "jockey": "伊藤裕",
+            "carriedWeight": "54.0",
+            "winnerOrRunnerUp": "マイブリッジ",
+            "last3f": "43.7",
+            "last3fRank": 8,
+            "passingOrder": "8-8-8-8"
+          },
+          {
+            "order": 2,
+            "finish": 10,
+            "venue": "川崎",
+            "date": "2026-07-10",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "distance": 1400,
+            "raceName": "ファイナルアンサー賞 Ｃ３ 選定馬",
+            "headCount": 10,
+            "horseNumberInRace": 8,
+            "popularity": 10,
+            "bodyWeight": 431,
+            "time": "1:37.5",
+            "margin": "4.8",
+            "jockey": "伊藤裕",
+            "carriedWeight": "54.0",
+            "winnerOrRunnerUp": "クインズカヤノヒメ",
+            "last3f": "44.0",
+            "last3fRank": 10,
+            "passingOrder": "6-6-9-10"
+          },
+          {
+            "order": 3,
+            "finish": 12,
+            "venue": "川崎",
+            "date": "2026-06-15",
+            "trackCondition": "重",
+            "surface": "ダ",
+            "distance": 1400,
+            "raceName": "Ｃ３(三)",
+            "headCount": 12,
+            "horseNumberInRace": 9,
+            "popularity": 12,
+            "bodyWeight": 428,
+            "time": "1:40.5",
+            "margin": "7.1",
+            "jockey": "伊藤裕",
+            "carriedWeight": "54.0",
+            "winnerOrRunnerUp": "キーファイン",
+            "last3f": "46.2",
+            "last3fRank": 12,
+            "passingOrder": "11-10-12-12"
+          },
+          {
+            "order": 4,
+            "finish": 9,
+            "venue": "浦和",
+            "date": "2026-05-25",
+            "trackCondition": "重",
+            "surface": "ダ",
+            "distance": 1300,
+            "raceName": "Ｃ３(七)",
+            "headCount": 11,
+            "horseNumberInRace": 9,
+            "popularity": 11,
+            "bodyWeight": 430,
+            "time": "1:26.8",
+            "margin": "2.5",
+            "jockey": "伊藤裕",
+            "carriedWeight": "54.0",
+            "winnerOrRunnerUp": "ニシノテンカフブ",
+            "last3f": "40.0",
+            "last3fRank": 7,
+            "passingOrder": "10-10-10-10"
+          },
+          {
+            "order": 5,
+            "finish": 12,
+            "venue": "川崎",
+            "date": "2026-05-11",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "distance": 1400,
+            "raceName": "Ｃ３(五)",
+            "headCount": 12,
+            "horseNumberInRace": 3,
+            "popularity": 12,
+            "bodyWeight": 428,
+            "time": "1:37.1",
+            "margin": "4.0",
+            "jockey": "伊藤裕",
+            "carriedWeight": "54.0",
+            "winnerOrRunnerUp": "セクレトウェポン",
+            "last3f": "43.7",
+            "last3fRank": 12,
+            "passingOrder": "10-10-10-12"
+          }
+        ],
+        "sourceMeta": {
+          "sourceType": "uma_info-html-fixture"
+        }
+      }
+    },
+    {
+      "horseNumber": 12,
+      "frameNumber": null,
+      "horseName": "アンジェラカフェ",
+      "horseStatsNankan": {
+        "profile": {
+          "sire": "アロマカフェ",
+          "dam": "トレイケイトカフェ",
+          "damsire": "牝7 黒鹿毛 19.6.1 中同名",
+          "sex": "牝",
+          "age": 7,
+          "color": "黒鹿毛",
+          "birthDate": "19.6.1",
+          "jockey": "藤江渉",
+          "jockeyAffiliation": "川崎",
+          "carriedWeight": "54.0",
+          "trainer": "山田正",
+          "trainerAffiliation": "川崎",
+          "owner": "北原大史",
+          "breeder": "中脇一幸"
+        },
+        "bestTimes": [
+          {
+            "label": null,
+            "raw": "浦1317稍ダ 7",
+            "venue": "浦和",
+            "venueAbbrev": "浦",
+            "time": "1:31.7",
+            "timeRaw": "1317",
+            "trackCondition": "稍重",
+            "surface": "ダ",
+            "finish": 7
+          },
+          {
+            "label": null,
+            "raw": "浦1384稍ダ11",
+            "venue": "浦和",
+            "venueAbbrev": "浦",
+            "time": "1:38.4",
+            "timeRaw": "1384",
+            "trackCondition": "稍重",
+            "surface": "ダ",
+            "finish": 11
+          },
+          {
+            "label": null,
+            "raw": "川1338稍ダ 1",
+            "venue": "川崎",
+            "venueAbbrev": "川",
+            "time": "1:33.8",
+            "timeRaw": "1338",
+            "trackCondition": "稍重",
+            "surface": "ダ",
+            "finish": 1
+          }
+        ],
+        "finishStatsByDistance": [
+          {
+            "label": "1400",
+            "first": 1,
+            "second": 0,
+            "third": 1,
+            "out": 11
+          },
+          {
+            "label": "1500",
+            "first": 1,
+            "second": 1,
+            "third": 3,
+            "out": 22
+          },
+          {
+            "label": "川1400",
+            "first": 1,
+            "second": 0,
+            "third": 1,
+            "out": 9
+          }
+        ],
+        "finishStatsByVenue": [
+          {
+            "label": "浦和",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 6
+          },
+          {
+            "label": "船橋",
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 3
+          },
+          {
+            "label": "川崎",
+            "first": 3,
+            "second": 2,
+            "third": 4,
+            "out": 35
+          },
+          {
+            "label": "全成績",
+            "first": 3,
+            "second": 2,
+            "third": 4,
+            "out": 44
+          }
+        ],
+        "jockeyStats": {
+          "current": {
+            "first": 1,
+            "second": 1,
+            "third": 1,
+            "out": 11,
+            "winRate": 7.1,
+            "winRateRaw": "7.1%",
+            "quinellaRate": 14.3,
+            "quinellaRateRaw": "14.3%"
+          },
+          "previous": {
+            "first": 0,
+            "second": 0,
+            "third": 0,
+            "out": 2,
+            "winRate": 0,
+            "winRateRaw": "0.0%",
+            "quinellaRate": 0,
+            "quinellaRateRaw": "0.0%"
+          },
+          "all": {
+            "first": 3,
+            "second": 2,
+            "third": 5,
+            "out": 46,
+            "winRate": 5.4,
+            "winRateRaw": "5.4%",
+            "quinellaRate": 8.9,
+            "quinellaRateRaw": "8.9%"
+          }
+        },
+        "trackConditionStats": [
+          {
+            "label": "良",
+            "first": 0,
+            "second": 0,
+            "third": 2,
+            "out": 27
+          },
+          {
+            "label": "稍重",
+            "first": 1,
+            "second": 2,
+            "third": 1,
+            "out": 10
+          },
+          {
+            "label": "重",
+            "first": 2,
+            "second": 0,
+            "third": 0,
+            "out": 7
+          },
+          {
+            "label": "不良",
+            "first": 0,
+            "second": 0,
+            "third": 1,
+            "out": 0
+          }
+        ],
+        "intervalStats": [
+          {
+            "label": "10～19日",
+            "first": 1,
+            "second": 0,
+            "third": 1,
+            "out": 16
+          },
+          {
+            "label": "20～29日",
+            "first": 1,
+            "second": 1,
+            "third": 1,
+            "out": 19
+          },
+          {
+            "label": "30～59日",
+            "first": 1,
+            "second": 1,
+            "third": 2,
+            "out": 8
+          },
+          {
+            "label": "60日以上",
+            "first": 0,
+            "second": 0,
+            "third": 1,
+            "out": 2
+          }
+        ],
+        "sireStats": [
+          {
+            "label": "1200",
+            "winRate": 9.5,
+            "winRateRaw": "9.5%",
+            "quinellaRate": 19,
+            "quinellaRateRaw": "19.0%"
+          },
+          {
+            "label": "1300",
+            "winRate": 8.6,
+            "winRateRaw": "8.6%",
+            "quinellaRate": null,
+            "quinellaRateRaw": null
+          },
+          {
+            "label": "1400",
+            "winRate": 4.1,
+            "winRateRaw": "4.1%",
+            "quinellaRate": 14.3,
+            "quinellaRateRaw": "14.3%"
+          },
+          {
+            "label": "1500",
+            "winRate": 9.5,
+            "winRateRaw": "9.5%",
+            "quinellaRate": 13.5,
+            "quinellaRateRaw": "13.5%"
+          },
+          {
+            "label": "川1400",
+            "winRate": null,
+            "winRateRaw": null,
+            "quinellaRate": 14.3,
+            "quinellaRateRaw": "14.3%"
+          }
+        ],
+        "seasonStats": [
+          {
+            "label": "1月～3月",
+            "first": 0,
+            "second": 0,
+            "third": 1,
+            "out": 10
+          },
+          {
+            "label": "4月～6月",
+            "first": 1,
+            "second": 0,
+            "third": 1,
+            "out": 10
+          },
+          {
+            "label": "7月～9月",
+            "first": 1,
+            "second": 1,
+            "third": 3,
+            "out": 13
+          },
+          {
+            "label": "10月～12月",
+            "first": 1,
+            "second": 1,
+            "third": 0,
+            "out": 13
+          }
+        ],
+        "jockeyCourseStats": [
+          {
+            "label": "1200",
+            "winRate": 0.8,
+            "winRateRaw": "0.8%",
+            "quinellaRate": 4,
+            "quinellaRateRaw": "4.0%"
+          },
+          {
+            "label": "1300",
+            "winRate": 14.3,
+            "winRateRaw": "14.3%",
+            "quinellaRate": 42.9,
+            "quinellaRateRaw": "42.9%"
+          },
+          {
+            "label": "1400",
+            "winRate": 6,
+            "winRateRaw": "6.0%",
+            "quinellaRate": 13.1,
+            "quinellaRateRaw": "13.1%"
+          },
+          {
+            "label": "1500",
+            "winRate": 5.2,
+            "winRateRaw": "5.2%",
+            "quinellaRate": 9.7,
+            "quinellaRateRaw": "9.7%"
+          },
+          {
+            "label": "川1400",
+            "winRate": 4.6,
+            "winRateRaw": "4.6%",
+            "quinellaRate": 11.2,
+            "quinellaRateRaw": "11.2%"
+          }
+        ],
+        "returnRates": {
+          "horse": {
+            "win": {
+              "value": 108.9,
+              "raw": "108.9%"
+            },
+            "place": {
+              "value": 48.5,
+              "raw": "48.5%"
+            }
+          },
+          "jockey": {
+            "win": {
+              "value": 70.2,
+              "raw": "70.2%"
+            },
+            "place": {
+              "value": 74.7,
+              "raw": "74.7%"
+            }
+          }
+        },
+        "recentRacesDetailed": [
+          {
+            "order": 1,
+            "finish": 7,
+            "venue": "川崎",
+            "date": "2026-07-28",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "distance": 1500,
+            "raceName": "ペパーミント賞 Ｃ３ 選定馬",
+            "headCount": 9,
+            "horseNumberInRace": 9,
+            "popularity": 9,
+            "bodyWeight": 498,
+            "time": "1:40.8",
+            "margin": "1.8",
+            "jockey": null,
+            "carriedWeight": null,
+            "winnerOrRunnerUp": "シュヴァイゲン",
+            "last3f": "42.1",
+            "last3fRank": 4,
+            "passingOrder": "8-9-9-7"
+          },
+          {
+            "order": 2,
+            "finish": 8,
+            "venue": "川崎",
+            "date": "2026-07-07",
+            "trackCondition": "重",
+            "surface": "ダ",
+            "distance": 1500,
+            "raceName": "コリアンダー賞 Ｃ３ 選定馬",
+            "headCount": 11,
+            "horseNumberInRace": 1,
+            "popularity": 7,
+            "bodyWeight": 496,
+            "time": "1:41.4",
+            "margin": "3.6",
+            "jockey": null,
+            "carriedWeight": null,
+            "winnerOrRunnerUp": "ヤマニントレモロ",
+            "last3f": "42.9",
+            "last3fRank": 7,
+            "passingOrder": "8-8-9-8"
+          },
+          {
+            "order": 3,
+            "finish": 8,
+            "venue": "川崎",
+            "date": "2026-06-19",
+            "trackCondition": "重",
+            "surface": "ダ",
+            "distance": 2000,
+            "raceName": "ヴェルザンディ賞 Ｃ２Ｃ３ 選定馬",
+            "headCount": 10,
+            "horseNumberInRace": 5,
+            "popularity": 10,
+            "bodyWeight": 497,
+            "time": "2:21.3",
+            "margin": "5.3",
+            "jockey": "岡村裕",
+            "carriedWeight": "53.0",
+            "winnerOrRunnerUp": "アイビーブリッツ",
+            "last3f": "45.8",
+            "last3fRank": 8,
+            "passingOrder": "8-7-8-8"
+          },
+          {
+            "order": 4,
+            "finish": 9,
+            "venue": "浦和",
+            "date": "2026-05-26",
+            "trackCondition": null,
+            "surface": "ダ",
+            "distance": 2000,
+            "raceName": "桶川べに花まつり賞 Ｃ３ 選抜馬イ",
+            "headCount": 11,
+            "horseNumberInRace": 11,
+            "popularity": 11,
+            "bodyWeight": 497,
+            "time": "2:17.8",
+            "margin": "3.0",
+            "jockey": "岡村裕",
+            "carriedWeight": "54.0",
+            "winnerOrRunnerUp": "ジャストザヴァルス",
+            "last3f": "40.0",
+            "last3fRank": 3,
+            "passingOrder": "11-10-10-10"
+          },
+          {
+            "order": 5,
+            "finish": 9,
+            "venue": "川崎",
+            "date": "2026-05-11",
+            "trackCondition": "良",
+            "surface": "ダ",
+            "distance": 1500,
+            "raceName": "スペアミント賞 Ｃ３ 選定馬",
+            "headCount": 9,
+            "horseNumberInRace": 6,
+            "popularity": 9,
+            "bodyWeight": 498,
+            "time": "1:41.9",
+            "margin": "3.8",
+            "jockey": "藤江渉",
+            "carriedWeight": "54.0",
+            "winnerOrRunnerUp": "パーティーキング",
+            "last3f": "42.5",
+            "last3fRank": 9,
+            "passingOrder": "4-4-3-7"
+          }
+        ],
+        "sourceMeta": {
+          "sourceType": "uma_info-html-fixture"
+        }
+      }
+    }
+  ]
+}

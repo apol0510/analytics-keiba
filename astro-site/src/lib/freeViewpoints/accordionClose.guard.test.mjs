@@ -1,0 +1,56 @@
+/**
+ * accordionClose.guard.test.mjs
+ *
+ * 2026-08-20: レースを開くと中身が長くなる（出走馬 10 数頭 × 過去 5 走）ため、
+ * 閉じるのに一番上まで戻る必要があった。閉じやすさを次で担保する。
+ *
+ *   ① 中身の末尾に閉じるボタンを置く
+ *   ② そのボタンは sticky で、スクロール中も画面内に残る
+ *   ③ 閉じたらそのレースの見出しへ戻す（画面外にいるときだけ）
+ *   ④ 別のレースを開いたら前のレースは自動で閉じる（同時に開くのは 1 つ）
+ */
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+const board = readFileSync(join(ROOT, 'src/components/RaceViewpointsBoard.astro'), 'utf-8');
+
+test('開いた中身の末尾に閉じるボタンがある', () => {
+  assert.ok(board.includes('data-close-race'), '閉じるボタンの目印が無い');
+  assert.ok(board.includes('rvb-closebtn'), '閉じるボタンが無い');
+  // summary より後ろ（＝中身の末尾側）に置かれていること
+  const summary = board.indexOf('rvb-detail-sum');
+  const closeBtn = board.indexOf('data-close-race');
+  assert.ok(summary > -1 && closeBtn > summary, '閉じるボタンが中身の中に無い');
+});
+
+test('閉じるボタンはスクロール中も押せる（sticky）', () => {
+  const m = board.match(/\.rvb-closebar\s*\{([^}]*)\}/);
+  assert.ok(m, '.rvb-closebar のスタイルが無い');
+  assert.ok(/position:\s*sticky/.test(m[1]), 'sticky になっていない（長い中身で押せなくなる）');
+  assert.ok(/bottom:\s*0/.test(m[1]), '画面下に留まる指定が無い');
+});
+
+test('ボタンは button 要素で、レース番号が分かる', () => {
+  assert.ok(/<button[^>]*class="rvb-closebtn"/.test(board), 'button 要素になっていない');
+  assert.ok(board.includes('R を閉じる'), 'どのレースを閉じるのか分からない');
+});
+
+test('閉じたらそのレースの見出しへ戻す', () => {
+  assert.ok(board.includes('scrollIntoView'), '閉じたあとの位置合わせが無い');
+  assert.ok(/getBoundingClientRect[\s\S]{0,240}scrollIntoView/.test(board),
+    '画面内にいるかを見ずに毎回スクロールしている');
+});
+
+test('同時に開くのは 1 つだけ', () => {
+  assert.ok(/details\.rvb-detail\[open\]/.test(board), '他の開いているレースを探していない');
+  assert.ok(/other\.open\s*=\s*false/.test(board), '他のレースを閉じていない');
+});
+
+test('summary でのトグルは残す（閉じ方を 1 つに減らさない）', () => {
+  assert.ok(board.includes('<summary class="rvb-detail-sum"'), 'summary が無い');
+  assert.equal(board.includes('preventDefault'), false, 'summary の既定動作を止めている');
+});

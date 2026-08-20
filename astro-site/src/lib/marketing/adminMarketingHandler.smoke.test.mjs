@@ -11,13 +11,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { createFakeRedis, isFakeRedisUrl, FAKE_REDIS_ENV } from './fakeRedisForTests.mjs';
+
 const SECRET = 'test-admin-secret';
 
 /** Airtable / SendGrid への呼び出しを差し替える（**実 I/O を一切行わない**） */
 function stubFetch(routes = {}) {
   const calls = [];
+  // キュー登録は二重 queue を防ぐために鍵を取る（取れなければ何も書かない）。
+  // 実物と同じ意味の偽 Redis を用意して、**排他が理由で落ちない**ようにする。
+  const redis = createFakeRedis((body) => ({ ok: true, status: 200, json: async () => body }));
   globalThis.fetch = async (url, init = {}) => {
     const u = String(url);
+    if (isFakeRedisUrl(u)) return redis.handle(init);
     calls.push({ url: u, method: init.method || 'GET' });
     if (/api\.sendgrid\.com/.test(u)) {
       // 送信 API を叩いたら試験を落とす（admin は送信経路を持たない）
@@ -37,6 +43,7 @@ async function invoke(payload) {
   process.env.PREMIUM_PLUS_ADMIN_SECRET = SECRET;
   process.env.AIRTABLE_API_KEY = 'test-key';
   process.env.AIRTABLE_BASE_ID = 'appTEST';
+  Object.assign(process.env, FAKE_REDIS_ENV);
   const mod = await import('../../../netlify/functions/admin-marketing.js');
   const res = await mod.handler({
     httpMethod: 'POST',

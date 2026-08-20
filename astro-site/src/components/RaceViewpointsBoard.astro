@@ -1,0 +1,741 @@
+---
+/**
+ * RaceViewpointsBoard.astro — 無料「レースの見どころ」ボード（表示専用）
+ *
+ * 出すもの:
+ *   一覧  … 発走時刻 / R / レース名 / 距離 / 頭数 / 絶対タグ or 中立 or 状態
+ *   詳細  … タグの根拠（該当頭数）＋**出走馬と無料公開可能な印**＋馬単位の条件変化
+ *   会場別… 当日相対（その日その会場の中での順位。絶対タグとは別レイヤー）
+ *
+ * 出さないもの: 買い目 / pt / AI総合指数 / 役割 / 特徴量。
+ *   印は `freePublicView.js` の公開 DTO 由来（上位 4 頭ぶん）で、有料項目は含まれない。
+ *
+ * 設計上の約束:
+ *   - **色だけに意味を持たせない**。すべてのタグ・状態・チップは記号＋文字を伴う
+ *   - `<details>` は開くと `.is-open` が付き、背景・border・アイコンが変わる
+ *
+ * ⚠️ 色番号・文言・名称・URL は仮。MK 目視確認が必要。
+ */
+import { RACE_STATE } from '../lib/freeViewpoints/raceViewpoints.js';
+import {
+  TAG_LABEL, TAG_SENTENCE, TAG_ICON, STATE_LABEL, STATE_SENTENCE, STATE_ICON,
+  HIGHLIGHT_LABEL, HORSE_CHANGE_CHIP, PAID_CTA, HORSE_SECTION, MEMBER_EXTRAS, coverageNote,
+  TERM_HELP, CHIP_HELP, INTERVAL_HELP, HOW_TO_USE, HELP_TOGGLE, LAYOFF_LABEL,
+} from '../lib/freeViewpoints/copy.js';
+
+interface Props { view: any; categoryLabel: string; freeUrl: string; }
+const { view, categoryLabel, freeUrl } = Astro.props;
+
+const fmtDate = (d: string) => {
+  const [y, m, day] = String(d).split('-');
+  return `${y}年${parseInt(m, 10)}月${parseInt(day, 10)}日`;
+};
+const stateClass = (s: string) =>
+  s === RACE_STATE.TAGGED ? 'is-tagged'
+  : s === RACE_STATE.NEUTRAL ? 'is-neutral'
+  : s === RACE_STATE.NO_HISTORY ? 'is-nohistory'
+  : 'is-pending';
+
+// タグ → 色分けキー（意味別の多色。色だけに頼らず記号も出す）
+const TAG_KIND: Record<string, string> = {
+  'distance-change': 'distance',
+  'first-course': 'course',
+  'jockey-change': 'jockey',
+  'easy-compare': 'compare',
+  'hard-compare': 'contrast',
+};
+
+// タグの根拠になった頭数（情報密度。公開事実の集計のみ）
+const tagEvidence = (tag: string, c: any) => {
+  if (!c) return null;
+  if (tag === 'distance-change') return { n: c.distanceChange, of: c.distanceBase };
+  if (tag === 'first-course') return { n: c.firstCourse, of: c.withHistory };
+  if (tag === 'jockey-change') return { n: c.jockeyChange, of: c.jockeyBase };
+  if (tag === 'easy-compare' || tag === 'hard-compare') return { n: c.easyCompare, of: c.distanceBase };
+  return null;
+};
+
+const CHIP_ORDER = ['distanceChanged', 'firstCourse', 'jockeyChanged', 'easyCompare'] as const;
+
+// 凡例。**説明は本文として常に出す**（title 属性はマウスを止めないと出ず、スマホでは出ないため）
+// 「何走前か」の呼び方。5 走まで出す
+const RACE_AGO = ['前走', '2走前', '3走前', '4走前', '5走前'];
+
+const LEGEND = [
+  { kind: 'distance', icon: '⇔', label: '距離替わり', desc: '前回とちがう距離を走る馬がいる' },
+  { kind: 'course', icon: '◇', label: '初コース', desc: 'この競馬場を走るのが初めての馬がいる' },
+  { kind: 'jockey', icon: '⇄', label: '乗り替わり', desc: '前回とちがう騎手が乗る馬がいる' },
+  { kind: 'compare', icon: '≡', label: '前走と近い条件', desc: '前回と似た条件なので見比べやすい' },
+  { kind: 'contrast', icon: '≠', label: '比べにくい', desc: '条件がちがい、前回の着順を並べても比べにくい' },
+  { kind: 'neutral', icon: '＝', label: '目立つ変化なし', desc: '確認したが、大きく変わった点はなかった' },
+  { kind: 'nodata', icon: '—', label: '近走なし', desc: '出走馬に前回のレースの記録がない（新馬戦など）' },
+  { kind: 'pending', icon: '⏳', label: '準備中', desc: '出走馬の近走をまだ全頭ぶん確認できていない' },
+];
+---
+
+<section class="rvb">
+  <header class="rvb-head">
+    {/* H1 は nav の文字（無料予想）と一致させる。押した先に来たことを確定させるため。
+        「今日のレースの見どころ」は内容の説明として直下に残す（情報は落とさない）。
+        ⚠️「無料予想」は買い目を期待させる語なので、説明行と「買い目は有料版」の案内を
+           必ず一緒に出すこと。単独で置かない。 */}
+    <h1 class="rvb-title">無料予想<span class="rvb-cat">{categoryLabel}</span></h1>
+    <p class="rvb-subtitle">今日のレースの見どころ</p>
+    <p class="rvb-date">{fmtDate(view.date)}</p>
+    <p class="rvb-lead">
+      出走馬の<strong>近走（前走の会場・距離・騎手）</strong>だけを数えて、レースごとに
+      「何が替わったか」「近走を見比べやすいか」を出しています。
+      各レースを開くと、<strong>出走馬と、その馬の条件がどう変わったか</strong>まで確認できます。
+    </p>
+    <details class="rvb-howto" id="rvb-howto">
+      <summary class="rvb-howto-sum">
+        <span aria-hidden="true">💡</span><span class="rvb-howto-sum-txt">{HOW_TO_USE.toggleOpen}</span>
+      </summary>
+      <div class="rvb-howto-body">
+        <p class="rvb-howto-lead">{HOW_TO_USE.lead}</p>
+        <ol class="rvb-howto-steps">
+          {HOW_TO_USE.steps.map((st: any, i: number) => (
+            <li class="rvb-howto-step">
+              <span class="rvb-howto-no">{i + 1}</span>
+              <span class="rvb-howto-txt"><b>{st.title}</b>{st.body}</span>
+            </li>
+          ))}
+        </ol>
+        <p class="rvb-howto-note">{HOW_TO_USE.note}</p>
+      </div>
+    </details>
+
+    <div class="rvb-helpbar">
+      <button type="button" class="rvb-helpbtn" id="rvb-help-toggle" aria-pressed="true">
+        <span aria-hidden="true">🔎</span><span class="rvb-helpbtn-txt">{HELP_TOGGLE.on}</span>
+      </button>
+      <span class="rvb-helphint">{HELP_TOGGLE.hint}</span>
+    </div>
+
+    <ul class="rvb-legend">
+      {LEGEND.map((l) => (
+        <li class={`lg lg-${l.kind}`}>
+          <span class="lg-chip"><span class="lg-ic">{l.icon}</span>{l.label}</span>
+          <span class="lg-desc" data-help>{l.desc}</span>
+        </li>
+      ))}
+    </ul>
+
+    {/* ページ冒頭の常設バナー。未登録には CTA、登録済みには「何が増えたか」を出す。
+        アコーディオンを開かないと登録案内が見えなかった問題への対応（2026-08-20）。 */}
+    <div class="rvb-topgate" data-guest-only>
+      <p class="rvb-topgate-head"><span aria-hidden="true">🔓</span>{MEMBER_EXTRAS.topLockedHeading}</p>
+      <p class="rvb-topgate-body">{MEMBER_EXTRAS.topLockedBody}</p>
+      <ul class="rvb-topgate-list">
+        {MEMBER_EXTRAS.benefits.map((b: string) => <li>{b}</li>)}
+      </ul>
+      <a class="rvb-topgate-cta" href="/free-signup/">{MEMBER_EXTRAS.topCtaLabel}</a>
+      <p class="rvb-topgate-note">{MEMBER_EXTRAS.topLockedNote}</p>
+    </div>
+
+    <div class="rvb-topmember" data-member-only>
+      <p class="rvb-topmember-head"><span aria-hidden="true">✅</span>{MEMBER_EXTRAS.topMemberHeading}</p>
+      <p class="rvb-topmember-body">{MEMBER_EXTRAS.topMemberBody}</p>
+    </div>
+  </header>
+
+  {view.venues.map((venue: any) => (
+    <div class="rvb-venue">
+      <h2 class="rvb-venue-name">{venue.venue}<span class="rvb-venue-count">{venue.races.length}R</span></h2>
+
+      <div class="rvb-highlight">
+        <span class="rvb-highlight-head">今日の{venue.venue}では</span>
+        <ul class="rvb-highlight-list">
+          {(['mostChanged', 'easiest', 'hardest'] as const).map((k) => (
+            venue.highlights[k] ? (
+              <li class={`hl hl-${k}`}>
+                <span class="hl-key">{HIGHLIGHT_LABEL[k]}</span>
+                <span class="hl-val">{venue.highlights[k]}R</span>
+              </li>
+            ) : null
+          ))}
+        </ul>
+        <p class="rvb-highlight-note">
+          ※ ここは<strong>今日のこの会場だけを見くらべた結果</strong>です。
+          各レースに付いている印は「いつもと比べてどうか」なので、別の見かたになります。
+        </p>
+      </div>
+
+      <ol class="rvb-list">
+        {venue.races.map((race: any) => (
+          <li class={`rvb-row ${stateClass(race.result.state)}`}>
+            <div class="rvb-row-main">
+              <span class="rvb-time">{race.startTime || '--:--'}</span>
+              <span class="rvb-r">{race.raceNumber}R</span>
+              <span class="rvb-name">{race.raceName || '　'}</span>
+              <span class="rvb-meta">
+                {race.distanceMeters ? `${race.distanceMeters}m` : '距離未取得'} ・ {race.entryCount}頭
+              </span>
+            </div>
+
+            <div class="rvb-row-tags">
+              {race.result.state === RACE_STATE.TAGGED
+                ? race.result.tags.map((t: string) => {
+                    const ev = tagEvidence(t, race.result.counts);
+                    return (
+                      <span class={`rvb-tag tag-${TAG_KIND[t] || 'other'}`}>
+                        <span class="rvb-tag-ic">{TAG_ICON[t]}</span>{TAG_LABEL[t]}
+                        {ev && ev.of ? <span class="rvb-tag-n">{ev.of}頭中{ev.n}頭</span> : null}
+                      </span>
+                    );
+                  })
+                : (
+                  <span class={`rvb-state st-${stateClass(race.result.state).replace('is-', '')}`}>
+                    <span class="rvb-tag-ic">{STATE_ICON[race.result.state]}</span>{STATE_LABEL[race.result.state]}
+                  </span>
+                )}
+            </div>
+
+            {race.result.state === RACE_STATE.TAGGED && (
+              <p class="rvb-tag-help" data-help>
+                {race.result.tags.map((t: string) => TERM_HELP[t]).filter(Boolean).join(' ')}
+              </p>
+            )}
+
+            <details class="rvb-detail" data-race={race.raceNumber}>
+              <summary class="rvb-detail-sum">
+                <span class="rvb-detail-ic" aria-hidden="true">＋</span>
+                <span class="rvb-detail-txt">このレースの見かたと出走馬</span>
+              </summary>
+              <div class="rvb-detail-body">
+                {race.result.state === RACE_STATE.TAGGED
+                  ? race.result.tags.map((t: string) => (
+                    <p class={`rvb-sentence sn-${TAG_KIND[t] || 'other'}`}>
+                      {TAG_SENTENCE[t]}
+                      {TERM_HELP[t] && <span class="rvb-help" data-help>{TERM_HELP[t]}</span>}
+                    </p>
+                  ))
+                  : <p class={`rvb-sentence sn-${stateClass(race.result.state).replace('is-', '')}`}>{STATE_SENTENCE[race.result.state]}</p>}
+
+                {race.result.degraded.length > 0 && race.result.state !== RACE_STATE.UNMATCHED && (
+                  <p class="rvb-degraded">
+                    <span aria-hidden="true">⚠ </span>
+                    {race.result.degraded.includes('distance') && '今日の距離が取得できていないため、距離に関する見どころは出していません。'}
+                    {race.result.degraded.includes('jockey') && '騎手を照合できない馬があるため、乗り替わりの見どころは出していません。'}
+                  </p>
+                )}
+
+                <p class="rvb-cov">{coverageNote(race.result)}</p>
+
+                {race.horseRows && race.horseRows.length > 0 && (
+                  <div class="rvb-horses">
+                    <h3 class="rvb-horses-head">{HORSE_SECTION.heading}</h3>
+                    <p class="rvb-horses-note">{HORSE_SECTION.note}</p>
+                    <ul class="rvb-horse-list">
+                      {race.horseRows.map((h: any) => (
+                        <li class={`rvb-horse ${h.isHeadline ? `hm-${h.headlineKind}` : 'hm-plain'}`}>
+                          <span class="rvb-horse-mark" aria-label={h.isHeadline ? '印あり' : '印なし'}>{h.headlineMark || '・'}</span>
+                          <span class="rvb-horse-num">{h.number}</span>
+                          <span class="rvb-horse-name">{h.name}</span>
+                          <span class="rvb-horse-sub">
+                            {h.jockey ? `騎手 ${h.jockey}` : ''}{h.weight ? ` / ${h.weight}` : ''}
+                          </span>
+                          <span class="rvb-horse-prev">
+                            {h.prev ? `前走 ${h.prev.venue ?? ''}${h.prev.distance ? ` ${h.prev.distance}m` : ''}` : '前走データなし'}
+                          </span>
+                          <span class="rvb-horse-chips">
+                            {h.changes
+                              ? CHIP_ORDER.filter((k) => h.changes[k]).map((k) => (
+                                  <span class={`rvb-chip chip-${HORSE_CHANGE_CHIP[k].kind}`}>
+                                    <span aria-hidden="true">{HORSE_CHANGE_CHIP[k].icon}</span>{HORSE_CHANGE_CHIP[k].label}
+                                  </span>
+                                ))
+                              : <span class="rvb-chip chip-none">{HORSE_SECTION.noChanges}</span>}
+                          </span>
+
+                          {h.extras && (
+                            <span class="rvb-member-row" data-member-only>
+                              <span class="rvb-member-rowbadge">{MEMBER_EXTRAS.memberBadge}</span>
+                              <span class="rvb-member-chips">
+                                {h.extras.layoffRun && (
+                                  <span class={`rvb-mchip mchip-${h.extras.layoffRun.kind === 'layoff' ? 'layoff' : 'run'}`}>
+                                    <span aria-hidden="true">{h.extras.layoffRun.kind === 'layoff' ? LAYOFF_LABEL.layoff.icon : LAYOFF_LABEL.runAfterLayoff.icon}</span>
+                                    {h.extras.layoffRun.kind === 'layoff' ? LAYOFF_LABEL.layoff.label : `叩き${h.extras.layoffRun.nth}戦目`}
+                                  </span>
+                                )}
+                                {h.extras.interval && (
+                                  <span class="rvb-mchip mchip-interval">
+                                    <span aria-hidden="true">🗓</span>前走から{h.extras.interval.days}日ぶり
+                                    <span class="rvb-mchip-sub">{h.extras.interval.label}</span>
+                                  </span>
+                                )}
+                                {h.extras.bodyWeight && (
+                                  <span class="rvb-mchip mchip-weight">
+                                    <span aria-hidden="true">⚖</span>前走の体重 {h.extras.bodyWeight.latest}kg
+                                    {h.extras.bodyWeight.diff !== null && (
+                                      <span class="rvb-mchip-sub">{h.extras.bodyWeight.diff > 0 ? '+' : ''}{h.extras.bodyWeight.diff}</span>
+                                    )}
+                                  </span>
+                                )}
+                              </span>
+                              {h.extras.layoffRun && (
+                                <span class="rvb-mchip-help" data-help>
+                                  {h.extras.layoffRun.kind === 'layoff' ? CHIP_HELP.layoff : CHIP_HELP.runAfterLayoff}
+                                </span>
+                              )}
+                              {h.extras.history.length > 0 && (
+                                <span class="rvb-mhist">
+                                  <span class="rvb-mhist-label">{MEMBER_EXTRAS.historyHeading}</span>
+                                  <span class="rvb-mhist-help" data-help>{MEMBER_EXTRAS.historyHelp}</span>
+                                  <span class="rvb-mhist-rows">
+                                    {h.extras.history.map((p, i) => (
+                                      <span class="rvb-mhist-row">
+                                        <span class="mh-when">{RACE_AGO[i] || `${i + 1}走前`}</span>
+                                        <span class="mh-where">{p.venue || '—'}{p.distance ? ` ${p.distance}m` : ''}</span>
+                                        <span class="mh-rank">{p.finish != null && p.finish !== '' ? `${p.finish}着` : '—'}</span>
+                                        <span class="mh-chg">
+                                          {p.venueChanged && <span class="mh-badge mh-v">コースが変わった</span>}
+                                          {p.distanceChanged && <span class="mh-badge mh-d">距離が変わった</span>}
+                                        </span>
+                                      </span>
+                                    ))}
+                                  </span>
+                                </span>
+                              )}
+                            </span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {race.result.state !== RACE_STATE.UNMATCHED && race.horseRows && race.horseRows.length > 0 && (
+                  <>
+                    <div class="rvb-member" data-member-only>
+                      <h4 class="rvb-member-head">
+                        <span class="rvb-member-badge">{MEMBER_EXTRAS.memberBadge}</span>
+                        {MEMBER_EXTRAS.unlockedHeading}
+                      </h4>
+                      <div class="rvb-samecond">
+                        <span class="rvb-samecond-head">{MEMBER_EXTRAS.sameConditionHeading}</span>
+                        {race.sameCondition && race.sameCondition.length > 0
+                          ? (
+                            <ul class="rvb-samecond-list">
+                              {race.sameCondition.map((r: any) => (
+                                <li class="rvb-samecond-item">
+                                  <span class="sc-num">{r.number}</span>
+                                  <span class="sc-name">{r.name}</span>
+                                  <span class="sc-finish">前走 {r.finish != null && r.finish !== '' ? `${r.finish}着` : '—'}</span>
+                                  <span class="sc-meta">{r.distance ? `${r.distance}m` : ''}{r.bodyWeight ? ` / ${r.bodyWeight}kg` : ''}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          )
+                          : <p class="rvb-samecond-empty">{MEMBER_EXTRAS.sameConditionEmpty}</p>}
+                      </div>
+                    </div>
+
+                    <div class="rvb-signup" data-guest-only>
+                      <p class="rvb-signup-head">{MEMBER_EXTRAS.lockedHeading}</p>
+                      <p class="rvb-signup-body">{MEMBER_EXTRAS.lockedBody}</p>
+                      <ul class="rvb-signup-list">
+                        {MEMBER_EXTRAS.benefits.map((b: string) => <li>{b}</li>)}
+                      </ul>
+                      <a class="rvb-signup-cta" href="/free-signup/">{MEMBER_EXTRAS.ctaLabel}</a>
+                      <p class="rvb-signup-note">{MEMBER_EXTRAS.note}</p>
+                    </div>
+                  </>
+                )}
+
+                <div class="rvb-cta">
+                  <p class="rvb-cta-head">{PAID_CTA.heading}</p>
+                  <p class="rvb-cta-body">{PAID_CTA.body}</p>
+                  <div class="rvb-cta-links">
+                    <a class="rvb-cta-a" href={freeUrl}>{PAID_CTA.linkLabel}</a>
+                    <a class="rvb-cta-b" href="/pricing/">{PAID_CTA.planLabel}</a>
+                  </div>
+                </div>
+
+                <div class="rvb-closebar">
+                  <button type="button" class="rvb-closebtn" data-close-race={race.raceNumber}>
+                    <span aria-hidden="true">✕</span>{race.raceNumber}R を閉じる
+                  </button>
+                </div>
+              </div>
+            </details>
+          </li>
+        ))}
+      </ol>
+    </div>
+  ))}
+
+  <p class="rvb-foot">
+    近走の集計元は、南関は出走各馬の近走詳細データ、中央は JRA 公式の競走成績です。
+    まだ確認できていないレースは、無理に傾向を出さず「近走データ準備中」と表示しています。
+  </p>
+</section>
+
+<script is:inline>
+  // ── 初めての人向けの補助 ──────────────────────────────────────
+  // ① 使い方: 初回訪問だけ開いて見せる（一度閉じたら次からは閉じたまま）
+  // ② かんたん表示: 用語のやさしい説明を出し入れする。既定はオン
+  (function applyBeginnerHelp() {
+    const HOWTO_KEY = 'rvb-howto-seen';
+    const HELP_KEY = 'rvb-help-off';
+    function init() {
+      const howto = document.getElementById('rvb-howto');
+      if (howto) {
+        let seen = false;
+        try { seen = localStorage.getItem(HOWTO_KEY) === '1'; } catch { seen = false; }
+        howto.open = !seen;
+        howto.addEventListener('toggle', () => {
+          const txt = howto.querySelector('.rvb-howto-sum-txt');
+          if (txt) txt.textContent = howto.open ? '使い方を閉じる' : '使い方を見る';
+          if (!howto.open) { try { localStorage.setItem(HOWTO_KEY, '1'); } catch { /* 保存できなくても表示は動く */ } }
+        });
+        const txt = howto.querySelector('.rvb-howto-sum-txt');
+        if (txt) txt.textContent = howto.open ? '使い方を閉じる' : '使い方を見る';
+      }
+
+      const btn = document.getElementById('rvb-help-toggle');
+      if (!btn) return;
+      function paint(on) {
+        document.documentElement.setAttribute('data-rvb-help', on ? 'on' : 'off');
+        btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+        const t = btn.querySelector('.rvb-helpbtn-txt');
+        if (t) t.textContent = on ? 'かんたん表示：オン' : 'かんたん表示：オフ';
+      }
+      let on = true;
+      try { on = localStorage.getItem(HELP_KEY) !== '1'; } catch { on = true; }
+      paint(on);
+      btn.addEventListener('click', () => {
+        on = !on;
+        paint(on);
+        try { localStorage.setItem(HELP_KEY, on ? '0' : '1'); } catch { /* 保存できなくても切替は効く */ }
+      });
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+    else init();
+  })();
+
+  // ── 無料会員向け拡張表示の出し分け ────────────────────────────
+  // 既定は「未登録」の見え方（拡張は隠す / 登録 CTA を出す）。JS で登録済みなら入れ替える。
+  //
+  // ⚠️ これは**クライアント側の soft gate** で、開発者ツールがあれば回避できる。
+  //    ここで隠しているのは**公開事実だけ**（出走間隔・馬体重・過去走の推移）なので、
+  //    回避されても買い目 / pt / AI総合指数 / 役割 / 特徴量は一切漏れない。
+  //    有料情報のゲートには絶対に使わないこと。
+  (function applyMemberGate() {
+    function isRegisteredUser() {
+      // 他ページ（free-prediction / dashboard）と同じ 5 キー OR 判定にそろえる
+      for (const key of ['user-plan', 'userPlan', 'user_plan', 'user_email', 'userEmail', 'auth_data']) {
+        if (localStorage.getItem(key)) return true;
+      }
+      return localStorage.getItem('isLoggedIn') === 'true';
+    }
+    function apply() {
+      let registered = false;
+      try { registered = isRegisteredUser(); } catch { registered = false; }
+      document.querySelectorAll('[data-member-only]').forEach((el) => {
+        el.classList.toggle('is-unlocked', registered);
+      });
+      document.querySelectorAll('[data-guest-only]').forEach((el) => {
+        el.classList.toggle('is-hidden', registered);
+      });
+      document.documentElement.setAttribute('data-rvb-member', registered ? 'true' : 'false');
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', apply);
+    else apply();
+  })();
+
+  // ── アコーディオンを閉じやすくする ────────────────────────────
+  // 開くと中身が長くなる（1 レースで出走馬 10 数頭 × 過去 5 走）ため、
+  //   ① 中身の末尾に「閉じる」ボタンを置き、スクロール中も押せるよう sticky にする
+  //   ② 閉じたらそのレースの見出しへ戻す（どこにいるか分からなくならないように）
+  //   ③ 別のレースを開いたら前のレースは自動で閉じる（同時に開くのは 1 つ）
+  (function raceAccordionClose() {
+    function closeRace(details) {
+      const row = details.closest('.rvb-row') || details;
+      details.open = false;
+      // 閉じた直後に見出しが画面外だと迷子になるので、必要なときだけ戻す
+      const top = row.getBoundingClientRect().top;
+      if (top < 0 || top > window.innerHeight) {
+        row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      }
+    }
+    document.addEventListener('click', (e) => {
+      const btn = e.target instanceof Element ? e.target.closest('[data-close-race]') : null;
+      if (!btn) return;
+      const details = btn.closest('details.rvb-detail');
+      if (details) closeRace(details);
+    });
+    // 同時に開くのは 1 つだけ
+    document.addEventListener('toggle', (e) => {
+      const el = e.target;
+      if (!(el instanceof HTMLDetailsElement) || !el.classList.contains('rvb-detail') || !el.open) return;
+      document.querySelectorAll('details.rvb-detail[open]').forEach((other) => {
+        if (other !== el) other.open = false;
+      });
+    }, true);
+  })();
+
+  // details の開閉状態を class でも持たせる（CSS だけでなく状態として識別できるように）
+  document.addEventListener('toggle', (e) => {
+    const el = e.target;
+    if (el instanceof HTMLDetailsElement && el.classList.contains('rvb-detail')) {
+      el.classList.toggle('is-open', el.open);
+      el.setAttribute('data-open', el.open ? 'true' : 'false');
+    }
+  }, true);
+</script>
+
+<style>
+  .rvb { max-width: 1040px; margin: 0 auto; padding: 24px 16px 64px; color: #e2e8f0; }
+  .rvb-head { text-align: center; margin-bottom: 24px; }
+  .rvb-subtitle { font-size: 1rem; font-weight: 700; color: #7dd3fc; margin: 0 0 6px; letter-spacing: .02em; }
+  .rvb-title { font-size: 1.9rem; font-weight: 800; color: #f8fafc; margin: 0 0 6px; line-height: 1.3; }
+  .rvb-cat { display: inline-block; margin-left: 10px; padding: 3px 10px; border-radius: 999px; background: #7c3aed; color: #fff; font-size: .78rem; vertical-align: middle; }
+  .rvb-date { color: #cbd5e1; margin: 0 0 12px; font-size: .95rem; }
+  .rvb-lead { color: #e2e8f0; font-size: .92rem; line-height: 1.85; max-width: 660px; margin: 0 auto 14px; }
+
+  /* 凡例: 色 + 記号 + 文字 で意味を示す */
+  .rvb-legend { list-style: none; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 6px; margin: 0 auto; padding: 0; max-width: 900px; }
+  .lg { font-size: .74rem; padding: 6px 10px; border-radius: 10px; border: 1px solid; display: flex; flex-direction: column; align-items: flex-start; gap: 3px; text-align: left; }
+  .lg-chip { display: inline-flex; align-items: center; gap: 4px; font-weight: 700; }
+  .lg-ic { font-weight: 800; }
+  .lg-desc { font-size: .7rem; opacity: .92; line-height: 1.55; font-weight: 400; }
+  .lg-distance { color: #fde68a; border-color: #f59e0b; background: rgba(245,158,11,.16); }
+  .lg-course   { color: #bbf7d0; border-color: #22c55e; background: rgba(34,197,94,.16); }
+  .lg-jockey   { color: #ddd6fe; border-color: #8b5cf6; background: rgba(139,92,246,.18); }
+  .lg-compare  { color: #bae6fd; border-color: #0ea5e9; background: rgba(14,165,233,.16); }
+  .lg-contrast { color: #fecaca; border-color: #ef4444; background: rgba(239,68,68,.16); }
+  .lg-neutral  { color: #e2e8f0; border-color: #94a3b8; background: rgba(148,163,184,.16); }
+  .lg-nodata   { color: #e5e7eb; border-color: #6b7280; background: rgba(107,114,128,.2); }
+  .lg-pending  { color: #fed7aa; border-color: #fb923c; background: rgba(251,146,60,.16); }
+
+  .rvb-venue { margin-top: 34px; }
+  .rvb-venue-name { font-size: 1.3rem; font-weight: 800; color: #f8fafc; border-left: 5px solid #7c3aed; padding-left: 10px; margin: 0 0 12px; }
+  .rvb-venue-count { color: #c4b5fd; font-size: .8rem; margin-left: 8px; }
+
+  /* 当日相対: 絶対タグと視覚的に別物にする（紫の枠・破線） */
+  .rvb-highlight { border: 2px dashed #a855f7; border-radius: 12px; padding: 12px 14px; background: rgba(168,85,247,.10); margin-bottom: 14px; }
+  .rvb-highlight-head { font-weight: 800; color: #e9d5ff; font-size: .92rem; }
+  .rvb-highlight-list { list-style: none; margin: 8px 0 6px; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+  .hl { display: flex; gap: 6px; align-items: baseline; padding: 4px 10px; border-radius: 8px; background: rgba(168,85,247,.16); border: 1px solid rgba(168,85,247,.45); }
+  .hl-key { color: #f3e8ff; font-size: .82rem; }
+  .hl-val { font-weight: 800; color: #fff; }
+  .rvb-highlight-note { margin: 0; font-size: .74rem; color: #ddd6fe; line-height: 1.7; }
+
+  .rvb-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+  .rvb-row { border-left: 5px solid #64748b; border-radius: 10px; background: rgba(15,23,42,.6); padding: 10px 12px; border-top: 1px solid rgba(148,163,184,.2); border-right: 1px solid rgba(148,163,184,.2); border-bottom: 1px solid rgba(148,163,184,.2); }
+  .rvb-row.is-tagged { border-left-color: #0ea5e9; }
+  .rvb-row.is-neutral { border-left-color: #94a3b8; }
+  .rvb-row.is-nohistory { border-left-color: #6b7280; background: rgba(15,23,42,.4); }
+  .rvb-row.is-pending { border-left-color: #fb923c; background: rgba(251,146,60,.07); }
+
+  .rvb-row-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+  .rvb-time { color: #cbd5e1; font-variant-numeric: tabular-nums; font-size: .85rem; }
+  .rvb-r { font-weight: 800; color: #38bdf8; min-width: 2.6em; }
+  .rvb-name { font-weight: 700; color: #f1f5f9; }
+  .rvb-meta { color: #cbd5e1; font-size: .82rem; margin-left: auto; }
+
+  .rvb-row-tags { margin-top: 7px; display: flex; flex-wrap: wrap; gap: 6px; }
+  .rvb-tag, .rvb-state { border-radius: 7px; padding: 3px 9px; font-size: .8rem; border: 1px solid; display: inline-flex; align-items: center; gap: 5px; font-weight: 600; }
+  .rvb-tag-ic { font-weight: 800; }
+  .rvb-tag-n { font-size: .72rem; opacity: .95; font-weight: 500; }
+  .tag-distance { color: #fde68a; border-color: #f59e0b; background: rgba(245,158,11,.18); }
+  .tag-course   { color: #bbf7d0; border-color: #22c55e; background: rgba(34,197,94,.18); }
+  .tag-jockey   { color: #ddd6fe; border-color: #8b5cf6; background: rgba(139,92,246,.2); }
+  .tag-compare  { color: #bae6fd; border-color: #0ea5e9; background: rgba(14,165,233,.18); }
+  .tag-contrast { color: #fecaca; border-color: #ef4444; background: rgba(239,68,68,.18); }
+  .st-neutral   { color: #e2e8f0; border-color: #94a3b8; background: rgba(148,163,184,.16); }
+  .st-nohistory { color: #e5e7eb; border-color: #6b7280; background: rgba(107,114,128,.22); }
+  .st-pending   { color: #fed7aa; border-color: #fb923c; background: rgba(251,146,60,.18); }
+
+  /* details: 開いていることが一目で分かる */
+  .rvb-detail { margin-top: 9px; border: 1px solid rgba(148,163,184,.28); border-radius: 10px; background: rgba(2,6,23,.35); }
+  .rvb-detail[open], .rvb-detail.is-open { border-color: #22d3ee; background: rgba(8,47,73,.55); box-shadow: 0 0 0 2px rgba(34,211,238,.18) inset; }
+  .rvb-detail-sum { cursor: pointer; color: #7dd3fc; font-size: .84rem; list-style: none; padding: 8px 12px; display: flex; align-items: center; gap: 8px; font-weight: 700; }
+  .rvb-detail-sum::-webkit-details-marker { display: none; }
+  .rvb-detail-ic { display: inline-flex; width: 20px; height: 20px; align-items: center; justify-content: center; border-radius: 6px; background: rgba(56,189,248,.2); border: 1px solid rgba(56,189,248,.5); font-weight: 800; }
+  .rvb-detail[open] .rvb-detail-sum { color: #ecfeff; }
+  .rvb-detail[open] .rvb-detail-ic { background: #22d3ee; color: #082f49; border-color: #22d3ee; }
+  .rvb-detail[open] .rvb-detail-ic::after { content: ''; }
+  .rvb-detail[open] .rvb-detail-txt::after { content: '（開いています）'; font-size: .72rem; color: #a5f3fc; margin-left: 6px; font-weight: 500; }
+  .rvb-detail-body { padding: 4px 12px 14px; border-top: 1px solid rgba(34,211,238,.3); }
+
+  .rvb-sentence { margin: 8px 0 0; font-size: .88rem; line-height: 1.8; color: #f1f5f9; border-left: 3px solid #64748b; padding-left: 9px; }
+  .sn-distance { border-left-color: #f59e0b; }
+  .sn-course { border-left-color: #22c55e; }
+  .sn-jockey { border-left-color: #8b5cf6; }
+  .sn-compare { border-left-color: #0ea5e9; }
+  .sn-contrast { border-left-color: #ef4444; }
+  .sn-neutral { border-left-color: #94a3b8; }
+  .sn-nohistory { border-left-color: #6b7280; }
+  .sn-pending { border-left-color: #fb923c; }
+  .rvb-degraded { margin: 8px 0 0; font-size: .8rem; color: #fdba74; }
+  .rvb-cov { margin: 8px 0 0; font-size: .76rem; color: #cbd5e1; }
+
+  /* 出走馬 */
+  .rvb-horses { margin-top: 12px; border-top: 1px dashed rgba(148,163,184,.35); padding-top: 10px; }
+  .rvb-horses-head { font-size: .88rem; font-weight: 800; color: #f8fafc; margin: 0 0 3px; }
+  .rvb-horses-note { font-size: .72rem; color: #cbd5e1; margin: 0 0 8px; }
+  .rvb-horse-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
+  .rvb-horse { display: grid; grid-template-columns: 26px 30px minmax(6.5em, 1fr) auto; grid-template-areas: 'mark num name sub' 'chips chips chips chips' 'member member member member' 'prev prev prev prev'; gap: 2px 8px; align-items: baseline; padding: 6px 8px; border-radius: 8px; background: rgba(30,41,59,.55); border-left: 3px solid transparent; }
+  .rvb-horse.hm-main { border-left-color: #ef4444; background: rgba(239,68,68,.12); }
+  .rvb-horse.hm-sub { border-left-color: #f59e0b; background: rgba(245,158,11,.1); }
+  .rvb-horse.hm-tana { border-left-color: #22c55e; background: rgba(34,197,94,.1); }
+  .rvb-horse.hm-ren { border-left-color: #0ea5e9; background: rgba(14,165,233,.1); }
+  .rvb-horse-mark { grid-area: mark; font-weight: 800; font-size: 1rem; color: #f8fafc; text-align: center; }
+  .rvb-horse-num { grid-area: num; font-variant-numeric: tabular-nums; color: #e2e8f0; font-weight: 700; text-align: right; }
+  .rvb-horse-name { grid-area: name; font-weight: 700; color: #f8fafc; font-size: .9rem; }
+  .rvb-horse-sub { grid-area: sub; font-size: .74rem; color: #cbd5e1; text-align: right; }
+  .rvb-horse-prev { grid-area: prev; font-size: .74rem; color: #94a3b8; }
+  .rvb-horse-chips { grid-area: chips; display: flex; flex-wrap: wrap; gap: 4px; }
+  .rvb-chip { font-size: .7rem; padding: 2px 7px; border-radius: 999px; border: 1px solid; display: inline-flex; gap: 3px; align-items: center; }
+  .chip-distance { color: #fde68a; border-color: #f59e0b; background: rgba(245,158,11,.18); }
+  .chip-course   { color: #bbf7d0; border-color: #22c55e; background: rgba(34,197,94,.18); }
+  .chip-jockey   { color: #ddd6fe; border-color: #8b5cf6; background: rgba(139,92,246,.2); }
+  .chip-compare  { color: #bae6fd; border-color: #0ea5e9; background: rgba(14,165,233,.18); }
+  .chip-none     { color: #cbd5e1; border-color: #64748b; background: rgba(100,116,139,.2); }
+
+  /* CTA: 買い目は有料版で */
+  .rvb-cta { margin-top: 14px; border: 1px solid #f59e0b; border-radius: 10px; background: linear-gradient(180deg, rgba(245,158,11,.14), rgba(245,158,11,.05)); padding: 11px 12px; }
+  .rvb-cta-head { margin: 0 0 5px; font-weight: 800; color: #fde68a; font-size: .88rem; }
+  .rvb-cta-body { margin: 0 0 9px; font-size: .8rem; line-height: 1.75; color: #f1f5f9; }
+  .rvb-cta-links { display: flex; flex-wrap: wrap; gap: 8px; }
+  .rvb-cta-a, .rvb-cta-b { font-size: .82rem; font-weight: 700; text-decoration: none; padding: 7px 12px; border-radius: 8px; }
+  .rvb-cta-a { background: #f59e0b; color: #1c1917; }
+  .rvb-cta-b { border: 1px solid #f59e0b; color: #fde68a; }
+  .rvb-cta-a:hover { background: #fbbf24; }
+  .rvb-cta-b:hover { background: rgba(245,158,11,.18); }
+
+  .rvb-foot { margin-top: 32px; font-size: .78rem; color: #cbd5e1; line-height: 1.85; }
+
+  @media (max-width: 640px) {
+    .rvb-title { font-size: 1.35rem; }
+    .rvb-subtitle { font-size: .88rem; }
+    .rvb-meta { margin-left: 0; width: 100%; }
+    .rvb-horse { grid-template-columns: 24px 26px 1fr; grid-template-areas: 'mark num name' 'sub sub sub' 'prev prev prev' 'chips chips chips' 'member member member'; }
+    .rvb-horse-sub { text-align: left; }
+  }
+
+  /* ── 無料会員向け拡張（既定は非表示。登録済みで .is-unlocked が付く）── */
+  /* ゲートの本体。
+     ⚠️ 2026-08-20 の不具合: `[data-member-only] { display:none }` は詳細度 (0,2,0) で、
+        あとから定義した `.rvb-member-row { display:flex }` と同点になり、
+        **後勝ちで常に表示**されていた（未登録にも拡張が見えていた）。
+        同じ事故を繰り返さないよう `:not(.is-unlocked)` で詳細度を上げ、
+        さらに !important でどのコンポーネント規則にも負けないようにする。
+        ここはゲートなので、他の指定に上書きされてはいけない。 */
+  [data-member-only]:not(.is-unlocked) { display: none !important; }
+  [data-member-only].is-unlocked { display: block; }
+  span[data-member-only].is-unlocked { display: flex; }
+  .rvb-member-row[data-member-only].is-unlocked { display: flex; flex-direction: column; }
+  [data-guest-only].is-hidden { display: none !important; }
+
+  /* chips とは別の行に置く（同じ grid-area を共有すると重なる）。
+     チップ行と履歴行を縦に積むため column にする。 */
+  .rvb-topgate { text-align: left; margin-top: 14px; border: 2px dashed #22c55e; border-radius: 12px; background: rgba(34,197,94,.09); padding: 13px 14px; }
+  .rvb-topgate-head { margin: 0 0 6px; font-weight: 800; font-size: .95rem; color: #bbf7d0; display: flex; align-items: center; gap: 6px; }
+  .rvb-topgate-body { margin: 0 0 8px; font-size: .84rem; line-height: 1.8; color: #f1f5f9; }
+  .rvb-topgate-list { margin: 0 0 10px; padding-left: 1.15em; font-size: .8rem; line-height: 1.95; color: #e2e8f0; }
+  .rvb-topgate-cta { display: inline-block; background: #22c55e; color: #052e16; font-weight: 800; font-size: .9rem; padding: 10px 20px; border-radius: 9px; text-decoration: none; }
+  .rvb-topgate-cta:hover { background: #4ade80; }
+  .rvb-topgate-note { margin: 8px 0 0; font-size: .74rem; color: #cbd5e1; line-height: 1.7; }
+  .rvb-topmember { text-align: left; margin-top: 14px; border: 1px solid rgba(6,182,212,.5); border-radius: 12px; background: rgba(6,182,212,.09); padding: 12px 14px; }
+  .rvb-topmember-head { margin: 0 0 5px; font-weight: 800; font-size: .92rem; color: #a5f3fc; display: flex; align-items: center; gap: 6px; }
+  .rvb-topmember-body { margin: 0; font-size: .82rem; line-height: 1.8; color: #e2e8f0; }
+  .rvb-member-badge { display: inline-block; background: rgba(6,182,212,.25); border: 1px solid rgba(6,182,212,.55); color: #a5f3fc; font-size: .68rem; font-weight: 800; padding: 2px 7px; border-radius: 999px; margin-right: 7px; vertical-align: middle; }
+  .rvb-member-rowbadge { display: inline-block; background: rgba(6,182,212,.2); border: 1px solid rgba(6,182,212,.45); color: #a5f3fc; font-size: .64rem; font-weight: 800; padding: 1px 6px; border-radius: 999px; }
+  .rvb-member-row { grid-area: member; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 4px; padding-top: 5px; border-top: 1px dotted rgba(148,163,184,.3); width: 100%; min-width: 0; }
+  .rvb-member-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+  .rvb-mchip { font-size: .7rem; padding: 2px 7px; border-radius: 6px; border: 1px solid; display: inline-flex; gap: 4px; align-items: center; }
+  .rvb-mchip-sub { opacity: .85; font-size: .66rem; }
+  .mchip-interval { color: #a5f3fc; border-color: #06b6d4; background: rgba(6,182,212,.16); }
+  .mchip-weight { color: #fbcfe8; border-color: #ec4899; background: rgba(236,72,153,.16); }
+  .rvb-mhist { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; width: 100%; min-width: 0; margin-top: 0; }
+  .rvb-mhist-label { font-size: .66rem; color: #94a3b8; }
+
+  .rvb-member { margin-top: 12px; border: 1px solid rgba(6,182,212,.45); border-radius: 10px; background: rgba(6,182,212,.07); padding: 10px 12px; }
+  .rvb-member-head { margin: 0 0 8px; font-size: .84rem; font-weight: 800; color: #a5f3fc; }
+  .rvb-samecond-head { font-size: .78rem; font-weight: 700; color: #e2e8f0; }
+  .rvb-samecond-list { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px; }
+  .rvb-samecond-item { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; font-size: .78rem; background: rgba(15,23,42,.5); border-radius: 6px; padding: 4px 8px; }
+  .sc-num { font-weight: 800; color: #38bdf8; min-width: 1.6em; text-align: right; }
+  .sc-name { font-weight: 600; color: #f1f5f9; }
+  .sc-finish { color: #a5f3fc; }
+  .sc-meta { color: #94a3b8; font-size: .72rem; margin-left: auto; }
+  .rvb-samecond-empty { margin: 6px 0 0; font-size: .76rem; color: #94a3b8; }
+
+  /* 未登録に出す案内。買い目の話はしない（有料版 CTA と役割を分ける） */
+  .rvb-signup { margin-top: 12px; border: 2px dashed #22c55e; border-radius: 10px; background: rgba(34,197,94,.08); padding: 11px 12px; }
+  .rvb-signup-head { margin: 0 0 5px; font-weight: 800; color: #bbf7d0; font-size: .88rem; }
+  .rvb-signup-body { margin: 0 0 7px; font-size: .8rem; line-height: 1.75; color: #f1f5f9; }
+  .rvb-signup-list { margin: 0 0 9px; padding-left: 1.1em; font-size: .78rem; color: #e2e8f0; line-height: 1.9; }
+  .rvb-signup-cta { display: inline-block; background: #22c55e; color: #052e16; font-weight: 800; font-size: .84rem; padding: 8px 16px; border-radius: 8px; text-decoration: none; }
+  .rvb-signup-cta:hover { background: #4ade80; }
+  .rvb-signup-note { margin: 7px 0 0; font-size: .72rem; color: #cbd5e1; }
+
+  /* ── 初めての人向けの補助 ──────────────────────────────────── */
+  .rvb-howto { max-width: 640px; margin: 0 auto 12px; border: 1px solid rgba(56,189,248,.4); border-radius: 12px; background: rgba(8,47,73,.4); text-align: left; }
+  .rvb-howto-sum { cursor: pointer; list-style: none; padding: 10px 14px; display: flex; align-items: center; gap: 8px; font-weight: 800; color: #7dd3fc; font-size: .9rem; }
+  .rvb-howto-sum::-webkit-details-marker { display: none; }
+  .rvb-howto[open] .rvb-howto-sum { border-bottom: 1px solid rgba(56,189,248,.3); color: #ecfeff; }
+  .rvb-howto-body { padding: 12px 14px 14px; }
+  .rvb-howto-lead { margin: 0 0 10px; font-size: .88rem; line-height: 1.85; color: #f1f5f9; }
+  .rvb-howto-steps { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 8px; }
+  .rvb-howto-step { display: flex; gap: 10px; align-items: flex-start; }
+  .rvb-howto-no { flex-shrink: 0; width: 24px; height: 24px; border-radius: 50%; background: #38bdf8; color: #082f49; font-weight: 900; font-size: .82rem; display: flex; align-items: center; justify-content: center; }
+  .rvb-howto-txt { font-size: .85rem; line-height: 1.8; color: #e2e8f0; }
+  .rvb-howto-txt b { display: block; color: #f8fafc; }
+  .rvb-howto-note { margin: 0; font-size: .78rem; color: #fde68a; line-height: 1.75; }
+
+  .rvb-helpbar { display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap; margin: 0 0 12px; }
+  .rvb-helpbtn { cursor: pointer; border: 1px solid #22c55e; background: rgba(34,197,94,.16); color: #bbf7d0; font-weight: 700; font-size: .8rem; padding: 6px 14px; border-radius: 999px; display: inline-flex; align-items: center; gap: 6px; }
+  .rvb-helpbtn[aria-pressed="false"] { border-color: #64748b; background: rgba(100,116,139,.18); color: #cbd5e1; }
+  .rvb-helphint { font-size: .74rem; color: #94a3b8; }
+
+  /* やさしい説明。既定は出す（JS が動かなくても読める） */
+  .rvb-help { display: block; margin-top: 4px; font-size: .8rem; line-height: 1.75; color: #a5f3fc; padding-left: 1.1em; position: relative; }
+  .rvb-help::before { content: '↳'; position: absolute; left: 0; color: #22d3ee; }
+  :root[data-rvb-help="off"] .rvb-help { display: none; }
+  :root[data-rvb-help="off"] .rvb-tag-n { opacity: .75; }
+
+  /* 一覧のタグに付ける説明（title に頼らない・スマホでも読める） */
+  .rvb-tag-help { margin: 5px 0 0; font-size: .76rem; line-height: 1.7; color: #a5f3fc; padding-left: 1.1em; position: relative; }
+  .rvb-tag-help::before { content: '↳'; position: absolute; left: 0; color: #22d3ee; }
+  :root[data-rvb-help="off"] .rvb-tag-help { display: none; }
+  :root[data-rvb-help="off"] .lg-desc { display: none; }
+  :root[data-rvb-help="off"] .lg { flex-direction: row; align-items: center; border-radius: 999px; padding: 3px 9px; }
+  :root[data-rvb-help="off"] .rvb-legend { display: flex; flex-wrap: wrap; justify-content: center; }
+
+  /* 前回までのレース: 何走前 / どこで / 何着 / 何が変わった の 4 列 */
+  .rvb-mhist-help { font-size: .7rem; color: #94a3b8; line-height: 1.6; width: 100%; }
+  :root[data-rvb-help="off"] .rvb-mhist-help { display: none; }
+  .rvb-mhist-rows { display: grid; gap: 3px; width: 100%; margin-top: 3px; }
+  .rvb-mhist-row { display: grid; grid-template-columns: 4.2em minmax(7em, 1fr) 3.2em auto; gap: 6px; align-items: baseline; font-size: .74rem; background: rgba(15,23,42,.45); border-radius: 5px; padding: 3px 7px; }
+  .mh-when { color: #94a3b8; }
+  .mh-where { color: #e2e8f0; }
+  .mh-rank { color: #f1f5f9; font-weight: 700; text-align: right; }
+  .mh-chg { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
+  .mh-badge { font-size: .66rem; padding: 1px 6px; border-radius: 999px; border: 1px solid; white-space: nowrap; }
+  .mh-v { color: #bbf7d0; border-color: #22c55e; background: rgba(34,197,94,.16); }
+  .mh-d { color: #fde68a; border-color: #f59e0b; background: rgba(245,158,11,.16); }
+  @media (max-width: 640px) {
+    .rvb-mhist-row { grid-template-columns: 3.8em 1fr 3em; grid-template-areas: 'when where rank' 'chg chg chg'; }
+    .mh-chg { grid-area: chg; justify-content: flex-start; }
+    .mh-when { grid-area: when; } .mh-where { grid-area: where; } .mh-rank { grid-area: rank; }
+  }
+
+  /* 開いた内容の末尾に置く閉じるバー。長い中身をスクロール中も押せるよう sticky */
+  .rvb-closebar { position: sticky; bottom: 0; margin: 12px -12px -14px; padding: 8px 12px 10px;
+    background: linear-gradient(to top, rgba(8,47,73,.97) 60%, rgba(8,47,73,0));
+    display: flex; justify-content: center; }
+  .rvb-closebtn { cursor: pointer; border: 1px solid #22d3ee; background: rgba(34,211,238,.16); color: #ecfeff;
+    font-weight: 700; font-size: .84rem; padding: 8px 20px; border-radius: 999px;
+    display: inline-flex; align-items: center; gap: 7px; }
+  .rvb-closebtn:hover { background: #22d3ee; color: #082f49; }
+  @media (max-width: 640px) { .rvb-closebtn { width: 100%; justify-content: center; } }
+
+  .mchip-layoff { color: #fed7aa; border-color: #fb923c; background: rgba(251,146,60,.18); }
+  .mchip-run { color: #ddd6fe; border-color: #a78bfa; background: rgba(167,139,250,.18); }
+  .rvb-mchip-help { font-size: .7rem; color: #94a3b8; line-height: 1.6; width: 100%; }
+  :root[data-rvb-help="off"] .rvb-mchip-help { display: none; }
+</style>
