@@ -1,10 +1,10 @@
 ---
 /**
- * /race-viewpoints/ — 無料予想の索引ページ（2026-08-21 追加）
+ * /free/ — 無料予想の索引ページ（2026-08-21 追加）
  *
  * 【なぜ作ったか】
  *   このパスは **404 だった**。そのため nav「🔍 無料予想」もフッターも
- *   `/race-viewpoints/nankan/` を指すしかなく、**中央競馬目当ての人が南関へ着地**していた。
+ *   `/free/nankan/` を指すしかなく、**中央競馬目当ての人が南関へ着地**していた。
  *   ここで中央 / 南関 を選ばせて取りこぼしを無くす。
  *
  * 【方針】
@@ -34,7 +34,7 @@ function summarize(category: 'jra' | 'nankan') {
       raceCount: venues.reduce((n: number, v: any) => n + v.raceCount, 0),
     };
   } catch (error) {
-    console.error(`[race-viewpoints/index] ${category} build error:`, error);
+    console.error(`[free/index] ${category} build error:`, error);
     return null;
   }
 }
@@ -45,7 +45,7 @@ const CATEGORIES = [
     label: '中央競馬',
     sub: 'JRA',
     icon: '🏇',
-    href: '/race-viewpoints/jra/',
+    href: '/free/jra/',
     note: '土日を中心とした開催です。',
     summary: summarize('jra'),
   },
@@ -54,7 +54,7 @@ const CATEGORIES = [
     label: '南関競馬',
     sub: 'NANKAN',
     icon: '🏁',
-    href: '/race-viewpoints/nankan/',
+    href: '/free/nankan/',
     note: '大井・川崎・船橋・浦和。平日にも開催があります。',
     summary: summarize('nankan'),
   },

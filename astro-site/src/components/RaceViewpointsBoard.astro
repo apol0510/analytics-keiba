@@ -75,7 +75,12 @@ const LEGEND = [
 
 <section class="rvb">
   <header class="rvb-head">
-    <h1 class="rvb-title">今日のレースの見どころ<span class="rvb-cat">{categoryLabel}</span></h1>
+    {/* H1 は nav の文字（無料予想）と一致させる。押した先に来たことを確定させるため。
+        「今日のレースの見どころ」は内容の説明として直下に残す（情報は落とさない）。
+        ⚠️「無料予想」は買い目を期待させる語なので、説明行と「買い目は有料版」の案内を
+           必ず一緒に出すこと。単独で置かない。 */}
+    <h1 class="rvb-title">無料予想<span class="rvb-cat">{categoryLabel}</span></h1>
+    <p class="rvb-subtitle">今日のレースの見どころ</p>
     <p class="rvb-date">{fmtDate(view.date)}</p>
     <p class="rvb-lead">
       出走馬の<strong>近走（前走の会場・距離・騎手）</strong>だけを数えて、レースごとに
@@ -483,6 +488,7 @@ const LEGEND = [
 <style>
   .rvb { max-width: 1040px; margin: 0 auto; padding: 24px 16px 64px; color: #e2e8f0; }
   .rvb-head { text-align: center; margin-bottom: 24px; }
+  .rvb-subtitle { font-size: 1rem; font-weight: 700; color: #7dd3fc; margin: 0 0 6px; letter-spacing: .02em; }
   .rvb-title { font-size: 1.9rem; font-weight: 800; color: #f8fafc; margin: 0 0 6px; line-height: 1.3; }
   .rvb-cat { display: inline-block; margin-left: 10px; padding: 3px 10px; border-radius: 999px; background: #7c3aed; color: #fff; font-size: .78rem; vertical-align: middle; }
   .rvb-date { color: #cbd5e1; margin: 0 0 12px; font-size: .95rem; }
@@ -604,6 +610,7 @@ const LEGEND = [
 
   @media (max-width: 640px) {
     .rvb-title { font-size: 1.35rem; }
+    .rvb-subtitle { font-size: .88rem; }
     .rvb-meta { margin-left: 0; width: 100%; }
     .rvb-horse { grid-template-columns: 24px 26px 1fr; grid-template-areas: 'mark num name' 'sub sub sub' 'prev prev prev' 'chips chips chips' 'member member member'; }
     .rvb-horse-sub { text-align: left; }

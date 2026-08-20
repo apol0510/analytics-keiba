@@ -114,7 +114,7 @@ test('/free-prediction/ を「無料予想」と呼ばない（呼び名は AI�
   const home = readFileSync(join(ROOT, 'src/pages/index.astro'), 'utf-8');
 
   // /free-prediction/ へのリンクに「無料予想」というラベルを付けない。
-  // （2026-08-20 以降「無料予想」は /race-viewpoints/ を指す名前になった）
+  // （2026-08-20 以降「無料予想」は /free/ を指す名前になった）
   for (const [name, src] of [['BaseLayout', layout], ['free-prediction/index', hub], ['index', home]]) {
     const bad = [...src.matchAll(/href="\/free-prediction\/[^"]*"[^>]*>([^<]*)</g)]
       .map((m) => m[1])
@@ -126,16 +126,16 @@ test('/free-prediction/ を「無料予想」と呼ばない（呼び名は AI�
   assert.ok(hub.includes('AI予想プレビュー'), '入口ページの名称が入っていない');
 });
 
-test('「無料予想」というラベルは /race-viewpoints/ を指す', () => {
+test('「無料予想」というラベルは /free/ を指す', () => {
   const layout = readFileSync(join(ROOT, 'src/layouts/BaseLayout.astro'), 'utf-8');
-  assert.ok(/href="\/race-viewpoints\/[^"]*"[^>]*>[^<]*無料予想/.test(layout)
-    || /href="\/race-viewpoints\/[^"]*"[\s\S]{0,160}?無料予想/.test(layout),
-    'ナビの「無料予想」が /race-viewpoints/ を指していない');
+  assert.ok(/href="\/free\/[^"]*"[^>]*>[^<]*無料予想/.test(layout)
+    || /href="\/free\/[^"]*"[\s\S]{0,160}?無料予想/.test(layout),
+    'ナビの「無料予想」が /free/ を指していない');
 });
 
-test('トップページから /race-viewpoints/ へ到達できる', () => {
+test('トップページから /free/ へ到達できる', () => {
   const home = readFileSync(join(ROOT, 'src/pages/index.astro'), 'utf-8');
-  for (const href of ['/race-viewpoints/jra/', '/race-viewpoints/nankan/']) {
+  for (const href of ['/free/jra/', '/free/nankan/']) {
     assert.ok(home.includes(href), `トップページに ${href} への導線が無い`);
   }
   // 「無料で〜予想を見る」系のボタンは無料ページへ向ける
