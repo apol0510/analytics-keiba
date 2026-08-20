@@ -23,14 +23,14 @@ try {
 ---
 
 <BaseLayout
-  title={`レースの見どころ | 南関競馬`}
+  title={`無料予想（南関競馬）| 今日のレースの見どころ`}
   description="出走馬の近走から、レースごとの条件の替わり方と近走の比べやすさを無料で公開しています。買い目や評価数値は含みません。"
 >
   {view
     ? <RaceViewpointsBoard view={view} categoryLabel="南関競馬" freeUrl="/free-prediction/nankan/" />
     : (
       <section class="rvb-empty">
-        <h1>レースの見どころ（南関競馬）</h1>
+        <h1>無料予想（南関競馬）</h1>
         <p>本日ぶんのデータがまだ用意できていません。取込が終わり次第表示されます。</p>
         <a href="/free-prediction/nankan/">南関競馬 の有料版プレビューを見る →</a>
       </section>

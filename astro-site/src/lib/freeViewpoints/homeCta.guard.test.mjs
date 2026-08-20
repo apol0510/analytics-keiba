@@ -74,3 +74,35 @@ t('子項目（中央 / 南関）は直リンクのまま残る', () => {
 });
 
 console.log(`homeCta.guard: ${passed} 件すべて通過\n`);
+
+/* ── 名称の一致（2026-08-21 追加） ────────────────────────────────
+   nav の文字と着地ページの H1 がズレていると「押した先に来た」が確定しない。
+   nav = 無料予想 / H1 = 今日のレースの見どころ で 1 日ズレていた。 */
+const board = readFileSync(R('components/RaceViewpointsBoard.astro'), 'utf8');
+let passed2 = 0;
+const t2 = (name, fn) => { fn(); passed2 += 1; console.log(`  ✓ ${name}`); };
+
+console.log('homeCta.guard（名称の一致）');
+
+t2('H1 が nav と同じ「無料予想」である', () => {
+  assert.match(board, /<h1 class="rvb-title">無料予想/,
+    'nav は「無料予想」なので H1 も一致させる');
+});
+
+t2('説明「今日のレースの見どころ」を落としていない', () => {
+  assert.match(board, /rvb-subtitle">今日のレースの見どころ</,
+    '「無料予想」単独だと買い目を期待させる。内容の説明を必ず併記する');
+});
+
+t2('買い目は有料版である旨の案内が残っている', () => {
+  assert.ok(board.includes('PAID_CTA'), '有料版への案内が消えている');
+});
+
+t2('各ページの title も「無料予想」で始まる', () => {
+  for (const f of ['pages/race-viewpoints/jra.astro', 'pages/race-viewpoints/nankan.astro']) {
+    const src = readFileSync(R(f), 'utf8');
+    assert.match(src, /title=\{`無料予想（/, `${f} の title が「無料予想」で始まっていない`);
+  }
+});
+
+console.log(`homeCta.guard（名称の一致）: ${passed2} 件すべて通過\n`);
