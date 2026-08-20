@@ -40,6 +40,8 @@
  * ⚠️ **共通層は Airtable も商品ページも知らない。** 判定材料は引数だけ。
  */
 
+import { createHash } from 'node:crypto';
+
 /**
  * 商品の識別子。**価格の正本 `promotionOfferCatalog.js` の `REGULAR_PRICE` のキーと同じ語彙**を使う
  * （新しい語彙を作らない＝価格・商品・クーポンが同じ名前で繋がる）。
@@ -152,12 +154,17 @@ export function cleanReason(v) {
  * 監査行を組み立てる。`why=` は**必ず最後**（理由に `|` や `=` が入っても壊れない）。
  * ⚠️ 書式を変えると既存レコードが読めなくなる。**追加は末尾の新しいキーで行う**。
  */
-export function encodeCouponAudit({ kind, actor, atIso, reason, prevClaimedAtIso, prevSource } = {}) {
+export function encodeCouponAudit({
+  kind, actor, atIso, reason, prevClaimedAtIso, prevSource, operationId,
+} = {}) {
   const parts = [String(kind || '').trim()];
   parts.push(`by=${cleanToken(actor)}`);
   parts.push(`at=${cleanToken(atIso, 40)}`);
   if (prevClaimedAtIso) parts.push(`prev=${cleanToken(prevClaimedAtIso, 40)}`);
   if (prevSource) parts.push(`from=${cleanToken(prevSource, 48)}`);
+  // ⚠️ **部分成功の回復に使う**。状態変更は済んだが履歴だけ未記録、を後から検出し、
+  //    同じ OperationId で履歴だけ積み直せるようにする（二重にならない）。
+  if (operationId) parts.push(`op=${cleanToken(operationId, 64)}`);
   parts.push(`why=${cleanReason(reason)}`);
   return parts.join('|');
 }
@@ -174,7 +181,7 @@ export function parseCouponAudit(rawValue) {
   const raw = String(rawValue ?? '').trim();
   const out = {
     kind: raw, byAdmin: false, actor: '', atIso: '',
-    prevClaimedAtIso: '', prevSource: '', reason: '', raw,
+    prevClaimedAtIso: '', prevSource: '', reason: '', operationId: '', raw,
   };
   if (!raw || !raw.includes('|')) return out;   // 顧客取得（単純な値）はそのまま
   const whyAt = raw.indexOf('|why=');
@@ -192,6 +199,7 @@ export function parseCouponAudit(rawValue) {
     else if (k === 'at') out.atIso = v;
     else if (k === 'prev') out.prevClaimedAtIso = v;
     else if (k === 'from') out.prevSource = v;
+    else if (k === 'op') out.operationId = v;
   }
   return out;
 }
@@ -237,8 +245,72 @@ export function describeCouponHistory(holding) {
 /**
  * 予約の状態（**どの台帳から来たかは問わない**）。
  * @typedef {{ available: boolean, hasIssued: boolean, hasRedeemed: boolean,
- *             issuedRecordId: string|null, count: number|null }} ReservationView
+ *             issuedRecordId: string|null, issuedOfferKey?: string|null,
+ *             count: number|null }} ReservationView
  */
+
+/**
+ * 操作の **anchor**（＝「何を起点にした操作か」）。
+ *
+ * ## なぜ現在時刻を使わないか
+ *
+ * 冪等キーに `atIso`（wall-clock）を混ぜると、**再送のたびに別の操作**になり
+ * 「同じ操作の再送で履歴が増えない」を保証できない。
+ * anchor は **その操作が書き換えようとしている状態**から作るので、
+ *   - 成功する前の再送 → 状態が変わっていない → **同じ anchor＝同じ OperationId**
+ *   - 成功した後の再送 → その操作自体が拒否される（already_claimed 等）
+ * となり、時計に依存せず「論理的に同じ操作」を同定できる。
+ *
+ * | 操作 | anchor |
+ * |---|---|
+ * | `grant` | `none`（取得履歴が無い状態からの初回付与）|
+ * | `correct` | `claim:<いま取り消そうとしている取得日時>` |
+ * | `reissue` | `prev:<訂正で失った取得日時>`（無ければ `src:<訂正前の取得元>`）|
+ * | `revokeReservation` | `resv:<予約の OfferKey>`（無ければ `resvrec:<レコードID>`）|
+ *
+ * ⚠️ binding が `resolveOperationAnchor()` を持つ場合はそちらを優先する
+ *    （商品側にしか無い安定 ID を使いたいときの逃げ道）。
+ */
+export function resolveOperationAnchor({ operation, holding, reservations, binding } = {}) {
+  if (binding && typeof binding.resolveOperationAnchor === 'function') {
+    const custom = binding.resolveOperationAnchor({ operation, holding, reservations });
+    if (custom) return String(custom);
+  }
+  const held = holding || {};
+  const rv = reservations || {};
+  const O = COUPON_OPERATION;
+  if (operation === O.REVOKE_RESERVATION) {
+    if (rv.issuedOfferKey) return `resv:${rv.issuedOfferKey}`;
+    return rv.issuedRecordId ? `resvrec:${rv.issuedRecordId}` : 'resv:unknown';
+  }
+  if (operation === O.CORRECT) return `claim:${held.claimedAtIso || ''}`;
+  if (operation === O.REISSUE) {
+    const audit = parseCouponAudit(held.source);
+    if (audit.prevClaimedAtIso) return `prev:${audit.prevClaimedAtIso}`;
+    return held.source ? `src:${audit.kind || held.source}` : 'prev:unknown';
+  }
+  // grant は「取得履歴が無い状態」からしか実行できないので anchor は 1 つ
+  return 'none';
+}
+
+/**
+ * **安定した冪等キー**（OperationId）。
+ *
+ * ⚠️ **現在時刻を材料にしない。** 同じ論理操作の再送では必ず同じ値になる。
+ * ⚠️ 会員・商品・クーポン・操作種別・anchor がすべて入るので、
+ *    他会員 / 他商品 / 別操作は**必ず別のキー**になる。
+ */
+export function computeCouponOperationId({
+  productKey, couponId, version, customerRecordId, operationType, anchor,
+} = {}) {
+  const parts = [productKey, couponId, version, customerRecordId, operationType, anchor]
+    .map((v) => String(v ?? '').trim());
+  // anchor 以外が 1 つでも欠けたら作らない（作れないまま書かせない）
+  if (parts.slice(0, 5).some((v) => !v)) return null;
+  return createHash('sha256')
+    .update(`ak-coupon-op|${parts.join('|')}`, 'utf8')
+    .digest('hex').slice(0, 32);
+}
 
 /**
  * いま実行してよい操作かを決める（**サーバー側の唯一の判定**）。
@@ -255,7 +327,7 @@ export function describeCouponHistory(holding) {
  *           nowMs: number }} input
  */
 export function resolveCouponOperationPlan({
-  operation, holding, reservations, binding, env, actor, reason, nowMs,
+  operation, holding, reservations, binding, env, actor, reason, nowMs, customerRecordId,
 } = {}) {
   const deny = (code) => ({ ok: false, code, message: COUPON_REJECT_TEXT[code] || '操作できません' });
   const O = COUPON_OPERATION;
@@ -271,18 +343,31 @@ export function resolveCouponOperationPlan({
 
   const held = holding || { claimed: false };
   const atIso = new Date(nowMs).toISOString();
+  // 冪等キーは**状態から**作る（現在時刻は材料にしない）
+  const anchor = resolveOperationAnchor({ operation, holding: held, reservations: rv, binding });
+  const operationId = computeCouponOperationId({
+    productKey: binding && binding.productKey,
+    couponId: binding && binding.couponId,
+    version: binding && binding.version,
+    customerRecordId: (binding && binding.customerRecordId) || customerRecordId,
+    operationType: operation,
+    anchor,
+  });
 
   // ── 予約取消（保有状態には触らない）────────────────────────
   if (operation === O.REVOKE_RESERVATION) {
     if (!rv.count) return deny(R.NO_RESERVATION);
     if (!rv.hasIssued || !rv.issuedRecordId) return deny(R.RESERVATION_NOT_REVOCABLE);
+    if (!operationId) return deny(R.UNKNOWN_ACTION);
     return {
       ok: true,
       operation,
       target: 'reservation',
       reservationRecordId: rv.issuedRecordId,
+      anchor,
+      operationId,
       note: encodeCouponAudit({
-        kind: COUPON_OPERATION_SOURCE.revokeReservation, actor, atIso, reason,
+        kind: COUPON_OPERATION_SOURCE.revokeReservation, actor, atIso, reason, operationId,
       }),
       customerFieldsUnchanged: true,
     };
@@ -302,27 +387,29 @@ export function resolveCouponOperationPlan({
     if (operation === O.GRANT && history.had) return deny(R.HISTORY_EXISTS);
     if (operation === O.REISSUE && !history.had) return deny(R.NO_HISTORY);
 
+    if (!operationId) return deny(R.UNKNOWN_ACTION);
     const prev = parseCouponAudit(held.source);
     const fields = binding.buildClaimFields({
-      kind: COUPON_OPERATION_SOURCE[operation], actor, atIso, reason,
+      kind: COUPON_OPERATION_SOURCE[operation], actor, atIso, reason, operationId,
       prevClaimedAtIso: prev.prevClaimedAtIso || '',
       prevSource: prev.byAdmin ? prev.prevSource : (prev.raw || ''),
     });
     if (!fields) return deny(R.FIELD_ALLOW_LIST);
-    return { ok: true, operation, target: 'holding', fields, atIso, history };
+    return { ok: true, operation, target: 'holding', fields, atIso, history, anchor, operationId };
   }
 
   if (operation === O.CORRECT) {
     if (held.claimed !== true) return deny(R.NOT_CLAIMED);
     if (rv.hasIssued === true) return deny(R.RESERVATION_ACTIVE);
+    if (!operationId) return deny(R.UNKNOWN_ACTION);
     const prev = parseCouponAudit(held.source);
     const fields = binding.buildClearFields({
-      kind: COUPON_OPERATION_SOURCE.correct, actor, atIso, reason,
+      kind: COUPON_OPERATION_SOURCE.correct, actor, atIso, reason, operationId,
       prevClaimedAtIso: held.claimedAtIso || '',
       prevSource: prev.byAdmin ? prev.kind : (prev.raw || ''),
     });
     if (!fields) return deny(R.FIELD_ALLOW_LIST);
-    return { ok: true, operation, target: 'holding', fields, atIso };
+    return { ok: true, operation, target: 'holding', fields, atIso, anchor, operationId };
   }
 
   return deny(R.UNKNOWN_ACTION);

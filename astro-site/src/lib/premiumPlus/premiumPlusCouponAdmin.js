@@ -169,6 +169,8 @@ export function describeReservationView({ offerRows, ledgerAvailable, customerRe
     hasIssued: !!issued,
     hasRedeemed: mine.some((r) => statusOf(r) === OFFER_STATUS.REDEEMED),
     issuedRecordId: issued ? issued.id : null,
+    // 予約取消の冪等キーに使う**安定 ID**（レコード ID より意味が安定している）
+    issuedOfferKey: issued ? String((issued.fields || {}).OfferKey || '') : null,
     count: mine.length,
   };
 }
@@ -196,6 +198,7 @@ export function resolveCouponAdminPlanFor({
     holding: PP_COUPON_BINDING.readHolding(fields),
     reservations: describeReservationView({ offerRows, ledgerAvailable, customerRecordId }),
     binding: PP_COUPON_BINDING,
+    customerRecordId,
     env, actor, reason, nowMs,
   });
   if (!plan.ok) return plan;

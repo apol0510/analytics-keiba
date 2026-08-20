@@ -85,15 +85,15 @@ export function assertOnlyHistoryFields(fields) {
 }
 
 /**
- * 冪等キー。同じ会員・同じクーポン・同じ操作・同じ時刻なら常に同じ値。
- * ⚠️ 乱数を使わない（再実行で二重に積まないため）。
+ * 冪等キーは **`couponPlatform.computeCouponOperationId()` が作る**（再エクスポート）。
+ *
+ * ⚠️ **現在時刻を材料にしない。** 材料は
+ *    `productKey` / `couponId` / `version` / `customerRecordId` / `operationType` / `anchor`。
+ *    anchor は「その操作が書き換えようとしている状態」なので、
+ *    **成功前の再送では同じ値**になり、成功後は操作自体が拒否される。
+ *    → 「同じ操作を何度再送しても履歴は 1 件」を時計に依存せず担保する。
  */
-export function computeOperationId({ customerRecordId, couponId, version, operationType, atIso }) {
-  const parts = [customerRecordId, couponId, version, operationType, atIso]
-    .map((v) => String(v ?? '').trim());
-  if (parts.some((v) => !v)) return null;
-  return parts.join('|').slice(0, 255);
-}
+export { computeCouponOperationId as computeOperationId } from './couponPlatform.js';
 
 /**
  * 履歴 1 行を組み立てる（**書き込みはしない**）。
@@ -104,11 +104,12 @@ export function computeOperationId({ customerRecordId, couponId, version, operat
 export function buildHistoryRecord({
   customerRecordId, email, productKey, couponId, version,
   operationType, actor, reason, beforeState, afterState, detail, atIso,
+  /** ⚠️ **安定した冪等キー**。呼び出し側（操作の計画）が作った値をそのまま使う */
+  operationId,
 } = {}) {
-  const operationId = computeOperationId({
-    customerRecordId, couponId, version, operationType, atIso,
-  });
-  if (!operationId) return null;
+  if (!operationId) return null;   // 冪等キーが無ければ**積まない**（fail closed）
+  if (!String(customerRecordId || '').trim() || !String(couponId || '').trim()) return null;
+  if (!String(atIso || '').trim()) return null;
   const fields = {
     OperationId: operationId,
     OccurredAt: String(atIso),
@@ -130,18 +131,107 @@ export function buildHistoryRecord({
 }
 
 /**
- * 既存行と突き合わせて**積んでよいか**を決める（二重履歴の防止）。
- * @param {{ record: object, existing: object[] }} input
+ * 履歴を積む前の判断（**二重履歴の防止**）。
+ *
+ * ## Airtable には unique 制約が無い
+ *
+ * 「検索して無ければ create」だけでは、**同時に 2 本走ると両方が「無い」を読む**ため
+ * 2 行できる。そこで既存の primitive（`marketing/automationStore.js` の
+ * `SET NX` ＋ **墓標**）と同じやり方で、**Redis に OperationId の墓標を立てた 1 本だけ**が
+ * create する。新しい外部基盤は増やさない（`UPSTASH_REDIS_REST_*` は本番稼働中）。
+ *
+ * ```
+ * ① 既存行を OperationId で検索  → 有れば何もしない（収束済み）
+ * ② SET ak:coupon-history:mark:<opId> <token> NX EX 300 → 取れなければ何もしない
+ *                                        （もう 1 本が書いている / 書き終えた）
+ * ③ Airtable に 1 行 create
+ * ```
+ *
+ * ⚠️ **墓標に TTL を付ける**。②の後に落ちると行が無いまま鍵が残るので、
+ *    TTL 切れのあとに **repair が①で「行が無い」を見て積み直せる**ようにする
+ *    （TTL 無しの永久墓標にすると、落ちた 1 回の履歴が永遠に欠ける）。
+ * ⚠️ Redis が使えないときは **append しない**（fail closed）。
+ *    状態変更は成功しているので `op=` から後で repair できる（下記）。
+ *
+ * @param {{ record: object|null, existing?: object[], env?: object,
+ *           lock?: 'acquired'|'lost'|'unavailable' }} input
  */
-export function planHistoryAppend({ record, existing = [], env } = {}) {
+export function planHistoryAppend({ record, existing = [], env, lock = 'acquired' } = {}) {
   if (!record) return { append: false, reason: 'no_record' };
   // テーブルが無い / 未有効のあいだは**何もしない**（fail closed）
   if (!isCouponHistoryEnabled(env)) return { append: false, reason: 'history_disabled' };
+  // ① 既に積まれていれば何もしない（再送・repair 再実行が 1 件へ収束する）
   const dup = (existing || []).some((r) => String(((r && r.fields) || {}).OperationId || '')
     === record.operationId);
   if (dup) return { append: false, reason: 'already_recorded' };
+  // ② 同時実行の勝者だけが書く
+  if (lock === 'lost') return { append: false, reason: 'concurrent_writer' };
+  if (lock !== 'acquired') return { append: false, reason: 'lock_unavailable' };
   return { append: true, reason: 'ok' };
 }
+
+/** Redis の墓標キー（**PII を含めない**。OperationId はハッシュ値） */
+export const historyMarkKey = (operationId) => `ak:coupon-history:mark:${operationId}`;
+
+/** 墓標の TTL（秒）。Function の最大実行時間より十分長く、かつ永久にはしない */
+export const HISTORY_MARK_TTL_SEC = 300;
+
+/**
+ * 状態変更は成功したが**履歴だけ積めなかった**ものを見つける（部分成功の回復）。
+ *
+ * ## なぜ検出できるか
+ *
+ * 状態変更のときに監査文字列へ `op=<OperationId>` を残している
+ * （`couponPlatform.encodeCouponAudit`）。その `op` が履歴に無ければ
+ * 「**状態変更は済み・履歴だけ未記録**」と分かる。
+ *
+ * ⚠️ **成功済みの顧客状態を、履歴の失敗だけで巻き戻さない。**
+ *    直し方は「履歴だけを積み直す」の一方向だけ。
+ *
+ * @param {{ audits: Array<{ customerRecordId: string, audit: object }>,
+ *           rows: object[] }} input
+ * @returns {Array<{ customerRecordId: string, operationId: string, audit: object }>}
+ */
+export function findHistoryRepairTargets({ audits = [], rows = [] } = {}) {
+  const recorded = new Set((rows || [])
+    .map((r) => String(((r && r.fields) || {}).OperationId || '')).filter(Boolean));
+  return (audits || [])
+    .filter((a) => a && a.audit && a.audit.operationId && !recorded.has(a.audit.operationId))
+    .map((a) => ({
+      customerRecordId: a.customerRecordId,
+      operationId: a.audit.operationId,
+      audit: a.audit,
+    }));
+}
+
+/**
+ * repair で積み直す 1 行を組み立てる。
+ *
+ * ⚠️ **同じ OperationId** を使うので、何度実行しても 1 件へ収束する。
+ * ⚠️ 監査文字列に残っている値（実行者・時刻・理由）から**当時の行を再構成**する。
+ *    新しい時刻で作り直さない（履歴が実際の操作時刻からズレる）。
+ */
+export function buildRepairRecord({
+  customerRecordId, email, productKey, couponId, version, audit, beforeState, afterState,
+} = {}) {
+  const a = audit || {};
+  if (!a.operationId) return null;
+  return buildHistoryRecord({
+    customerRecordId, email, productKey, couponId, version,
+    operationType: OPERATION_FROM_SOURCE[a.kind] || a.kind,
+    actor: a.actor, reason: a.reason,
+    beforeState: beforeState || '', afterState: afterState || '',
+    detail: a.raw, atIso: a.atIso, operationId: a.operationId,
+  });
+}
+
+/** 監査文字列の `kind` → 操作種別 */
+const OPERATION_FROM_SOURCE = Object.freeze({
+  'admin-grant': 'grant',
+  'admin-correct': 'correct',
+  'admin-reissue': 'reissue',
+  'admin-revoke-reservation': 'revokeReservation',
+});
 
 /** 会員 1 人ぶんの履歴を新しい順に並べる（**他会員の行は混ぜない**） */
 export function listHistoryForCustomer({ rows, customerRecordId }) {

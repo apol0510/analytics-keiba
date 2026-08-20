@@ -544,6 +544,24 @@ sessionStorage なので**監査記録ではない**。）
 **案 A の設計は `src/lib/coupons/couponOperationHistory.js` に固定済み**
 （テーブル名・13 列・冪等キー・gate・禁止フィールド）。**商品名をテーブル名に入れない。**
 
+#### 冪等性の設計（2026-08-20 修正）
+
+- **`OperationId` に現在時刻を混ぜない。** 材料は `productKey` / `couponId` / `version` /
+  `customerRecordId` / `operationType` / **anchor**（＝その操作が書き換えようとしている状態）。
+  成功前の再送は同じ anchor＝同じキー、成功後はその操作自体が拒否される
+- **同時実行**: Airtable に unique 制約は無いので「検索→create」だけでは 2 行できる。
+  既存 primitive（`automationStore.js` の `SET NX` ＋ 墓標）と同じ形で
+  **墓標を取れた 1 本だけ**が create する。**新しい外部基盤は増やさない**
+  （`UPSTASH_REDIS_REST_*` は本番稼働中）。墓標は **TTL 付き**
+  （永久にすると落ちた 1 回の履歴が永遠に欠ける）
+- **保証の範囲**: 単発 create では exact-once を保証できない。
+  検索 + 墓標 + 収束 repair で**結果として 1 行に収束する（exact-once 相当）**。
+  Redis 障害中は履歴が**遅れる**（欠落ではなく未記録として検出できる）
+- **部分成功**: 状態変更 → その後で履歴。監査に `op=<OperationId>` を残すので、
+  `findHistoryRepairTargets()` が「状態は済み・履歴だけ未記録」を検出し、
+  `buildRepairRecord()` が**同じ OperationId** で history-only に積み直す。
+  **成功済みの顧客状態を履歴の失敗だけで巻き戻さない**
+
 ⚠️ **テーブルは MK の指示があるまで作らない。**
 `COUPON_HISTORY_TABLE_READY` が未設定のあいだ `planHistoryAppend()` は
 必ず `append:false` を返し、**Function からの書き込み経路も作っていない**

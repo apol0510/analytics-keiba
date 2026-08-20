@@ -50,9 +50,10 @@ function guard(fields) {
 
 const ENV = { DEMO_COUPON_READY: '1' };
 const LEDGER_OK = { available: true, hasIssued: false, hasRedeemed: false, issuedRecordId: null, count: 0 };
+const REC = 'recDEMO000000001';
 const plan = (over = {}) => P.resolveCouponOperationPlan({
   holding: demoBinding.readHolding({}), reservations: LEDGER_OK, binding: demoBinding,
-  env: ENV, nowMs: NOW, ...ACT, ...over,
+  customerRecordId: REC, env: ENV, nowMs: NOW, ...ACT, ...over,
 });
 
 // ── 2 商品目が Premium Plus 抜きで動く ───────────────────────
@@ -130,7 +131,7 @@ test('binding の許可外フィールドは組み立てさせない（fail clos
   const bad = { ...demoBinding, buildClaimFields: () => null };
   const out = P.resolveCouponOperationPlan({
     operation: 'grant', holding: { claimed: false }, reservations: LEDGER_OK,
-    binding: bad, env: ENV, nowMs: NOW, ...ACT,
+    binding: bad, customerRecordId: REC, env: ENV, nowMs: NOW, ...ACT,
   });
   assert.equal(out.ok, false);
   assert.equal(out.code, P.COUPON_REJECT.FIELD_ALLOW_LIST);
@@ -163,6 +164,68 @@ test('ボタン活性は商品によらず同じ規則', () => {
   });
   assert.ok(unknown.actions.every((a) => a.enabled === false));
   assert.equal(unknown.redeemed, null, '確認できないのに「使用済みでない」と断定している');
+});
+
+// ── 冪等キー（anchor）は商品によらず安定 ─────────────────────
+test('2 商品目でも 同じ操作の再送は同じ OperationId（時計に依存しない）', () => {
+  const O = P.COUPON_OPERATION;
+  // 時刻だけ違う 2 回の grant（＝成功する前の再送）
+  const a = plan({ operation: O.GRANT, nowMs: NOW });
+  const b = plan({ operation: O.GRANT, nowMs: NOW + 90_000 });
+  assert.equal(a.operationId, b.operationId, '再送で冪等キーが変わっている');
+  assert.equal(a.anchor, 'none');
+  // 監査文字列にも op= が載る（部分成功の回復に使う）
+  assert.equal(P.parseCouponAudit(a.fields[OTHER_PRODUCT_FIELDS.SOURCE]).operationId, a.operationId);
+
+  // 訂正 → 再発行 は別の操作＝別のキー
+  const granted = a.fields;
+  const c = plan({ operation: O.CORRECT, holding: demoBinding.readHolding(granted) });
+  const after = { ...granted, ...c.fields };
+  const d = plan({ operation: O.REISSUE, holding: demoBinding.readHolding(after) });
+  assert.equal(new Set([a.operationId, c.operationId, d.operationId]).size, 3);
+  // 訂正の再送も安定（訂正前の状態が変わっていないので同じ anchor）
+  const cRetry = plan({ operation: O.CORRECT, holding: demoBinding.readHolding(granted), nowMs: NOW + 5_000 });
+  assert.equal(c.operationId, cRetry.operationId);
+});
+
+test('他会員は別の OperationId（同じ操作でも混ざらない）', () => {
+  const mine = plan({ operation: 'grant' });
+  const theirs = plan({ operation: 'grant', customerRecordId: 'recOTHER00000009' });
+  assert.notEqual(mine.operationId, theirs.operationId);
+});
+
+test('予約取消の冪等キーは予約の OfferKey から作る（レコードIDが変わっても安定）', () => {
+  const rv = (over) => ({ available: true, hasIssued: true, hasRedeemed: false, count: 1, ...over });
+  const a = plan({
+    operation: 'revokeReservation',
+    reservations: rv({ issuedRecordId: 'recR1', issuedOfferKey: 'key-abc' }),
+  });
+  const b = plan({
+    operation: 'revokeReservation', nowMs: NOW + 60_000,
+    reservations: rv({ issuedRecordId: 'recR1', issuedOfferKey: 'key-abc' }),
+  });
+  assert.equal(a.operationId, b.operationId);
+  assert.equal(a.anchor, 'resv:key-abc');
+  // 別の予約は別のキー
+  const other = plan({
+    operation: 'revokeReservation',
+    reservations: rv({ issuedRecordId: 'recR2', issuedOfferKey: 'key-zzz' }),
+  });
+  assert.notEqual(a.operationId, other.operationId);
+  // OfferKey が無ければレコード ID へ退避（それでも時計は使わない）
+  const noKey = plan({
+    operation: 'revokeReservation', reservations: rv({ issuedRecordId: 'recR3' }),
+  });
+  assert.equal(noKey.anchor, 'resvrec:recR3');
+});
+
+test('binding が独自の安定 ID を渡せる（商品側の逃げ道）', () => {
+  const withAnchor = { ...demoBinding, resolveOperationAnchor: () => 'order:12345' };
+  const out = P.resolveCouponOperationPlan({
+    operation: 'grant', holding: { claimed: false }, reservations: LEDGER_OK,
+    binding: withAnchor, customerRecordId: REC, env: ENV, nowMs: NOW, ...ACT,
+  });
+  assert.equal(out.anchor, 'order:12345');
 });
 
 // ── 監査の書式は全商品で同じ ─────────────────────────────────

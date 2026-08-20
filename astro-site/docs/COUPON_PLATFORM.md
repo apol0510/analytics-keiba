@@ -124,9 +124,64 @@ Customers の 1 列に畳む方式では**直近 1 回の操作しか残らな�
   `CouponId` / `CouponVersion` / `OperationType` / `Actor` / `Reason` /
   `BeforeState` / `AfterState` / `Detail`
 - gate: `COUPON_HISTORY_TABLE_READY=1`（**未設定のあいだは 1 行も積まない**）
-- 冪等キー `OperationId` = `customerRecordId|couponId|version|operationType|atIso`
-  （**乱数を使わない**＝再実行で二重に積まない）
 - ⚠️ **課金・権限の列を 1 つも持たない**（履歴が権利の根拠になってはいけない）
+
+### 冪等キー `OperationId`（**現在時刻を材料にしない**）
+
+```
+sha256("ak-coupon-op|" + productKey + "|" + couponId + "|" + version
+       + "|" + customerRecordId + "|" + operationType + "|" + anchor).slice(0, 32)
+```
+
+`atIso`（wall-clock）を混ぜると**再送のたびに別の操作**になり、
+「同じ操作の再送で履歴が増えない」を保証できない。代わりに **anchor**
+＝「その操作が書き換えようとしている状態」を使う。
+
+| 操作 | anchor |
+|---|---|
+| `grant` | `none`（取得履歴が無い状態からの初回付与）|
+| `correct` | `claim:<いま取り消そうとしている取得日時>` |
+| `reissue` | `prev:<訂正で失った取得日時>`（無ければ `src:<訂正前の取得元>`）|
+| `revokeReservation` | `resv:<予約の OfferKey>`（無ければ `resvrec:<レコードID>`）|
+
+- **成功する前の再送** → 状態が変わっていない → **同じ anchor＝同じ OperationId**
+- **成功した後の再送** → その操作自体が拒否される（`already_claimed` 等）
+
+⚠️ binding が `resolveOperationAnchor()` を持つ場合はそちらを優先する
+（商品側にしか無い安定 ID を使いたいときの逃げ道）。
+
+### 同時実行（Airtable に unique 制約は無い）
+
+「検索して無ければ create」だけでは、**同時に 2 本走ると両方が「無い」を読む**ため 2 行できる。
+既存の primitive（`marketing/automationStore.js` の `SET NX` ＋ 墓標）と同じやり方で防ぐ。
+**新しい外部基盤は増やさない**（`UPSTASH_REDIS_REST_*` は本番稼働中）。
+
+```
+① 既存行を OperationId で検索 → 有れば何もしない（収束済み）
+② SET ak:coupon-history:mark:<opId> <token> NX EX 300 → 取れなければ何もしない
+③ Airtable に 1 行 create
+```
+
+- ⚠️ **墓標には TTL を付ける**。②の後に落ちると行が無いまま鍵が残るので、
+  TTL 切れのあとに repair が①で「行が無い」を見て積み直せるようにする
+  （TTL 無しの永久墓標にすると、落ちた 1 回の履歴が永遠に欠ける）
+- ⚠️ **Redis が使えないときは append しない**（fail closed）。
+  状態変更は成功しているので、下の `op=` から後で repair できる
+
+**保証の範囲（正直に書く）**: 単発の create では exact-once を保証できない。
+上の①②③ ＋ 収束 repair により、**結果として 1 行に収束する（exact-once 相当）**。
+Redis が落ちている最中は履歴が**遅れる**（欠落ではなく未記録として検出できる）。
+
+### 部分成功（状態は成功・履歴だけ失敗）
+
+**順序**: `authoritative なクーポン状態変更の成功` → **その後で**同じ `OperationId` で history append。
+
+- 状態変更の監査文字列に **`op=<OperationId>`** を残す（`encodeCouponAudit`）
+- `op` が履歴に無ければ「**状態変更は済み・履歴だけ未記録**」と分かる
+  （`findHistoryRepairTargets()`）
+- repair は **history-only**。`buildRepairRecord()` が**同じ OperationId・当時の実行者と時刻**で
+  1 行を作り直すので、何度実行しても 1 件へ収束する
+- ⚠️ **成功済みの顧客状態を、履歴の失敗だけで巻き戻さない**
 
 ### なぜ `PromotionalOffers` に混ぜないか
 
