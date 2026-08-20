@@ -30,8 +30,43 @@ const EMAIL = 'synthetic@example.invalid';
 
 /** 合成 Airtable。PATCH を実際に反映し、書かれたフィールドを記録する */
 let db;
+let redis;
 let realFetch;
 let realEnv;
+
+/**
+ * 合成 Redis。**SET NX / EVAL(verify/release) の意味を本物どおりに実装する**
+ * （排他が効いているかを本当に確かめるため）。`down:true` で「使えない」を再現する。
+ */
+function makeRedis({ down = false } = {}) {
+  const store = new Map();
+  const cmd = async (args) => {
+    if (down) throw new Error('redis_down');
+    const [op, ...rest] = args;
+    if (op === 'INCR') {
+      const n = Number(store.get(rest[0]) || 0) + 1;
+      store.set(rest[0], String(n));
+      return n;
+    }
+    if (op === 'SET') {
+      const [key, value, ...opts] = rest;
+      const nx = opts.includes('NX');
+      if (nx && store.has(key)) return null;      // 先客がいる = 取れない
+      store.set(key, value);
+      return 'OK';
+    }
+    if (op === 'EVAL') {
+      const [script, , key, token] = rest;
+      const cur = store.get(key);
+      if (cur === undefined) return 'LOST';
+      if (cur !== token) return 'STOLEN';
+      if (script.includes("DEL")) store.delete(key);
+      return 'OK';
+    }
+    return null;
+  };
+  return { cmd, store };
+}
 
 function makeDb({ member = {}, offers = [], ledger = 'ok' } = {}) {
   return {
@@ -103,6 +138,14 @@ function stubFetch() {
       return ok({ id, fields: db.customers[id] });
     }
     if (u.includes('/CampaignDeliveries/')) return ok({ records: [] });
+    if (u.includes('redis.example.invalid')) {
+      const args = JSON.parse(init.body || '[]');
+      try {
+        return ok({ result: await redis.cmd(args) });
+      } catch {
+        return err(500);   // Redis が使えない状態
+      }
+    }
     return err(403);
   };
 }
@@ -149,8 +192,10 @@ beforeEach(() => {
   process.env.COMEBACK_OFFER_TABLE_READY = '1';
   process.env.PREMIUM_PLUS_FIELDS_READY = '1';
   process.env.PREMIUM_PLUS_REOPEN_COUPON_READY = '1';
-  delete process.env.UPSTASH_REDIS_REST_URL;
-  delete process.env.UPSTASH_REDIS_REST_TOKEN;
+  // 排他は Redis 必須（fail closed）。合成 Redis を使えるよう env を立てる
+  process.env.UPSTASH_REDIS_REST_URL = 'https://redis.example.invalid';
+  process.env.UPSTASH_REDIS_REST_TOKEN = 'token-test';
+  redis = makeRedis();
   db = makeDb();
   stubFetch();
 });
@@ -320,6 +365,175 @@ test('利用予約中 / 使用済み / 台帳確認不能 は 付与も再発行
     assert.equal(out.body.code, PP_COUPON_ADMIN_REJECT.LEDGER_UNAVAILABLE, a);
   }
   assert.equal(db.writes.length, 0, '断ったのに書き込んでいる');
+});
+
+// ── 同時実行: **本体 PATCH も 1 回**（排他は状態変更より前に取る）──────
+/**
+ * ⚠️ 履歴だけを OperationId で 1 件にしても足りない。
+ *    同時 2 本が両方 Customers PATCH に成功すると、Source / actor / reason / at が
+ *    後勝ちで上書きされ、**最終監査値と履歴が食い違う**。
+ *    そのため排他は「状態変更より前」に取り、負けた側は**副作用ゼロ**で断る。
+ */
+const HELD_FIELDS = {
+  [PP_REOPEN_COUPON_FIELDS.CLAIMED_AT]: '2026-08-18T22:07:54.803Z',
+  [PP_REOPEN_COUPON_FIELDS.SOURCE]: 'pause-notice',
+};
+
+/** 同じ操作を 2 本同時に投げ、書き込み回数と応答を返す */
+async function race2(couponAction) {
+  const [a, b] = await Promise.all([op(couponAction), op(couponAction)]);
+  const patches = db.writes.length;
+  const okCount = [a, b].filter((r) => r.statusCode === 200).length;
+  const rejected = [a, b].find((r) => r.statusCode !== 200);
+  return { a, b, patches, okCount, rejected };
+}
+
+test('同時 grant 2 本 → Customers PATCH は 1 回だけ', async () => {
+  const r = await race2(PP_COUPON_ADMIN_ACTION.GRANT);
+  assert.equal(r.okCount, 1, '2 本とも成功している（本体が二重に書かれた）');
+  assert.equal(r.patches, 1, `PATCH が ${r.patches} 回走っている`);
+  // 負けた側は副作用ゼロで競合として断られる
+  assert.equal(r.rejected.body.sideEffects, 'none');
+  assert.ok(['operation_in_progress', 'already_claimed'].includes(r.rejected.body.code),
+    `想定外の拒否理由: ${r.rejected.body.code}`);
+  // 監査値は勝者のものだけが残る
+  const audit = parseCouponAudit(db.customers[REC][PP_REOPEN_COUPON_FIELDS.SOURCE]);
+  assert.equal(audit.kind, 'admin-grant');
+  assert.ok(audit.operationId, 'op= が残っていない（部分成功の回復ができない）');
+});
+
+test('同時 correct 2 本 → PATCH は 1 回だけ', async () => {
+  db = makeDb({ member: HELD_FIELDS });
+  const r = await race2(PP_COUPON_ADMIN_ACTION.CORRECT);
+  assert.equal(r.okCount, 1);
+  assert.equal(r.patches, 1);
+  assert.equal(r.rejected.body.sideEffects, 'none');
+});
+
+test('同時 reissue 2 本 → PATCH は 1 回だけ', async () => {
+  // 訂正済み（履歴あり・現在未取得）から
+  db = makeDb({ member: HELD_FIELDS });
+  await op(PP_COUPON_ADMIN_ACTION.CORRECT, { reason: '訂正' });
+  db.writes.length = 0;
+  const r = await race2(PP_COUPON_ADMIN_ACTION.REISSUE);
+  assert.equal(r.okCount, 1);
+  assert.equal(r.patches, 1);
+  assert.equal(r.rejected.body.sideEffects, 'none');
+});
+
+test('同時 revokeReservation 2 本 → PATCH は 1 回だけ', async () => {
+  db = makeDb({
+    member: HELD_FIELDS,
+    offers: [{ id: 'recOFFER0000001', fields: reservationFields(OFFER_STATUS.ISSUED) }],
+  });
+  const r = await race2(PP_COUPON_ADMIN_ACTION.REVOKE_RESERVATION);
+  assert.equal(r.okCount, 1);
+  assert.equal(r.patches, 1);
+  assert.equal(r.rejected.body.sideEffects, 'none');
+});
+
+test('lock を取れなかった側は副作用ゼロ（Airtable へ 1 バイトも書かない）', async () => {
+  // 先に同じ操作の lock を外部が握っている状態を作る
+  const first = await op(PP_COUPON_ADMIN_ACTION.GRANT);
+  assert.equal(first.statusCode, 200);
+  const opId = first.body.operationId;
+  // lock を握り直す（TTL 内に別実行が進行中の状況）
+  await redis.cmd(['SET', `ak:coupon-op:lock:${opId}`, '999', 'NX', 'EX', '300']);
+  const writes = db.writes.length;
+  // 同じ状態でもう一度 grant → すでに取得済みなので状態判定で断られる（書き込み 0）
+  const again = await op(PP_COUPON_ADMIN_ACTION.GRANT);
+  assert.notEqual(again.statusCode, 200);
+  assert.equal(again.body.sideEffects, 'none');
+  assert.equal(db.writes.length, writes, '断ったのに書き込んでいる');
+});
+
+test('lock 取得後に状態が変わっていたら再判定で拒否する（TOCTOU を閉じる）', async () => {
+  db = makeDb();
+  // ① 現状 read → ② OperationId 算出 → ③ lock、の後の再 read で状態が変わるよう仕込む
+  let reads = 0;
+  const baseFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    const u = String(url);
+    const isCustomerGet = u.includes('/Customers/') && !u.endsWith('/listRecords')
+      && (init.method || 'GET').toUpperCase() === 'GET';
+    if (isCustomerGet) {
+      reads += 1;
+      // 2 回目（lock 取得後の再 read）で「別の実行が先に付与した」状態にする
+      if (reads === 2) Object.assign(db.customers[REC], HELD_FIELDS);
+    }
+    return baseFetch(url, init);
+  };
+  const out = await op(PP_COUPON_ADMIN_ACTION.GRANT);
+  globalThis.fetch = baseFetch;
+  assert.notEqual(out.statusCode, 200, '状態が変わったのに実行してしまった');
+  assert.equal(out.body.sideEffects, 'none');
+  assert.equal(db.writes.length, 0);
+});
+
+test('crash 後は TTL で回復し、通常どおり再実行できる', async () => {
+  db = makeDb();
+  const planned = await op(PP_COUPON_ADMIN_ACTION.GRANT);
+  const opId = planned.body.operationId;
+  // 「crash して release されなかった」状態を作る（鍵が残っている）
+  await redis.cmd(['SET', `ak:coupon-op:lock:${opId}`, '777', 'NX', 'EX', '300']);
+  // TTL 切れ = 鍵が消える
+  redis.store.delete(`ak:coupon-op:lock:${opId}`);
+  // 訂正 → 再発行 が普通に通る（鍵が残り続けて詰まらない）
+  const c = await op(PP_COUPON_ADMIN_ACTION.CORRECT, { reason: '訂正' });
+  assert.equal(c.statusCode, 200);
+  const r = await op(PP_COUPON_ADMIN_ACTION.REISSUE, { reason: '再発行' });
+  assert.equal(r.statusCode, 200);
+});
+
+test('他会員は互いに block しない（別の lock）', async () => {
+  db = makeDb();
+  const other = (over = {}) => post({
+    action: 'couponAdmin', recordId: OTHER, couponAction: PP_COUPON_ADMIN_ACTION.CORRECT,
+    actor: 'MK', reason: '別会員の訂正', ...over,
+  });
+  // 同時に別会員の操作 → どちらも通る（鍵が別なので待たされない）
+  const [mine, theirs] = await Promise.all([op(PP_COUPON_ADMIN_ACTION.GRANT), other()]);
+  assert.equal(mine.statusCode, 200);
+  assert.equal(theirs.statusCode, 200);
+  assert.equal(db.writes.length, 2);
+  assert.deepEqual([...new Set(db.writes.map((w) => w.id))].sort(), [OTHER, REC].sort());
+  // 鍵が別であることも確認する
+  const keys = [...redis.store.keys()].filter((k) => k.startsWith('ak:coupon-op:lock:'));
+  assert.equal(new Set(keys).size, keys.length);
+});
+
+test('Redis が使えないときは書かない（fail closed）', async () => {
+  db = makeDb();
+  redis = makeRedis({ down: true });
+  const out = await op(PP_COUPON_ADMIN_ACTION.GRANT);
+  assert.equal(out.statusCode, 503);
+  assert.equal(out.body.code, 'lock_unavailable');
+  assert.equal(out.body.sideEffects, 'none');
+  assert.equal(db.writes.length, 0, '排他できないのに書いている');
+});
+
+test('4 操作すべてが監査へ op=<OperationId> を残す（部分成功の回復に使う）', async () => {
+  db = makeDb();
+  const seen = [];
+  const grab = () => parseCouponAudit(db.customers[REC][PP_REOPEN_COUPON_FIELDS.SOURCE]).operationId;
+
+  let out = await op(PP_COUPON_ADMIN_ACTION.GRANT, { reason: '付与' });
+  seen.push([out.body.operationId, grab()]);
+  out = await op(PP_COUPON_ADMIN_ACTION.CORRECT, { reason: '訂正' });
+  seen.push([out.body.operationId, grab()]);
+  out = await op(PP_COUPON_ADMIN_ACTION.REISSUE, { reason: '再発行' });
+  seen.push([out.body.operationId, grab()]);
+
+  for (const [fromResponse, fromRecord] of seen) {
+    assert.ok(fromResponse, '応答に operationId が無い');
+    assert.equal(fromRecord, fromResponse, '監査の op= と応答の operationId が食い違う');
+  }
+  // 予約取消は予約行の Notes に残る
+  db.offers.recOFFER0000001 = reservationFields(OFFER_STATUS.ISSUED);
+  const rev = await op(PP_COUPON_ADMIN_ACTION.REVOKE_RESERVATION, { reason: '予約取消' });
+  assert.equal(rev.statusCode, 200);
+  assert.equal(parseCouponAudit(String(db.offers.recOFFER0000001.Notes).split(' / ').pop()).operationId,
+    rev.body.operationId);
 });
 
 // ── 二重操作・使用済み ───────────────────────────────────────

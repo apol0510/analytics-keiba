@@ -47,7 +47,6 @@ export function isCouponHistoryEnabled(env) {
  * | `OperationId` | single line text | 冪等キー。同じ操作は 1 行のまま |
  * | `OccurredAt` | dateTime | 操作時刻（ISO・UTC）|
  * | `CustomerRecordId` | single line text | **どの会員か**（他会員と混ざらない鍵）|
- * | `Email` | email | 参照用（正本は CustomerRecordId）|
  * | `ProductKey` | single line text | **どの商品か**（`PRODUCT_KEY`）|
  * | `CouponId` | single line text | どのクーポンか |
  * | `CouponVersion` | number | クーポン定義の版 |
@@ -59,15 +58,20 @@ export function isCouponHistoryEnabled(env) {
  * | `Detail` | long text | 監査行（`admin-grant\|by=…` の生値）・補足 |
  *
  * ⚠️ **課金・権限の列は 1 つも持たない**（履歴が権利の根拠になってはいけない）。
+ * ⚠️ **アドレスを持たない**。会員の正本は `CustomerRecordId` で、`Email` は参照用にすぎない。
+ *    append-only の履歴へ PII を重複保存しない（表示に要るときだけ
+ *    `CustomerRecordId` から Customers を引く）。
  */
 export const COUPON_HISTORY_FIELDS = Object.freeze([
-  'OperationId', 'OccurredAt', 'CustomerRecordId', 'Email',
+  'OperationId', 'OccurredAt', 'CustomerRecordId',
   'ProductKey', 'CouponId', 'CouponVersion',
   'OperationType', 'Actor', 'Reason', 'BeforeState', 'AfterState', 'Detail',
 ]);
 
 /** 履歴に**絶対に現れてはいけない**名前（Customers 側の課金・権限フィールド） */
 export const COUPON_HISTORY_FORBIDDEN_FIELDS = Object.freeze([
+  // ⚠️ アドレス・氏名は履歴に持たない（PII の重複保存を避ける）
+  'Email', 'メールアドレス', '氏名', 'Name',
   'プラン', 'Plan', 'PlanType', 'Status', '有効期限', 'ValidUntil',
   'PaidAt', 'PaymentConfirmed', 'PaymentEmailSent', 'LifetimeSanrenpuku',
   'RequestedPlan', 'RequestedPlanType', 'RequestedAmount', 'SessionVersion',
@@ -102,7 +106,7 @@ export { computeCouponOperationId as computeOperationId } from './couponPlatform
  *   情報不足・許可外フィールドなら **null**（呼び出し側は行を作らない＝ fail closed）
  */
 export function buildHistoryRecord({
-  customerRecordId, email, productKey, couponId, version,
+  customerRecordId, productKey, couponId, version,
   operationType, actor, reason, beforeState, afterState, detail, atIso,
   /** ⚠️ **安定した冪等キー**。呼び出し側（操作の計画）が作った値をそのまま使う */
   operationId,
@@ -114,7 +118,6 @@ export function buildHistoryRecord({
     OperationId: operationId,
     OccurredAt: String(atIso),
     CustomerRecordId: String(customerRecordId),
-    Email: String(email || ''),
     ProductKey: String(productKey || ''),
     CouponId: String(couponId),
     CouponVersion: Number(version),
@@ -212,12 +215,12 @@ export function findHistoryRepairTargets({ audits = [], rows = [] } = {}) {
  *    新しい時刻で作り直さない（履歴が実際の操作時刻からズレる）。
  */
 export function buildRepairRecord({
-  customerRecordId, email, productKey, couponId, version, audit, beforeState, afterState,
+  customerRecordId, productKey, couponId, version, audit, beforeState, afterState,
 } = {}) {
   const a = audit || {};
   if (!a.operationId) return null;
   return buildHistoryRecord({
-    customerRecordId, email, productKey, couponId, version,
+    customerRecordId, productKey, couponId, version,
     operationType: OPERATION_FROM_SOURCE[a.kind] || a.kind,
     actor: a.actor, reason: a.reason,
     beforeState: beforeState || '', afterState: afterState || '',

@@ -537,12 +537,31 @@ sessionStorage なので**監査記録ではない**。）
 
 | 案 | 変更 | 影響 |
 |---|---|---|
-| **A. 履歴テーブル新設（採用予定）** | Airtable に **`CouponOperationHistory`** テーブル + 13 列 | いちばん素直。読み手を 1 つ作るだけで既存に影響しない |
+| **A. 履歴テーブル新設（MK 確定済み・**本番作成は未承認**）** | Airtable に **`CouponOperationHistory`** テーブル + **12 列** | いちばん素直。読み手を 1 つ作るだけで既存に影響しない |
 | B. Customers に列追加 | long text 1 列へ追記 | 列 1 本で済むが行が肥大する |
 | C. `PromotionalOffers` に監査行 | schema 変更は不要だが**コード変更が要る** | ⚠️ 価格の無い行が `offerFilterModel.js` / `customerTimeline.js` / `recommendedActions.js` の分類を壊す。**採らない**（同じ理由で予約行も Source で除外している）|
 
 **案 A の設計は `src/lib/coupons/couponOperationHistory.js` に固定済み**
 （テーブル名・13 列・冪等キー・gate・禁止フィールド）。**商品名をテーブル名に入れない。**
+
+#### 排他は状態変更より前（2026-08-20 修正 2）
+
+⚠️ **履歴の直前で排他を取るだけでは足りなかった。** 同時 2 本が両方 Customers PATCH に
+成功すると、監査値が後勝ちで上書きされ**履歴と食い違う**。
+排他を **① read → ② OperationId 算出 → ③ lock → ④ 再 read → ⑤ 再判定 → ⑥ 変更**
+の順に変更した（4 操作すべて）。
+
+- lock を取れない要求は**副作用ゼロで拒否**（409）。Redis 不可でも書かない（503・fail closed）
+- 鍵は `ak:coupon-op:lock:<OperationId>`。**他会員・他商品・別操作は別の鍵**
+- **token 一致時のみ release**。crash 時は TTL で回復
+- 実装は `couponOperationLock.js`。`SET NX` / fencing token / 検証・解放の Lua は
+  **`automationStore.js` の既存 primitive を再利用**（新しい外部基盤なし）
+- **状態成功後の履歴失敗で状態を rollback しない**
+
+#### schema 変更（2026-08-20）: `Email` を削除して **12 列**
+
+会員の正本は `CustomerRecordId`。append-only の履歴へ **PII を重複保存しない**。
+表示に要るときは `CustomerRecordId` から Customers を引く。
 
 #### 冪等性の設計（2026-08-20 修正）
 

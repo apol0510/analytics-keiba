@@ -120,9 +120,12 @@ Customers の 1 列に畳む方式では**直近 1 回の操作しか残らな�
 設計だけ `src/lib/coupons/couponOperationHistory.js` に固定してある。
 
 - テーブル名: `CouponOperationHistory`（**商品名を含めない**）
-- 列: `OperationId` / `OccurredAt` / `CustomerRecordId` / `Email` / `ProductKey` /
+- 列（**12 列**）: `OperationId` / `OccurredAt` / `CustomerRecordId` / `ProductKey` /
   `CouponId` / `CouponVersion` / `OperationType` / `Actor` / `Reason` /
   `BeforeState` / `AfterState` / `Detail`
+- ⚠️ **`Email` は持たない。** 会員の正本は `CustomerRecordId` で、アドレスは参照用にすぎない。
+  append-only の履歴へ **PII を重複保存しない**。表示に要るときは
+  `CustomerRecordId` から Customers を引く
 - gate: `COUPON_HISTORY_TABLE_READY=1`（**未設定のあいだは 1 行も積まない**）
 - ⚠️ **課金・権限の列を 1 つも持たない**（履歴が権利の根拠になってはいけない）
 
@@ -149,6 +152,38 @@ sha256("ak-coupon-op|" + productKey + "|" + couponId + "|" + version
 
 ⚠️ binding が `resolveOperationAnchor()` を持つ場合はそちらを優先する
 （商品側にしか無い安定 ID を使いたいときの逃げ道）。
+
+### 排他は **状態変更より前**に取る（本体 PATCH の race を閉じる）
+
+⚠️ **履歴の直前で排他を取るだけでは足りない。** 同じ未取得会員へ `grant` が同時に 2 本来ると、
+両方が未取得を read して **Customers PATCH まで成功**し、`Source` / `Actor` / `Reason` / `at` が
+後勝ちで上書きされる。履歴が `OperationId` で 1 件になっても、
+**Customers の最終監査値と履歴が食い違う**ので不可。
+
+**実行順序（4 操作すべてに適用）**:
+
+```
+① 現状態を read（Customers + 予約台帳）
+② 安定 OperationId を算出（現在時刻は材料にしない）
+③ Redis SET NX で operation lock を取得   ← **状態変更より前**
+④ 取得できた 1 本だけが authoritative state を**もう一度 read**（TOCTOU を閉じる）
+⑤ server-side 条件を**再判定**（OperationId が変わっていたら stale として拒否）
+⑥ 書く直前に lock を verify（奪われていたら書かない）→ Customers / 予約行を変更
+⑦ 同じ OperationId で history append
+⑧ 状態成功 / history 失敗なら `op=` から history-only repair
+⑨ lock は token 一致時のみ release。crash 時は TTL で回復
+```
+
+- **lock を取れない要求は副作用ゼロで拒否**（`409 operation_in_progress`）
+- **Redis unavailable でも書かない**（`503 lock_unavailable`・fail closed）
+- 鍵は `ak:coupon-op:lock:<OperationId>`。OperationId は会員・商品・クーポン・操作・anchor から
+  作られるので、**他会員・他商品・別操作は自動的に別の鍵**（互いに block しない）
+- 鍵に載せるのは **OperationId だけ**（アドレス・氏名・理由は 1 文字も入れない）
+- **token が一致しないと release しない**（他プロセスの鍵を消さない）
+- 実装 `src/lib/coupons/couponOperationLock.js`。`SET NX` / `INCR` の fencing token /
+  検証・解放の Lua は **`marketing/automationStore.js` の既存 primitive を再利用**する
+  （新しい外部基盤を足さない）
+- ⚠️ **状態成功後の履歴失敗で、状態を rollback しない**
 
 ### 同時実行（Airtable に unique 制約は無い）
 

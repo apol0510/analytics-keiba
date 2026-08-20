@@ -32,7 +32,7 @@ const opId = (over = {}) => P.computeCouponOperationId({
   ...BASE, operationType: COUPON_OPERATION.GRANT, anchor: 'none', ...over,
 });
 const rec = (over = {}) => H.buildHistoryRecord({
-  ...BASE, email: 'a@example.invalid',
+  ...BASE,
   operationType: COUPON_OPERATION.GRANT, actor: 'MK', reason: 'お電話でのご依頼',
   beforeState: 'none', afterState: 'held', detail: 'admin-grant|by=MK',
   atIso: '2026-08-20T12:00:00.000Z', operationId: opId(), ...over,
@@ -141,7 +141,7 @@ test('state 成功 / history 失敗 を op= から検出し、history-only で 1
   assert.equal(targets[0].operationId, opId());
 
   // repair の 1 行は**同じ OperationId**・当時の実行者と時刻で作る
-  const repaired = H.buildRepairRecord({ ...BASE, email: 'a@example.invalid', audit });
+  const repaired = H.buildRepairRecord({ ...BASE, audit });
   assert.equal(repaired.operationId, opId());
   assert.equal(repaired.fields.OperationType, 'grant');
   assert.equal(repaired.fields.Actor, 'MK');
@@ -178,8 +178,11 @@ test('商品・会員・クーポン・操作を識別できる', () => {
   assert.ok(r.fields.OccurredAt);
 });
 
-test('課金・権限の列を持たない（履歴が権利の根拠にならない）', () => {
+test('アドレス・課金・権限の列を持たない（PII を重複保存しない）', () => {
   const keys = Object.keys(rec().fields);
+  assert.equal(H.COUPON_HISTORY_FIELDS.length, 12, '列数が 12 でない');
+  assert.ok(!keys.includes('Email'), '履歴にアドレスを保存している');
+  assert.ok(H.COUPON_HISTORY_FORBIDDEN_FIELDS.includes('Email'));
   for (const k of keys) assert.ok(H.COUPON_HISTORY_FIELDS.includes(k), k);
   for (const bad of H.COUPON_HISTORY_FORBIDDEN_FIELDS) assert.ok(!keys.includes(bad), bad);
   assert.equal(H.assertOnlyHistoryFields({ プラン: 'Premium' }), false);

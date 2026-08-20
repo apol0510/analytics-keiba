@@ -135,22 +135,29 @@ export const PP_COUPON_BINDING = Object.freeze({
 
   isStorageEnabled: (env) => isReopenCouponEnabled(env),
 
-  /** 取得を書く（付与 / 再発行）。3 列以外が混ざれば **null**（fail closed） */
-  buildClaimFields: ({ kind, actor, atIso, reason, prevClaimedAtIso, prevSource }) => guardFields({
+  /**
+   * 取得を書く（付与 / 再発行）。3 列以外が混ざれば **null**（fail closed）。
+   * ⚠️ `operationId` を必ず監査へ載せる（**部分成功の回復に使う**）。
+   */
+  buildClaimFields: ({
+    kind, actor, atIso, reason, prevClaimedAtIso, prevSource, operationId,
+  }) => guardFields({
     [PP_REOPEN_COUPON_FIELDS.CLAIMED_AT]: atIso,
     [PP_REOPEN_COUPON_FIELDS.COUPON_ID]: couponIdWithVersion(),
     [PP_REOPEN_COUPON_FIELDS.SOURCE]: encodeCouponAudit({
-      kind, actor, atIso, reason, prevClaimedAtIso, prevSource,
+      kind, actor, atIso, reason, prevClaimedAtIso, prevSource, operationId,
     }),
   }),
 
   /** 取得を消す（誤取得訂正）。**履歴は `Source` に畳んで残す** */
-  buildClearFields: ({ kind, actor, atIso, reason, prevClaimedAtIso, prevSource }) => guardFields({
+  buildClearFields: ({
+    kind, actor, atIso, reason, prevClaimedAtIso, prevSource, operationId,
+  }) => guardFields({
     // 取得判定は ClaimedAt の有無だけなので、これで未取得になる
     [PP_REOPEN_COUPON_FIELDS.CLAIMED_AT]: null,
     // ⚠️ 履歴を消さない。元の取得日時・取得元を監査行へ畳んで残す
     [PP_REOPEN_COUPON_FIELDS.SOURCE]: encodeCouponAudit({
-      kind, actor, atIso, reason, prevClaimedAtIso, prevSource,
+      kind, actor, atIso, reason, prevClaimedAtIso, prevSource, operationId,
     }),
   }),
 });
