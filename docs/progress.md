@@ -544,9 +544,36 @@ sessionStorage なので**監査記録ではない**。）
 **案 A の設計は `src/lib/coupons/couponOperationHistory.js` に固定済み**
 （テーブル名・13 列・冪等キー・gate・禁止フィールド）。**商品名をテーブル名に入れない。**
 
-#### 🛑 本番テーブル作成は **PAT のスコープ不足で未実施**（2026-08-20）
+#### ✅ 本番テーブル作成済み（2026-08-20 / **MK が Airtable 画面で手動作成**）
 
-MK 承認済みだが、**作成できていない**。
+API 経由は本番 PAT に `schema.bases:write` が無く 403 だったため、**MK が手動で作成**した。
+作成後の **read-only 検証**（GET のみ・本番 write 0 件）:
+
+| 確認項目 | 結果 |
+|---|---|
+| テーブル名 `CouponOperationHistory` | ✅ 完全一致・**1 つだけ**（名前の揺れなし）|
+| 12 列（名前・型） | ✅ **完全一致**。`Email` なし・余分な列なし・不足なし |
+| `CouponVersion` = number / `Reason`・`Detail` = long text / `OccurredAt` = dateTime | ✅ 指定どおり |
+| 既存 12 テーブル | ✅ **変更なし**（名前・列数が作成前スナップショットと一致）|
+| `COUPON_HISTORY_TABLE_READY` | ✅ **UNSET**（未設定のまま＝履歴は 1 行も書かれない）|
+| `UPSTASH_REDIS_REST_URL` / `_TOKEN` | ✅ SET（排他の前提を満たす）|
+
+**⚠️ 仕様と違う点が 2 つ（どちらも実装への影響なし・MK 判断待ち）**
+
+1. **Primary が `OperationId` ではなく `CustomerRecordId`**（列順も `CustomerRecordId` が先頭）。
+   - 実装は **primary に依存していない**。冪等性は `OperationId` を
+     `filterByFormula` で検索して担保しており、**Airtable の primary に一意制約は無い**ので
+     どちらでも保証は変わらない。列順も `assertOnlyHistoryFields` が名前の集合で見るため無関係。
+   - 直すなら Airtable 画面で primary を変更（プランにより可否あり）か作り直し。
+2. **空行が 3 件ある**（Airtable が新規テーブル作成時に自動で入れる行）。
+   - **値は 1 つも入っていない**ことを確認済み（`fields` が空の行が 3 件）。
+   - 実装への影響なし: `listHistoryForCustomer` は `CustomerRecordId` 一致で絞り、
+     `findHistoryRepairTargets` は `OperationId` を持つ行しか見ないので、空行は無視される。
+   - 消すには**本番 write（DELETE）が要る**ため、承認が無いので**削除していない**。
+
+#### （経緯）API 作成は PAT のスコープ不足で失敗した
+
+MK 承認済みだが、**API では作成できなかった**。
 
 | 確認 | 結果 |
 |---|---|
@@ -561,9 +588,11 @@ MK 承認済みだが、**作成できていない**。
 原因: 本番 PAT に **`schema.bases:write` が無い**（`schema.bases:read` は有効＝一覧は読める）。
 ⚠️ **PAT のスコープ変更・ローテーションは行っていない**（承認範囲外）。
 
-**次のどちらかが要る（MK 判断）**:
+→ **2（Airtable 画面での手動作成）を MK が実施し、完了した**（上記の検証結果を参照）。
+
+当時の選択肢:
 1. 本番 PAT へ `schema.bases:write` を付与し、API で作成する
-2. **Airtable の画面で手動作成**する（下の 12 列どおり。`Email` は作らない）
+2. **Airtable の画面で手動作成**する（下の 12 列どおり。`Email` は作らない）← 採用
 
 | 列 | 型 |
 |---|---|
@@ -582,6 +611,7 @@ MK 承認済みだが、**作成できていない**。
 
 作成後も **`COUPON_HISTORY_TABLE_READY` は未設定のまま**なので、
 `planHistoryAppend()` は `append:false` を返し続け、**履歴の書き込みは発生しない**。
+**本番 write は未開始**（Customers / PromotionalOffers / 履歴のいずれにも書いていない）。
 
 #### 排他は状態変更より前（2026-08-20 修正 2）
 
