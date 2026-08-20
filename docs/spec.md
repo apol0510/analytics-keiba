@@ -191,6 +191,24 @@ Concurrency Group: 南関 `archive-nankan-update` / JRA `archive-jra-update`。
 | 無料専用の 5 点買い目を新設 | 不採用 |
 | `/free-prediction/` の解放範囲を広げて第 2 層を兼ねる | 不採用 |
 
+### 第 2 層の無料会員特典（2026-08-20 確定）
+
+**登録特典＝拡張版 `/race-viewpoints/`**（自動付与）。開くのは**公開事実だけ**で、
+買い目 / `pt` / AI総合指数 / 役割 / 特徴量は**登録しても出さない**。
+
+| 特典 | 単一源 |
+|---|---|
+| 出走間隔 / 馬体重の増減 / 条件変化の履歴 / 同条件馬の横比較 | `src/lib/freeViewpoints/memberExtras.js` |
+
+**守ること**:
+
+- **いま公開しているものを引っ込めてゲートにしない**（追加分だけをゲートにする）
+- `/free-prediction/` と重複する情報を特典にしない（未登録から迂回できるため）
+- ゲートは**クライアント側の soft gate**。公開事実にのみ使い、**有料情報には使わない**
+- 「登録すれば買い目が見える」と読める文言を書かない
+
+検証: `npm run test:free-viewpoints`（`memberExtras.test.mjs` / `memberGate.guard.test.mjs`）。
+
 判断の根拠と不採用案は `docs/decisions.md` §2026-08-19（無料コンテンツを 2 層に分ける）が正本。
 進捗・残作業は `docs/progress.md` の該当ブロックが正本。
 

@@ -15,7 +15,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         <div id="signup-section" class="signup-section">
             <div class="signup-card">
                 <h2>📧 AI競馬予想を即座に体験</h2>
-                <p>登録はメールアドレスを入力のみ。すぐに南関競馬のAI予想が無料でご利用いただけます！</p>
+                <p>登録はメールアドレスを入力するだけ。無料予想の各レースで、出走馬の詳しい情報が見られるようになります。</p>
                 
                 <div class="email-input-section">
                     <div class="input-group">
@@ -51,12 +51,20 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
                 <!-- 特典説明 -->
                 <div class="benefits-section">
-                    <h3>✨ 今すぐ使える無料特典</h3>
+                    <h3>✨ 登録すると開くもの</h3>
+                    <p class="benefits-lead">
+                        無料予想の各レースで、出走馬の詳しい情報が見られるようになります。
+                    </p>
                     <ul class="benefits-list">
-                        <li>📊 南関競馬のAI無料予想</li>
-                        <li>🤖 機械学習による精密な分析データ</li>
-                        <li>🎁 毎日ログインで追加ポイント獲得</li>
+                        <li>🗓 出走間隔（連闘・中◯週・休養明け）</li>
+                        <li>⚖ 前走の馬体重と増減</li>
+                        <li>📈 過去5走の条件の移り変わり</li>
+                        <li>🔀 同じ会場・近い距離を使ってきた馬の比較</li>
+                        <li>🎁 毎日ログインでポイントが貯まります</li>
                     </ul>
+                    <p class="benefits-note">
+                        ※ 買い目は有料版でのみ公開しています。無料登録では公開されません。
+                    </p>
                 </div>
             </div>
         </div>
@@ -83,9 +91,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
             <div class="completed-card">
                 <div class="success-icon">🎊</div>
                 <h2>🎉 AI予想が利用開始できます！</h2>
-                <p>登録完了！今すぐ南関競馬のAI無料予想をお楽しみください。</p>
+                <p>登録が完了しました。無料予想のページで、出走馬の詳しい情報が見られるようになっています。</p>
                 <div class="action-buttons">
-                    <a href="/free-prediction/nankan/" class="primary-btn">🏇 AI予想を今すぐ見る</a>
+                    <a href="/race-viewpoints/nankan/" class="primary-btn">🏇 無料予想を今すぐ見る</a>
                     <a href="/dashboard/" class="secondary-btn">📊 マイページ</a>
                 </div>
             </div>
@@ -421,6 +429,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
             flex-direction: column;
         }
     }
+
+    .benefits-lead { font-size: 0.9rem; color: #cbd5e1; margin: 0 0 10px; line-height: 1.7; }
+    .benefits-note { font-size: 0.8rem; color: #94a3b8; margin: 10px 0 0; line-height: 1.7; }
 </style>
 
 <script>
