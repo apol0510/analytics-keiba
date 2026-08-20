@@ -157,3 +157,75 @@ t3('コード内に旧 URL の参照が残っていない', () => {
 });
 
 console.log(`homeCta.guard（URL と 301）: ${passed3} 件すべて通過\n`);
+
+/* ── ナビの並び（2026-08-21 追加） ────────────────────────────────
+   以前は「AI予想プレビュー」と「無料予想」が隣り合い、どちらも 中央/南関 の
+   同じ形の submenu で見分けが付かず、有料への導線が先頭に来ていた。
+   無料を先頭に、プレビューは「有料版」へ統合した。 */
+let passed4 = 0;
+const t4 = (name, fn) => { fn(); passed4 += 1; console.log(`  ✓ ${name}`); };
+
+console.log('homeCta.guard（ナビの並び）');
+
+/**
+ * nav-menu 内のトップ項目の並び（nav-text の中身）を取り出す。
+ *
+ * ⚠️ `nav-login` / `nav-dashboard` は**ログイン状態で入れ替わる同じ 1 枠**（どちらも「マイページ」）。
+ *    両方数えると実際より 1 個多くなるので、初期表示で隠れているものは除く。
+ *    ログアウトはスクリプトが後から差し込むため静的 HTML には無い。
+ */
+function topLevelNavTexts(src) {
+  const start = src.indexOf('<ul class="nav-menu"');
+  // ⚠️ 範囲は `</nav>` で切る。`nav-dashboard` は後半のスクリプトにも出てくるため、
+  //    それを目印にすると JS 側のテンプレート文字列（ログアウト等）まで拾ってしまう。
+  const end = src.indexOf('</nav>', start);
+  const menu = src.slice(start, end);
+  const items = menu.split(/<li\b/).slice(1);
+  return items
+    .filter((li) => !/style="display:\s*none/.test(li.slice(0, li.indexOf('>'))))
+    .map((li) => (li.match(/<span class="nav-text">([^<]+)<\/span>/) || [])[1])
+    .filter(Boolean);
+}
+
+t4('無料予想がプレビューより前にある', () => {
+  const texts = topLevelNavTexts(layout);
+  const free = texts.indexOf('無料予想');
+  const paid = texts.indexOf('有料版');
+  assert.ok(free > -1, 'トップ項目に「無料予想」が無い');
+  assert.ok(paid > -1, 'トップ項目に「有料版」が無い');
+  assert.ok(free < paid, `無料予想(${free}) が 有料版(${paid}) より後ろにある`);
+});
+
+t4('プレビューはトップ項目ではなく「有料版」の中にある', () => {
+  const texts = topLevelNavTexts(layout);
+  assert.equal(texts.includes('AI予想プレビュー'), false,
+    'プレビューがトップ項目に戻っている（有料導線が無料より前に出る）');
+  // 有料版 submenu の中にプレビューへのリンクがあること
+  assert.match(layout, /submenu-group-label">🎁 予想プレビュー[\s\S]{0,400}?\/free-prediction\/jra\//);
+  assert.match(layout, /submenu-group-label">🎁 予想プレビュー[\s\S]{0,400}?\/free-prediction\/nankan\//);
+});
+
+t4('料金プランへの導線が消えていない', () => {
+  assert.match(layout, /submenu-group-label">💰 料金プラン/);
+  assert.ok(layout.includes('href="/pricing/"'), 'pricing へのリンクが無い');
+});
+
+t4('トップ項目が 7 個以内（はみ出し防止）', () => {
+  const texts = topLevelNavTexts(layout);
+  assert.ok(texts.length <= 7,
+    `トップ項目が ${texts.length} 個。1009px でナビが画面外にはみ出す: ${texts.join(' / ')}`);
+});
+
+t4('モバイル nav も同じ並びになっている', () => {
+  // ⚠️ 'mobile-nav-menu' はハンバーガーの onclick にも出てくる。
+  //    id 属性を目印にして本体の <nav> から切り出す。
+  const start = layout.indexOf('<nav class="mobile-nav-menu"');
+  assert.ok(start > -1, 'モバイル nav 本体が見つからない');
+  const mb = layout.slice(start, layout.indexOf('</nav>', start));
+  assert.ok(mb.indexOf('🔍</span> 無料予想') < mb.indexOf('💎</span> 有料版'),
+    'モバイルでも無料予想を先に出す');
+  assert.equal(mb.includes('AI予想プレビュー'), false,
+    'モバイル nav にプレビューがトップ項目として残っている');
+});
+
+console.log(`homeCta.guard（ナビの並び）: ${passed4} 件すべて通過\n`);
