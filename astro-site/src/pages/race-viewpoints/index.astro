@@ -1,0 +1,165 @@
+---
+/**
+ * /race-viewpoints/ — 無料予想の索引ページ（2026-08-21 追加）
+ *
+ * 【なぜ作ったか】
+ *   このパスは **404 だった**。そのため nav「🔍 無料予想」もフッターも
+ *   `/race-viewpoints/nankan/` を指すしかなく、**中央競馬目当ての人が南関へ着地**していた。
+ *   ここで中央 / 南関 を選ばせて取りこぼしを無くす。
+ *
+ * 【方針】
+ *   選ばせるだけの空ページにしない。各カテゴリの **最新開催日・会場・レース数**を出し、
+ *   「今どちらに何があるか」が分かった上で選べるようにする。
+ *   JRA は平日開催が無く南関と最新日がズレるのは**正常**（docs/CLAUDE.md 記載）。
+ *
+ * 出さないもの: 買い目 / pt / AI総合指数 / 役割 / 特徴量（各ページと同じ制約）
+ */
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { buildViewpoints } from '../../lib/freeViewpoints/loadRaceViewpoints.js';
+
+export const prerender = false;
+
+/** 片方が壊れてももう片方は出す（fail closed ではなく片肺運転を許す）。 */
+function summarize(category: 'jra' | 'nankan') {
+  try {
+    const view: any = buildViewpoints(category, process.cwd());
+    if (!view) return null;
+    const venues = (view.venues || []).map((v: any) => ({
+      venue: v.venue,
+      raceCount: (v.races || []).length,
+    }));
+    return {
+      date: view.date,
+      venues,
+      raceCount: venues.reduce((n: number, v: any) => n + v.raceCount, 0),
+    };
+  } catch (error) {
+    console.error(`[race-viewpoints/index] ${category} build error:`, error);
+    return null;
+  }
+}
+
+const CATEGORIES = [
+  {
+    key: 'jra' as const,
+    label: '中央競馬',
+    sub: 'JRA',
+    icon: '🏇',
+    href: '/race-viewpoints/jra/',
+    note: '土日を中心とした開催です。',
+    summary: summarize('jra'),
+  },
+  {
+    key: 'nankan' as const,
+    label: '南関競馬',
+    sub: 'NANKAN',
+    icon: '🏁',
+    href: '/race-viewpoints/nankan/',
+    note: '大井・川崎・船橋・浦和。平日にも開催があります。',
+    summary: summarize('nankan'),
+  },
+];
+
+/** 2026-08-21 → 8月21日 */
+function jpDate(iso: string | undefined) {
+  if (!iso) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  return m ? `${Number(m[2])}月${Number(m[3])}日` : iso;
+}
+---
+
+<BaseLayout
+  title="無料予想 | 中央競馬・南関競馬"
+  description="出走馬の近走から、レースごとの条件の替わり方と近走の比べやすさを毎日無料で公開しています。中央競馬・南関競馬から選べます。買い目や評価数値は含みません。"
+>
+  <section class="rvi">
+    <h1 class="rvi-title">無料予想</h1>
+    <p class="rvi-lead">
+      出走馬の<strong>近走（前走の会場・距離・騎手）</strong>だけを数えて、
+      レースごとに「何が替わったか」「近走を見比べやすいか」を毎日出しています。
+      <strong>登録なしで全レース見られます。</strong>
+    </p>
+
+    <div class="rvi-grid">
+      {CATEGORIES.map((c) => (
+        <a class={`rvi-card rvi-${c.key}`} href={c.href}>
+          <span class="rvi-icon" aria-hidden="true">{c.icon}</span>
+          <span class="rvi-name">{c.label}<span class="rvi-sub">{c.sub}</span></span>
+          {c.summary
+            ? (
+              <span class="rvi-meta">
+                <span class="rvi-date">{jpDate(c.summary.date)}</span>
+                <span class="rvi-venues">
+                  {c.summary.venues.map((v: any) => v.venue).join('・') || '会場情報なし'}
+                </span>
+                <span class="rvi-count">全{c.summary.raceCount}レース</span>
+              </span>
+            )
+            : <span class="rvi-meta rvi-meta-empty">次の開催ぶんを準備中です</span>}
+          <span class="rvi-go">見どころを見る →</span>
+        </a>
+      ))}
+    </div>
+
+    <p class="rvi-note">
+      ※ 中央競馬は平日の開催が無いため、南関競馬と表示日がズレることがあります。
+    </p>
+
+    <div class="rvi-paid">
+      <p class="rvi-paid-head">買い目をお探しの方へ</p>
+      <p class="rvi-paid-body">
+        どの馬からどう組み立てるか（買い目）は有料版で公開しています。
+        有料版のプレビューでは、各馬の過去走まで含めた詳しい内容をご確認いただけます。
+      </p>
+      <span class="rvi-paid-links">
+        <a class="rvi-paid-link" href="/free-prediction/">有料版のプレビューを見る →</a>
+        <a class="rvi-paid-link rvi-paid-sub" href="/pricing/">プランを見る →</a>
+      </span>
+    </div>
+  </section>
+</BaseLayout>
+
+<style>
+  .rvi { max-width: 860px; margin: 0 auto; padding: 40px 16px 64px; }
+  .rvi-title { font-size: 1.8rem; font-weight: 800; color: #38bdf8; text-align: center; margin: 0 0 14px; }
+  .rvi-lead { font-size: .92rem; line-height: 1.95; color: #e2e8f0; text-align: center; margin: 0 0 26px; }
+  .rvi-lead strong { color: #f8fafc; }
+
+  .rvi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+  .rvi-card {
+    display: flex; flex-direction: column; gap: 8px;
+    padding: 20px 18px; border-radius: 14px; text-decoration: none;
+    border: 2px solid rgba(56,189,248,.35); background: rgba(56,189,248,.07);
+    transition: transform .15s, border-color .15s, background .15s;
+  }
+  .rvi-card:hover { transform: translateY(-2px); border-color: rgba(56,189,248,.7); background: rgba(56,189,248,.12); }
+  .rvi-nankan { border-color: rgba(168,85,247,.35); background: rgba(168,85,247,.07); }
+  .rvi-nankan:hover { border-color: rgba(168,85,247,.7); background: rgba(168,85,247,.12); }
+
+  .rvi-icon { font-size: 1.7rem; line-height: 1; }
+  .rvi-name { font-size: 1.15rem; font-weight: 800; color: #f8fafc; display: flex; align-items: baseline; gap: 8px; }
+  .rvi-sub { font-size: .72rem; font-weight: 700; color: #94a3b8; letter-spacing: .06em; }
+  .rvi-meta { display: flex; flex-wrap: wrap; gap: 6px 10px; font-size: .82rem; color: #cbd5e1; }
+  .rvi-date { font-weight: 800; color: #7dd3fc; }
+  .rvi-nankan .rvi-date { color: #d8b4fe; }
+  .rvi-count { font-weight: 700; color: #e2e8f0; }
+  .rvi-meta-empty { color: #94a3b8; }
+  .rvi-go { margin-top: 4px; font-size: .86rem; font-weight: 800; color: #38bdf8; }
+  .rvi-nankan .rvi-go { color: #c084fc; }
+
+  .rvi-note { margin: 14px 0 0; font-size: .76rem; color: #94a3b8; line-height: 1.7; text-align: center; }
+
+  .rvi-paid { margin-top: 28px; border: 1px solid rgba(251,191,36,.4); border-radius: 12px; background: rgba(251,191,36,.07); padding: 16px 18px; }
+  .rvi-paid-head { margin: 0 0 6px; font-weight: 800; font-size: .92rem; color: #fde68a; }
+  .rvi-paid-body { margin: 0 0 12px; font-size: .82rem; line-height: 1.85; color: #e2e8f0; }
+  .rvi-paid-links { display: flex; flex-wrap: wrap; gap: 10px; }
+  .rvi-paid-link { display: inline-block; background: #f59e0b; color: #451a03; font-weight: 800; font-size: .84rem; padding: 9px 16px; border-radius: 8px; text-decoration: none; }
+  .rvi-paid-link:hover { background: #fbbf24; }
+  .rvi-paid-sub { background: transparent; color: #fde68a; border: 1px solid rgba(251,191,36,.5); }
+  .rvi-paid-sub:hover { background: rgba(251,191,36,.15); }
+
+  @media (max-width: 640px) {
+    .rvi { padding: 28px 14px 48px; }
+    .rvi-title { font-size: 1.5rem; }
+  }
+</style>
