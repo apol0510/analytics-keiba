@@ -144,7 +144,7 @@ test('2026-08-20: nav に掲載し noindex を解除した', () => {
   for (const href of ['/race-viewpoints/jra/', '/race-viewpoints/nankan/']) {
     assert.ok(layout.includes(href), `nav に ${href} が無い`);
   }
-  assert.ok(layout.includes('レースの見どころ'), 'nav のラベルが無い');
+  assert.ok(layout.includes('無料予想'), 'nav のラベル（無料予想）が無い');
   // PC ナビ / モバイルナビ / フッターの 3 経路すべてに導線がある
   const count = (layout.match(/\/race-viewpoints\//g) || []).length;
   assert.ok(count >= 5, `導線が足りない（${count} 箇所）。PC・モバイル・フッターに置くこと`);

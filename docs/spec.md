@@ -202,7 +202,7 @@ Concurrency Group: 南関 `archive-nankan-update` / JRA `archive-jra-update`。
 
 | | |
 |---|---|
-| URL | `/race-viewpoints/{jra,nankan}/`（**2026-08-20 に nav 掲載・`noindex` 解除**。URL 名称そのものは未確定のままで、変更する場合は 301 リダイレクトが要る）|
+| URL | `/race-viewpoints/{jra,nankan}/`（**2026-08-20 に nav 掲載・`noindex` 解除**。nav / フッター / トップページでの呼び名は「**無料予想**」。URL 名称そのものは未確定で、変更する場合は 301 リダイレクトが要る）|
 | 判定の単一源 | `astro-site/src/lib/freeViewpoints/raceViewpoints.js`（純粋・I/O なし）|
 | しきい値の単一源 | `astro-site/src/lib/freeViewpoints/thresholds.js`（**凍結値**）|
 | 文言の単一源 | `astro-site/src/lib/freeViewpoints/copy.js`（**仮文言**・有限集合）|
