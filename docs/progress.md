@@ -558,18 +558,29 @@ API 経由は本番 PAT に `schema.bases:write` が無く 403 だったため�
 | `COUPON_HISTORY_TABLE_READY` | ✅ **UNSET**（未設定のまま＝履歴は 1 行も書かれない）|
 | `UPSTASH_REDIS_REST_URL` / `_TOKEN` | ✅ SET（排他の前提を満たす）|
 
-**⚠️ 仕様と違う点が 2 つ（どちらも実装への影響なし・MK 判断待ち）**
+**Primary は `CustomerRecordId`（`OperationId` ではない）。2026-08-20 MK 判断で現状維持。**
 
-1. **Primary が `OperationId` ではなく `CustomerRecordId`**（列順も `CustomerRecordId` が先頭）。
-   - 実装は **primary に依存していない**。冪等性は `OperationId` を
-     `filterByFormula` で検索して担保しており、**Airtable の primary に一意制約は無い**ので
-     どちらでも保証は変わらない。列順も `assertOnlyHistoryFields` が名前の集合で見るため無関係。
-   - 直すなら Airtable 画面で primary を変更（プランにより可否あり）か作り直し。
-2. **空行が 3 件ある**（Airtable が新規テーブル作成時に自動で入れる行）。
-   - **値は 1 つも入っていない**ことを確認済み（`fields` が空の行が 3 件）。
-   - 実装への影響なし: `listHistoryForCustomer` は `CustomerRecordId` 一致で絞り、
-     `findHistoryRepairTargets` は `OperationId` を持つ行しか見ないので、空行は無視される。
-   - 消すには**本番 write（DELETE）が要る**ため、承認が無いので**削除していない**。
+- 実装は **primary に依存していない**。冪等性は `OperationId` を
+  `filterByFormula` で**明示検索**して担保しており、**Airtable の primary に一意制約は無い**ので
+  どちらが primary でも保証は変わらない。列順も `assertOnlyHistoryFields` が
+  名前の集合で見るため無関係。
+- ⚠️ **テーブルの作り直し・追加 schema 変更は不要**（MK 確定）。
+  「primary が仕様と違う」を理由に作り直さないこと。
+
+**自動生成された空行 3 件は MK が手動削除済み（2026-08-20）。**
+削除後の read-only 検証で **レコード 0 件**を確認した（下表）。
+
+#### 最終確認（2026-08-20 / GET のみ・本番 write 0 件）
+
+| 確認項目 | 結果 |
+|---|---|
+| `CouponOperationHistory` のレコード | ✅ **0 件** |
+| 12 列（名前・型） | ✅ そのまま完全一致（型の不一致なし）|
+| `Email` 列 | ✅ なし |
+| 余分な列 / 不足した列 | ✅ どちらもなし |
+| 既存 12 テーブル | ✅ **追加変更なし**（名前・列数が作成前と一致）|
+| `COUPON_HISTORY_TABLE_READY` | ✅ **UNSET** |
+| Customers / PromotionalOffers への本番 write | ✅ **していない**（この作業で発行したのは GET のみ）|
 
 #### （経緯）API 作成は PAT のスコープ不足で失敗した
 
