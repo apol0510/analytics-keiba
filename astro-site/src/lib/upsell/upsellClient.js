@@ -34,6 +34,8 @@ export function getUpsellDecision() {
       channel: UPSELL_CLIENT_CHANNEL.UNKNOWN,
       sanrenpuku: { allowed: true },
       plus: { allowed: false },
+      // 取得できなければ「持っていない」扱い＝カードを出さない（fail closed）
+      coupon: { claimed: false },
     };
     try {
       const res = await fetch(ENDPOINT, { credentials: 'same-origin' });
@@ -56,6 +58,20 @@ export async function canShowSanrenpukuUpsell() {
   const d = await getUpsellDecision();
   if (d.channel === UPSELL_CLIENT_CHANNEL.UNKNOWN) return true;
   return d.channel === UPSELL_CLIENT_CHANNEL.SANRENPUKU;
+}
+
+/**
+ * 本人の取得済みクーポン（マイページのカード用）。
+ *
+ * 追加の通信はしない（`getUpsellDecision()` の結果を使い回す）。
+ * 取得できない / 未取得のときは `{ claimed: false }` を返し、呼び出し側は**何も出さない**。
+ * ⚠️ 表示文言・条件はサーバー（単一源）が返した文字列をそのまま使うこと。
+ *    クライアントで条件文や価格を組み立てない。
+ */
+export async function getReopenCoupon() {
+  const d = await getUpsellDecision();
+  const c = d && d.coupon;
+  return c && c.claimed === true ? c : { claimed: false };
 }
 
 /** Premium Plus の導線を出してよいか（unknown は従来どおり Plus 側 API の判定に委ねる） */

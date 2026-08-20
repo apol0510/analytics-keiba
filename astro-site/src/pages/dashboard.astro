@@ -183,6 +183,27 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                 </div>
             </div>
 
+            <!-- 取得済みクーポン（本人が取得済みのときだけ表示）。
+                 判定・文言・条件はサーバーの単一源（/api/upsell.json → premiumPlusReopenCoupon.js）が返す。
+                 ⚠️ dashboard 側で条件文・価格・割引率を組み立てないこと。
+                 未取得ならこのカードごと出さない（既定 display:none）。 -->
+            <div class="coupon-section" id="reopen-coupon-section" style="display: none;">
+                <div class="coupon-card">
+                    <div class="coupon-header">
+                        <div class="coupon-icon">🎟</div>
+                        <div class="coupon-title">取得済みクーポン</div>
+                        <div class="coupon-badge">取得済み</div>
+                    </div>
+                    <div class="coupon-name" id="reopen-coupon-name"></div>
+                    <dl class="coupon-kv">
+                        <dt>取得日時</dt><dd id="reopen-coupon-claimed-at"></dd>
+                        <dt>ご利用時期</dt><dd id="reopen-coupon-usable"></dd>
+                        <dt>優待条件</dt><dd id="reopen-coupon-terms"></dd>
+                    </dl>
+                    <a class="coupon-link" id="reopen-coupon-link" href="/premium-plus-coupon/">クーポン詳細を確認</a>
+                </div>
+            </div>
+
             <!-- 今日の予想 -->
             <div class="predictions-section">
                 <h2>🏇 今日の予想</h2>
@@ -2422,6 +2443,38 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
         }
         
         /* VIPステータスカード */
+        /* 取得済みクーポン（マイページ内のカード。既存カードと同じ角丸・余白・淡い枠に合わせる） */
+        .coupon-section { margin: 1.5rem 0 0; }
+        .coupon-card {
+            background: linear-gradient(135deg, rgba(45, 212, 191, 0.10) 0%, rgba(59, 130, 246, 0.10) 100%);
+            border: 1px solid rgba(45, 212, 191, 0.30);
+            border-radius: 1rem;
+            padding: 1.5rem;
+        }
+        .coupon-header { display: flex; align-items: center; gap: .6rem; margin-bottom: .9rem; flex-wrap: wrap; }
+        .coupon-icon { font-size: 1.4rem; line-height: 1; }
+        .coupon-title { font-size: 1.05rem; font-weight: 700; color: #f8fafc; }
+        .coupon-badge {
+            font-size: .78rem; font-weight: 700; padding: .25rem .7rem; border-radius: 999px;
+            background: rgba(16, 185, 129, .18); color: #6ee7b7; border: 1px solid rgba(16, 185, 129, .5);
+        }
+        .coupon-name { font-size: 1rem; font-weight: 700; color: #e2e8f0; margin: 0 0 .9rem; }
+        .coupon-kv { display: grid; grid-template-columns: auto 1fr; gap: .45rem 1rem; margin: 0; font-size: .92rem; }
+        .coupon-kv dt { color: #94a3b8; font-size: .82rem; white-space: nowrap; }
+        .coupon-kv dd { margin: 0; color: #e2e8f0; }
+        .coupon-link {
+            display: inline-block; margin-top: 1.1rem; padding: .7rem 1.2rem; border-radius: .7rem;
+            background: rgba(59, 130, 246, .18); border: 1px solid rgba(59, 130, 246, .45);
+            color: #bfdbfe; text-decoration: none; font-size: .9rem; font-weight: 700;
+        }
+        .coupon-link:hover { background: rgba(59, 130, 246, .3); }
+        @media (max-width: 768px) {
+            .coupon-card { padding: 1.2rem; }
+            .coupon-kv { grid-template-columns: 1fr; gap: .2rem; }
+            .coupon-kv dt { margin-top: .5rem; }
+            .coupon-link { display: block; text-align: center; }
+        }
+
         .vip-status-card {
             grid-column: 2;
             grid-row: 1;
@@ -5400,7 +5453,7 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
     <!-- 販売導線（三連複 / Premium Plus / なし）の取得。判定はサーバー側の単一源。
          取得できないとき（未ログイン・API 不在）は 'unknown' のままで従来動作を維持する。 -->
     <script>
-      import { getUpsellDecision } from '../lib/upsell/upsellClient.js';
+      import { getUpsellDecision, getReopenCoupon } from '../lib/upsell/upsellClient.js';
       import { installPlusFunnel } from '../lib/premiumPlus/premiumPlusFunnelClient.js';
       // 実閲覧の送信本体。導線が出る前に install しておく（先に積まれても取りこぼさない）
       installPlusFunnel(window);
@@ -5409,6 +5462,28 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
         window.__akUpsellChannel = d.channel;
         // 会員データ描画より後に確定することがあるので、取得後にもう一度出し分ける
         if (typeof window.applyUpsellSections === 'function') window.applyUpsellSections();
+        renderReopenCoupon(await getReopenCoupon());
       })();
+
+      /**
+       * 取得済みクーポンのカードを出す（**本人が取得済みのときだけ**）。
+       *
+       * 判定も文言もサーバーの単一源が返した値をそのまま使う。
+       * ここで条件文・価格・割引率を作らない（条件が確定したら単一源だけが変わる）。
+       * 未取得・取得失敗・未ログインでは**カードごと出さない**（fail closed）。
+       */
+      function renderReopenCoupon(c) {
+        const sec = document.getElementById('reopen-coupon-section');
+        if (!sec) return;
+        if (!c || c.claimed !== true) { sec.style.display = 'none'; return; }
+        const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v || ''; };
+        set('reopen-coupon-name', c.name);
+        set('reopen-coupon-claimed-at', c.claimedAtText);
+        set('reopen-coupon-usable', c.usableNote);
+        set('reopen-coupon-terms', c.termsText);
+        const link = document.getElementById('reopen-coupon-link');
+        if (link && c.detailHref) link.setAttribute('href', c.detailHref);
+        sec.style.display = '';
+      }
     </script>
 </BaseLayout>
