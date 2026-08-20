@@ -1,9 +1,9 @@
 ---
 /**
- * /race-viewpoints/nankan/ — 無料コンテンツ第 2 層（**仮 URL / 仮名称**）
+ * /free/jra/ — 無料コンテンツ第 2 層（**仮 URL / 仮名称**）
  *
  * 2026-08-20: MK 判断により nav へ掲載し、noindex を解除した（検索対象にする）。
- *    URL（/race-viewpoints/）を後から変える場合は 301 リダイレクトが必要になる。
+ *    URL（/free/）を後から変える場合は 301 リダイレクトが必要になる。
  *
  * 出さないもの: 買い目 / pt / AI総合指数 / 役割 / 特徴量
  * /free-prediction/ の役割（有料版プレビュー）は変更しない。ここは別ページ。
@@ -16,23 +16,23 @@ export const prerender = false;
 
 let view: any = null;
 try {
-  view = buildViewpoints('nankan', process.cwd());
+  view = buildViewpoints('jra', process.cwd());
 } catch (error) {
-  console.error('[race-viewpoints/nankan] build error:', error);
+  console.error('[free/jra] build error:', error);
 }
 ---
 
 <BaseLayout
-  title={`レースの見どころ | 南関競馬`}
+  title={`無料予想（中央競馬）| 今日のレースの見どころ`}
   description="出走馬の近走から、レースごとの条件の替わり方と近走の比べやすさを無料で公開しています。買い目や評価数値は含みません。"
 >
   {view
-    ? <RaceViewpointsBoard view={view} categoryLabel="南関競馬" freeUrl="/free-prediction/nankan/" />
+    ? <RaceViewpointsBoard view={view} categoryLabel="中央競馬" freeUrl="/free-prediction/jra/" />
     : (
       <section class="rvb-empty">
-        <h1>レースの見どころ（南関競馬）</h1>
+        <h1>無料予想（中央競馬）</h1>
         <p>本日ぶんのデータがまだ用意できていません。取込が終わり次第表示されます。</p>
-        <a href="/free-prediction/nankan/">南関競馬 の有料版プレビューを見る →</a>
+        <a href="/free-prediction/jra/">中央競馬 の有料版プレビューを見る →</a>
       </section>
     )}
 </BaseLayout>
