@@ -544,6 +544,45 @@ sessionStorage なので**監査記録ではない**。）
 **案 A の設計は `src/lib/coupons/couponOperationHistory.js` に固定済み**
 （テーブル名・13 列・冪等キー・gate・禁止フィールド）。**商品名をテーブル名に入れない。**
 
+#### 🛑 本番テーブル作成は **PAT のスコープ不足で未実施**（2026-08-20）
+
+MK 承認済みだが、**作成できていない**。
+
+| 確認 | 結果 |
+|---|---|
+| production env `UPSTASH_REDIS_REST_URL` / `_TOKEN` | **SET**（排他の前提は満たす）|
+| `COUPON_HISTORY_TABLE_READY` | **UNSET**（未設定のまま）|
+| 本番 Base のテーブル | 12 件。`CouponOperationHistory` は**存在しない** |
+| 作成予定 12 列 と実装 `COUPON_HISTORY_FIELDS` | **完全一致**（順序も。`Email` 無し）|
+| `POST /v0/meta/bases/*/tables` | **HTTP 403 `INVALID_PERMISSIONS_OR_MODEL_NOT_FOUND`** |
+| 既存 12 テーブルの schema | **変更なし**（作成前後のスナップショットが完全一致）|
+| 本番 write | **0 件** |
+
+原因: 本番 PAT に **`schema.bases:write` が無い**（`schema.bases:read` は有効＝一覧は読める）。
+⚠️ **PAT のスコープ変更・ローテーションは行っていない**（承認範囲外）。
+
+**次のどちらかが要る（MK 判断）**:
+1. 本番 PAT へ `schema.bases:write` を付与し、API で作成する
+2. **Airtable の画面で手動作成**する（下の 12 列どおり。`Email` は作らない）
+
+| 列 | 型 |
+|---|---|
+| `OperationId` | single line text（**先頭＝primary**）|
+| `OccurredAt` | dateTime（UTC / ISO）|
+| `CustomerRecordId` | single line text |
+| `ProductKey` | single line text |
+| `CouponId` | single line text |
+| `CouponVersion` | number（precision 0）|
+| `OperationType` | single line text |
+| `Actor` | single line text |
+| `Reason` | long text |
+| `BeforeState` | single line text |
+| `AfterState` | single line text |
+| `Detail` | long text |
+
+作成後も **`COUPON_HISTORY_TABLE_READY` は未設定のまま**なので、
+`planHistoryAppend()` は `append:false` を返し続け、**履歴の書き込みは発生しない**。
+
 #### 排他は状態変更より前（2026-08-20 修正 2）
 
 ⚠️ **履歴の直前で排他を取るだけでは足りなかった。** 同時 2 本が両方 Customers PATCH に
