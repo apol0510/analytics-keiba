@@ -271,6 +271,19 @@ if (!error && Array.isArray(venues) && venues.length > 0) {
             </h1>
           </div>
 
+        <!-- 2026-08-20: このページが「有料版のプレビュー」であることを最上部で伝える -->
+        <div class="preview-banner">
+            <span class="preview-banner-badge">PREVIEW</span>
+            <div class="preview-banner-text">
+                <p class="preview-banner-title">このページは<strong>有料版のプレビュー</strong>です</p>
+                <p class="preview-banner-desc">
+                    出走全頭と印は<strong>どなたでもそのまま</strong>ご覧いただけます。
+                    <strong>AI予測買い目・AI総合指数・累積スコア・役割</strong>は伏せてあり、有料版で公開しています。
+                </p>
+            </div>
+            <a class="preview-banner-cta" href="/pricing/">プランを見る →</a>
+        </div>
+
           <!-- 会場タブ（複数会場の場合のみ表示）-->
           {isMultiVenue && venues.length > 1 && (
             <div class="venue-selector">
@@ -2788,6 +2801,68 @@ if (!error && Array.isArray(venues) && venues.length > 0) {
         .access-control-section .locked-content.locked-paid { padding: 26px 18px 22px; }
         .access-control-section .locked-content.locked-paid h3 { font-size: 1.2rem; }
         .access-control-section .locked-content.locked-paid .unlock-btn-paid { font-size: 1rem; padding: 14px 20px; }
+    }
+
+    /* ── 2026-08-20: 上部プレビューバナー ──────────────────────────
+       /free-prediction/ が「有料版のプレビュー」であることを、
+       各レースの CTA まで読まなくてもページ上部で分かるようにする。 */
+    .preview-banner {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        max-width: 900px;
+        margin: 0 auto 22px;
+        padding: 14px 18px;
+        border-radius: 14px;
+        border: 2px solid rgba(245, 158, 11, 0.55);
+        background:
+            linear-gradient(135deg, rgba(139, 92, 246, 0.20) 0%, rgba(245, 158, 11, 0.12) 55%, rgba(15, 23, 42, 0.75) 100%);
+        box-shadow: 0 6px 24px rgba(139, 92, 246, 0.16);
+    }
+    .preview-banner-badge {
+        flex-shrink: 0;
+        font-size: 0.7rem;
+        font-weight: 900;
+        letter-spacing: 0.12em;
+        padding: 6px 12px;
+        border-radius: 999px;
+        background: linear-gradient(135deg, #8b5cf6, #f59e0b);
+        color: #0f172a;
+        white-space: nowrap;
+    }
+    .preview-banner-text { flex: 1; min-width: 0; }
+    .preview-banner-title {
+        margin: 0 0 4px;
+        font-size: 1.02rem;
+        font-weight: 800;
+        color: #fde68a;
+        line-height: 1.5;
+    }
+    .preview-banner-title strong { color: #fbbf24; }
+    .preview-banner-desc {
+        margin: 0;
+        font-size: 0.82rem;
+        line-height: 1.75;
+        color: #e2e8f0;
+    }
+    .preview-banner-desc strong { color: #c4b5fd; font-weight: 700; }
+    .preview-banner-cta {
+        flex-shrink: 0;
+        text-decoration: none;
+        font-size: 0.86rem;
+        font-weight: 800;
+        padding: 10px 18px;
+        border-radius: 10px;
+        background: #f59e0b;
+        color: #1c1917;
+        white-space: nowrap;
+    }
+    .preview-banner-cta:hover { background: #fbbf24; }
+    @media (max-width: 768px) {
+        .preview-banner { flex-direction: column; align-items: stretch; text-align: center; gap: 10px; padding: 14px; }
+        .preview-banner-badge { align-self: center; }
+        .preview-banner-title { font-size: 0.96rem; }
+        .preview-banner-cta { width: 100%; text-align: center; }
     }
 </style>
 

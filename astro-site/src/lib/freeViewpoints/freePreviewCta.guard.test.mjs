@@ -65,8 +65,33 @@ test('CTA が 1 枚になったレイアウトに変えている（2 枚並び�
 
 test('有料版プレビューであることをページ内で伝える', () => {
   for (const { name, src } of PAGES) {
-    assert.ok(src.includes('preview-note'), `${name}: プレビュー注記が無い`);
+    assert.ok(src.includes('preview-note'), `${name}: CTA 横の注記が無い`);
     assert.ok(src.includes('有料版のプレビュー'), `${name}: 位置づけの説明が無い`);
+  }
+});
+
+test('プレビューであることをページ上部で伝える（CTA まで読まないと分からない状態にしない）', () => {
+  for (const { name, src } of PAGES) {
+    assert.ok(src.includes('preview-banner'), `${name}: 上部バナーが無い`);
+    // 各レースの CTA より前（＝ページ上部）に置かれていること
+    const banner = src.indexOf('class="preview-banner"');
+    const firstCta = src.indexOf('locked-content locked-paid');
+    assert.ok(banner > -1 && firstCta > -1, `${name}: 位置を判定できない`);
+    assert.ok(banner < firstCta, `${name}: バナーが CTA より後ろにある（上部に置くこと）`);
+    // ヘッダー直後に置く（会場タブやレース一覧より前）
+    const header = src.indexOf('class="header-section"');
+    assert.ok(header > -1 && header < banner, `${name}: ヘッダーより前に出ている`);
+    const races = src.indexOf('venue-selector');
+    if (races > -1) assert.ok(banner < races, `${name}: 会場タブより後ろにある`);
+  }
+});
+
+test('上部バナーは有料への導線を持つ', () => {
+  for (const { name, src } of PAGES) {
+    const i = src.indexOf('class="preview-banner"');
+    const seg = src.slice(i, i + 1200);
+    assert.ok(seg.includes('/pricing/'), `${name}: バナーから料金ページへ行けない`);
+    assert.ok(seg.includes('PREVIEW'), `${name}: バナーのラベルが無い`);
   }
 });
 
