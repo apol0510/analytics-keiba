@@ -624,6 +624,30 @@ MK 承認済みだが、**API では作成できなかった**。
 `planHistoryAppend()` は `append:false` を返し続け、**履歴の書き込みは発生しない**。
 **本番 write は未開始**（Customers / PromotionalOffers / 履歴のいずれにも書いていない）。
 
+#### ✅ 履歴の配線を完成（2026-08-20 / **gate は未設定のまま**）
+
+| 経路 | 状態 |
+|---|---|
+| 4 操作の成功後に**同じ lock の中で**履歴 1 行 append | ✅ 実装 |
+| `action='couponHistory'`（時系列・read-only）| ✅ 実装 |
+| `action='couponHistoryRepair'`（history-only 修復）| ✅ 実装 |
+| 管理画面の「操作履歴を表示」| ✅ 実装（**Airtable を直接見なくてよい**）|
+
+- 書き込みは `couponHistoryStore.js` だけ。**PATCH / DELETE の経路を持たない**（append-only）
+- `COUPON_HISTORY_TABLE_READY !== '1'` なら**読み書きとも行わない**。
+  画面は「確認できない」と出し、**0 件と断定しない**
+- append 失敗でも**状態は巻き戻さない**。`op=` から repair で 1 件へ収束
+- repair は**状態を 1 バイトも触らない**
+
+**合成 Airtable + 合成 Redis + 本物の handler で実測**（本番へは 1 行も書いていない）:
+grant → 履歴 1 件 / correct → 2 件目追加・1 件目不変 / reissue → 3 件目 /
+revokeReservation → 追加 / 同時 2 要求 → **state PATCH 1 回・履歴 1 件** /
+history create 失敗 → state 成功維持・repair 対象を検出 / repair → 同じ OperationId で 1 件 /
+repair 再実行 → 増えない / gate UNSET → 履歴 write 0 / Redis down → state write 0 /
+他会員・他商品は分離。
+
+⚠️ **本番 gate は UNSET のまま。production への履歴レコード作成は行っていない。**
+
 #### 排他は状態変更より前（2026-08-20 修正 2）
 
 ⚠️ **履歴の直前で排他を取るだけでは足りなかった。** 同時 2 本が両方 Customers PATCH に

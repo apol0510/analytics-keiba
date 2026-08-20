@@ -87,8 +87,14 @@ function makeDb({ member = {}, offers = [], ledger = 'ok' } = {}) {
       },
     },
     offers: Object.fromEntries(offers.map((o) => [o.id, o.fields])),
-    /** 記録: どのテーブルの誰へ何を書いたか */
+    /** CouponOperationHistory（append-only。テストでは配列で持つ）*/
+    history: [],
+    /** 記録: **state（Customers / PromotionalOffers）**への書き込みだけ */
     writes: [],
+    /** 履歴テーブルへの書き込み（state とは別に数える）*/
+    historyWrites: [],
+    /** 履歴 create をわざと失敗させる（部分成功の再現）*/
+    historyCreateFails: false,
   };
 }
 
@@ -136,6 +142,26 @@ function stubFetch() {
         return ok({ id, fields: db.customers[id] });
       }
       return ok({ id, fields: db.customers[id] });
+    }
+    if (u.includes('/CouponOperationHistory')) {
+      if (u.endsWith('/listRecords')) {
+        const body = JSON.parse(init.body || '{}');
+        const f = String(body.filterByFormula || '');
+        const eq = f.match(/\{(\w+)\}\s*=\s*'([^']*)'/);
+        const rows = db.history.filter((r) => !eq || String(r.fields[eq[1]] || '') === eq[2]);
+        return ok({ records: rows });
+      }
+      if (method === 'POST') {
+        if (db.historyCreateFails) return err(500);
+        const body = JSON.parse(init.body || '{}');
+        for (const r of body.records || []) {
+          db.historyWrites.push({ method: 'POST', fields: r.fields });
+          db.history.push({ id: `recH${db.history.length + 1}`, fields: r.fields });
+        }
+        return ok({ records: body.records });
+      }
+      // ⚠️ append-only。PATCH / DELETE は実装しない（来たら失敗させる）
+      return err(405);
     }
     if (u.includes('/CampaignDeliveries/')) return ok({ records: [] });
     if (u.includes('redis.example.invalid')) {
@@ -192,6 +218,7 @@ beforeEach(() => {
   process.env.COMEBACK_OFFER_TABLE_READY = '1';
   process.env.PREMIUM_PLUS_FIELDS_READY = '1';
   process.env.PREMIUM_PLUS_REOPEN_COUPON_READY = '1';
+  process.env.COUPON_HISTORY_TABLE_READY = '1';
   // 排他は Redis 必須（fail closed）。合成 Redis を使えるよう env を立てる
   process.env.UPSTASH_REDIS_REST_URL = 'https://redis.example.invalid';
   process.env.UPSTASH_REDIS_REST_TOKEN = 'token-test';
@@ -534,6 +561,168 @@ test('4 操作すべてが監査へ op=<OperationId> を残す（部分成功の
   assert.equal(rev.statusCode, 200);
   assert.equal(parseCouponAudit(String(db.offers.recOFFER0000001.Notes).split(' / ').pop()).operationId,
     rev.body.operationId);
+});
+
+// ── 履歴の配線（append-only / repair / gate / 分離）─────────────
+const histOps = () => db.history.map((r) => r.fields.OperationType);
+const histIds = () => db.history.map((r) => r.fields.OperationId);
+
+test('grant → state 変更 + 履歴 1 件', async () => {
+  const out = await op(PP_COUPON_ADMIN_ACTION.GRANT, { reason: '付与' });
+  assert.equal(out.statusCode, 200);
+  assert.equal(out.body.history.appended, true);
+  assert.equal(db.history.length, 1);
+  const f = db.history[0].fields;
+  assert.equal(f.OperationType, 'grant');
+  assert.equal(f.CustomerRecordId, REC);
+  assert.equal(f.OperationId, out.body.operationId);
+  assert.equal(f.ProductKey, 'premium_plus');
+  assert.equal(f.Actor, 'MK');
+  assert.equal(f.BeforeState, 'none');
+  assert.equal(f.AfterState, 'held');
+  assert.ok(!('Email' in f), '履歴にアドレスを書いている');
+});
+
+test('correct で 2 件目が増え、1 件目は不変（append-only）', async () => {
+  await op(PP_COUPON_ADMIN_ACTION.GRANT, { reason: '付与' });
+  const first = JSON.parse(JSON.stringify(db.history[0]));
+  await op(PP_COUPON_ADMIN_ACTION.CORRECT, { reason: '訂正' });
+  assert.equal(db.history.length, 2);
+  assert.deepEqual(db.history[0], first, '既存の履歴行が書き換わっている');
+  assert.deepEqual(histOps(), ['grant', 'correct']);
+  // 既存行への PATCH / DELETE を一度も発行していない（POST だけ）
+  assert.ok(db.historyWrites.every((w) => w.method === 'POST'), 'append 以外の書き込みがある');
+});
+
+test('reissue で 3 件目が増える', async () => {
+  await op(PP_COUPON_ADMIN_ACTION.GRANT, { reason: '付与' });
+  await op(PP_COUPON_ADMIN_ACTION.CORRECT, { reason: '訂正' });
+  await op(PP_COUPON_ADMIN_ACTION.REISSUE, { reason: '再発行' });
+  assert.equal(db.history.length, 3);
+  assert.deepEqual(histOps(), ['grant', 'correct', 'reissue']);
+  assert.equal(new Set(histIds()).size, 3, '別の操作が同じ OperationId になっている');
+});
+
+test('revokeReservation も履歴に残る', async () => {
+  db = makeDb({
+    member: HELD_FIELDS,
+    offers: [{ id: 'recOFFER0000001', fields: reservationFields(OFFER_STATUS.ISSUED) }],
+  });
+  const out = await op(PP_COUPON_ADMIN_ACTION.REVOKE_RESERVATION, { reason: '予約取消' });
+  assert.equal(out.statusCode, 200);
+  assert.equal(db.history.length, 1);
+  assert.equal(db.history[0].fields.OperationType, 'revokeReservation');
+  assert.equal(db.history[0].fields.OperationId, out.body.operationId);
+});
+
+test('同時 2 要求 → state PATCH 1 回 / 履歴 1 件', async () => {
+  const r = await race2(PP_COUPON_ADMIN_ACTION.GRANT);
+  assert.equal(r.okCount, 1);
+  const customerPatches = db.writes.filter((w) => w.table === 'Customers').length;
+  assert.equal(customerPatches, 1, `state PATCH が ${customerPatches} 回`);
+  assert.equal(db.history.length, 1, `履歴が ${db.history.length} 件`);
+});
+
+test('履歴 create 失敗でも state 成功は維持し、repair 対象として検出できる', async () => {
+  db = makeDb();
+  db.historyCreateFails = true;
+  const out = await op(PP_COUPON_ADMIN_ACTION.GRANT, { reason: '付与' });
+  // 状態変更は成功したまま（**巻き戻さない**）
+  assert.equal(out.statusCode, 200);
+  assert.equal(out.body.after.claimed, true);
+  assert.equal(readReopenCoupon(db.customers[REC]).claimed, true);
+  // 履歴だけ積めていない
+  assert.equal(out.body.history.appended, false);
+  assert.equal(db.history.length, 0);
+  // op= は残っているので後から repair できる
+  const audit = parseCouponAudit(db.customers[REC][PP_REOPEN_COUPON_FIELDS.SOURCE]);
+  assert.equal(audit.operationId, out.body.operationId);
+});
+
+test('repair で同じ OperationId の 1 件へ収束し、再実行しても増えない', async () => {
+  db = makeDb();
+  db.historyCreateFails = true;
+  const out = await op(PP_COUPON_ADMIN_ACTION.GRANT, { reason: '付与' });
+  db.historyCreateFails = false;
+
+  const fix = await post({ action: 'couponHistoryRepair', recordId: REC });
+  assert.equal(fix.statusCode, 200);
+  assert.equal(fix.body.repaired, 1);
+  assert.equal(db.history.length, 1);
+  assert.equal(db.history[0].fields.OperationId, out.body.operationId, '別の OperationId で積んでいる');
+  assert.equal(db.history[0].fields.OperationType, 'grant');
+  assert.equal(db.history[0].fields.Actor, 'MK');
+  // ⚠️ 状態は 1 バイトも触っていない
+  assert.equal(db.writes.filter((w) => w.table === 'Customers').length, 1, 'repair が state を書いている');
+
+  // 再実行しても増えない
+  const again = await post({ action: 'couponHistoryRepair', recordId: REC });
+  assert.equal(again.statusCode, 200);
+  assert.equal(again.body.repaired, 0);
+  assert.equal(db.history.length, 1);
+});
+
+test('gate UNSET なら履歴を 1 行も書かない（state は従来どおり動く）', async () => {
+  delete process.env.COUPON_HISTORY_TABLE_READY;
+  const out = await op(PP_COUPON_ADMIN_ACTION.GRANT, { reason: '付与' });
+  assert.equal(out.statusCode, 200, 'gate off で state まで止めている');
+  assert.equal(out.body.history.appended, false);
+  assert.equal(out.body.history.reason, 'history_disabled');
+  assert.equal(db.history.length, 0);
+  assert.equal(db.historyWrites.length, 0);
+  // repair も断る
+  const fix = await post({ action: 'couponHistoryRepair', recordId: REC });
+  assert.equal(fix.statusCode, 503);
+  assert.equal(fix.body.code, 'history_disabled');
+  // 履歴表示は「確認できない」を返す（0 件と言わない）
+  const list = await post({ action: 'couponHistory', recordId: REC });
+  assert.equal(list.body.available, false);
+  assert.equal(list.body.reason, 'history_disabled');
+  assert.ok(list.body.note.includes('有効化されていません'));
+});
+
+test('Redis down なら state も履歴も書かない', async () => {
+  db = makeDb();
+  redis = makeRedis({ down: true });
+  const out = await op(PP_COUPON_ADMIN_ACTION.GRANT);
+  assert.equal(out.statusCode, 503);
+  assert.equal(db.writes.length, 0);
+  assert.equal(db.history.length, 0);
+});
+
+test('他会員・他商品は履歴で分離される', async () => {
+  await op(PP_COUPON_ADMIN_ACTION.GRANT, { reason: '付与' });
+  await post({
+    action: 'couponAdmin', recordId: OTHER, couponAction: PP_COUPON_ADMIN_ACTION.CORRECT,
+    actor: 'MK', reason: '別会員の訂正',
+  });
+  assert.equal(db.history.length, 2);
+  // 会員ごとに引くと 1 件ずつ
+  const mine = await post({ action: 'couponHistory', recordId: REC });
+  const theirs = await post({ action: 'couponHistory', recordId: OTHER });
+  assert.equal(mine.body.rows.length, 1);
+  assert.equal(theirs.body.rows.length, 1);
+  assert.equal(mine.body.rows[0].operationType, 'grant');
+  assert.equal(theirs.body.rows[0].operationType, 'correct');
+  assert.notEqual(mine.body.rows[0].operationId, theirs.body.rows[0].operationId);
+  // 商品識別子が入っている（2 商品目が来ても混ざらない）
+  assert.ok(db.history.every((r) => r.fields.ProductKey === 'premium_plus'));
+});
+
+test('履歴は時系列（新しい順）で admin へ返る', async () => {
+  await op(PP_COUPON_ADMIN_ACTION.GRANT, { reason: '付与' });
+  await op(PP_COUPON_ADMIN_ACTION.CORRECT, { reason: '訂正' });
+  const list = await post({ action: 'couponHistory', recordId: REC });
+  assert.equal(list.body.available, true);
+  assert.equal(list.body.rows.length, 2);
+  const times = list.body.rows.map((r) => Date.parse(r.occurredAt));
+  assert.ok(times[0] >= times[1], '新しい順になっていない');
+  // 画面に出すのに必要な項目が揃っている（Airtable を直接見なくて済む）
+  for (const row of list.body.rows) {
+    for (const k of ['operationId', 'occurredAt', 'operationType', 'actor', 'reason']) {
+      assert.ok(k in row, `${k} が無い`);
+    }
+  }
 });
 
 // ── 二重操作・使用済み ───────────────────────────────────────

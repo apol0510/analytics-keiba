@@ -1292,6 +1292,13 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   .ppe .coupon-ops-msg { margin: 8px 0 0; font-size: .84rem; }
   .ppe .coupon-ops-msg.ok { color: #34d399; }
   .ppe .coupon-ops-msg.err { color: #f87171; }
+  /* 操作履歴（読み取り専用・時系列） */
+  .ppe .coupon-hist { margin-top: 10px; border-top: 1px solid rgba(148,163,184,.18); padding-top: 8px; }
+  .ppe .coupon-hist-body { margin-top: 8px; }
+  .ppe .coupon-hist-list { list-style: none; margin: 0; padding: 0; }
+  .ppe .coupon-hist-list li { padding: .4rem 0; border-bottom: 1px dashed rgba(148,163,184,.16); font-size: .84rem; }
+  .ppe .coupon-hist-list li:last-child { border-bottom: none; }
+  .ppe .coupon-hist-why { color: #94a3b8; font-size: .8rem; margin-top: .15rem; }
   @media (max-width: 768px) {
     .ppe .coupon-ops .dt-ops { flex-direction: column; }
     .ppe .b-coupon { width: 100%; }
@@ -3719,7 +3726,77 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       }
       box.appendChild(ops);
       box.appendChild(msg);
+
+      // ── 操作履歴（時系列）────────────────────────────────
+      // ⚠️ **通常運用で Airtable を直接見なくて済むように**、この画面で全部見せる。
+      //    読み取り専用。0 件と「確認できない」を混同しない。
+      const hist = document.createElement('div'); hist.className = 'coupon-hist';
+      const hb = document.createElement('button');
+      hb.type = 'button'; hb.className = 'btn-ghost btn-sm';
+      hb.textContent = '操作履歴を表示（読み取りのみ）';
+      const hbody = document.createElement('div'); hbody.className = 'coupon-hist-body'; hbody.hidden = true;
+      hb.addEventListener('click', async () => {
+        hb.disabled = true;
+        const out = await call({ action: 'couponHistory', recordId: r.recordId });
+        hb.disabled = false;
+        hbody.hidden = false;
+        hbody.innerHTML = '';
+        if (!out || out.__unknown) {
+          const p = document.createElement('p'); p.className = 'blocker';
+          p.textContent = '履歴を取得できませんでした。0 件と判断しないでください。';
+          hbody.appendChild(p); return;
+        }
+        if (out.available !== true) {
+          const p = document.createElement('p'); p.className = 'blocker';
+          p.textContent = '⚠️ ' + (out.note || '履歴を確認できません。');
+          hbody.appendChild(p); return;
+        }
+        if (!out.rows.length) {
+          const p = document.createElement('p'); p.className = 'muted';
+          p.textContent = 'この会員の操作履歴は 0 件です（記録開始後に操作がありません）。';
+          hbody.appendChild(p); return;
+        }
+        const ul = document.createElement('ul'); ul.className = 'coupon-hist-list';
+        for (const row of out.rows) {
+          const li = document.createElement('li');
+          const head = document.createElement('b');
+          head.textContent = (OP_LABEL[row.operationType] || row.operationType);
+          const meta = document.createElement('span'); meta.className = 'muted';
+          meta.textContent = '　' + fmtDateTime(row.occurredAt)
+            + '　実行者: ' + (row.actor || '—')
+            + (row.beforeState || row.afterState ? '　' + (row.beforeState || '—') + ' → ' + (row.afterState || '—') : '');
+          li.appendChild(head); li.appendChild(meta);
+          if (row.reason) {
+            const why = document.createElement('div'); why.className = 'coupon-hist-why';
+            why.textContent = '理由: ' + row.reason;
+            li.appendChild(why);
+          }
+          ul.appendChild(li);
+        }
+        hbody.appendChild(ul);
+        const n = document.createElement('p'); n.className = 'muted';
+        n.style.fontSize = '0.78rem';
+        n.textContent = '新しい順・' + out.rows.length + ' 件。'
+          + 'この履歴は記録専用で、会員の権限・課金の根拠にはなりません。';
+        hbody.appendChild(n);
+      });
+      hist.appendChild(hb); hist.appendChild(hbody);
+      box.appendChild(hist);
+
       sec.appendChild(box);
+    }
+
+    /** 操作種別の表示名（サーバーと同じ語彙） */
+    const OP_LABEL = {
+      claim: 'お客様ご自身の取得', grant: 'クーポンを付与', reissue: 'クーポンを再発行',
+      correct: '誤取得を訂正', revokeReservation: '利用予約を取り消す',
+    };
+
+    /** 日時（JST・分まで）。履歴は「いつ」が要るので日付だけにしない */
+    function fmtDateTime(iso) {
+      const t = Date.parse(String(iso || ''));
+      if (!Number.isFinite(t)) return '—';
+      return new Date(t).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', hour12: false });
     }
 
     function renderDetail() {

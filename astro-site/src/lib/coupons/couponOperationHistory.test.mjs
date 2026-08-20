@@ -48,9 +48,26 @@ test('本番テーブルが未有効のあいだは何も積まない（fail clo
   assert.equal(p.reason, 'history_disabled');
 });
 
-test('本番テーブルへ書く経路をまだ作っていない（設計のみ）', () => {
+test('履歴の書き込みは gate 配下にしかない（gate off で 1 行も書かない）', () => {
+  const store = read('./couponHistoryStore.js');
+  // append / 読み出しの入口が必ず gate を通る
+  const appendFn = store.slice(store.indexOf('async append('));
+  assert.match(appendFn.slice(0, appendFn.indexOf('\n    },')), /isCouponHistoryEnabled\(environment\)/,
+    'append が gate を見ていない');
+  // append-only: 既存行を書き換える経路を持たない
+  assert.doesNotMatch(store, /method:\s*'PATCH'/, '履歴を PATCH する経路がある');
+  assert.doesNotMatch(store, /method:\s*'DELETE'/, '履歴を DELETE する経路がある');
+});
+
+test('admin から会員の履歴を時系列で見られる（Airtable を直接見なくて済む）', () => {
   const fn = read('../../../netlify/functions/premium-plus-eligibility.js');
-  assert.doesNotMatch(fn, /CouponOperationHistory/, '本番テーブル未作成なのに書き込み経路がある');
+  assert.match(fn, /action === 'couponHistory'/, '履歴を返す経路が無い');
+  assert.match(fn, /action === 'couponHistoryRepair'/, 'repair 経路が無い');
+  const page = read('../../pages/admin/premium-plus-eligibility.astro');
+  assert.match(page, /action: 'couponHistory'/, '管理画面から履歴を引いていない');
+  assert.match(page, /coupon-hist-list/, '履歴の一覧を描画していない');
+  // 「確認できない」と 0 件を混同しない
+  assert.match(page, /0 件と判断しないでください/);
 });
 
 // ── 冪等キーは時計に依存しない ───────────────────────────────
@@ -99,10 +116,12 @@ test('Redis が使えないときは積まない（fail closed・状態は巻き
   assert.equal(p.reason, 'lock_unavailable');
 });
 
-test('墓標は TTL 付き（落ちた 1 回の履歴が永遠に欠けない）', () => {
-  assert.match(H.historyMarkKey('abc'), /^ak:coupon-history:mark:abc$/);
-  assert.ok(H.HISTORY_MARK_TTL_SEC >= 60, 'TTL が短すぎる');
-  assert.ok(Number.isFinite(H.HISTORY_MARK_TTL_SEC), 'TTL 無し（永久墓標）にしている');
+test('排他は operation lock が持つ（履歴専用の鍵を二重に持たない）', async () => {
+  const L = await import('./couponOperationLock.js');
+  const src = read('./couponOperationHistory.js');
+  assert.doesNotMatch(src, /historyMarkKey|HISTORY_MARK_TTL_SEC/, '履歴専用の墓標が残っている');
+  // lock は TTL 付き（crash しても repair が積み直せる）
+  assert.ok(Number.isFinite(L.COUPON_LOCK_TTL_SEC) && L.COUPON_LOCK_TTL_SEC >= 60);
 });
 
 // ── 別操作 / 別会員 / 別商品は別キー ─────────────────────────

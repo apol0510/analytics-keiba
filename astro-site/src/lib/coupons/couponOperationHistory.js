@@ -139,25 +139,23 @@ export function buildHistoryRecord({
  * ## Airtable には unique 制約が無い
  *
  * 「検索して無ければ create」だけでは、**同時に 2 本走ると両方が「無い」を読む**ため
- * 2 行できる。そこで既存の primitive（`marketing/automationStore.js` の
- * `SET NX` ＋ **墓標**）と同じやり方で、**Redis に OperationId の墓標を立てた 1 本だけ**が
- * create する。新しい外部基盤は増やさない（`UPSTASH_REDIS_REST_*` は本番稼働中）。
+ * 2 行できる。排他は **`couponOperationLock.js` の operation lock**（`OperationId` の鍵）が持つ。
  *
  * ```
- * ① 既存行を OperationId で検索  → 有れば何もしない（収束済み）
- * ② SET ak:coupon-history:mark:<opId> <token> NX EX 300 → 取れなければ何もしない
- *                                        （もう 1 本が書いている / 書き終えた）
+ * ① OperationId で operation lock を取得（**状態変更より前**）
+ * ② 既存行を OperationId で検索 → 有れば何もしない（収束済み）
  * ③ Airtable に 1 行 create
  * ```
  *
- * ⚠️ **墓標に TTL を付ける**。②の後に落ちると行が無いまま鍵が残るので、
- *    TTL 切れのあとに **repair が①で「行が無い」を見て積み直せる**ようにする
- *    （TTL 無しの永久墓標にすると、落ちた 1 回の履歴が永遠に欠ける）。
- * ⚠️ Redis が使えないときは **append しない**（fail closed）。
- *    状態変更は成功しているので `op=` から後で repair できる（下記）。
+ * ⚠️ **状態変更と履歴を同じ鍵の中で行う**ので、「状態は 1 回・履歴も 1 件」が
+ *    ひとつの排他で保証される。履歴専用の墓標は持たない（鍵を二重に持たない）。
+ * ⚠️ lock は TTL 付き。crash しても TTL 切れのあと **repair が②で「行が無い」を見て
+ *    積み直せる**（永久墓標にすると、落ちた 1 回の履歴が永遠に欠ける）。
+ * ⚠️ Redis が使えないときは **状態変更ごと行わない**（fail closed）。
  *
  * @param {{ record: object|null, existing?: object[], env?: object,
  *           lock?: 'acquired'|'lost'|'unavailable' }} input
+ *   `lock` は **operation lock の状態**（`couponOperationLock.acquire()` の結果）。
  */
 export function planHistoryAppend({ record, existing = [], env, lock = 'acquired' } = {}) {
   if (!record) return { append: false, reason: 'no_record' };
@@ -172,12 +170,6 @@ export function planHistoryAppend({ record, existing = [], env, lock = 'acquired
   if (lock !== 'acquired') return { append: false, reason: 'lock_unavailable' };
   return { append: true, reason: 'ok' };
 }
-
-/** Redis の墓標キー（**PII を含めない**。OperationId はハッシュ値） */
-export const historyMarkKey = (operationId) => `ak:coupon-history:mark:${operationId}`;
-
-/** 墓標の TTL（秒）。Function の最大実行時間より十分長く、かつ永久にはしない */
-export const HISTORY_MARK_TTL_SEC = 300;
 
 /**
  * 状態変更は成功したが**履歴だけ積めなかった**ものを見つける（部分成功の回復）。

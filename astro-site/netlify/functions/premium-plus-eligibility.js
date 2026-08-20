@@ -114,6 +114,15 @@ import {
   LOCK_RESULT,
   LOCK_REJECT_TEXT,
 } from '../../src/lib/coupons/couponOperationLock.js';
+import { createCouponHistoryStore } from '../../src/lib/coupons/couponHistoryStore.js';
+import {
+  buildHistoryRecord,
+  buildRepairRecord,
+  findHistoryRepairTargets,
+  isCouponHistoryEnabled,
+} from '../../src/lib/coupons/couponOperationHistory.js';
+import { PP_COUPON_BINDING } from '../../src/lib/premiumPlus/premiumPlusCouponAdmin.js';
+import { parseCouponAudit } from '../../src/lib/coupons/couponPlatform.js';
 import {
   describeCouponLifecycle,
   describeLedgerUnavailable,
@@ -124,6 +133,7 @@ import {
   readReopenCoupon,
   isReopenCouponEnabled,
   PP_REOPEN_COUPON,
+  PP_REOPEN_COUPON_FIELDS,
   describeCouponTerms,
   describeCouponDiscount,
   describeCouponPrice,
@@ -180,6 +190,8 @@ exports.handler = async (event) => {
     if (action === 'setUpsell') return await handleSetUpsell({ KEY, BASE, now, req });
     if (action === 'setSalePause') return await handleSetSalePause({ KEY, BASE, now, req });
     if (action === 'couponAdmin') return await handleCouponAdmin({ KEY, BASE, now, req });
+    if (action === 'couponHistory') return await handleCouponHistory({ KEY, BASE, req });
+    if (action === 'couponHistoryRepair') return await handleCouponHistoryRepair({ KEY, BASE, now, req });
     return json(400, { error: `未知の action: ${action}` });
   } catch (e) {
     console.error('❌ [premium-plus-eligibility]', e.message);
@@ -835,10 +847,15 @@ async function handleCouponAdmin({ KEY, BASE, now, req }) {
       console.log('✅ [premium-plus-eligibility] 利用予約を取消:', { recordId, actor });
       // 台帳が変わったので**読み直す**（手元の ledger を使い回さない）
       const after = await reloadCouponState({ KEY, BASE, recordId });
+      // ⑦ 履歴（同じ lock の中・同じ OperationId）。失敗しても状態は巻き戻さない
+      const history = await appendOperationHistory({
+        KEY, BASE, recordId, plan, actor, reason, before, after, detail: plan.note,
+      });
       return json(200, {
         success: true, couponAction, subject, before, after,
         changed: true,
         operationId: plan.operationId,
+        history,
         /** Customers 側は 1 バイトも書いていない */
         customerFieldsUnchanged: true,
         note: '利用予約を取り消しました。クーポンの取得（保有）はそのまま残っています。',
@@ -868,6 +885,11 @@ async function handleCouponAdmin({ KEY, BASE, now, req }) {
     //    状態変更が成功していれば、監査文字列に残した op= から後で
     //    history-only で積み直せる（⑧ 部分成功の回復）。
     const after = await reloadCouponState({ KEY, BASE, recordId });
+    // ⑦ 履歴（同じ lock の中・同じ OperationId）。失敗しても状態は巻き戻さない
+    const history = await appendOperationHistory({
+      KEY, BASE, recordId, plan, actor, reason, before, after,
+      detail: String(plan.fields[PP_REOPEN_COUPON_FIELDS.SOURCE] || ''),
+    });
     return json(200, {
       success: true,
       couponAction,
@@ -876,6 +898,7 @@ async function handleCouponAdmin({ KEY, BASE, now, req }) {
       after,
       changed: true,
       operationId: plan.operationId,
+      history,
       /** 資格・停止・会員権・決済は変更していない（応答でも明示して履歴に残す） */
       eligibilityUnchanged: true,
       membershipUnchanged: true,
@@ -888,6 +911,159 @@ async function handleCouponAdmin({ KEY, BASE, now, req }) {
     // ── ⑨ 解放（token 一致時のみ）。失敗しても TTL で必ず回復する ──
     await lock.release({ operationId: planned.operationId, token: got.token });
   }
+}
+
+/**
+ * 操作の履歴を 1 行積む（**append-only**）。
+ *
+ * ⚠️ **呼び出せるのは operation lock を保持したまま**（状態変更と同じ鍵の中）。
+ * ⚠️ **失敗しても状態変更を巻き戻さない。** 監査に残した `op=` から
+ *    `couponHistoryRepair` で後から同じ OperationId で積み直せる。
+ * ⚠️ gate（`COUPON_HISTORY_TABLE_READY`）が off なら**何もしない**。
+ */
+async function appendOperationHistory({
+  KEY, BASE, recordId, plan, actor, reason, before, after, detail,
+}) {
+  if (!isCouponHistoryEnabled(process.env)) {
+    return { appended: false, reason: 'history_disabled' };
+  }
+  const record = buildHistoryRecord({
+    customerRecordId: recordId,
+    productKey: PP_COUPON_BINDING.productKey,
+    couponId: PP_COUPON_BINDING.couponId,
+    version: PP_COUPON_BINDING.version,
+    operationType: plan.operation || plan.action,
+    actor, reason,
+    beforeState: (before && before.lifecycle) || '',
+    afterState: (after && after.lifecycle) || '',
+    detail: detail || '',
+    atIso: plan.atIso || new Date().toISOString(),
+    operationId: plan.operationId,
+  });
+  if (!record) return { appended: false, reason: 'no_record' };
+  const store = createCouponHistoryStore({ apiKey: KEY, baseId: BASE, env: process.env });
+  const out = await store.append({ record, lockStatus: 'acquired' });
+  if (!out.appended && out.reason !== 'already_recorded') {
+    // 状態は成功している。**巻き戻さず**、未記録として運営者に見せる
+    console.warn('⚠️ [premium-plus-eligibility] 履歴を積めませんでした:',
+      { recordId, operationId: plan.operationId, reason: out.reason });
+  }
+  return out;
+}
+
+/**
+ * 会員 1 人ぶんのクーポン操作履歴を**時系列で返す**（read-only）。
+ *
+ * これがあるので、通常運用で **Airtable を直接見る必要がない**。
+ * ⚠️ 他会員の行は混ざらない（`CustomerRecordId` 一致だけを引く）。
+ * ⚠️ gate が off / 読めないときは **0 件と断定しない**（「確認できない」を返す）。
+ */
+async function handleCouponHistory({ KEY, BASE, req }) {
+  const recordId = String(req.recordId || '').trim();
+  if (!recordId) return json(400, { error: 'recordId が必要です', sideEffects: 'none' });
+
+  const store = createCouponHistoryStore({ apiKey: KEY, baseId: BASE, env: process.env });
+  const got = await store.listForCustomer({ customerRecordId: recordId });
+  return json(200, {
+    recordId,
+    available: got.available,
+    reason: got.reason,
+    note: got.available ? '' : (got.reason === 'history_disabled'
+      ? '操作履歴の保存はこの本番環境でまだ有効化されていません（COUPON_HISTORY_TABLE_READY 未設定）。'
+        + 'これまでの操作は記録されていないため、履歴は表示できません。'
+      : '操作履歴を読み取れませんでした。0 件と判断しないでください。'),
+    rows: (got.rows || []).map((r) => ({
+      operationId: r.fields.OperationId || '',
+      occurredAt: r.fields.OccurredAt || '',
+      operationType: r.fields.OperationType || '',
+      actor: r.fields.Actor || '',
+      reason: r.fields.Reason || '',
+      beforeState: r.fields.BeforeState || '',
+      afterState: r.fields.AfterState || '',
+      productKey: r.fields.ProductKey || '',
+      couponId: r.fields.CouponId || '',
+      couponVersion: r.fields.CouponVersion ?? null,
+    })),
+    sideEffects: 'none',
+  });
+}
+
+/**
+ * **history-only repair**（状態は成功したが履歴だけ未記録、を収束させる）。
+ *
+ * 監査文字列に残した `op=<OperationId>` を根拠に、履歴に無い分だけを
+ * **同じ OperationId** で積み直す。**状態は 1 バイトも触らない。**
+ *
+ * ⚠️ 同じ OperationId の operation lock を取ってから積む（並行 repair でも 1 件）。
+ * ⚠️ 何度実行しても増えない（既に積まれていれば `already_recorded` でスキップ）。
+ */
+async function handleCouponHistoryRepair({ KEY, BASE, now, req }) {
+  const recordId = String(req.recordId || '').trim();
+  if (!recordId) return json(400, { error: 'recordId が必要です', sideEffects: 'none' });
+  if (!isCouponHistoryEnabled(process.env)) {
+    return json(503, {
+      error: '操作履歴の保存が有効化されていないため修復できません（COUPON_HISTORY_TABLE_READY 未設定）。',
+      code: 'history_disabled', sideEffects: 'none',
+    });
+  }
+
+  const getRes = await fetch(`https://api.airtable.com/v0/${BASE}/${CUSTOMERS_TABLE}/${recordId}`, {
+    headers: airtableHeaders(KEY),
+  });
+  if (!getRes.ok) return json(404, { error: 'Record not found', sideEffects: 'none' });
+  const fields = (await getRes.json()).fields || {};
+
+  const store = createCouponHistoryStore({ apiKey: KEY, baseId: BASE, env: process.env });
+  const existing = await store.listForCustomer({ customerRecordId: recordId });
+  if (!existing.available) {
+    return json(503, {
+      error: '操作履歴を読み取れないため修復できません。', code: existing.reason, sideEffects: 'none',
+    });
+  }
+
+  // Customers に残っている**直近 1 回**の監査から未記録を拾う
+  const audit = parseCouponAudit(readReopenCoupon(fields).source);
+  const targets = findHistoryRepairTargets({
+    audits: [{ customerRecordId: recordId, audit }], rows: existing.rows,
+  });
+  if (targets.length === 0) {
+    return json(200, {
+      recordId, repaired: 0, note: '未記録の操作はありません（履歴は state と一致しています）。',
+      sideEffects: 'none',
+    });
+  }
+
+  const lock = createCouponOperationLock({ redisCmd: makeRedisCmd(process.env) });
+  const results = [];
+  for (const t of targets) {
+    const got = await lock.acquire({ operationId: t.operationId });
+    if (got.status !== LOCK_RESULT.ACQUIRED) {
+      results.push({ operationId: t.operationId, appended: false, reason: got.status });
+      continue;
+    }
+    try {
+      const record = buildRepairRecord({
+        customerRecordId: recordId,
+        productKey: PP_COUPON_BINDING.productKey,
+        couponId: PP_COUPON_BINDING.couponId,
+        version: PP_COUPON_BINDING.version,
+        audit: t.audit,
+        // 当時の前後状態は残っていないので**推測しない**（空のまま積む）
+        beforeState: '', afterState: '',
+      });
+      const out = await store.append({ record, lockStatus: 'acquired' });
+      results.push({ operationId: t.operationId, ...out });
+    } finally {
+      await lock.release({ operationId: t.operationId, token: got.token });
+    }
+  }
+  return json(200, {
+    recordId,
+    repaired: results.filter((r) => r.appended).length,
+    results,
+    note: '履歴だけを積み直しました。**会員の状態は 1 バイトも変更していません。**',
+    sideEffects: 'coupon_history_appended',
+  });
 }
 
 /** 操作後の状態を **Airtable から読み直して**返す（送った値が通った前提にしない） */

@@ -185,6 +185,22 @@ sha256("ak-coupon-op|" + productKey + "|" + couponId + "|" + version
   （新しい外部基盤を足さない）
 - ⚠️ **状態成功後の履歴失敗で、状態を rollback しない**
 
+### 履歴の配線（**実装済み・gate は未設定**）
+
+| 経路 | 何をするか |
+|---|---|
+| 4 操作（grant / correct / reissue / revokeReservation）| 状態変更の成功後、**同じ lock の中**で同じ `OperationId` の履歴を 1 行 append |
+| `action='couponHistory'` | 会員 1 人ぶんの履歴を**時系列（新しい順）**で返す（read-only）|
+| `action='couponHistoryRepair'` | **history-only** の修復。`op=` から未記録を拾い、同じ `OperationId` で積み直す |
+| 管理画面 | 詳細パネルの「操作履歴を表示」。**通常運用で Airtable を直接見なくてよい** |
+
+- 書き込みは `src/lib/coupons/couponHistoryStore.js` だけが行う。
+  **PATCH / DELETE の経路を持たない**（append-only を構造で守る）
+- `COUPON_HISTORY_TABLE_READY !== '1'` なら**読み書きとも行わない**
+  （画面には「確認できない」と出す。**0 件と断定しない**）
+- 履歴の append に失敗しても**状態は巻き戻さない**。`op=` から repair で収束する
+- repair は**状態を 1 バイトも触らない**。同じ `OperationId` なので何度実行しても 1 件
+
 ### 同時実行（Airtable に unique 制約は無い）
 
 「検索して無ければ create」だけでは、**同時に 2 本走ると両方が「無い」を読む**ため 2 行できる。
