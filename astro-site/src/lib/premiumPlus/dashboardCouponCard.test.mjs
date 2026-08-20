@@ -49,7 +49,9 @@ test('確定条件が表示モデルから出る（10,000円OFF / 68,000円 → 
   assert.equal(v.priceText, '通常 68,000円 → 58,000円');
   // 有効期限だけは未確定のまま
   assert.equal(v.expiryDetermined, false);
-  assert.match(v.expiryText, /未定/);
+  // ルールは確定（募集再開日から14日）だが、開始日が未定なので**具体的な日付は出さない**
+  assert.match(v.expiryText, /14日間/);
+  assert.doesNotMatch(v.expiryText, /\d{4}-\d{2}-\d{2}|\d+月\d+日/);
 });
 
 test('取得日時は JST・時刻まで（UTC 基準で日付をズラさない）', () => {

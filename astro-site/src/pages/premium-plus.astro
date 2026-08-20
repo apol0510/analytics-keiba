@@ -40,6 +40,8 @@ import {
   PP_REOPEN_COUPON_SOURCE,
 } from '../lib/premiumPlus/premiumPlusReopenCoupon.js';
 import { renderPauseNoticeHtml } from '../lib/premiumPlus/premiumPlusPauseNoticePage.js';
+// 申込モーダル内のクーポン適用 UI（金額はサーバーの単一源から取る）
+import PremiumPlusCouponApply from '../components/PremiumPlusCouponApply.astro';
 import { lookupCustomerFields } from '../lib/premiumPlus/purchaseAnchorLookup.js';
 import { recordPlusPageView, readPlusSourceFromUrl } from '../lib/premiumPlus/premiumPlusFunnelServer.js';
 
@@ -1504,6 +1506,8 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
       <button class="modal-close" onclick="closeBankModal()">×</button>
       <h2 class="modal-title">🏦 銀行振込でのお申し込み</h2>
 
+      <PremiumPlusCouponApply />
+
       <div class="bank-box">
         <div class="bank-item">
           <span class="k">振込先銀行</span>
@@ -1782,7 +1786,9 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
         saleTargetDate: document.getElementById('ppSaleTargetDate')?.value || null,
         // どの導線から来たか（?from=）。**採否はサーバーの allow-list**が決める
         funnelSource: new URLSearchParams(location.search).get('from') || null,
-          paymentCompletedConfirm: document.getElementById('paymentCompletedConfirm').checked,
+          // 選択したクーポン（**id だけ**。割引額・最終価格は送らない＝サーバーが決める）
+        couponId: (typeof window.__akPpCouponId === 'function' ? window.__akPpCouponId() : ''),
+        paymentCompletedConfirm: document.getElementById('paymentCompletedConfirm').checked,
         timestamp: new Date().toISOString(),
       };
 

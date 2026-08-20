@@ -42,6 +42,7 @@
  */
 
 import { REGULAR_PRICE, DISCOUNT_TYPE } from '../promotions/promotionOfferCatalog.js';
+import { encodeCouponAudit, parseCouponAudit } from '../coupons/couponPlatform.js';
 
 /** 円表記（3 桁区切り）。表示の体裁もここ 1 か所で決める。 */
 export function formatYen(n) {
@@ -79,7 +80,20 @@ export const PP_REOPEN_COUPON = Object.freeze({
     discountValue: PP_REOPEN_COUPON_DISCOUNT_YEN,
     regularPrice: REGULAR_PRICE.premium_plus,
     offerPrice: REGULAR_PRICE.premium_plus - PP_REOPEN_COUPON_DISCOUNT_YEN,
-    /** 有効期限は未確定。null のまま + expiresDetermined:false */
+    /**
+     * 有効期限の**ルールは確定**（2026-08-19 MK）:
+     *   **再募集開始日時から 14 日間**
+     *
+     * ⚠️ ただし **`reopenStartsAt`（再募集の開始日時）がまだ決まっていない**ので、
+     *    絶対日時である `expiresAt` は**まだ計算できない**。
+     *    `expiresDetermined` は「顧客へ出せる確定日時があるか」を表すフラグなので false のまま。
+     *    再募集の開始日時が決まったら `reopenStartsAt` を入れるだけで、
+     *    `expiresAt` は `resolveCouponExpiry()` が 14 日を足して導出する。
+     * ⚠️ **仮の日付をここに書かないこと。**
+     */
+    expiryDays: 14,
+    /** 再募集の開始日時（ISO）。**未定** */
+    reopenStartsAt: null,
     expiresAt: null,
     expiresDetermined: false,
   }),
@@ -90,7 +104,7 @@ export const PP_REOPEN_COUPON = Object.freeze({
  * ⚠️ 「30日間有効」などと勝手に補完しないこと。
  */
 export const PP_REOPEN_COUPON_EXPIRY_NOTE =
-  '有効期限は未定です（募集再開のご案内時にお知らせいたします）。';
+  '募集再開日から14日間ご利用いただけます（開始日は募集再開のご案内時にお知らせいたします）。';
 
 /** 「いつ使えるか」の説明（顧客画面・管理画面で同じ文言を使う） */
 export const PP_REOPEN_COUPON_USABLE_NOTE = '募集再開時にご利用いただけます。';
@@ -195,12 +209,21 @@ function parseMs(v) {
 export function readReopenCoupon(fields) {
   const f = fields && typeof fields === 'object' ? fields : {};
   const claimedAtMs = parseMs(f[PP_REOPEN_COUPON_FIELDS.CLAIMED_AT]);
+  const source = String(f[PP_REOPEN_COUPON_FIELDS.SOURCE] ?? '').trim();
+  // `Source` は監査行として構造化されうる（`pause-notice|by=customer|at=…|op=…`）。
+  // ⚠️ **旧データ（素の `pause-notice`）もそのまま読める**（後方互換）。
+  const audit = parseCouponAudit(source);
   return {
     claimed: claimedAtMs !== null,
     claimedAtMs,
     claimedAtIso: claimedAtMs === null ? '' : new Date(claimedAtMs).toISOString(),
     couponId: String(f[PP_REOPEN_COUPON_FIELDS.COUPON_ID] ?? '').trim(),
-    source: String(f[PP_REOPEN_COUPON_FIELDS.SOURCE] ?? '').trim(),
+    /** 生値（監査行そのもの）*/
+    source,
+    /** **論理的な取得元**（`pause-notice` / `coupon-page` / `admin-*`）。構造化前後で同じ値 */
+    sourceKind: audit.kind || '',
+    /** 履歴の冪等キー（部分成功の回復に使う。旧データには無いので空）*/
+    operationId: audit.operationId || '',
   };
 }
 
@@ -256,7 +279,15 @@ export function resolveCouponClaimDecision({ pauseNotice, coupon, enabled } = {}
  * @returns {{ fields: object, changed: boolean, claimedAtIso: string }|null}
  *   書けない（enabled=false / now 不正）なら null（呼び出し側は 503。fail closed）
  */
-export function buildReopenCouponClaimFields({ current, now, source, enabled = false } = {}) {
+export function buildReopenCouponClaimFields({
+  current, now, source, enabled = false,
+  /**
+   * 履歴の冪等キー。**`Source` へ `op=` として残す**ので、
+   * 「Customers は成功したが履歴だけ失敗した」を後から検出して積み直せる。
+   * 省略しても取得自体は成立する（旧データと同じ形になる）。
+   */
+  operationId,
+} = {}) {
   if (enabled !== true) return null;
   const ms = now instanceof Date ? now.getTime() : Number(now);
   if (!Number.isFinite(ms)) return null;
@@ -267,10 +298,15 @@ export function buildReopenCouponClaimFields({ current, now, source, enabled = f
   }
 
   const iso = new Date(ms).toISOString();
+  // ⚠️ 取得元は **allow-list を通した値だけ**（クライアントが `admin-grant` 等を騙れない）。
+  //    監査行として構造化しても、先頭の kind は論理的な取得元のまま。
+  const kind = normalizeCouponSource(source);
   const out = {
     [PP_REOPEN_COUPON_FIELDS.CLAIMED_AT]: iso,
     [PP_REOPEN_COUPON_FIELDS.COUPON_ID]: couponIdWithVersion(),
-    [PP_REOPEN_COUPON_FIELDS.SOURCE]: normalizeCouponSource(source),
+    [PP_REOPEN_COUPON_FIELDS.SOURCE]: operationId
+      ? encodeCouponAudit({ kind, actor: 'customer', atIso: iso, reason: '', operationId })
+      : kind,
   };
   if (!assertOnlyCouponFields(out)) return null;
   // 資格・停止・会員権・決済を巻き添えで書いていないことを構造的に確認する
@@ -310,6 +346,26 @@ export function describeCouponPrice(def = PP_REOPEN_COUPON) {
     : '';
 }
 
+/**
+ * 有効期限を導出する（**期限の計算はここだけ**）。
+ *
+ * ルール: **再募集開始日時 + 14 日**。
+ * `reopenStartsAt` が未定のあいだは `null` を返す（＝仮の日付を作らない）。
+ */
+export function resolveCouponExpiry(def = PP_REOPEN_COUPON) {
+  const t = (def && def.terms) || {};
+  if (t.expiresAt) return { expiresAtIso: String(t.expiresAt), determined: true };
+  const startMs = Date.parse(String(t.reopenStartsAt || ''));
+  const days = Number(t.expiryDays);
+  if (!Number.isFinite(startMs) || !Number.isFinite(days)) {
+    return { expiresAtIso: null, determined: false };
+  }
+  return {
+    expiresAtIso: new Date(startMs + days * 24 * 60 * 60 * 1000).toISOString(),
+    determined: true,
+  };
+}
+
 /** 有効期限の表示。**未確定のあいだは日付を作らない** */
 export function describeCouponExpiry(def = PP_REOPEN_COUPON) {
   const t = (def && def.terms) || {};
@@ -334,13 +390,63 @@ export function resolveCouponPrice(def = PP_REOPEN_COUPON) {
   };
 }
 
+/** 申込画面のパス（クーポンから申込へ進む先） */
+export const PP_ORDER_PATH = '/premium-plus-v2/';
+
+/**
+ * 「取得後にどこへ進めるか」の CTA（**dashboard / クーポンページで共用**）。
+ *
+ * ⚠️ **販売停止中・再募集前は購入させない。**
+ *    押せる購入 CTA を偽装せず、`href: null` の**非購入表示**を返す。
+ * ⚠️ 文言・遷移先をここ以外で組み立てないこと（面ごとにズレる）。
+ *
+ * @param {{ claimed: boolean, purchasable: boolean, source?: string }} input
+ * @returns {{ show: boolean, purchasable: boolean, label: string, href: string|null,
+ *             note: string, detailLabel: string, detailHref: string }}
+ */
+export function describeCouponOrderCta({ claimed, purchasable, source = 'dashboard' } = {}) {
+  const discount = describeCouponDiscount();
+  const base = {
+    show: claimed === true,
+    detailLabel: 'クーポン詳細を確認',
+    detailHref: '/premium-plus-coupon/',
+  };
+  if (claimed !== true) {
+    return { ...base, show: false, purchasable: false, label: '', href: null, note: '' };
+  }
+  if (purchasable === true) {
+    // 再募集後・購入可能: 申込であることが明確な文言にする
+    return {
+      ...base,
+      purchasable: true,
+      label: `${discount}で申し込む`,
+      href: `${PP_ORDER_PATH}?from=${encodeURIComponent(source)}`,
+      note: '',
+    };
+  }
+  // 販売停止中・再募集前: **リンクにしない**（押せる購入 CTA を偽装しない）
+  return {
+    ...base,
+    purchasable: false,
+    label: `再募集時に${discount}で申し込めます`,
+    href: null,
+    note: '再募集時にこのクーポンをご利用いただけます。',
+  };
+}
+
 /**
  * 顧客画面に出す表示モデル（クーポンページ・受付休止ページで共用）。
  * **他会員の情報は入らない**（渡された 1 人分の fields からしか作らない）。
  *
  * @param {{ coupon: object, paused: boolean, claimable: boolean, storageReady?: boolean }} input
  */
-export function describeCouponForMember({ coupon, paused, claimable, storageReady = true } = {}) {
+export function describeCouponForMember({
+  coupon, paused, claimable, storageReady = true,
+  /** いま購入できるか（`plusRelease.purchaseEnabled`）。停止中は false */
+  purchasable = false,
+  /** CTA の導線元（`?from=` に載る） */
+  ctaSource = 'dashboard',
+} = {}) {
   const held = coupon || { claimed: false, claimedAtIso: '' };
   return {
     /**
@@ -375,6 +481,13 @@ export function describeCouponForMember({ coupon, paused, claimable, storageRead
     paused: paused === true,
     /** 取得 CTA を出してよいか（取得済みなら常に false ＝ 二重取得させない） */
     showClaimCta: claimable === true && held.claimed !== true,
+    /**
+     * 取得後の申込導線（主 CTA）。販売停止中は `href: null` の非購入表示。
+     * ⚠️ 呼び出し側は `purchasable` を見てリンクにするか決めること。
+     */
+    orderCta: describeCouponOrderCta({
+      claimed: held.claimed === true, purchasable: purchasable === true, source: ctaSource,
+    }),
     /** 保存先が有効化されていない（押しても取得できない）ことを隠さない */
     storageReady: storageReady !== false,
   };

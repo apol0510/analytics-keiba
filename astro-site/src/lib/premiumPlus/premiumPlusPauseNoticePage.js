@@ -108,6 +108,11 @@ dl{margin:0;font-size:0.9rem}
 dt{color:#94a3b8;font-size:0.82rem;margin:10px 0 2px}
 dd{margin:0;color:#e2e8f0}
 .note{font-size:0.84rem;color:#94a3b8;margin:14px 0 0}
+a.order-cta{display:block;text-align:center;margin:20px 0 0;padding:15px 18px;border-radius:12px;
+  background:#2563eb;color:#fff;font-size:0.98rem;font-weight:700;text-decoration:none}
+a.order-cta:hover{background:#1d4ed8}
+.order-wait{margin:20px 0 0;padding:14px 16px;border-radius:12px;background:#1e293b;
+  border:1px solid #475569;color:#cbd5e1;font-size:0.94rem;font-weight:700;text-align:center}
 button.claim{display:block;width:100%;margin:20px 0 0;padding:15px 18px;border:0;
   border-radius:12px;background:#2563eb;color:#fff;font-size:0.98rem;font-weight:700;
   cursor:pointer;font-family:inherit}
@@ -228,6 +233,7 @@ export function renderPauseNoticeHtml({ coupon, source = 'pause-notice' } = {}) 
   if (v.showClaimCta) {
     parts.push(claimForm({ source, storageReady: v.storageReady }));
   }
+  parts.push(orderCtaBlock(v.orderCta));
   parts.push(`<p class="links"><a href="${escapeHtml(COUPON_PAGE_PATH)}">取得済みクーポンを確認する</a></p>`);
   return shell({ title: PAUSE_NOTICE_COPY.title, inner: parts.join('\n') });
 }
@@ -246,5 +252,20 @@ export function renderCouponPageHtml({ coupon, source = 'coupon-page' } = {}) {
   if (v.showClaimCta) {
     parts.push(claimForm({ source, storageReady: v.storageReady }));
   }
+  parts.push(orderCtaBlock(v.orderCta));
   return shell({ title: COUPON_PAGE_COPY.title, inner: parts.join('\n') });
+}
+
+/**
+ * 申込導線（主 CTA）。
+ * ⚠️ **購入できないときはリンクにしない**（押せる購入 CTA を偽装しない）。
+ */
+function orderCtaBlock(cta) {
+  const c = cta || {};
+  if (c.show !== true) return '';
+  if (c.purchasable === true) {
+    return `<a class="order-cta" href="${escapeHtml(c.href)}">${escapeHtml(c.label)}</a>`;
+  }
+  return `<p class="order-wait">${escapeHtml(c.label)}</p>`
+    + (c.note ? `<p class="note">${escapeHtml(c.note)}</p>` : '');
 }

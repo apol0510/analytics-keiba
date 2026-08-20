@@ -193,7 +193,7 @@ test('表示モデルが割引・価格・期限を単一源から返す', () =>
   assert.equal(v.termsDetermined, true);
   assert.equal(v.discountText, '10,000円OFF');
   assert.equal(v.priceText, '通常 68,000円 → 58,000円');
-  assert.match(v.expiryText, /未定/);
+  assert.match(v.expiryText, /14日間/);
   assert.equal(v.expiryDetermined, false);
   assert.equal(v.showClaimCta, true);
 });

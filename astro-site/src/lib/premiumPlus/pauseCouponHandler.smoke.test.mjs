@@ -34,11 +34,70 @@ const SALEABLE = Object.freeze({
 let calls = [];
 let realFetch;
 let realEnv;
+let redis;
+/** CouponOperationHistory（append-only。テストでは配列で持つ）*/
+let history = [];
+let historyCreateFails = false;
+
+/** SET NX / EVAL の意味を本物どおりに実装した合成 Redis（排他の検証に使う）*/
+function makeRedis({ down = false } = {}) {
+  const store = new Map();
+  return {
+    store,
+    cmd: async (args) => {
+      if (down) throw new Error('redis_down');
+      const [op, ...rest] = args;
+      if (op === 'INCR') {
+        const n = Number(store.get(rest[0]) || 0) + 1;
+        store.set(rest[0], String(n));
+        return n;
+      }
+      if (op === 'SET') {
+        const [key, value, ...opts] = rest;
+        if (opts.includes('NX') && store.has(key)) return null;
+        store.set(key, value);
+        return 'OK';
+      }
+      if (op === 'EVAL') {
+        const [script, , key, token] = rest;
+        const cur = store.get(key);
+        if (cur === undefined) return 'LOST';
+        if (cur !== token) return 'STOLEN';
+        if (script.includes('DEL')) store.delete(key);
+        return 'OK';
+      }
+      return null;
+    },
+  };
+}
 
 function stubAirtable(recordsById) {
   globalThis.fetch = async (url, init = {}) => {
     const method = init.method || 'GET';
     calls.push({ url: String(url), method, body: init.body ? JSON.parse(init.body) : null });
+    const u = String(url);
+    // 合成 Redis（排他）
+    if (u.includes('redis.example.invalid')) {
+      try { return { ok: true, status: 200, json: async () => ({ result: await redis.cmd(JSON.parse(init.body || '[]')) }) }; }
+      catch { return { ok: false, status: 500, json: async () => ({}) }; }
+    }
+    // 合成 CouponOperationHistory（append-only）
+    if (u.includes('/CouponOperationHistory')) {
+      if (u.endsWith('/listRecords')) {
+        const body = JSON.parse(init.body || '{}');
+        const eq = String(body.filterByFormula || '').match(/\{(\w+)\}\s*=\s*'([^']*)'/);
+        const rows = history.filter((r) => !eq || String(r.fields[eq[1]] || '') === eq[2]);
+        return { ok: true, status: 200, json: async () => ({ records: rows }) };
+      }
+      if (method === 'POST') {
+        if (historyCreateFails) return { ok: false, status: 500, json: async () => ({}) };
+        for (const r of (JSON.parse(init.body || '{}').records || [])) {
+          history.push({ id: `recH${history.length + 1}`, fields: r.fields });
+        }
+        return { ok: true, status: 200, json: async () => ({ records: [] }) };
+      }
+      return { ok: false, status: 405, json: async () => ({}) };
+    }
     const id = String(url).split('/').pop();
     if (method === 'GET') {
       const fields = recordsById[id];
@@ -76,7 +135,7 @@ async function post(args) {
   return mod.POST({ request: request(args) });
 }
 
-const patches = () => calls.filter((c) => c.method === 'PATCH');
+const patches = () => calls.filter((c) => c.method === 'PATCH' && !String(c.url).includes('redis'));
 
 beforeEach(() => {
   calls = [];
@@ -88,6 +147,13 @@ beforeEach(() => {
   process.env.AIRTABLE_BASE_ID = BASE;
   process.env.PREMIUM_PLUS_FIELDS_READY = '1';
   process.env.PREMIUM_PLUS_REOPEN_COUPON_READY = '1';
+  // 排他は Redis 必須（fail closed）。合成 Redis を使えるよう env を立てる
+  process.env.UPSTASH_REDIS_REST_URL = 'https://redis.example.invalid';
+  process.env.UPSTASH_REDIS_REST_TOKEN = 'token-test';
+  redis = makeRedis();
+  history = [];
+  historyCreateFails = false;
+  delete process.env.COUPON_HISTORY_TABLE_READY;
   delete process.env.PREMIUM_PLUS_FUNNEL_ANCHOR;
 });
 
@@ -255,4 +321,152 @@ test('GET では取得できない（プリフェッチで勝手に取得しな�
   const res = mod.GET();
   assert.equal(res.status, 404);
   assert.equal(patches().length, 0);
+});
+
+// ── 共通クーポン基盤への配線（entity lock / 履歴 / repair）─────────
+const REC = 'recPAUSED0000001';
+const paused = () => ({ [REC]: { ...SALEABLE, PremiumPlusSalePaused: true } });
+const P = await import('../coupons/couponPlatform.js');
+
+test('claim も entity lock を通り、同時 2 本でも PATCH 1 回・取得日時を二重更新しない', async () => {
+  const db = paused();
+  stubAirtable(db);
+  const cookie = await cookieFor(REC);
+  const [a, b] = await Promise.all([post({ cookie }), post({ cookie })]);
+  const bodies = await Promise.all([a.json(), b.json()]);
+
+  assert.equal(patches().length, 1, `Customers PATCH が ${patches().length} 回`);
+  // 片方は取得成功、もう片方は「既取得」か「進行中」。**失敗扱いにしない／二重に書かない**
+  const claimedAt = db[REC][PP_REOPEN_COUPON_FIELDS.CLAIMED_AT];
+  assert.ok(claimedAt, '取得日時が記録されていない');
+  for (const [i, res] of [a, b].entries()) {
+    if (res.status === 200) assert.equal(bodies[i].claimed, true);
+    else assert.equal(bodies[i].sideEffects, 'none');
+  }
+  // 取得日時は 1 回しか書かれていない
+  assert.equal(patches()[0].body.fields[PP_REOPEN_COUPON_FIELDS.CLAIMED_AT], claimedAt);
+});
+
+test('Redis が使えないときは state を書かず 503（fail closed）', async () => {
+  const db = paused();
+  stubAirtable(db);
+  redis = makeRedis({ down: true });
+  const res = await post({ cookie: await cookieFor(REC) });
+  const json = await res.json();
+  assert.equal(res.status, 503);
+  assert.equal(json.code, 'coupon_lock_unavailable');
+  assert.equal(json.sideEffects, 'none');
+  assert.equal(patches().length, 0, '排他できないのに書いている');
+});
+
+test('claim → 履歴 1 件（gate ON のとき）', async () => {
+  process.env.COUPON_HISTORY_TABLE_READY = '1';
+  const db = paused();
+  stubAirtable(db);
+  const res = await post({ cookie: await cookieFor(REC) });
+  const json = await res.json();
+  assert.equal(res.status, 200);
+  assert.equal(json.historyRecorded, true);
+  assert.equal(history.length, 1);
+  const f = history[0].fields;
+  assert.equal(f.OperationType, 'claim');
+  assert.equal(f.Actor, 'customer');
+  assert.equal(f.CustomerRecordId, REC);
+  assert.equal(f.ProductKey, 'premium_plus');
+  assert.equal(f.BeforeState, 'none');
+  assert.equal(f.AfterState, 'held');
+  assert.ok(!('Email' in f), '履歴にアドレスを書いている');
+});
+
+test('gate UNSET なら claim の履歴は 0 件（取得自体は成功）', async () => {
+  const db = paused();
+  stubAirtable(db);
+  const res = await post({ cookie: await cookieFor(REC) });
+  const json = await res.json();
+  assert.equal(res.status, 200);
+  assert.equal(json.claimed, true);
+  assert.equal(json.historyRecorded, false);
+  assert.equal(history.length, 0);
+});
+
+test('履歴 create 失敗でも claim を rollback しない（op= から復元できる）', async () => {
+  process.env.COUPON_HISTORY_TABLE_READY = '1';
+  historyCreateFails = true;
+  const db = paused();
+  stubAirtable(db);
+  const res = await post({ cookie: await cookieFor(REC) });
+  const json = await res.json();
+
+  // 取得は成功したまま
+  assert.equal(res.status, 200);
+  assert.equal(json.claimed, true);
+  assert.equal(json.historyRecorded, false);
+  assert.equal(history.length, 0);
+  assert.ok(db[REC][PP_REOPEN_COUPON_FIELDS.CLAIMED_AT], '取得が巻き戻っている');
+
+  // ⚠️ durable marker: Source から OperationId を復元できる
+  const audit = P.parseCouponAudit(db[REC][PP_REOPEN_COUPON_FIELDS.SOURCE]);
+  assert.ok(audit.operationId, 'op= が残っていない（repair できない）');
+  // 論理的な取得元も失っていない
+  assert.equal(audit.kind, 'pause-notice');
+  // 期待どおりの安定キー（時計に依存しない）
+  assert.equal(audit.operationId, P.computeCouponOperationId({
+    productKey: 'premium_plus', couponId: 'premium-plus-reopen-priority', version: 1,
+    customerRecordId: REC, operationType: 'claim', anchor: 'none',
+  }));
+});
+
+test('旧データ（素の pause-notice）もそのまま読める（後方互換）', async () => {
+  const { readReopenCoupon } = await import('./premiumPlusReopenCoupon.js');
+  const legacy = readReopenCoupon({
+    [PP_REOPEN_COUPON_FIELDS.CLAIMED_AT]: '2026-08-18T22:07:54.803Z',
+    [PP_REOPEN_COUPON_FIELDS.SOURCE]: 'pause-notice',
+  });
+  assert.equal(legacy.claimed, true);
+  assert.equal(legacy.sourceKind, 'pause-notice');
+  assert.equal(legacy.operationId, '', '旧データに op= は無い');
+  // 構造化後も論理的な取得元は同じ
+  const structured = readReopenCoupon({
+    [PP_REOPEN_COUPON_FIELDS.CLAIMED_AT]: '2026-08-20T00:00:00.000Z',
+    [PP_REOPEN_COUPON_FIELDS.SOURCE]: 'coupon-page|by=customer|at=2026-08-20T00:00:00.000Z|op=abc|why=',
+  });
+  assert.equal(structured.sourceKind, 'coupon-page');
+  assert.equal(structured.operationId, 'abc');
+});
+
+test('取得元を偽装できない（admin-* を送っても顧客経路の値になる）', async () => {
+  process.env.COUPON_HISTORY_TABLE_READY = '1';
+  const db = paused();
+  stubAirtable(db);
+  const res = await post({
+    cookie: await cookieFor(REC),
+    body: { source: 'admin-grant' },
+  });
+  assert.equal(res.status, 200);
+  const audit = P.parseCouponAudit(db[REC][PP_REOPEN_COUPON_FIELDS.SOURCE]);
+  assert.equal(audit.kind, 'pause-notice', '管理者操作を騙れている');
+  assert.equal(audit.byAdmin, false);
+  assert.equal(history[0].fields.OperationType, 'claim');
+  assert.equal(history[0].fields.Actor, 'customer');
+});
+
+test('claim は資格 / 停止 / 会員権 / 決済を 1 つも変更しない（履歴 ON でも）', async () => {
+  process.env.COUPON_HISTORY_TABLE_READY = '1';
+  const db = paused();
+  stubAirtable(db);
+  await post({ cookie: await cookieFor(REC) });
+  const written = Object.keys(patches()[0].body.fields);
+  assert.deepEqual(written.sort(), [
+    PP_REOPEN_COUPON_FIELDS.CLAIMED_AT,
+    PP_REOPEN_COUPON_FIELDS.COUPON_ID,
+    PP_REOPEN_COUPON_FIELDS.SOURCE,
+  ].sort());
+  for (const k of ['プラン', 'Status', '有効期限', 'PaidAt', 'PaymentConfirmed',
+    'PremiumPlusEligibility', 'PremiumPlusSalePaused', 'LifetimeSanrenpuku']) {
+    assert.ok(!written.includes(k), `${k} を書いている`);
+  }
+  // 履歴にも課金・権限の列は無い
+  for (const k of Object.keys(history[0].fields)) {
+    assert.doesNotMatch(k, /プラン|Status|有効期限|PaidAt|Payment|Lifetime/);
+  }
 });

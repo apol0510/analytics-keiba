@@ -122,9 +122,12 @@ test('休止ページに購入導線・振込情報が 1 つも無い（価格�
     renderPauseNoticeHtml({ coupon: claimed }),
     renderCouponPageHtml({ coupon: claimed }),
   ]) {
-    assert.doesNotMatch(html, /申し?込|購入|お支払|振込|口座|カート|決済/, '購入導線が出ている');
+    // 「いま買える」導線が無いこと。振込先・決済・申込モーダルはどれも出さない
+    assert.doesNotMatch(html, /購入|お支払|振込|口座|カート|決済/, '購入導線が出ている');
     assert.doesNotMatch(html, /openBankModal/, '申込モーダルを開ける導線がある');
-    // 販売停止中なので「いま買える」導線は無い。価格は"再募集時の優待条件"としてのみ出す
+    // 押せる申込リンク（order-cta）は停止中には出ない。出てよいのは非購入表示だけ
+    const body = html.slice(html.indexOf('<body>'));
+    assert.doesNotMatch(body, /<a class="order-cta"/, '停止中に押せる申込リンクが出ている');
     assert.doesNotMatch(html, /98,?000/, '旧定価が出ている');
   }
 });
@@ -139,7 +142,8 @@ test('確定した優待条件（10,000円OFF / 68,000円 → 58,000円）が全
     assert.match(html, /10,000円OFF/, '割引額が出ていない');
     assert.match(html, /通常 68,000円 → 58,000円/, '通常価格→適用価格が出ていない');
     assert.match(html, /有効期限/, '有効期限の行が無い');
-    assert.match(html, /未定/, '有効期限を未確定と伝えていない');
+    assert.match(html, /14日間/, '有効期限のルールを伝えていない');
+    assert.doesNotMatch(html, /有効期限[^<]*\d{4}-\d{2}-\d{2}/, '具体的な日付を出している');
   }
 });
 

@@ -6,6 +6,8 @@
 
 import { SUPPORT_EMAIL, ADMIN_EMAIL, FROM_EMAIL } from './config/email-config.js';
 import { buildApplicationFields } from '../../src/lib/payments/bankPaymentFlow.js';
+// 申込価格の正本（クーポン適用込み）。**クライアントの言い値を使わない**
+import { resolveOrderPricing } from '../../src/lib/premiumPlus/premiumPlusCouponApply.js';
 import { checkMemberOnlyPricing } from '../../src/lib/pricing/pricingEligibility.js';
 import { resolveOrderSaleDate, buildSaleProductName, isPremiumPlusProductName } from '../../src/lib/premiumPlus/premiumPlusSaleDate.js';
 import { shapeRaceCalendar } from '../../src/lib/premiumPlus/premiumPlusRaceCalendar.js';
@@ -49,6 +51,8 @@ exports.handler = async (event, context) => {
       transferName,
       remarks,
       productName,
+      // 選択されたクーポン（**id だけ**。割引額・最終価格は受け取らない）
+      couponId,
       saleTargetDate,
       funnelSource,
       paymentCompletedConfirm,
@@ -276,6 +280,47 @@ exports.handler = async (event, context) => {
         };
       }
     }
+    // ── クーポン検証（**副作用ゼロの地点で行う**）───────────────────
+    // ⚠️ 本人が couponId を**明示的に選んだ**申込で検証に失敗したときは、
+    //    黙って通常価格へ落として受理してはいけない。
+    //    58,000円のつもりで申し込んだ人が 68,000円の申込を作られるのが最悪の事故。
+    //    所持していない / 未知の id / 判定不能 は**申込ごと停止**し、
+    //    Customers / PromotionalOffers / queue / メール のどれにも触れずに返す。
+    //
+    //    クーポンを**最初から選んでいない**申込は従来どおり通常価格で進む。
+    let serverPricing = null;
+    if (isPremiumPlusOrder) {
+      const selectedCouponId = String(couponId ?? '').trim();
+      if (selectedCouponId) {
+        try {
+          serverPricing = resolveOrderPricing({
+            fields: plusCustomerFields,
+            couponId: selectedCouponId,
+            nowMs: Date.now(),
+          });
+        } catch (e) {
+          serverPricing = null;  // 判定不能。下で拒否する
+        }
+        // 検証に落ちた（理由あり）／判定できなかった／割引が乗らなかった → 申込を止める
+        if (!serverPricing || serverPricing.reason || !serverPricing.couponApplied) {
+          console.warn('🚫 [bank-transfer] クーポン検証に失敗したため申込を停止:', {
+            recordId: plusCustomerRecordId || null,
+            reason: serverPricing ? serverPricing.reason : 'pricing_unavailable',
+          });
+          return {
+            statusCode: 409,
+            headers,
+            body: JSON.stringify({
+              error: 'クーポンを確認できませんでした。お手数ですが、'
+                + 'ページを再読み込みのうえ、もう一度お試しください。',
+              code: 'coupon_unavailable',
+              sideEffects: 'none',
+            }),
+          };
+        }
+      }
+    }
+
     // 対象日を含む確定商品名。**以後の処理・メール・履歴はこれを使う**
     const orderProductName = (isPremiumPlusOrder && saleOrder && saleOrder.date)
       ? buildSaleProductName(saleOrder.label, 68000)
@@ -659,14 +704,42 @@ exports.handler = async (event, context) => {
       // confirm-bank-payment.js が PaymentConfirmed を起点に行う。
       // 有効期限は入金確認日（JST）基準で自動計算されるため手入力は不要。
       // ─────────────────────────────────────────────
-      const requestedAmount = Number.parseInt(transferAmount, 10);
+      // ── 申込価格はサーバーが決める ─────────────────────────────
+      // ⚠️ 画面の `transferAmount` は**参考値**。Premium Plus の申込では
+      //    「本人が本当にそのクーポンを持っているか」を Airtable の実データから
+      //    再検証し、**正本の通常価格から 1 回だけ引いた確定値**を採用する。
+      //    クライアントが割引額・最終価格を送ってきても読まない（二重適用・改ざん防止）。
+      //    検証に落ちたら割引なし（通常価格）へ倒す＝ fail closed。
+      const clientAmount = Number.parseInt(transferAmount, 10);
+      let requestedAmount = clientAmount;
+      let appliedCoupon = null;
+      if (isPremiumPlusOrder) {
+        // 上で検証済みの結果をそのまま使う（ここで再計算すると判定が割れる）。
+        // クーポン未選択のときは通常価格を採用する。
+        const pricing = serverPricing || resolveOrderPricing({
+          fields: plusCustomerFields, couponId: null, nowMs: Date.now(),
+        });
+        if (Number.isFinite(pricing.finalPrice)) {
+          requestedAmount = pricing.finalPrice;
+          appliedCoupon = pricing.couponApplied;
+        }
+        if (clientAmount !== requestedAmount) {
+          console.warn('⚠️ [bank-transfer] 申込金額をサーバー確定値へ置き換え:', {
+            client: Number.isFinite(clientAmount) ? clientAmount : null,
+            server: requestedAmount,
+            couponApplied: appliedCoupon ? appliedCoupon.couponId : null,
+          });
+        }
+      }
 
       console.log('📝 申込内容を Requested* に退避:', {
         productName: orderProductName,
         fullPlanName,
         planName,
         planType,
-        requestedAmount: Number.isFinite(requestedAmount) ? requestedAmount : null
+        requestedAmount: Number.isFinite(requestedAmount) ? requestedAmount : null,
+        // どのクーポンを適用したか（後から追跡できるように残す）
+        couponApplied: appliedCoupon ? appliedCoupon.couponId : null
       });
 
       // Airtable登録処理
