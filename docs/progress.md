@@ -749,6 +749,50 @@ Light 約 15,000 名 rollout（#372 系列）の修復。#369 反映後に再開
 - **正常除外を含め全員が barrier 上で解決済み**（`granted === resolved`）
 - duplicate grant / queue / send = **0**
 
+## 2026-08-20 — 【本番実行】Light rollout の救済（kill → orphan 取消 → Step1 159 名を再 queue → 実送信）
+
+Light 約 15,000 名 rollout の滞留を解消した。**Step1 の outstanding は 0 になった。**
+実装の話は次節（「キュー登録が途中で終わっても…」）にあるので、ここは**運用の記録**に絞る。
+
+### 実行した順序（この順序に意味がある）
+
+| # | 操作 | 書込み | 結果 |
+|---|---|---|---|
+| 1 | `rolloutKill` | 展開状態（Redis）**1 件**（version 82→83）| `killed: true`。以後の tick は `skip / kill_switch`・**150〜170ms**（kill 前は 47〜55 秒）|
+| 2 | orphan PENDING を `cancelJob` で取消（**削除は使わない**）| ScheduledEmails **1 行** | 配信行 0 行のため `cancelledDeliveries: 0` / PENDING **0** |
+| 3 | Step1 を管理経路から **50 / 50 / 50 / 9 の 4 batch** で queue | CampaignDeliveries **159 行**（すべて `queued`）＋ ScheduledEmails **4 行** | 各 batch とも expected = verified / missing 0 / DeliveryKey 重複 0 |
+| 4 | `marketing-campaign-dispatch` を **jobId 指定で 1 ジョブずつ**（9 → 50 → 50 → 50）| 各ジョブの状態・配信行のみ | **実送信 159 通 / failed 0 / skipped 0 / duplicate send 0** |
+
+各 batch は「単一源 `action:'sequence'` の `next`（step=1）から対象を取り直す → `dryRun` →
+**同じ対象・同じ `planFingerprint`** で live queue → 配信行を読み戻して検証」。
+5 回目は `next.step` が **2** になった時点で自動停止した（Step2 は対象外）。
+dispatch も毎回 dryRun（suppression / 退会 / バウンス / 購入の送信直前再判定）を通し、
+`expectedWillSend` を渡して 1 回だけ live 実行。`lockRelease.ok: true` を各回確認。
+
+### ⚠️ なぜ「kill が先」なのか（この順序を崩さない）
+
+`stage: paused` は**新規付与しか止めない**。積み残しの queue / 送信起動は進む。
+2026-08-19 に paused のまま orphan を取り消したところ、`pendingJobs` が 0 になったことで
+automation が動き、翌 00:51Z に**同じ 100 名を再 queue して新しい orphan** を作った。
+**全停止は `rolloutKill`。`killed` を解除できるのは `rolloutResume` だけ**で、
+`rolloutStart` は `killed: true` を保持する（詳細は `astro-site/docs/ACTIVATION_RUNBOOK.md`）。
+
+### 実行後の実測（read-only）
+
+- **`outstandingStep1: 0`** ／ granted **1,570** ＝ resolved **1,570**（Step1 済み 1,557 ＋ 停止リスト 13）
+- 本日作成の配信行 **159 行すべて `sent`**・**DeliveryKey 重複 0**・ジョブ 4 件すべて `SENT`（sent 合計 159 / failed 0）
+- **PENDING 0 / queued 残 0**
+- `killed: true` / `stage: paused` / `autoStopped: true` を維持。**新規 grant 0**
+- Step2 は `dueByStep{2}` に滞留（**未着手**）
+
+⚠️ Redis の増分集計 `steps[].queued` は cron が加算する設計のため、**管理経路の手動 queue では増えない**
+（実数の正本は台帳 = CampaignDeliveries / ScheduledEmails）。
+
+### この時点で未完了のもの
+
+**Step2 / `rolloutResume`（automation の再開）**。`killed: true` のままなので、
+再開は人が `rolloutResume` を実行するまで起きない。
+
 ## 2026-08-20 — 【修正】キュー登録が途中で終わっても「送られないジョブ」しか残さない
 
 #385 反映後にも orphan PENDING が再発した（2026-08-20T00:51Z）。原因調査と恒久修正。
@@ -802,10 +846,28 @@ dispatcher が印付きを弾く・queue と tick が排他を取る・鍵空間
 `test:drm` 64 / `test:promotions` 120 pass（fail 0）・`check:safety` EXIT=0・`build` EXIT=0・
 `package.json` / `package-lock.json` 変更なし。
 
+### 本番反映（2026-08-20）
+
+PR #393 を squash merge（**`e1e3547f`**）。Netlify の production deploy **`6a86f037`**
+（context=production / branch=main / commit `e1e3547f`）が **ready** で公開された。
+
+本番での確認（read-only・書込みゼロ）:
+
+- 新コードの存在: 不正な `campaignId` の `action:'send'` が、#393 で新設した排他ラッパの
+  **`キャンペーンの指定が不正です`（400）** を返す。存在しない `campaignId` では従来どおり
+  `未知のキャンペーンです` を返す ＝ **排他を実 Redis で取得・解放して本体へ到達している**
+  （取れなければ 503 になる）
+- cron tick を 4 回観測（12:20 / 12:26 / 12:28 / 12:30）: すべて
+  `action: skip` / `reason: kill_switch` / `sideEffects: 'none'`・**0.5〜0.9 秒**。
+  kill 判定は **tick 排他を取得したあと**に到達するので、これは新しい tick 排他が
+  production で機能している証拠でもある
+- `killed: true` / `stage: paused` / `autoStopped: true` / PENDING **0** /
+  新規 grant・queue・dispatch・実送信すべて **0**
+
 ### やっていないこと
 
-本番データ書込み / env 変更 / deploy / merge / 実送信。`killed: true` は維持。
-**Step2（due 598）と `rolloutResume` は未着手。**
+env 変更 / **Step2 の queue・dispatch・実送信** / `rolloutResume` / 新規 grant。
+`killed: true` は維持。**Step2 と automation の再開は未着手。**
 
 ## 2026-08-19 — 【追加】Direct Response Marketing（DRM）基盤
 

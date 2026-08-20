@@ -148,6 +148,43 @@ curl -s -X POST "$SITE/.netlify/functions/admin-marketing" \
 #   {"action":"rolloutResume", "campaignId":"..."}
 ```
 
+### 停止の解除は `rolloutResume` だけ
+
+| 操作 | `killed` への影響 |
+|---|---|
+| `rolloutKill` | **true にする**（次 tick から全停止）|
+| `rolloutPause` | **触らない**（新規付与だけ止める）|
+| **`rolloutStart`** | **`killed: true` を保持する**（`planRolloutStart` が `killed: base.killed === true`）|
+| **`rolloutResume`** | **`killed: false` にする** ＝ **緊急停止を解除できる唯一の操作** |
+
+⚠️ 緊急停止したまま `rolloutStart` しても自動処理は動かない。「解除は `rolloutStart`」は**誤り**。
+固定テスト: `rolloutControl.test.mjs`「start は緊急停止を勝手に解除しない」/
+「pause は新規付与だけ止める（killed は触らない）」/「resume は段階を上げない・武装も戻さない」、
+`rolloutOrchestrator.test.mjs`「stage=paused は従来どおり『新規付与だけ』停止（積み残しは進む）」。
+
+### 事故対応の順序：**orphan を取り消す前に `rolloutKill`**
+
+`stage: paused` は**新規付与しか止めない**（上の 3 段階表のとおり）。積み残しの
+キュー登録・送信起動は進むので、**orphan PENDING を取り消すと `pendingJobs` が 0 になり、
+次の tick が「積み残しの queue」を実行して同じ相手を積み直す**。
+
+2026-08-19: paused のまま orphan を取り消したところ、翌 00:51Z に automation が同じ 100 名を
+再 queue し、配信行 0 行の**新しい orphan** ができた。
+
+手順は必ずこの順にする:
+
+1. `action=rolloutKill` で全停止する
+2. cron のログで `action: skip` / `reason: kill_switch` になったことを**実際に確認**する
+3. orphan を `action=cancelJob` で取り消す（**削除は使わない**）
+4. 復旧の queue → dispatch を行う
+
+⚠️ 復旧の queue は cron ではなく **管理経路（`action=dryRun` → `action=send`）から
+小分け**（1 回 50 名程度）にする。cron の 1 tick は実測 47〜55 秒に達しており、
+長い実行ほど途中で終わる余地が大きい。
+⚠️ 復旧の dispatch も **`jobId` を名指しで 1 ジョブずつ**行う
+（`marketing-campaign-dispatch` は `jobId` 無しの live を受け付けない）。
+
+
 ⚠️ **`killed: true` でも、既に起動した Background ジョブは取り消せない**（送信中のバッチは走り切る）。
 **送信そのものを確実に止める最終手段は `MARKETING_CAMPAIGN_DISPATCH_ENABLED` を UNSET + redeploy。**
 
