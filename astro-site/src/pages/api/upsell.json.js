@@ -82,7 +82,12 @@ export async function GET({ request }) {
         claimedAt: held.claimedAtIso,
         claimedAtText: formatClaimedAtJst(held.claimedAtIso),
         usableNote: v.usableNote,
+        // 割引条件はすべて単一源が組み立てた文字列。API 側で数値を作らない
         termsText: v.termsText,
+        discountText: v.discountText,
+        priceText: v.priceText,
+        expiryText: v.expiryText,
+        expiryDetermined: v.expiryDetermined,
         termsDetermined: v.termsDetermined,
         detailHref: COUPON_PAGE_PATH,
       };

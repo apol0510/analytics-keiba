@@ -3880,15 +3880,20 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       const rcNote = document.createElement('p'); rcNote.className = 'muted';
       rcNote.style.margin = '0 0 8px'; rcNote.style.fontSize = '0.82rem';
       rcNote.textContent = '販売を一時停止している間に、お客様が受付休止ページからご自身で'
-        + '取得されたクーポンの保有状況です。管理者が付与・取消する操作はありません。'
+        + '取得されたクーポンの保有状況です。管理者が付与・取消する操作は現状ありません'
+        + '（確定仕様ではなく現行実装。取消・訂正は Airtable の直接編集に依存します）。'
         + '取得しても販売資格・一時停止・段階公開（PHASE）・会員権・決済は変わりません。'
-        + '優待の具体的な条件は未確定で、募集再開時に決めます。';
+        + '割引条件は確定済み（下記）。有効期限だけがまだ未確定です。';
       rcSec.appendChild(rcNote);
 
       const rcKv = document.createElement('dl'); rcKv.className = 'kv';
       kvRow(rcKv, 'いま販売を止めているか', r.salePaused ? '⏸ 一時停止中' : '✅ 停止していない',
         r.salePaused ? '' : 'muted');
       kvRow(rcKv, 'クーポン', r.reopenCouponName || '—', r.reopenCouponName ? '' : 'muted');
+      // 価格条件は Function が単一源から作った文字列。画面側で数値を組み立てない
+      if (r.reopenCouponDiscountText) kvRow(rcKv, '割引', r.reopenCouponDiscountText);
+      if (r.reopenCouponPriceText) kvRow(rcKv, '価格', r.reopenCouponPriceText);
+      if (r.reopenCouponExpiryText) kvRow(rcKv, '有効期限', r.reopenCouponExpiryText, 'muted');
       kvRow(rcKv, '取得状況', r.reopenCouponClaimed ? '🎟 取得済み' : '未取得',
         r.reopenCouponClaimed ? '' : 'muted');
       if (r.reopenCouponClaimed) {

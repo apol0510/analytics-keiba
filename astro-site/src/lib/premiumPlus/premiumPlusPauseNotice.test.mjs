@@ -17,6 +17,7 @@ import { describeCouponForMember, readReopenCoupon, PP_REOPEN_COUPON_FIELDS } fr
 import {
   renderPauseNoticeHtml, renderCouponPageHtml, formatClaimedAtJst,
   PAUSE_NOTICE_COPY, COUPON_API_PATH, COUPON_PAGE_PATH,
+  benefitHeadline, claimCtaLabel,
 } from './premiumPlusPauseNoticePage.js';
 
 /** 2026-08-18(火) 11:30 JST = 受付時間内 */
@@ -115,15 +116,30 @@ const claimed = describeCouponForMember({
   paused: true, claimable: true,
 });
 
-test('休止ページに購入導線・価格・振込情報が 1 つも無い', () => {
+test('休止ページに購入導線・振込情報が 1 つも無い（価格は優待条件として出す）', () => {
   for (const html of [
     renderPauseNoticeHtml({ coupon: notClaimed }),
     renderPauseNoticeHtml({ coupon: claimed }),
     renderCouponPageHtml({ coupon: claimed }),
   ]) {
-    assert.doesNotMatch(html, /68,?000|98,?000|¥\s*\d/, '価格が出ている');
     assert.doesNotMatch(html, /申し?込|購入|お支払|振込|口座|カート|決済/, '購入導線が出ている');
     assert.doesNotMatch(html, /openBankModal/, '申込モーダルを開ける導線がある');
+    // 販売停止中なので「いま買える」導線は無い。価格は"再募集時の優待条件"としてのみ出す
+    assert.doesNotMatch(html, /98,?000/, '旧定価が出ている');
+  }
+});
+
+test('確定した優待条件（10,000円OFF / 68,000円 → 58,000円）が全画面で同一', () => {
+  for (const html of [
+    renderPauseNoticeHtml({ coupon: notClaimed }),
+    renderPauseNoticeHtml({ coupon: claimed }),
+    renderCouponPageHtml({ coupon: claimed }),
+    renderCouponPageHtml({ coupon: notClaimed }),
+  ]) {
+    assert.match(html, /10,000円OFF/, '割引額が出ていない');
+    assert.match(html, /通常 68,000円 → 58,000円/, '通常価格→適用価格が出ていない');
+    assert.match(html, /有効期限/, '有効期限の行が無い');
+    assert.match(html, /未定/, '有効期限を未確定と伝えていない');
   }
 });
 
@@ -137,7 +153,10 @@ test('休止ページはお客様を立てる文言と取得 CTA を含む', () 
   assert.ok(html.includes(PAUSE_NOTICE_COPY.lead));
   assert.ok(html.includes(PAUSE_NOTICE_COPY.body));
   assert.ok(html.includes(PAUSE_NOTICE_COPY.couponLead));
-  assert.ok(html.includes(PAUSE_NOTICE_COPY.cta));
+  // CTA 文言は単一源から作る（金額を書き写さない）
+  assert.ok(html.includes(claimCtaLabel()));
+  assert.match(claimCtaLabel(), /10,000円OFF/);
+  assert.ok(html.includes(benefitHeadline()));
   assert.ok(html.includes(COUPON_API_PATH));
 });
 

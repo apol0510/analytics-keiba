@@ -78,6 +78,13 @@ export const REGULAR_PRICE = Object.freeze({
   premium_monthly: 18000,
   premium_annual: 49800,
   premium_lifetime: 78000,
+  /**
+   * Premium Plus（1 日 1 鞍の単品商品）。`/pricing/` では売らないので上の 4 つとは
+   * 突き合わせ先が違い、**商品ページ `premium-plus.astro` の `PRICE`** が実売価格。
+   * ⚠️ 変更したら商品ページ（premium-plus / premium-plus-v2）と**必ず両方**直す。
+   *    ズレは `premiumPlusCouponTerms.test.mjs` が検知して落ちる。
+   */
+  premium_plus: 68000,
 });
 
 /** 割引価格の下限（円）。これ未満は「実質無料」なので isFree の offer を使う */

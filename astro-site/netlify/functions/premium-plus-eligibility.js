@@ -105,6 +105,10 @@ import {
   readReopenCoupon,
   isReopenCouponEnabled,
   PP_REOPEN_COUPON,
+  describeCouponTerms,
+  describeCouponDiscount,
+  describeCouponPrice,
+  describeCouponExpiry,
 } from '../../src/lib/premiumPlus/premiumPlusReopenCoupon.js';
 
 const CUSTOMERS_TABLE = process.env.AIRTABLE_CUSTOMERS_TABLE || 'Customers';
@@ -271,6 +275,11 @@ function buildAdminRow(rec, now) {
         reopenCouponSource: reopenCoupon.source,
         /** 取得の記録が本番で保存できる状態か（画面の注意表示に使う） */
         reopenCouponWritable: isReopenCouponEnabled(process.env),
+        // 価格条件は**単一源が作った文字列**をそのまま載せる（管理画面で数値を組み立てない）
+        reopenCouponTerms: describeCouponTerms(),
+        reopenCouponDiscountText: describeCouponDiscount(),
+        reopenCouponPriceText: describeCouponPrice(),
+        reopenCouponExpiryText: describeCouponExpiry(),
         /**
          * 停止/再開の操作が本番で受け付けられる状態か（画面のボタン活性に使う）。
          */
@@ -683,6 +692,8 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
       fieldsReady: isReopenCouponEnabled(process.env),
       name: PP_REOPEN_COUPON.name,
       termsDetermined: PP_REOPEN_COUPON.terms.determined === true,
+      termsText: describeCouponTerms(),
+      expiryDetermined: PP_REOPEN_COUPON.terms.expiresDetermined === true,
     },
     // 「自動」の意味を管理画面に常設するための文言（正本は upsellExplain.js）
     upsellAutoRules: UPSELL_AUTO_RULE_TEXT,

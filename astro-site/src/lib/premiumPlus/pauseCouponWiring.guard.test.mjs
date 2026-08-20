@@ -175,12 +175,20 @@ test('特定の会員名・メールアドレスを直書きしていない', ()
 });
 
 // ── 8. 割引条件を勝手に作っていない ─────────────────────────────
-test('クーポン実装のどこにも価格・割引率を持たせていない', () => {
-  for (const [name, src] of Object.entries({ COUPON_LIB, NOTICE_PAGE_LIB, API, COUPON_PAGE })) {
+test('価格・割引額の数値は単一源だけが持つ（他のファイルは文字列を受け取るだけ）', () => {
+  // 単一源: 割引額は 1 か所、通常価格は価格の正本を参照して引き算で導く
+  assert.match(COUPON_LIB, /PP_REOPEN_COUPON_DISCOUNT_YEN = 10000/);
+  assert.match(COUPON_LIB, /REGULAR_PRICE\.premium_plus - PP_REOPEN_COUPON_DISCOUNT_YEN/);
+  assert.doesNotMatch(COUPON_LIB, /offerPrice:\s*58000/, '適用価格を直書きしている');
+  assert.doesNotMatch(COUPON_LIB, /regularPrice:\s*68000/, '通常価格を直書きしている');
+
+  // 表示側・API・ページは数値を持たない
+  for (const [name, src] of Object.entries({ NOTICE_PAGE_LIB, API, COUPON_PAGE })) {
+    assert.doesNotMatch(src, /68000|58000|10000|98000/, `${name}: 金額を直書きしている`);
     assert.doesNotMatch(src, /offerPrice:\s*[0-9]/, `${name}: 価格を作っている`);
-    assert.doesNotMatch(src, /discountValue:\s*[0-9]/, `${name}: 割引率を作っている`);
-    assert.doesNotMatch(src, /68000|98000|44820|49800/, `${name}: 具体的な金額がある`);
+    assert.doesNotMatch(src, /discountValue:\s*[0-9]/, `${name}: 割引額を作っている`);
   }
-  // 未確定であることが正本に書かれている
-  assert.match(COUPON_LIB, /determined:\s*false/);
+  // 条件は確定済み・期限だけ未確定
+  assert.match(COUPON_LIB, /determined:\s*true/);
+  assert.match(COUPON_LIB, /expiresDetermined:\s*false/);
 });
