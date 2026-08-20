@@ -183,6 +183,10 @@ import { MEASURE } from '../../src/lib/crm/deliveryMeasurement.js';
 import {
   classifyQueueOutcome, collectDeliveryKeys, summarizeRollback, QUEUE_FAIL,
 } from '../../src/lib/marketing/queueDeliveryOutcome.js';
+import {
+  markUnverified, clearUnverified, hasUnverifiedMark,
+  decideJobRowAction, JOB_ROW_ACTION,
+} from '../../src/lib/marketing/queueJobPreparation.js';
 import { describePolicy, normalizePolicy } from '../../src/lib/marketing/sequencePolicy.js';
 import { assertCohortObservable, COHORT_SKIP_LABEL } from '../../src/lib/crm/importedCohort.js';
 import {
@@ -194,6 +198,9 @@ import {
   resolveDeliveryStoreMode, resolveDeliveredKeys, recordDelivered,
 } from '../../src/lib/marketing/deliveryKeySource.js';
 import { createDeliveryKeyStore, makeRedisCmd } from '../../src/lib/marketing/deliveryKeyStore.js';
+import {
+  createDispatchLock, QUEUE_LOCK_ROOT, DISPATCH_LOCK_TTL_SEC, LOCK_FAIL, isSafeJobId,
+} from '../../src/lib/marketing/dispatchLock.js';
 // カムバック無料付与の成功者を引き継ぐ判定（対象の導出・期限・監査印の単一源）
 import {
   HANDOFF_BLOCK, HANDOFF_BLOCK_LABEL,
@@ -796,8 +803,8 @@ export const handler = async (event) => {
     if (action === 'preview') return handlePreview({ req });
     if (action === 'customers') return await handleCustomers({ KEY, BASE, now, req });
     if (action === 'customerDetail') return await handleCustomerDetail({ KEY, BASE, now, req });
-    if (action === 'dryRun') return await handlePlan({ KEY, BASE, now, req, live: false });
-    if (action === 'send') return await handlePlan({ KEY, BASE, now, req, live: true });
+    if (action === 'dryRun') return await handleQueuedPlan({ KEY, BASE, now, req, live: false });
+    if (action === 'send') return await handleQueuedPlan({ KEY, BASE, now, req, live: true });
     if (action === 'segmentCatalog') return handleSegmentCatalog();
     if (action === 'segments') return await handleSegments({ KEY, BASE, now, req });
     if (action === 'sequence') return await handleSequence({ KEY, BASE, now, req });
@@ -2682,6 +2689,54 @@ async function handleSequence({ KEY, BASE, now, req }) {
   });
 }
 
+/**
+ * キュー登録の入口。**live のときだけ排他を取ってから**本体を呼ぶ。
+ *
+ * ⚠️ `JobId` は plan fingerprint 由来なので、同じキャンペーンのキュー登録が 2 本重なると
+ *    **同じ JobId の行が 2 つ**できる（2026-08-20 に本番で発生。cron の tick が
+ *    1 スロットで 3 回走っていた実測もある）。鍵が取れない = 他が書いている、
+ *    確かめられない = 状態不明。**どちらも 1 バイトも書かずに終わる**（fail closed）。
+ * ⚠️ dry-run は何も書かないので鍵を取らない（確認は何本走ってもよい）。
+ * ⚠️ 本体がどこで return しても `finally` で必ず鍵を返す。
+ */
+async function handleQueuedPlan({ KEY, BASE, now, req, live }) {
+  if (!live) return handlePlan({ KEY, BASE, now, req, live });
+
+  const campaignId = String((req && req.campaignId) || '').trim();
+  const stepPart = Number.isFinite(Number(req && req.step)) ? `:s${Number(req.step)}` : '';
+  const lockId = `queue:${campaignId}${stepPart}`;
+  if (!isSafeJobId(lockId)) {
+    return json(400, { error: 'キャンペーンの指定が不正です', sideEffects: 'none' });
+  }
+
+  let lock = null;
+  let token = null;
+  try {
+    lock = createDispatchLock({ cmd: makeRedisCmd(process.env), root: QUEUE_LOCK_ROOT });
+    const got = await lock.acquire({ jobId: lockId, ttlSec: DISPATCH_LOCK_TTL_SEC });
+    if (!got.ok) {
+      return json(got.reason === LOCK_FAIL.BUSY ? 409 : 503, {
+        error: got.reason === LOCK_FAIL.BUSY
+          ? '同じキャンペーンのキュー登録が実行中です（二重に積まないため中止しました）'
+          : 'キュー登録の排他を確認できないため中止しました',
+        code: got.reason, sideEffects: 'none',
+      });
+    }
+    token = got.token;
+  } catch {
+    return json(503, {
+      error: 'キュー登録の排他を確認できないため中止しました',
+      code: LOCK_FAIL.UNAVAILABLE, sideEffects: 'none',
+    });
+  }
+
+  try {
+    return await handlePlan({ KEY, BASE, now, req, live });
+  } finally {
+    try { await lock.release({ jobId: lockId, token }); } catch { /* TTL で切れる */ }
+  }
+}
+
 async function handlePlan({ KEY, BASE, now, req, live }) {
   const baseCampaign = getCampaign(req.campaignId);
   if (baseCampaign && isSequenceCampaign(baseCampaign) && !Number.isFinite(Number(req.step))) {
@@ -3074,10 +3129,61 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
         handoffNote: grantOperationId ? handoffNote(grantOperationId) : '',
       }),
     });
+    /**
+     * ⚠️ **未検証の印を付けて作る。** ジョブは作った瞬間から dispatcher の対象
+     *    （`{Status}='PENDING'`）になるので、配信行を確認する前に「送ってよい」状態で
+     *    置いてはいけない。実行が途中で終わっても、残るのは**送られないジョブ**にする
+     *    （2026-08-18 / 08-20 の orphan 事故）。印は配信行を読み戻して確認できてから外す。
+     */
+    jobFields.Notes = markUnverified(jobFields.Notes);
     if (!assertOnlyScheduledFields(jobFields)) return json(500, { error: 'field allow-list violation' });
-    const created = await createRecord({ KEY, BASE, table: SCHEDULED_TABLE, fields: jobFields });
-    for (const r of batch) jobIdByEmail.set(r.email, { jobId, recordId: created?.id || null });
-    jobs.push({ jobId, recipientCount: batch.length, recordId: created?.id || null });
+    /**
+     * ⚠️ **同じ `JobId` の行を二重に作らない。** `JobId` は plan fingerprint 由来なので、
+     *    同じ母集団・同じ本文で積み直すと**同じ JobId** になる。`createRecord` は毎回
+     *    新しい行を作るため、失敗して積み直すと同じ JobId の行が 2 つできる
+     *    （2026-08-20 に本番で発生）。既存行があるならそれを作り直して使う。
+     * ⚠️ 送信済みのジョブは**絶対に作り直さない**（二重送信になる）。読めなければ書かない。
+     */
+    let existingRows = null;
+    try {
+      existingRows = await fetchAllStrict({
+        KEY, BASE, table: SCHEDULED_TABLE, filterByFormula: `{JobId}='${jobId}'`,
+        maxPages: TARGETED_MAX_PAGES, fields: ['JobId', 'Status', 'SentCount'],
+      });
+    } catch {
+      existingRows = null;                 // 読めない = 判断できない（fail closed）
+    }
+    const decided = decideJobRowAction({ rows: existingRows });
+    if (decided.action === JOB_ROW_ACTION.REJECT) {
+      await rollbackQueue({
+        KEY, BASE, campaign, now, jobs, rows: new Map(), reason: decided.reason,
+      });
+      return json(409, {
+        error: 'キュー登録を中止しました（同じジョブの状態を確かめられません）',
+        reason: decided.reason, jobId,
+        sideEffects: jobs.length > 0 ? 'rolled_back' : 'none',
+        notice: '同じ内容のジョブが既に送信済み、もしくは状態を確認できません。'
+          + '**積み直すと二重送信になり得るため、何も書いていません。**',
+      });
+    }
+    let recordId = decided.recordId;
+    if (decided.action === JOB_ROW_ACTION.REUSE) {
+      const ok = await patchRecord({
+        KEY, BASE, table: SCHEDULED_TABLE, recordId: decided.recordId, fields: jobFields,
+      });
+      if (!ok) {
+        await rollbackQueue({ KEY, BASE, campaign, now, jobs, rows: new Map(), reason: 'job_reuse_failed' });
+        return json(500, {
+          error: 'キュー登録を確定できませんでした（既存ジョブを作り直せません）',
+          reason: 'job_reuse_failed', jobId, sideEffects: jobs.length > 0 ? 'rolled_back' : 'none',
+        });
+      }
+    } else {
+      const created = await createRecord({ KEY, BASE, table: SCHEDULED_TABLE, fields: jobFields });
+      recordId = created?.id || null;
+    }
+    for (const r of batch) jobIdByEmail.set(r.email, { jobId, recordId });
+    jobs.push({ jobId, recipientCount: batch.length, recordId });
   }
 
   // 2) CampaignDeliveries を DeliveryKey 冪等で upsert（二重送信の最終防壁）
@@ -3175,6 +3281,34 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
       notice: rb.verified === true
         ? '配信行を確認できないため、作成した送信待ちジョブと配信行を取り消しました。'
           + '取消済み配信行は既送信に数えないので、そのまま再実行できます。'
+        : '⚠️ 巻き戻しを確認できていません。**人が状態を確認するまで再実行しないでください。**',
+    });
+  }
+
+  /**
+   * ⚠️ **ここで初めて「送ってよい」状態にする。** 配信行の実在を読み戻して確認できたので、
+   *    未検証の印を外す。外せたことも**読み戻して確かめる**（外したつもりにしない）。
+   *    外せなければ成功と言わず、作ったものを巻き戻す（fail closed）。
+   */
+  const promoted = await promoteVerifiedJobs({ KEY, BASE, jobs });
+  if (!promoted.ok) {
+    const rb = await rollbackQueue({
+      KEY, BASE, campaign, now, jobs, rows: await readDeliveryRows({
+        KEY, BASE, campaign, keys: [...collectDeliveryKeys(plan.recipients)],
+      }), reason: 'job_promote_unconfirmed',
+    });
+    console.error('🛑 [admin-marketing] 未検証の印を外せず巻き戻し:', {
+      campaignId: campaign.campaignId, promoted: promoted.promoted, targeted: promoted.targeted,
+      rollbackVerified: rb.verified === true,
+    });
+    return json(500, {
+      error: 'キュー登録を確定できませんでした（ジョブを送信可能な状態にできません）',
+      reason: 'job_promote_unconfirmed',
+      targeted: promoted.targeted, promoted: promoted.promoted, stillUnverified: promoted.stillUnverified,
+      rolledBack: rb.verified === true,
+      sideEffects: rb.verified === true ? 'rolled_back' : 'partial_unconfirmed',
+      notice: rb.verified === true
+        ? '送信可能な状態にできなかったため、作成したジョブと配信行を取り消しました。'
         : '⚠️ 巻き戻しを確認できていません。**人が状態を確認するまで再実行しないでください。**',
     });
   }
@@ -3534,6 +3668,66 @@ async function settleQueueWrite({
     KEY, BASE, campaign, now, jobs, rows, reason: outcome.reason,
   });
   return { ok: false, outcome, rollback, writeError: writeError || null };
+}
+
+/**
+ * 配信行を確認できたジョブから**未検証の印を外す**（＝ dispatcher が送ってよい状態にする）。
+ *
+ * ⚠️ **外したことを読み戻して確かめる。** PATCH が 200 でも、実際に印が消えているかは
+ *    別の話（他の実行が同時に書き戻すこともある）。確かめられなければ `ok:false` を返し、
+ *    呼び出し側は成功と言わずに巻き戻す。
+ * ⚠️ 印が最初から無い行（この修正より前に積まれたもの）は**そのまま成功扱い**にする。
+ */
+async function promoteVerifiedJobs({ KEY, BASE, jobs }) {
+  const list = (Array.isArray(jobs) ? jobs : []).filter((j) => j && j.recordId && j.jobId);
+  const report = { ok: false, targeted: list.length, promoted: 0, stillUnverified: null };
+  if (list.length === 0) return { ...report, ok: true };
+
+  for (const j of list) {
+    let rows = null;
+    try {
+      // eslint-disable-next-line no-await-in-loop -- ジョブ 1 件ずつ名指し
+      rows = await fetchAllStrict({
+        KEY, BASE, table: SCHEDULED_TABLE, filterByFormula: `{JobId}='${j.jobId}'`,
+        maxPages: TARGETED_MAX_PAGES, fields: ['JobId', 'Notes'],
+      });
+    } catch {
+      return { ...report, stillUnverified: null };   // 読めない = 確認できない
+    }
+    const row = (rows || []).find((r) => String(((r && r.fields) || {}).JobId || '') === j.jobId);
+    if (!row) return { ...report, stillUnverified: null };
+    const notes = String((row.fields || {}).Notes || '');
+    if (!hasUnverifiedMark(notes)) { report.promoted += 1; continue; }
+    const fields = { Notes: clearUnverified(notes) };
+    if (!assertOnlyScheduledFields(fields)) return { ...report };
+    try {
+      // eslint-disable-next-line no-await-in-loop -- 1 件ずつ
+      const ok = await patchRecord({ KEY, BASE, table: SCHEDULED_TABLE, recordId: row.id, fields });
+      if (!ok) return { ...report };
+    } catch {
+      return { ...report };
+    }
+    report.promoted += 1;
+  }
+
+  // 読み戻して「印が 1 つも残っていない」ことを確かめる
+  let stillUnverified = 0;
+  for (const j of list) {
+    let rows = null;
+    try {
+      // eslint-disable-next-line no-await-in-loop -- 1 件ずつ名指し
+      rows = await fetchAllStrict({
+        KEY, BASE, table: SCHEDULED_TABLE, filterByFormula: `{JobId}='${j.jobId}'`,
+        maxPages: TARGETED_MAX_PAGES, fields: ['JobId', 'Notes'],
+      });
+    } catch {
+      return { ...report, stillUnverified: null };
+    }
+    const row = (rows || []).find((r) => String(((r && r.fields) || {}).JobId || '') === j.jobId);
+    if (!row) return { ...report, stillUnverified: null };
+    if (hasUnverifiedMark(String((row.fields || {}).Notes || ''))) stillUnverified += 1;
+  }
+  return { ...report, stillUnverified, ok: stillUnverified === 0 };
 }
 
 /**

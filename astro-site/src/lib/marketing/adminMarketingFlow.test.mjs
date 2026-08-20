@@ -22,9 +22,12 @@ import { clearProviderSuppressionCache } from './providerSuppression.js';
 import { getCampaign } from './campaignCatalog.js';
 
 const SECRET = 'test-secret';
+import { createFakeRedis, isFakeRedisUrl, FAKE_REDIS_ENV } from './fakeRedisForTests.mjs';
+
 const ENV_KEYS = ['PREMIUM_PLUS_ADMIN_SECRET', 'MARKETING_ADMIN_SECRET', 'AIRTABLE_API_KEY',
   'AIRTABLE_BASE_ID', 'MARKETING_CAMPAIGN_ENABLED', 'NEWSLETTER_AUTOMATION_ENABLED',
-  'MARKETING_CAMPAIGN_DISPATCH_ENABLED', 'SENDGRID_API_KEY', 'NEWSLETTER_TEST_RECIPIENTS'];
+  'MARKETING_CAMPAIGN_DISPATCH_ENABLED', 'SENDGRID_API_KEY', 'NEWSLETTER_TEST_RECIPIENTS',
+  'UPSTASH_REDIS_REST_URL', 'UPSTASH_REDIS_REST_TOKEN'];
 const savedEnv = {};
 let realFetch;
 
@@ -79,9 +82,15 @@ let suppressionFails = false;
 
 function installFakeAirtable() {
   store = { deliveries: [], scheduled: [], writes: [], customerWrites: 0, mailSendCalls: 0, suppressionGets: 0 };
+  const redis = createFakeRedis(makeResponse);
   globalThis.fetch = async (url, init = {}) => {
     const u = String(url);
     const method = (init.method || 'GET').toUpperCase();
+
+    // ── 排他（Upstash REST）──
+    //    キュー登録は二重 queue を防ぐために鍵を取る。取れなければ何も書かない
+    //    （fail closed）ので、テストでも実物と同じ意味の鍵を用意する。
+    if (isFakeRedisUrl(u)) return redis.handle(init);
 
     // ── SendGrid ──
     if (u.includes('api.sendgrid.com')) {
@@ -110,7 +119,11 @@ function installFakeAirtable() {
     const pick = (re) => [...formula.matchAll(re)].map((m) => m[1]);
 
     if (method !== 'GET' && !isListRecords) {
-      store.writes.push({ table: u.split('/').pop().split('?')[0], method });
+      // ⚠️ 書き込み先は **テーブル名**で数える。`/v0/{base}/{Table}/{recordId}` のような
+      //    1 行更新でも、末尾（recordId）ではなくテーブル名を記録する。
+      const path = (u.split('/v0/')[1] || '').split('?')[0];
+      const table = decodeURIComponent((path.split('/')[1] || path).replace(/\/$/, ''));
+      store.writes.push({ table, method });
       if (u.includes('/Customers')) store.customerWrites += 1;
     }
 
@@ -168,6 +181,16 @@ function installFakeAirtable() {
         store.scheduled.push(rec);
         return makeResponse(rec);
       }
+      // ⚠️ **PATCH を素通りさせない。** キュー登録は配信行を確認したあとに
+      //    ジョブの `Notes` から「未検証」の印を外し、**外せたことを読み戻して確かめる**。
+      //    ここで反映しないと、実物では成功する経路がテストだけ失敗する。
+      if (method === 'PATCH') {
+        const id = u.split('/ScheduledEmails/')[1];
+        const body = JSON.parse(init.body);
+        const rec = store.scheduled.find((r) => r.id === id);
+        if (rec) rec.fields = { ...rec.fields, ...body.fields };
+        return makeResponse(rec || { id, fields: body.fields });
+      }
       return makeResponse({ records: store.scheduled });
     }
     return makeResponse({ records: [] });
@@ -188,6 +211,7 @@ beforeEach(() => {
   process.env.AIRTABLE_API_KEY = 'fake-key';
   process.env.AIRTABLE_BASE_ID = 'appFAKE';
   process.env.SENDGRID_API_KEY = 'fake-sg-key';
+  Object.assign(process.env, FAKE_REDIS_ENV);   // キュー登録の排他（実物と同じ意味の偽 Redis）
   delete process.env.MARKETING_CAMPAIGN_ENABLED;
   delete process.env.NEWSLETTER_AUTOMATION_ENABLED;
   delete process.env.MARKETING_CAMPAIGN_DISPATCH_ENABLED;
