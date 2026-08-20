@@ -104,3 +104,38 @@ test('有料項目のマスクは維持する（プレビュー化で緩めな�
     assert.equal(/bettingLines/.test(src), false, `${name}: 買い目の実データを描画している`);
   }
 });
+
+
+// ─── サイト全体の呼び方 ───────────────────────────────────────
+
+test('ナビ・フッター・入口ページで /free-prediction/ を「無料予想」と呼ばない', () => {
+  const layout = readFileSync(join(ROOT, 'src/layouts/BaseLayout.astro'), 'utf-8');
+  const hub = readFileSync(join(ROOT, 'src/pages/free-prediction/index.astro'), 'utf-8');
+  for (const [name, src] of [['BaseLayout', layout], ['free-prediction/index', hub]]) {
+    assert.equal(src.includes('無料予想'), false,
+      `${name}: /free-prediction/ は有料版プレビュー。「無料予想」と呼ばない`);
+    assert.equal(src.includes('無料AI予想'), false, `${name}: 「無料AI予想」も同様`);
+  }
+  assert.ok(layout.includes('AI予想プレビュー'), 'ナビの名称が入っていない');
+  assert.ok(hub.includes('AI予想プレビュー'), '入口ページの名称が入っていない');
+});
+
+test('2 ページの title を「無料予想」にしない', () => {
+  for (const { name, src } of PAGES) {
+    const m = src.match(/title=(?:"([^"]*)"|\{`([^`]*)`\})/);
+    assert.ok(m, `${name}: title が読めない`);
+    const title = m[1] || m[2] || '';
+    assert.equal(title.includes('無料予想'), false, `${name}: title が実態と食い違っている: ${title}`);
+  }
+});
+
+test('2 ページの description が「無料公開」と言わない', () => {
+  for (const { name, src } of PAGES) {
+    const m = src.match(/description=(?:"([^"]*)"|\{`([^`]*)`\})/);
+    assert.ok(m, `${name}: description が読めない`);
+    const desc = m[1] || m[2] || '';
+    assert.equal(/無料(?:公開|予想|で提供)/.test(desc), false,
+      `${name}: description が実態と食い違っている: ${desc}`);
+    assert.ok(desc.includes('プレビュー'), `${name}: description にプレビューの明示が無い`);
+  }
+});
