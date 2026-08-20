@@ -531,7 +531,13 @@ const LEGEND = [
 
   .rvb-row-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
   .rvb-time { color: #cbd5e1; font-variant-numeric: tabular-nums; font-size: .85rem; }
-  .rvb-r { font-weight: 800; color: #38bdf8; min-width: 2.6em; }
+  /* レース番号（2026-08-21・MK 目視判断）。
+     もとは #38bdf8 で、閉じたアコーディオンの塗りと**同じ水色**だったため、
+     1 枚のカードに水色の要素が 2 つ並んでいた。薄い緑へ変更して分離する。
+     枠も塗りも付けない（文字色だけ）。番号は識別子なので装飾を足さない。
+     ⚠️ 濃い緑（#16a34a 5.3:1）ではなく薄い緑（#86efac **12.4:1**）を選んでいる。
+        濃い色は暗い濃紺の背景に沈み、番号が読みにくくなる。 */
+  .rvb-r { font-weight: 800; color: #86efac; min-width: 2.6em; }
   .rvb-name { font-weight: 700; color: #f1f5f9; }
   .rvb-meta { color: #cbd5e1; font-size: .82rem; margin-left: auto; }
 
@@ -553,6 +559,21 @@ const LEGEND = [
   .rvb-detail[open], .rvb-detail.is-open { border-color: #22d3ee; background: rgba(8,47,73,.55); box-shadow: 0 0 0 2px rgba(34,211,238,.18) inset; }
   .rvb-detail-sum { cursor: pointer; color: #7dd3fc; font-size: .84rem; list-style: none; padding: 8px 12px; display: flex; align-items: center; gap: 8px; font-weight: 700; }
   .rvb-detail-sum::-webkit-details-marker { display: none; }
+
+  /* 閉じている状態は「押せるボタン」に見せる（2026-08-21・MK 目視判断）。
+     細い枠線＋カードと同じ濃紺の背景だと押せることが伝わらず、
+     全レースが同じ見た目で並ぶため一覧が白と水色のツートンで単調に見えていた。
+     **色相は変えない（水色のまま）**。枠線ではなく塗りにすることで解決する。
+     ⚠️ ボタン化・バッジ化してクリック領域を縮めないこと。
+        コンパクト化案は押せる幅が 931px → 約 230px になり、
+        スマホで押しづらくなるため見送った。フル幅を維持する。
+     開いている状態は従来どおり（シアン）。`:not([open])` なので開くと自然に解除される。 */
+  .rvb-detail:not([open]) {
+    border-color: rgba(56, 189, 248, .6);
+    background: linear-gradient(180deg, rgba(56, 189, 248, .24), rgba(3, 105, 161, .20));
+  }
+  .rvb-detail:not([open]) .rvb-detail-sum { color: #f0f9ff; }
+  .rvb-detail:not([open]) .rvb-detail-ic { background: #38bdf8; border-color: #7dd3fc; color: #082f49; }
   .rvb-detail-ic { display: inline-flex; width: 20px; height: 20px; align-items: center; justify-content: center; border-radius: 6px; background: rgba(56,189,248,.2); border: 1px solid rgba(56,189,248,.5); font-weight: 800; }
   .rvb-detail[open] .rvb-detail-sum { color: #ecfeff; }
   .rvb-detail[open] .rvb-detail-ic { background: #22d3ee; color: #082f49; border-color: #22d3ee; }
