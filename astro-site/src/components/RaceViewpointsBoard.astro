@@ -115,6 +115,23 @@ const LEGEND = [
         </li>
       ))}
     </ul>
+
+    {/* ページ冒頭の常設バナー。未登録には CTA、登録済みには「何が増えたか」を出す。
+        アコーディオンを開かないと登録案内が見えなかった問題への対応（2026-08-20）。 */}
+    <div class="rvb-topgate" data-guest-only>
+      <p class="rvb-topgate-head"><span aria-hidden="true">🔓</span>{MEMBER_EXTRAS.topLockedHeading}</p>
+      <p class="rvb-topgate-body">{MEMBER_EXTRAS.topLockedBody}</p>
+      <ul class="rvb-topgate-list">
+        {MEMBER_EXTRAS.benefits.map((b: string) => <li>{b}</li>)}
+      </ul>
+      <a class="rvb-topgate-cta" href="/free-signup/">{MEMBER_EXTRAS.topCtaLabel}</a>
+      <p class="rvb-topgate-note">{MEMBER_EXTRAS.topLockedNote}</p>
+    </div>
+
+    <div class="rvb-topmember" data-member-only>
+      <p class="rvb-topmember-head"><span aria-hidden="true">✅</span>{MEMBER_EXTRAS.topMemberHeading}</p>
+      <p class="rvb-topmember-body">{MEMBER_EXTRAS.topMemberBody}</p>
+    </div>
   </header>
 
   {view.venues.map((venue: any) => (
@@ -228,6 +245,7 @@ const LEGEND = [
 
                           {h.extras && (
                             <span class="rvb-member-row" data-member-only>
+                              <span class="rvb-member-rowbadge">{MEMBER_EXTRAS.memberBadge}</span>
                               <span class="rvb-member-chips">
                                 {h.extras.layoffRun && (
                                   <span class={`rvb-mchip mchip-${h.extras.layoffRun.kind === 'layoff' ? 'layoff' : 'run'}`}>
@@ -285,7 +303,10 @@ const LEGEND = [
                 {race.result.state !== RACE_STATE.UNMATCHED && race.horseRows && race.horseRows.length > 0 && (
                   <>
                     <div class="rvb-member" data-member-only>
-                      <h4 class="rvb-member-head">{MEMBER_EXTRAS.unlockedHeading}</h4>
+                      <h4 class="rvb-member-head">
+                        <span class="rvb-member-badge">{MEMBER_EXTRAS.memberBadge}</span>
+                        {MEMBER_EXTRAS.unlockedHeading}
+                      </h4>
                       <div class="rvb-samecond">
                         <span class="rvb-samecond-head">{MEMBER_EXTRAS.sameConditionHeading}</span>
                         {race.sameCondition && race.sameCondition.length > 0
@@ -589,14 +610,33 @@ const LEGEND = [
   }
 
   /* ── 無料会員向け拡張（既定は非表示。登録済みで .is-unlocked が付く）── */
-  [data-member-only] { display: none; }
+  /* ゲートの本体。
+     ⚠️ 2026-08-20 の不具合: `[data-member-only] { display:none }` は詳細度 (0,2,0) で、
+        あとから定義した `.rvb-member-row { display:flex }` と同点になり、
+        **後勝ちで常に表示**されていた（未登録にも拡張が見えていた）。
+        同じ事故を繰り返さないよう `:not(.is-unlocked)` で詳細度を上げ、
+        さらに !important でどのコンポーネント規則にも負けないようにする。
+        ここはゲートなので、他の指定に上書きされてはいけない。 */
+  [data-member-only]:not(.is-unlocked) { display: none !important; }
   [data-member-only].is-unlocked { display: block; }
   span[data-member-only].is-unlocked { display: flex; }
   .rvb-member-row[data-member-only].is-unlocked { display: flex; flex-direction: column; }
-  [data-guest-only].is-hidden { display: none; }
+  [data-guest-only].is-hidden { display: none !important; }
 
   /* chips とは別の行に置く（同じ grid-area を共有すると重なる）。
      チップ行と履歴行を縦に積むため column にする。 */
+  .rvb-topgate { text-align: left; margin-top: 14px; border: 2px dashed #22c55e; border-radius: 12px; background: rgba(34,197,94,.09); padding: 13px 14px; }
+  .rvb-topgate-head { margin: 0 0 6px; font-weight: 800; font-size: .95rem; color: #bbf7d0; display: flex; align-items: center; gap: 6px; }
+  .rvb-topgate-body { margin: 0 0 8px; font-size: .84rem; line-height: 1.8; color: #f1f5f9; }
+  .rvb-topgate-list { margin: 0 0 10px; padding-left: 1.15em; font-size: .8rem; line-height: 1.95; color: #e2e8f0; }
+  .rvb-topgate-cta { display: inline-block; background: #22c55e; color: #052e16; font-weight: 800; font-size: .9rem; padding: 10px 20px; border-radius: 9px; text-decoration: none; }
+  .rvb-topgate-cta:hover { background: #4ade80; }
+  .rvb-topgate-note { margin: 8px 0 0; font-size: .74rem; color: #cbd5e1; line-height: 1.7; }
+  .rvb-topmember { text-align: left; margin-top: 14px; border: 1px solid rgba(6,182,212,.5); border-radius: 12px; background: rgba(6,182,212,.09); padding: 12px 14px; }
+  .rvb-topmember-head { margin: 0 0 5px; font-weight: 800; font-size: .92rem; color: #a5f3fc; display: flex; align-items: center; gap: 6px; }
+  .rvb-topmember-body { margin: 0; font-size: .82rem; line-height: 1.8; color: #e2e8f0; }
+  .rvb-member-badge { display: inline-block; background: rgba(6,182,212,.25); border: 1px solid rgba(6,182,212,.55); color: #a5f3fc; font-size: .68rem; font-weight: 800; padding: 2px 7px; border-radius: 999px; margin-right: 7px; vertical-align: middle; }
+  .rvb-member-rowbadge { display: inline-block; background: rgba(6,182,212,.2); border: 1px solid rgba(6,182,212,.45); color: #a5f3fc; font-size: .64rem; font-weight: 800; padding: 1px 6px; border-radius: 999px; }
   .rvb-member-row { grid-area: member; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 4px; padding-top: 5px; border-top: 1px dotted rgba(148,163,184,.3); width: 100%; min-width: 0; }
   .rvb-member-chips { display: flex; flex-wrap: wrap; gap: 4px; }
   .rvb-mchip { font-size: .7rem; padding: 2px 7px; border-radius: 6px; border: 1px solid; display: inline-flex; gap: 4px; align-items: center; }

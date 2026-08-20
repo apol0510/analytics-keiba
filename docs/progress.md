@@ -8350,3 +8350,60 @@ rollback は該当 env の unset（コード変更不要）。
   **`package.json` / lockfile / workflow / データ schema / consumer contract は未変更**（既存 step に乗る）。
 - production deploy / merge / env 変更 / Airtable write / 実顧客テストは**していない**。
 - **Last verified**: 2026-08-08
+
+---
+
+## 🐞 本番不具合: 無料登録ゲートが効いていなかった（2026-08-20 発見・修正）
+
+**MK の指摘**: 「無料登録した後で何が変わる？違いがわからなかった。拡張したはず。」
+
+### 何が起きていたか
+
+`RaceViewpointsBoard.astro` のゲート CSS が、**未登録の人にも会員限定の拡張を表示していた**。
+
+| ルール | 詳細度 | 定義位置 |
+|---|---|---|
+| `[data-member-only] { display: none; }` | (0,2,0) | 先 |
+| `.rvb-member-row { display: flex; }` | (0,2,0) | **後** |
+
+Astro のスコープ属性が両方に付くため詳細度が**同点**になり、**後勝ちで `flex`** が適用されていた。
+
+本番実測（未登録状態）: `data-rvb-member=false` なのに `[data-member-only]` が **136 個可視**。
+
+### 影響
+
+- 登録しても変わるのは**登録CTAが消えることだけ**。だから違いが分からなかった
+- 隠していたのは**公開事実のみ**（出走間隔・馬体重・条件の移り変わり・同条件の馬）。
+  買い目 / pt / AI総合指数 / 役割 / 特徴量は DTO に入っていないため、**有料情報の漏れは無い**
+- 発生期間: PR #387 の本番反映（2026-08-20）から本修正まで
+
+### なぜ検知できなかったか
+
+既存の `memberGate.guard.test.mjs` は **markup に `data-member-only` が付いているか**しか見ておらず、
+**CSS が実際に隠せるか**を検査していなかった。本番確認でも登録済み状態だけ測り、
+**未登録状態の可視数を測っていなかった**。
+
+### 恒久対策
+
+1. `[data-member-only]:not(.is-unlocked) { display: none !important; }` へ変更。
+   `:not()` で詳細度を上げ、`!important` でどのコンポーネント規則にも負けないようにした
+2. `memberGateStrength.guard.test.mjs` を追加（`test:free-viewpoints` の glob で CI 実行）
+   - 非表示ルールが `:not(.is-unlocked)` + `!important` であること
+   - 裸の `[data-member-only] { display:none }` を書かないこと（同点負けの元）
+   - **ゲート以外のどのルールも `display` に `!important` を使わないこと**
+   - `data-member-only` が付く要素の class が、ゲートを覆す `display` を持たないこと
+   - 壊すと `npm run test:free-viewpoints` が exit 1 になることを実測で確認済み
+
+### 同時に入れた改善（CTA）
+
+登録案内が**アコーディオンを開かないと見えなかった**ため、一覧の手前に常設の枠を置いた。
+
+| 状態 | 表示 |
+|---|---|
+| 未登録 | `.rvb-topgate`「いまは『かんたん表示』です」＋ 追加される4項目 ＋「無料で登録する →」 |
+| 登録済み | `.rvb-topmember`「無料登録ずみです。詳しい表示になっています」＋ 何が増えるかの説明 |
+
+さらに会員限定ブロックに **「無料登録者だけの表示」バッジ**を付け、
+登録して増えた箇所が一目で分かるようにした。
+
+⚠️ 文言で約束するのは**公開事実の追加だけ**。「登録すれば買い目が見える」と読める文言は禁止。
