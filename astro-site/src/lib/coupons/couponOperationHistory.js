@@ -99,6 +99,8 @@ export function assertOnlyHistoryFields(fields) {
  */
 export { computeCouponOperationId as computeOperationId } from './couponPlatform.js';
 
+import { COUPON_OPERATION } from './couponPlatform.js';
+
 /**
  * 履歴 1 行を組み立てる（**書き込みはしない**）。
  *
@@ -213,20 +215,31 @@ export function buildRepairRecord({
   if (!a.operationId) return null;
   return buildHistoryRecord({
     customerRecordId, productKey, couponId, version,
-    operationType: OPERATION_FROM_SOURCE[a.kind] || a.kind,
-    actor: a.actor, reason: a.reason,
+    operationType: operationTypeFromAudit(a),
+    actor: a.actor || (a.byAdmin ? '' : 'customer'),
+    // 顧客取得は理由欄が無いので、取得元を理由として残す（空欄にしない）
+    reason: a.reason || (a.byAdmin ? '' : `お客様ご自身の取得（${a.kind}）`),
     beforeState: beforeState || '', afterState: afterState || '',
     detail: a.raw, atIso: a.atIso, operationId: a.operationId,
   });
 }
 
-/** 監査文字列の `kind` → 操作種別 */
+/**
+ * 監査文字列の `kind` → 操作種別。
+ * ⚠️ `admin-*` 以外（`pause-notice` / `coupon-page` など）は
+ *    **お客様ご自身の取得**なので `claim` に寄せる（商品が増えても同じ規則）。
+ */
 const OPERATION_FROM_SOURCE = Object.freeze({
-  'admin-grant': 'grant',
-  'admin-correct': 'correct',
-  'admin-reissue': 'reissue',
-  'admin-revoke-reservation': 'revokeReservation',
+  'admin-grant': COUPON_OPERATION.GRANT,
+  'admin-correct': COUPON_OPERATION.CORRECT,
+  'admin-reissue': COUPON_OPERATION.REISSUE,
+  'admin-revoke-reservation': COUPON_OPERATION.REVOKE_RESERVATION,
 });
+
+function operationTypeFromAudit(audit) {
+  const a = audit || {};
+  return OPERATION_FROM_SOURCE[a.kind] || (a.byAdmin ? a.kind : COUPON_OPERATION.CLAIM);
+}
 
 /** 会員 1 人ぶんの履歴を新しい順に並べる（**他会員の行は混ぜない**） */
 export function listHistoryForCustomer({ rows, customerRecordId }) {

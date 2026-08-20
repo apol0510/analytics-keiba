@@ -42,6 +42,7 @@
  */
 
 import { REGULAR_PRICE, DISCOUNT_TYPE } from '../promotions/promotionOfferCatalog.js';
+import { encodeCouponAudit, parseCouponAudit } from '../coupons/couponPlatform.js';
 
 /** 円表記（3 桁区切り）。表示の体裁もここ 1 か所で決める。 */
 export function formatYen(n) {
@@ -208,12 +209,21 @@ function parseMs(v) {
 export function readReopenCoupon(fields) {
   const f = fields && typeof fields === 'object' ? fields : {};
   const claimedAtMs = parseMs(f[PP_REOPEN_COUPON_FIELDS.CLAIMED_AT]);
+  const source = String(f[PP_REOPEN_COUPON_FIELDS.SOURCE] ?? '').trim();
+  // `Source` は監査行として構造化されうる（`pause-notice|by=customer|at=…|op=…`）。
+  // ⚠️ **旧データ（素の `pause-notice`）もそのまま読める**（後方互換）。
+  const audit = parseCouponAudit(source);
   return {
     claimed: claimedAtMs !== null,
     claimedAtMs,
     claimedAtIso: claimedAtMs === null ? '' : new Date(claimedAtMs).toISOString(),
     couponId: String(f[PP_REOPEN_COUPON_FIELDS.COUPON_ID] ?? '').trim(),
-    source: String(f[PP_REOPEN_COUPON_FIELDS.SOURCE] ?? '').trim(),
+    /** 生値（監査行そのもの）*/
+    source,
+    /** **論理的な取得元**（`pause-notice` / `coupon-page` / `admin-*`）。構造化前後で同じ値 */
+    sourceKind: audit.kind || '',
+    /** 履歴の冪等キー（部分成功の回復に使う。旧データには無いので空）*/
+    operationId: audit.operationId || '',
   };
 }
 
@@ -269,7 +279,15 @@ export function resolveCouponClaimDecision({ pauseNotice, coupon, enabled } = {}
  * @returns {{ fields: object, changed: boolean, claimedAtIso: string }|null}
  *   書けない（enabled=false / now 不正）なら null（呼び出し側は 503。fail closed）
  */
-export function buildReopenCouponClaimFields({ current, now, source, enabled = false } = {}) {
+export function buildReopenCouponClaimFields({
+  current, now, source, enabled = false,
+  /**
+   * 履歴の冪等キー。**`Source` へ `op=` として残す**ので、
+   * 「Customers は成功したが履歴だけ失敗した」を後から検出して積み直せる。
+   * 省略しても取得自体は成立する（旧データと同じ形になる）。
+   */
+  operationId,
+} = {}) {
   if (enabled !== true) return null;
   const ms = now instanceof Date ? now.getTime() : Number(now);
   if (!Number.isFinite(ms)) return null;
@@ -280,10 +298,15 @@ export function buildReopenCouponClaimFields({ current, now, source, enabled = f
   }
 
   const iso = new Date(ms).toISOString();
+  // ⚠️ 取得元は **allow-list を通した値だけ**（クライアントが `admin-grant` 等を騙れない）。
+  //    監査行として構造化しても、先頭の kind は論理的な取得元のまま。
+  const kind = normalizeCouponSource(source);
   const out = {
     [PP_REOPEN_COUPON_FIELDS.CLAIMED_AT]: iso,
     [PP_REOPEN_COUPON_FIELDS.COUPON_ID]: couponIdWithVersion(),
-    [PP_REOPEN_COUPON_FIELDS.SOURCE]: normalizeCouponSource(source),
+    [PP_REOPEN_COUPON_FIELDS.SOURCE]: operationId
+      ? encodeCouponAudit({ kind, actor: 'customer', atIso: iso, reason: '', operationId })
+      : kind,
   };
   if (!assertOnlyCouponFields(out)) return null;
   // 資格・停止・会員権・決済を巻き添えで書いていないことを構造的に確認する

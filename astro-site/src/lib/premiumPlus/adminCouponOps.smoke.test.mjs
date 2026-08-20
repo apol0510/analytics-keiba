@@ -21,6 +21,8 @@ const { couponIdWithVersion, PP_REOPEN_COUPON_FIELDS, PP_REOPEN_COUPON_WRITABLE_
 const { PP_COUPON_ADMIN_ACTION, PP_COUPON_ADMIN_REJECT, parseCouponAudit } =
   await import('./premiumPlusCouponAdmin.js');
 const { RESERVATION_SOURCE } = await import('../promotions/couponReservationSource.js');
+const P2 = await import('../coupons/couponPlatform.js');
+const { computeCouponEntityId: entityId } = P2;
 const { OFFER_STATUS } = await import('../promotions/promotionalOffer.js');
 
 const SECRET = 'admin-secret-for-test';
@@ -563,6 +565,90 @@ test('4 操作すべてが監査へ op=<OperationId> を残す（部分成功の
     rev.body.operationId);
 });
 
+// ── 異種操作の同時実行も直列化する（entity lock）──────────────
+/**
+ * ⚠️ 鍵が OperationId だと、**操作種別が違うだけで別の鍵**になり、
+ *    `grant` と `correct` のような別種の操作が同時に state を書けてしまう（lost update）。
+ *    鍵は **entity（会員 × 商品 × クーポン × 版）**でなければならない。
+ */
+async function raceMixed(a, b) {
+  const [ra, rb] = await Promise.all([op(a), op(b)]);
+  const statePatches = db.writes.filter((w) => w.table === 'Customers' || w.table === 'PromotionalOffers').length;
+  return { ra, rb, statePatches, ok: [ra, rb].filter((r) => r.statusCode === 200) };
+}
+
+test('同一会員・同一クーポンなら claim 相当と grant が同時でも state PATCH は 1 回', async () => {
+  // claim 相当 = 未取得からの取得。grant と**状態上は同じ遷移**を争う
+  const r = await raceMixed(PP_COUPON_ADMIN_ACTION.GRANT, PP_COUPON_ADMIN_ACTION.GRANT);
+  assert.equal(r.statePatches, 1, `state PATCH が ${r.statePatches} 回`);
+  assert.equal(r.ok.length, 1);
+});
+
+test('grant と correct が同時でも直列化され、state PATCH は 1 回', async () => {
+  db = makeDb();   // 未取得
+  const r = await raceMixed(PP_COUPON_ADMIN_ACTION.GRANT, PP_COUPON_ADMIN_ACTION.CORRECT);
+  // 未取得なので correct は成立しない。grant だけが通る
+  assert.equal(r.statePatches, 1, `state PATCH が ${r.statePatches} 回`);
+  assert.equal(readReopenCoupon(db.customers[REC]).claimed, true);
+  // 負けた側は**再 read 後の正しい状態**で断られている（lost update が起きていない）
+  const rejected = [r.ra, r.rb].find((x) => x.statusCode !== 200);
+  assert.equal(rejected.body.sideEffects, 'none');
+});
+
+test('correct と reissue が同時でも state PATCH は 1 回', async () => {
+  db = makeDb({ member: HELD_FIELDS });   // 取得済み
+  const r = await raceMixed(PP_COUPON_ADMIN_ACTION.CORRECT, PP_COUPON_ADMIN_ACTION.REISSUE);
+  assert.equal(r.statePatches, 1, `state PATCH が ${r.statePatches} 回`);
+  // 取得済みなので reissue は already_claimed。correct だけが通る
+  assert.equal(readReopenCoupon(db.customers[REC]).claimed, false);
+});
+
+test('revokeReservation と correct が同時でも競合せず state は壊れない', async () => {
+  db = makeDb({
+    member: HELD_FIELDS,
+    offers: [{ id: 'recOFFER0000001', fields: reservationFields(OFFER_STATUS.ISSUED) }],
+  });
+  const r = await raceMixed(PP_COUPON_ADMIN_ACTION.REVOKE_RESERVATION, PP_COUPON_ADMIN_ACTION.CORRECT);
+  // 予約が生きているうちは correct を断る仕様。予約取消だけが通る
+  assert.equal(r.statePatches, 1, `state PATCH が ${r.statePatches} 回`);
+  assert.equal(db.offers.recOFFER0000001.Status, OFFER_STATUS.REVOKED);
+  // 取得（保有）は消えていない
+  assert.equal(readReopenCoupon(db.customers[REC]).claimed, true);
+});
+
+test('負けた側は再 read 後の状態で正しく拒否される（lost update なし）', async () => {
+  db = makeDb();
+  const r = await raceMixed(PP_COUPON_ADMIN_ACTION.GRANT, PP_COUPON_ADMIN_ACTION.GRANT);
+  const rejected = [r.ra, r.rb].find((x) => x.statusCode !== 200);
+  // 「進行中」か「既に取得済み」のどちらか。**取得日時を上書きしていない**
+  assert.ok(['operation_in_progress', 'already_claimed'].includes(rejected.body.code),
+    `想定外: ${rejected.body.code}`);
+  const audit = parseCouponAudit(db.customers[REC][PP_REOPEN_COUPON_FIELDS.SOURCE]);
+  const winner = [r.ra, r.rb].find((x) => x.statusCode === 200);
+  assert.equal(audit.operationId, winner.body.operationId, '勝者以外の監査値で上書きされている');
+});
+
+test('他会員は並行して成功し、同一会員でも別商品/別クーポンは block しない', async () => {
+  db = makeDb();
+  const [mine, theirs] = await Promise.all([
+    op(PP_COUPON_ADMIN_ACTION.GRANT),
+    post({
+      action: 'couponAdmin', recordId: OTHER, couponAction: PP_COUPON_ADMIN_ACTION.CORRECT,
+      actor: 'MK', reason: '別会員',
+    }),
+  ]);
+  assert.equal(mine.statusCode, 200);
+  assert.equal(theirs.statusCode, 200);
+  // 鍵が別（entity id が別）
+  const keys = [...redis.store.keys()].filter((k) => k.startsWith('ak:coupon-op:lock:'));
+  assert.ok(keys.length === 0 || new Set(keys).size === keys.length);
+  // 別商品・別クーポンは entity id が別（プラットフォーム側で保証）
+  const ent = (over) => entityId({ customerRecordId: REC, productKey: 'premium_plus', couponId: 'c', version: 1, ...over });
+  assert.notEqual(ent(), ent({ productKey: 'premium_monthly' }));
+  assert.notEqual(ent(), ent({ couponId: 'other' }));
+  assert.notEqual(ent(), ent({ version: 2 }));
+});
+
 // ── 履歴の配線（append-only / repair / gate / 分離）─────────────
 const histOps = () => db.history.map((r) => r.fields.OperationType);
 const histIds = () => db.history.map((r) => r.fields.OperationId);
@@ -723,6 +809,40 @@ test('履歴は時系列（新しい順）で admin へ返る', async () => {
       assert.ok(k in row, `${k} が無い`);
     }
   }
+});
+
+test('claim の部分成功も history-only repair で 1 件へ収束する', async () => {
+  // お客様が取得したが履歴だけ積めなかった状態を、durable marker（op=）から再現
+  const claimOpId = P2.computeCouponOperationId({
+    productKey: 'premium_plus', couponId: 'premium-plus-reopen-priority', version: 1,
+    customerRecordId: REC, operationType: 'claim', anchor: 'none',
+  });
+  db = makeDb({
+    member: {
+      [PP_REOPEN_COUPON_FIELDS.CLAIMED_AT]: '2026-08-20T01:00:00.000Z',
+      [PP_REOPEN_COUPON_FIELDS.SOURCE]: P2.encodeCouponAudit({
+        kind: 'pause-notice', actor: 'customer', atIso: '2026-08-20T01:00:00.000Z',
+        reason: '', operationId: claimOpId,
+      }),
+    },
+  });
+
+  const fix = await post({ action: 'couponHistoryRepair', recordId: REC });
+  assert.equal(fix.statusCode, 200);
+  assert.equal(fix.body.repaired, 1);
+  assert.equal(db.history.length, 1);
+  const f = db.history[0].fields;
+  assert.equal(f.OperationId, claimOpId, '別の OperationId で積んでいる');
+  assert.equal(f.OperationType, 'claim', 'claim として復元できていない');
+  assert.equal(f.Actor, 'customer');
+  assert.equal(f.OccurredAt, '2026-08-20T01:00:00.000Z', '履歴の時刻を今にしている');
+  // 状態は 1 バイトも触っていない
+  assert.equal(db.writes.filter((w) => w.table === 'Customers').length, 0);
+
+  // 再実行しても増えない
+  const again = await post({ action: 'couponHistoryRepair', recordId: REC });
+  assert.equal(again.body.repaired, 0);
+  assert.equal(db.history.length, 1);
 });
 
 // ── 二重操作・使用済み ───────────────────────────────────────

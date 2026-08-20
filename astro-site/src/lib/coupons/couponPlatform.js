@@ -207,7 +207,13 @@ export function parseCouponAudit(rawValue) {
 /** 監査を日本語 1 行にする（管理画面にそのまま出す） */
 export function describeCouponAudit(parsed) {
   const a = parsed || {};
-  if (!a.byAdmin) return a.raw ? `お客様ご自身の取得（${a.raw}）` : '';
+  if (!a.byAdmin) {
+    if (!a.raw) return '';
+    // 顧客取得。構造化されていれば日時まで出す（旧来の素の値もそのまま読める）
+    const bits = [`お客様ご自身の取得（${a.kind || a.raw}）`];
+    if (a.atIso) bits.push(`日時: ${a.atIso}`);
+    return bits.join(' / ');
+  }
   const label = {
     'admin-grant': '管理者が付与', 'admin-correct': '管理者が誤取得を訂正',
     'admin-reissue': '管理者が再発行', 'admin-revoke-reservation': '管理者が利用予約を取消',
@@ -294,7 +300,35 @@ export function resolveOperationAnchor({ operation, holding, reservations, bindi
 }
 
 /**
- * **安定した冪等キー**（OperationId）。
+ * **クーポン実体の識別子**（entity id）＝ *排他の単位*。
+ *
+ * ## OperationId とは**別の概念**（混同しない）
+ *
+ * | | 何のためか | 何から作るか |
+ * |---|---|---|
+ * | **entity id** | **mutation の排他**（同じクーポン状態を触る操作を直列化）| 会員 + 商品 + クーポン + 版 |
+ * | **OperationId** | **履歴の冪等**（同じ論理操作の履歴を 1 件に収束）| entity の材料 + 操作種別 + anchor |
+ *
+ * 同じ会員・同じ商品・同じクーポンなら、**操作種別が違っても同じ鍵**を取る
+ * （`claim` と `grant`、`correct` と `reissue` などが同時に走っても直列化される）。
+ * OperationId を鍵にすると**種別が違う操作どうしが同時に state を書けてしまう**。
+ *
+ * ⚠️ 他会員・他商品・別クーポン（別 version）は**別の鍵**なので互いに待たない。
+ * ⚠️ PII は含めない（sha256 の断片）。
+ */
+export function computeCouponEntityId({ customerRecordId, productKey, couponId, version } = {}) {
+  const parts = [customerRecordId, productKey, couponId, version].map((v) => String(v ?? '').trim());
+  if (parts.some((v) => !v)) return null;
+  return createHash('sha256')
+    .update(`ak-coupon-entity|${parts.join('|')}`, 'utf8')
+    .digest('hex').slice(0, 32);
+}
+
+/**
+ * **安定した冪等キー**（OperationId）＝ *履歴の一意性*。
+ *
+ * ⚠️ **mutation の排他には使わない**（排他は `computeCouponEntityId`）。
+ *    操作種別ごとに値が変わるため、鍵にすると別種の操作が同時に state を書ける。
  *
  * ⚠️ **現在時刻を材料にしない。** 同じ論理操作の再送では必ず同じ値になる。
  * ⚠️ 会員・商品・クーポン・操作種別・anchor がすべて入るので、

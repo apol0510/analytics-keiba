@@ -624,6 +624,27 @@ MK 承認済みだが、**API では作成できなかった**。
 `planHistoryAppend()` は `append:false` を返し続け、**履歴の書き込みは発生しない**。
 **本番 write は未開始**（Customers / PromotionalOffers / 履歴のいずれにも書いていない）。
 
+#### 🔑 entity lock（排他）と OperationId（履歴の冪等）は**別概念**（2026-08-20 修正 3）
+
+| | 何のためか | 何から作るか |
+|---|---|---|
+| **entity lock** | **mutation の排他** | 会員 + 商品 + クーポン + 版（**操作種別を含まない**）|
+| **OperationId** | **履歴の冪等** | entity の材料 + 操作種別 + anchor |
+
+⚠️ **OperationId を鍵にしていたのが誤り**だった。操作種別ごとに鍵が変わるため、
+`claim` と `grant`、`correct` と `reissue` のような**別種の操作が同時に state を書けた**。
+鍵を entity 単位へ変更し、**同じクーポン実体の全操作を直列化**した。
+他会員・他商品・別クーポン（別 version）は別鍵なので互いに待たない。
+
+#### ✅ 顧客の claim も共通基盤へ配線（2026-08-20）
+
+`/api/premium-plus-coupon.json` を例外にせず、管理操作と同じ
+**entity lock → 再 read → 再判定 → OperationId → lock verify → 3 列 PATCH → history append**
+を通す。durable marker は **`Source` の構造化**（`pause-notice|by=customer|at=…|op=…`）で、
+**新しい Customers 列は追加していない**。論理的な取得元を失わず、
+**旧データ（素の `pause-notice`）も読める**（`readReopenCoupon()` が `sourceKind` / `operationId` を返す）。
+取得元は allow-list を通すので**クライアントは admin 操作を騙れない**。
+
 #### ✅ 履歴の配線を完成（2026-08-20 / **gate は未設定のまま**）
 
 | 経路 | 状態 |

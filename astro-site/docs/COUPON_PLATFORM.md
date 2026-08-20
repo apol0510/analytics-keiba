@@ -153,6 +153,22 @@ sha256("ak-coupon-op|" + productKey + "|" + couponId + "|" + version
 ⚠️ binding が `resolveOperationAnchor()` を持つ場合はそちらを優先する
 （商品側にしか無い安定 ID を使いたいときの逃げ道）。
 
+### 🔑 **entity lock**（排他）と **OperationId**（履歴の冪等）は別概念
+
+**混同しないこと。**
+
+| | 何のためか | 何から作るか | 粒度 |
+|---|---|---|---|
+| **entity lock** | **mutation の排他** | `CustomerRecordId` + `ProductKey` + `CouponId` + `CouponVersion` | **クーポン実体ごと**（操作種別を含まない）|
+| **OperationId** | **履歴の冪等**（exact-once 相当）| entity の材料 + `OperationType` + `anchor` | 論理操作ごと |
+
+- 同じ会員・同じ商品・同じクーポンなら、**`claim` / `grant` / `correct` / `reissue` /
+  `revokeReservation` のどれでも同じ鍵**を取り、**必ず直列化**される。
+- ⚠️ **OperationId を鍵にしてはいけない。** 操作種別ごとに値が変わるため、
+  `claim` と `grant` のような**別種の操作が同時に同じ状態を書けてしまう**（lost update）。
+- 他会員・他商品・別クーポン（別 version）は別の鍵なので**互いに待たない**。
+- 鍵は `ak:coupon-op:lock:<entityId>`。**PII を含めない**（sha256 の断片）。
+
 ### 排他は **状態変更より前**に取る（本体 PATCH の race を閉じる）
 
 ⚠️ **履歴の直前で排他を取るだけでは足りない。** 同じ未取得会員へ `grant` が同時に 2 本来ると、
@@ -184,6 +200,34 @@ sha256("ak-coupon-op|" + productKey + "|" + couponId + "|" + version
   検証・解放の Lua は **`marketing/automationStore.js` の既存 primitive を再利用**する
   （新しい外部基盤を足さない）
 - ⚠️ **状態成功後の履歴失敗で、状態を rollback しない**
+
+### 顧客の `claim` も同じ手順を通る（**例外にしない**）
+
+`/api/premium-plus-coupon.json` の取得も、管理操作とまったく同じ順序:
+**entity lock → 再 read → 再判定 → OperationId 算出 → lock verify → 3 列 PATCH → history append**。
+
+- 同時 2 本でも **Customers PATCH は 1 回**。**取得日時を二重更新しない**
+- lock 待ちの間に別実行が取得していれば、再判定で**既取得として 200**（失敗にしない）
+- Redis unavailable は **state を書かず 503**（`sideEffects:'none'`）
+- 既に取得済みなら従来どおり **200・PATCH なし**
+- 履歴 append の失敗で **claim を rollback しない**
+
+#### durable marker（`Source` の構造化・**新しい列を追加しない**）
+
+`Source` へ監査行を書き、`op=<OperationId>` を残す。
+
+```
+pause-notice|by=customer|at=2026-08-20T…|op=<OperationId>|why=
+```
+
+- **論理的な取得元（`pause-notice` / `coupon-page`）を失わない**（先頭の kind がそれ）
+- **旧データ（素の `pause-notice`）もそのまま読める**（`parseCouponAudit` が後方互換）。
+  `readReopenCoupon()` が `sourceKind` / `operationId` を返すので、
+  構造化の有無を呼び出し側が気にしなくてよい
+- **admin 操作の監査形式と同じ**（1 つの parser / encoder を共用）
+- ⚠️ 取得元は **allow-list（`normalizeCouponSource`）を通した値だけ**。
+  クライアントが `admin-grant` を送っても `pause-notice` に倒れる（**騙れない**）
+- repair 時は `admin-*` 以外の kind を **`claim`** として復元する
 
 ### 履歴の配線（**実装済み・gate は未設定**）
 

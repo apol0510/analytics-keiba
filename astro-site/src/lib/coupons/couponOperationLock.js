@@ -1,5 +1,5 @@
 /**
- * couponOperationLock.js — クーポン操作の**排他**（状態変更より前に取る）
+ * couponOperationLock.js — クーポン**実体（entity）**の排他（状態変更より前に取る）
  *
  * ## なぜ「履歴の直前」ではなく「状態変更の前」か
  *
@@ -31,11 +31,17 @@
  *
  * **書かない**（fail closed）。排他できないまま本体を書くと、上の race がそのまま起きる。
  *
- * ## 鍵に入れてよいもの
+ * ## 鍵は **entity id**（OperationId ではない）
  *
- * `OperationId`（sha256 の断片）**だけ**。アドレス・氏名・理由は 1 文字も入れない。
- * OperationId は会員・商品・クーポン・操作・anchor から作られるので、
- * **他会員・他商品・別操作は自動的に別の鍵**になる。
+ * `computeCouponEntityId(会員 + 商品 + クーポン + 版)` の sha256 断片**だけ**を鍵にする。
+ * アドレス・氏名・理由は 1 文字も入れない。
+ *
+ * ⚠️ **OperationId を鍵にしてはいけない。** OperationId は操作種別ごとに値が変わるため、
+ *    `claim` と `grant`、`correct` と `reissue` のような**別種の操作が同時に
+ *    同じクーポン状態を書けてしまう**（lost update）。
+ *    排他の単位は「**どのクーポン実体か**」であって「どの操作か」ではない。
+ *
+ * ⚠️ 他会員・他商品・別クーポン（別 version）は別の鍵なので**互いに待たない**。
  */
 
 import { LOCK_RELEASE_LUA, LOCK_VERIFY_LUA } from '../marketing/automationStore.js';
@@ -44,7 +50,8 @@ import { LOCK_RELEASE_LUA, LOCK_VERIFY_LUA } from '../marketing/automationStore.
 export const COUPON_LOCK_ROOT = 'ak:coupon-op:';
 
 export const couponLockKey = Object.freeze({
-  lock: (operationId) => `${COUPON_LOCK_ROOT}lock:${operationId}`,
+  /** @param {string} entityId `computeCouponEntityId()` の値 */
+  lock: (entityId) => `${COUPON_LOCK_ROOT}lock:${entityId}`,
   fence: () => `${COUPON_LOCK_ROOT}fence`,
 });
 
@@ -65,9 +72,9 @@ export const LOCK_RESULT = Object.freeze({
   UNAVAILABLE: 'unavailable',
 });
 
-/** `OperationId` として鍵に載せてよい形か（PII 混入と鍵空間の汚染を防ぐ） */
-export function isSafeOperationId(operationId) {
-  return typeof operationId === 'string' && /^[0-9a-f]{16,64}$/.test(operationId);
+/** 鍵に載せてよい形か（PII 混入と鍵空間の汚染を防ぐ）。entity id は sha256 の断片 */
+export function isSafeLockId(id) {
+  return typeof id === 'string' && /^[0-9a-f]{16,64}$/.test(id);
 }
 
 /**
@@ -93,14 +100,14 @@ export function createCouponOperationLock({ redisCmd } = {}) {
      * **状態変更より前に**取る。取れた 1 本だけが本体を書いてよい。
      * @returns {Promise<{ status: string, token: string|null }>}
      */
-    async acquire({ operationId, ttlSec = COUPON_LOCK_TTL_SEC }) {
-      if (!isSafeOperationId(operationId)) return { status: LOCK_RESULT.UNAVAILABLE, token: null };
+    async acquire({ entityId, ttlSec = COUPON_LOCK_TTL_SEC }) {
+      if (!isSafeLockId(entityId)) return { status: LOCK_RESULT.UNAVAILABLE, token: null };
       const fence = await call(['INCR', couponLockKey.fence()]);
       if (!fence.ok) return { status: LOCK_RESULT.UNAVAILABLE, token: null };
       const token = String(fence.result);
       if (!token || token === 'null') return { status: LOCK_RESULT.UNAVAILABLE, token: null };
       const res = await call([
-        'SET', couponLockKey.lock(operationId), token, 'NX', 'EX', String(ttlSec),
+        'SET', couponLockKey.lock(entityId), token, 'NX', 'EX', String(ttlSec),
       ]);
       if (!res.ok) return { status: LOCK_RESULT.UNAVAILABLE, token: null };
       if (res.result === 'OK') return { status: LOCK_RESULT.ACQUIRED, token };
@@ -113,9 +120,9 @@ export function createCouponOperationLock({ redisCmd } = {}) {
      * **本体を書く直前に必ず通す**。奪われていたら書かない。
      * @returns {Promise<{ ok: boolean, reason: string|null }>}
      */
-    async verify({ operationId, token }) {
+    async verify({ entityId, token }) {
       if (!token) return { ok: false, reason: 'no_token' };
-      const res = await call(['EVAL', LOCK_VERIFY_LUA, '1', couponLockKey.lock(operationId), String(token)]);
+      const res = await call(['EVAL', LOCK_VERIFY_LUA, '1', couponLockKey.lock(entityId), String(token)]);
       if (!res.ok) return { ok: false, reason: 'unavailable' };
       if (res.result === 'OK') return { ok: true, reason: null };
       return { ok: false, reason: String(res.result || 'unknown').toLowerCase() };
@@ -125,9 +132,9 @@ export function createCouponOperationLock({ redisCmd } = {}) {
      * 解放。**token が一致するときだけ消す**（他プロセスの鍵を消さない）。
      * 解放に失敗しても TTL で必ず回復するので、呼び出し側は握りつぶしてよい。
      */
-    async release({ operationId, token }) {
+    async release({ entityId, token }) {
       if (!token) return { ok: false, reason: 'no_token' };
-      const res = await call(['EVAL', LOCK_RELEASE_LUA, '1', couponLockKey.lock(operationId), String(token)]);
+      const res = await call(['EVAL', LOCK_RELEASE_LUA, '1', couponLockKey.lock(entityId), String(token)]);
       if (!res.ok) return { ok: false, reason: 'unavailable' };
       return { ok: res.result === 'OK', reason: res.result === 'OK' ? null : String(res.result).toLowerCase() };
     },
@@ -138,7 +145,7 @@ export function createCouponOperationLock({ redisCmd } = {}) {
  * lock を取れなかったときに返す内容（**副作用ゼロ**であることを明示する）。
  */
 export const LOCK_REJECT_TEXT = Object.freeze({
-  lost: 'この会員に対する同じ操作が、いま別の実行で進行中です。'
+  lost: 'この会員のこのクーポンに対する操作が、いま別の実行で進行中です。'
     + '二重に実行しないよう受け付けませんでした。数秒おいて画面を再読込し、結果を確認してください。',
   unavailable: '排他制御を確認できないため操作を受け付けませんでした。'
     + '同時実行で二重に書き換わるおそれがあるため、確認できない状態では書き込みません。',

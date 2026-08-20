@@ -122,7 +122,7 @@ import {
   isCouponHistoryEnabled,
 } from '../../src/lib/coupons/couponOperationHistory.js';
 import { PP_COUPON_BINDING } from '../../src/lib/premiumPlus/premiumPlusCouponAdmin.js';
-import { parseCouponAudit } from '../../src/lib/coupons/couponPlatform.js';
+import { parseCouponAudit, computeCouponEntityId } from '../../src/lib/coupons/couponPlatform.js';
 import {
   describeCouponLifecycle,
   describeLedgerUnavailable,
@@ -770,10 +770,13 @@ async function handleCouponAdmin({ KEY, BASE, now, req }) {
   }
 
   // ── ③ **状態変更より前に**排他を取る ───────────────────────
+  //    ⚠️ 鍵は **entity id（会員 × 商品 × クーポン）**。OperationId を鍵にすると
+  //       claim と grant のような**別種の操作が同時に state を書けてしまう**。
   //    ここを history append の直前にすると、同時 2 本が両方 PATCH に成功し、
   //    Customers の最終監査値と履歴が食い違う。
+  const entityId = couponEntityIdFor(recordId);
   const lock = createCouponOperationLock({ redisCmd: makeRedisCmd(process.env) });
-  const got = await lock.acquire({ operationId: planned.operationId });
+  const got = await lock.acquire({ entityId });
   if (got.status !== LOCK_RESULT.ACQUIRED) {
     const lost = got.status === LOCK_RESULT.LOST;
     return json(lost ? 409 : 503, {
@@ -810,7 +813,7 @@ async function handleCouponAdmin({ KEY, BASE, now, req }) {
     }
 
     // ── ⑥ 状態変更（書く直前に lock を検証。奪われていたら書かない）──
-    const held = await lock.verify({ operationId: plan.operationId, token: got.token });
+    const held = await lock.verify({ entityId, token: got.token });
     if (!held.ok) {
       return json(409, {
         error: LOCK_REJECT_TEXT.lost, code: 'operation_lock_lost',
@@ -909,8 +912,23 @@ async function handleCouponAdmin({ KEY, BASE, now, req }) {
     });
   } finally {
     // ── ⑨ 解放（token 一致時のみ）。失敗しても TTL で必ず回復する ──
-    await lock.release({ operationId: planned.operationId, token: got.token });
+    await lock.release({ entityId, token: got.token });
   }
+}
+
+/**
+ * この会員 × この商品 × このクーポンの **排他の鍵**（entity id）。
+ *
+ * ⚠️ **OperationId ではない。** OperationId は操作種別ごとに変わるので、
+ *    鍵にすると `claim` と `grant` のような別種の操作が同時に state を書ける。
+ */
+function couponEntityIdFor(recordId) {
+  return computeCouponEntityId({
+    customerRecordId: recordId,
+    productKey: PP_COUPON_BINDING.productKey,
+    couponId: PP_COUPON_BINDING.couponId,
+    version: PP_COUPON_BINDING.version,
+  });
 }
 
 /**
@@ -1034,9 +1052,11 @@ async function handleCouponHistoryRepair({ KEY, BASE, now, req }) {
   }
 
   const lock = createCouponOperationLock({ redisCmd: makeRedisCmd(process.env) });
+  // repair も**同じ entity lock**を取る（進行中の操作と直列化する）
+  const entityId = couponEntityIdFor(recordId);
   const results = [];
   for (const t of targets) {
-    const got = await lock.acquire({ operationId: t.operationId });
+    const got = await lock.acquire({ entityId });
     if (got.status !== LOCK_RESULT.ACQUIRED) {
       results.push({ operationId: t.operationId, appended: false, reason: got.status });
       continue;
@@ -1054,7 +1074,7 @@ async function handleCouponHistoryRepair({ KEY, BASE, now, req }) {
       const out = await store.append({ record, lockStatus: 'acquired' });
       results.push({ operationId: t.operationId, ...out });
     } finally {
-      await lock.release({ operationId: t.operationId, token: got.token });
+      await lock.release({ entityId, token: got.token });
     }
   }
   return json(200, {
