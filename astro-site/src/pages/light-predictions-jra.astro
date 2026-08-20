@@ -16,7 +16,7 @@ import { gatePaidPage, PAID_PAGE_HEADERS } from '../lib/auth/paidPageGate.js';
 import { loadFeatureScores, getHorseFeatures, venueCodeFromName } from '../lib/loadFeatureScores.js';
 import { deriveAkImportance } from '../lib/akFeatureSummary.js';
 // premium JRA と同じ JRA horseHistories を表示専用フォールバックとして使う（読むだけ）。
-import { jraVenueCodeFromName, loadHorseHistoriesForVenue, buildHorseNameIndex, pickRecentRacesFromHistories, pickHistoryForDetails } from '../lib/loadHorseHistoriesJra.js';
+import { jraVenueCodeFromName, loadHorseHistoriesForVenue, buildHistoryJoinIndex, resolveRaceHistories, pickRecentRacesFromHistories, pickHistoryForDetails } from '../lib/loadHorseHistoriesJra.js';
 
 // 算出可能な馬のみ horse.importance を shared featureScores 由来へ差し替える。
 // 算出不能（fs6 無し / 全項目 null）の馬は既存 horse.importance（computeImportance 由来）を維持。
@@ -39,12 +39,15 @@ function applyAkImportanceJra(horses, featureScoresData, raceNumber) {
 // premium JRA と同方式: JRA horseHistories の recent5（当日除外・最大5走）を表示用 recentRaces に差し替える。
 // histories が無い馬は既存 recentRaces を維持。表示専用（pt/印/ロール/featureScores 等の計算入力は変えない）。
 // rank は finish 由来（order は使わない）。convertHistoryRaceToRecentShape の shape は premium JRA recent5 と同一。
-function applyHorseHistoriesJra(horses, nameIndex, date, raceVenue, raceDistanceMeters) {
-    if (!nameIndex || !Array.isArray(horses)) return horses;
-    for (const horse of horses) {
-        if (!horse) continue;
-        const histHorse = nameIndex.get(horse.name ?? horse.horseName);
-        if (!histHorse) continue;
+function applyHorseHistoriesJra(horses, joinIndex, date, raceVenue, raceDistanceMeters) {
+    if (!joinIndex || !Array.isArray(horses)) return horses;
+    // 結合規則の単一源は lib/jra/horseHistoryJoin.js（完全一致優先 → (地)/(外) を外して再照合 → 衝突は fail closed）。
+    // premium / free JRA と同じ判定にそろえる。表示用の馬名は変更しない。
+    const resolved = resolveRaceHistories(horses, joinIndex, { nameOf: (h) => h?.name ?? h?.horseName });
+    for (let i = 0; i < horses.length; i += 1) {
+        const horse = horses[i];
+        const histHorse = resolved[i];
+        if (!horse || !histHorse) continue;
         const recent = pickRecentRacesFromHistories(histHorse, date);
         if (Array.isArray(recent) && recent.length > 0) {
             horse.recentRaces = recent;
@@ -132,7 +135,7 @@ const venuesView = adaptedVenues.map(({ venueName, adapted }) => {
     // premium JRA と同方式: 会場単位で JRA horseHistories を1回ロードし名前 index 化（読むだけ）。
     const histVenueCode = jraVenueCodeFromName(venueName);
     const historiesJson = histVenueCode ? loadHorseHistoriesForVenue(adapted.raceDate, histVenueCode) : null;
-    const historiesIndex = historiesJson ? buildHorseNameIndex(historiesJson) : null;
+    const historiesIndex = historiesJson ? buildHistoryJoinIndex(historiesJson) : null;
 
     return {
         venueName,

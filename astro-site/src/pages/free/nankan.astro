@@ -1,0 +1,44 @@
+---
+/**
+ * /free/nankan/ — 無料コンテンツ第 2 層（**仮 URL / 仮名称**）
+ *
+ * 2026-08-20: MK 判断により nav へ掲載し、noindex を解除した（検索対象にする）。
+ *    URL（/free/）を後から変える場合は 301 リダイレクトが必要になる。
+ *
+ * 出さないもの: 買い目 / pt / AI総合指数 / 役割 / 特徴量
+ * /free-prediction/ の役割（有料版プレビュー）は変更しない。ここは別ページ。
+ */
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import RaceViewpointsBoard from '../../components/RaceViewpointsBoard.astro';
+import { buildViewpoints } from '../../lib/freeViewpoints/loadRaceViewpoints.js';
+
+export const prerender = false;
+
+let view: any = null;
+try {
+  view = buildViewpoints('nankan', process.cwd());
+} catch (error) {
+  console.error('[free/nankan] build error:', error);
+}
+---
+
+<BaseLayout
+  title={`無料予想（南関競馬）| 今日のレースの見どころ`}
+  description="出走馬の近走から、レースごとの条件の替わり方と近走の比べやすさを無料で公開しています。買い目や評価数値は含みません。"
+>
+  {view
+    ? <RaceViewpointsBoard view={view} categoryLabel="南関競馬" freeUrl="/free-prediction/nankan/" />
+    : (
+      <section class="rvb-empty">
+        <h1>無料予想（南関競馬）</h1>
+        <p>本日ぶんのデータがまだ用意できていません。取込が終わり次第表示されます。</p>
+        <a href="/free-prediction/nankan/">南関競馬 の有料版プレビューを見る →</a>
+      </section>
+    )}
+</BaseLayout>
+
+<style>
+  .rvb-empty { max-width: 640px; margin: 0 auto; padding: 64px 16px; text-align: center; color: #cbd5e1; }
+  .rvb-empty h1 { color: #38bdf8; font-size: 1.4rem; margin-bottom: 12px; }
+  .rvb-empty a { color: #38bdf8; }
+</style>
