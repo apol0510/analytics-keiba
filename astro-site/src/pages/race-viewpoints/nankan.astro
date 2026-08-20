@@ -2,8 +2,8 @@
 /**
  * /race-viewpoints/nankan/ — 無料コンテンツ第 2 層（**仮 URL / 仮名称**）
  *
- * ⚠️ URL・ページ名称・最終コピーは MK 未承認。目視確認が必要。
- *    確定するまで nav へは載せない（直 URL でのみ到達可能）。
+ * 2026-08-20: MK 判断により nav へ掲載し、noindex を解除した（検索対象にする）。
+ *    URL（/race-viewpoints/）を後から変える場合は 301 リダイレクトが必要になる。
  *
  * 出さないもの: 買い目 / pt / AI総合指数 / 役割 / 特徴量
  * /free-prediction/ の役割（有料版プレビュー）は変更しない。ここは別ページ。
@@ -25,7 +25,6 @@ try {
 <BaseLayout
   title={`レースの見どころ | 南関競馬`}
   description="出走馬の近走から、レースごとの条件の替わり方と近走の比べやすさを無料で公開しています。買い目や評価数値は含みません。"
-  noindex={true}
 >
   {view
     ? <RaceViewpointsBoard view={view} categoryLabel="南関競馬" freeUrl="/free-prediction/nankan/" />

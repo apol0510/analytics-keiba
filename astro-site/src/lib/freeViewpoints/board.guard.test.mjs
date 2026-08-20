@@ -130,11 +130,22 @@ test('データ不足のレースはタグを出さず状態表示にする', ()
   assert.ok(board.includes('noChanges'), '近走が無い馬の扱いが無い');
 });
 
-test('ページは noindex かつ nav 未掲載のまま', () => {
+test('ページは SSR のまま（最新開催日を出すため）', () => {
   for (const p of pages) {
-    assert.ok(p.includes('noindex={true}'), 'noindex が外れている');
     assert.ok(p.includes('prerender = false'), 'SSR 前提が変わっている');
   }
+});
+
+test('2026-08-20: nav に掲載し noindex を解除した', () => {
+  for (const p of pages) {
+    assert.equal(p.includes('noindex={true}'), false, 'noindex を戻してはいけない（nav 掲載済みのため）');
+  }
   const layout = readFileSync(join(ROOT, 'src/layouts/BaseLayout.astro'), 'utf-8');
-  assert.equal(layout.includes('/race-viewpoints/'), false, 'nav に載せてはいけない（未確定のため）');
+  for (const href of ['/race-viewpoints/jra/', '/race-viewpoints/nankan/']) {
+    assert.ok(layout.includes(href), `nav に ${href} が無い`);
+  }
+  assert.ok(layout.includes('レースの見どころ'), 'nav のラベルが無い');
+  // PC ナビ / モバイルナビ / フッターの 3 経路すべてに導線がある
+  const count = (layout.match(/\/race-viewpoints\//g) || []).length;
+  assert.ok(count >= 5, `導線が足りない（${count} 箇所）。PC・モバイル・フッターに置くこと`);
 });
