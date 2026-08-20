@@ -19,6 +19,12 @@
 
 import { DISTANCE_CHANGE_METERS } from './thresholds.js';
 
+/**
+ * 「長い休み」とみなす日数。12 週。
+ * 休み明け / 叩き◯戦目 の判定はすべてこの 1 つの値を基準にする。
+ */
+export const LAYOFF_DAYS = 84;
+
 const num = (v) => {
   if (v === null || v === undefined || v === '') return null;
   const n = Number(v);
@@ -52,7 +58,7 @@ export function calcInterval(raceDate, prevDate) {
   // 8 日 → 中1週 / 14 日 → 中1週 / 21 日 → 中2週 となるよう floor((days-1)/7) を使う。
   const weeks = Math.floor((days - 1) / 7);
   if (weeks <= 0) return { days, label: '連闘', longLayoff: false };
-  if (days >= 84) return { days, label: `休養明け（中${weeks}週）`, longLayoff: true };
+  if (days >= LAYOFF_DAYS) return { days, label: `休養明け（中${weeks}週）`, longLayoff: true };
   return { days, label: `中${weeks}週`, longLayoff: false };
 }
 
@@ -140,6 +146,45 @@ export function buildSameConditionTable(horses, today) {
   return rows.sort((a, b) => rank(a.finish) - rank(b.finish) || a.number - b.number);
 }
 
+
+/**
+ * 休み明け / 叩き◯戦目。
+ *
+ * 長い休み（`LAYOFF_DAYS` 以上の間隔）のあと、**今日が何戦目か**を数える。
+ *   今日 ← 前走 の間隔が長い            → 休み明け（＝復帰initial戦）
+ *   前走 ← 2走前 の間隔が長い           → 叩き2戦目
+ *   2走前 ← 3走前 の間隔が長い          → 叩き3戦目 …
+ *
+ * **持っている過去走の範囲でしか分からない**。5 走ぶんしか無いので、
+ * それより前に休みがあった場合は判定できず `null` を返す
+ * （「休み明けではない」と断定しない）。日付が欠けたらそこで打ち切る。
+ *
+ * @param {string} raceDate 今日のレース日
+ * @param {Array<{date?: string}>} past 新しい順の過去走
+ * @returns {{kind: 'layoff'|'run-after-layoff', nth: number, gapDays: number}|null}
+ */
+export function calcLayoffRun(raceDate, past) {
+  const list = Array.isArray(past) ? past : [];
+  const today = parseDate(raceDate);
+  if (today === null || list.length === 0) return null;
+
+  let prev = today;
+  for (let i = 0; i < list.length; i += 1) {
+    const at = parseDate(list[i]?.date);
+    if (at === null) return null;           // 日付が欠けたら判定しない
+    const gap = Math.round((prev - at) / 86400000);
+    if (gap < 0) return null;               // 並びが壊れている
+    if (gap >= LAYOFF_DAYS) {
+      // i=0 なら今日が休み明け、i=1 なら叩き2戦目 …
+      return i === 0
+        ? { kind: 'layoff', nth: 1, gapDays: gap }
+        : { kind: 'run-after-layoff', nth: i + 1, gapDays: gap };
+    }
+    prev = at;
+  }
+  return null;                               // 持っている範囲に長い休みが無い
+}
+
 /**
  * 1 頭ぶんの拡張情報をまとめる。データが無い項目は **null のまま返す**
  * （「該当なし」と「データが無い」を取り違えさせないため）。
@@ -149,12 +194,13 @@ export function buildHorseExtras(horse, today) {
   if (past.length === 0) return null;
   return {
     interval: calcInterval(today?.date, past[0]?.date),
+    layoffRun: calcLayoffRun(today?.date, past),
     bodyWeight: calcBodyWeight(past),
     history: buildConditionHistory(past, today),
   };
 }
 
 export default {
-  parseDate, calcInterval, calcBodyWeight, buildConditionHistory,
-  buildSameConditionTable, buildHorseExtras,
+  parseDate, calcInterval, calcLayoffRun, calcBodyWeight, buildConditionHistory,
+  buildSameConditionTable, buildHorseExtras, LAYOFF_DAYS,
 };

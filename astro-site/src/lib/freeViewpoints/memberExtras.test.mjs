@@ -144,3 +144,54 @@ test('有料項目を入力に取らず、出力にも含めない', () => {
   const plain = buildHorseExtras({ past: [{ venue: '川崎', distance: 1600, date: '2026-08-06', bodyWeight: 470 }] }, today);
   assert.deepEqual(e, plain);
 });
+
+// ─── 休み明け / 叩き◯戦目 ────────────────────────────────────
+
+import { calcLayoffRun, LAYOFF_DAYS } from './memberExtras.js';
+
+const at = (...ds) => ds.map((d) => ({ date: d }));
+
+test('長い休みの直後は 休み明け', () => {
+  const r = calcLayoffRun('2026-08-20', at('2026-04-01', '2026-03-01'));
+  assert.equal(r.kind, 'layoff');
+  assert.equal(r.nth, 1);
+  assert.ok(r.gapDays >= LAYOFF_DAYS);
+});
+
+test('休み明けの次走は 叩き2戦目、その次は 叩き3戦目', () => {
+  assert.equal(calcLayoffRun('2026-08-20', at('2026-08-01', '2026-04-01')).nth, 2);
+  assert.equal(calcLayoffRun('2026-08-20', at('2026-08-01', '2026-07-01', '2026-03-01')).nth, 3);
+  assert.equal(calcLayoffRun('2026-08-20', at('2026-08-01', '2026-07-01', '2026-03-01')).kind, 'run-after-layoff');
+});
+
+test('しきい値の境界（84 日）で切り替わる', () => {
+  // 2026-05-29 = 83 日前（休みではない） / 2026-05-28 = 84 日前（休み）
+  assert.equal(calcLayoffRun('2026-08-20', at('2026-05-29')), null, '83 日は休みではない');
+  assert.equal(calcLayoffRun('2026-08-20', at('2026-05-28')).kind, 'layoff', '84 日は休み');
+  assert.equal(calcLayoffRun('2026-08-20', at('2026-05-28')).gapDays, LAYOFF_DAYS);
+});
+
+test('持っている範囲に長い休みが無ければ null（休みではないと断定しない）', () => {
+  assert.equal(calcLayoffRun('2026-08-20', at('2026-08-01', '2026-07-01', '2026-06-01')), null);
+});
+
+test('日付が欠けたらそこで打ち切って null（推測しない）', () => {
+  assert.equal(calcLayoffRun('2026-08-20', at(null)), null);
+  assert.equal(calcLayoffRun('2026-08-20', at('2026-08-01', null, '2026-01-01')), null);
+  assert.equal(calcLayoffRun('2026-08-20', []), null);
+  assert.equal(calcLayoffRun(null, at('2026-04-01')), null);
+});
+
+test('並びが壊れている（未来日）ときは判定しない', () => {
+  assert.equal(calcLayoffRun('2026-08-20', at('2026-09-01')), null);
+});
+
+test('buildHorseExtras に layoffRun が含まれ、有料項目は混ざらない', () => {
+  const e = buildHorseExtras({ past: at('2026-04-01', '2026-03-01') }, today);
+  assert.ok(e.layoffRun, 'layoffRun が無い');
+  assert.equal(e.layoffRun.kind, 'layoff');
+  const json = JSON.stringify(e);
+  for (const banned of ['pt', 'computerIndex', 'role', 'featureScores', 'bettingLines']) {
+    assert.equal(json.includes(banned), false, `${banned} を出してはいけない`);
+  }
+});

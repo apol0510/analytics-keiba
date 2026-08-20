@@ -20,7 +20,7 @@ import { RACE_STATE } from '../lib/freeViewpoints/raceViewpoints.js';
 import {
   TAG_LABEL, TAG_SENTENCE, TAG_ICON, STATE_LABEL, STATE_SENTENCE, STATE_ICON,
   HIGHLIGHT_LABEL, HORSE_CHANGE_CHIP, PAID_CTA, HORSE_SECTION, MEMBER_EXTRAS, coverageNote,
-  TERM_HELP, CHIP_HELP, INTERVAL_HELP, HOW_TO_USE, HELP_TOGGLE,
+  TERM_HELP, CHIP_HELP, INTERVAL_HELP, HOW_TO_USE, HELP_TOGGLE, LAYOFF_LABEL,
 } from '../lib/freeViewpoints/copy.js';
 
 interface Props { view: any; categoryLabel: string; freeUrl: string; }
@@ -229,6 +229,12 @@ const LEGEND = [
                           {h.extras && (
                             <span class="rvb-member-row" data-member-only>
                               <span class="rvb-member-chips">
+                                {h.extras.layoffRun && (
+                                  <span class={`rvb-mchip mchip-${h.extras.layoffRun.kind === 'layoff' ? 'layoff' : 'run'}`}>
+                                    <span aria-hidden="true">{h.extras.layoffRun.kind === 'layoff' ? LAYOFF_LABEL.layoff.icon : LAYOFF_LABEL.runAfterLayoff.icon}</span>
+                                    {h.extras.layoffRun.kind === 'layoff' ? LAYOFF_LABEL.layoff.label : `叩き${h.extras.layoffRun.nth}戦目`}
+                                  </span>
+                                )}
                                 {h.extras.interval && (
                                   <span class="rvb-mchip mchip-interval">
                                     <span aria-hidden="true">🗓</span>前走から{h.extras.interval.days}日ぶり
@@ -244,6 +250,11 @@ const LEGEND = [
                                   </span>
                                 )}
                               </span>
+                              {h.extras.layoffRun && (
+                                <span class="rvb-mchip-help" data-help>
+                                  {h.extras.layoffRun.kind === 'layoff' ? CHIP_HELP.layoff : CHIP_HELP.runAfterLayoff}
+                                </span>
+                              )}
                               {h.extras.history.length > 0 && (
                                 <span class="rvb-mhist">
                                   <span class="rvb-mhist-label">{MEMBER_EXTRAS.historyHeading}</span>
@@ -675,4 +686,9 @@ const LEGEND = [
     display: inline-flex; align-items: center; gap: 7px; }
   .rvb-closebtn:hover { background: #22d3ee; color: #082f49; }
   @media (max-width: 640px) { .rvb-closebtn { width: 100%; justify-content: center; } }
+
+  .mchip-layoff { color: #fed7aa; border-color: #fb923c; background: rgba(251,146,60,.18); }
+  .mchip-run { color: #ddd6fe; border-color: #a78bfa; background: rgba(167,139,250,.18); }
+  .rvb-mchip-help { font-size: .7rem; color: #94a3b8; line-height: 1.6; width: 100%; }
+  :root[data-rvb-help="off"] .rvb-mchip-help { display: none; }
 </style>
