@@ -10,6 +10,7 @@
  */
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import RaceViewpointsBoard from '../../components/RaceViewpointsBoard.astro';
+import ResultsShowcaseBanner from '../../components/ResultsShowcaseBanner.astro';
 import { buildViewpoints } from '../../lib/freeViewpoints/loadRaceViewpoints.js';
 
 export const prerender = false;
@@ -27,7 +28,9 @@ try {
   description="出走馬の近走から、レースごとの条件の替わり方と近走の比べやすさを無料で公開しています。買い目や評価数値は含みません。"
 >
   {view
-    ? <RaceViewpointsBoard view={view} categoryLabel="中央競馬" freeUrl="/free-prediction/jra/" />
+    ? <RaceViewpointsBoard view={view} categoryLabel="中央競馬" freeUrl="/free-prediction/jra/">
+        <ResultsShowcaseBanner slot="results" category="jra" />
+      </RaceViewpointsBoard>
     : (
       <section class="rvb-empty">
         <h1>無料予想（中央競馬）</h1>

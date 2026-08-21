@@ -139,6 +139,13 @@ const LEGEND = [
     </div>
   </header>
 
+  {/* 有料版の直近実績への導線。「見どころ」を読んだ人に、同じ日の買い目がどうなったかを見せる。
+      ⚠️ 実績バナーの中身は **ページ側から slot で差し込む**。ここで直接 import すると、
+         resultsShowcase.js → mainRaceBetting.js と有料ロジックがこの純粋な表示部品に
+         入り込み、board.guard.test.mjs の「有料データを読むモジュールを import しない」
+         方針を骨抜きにするため。差し込みが無ければ何も出ない。 */}
+  <div class="rvb-resultslot"><slot name="results" /></div>
+
   {/* 会場タブ。複数開催（JRA 3 場 / 南関 2 場）で全会場を縦に並べると 10 画面ぶんになるため、
       1 会場ずつ出す。**JS が動かない環境ではタブを出さず、全会場を縦に並べたまま**にする
       （情報を落とさない）。有効化は下の venueTabs() が :root[data-rvb-venuetabs="on"] を付けたとき。 */}
@@ -676,6 +683,8 @@ const LEGEND = [
     .rvb-venuetab { padding: 8px 12px; font-size: .9rem; }
     .rvb-venuetab[aria-selected="true"]::after { content: '●'; padding: 0 2px; background: none; }
   }
+
+  .rvb-resultslot:not(:empty) { margin: 20px 0 0; }
 
   .rvb-venue { margin-top: 34px; }
   .rvb-venue-name { font-size: 1.3rem; font-weight: 800; color: #f8fafc; border-left: 5px solid #7c3aed; padding-left: 10px; margin: 0 0 12px; }
