@@ -38,7 +38,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       # 判定スクリプトは node 標準機能だけで動く（依存なし）。npm install は不要
       - name: 確認期限を判定する
