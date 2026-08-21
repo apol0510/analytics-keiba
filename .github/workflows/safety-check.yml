@@ -32,6 +32,13 @@ on:
       # 本番 Customers を削除する運用スクリプト（安全条件はテストで固定する）
       - 'astro-site/scripts/dedupe-customers.mjs'
       - 'astro-site/scripts/dedupeCustomers.test.mjs'
+      # 予想・結果データの正本を作る取込スクリプト。
+      # ここが壊れると全ページの表示が壊れるのに、paths に無いため
+      # 変更しても safety check が起動していなかった（2026-08-21 に判明）。
+      - 'astro-site/scripts/importPrediction.js'
+      - 'astro-site/scripts/importPredictionJra.js'
+      - 'astro-site/scripts/importResults.js'
+      - 'astro-site/scripts/importResultsJra.js'
   push:
     branches:
       - main
@@ -58,6 +65,13 @@ on:
       # 本番 Customers を削除する運用スクリプト（安全条件はテストで固定する）
       - 'astro-site/scripts/dedupe-customers.mjs'
       - 'astro-site/scripts/dedupeCustomers.test.mjs'
+      # 予想・結果データの正本を作る取込スクリプト。
+      # ここが壊れると全ページの表示が壊れるのに、paths に無いため
+      # 変更しても safety check が起動していなかった（2026-08-21 に判明）。
+      - 'astro-site/scripts/importPrediction.js'
+      - 'astro-site/scripts/importPredictionJra.js'
+      - 'astro-site/scripts/importResults.js'
+      - 'astro-site/scripts/importResultsJra.js'
   workflow_dispatch:
 
 concurrency:
