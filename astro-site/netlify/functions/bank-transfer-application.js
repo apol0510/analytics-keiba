@@ -296,7 +296,10 @@ exports.handler = async (event, context) => {
     // 再募集の開始状態（＝クーポン有効期限の確定）。読めなければ期限未確定のまま進む
     let plusCouponDef = null;
     if (isPremiumPlusOrder) {
-      const reopenState = await loadReopenStart({ env: process.env });
+      // ⚠️ 会員ごとの開始日時。**申込者本人の recordId**で読む（client の申告は使わない）
+      const reopenState = await loadReopenStart({
+        recordId: plusCustomerRecordId || null, env: process.env,
+      });
       plusCouponDef = withReopenStart(reopenState.startsAtIso);
       const selectedCouponId = String(couponId ?? '').trim();
       if (selectedCouponId) {
