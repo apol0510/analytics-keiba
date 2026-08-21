@@ -1,0 +1,157 @@
+---
+/**
+ * PremiumPlusCouponApply.astro — 申込モーダル内の「クーポンを選んで適用する」ブロック
+ *
+ * ⚠️ **金額をこのファイルに書かない。** 表示する数値・文言はすべて
+ *    `/api/premium-plus-order.json`（サーバー = 単一源）が返したものをそのまま出す。
+ * ⚠️ **未所持なら何も描画しない**（既定 hidden のまま。他会員のクーポンは構造的に来ない）。
+ * ⚠️ 適用しても購入可否は変わらない。販売停止中は従来どおり購入できない。
+ */
+---
+<div class="pp-coupon" id="ppCouponBlock" hidden>
+  <div class="pp-coupon-head">
+    <span class="pp-coupon-icon">🎟</span>
+    <span class="pp-coupon-title">ご利用いただけるクーポン</span>
+  </div>
+  <div id="ppCouponList" class="pp-coupon-list"></div>
+  <button type="button" id="ppCouponApply" class="pp-coupon-apply">このクーポンを適用する</button>
+  <p class="pp-coupon-msg" id="ppCouponMsg" role="status" aria-live="polite"></p>
+
+  <dl class="pp-coupon-breakdown" id="ppCouponBreakdown" hidden>
+    <div class="pp-row"><dt id="ppBdRegularLabel"></dt><dd id="ppBdRegular"></dd></div>
+    <div class="pp-row discount"><dt id="ppBdDiscountLabel"></dt><dd id="ppBdDiscount"></dd></div>
+    <div class="pp-row total"><dt id="ppBdFinalLabel"></dt><dd id="ppBdFinal"></dd></div>
+  </dl>
+  <!-- サーバーへ送るのは**選択したクーポンの id だけ**。価格は送らない -->
+  <input type="hidden" id="ppAppliedCouponId" name="couponId" value="" />
+</div>
+
+<style>
+  .pp-coupon { margin: 0 0 1.2rem; padding: 1rem 1.1rem; border-radius: .9rem;
+    background: rgba(45,212,191,.08); border: 1px solid rgba(45,212,191,.32); }
+  .pp-coupon-head { display: flex; align-items: center; gap: .45rem; margin-bottom: .7rem; }
+  .pp-coupon-icon { font-size: 1.1rem; }
+  .pp-coupon-title { font-weight: 700; color: #f8fafc; font-size: .96rem; }
+  .pp-coupon-option { display: flex; gap: .6rem; align-items: flex-start; padding: .7rem .8rem;
+    border: 1px solid rgba(148,163,184,.3); border-radius: .6rem; margin-bottom: .5rem; cursor: pointer; }
+  .pp-coupon-option:hover { border-color: rgba(45,212,191,.6); }
+  .pp-coupon-option input { margin-top: .25rem; }
+  .pp-coupon-name { font-weight: 700; color: #e2e8f0; font-size: .92rem; }
+  .pp-coupon-discount { color: #6ee7b7; font-weight: 800; font-size: 1.1rem; margin-top: .1rem; }
+  .pp-coupon-sub { color: #94a3b8; font-size: .8rem; margin-top: .15rem; }
+  .pp-coupon-apply { width: 100%; padding: .8rem 1rem; border: 0; border-radius: .6rem;
+    background: #2563eb; color: #fff; font-weight: 700; font-size: .95rem; cursor: pointer; }
+  .pp-coupon-apply:hover { background: #1d4ed8; }
+  .pp-coupon-apply:disabled { background: #334155; color: #94a3b8; cursor: not-allowed; }
+  .pp-coupon-msg { margin: .55rem 0 0; font-size: .85rem; min-height: 1.1em; color: #6ee7b7; }
+  .pp-coupon-msg.err { color: #fca5a5; }
+  .pp-coupon-breakdown { margin: .9rem 0 0; padding-top: .8rem; border-top: 1px solid rgba(148,163,184,.25); }
+  .pp-coupon-breakdown .pp-row { display: flex; justify-content: space-between; gap: 1rem; padding: .22rem 0; font-size: .92rem; }
+  .pp-coupon-breakdown dt { color: #94a3b8; margin: 0; }
+  .pp-coupon-breakdown dd { margin: 0; color: #e2e8f0; }
+  .pp-coupon-breakdown .discount dd { color: #6ee7b7; }
+  .pp-coupon-breakdown .total { margin-top: .3rem; padding-top: .5rem; border-top: 1px dashed rgba(148,163,184,.3); }
+  .pp-coupon-breakdown .total dt, .pp-coupon-breakdown .total dd { font-weight: 800; font-size: 1.05rem; color: #f8fafc; }
+  @media (max-width: 600px) { .pp-coupon { padding: .85rem .9rem; } }
+</style>
+
+<script is:inline>
+(function () {
+  var ENDPOINT = '/api/premium-plus-order.json';
+  var block = document.getElementById('ppCouponBlock');
+  if (!block) return;
+  var list = document.getElementById('ppCouponList');
+  var applyBtn = document.getElementById('ppCouponApply');
+  var msg = document.getElementById('ppCouponMsg');
+  var bd = document.getElementById('ppCouponBreakdown');
+  var hidden = document.getElementById('ppAppliedCouponId');
+
+  function setText(id, v) { var el = document.getElementById(id); if (el) el.textContent = v || ''; }
+
+  // 内訳・振込金額は**サーバーが返した値だけ**で更新する
+  function applyServerPricing(data) {
+    var b = (data && data.breakdown) || {};
+    var p = (data && data.pricing) || {};
+    setText('ppBdRegularLabel', '通常価格');
+    setText('ppBdRegular', (b.regularText || '').replace('通常価格 ', ''));
+    setText('ppBdDiscountLabel', 'クーポン割引');
+    setText('ppBdDiscount', (b.discountText || '').replace('クーポン割引 ', ''));
+    setText('ppBdFinalLabel', 'お支払い金額');
+    setText('ppBdFinal', (b.finalText || '').replace('お支払い金額 ', ''));
+    bd.hidden = false;
+    var discountRow = bd.querySelector('.discount');
+    if (discountRow) discountRow.style.display = p.discount > 0 ? '' : 'none';
+    // 振込金額欄もサーバーの確定値へ（画面で計算しない）
+    var amount = document.getElementById('transferAmount');
+    if (amount && typeof p.finalPrice === 'number') amount.value = String(p.finalPrice);
+    hidden.value = p.couponApplied ? p.couponApplied.couponId : '';
+  }
+
+  function render(data) {
+    var coupons = (data && data.coupons) || [];
+    // 未所持は選択欄ごと出さない
+    if (!coupons.length) { block.hidden = true; return; }
+    list.innerHTML = '';
+    coupons.forEach(function (c, i) {
+      var label = document.createElement('label');
+      label.className = 'pp-coupon-option';
+      var radio = document.createElement('input');
+      radio.type = 'radio'; radio.name = 'ppCouponChoice'; radio.value = c.couponId;
+      if (i === 0) radio.checked = true;
+      var box = document.createElement('div');
+      var n = document.createElement('div'); n.className = 'pp-coupon-name'; n.textContent = c.name;
+      var d = document.createElement('div'); d.className = 'pp-coupon-discount'; d.textContent = c.discountText;
+      var s = document.createElement('div'); s.className = 'pp-coupon-sub'; s.textContent = c.priceText;
+      var e = document.createElement('div'); e.className = 'pp-coupon-sub'; e.textContent = '有効期限: ' + c.expiryText;
+      box.appendChild(n); box.appendChild(d); box.appendChild(s); box.appendChild(e);
+      label.appendChild(radio); label.appendChild(box);
+      list.appendChild(label);
+    });
+    block.hidden = false;
+  }
+
+  function load(couponId) {
+    var url = ENDPOINT + (couponId ? ('?couponId=' + encodeURIComponent(couponId)) : '');
+    return fetch(url, { credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .catch(function () { return null; });
+  }
+
+  load().then(function (data) {
+    if (!data) return;           // 取得できないときは何も出さない（fail closed）
+    render(data);
+    if (block.hidden) return;
+    // 本人のクーポンを**初期選択**し、その価格をサーバーに計算させて即表示する。
+    // ⚠️ URL パラメータや localStorage を根拠にしない。id を渡してサーバーが再検証する。
+    var first = (data.coupons && data.coupons[0]) ? data.coupons[0].couponId : '';
+    if (!first) { applyServerPricing(data); return; }
+    load(first).then(function (applied) {
+      applyServerPricing(applied && applied.pricing ? applied : data);
+    });
+  });
+
+  applyBtn.addEventListener('click', function () {
+    var sel = document.querySelector('input[name="ppCouponChoice"]:checked');
+    if (!sel) { msg.className = 'pp-coupon-msg err'; msg.textContent = 'クーポンを選択してください。'; return; }
+    applyBtn.disabled = true;
+    msg.className = 'pp-coupon-msg'; msg.textContent = '適用しています…';
+    // ⚠️ 価格は送らない。id だけ送り、**サーバーが計算し直した結果**を表示する
+    load(sel.value).then(function (data) {
+      applyBtn.disabled = false;
+      if (!data || !data.pricing) { msg.className = 'pp-coupon-msg err'; msg.textContent = '適用できませんでした。'; return; }
+      if (data.pricing.reason) {
+        msg.className = 'pp-coupon-msg err';
+        msg.textContent = 'このクーポンは今回のお申し込みにはご利用いただけません。';
+        applyServerPricing(data);
+        return;
+      }
+      applyServerPricing(data);
+      msg.className = 'pp-coupon-msg';
+      msg.textContent = 'クーポンを適用しました。';
+    });
+  });
+
+  // 申込 payload へ couponId を載せる（価格は載せない）
+  window.__akPpCouponId = function () { return hidden.value || ''; };
+})();
+</script>

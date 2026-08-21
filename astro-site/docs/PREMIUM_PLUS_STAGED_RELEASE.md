@@ -869,7 +869,137 @@ route 未成立・`blocked`・無料会員にまで**商品の存在が漏れる
 | Plus の候補ではない（無料・Premium 加入直後 等）| 404 |
 | `UpsellTarget=none` / `sanrenpuku` | 404（管理者が別の導線を指定しているため） |
 
-### 再募集クーポン（取得権であって、割引ではない）
+### 再募集クーポンの優待条件（**2026-08-19 MK 確定**）
+
+| 項目 | 確定値 |
+|---|---|
+| クーポン種別 | 固定額割引（`discountType='amount'`）|
+| 割引額 | **10,000円OFF** |
+| Premium Plus 通常価格 | **68,000円**（`REGULAR_PRICE.premium_plus`）|
+| クーポン適用価格 | **58,000円**（通常価格から引き算で導出）|
+| 対象 | 再募集クーポン取得済み会員 |
+| 有効期限 | **未確定**（`expiresDetermined=false`。顧客には「未定」と表示）|
+
+**単一源は `premiumPlusReopenCoupon.js`**。割引額は `PP_REOPEN_COUPON_DISCOUNT_YEN` の
+1 か所だけ、通常価格は価格の正本 `promotionOfferCatalog.js` を参照し、
+**適用価格は引き算で導出**する（68,000 と 58,000 を別々に書かない）。
+表示文字列も `describeCouponDiscount()` / `describeCouponPrice()` / `describeCouponTerms()` /
+`describeCouponExpiry()` が作り、**画面・API・管理画面は文字列を受け取るだけ**。
+
+⚠️ **金額を画面側に書き写さないこと。** `pauseCouponWiring.guard.test.mjs` と
+`premiumPlusCouponTerms.test.mjs` が、単一源以外に数値があると落とす。
+
+⚠️ **クーポン取得は購入可否を一切変えない。** 販売停止中は購入不可のままで、
+`salePaused` / `eligibility` / `override` / PHASE / route / CTA / purchase gate /
+payment のいずれも動かさない。
+
+⚠️ **二重割引の防止**: 価格計算は `resolveCouponPrice()` だけが行い、
+**入力価格から引き算しない**（常に正本の通常価格から 1 回だけ引いた確定値を返す）。
+再募集用 `purchase_offer` は**まだ実体化していない**（＝ 2 つ目の価格経路が無い）。
+足した瞬間から `premiumPlusCouponTerms.test.mjs` が単一源との一致を検査する。
+
+### 申込画面でのクーポン適用（2026-08-19 確定・**実装は未完了**）
+
+申込画面で、**本人が所持している利用可能なクーポンを選択 →「このクーポンを適用する」**で
+申込価格へ反映する。適用後は **通常 68,000円 / 割引 −10,000円 / お支払い 58,000円** を明示する。
+
+#### 価格を決めるのはサーバーだけ
+
+クライアントが送ってよいのは **`couponId`（選択の意思表示）だけ**。
+`discount` / `offerPrice` / `finalPrice` を送られても**読まない**。
+サーバーは ak_session から会員を解決し、次を再検証してから価格を決める:
+
+1. 本人が所持しているか（Customers のクーポン 3 列）
+2. 対象商品に使えるか（Premium Plus か）
+3. 現在利用可能か
+4. 未使用か
+5. 有効期限内か（**期限が確定してから**有効になる検査）
+
+判定と価格は単一源 `premiumPlusCouponApply.js` / `premiumPlusReopenCoupon.js` に集約する。
+**申込画面に金額を書かない。**
+
+#### 取得後に申込へ到達できること（2026-08-19 確定・完成条件）
+
+**「取得できた・確認できた」で完成としない。** 取得済みの会員が
+**dashboard / `/premium-plus-coupon/` から実際の申込へ到達できる**ことまでが完成条件。
+
+- dashboard のクーポンカードは**主 CTA を申込導線**にし、「クーポン詳細を確認」は補助導線
+- **販売停止中・再募集前は購入させない**。10,000円OFF / 68,000円→58,000円 /
+  再募集開始から 14 日間 / 「再募集時にご利用いただけます」を表示し、
+  **押せる購入 CTA を偽装しない**
+- **再募集後・購入可能時**は「10,000円OFFで申し込む」を主 CTA にし、
+  申込画面で**本人のクーポンを初期選択**して 68,000 / −10,000 / 58,000 を出す
+- ⚠️ **URL パラメータ・localStorage だけを根拠に価格を適用しない**。所持・利用可能性・
+  価格はサーバーで再検証する
+- ⚠️ 遷移しただけで `issued` / `redeemed` / payment / eligibility / `salePaused` を変えない
+- **未所持の会員にはクーポン適用 UI も申込 CTA も出さない**
+
+#### 検証に失敗したら申込ごと止める（**通常価格へ黙って落とさない**）
+
+`couponId` を選んだ申込で所持確認・利用可能性・価格検証のどれかに失敗したら、
+**409 `coupon_unavailable` / `sideEffects:'none'`** で申込を停止する。
+検証は**副作用ゼロの地点**（SendGrid 送信・Airtable 書き込みより前）で行う。
+
+⚠️ **68,000円へフォールバックして受理してはいけない。**
+58,000円のつもりで申し込んだ方に 68,000円の申込が作られる事故を防ぐ。
+クーポンを**最初から選んでいない**申込だけ、従来どおり通常価格で進む。
+
+#### 二重適用が構造的に起きない
+
+価格は「正本の通常価格から 1 回だけ引いた確定値」で、**入力価格から引き算しない**。
+同じクーポンを何度「適用」しても 58,000円のままで、48,000円にはならない。
+再読込・戻る・再送でも同じ値になる。
+
+#### 販売停止中は買えないまま
+
+`salePaused` の会員は購入不可のまま。クーポンの所持・選択・適用で
+`salePaused` / `eligibility` / `override` / PHASE / route / plan / payment を**一切変更しない**。
+募集再開して購入可能になって初めて、クーポンを購入へ使える。
+
+#### 利用ライフサイクル（2026-08-19 MK 確定）
+
+```
+選択・適用 → 振込完了報告の正常受理で Status='issued'（利用予約）
+          → 入金確認（confirm-bank-payment）の正常完了で Status='redeemed'
+```
+
+- **選択しただけでは issued にも redeemed にもしない**
+- **報告が正常受理される前に予約を作らない**
+- `ExpiresAt` は**クーポン本体の利用期限**（予約用の別 TTL は作らない）
+- ⚠️ **期限判定は報告受理時に固定**。期限内に報告済みなら、MK の確認が期限をまたいでも
+  失効させない（`StartsAt` と `ExpiresAt` の突き合わせで台帳から再現する）
+- 取消は「**入金確認前の取消・誤申告訂正**」。予約行だけ `revoked` にし、
+  Customers の「クーポン取得済み」は消さない
+- admin は `Source='premium-plus-coupon-reservation'` で通常の販促 offer と区別する
+
+#### 有効期限（2026-08-19 MK 確定）
+
+**再募集開始日時から 14 日間**（`expiryDays = 14`）。
+ただし **`reopenStartsAt`（実際の再募集開始日時）は未決定**なので、
+`expiresAt` は `reopenStartsAt + 14 日` で**導出**する（`resolveCouponExpiry()`）。
+⚠️ **開始日時を捏造しない。** 未設定のあいだは `buildReservationFields()` が null を返し、
+**本番の予約 write は fail closed**。
+
+#### redeem の部分成功（実装済み）
+
+`Customers 成功 → redeem` の順で、Customers が失敗した回は redeem しない。
+Customers 成功後に redeem が失敗しても巻き戻さず `needs_redeem`（要修復）として検出し、
+再実行は **`REDEEM_ONLY`**（offer 台帳の 2 列だけ）で収束する
+＝**二重昇格・有効期限の再延長・二重メールは起きない**。
+`未確定 + redeemed` は `anomaly` として**自動修復せず** admin に手順を出す。
+状態は admin の詳細で「所持中 / 利用予約 / 使用済み / 予約取消 / 要修復」として確認できる。
+
+⚠️ **未完了は「配線・有効化」だけ**: `confirm-bank-payment` への接続と production 有効化。
+詳細は `docs/progress.md` の「2-B」。
+
+#### 申込記録は既存 schema で足りる（**新規 schema 不要**）
+
+| 記録 | 置き場所 |
+|---|---|
+| 最終申込価格 | Customers `RequestedAmount`（既存・申込時に書いている）|
+| どのクーポンか / 通常価格 / 割引 / 適用価格 / 使用状態 | `PromotionalOffers`（`OfferId` / `RegularPrice` / `DiscountValue` / `OfferPrice` / `Status` / `RedeemedAt`）|
+
+### 再募集クーポン（取得権であって、その場で割引が効くものではない）
 
 休止ページから会員本人が取得できる。**取得しても権利は 1 ミリも増えない。**
 

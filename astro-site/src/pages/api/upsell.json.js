@@ -75,6 +75,9 @@ export async function GET({ request }) {
         paused: view.plusRelease?.salePaused === true,
         // マイページから新規取得はさせない（取得はクーポンページ / 受付休止ページ）
         claimable: false,
+        // いま購入できるか。**停止中・再募集前は false** で、押せる CTA を出さない
+        purchasable: view.plusRelease?.purchaseEnabled === true,
+        ctaSource: 'dashboard',
       });
       return {
         claimed: true,
@@ -82,9 +85,16 @@ export async function GET({ request }) {
         claimedAt: held.claimedAtIso,
         claimedAtText: formatClaimedAtJst(held.claimedAtIso),
         usableNote: v.usableNote,
+        // 割引条件はすべて単一源が組み立てた文字列。API 側で数値を作らない
         termsText: v.termsText,
+        discountText: v.discountText,
+        priceText: v.priceText,
+        expiryText: v.expiryText,
+        expiryDetermined: v.expiryDetermined,
         termsDetermined: v.termsDetermined,
         detailHref: COUPON_PAGE_PATH,
+        // 申込導線（主 CTA）。停止中は href が null の非購入表示になる
+        cta: v.orderCta,
       };
     })()
     : { claimed: false };

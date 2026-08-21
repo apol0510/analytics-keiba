@@ -101,10 +101,43 @@ import {
   SEARCH_ERROR_TEXT,
   MAX_SEARCH_PAGES,
 } from '../../src/lib/premiumPlus/premiumPlusAdminSearch.js';
+import { OFFERS_TABLE, isOfferTableEnabled, assertOnlyOfferFields } from '../../src/lib/promotions/promotionalOffer.js';
+import {
+  PP_COUPON_ADMIN_ACTION,
+  resolveCouponAdminPlanFor,
+  describeCouponAdminState,
+  describeCouponAdminActions,
+} from '../../src/lib/premiumPlus/premiumPlusCouponAdmin.js';
+import { buildReservationRevokeFields } from '../../src/lib/premiumPlus/premiumPlusCouponReservation.js';
+import {
+  createCouponOperationLock,
+  LOCK_RESULT,
+  LOCK_REJECT_TEXT,
+} from '../../src/lib/coupons/couponOperationLock.js';
+import { createCouponHistoryStore } from '../../src/lib/coupons/couponHistoryStore.js';
+import {
+  buildHistoryRecord,
+  buildRepairRecord,
+  findHistoryRepairTargets,
+  isCouponHistoryEnabled,
+} from '../../src/lib/coupons/couponOperationHistory.js';
+import { PP_COUPON_BINDING } from '../../src/lib/premiumPlus/premiumPlusCouponAdmin.js';
+import { parseCouponAudit, computeCouponEntityId } from '../../src/lib/coupons/couponPlatform.js';
+import {
+  describeCouponLifecycle,
+  describeLedgerUnavailable,
+  COUPON_LIFECYCLE,
+  LEDGER_UNAVAILABLE,
+} from '../../src/lib/premiumPlus/premiumPlusCouponReservation.js';
 import {
   readReopenCoupon,
   isReopenCouponEnabled,
   PP_REOPEN_COUPON,
+  PP_REOPEN_COUPON_FIELDS,
+  describeCouponTerms,
+  describeCouponDiscount,
+  describeCouponPrice,
+  describeCouponExpiry,
 } from '../../src/lib/premiumPlus/premiumPlusReopenCoupon.js';
 
 const CUSTOMERS_TABLE = process.env.AIRTABLE_CUSTOMERS_TABLE || 'Customers';
@@ -156,6 +189,9 @@ exports.handler = async (event) => {
     if (action === 'preview') return await handlePreview({ KEY, BASE, now, req });
     if (action === 'setUpsell') return await handleSetUpsell({ KEY, BASE, now, req });
     if (action === 'setSalePause') return await handleSetSalePause({ KEY, BASE, now, req });
+    if (action === 'couponAdmin') return await handleCouponAdmin({ KEY, BASE, now, req });
+    if (action === 'couponHistory') return await handleCouponHistory({ KEY, BASE, req });
+    if (action === 'couponHistoryRepair') return await handleCouponHistoryRepair({ KEY, BASE, now, req });
     return json(400, { error: `未知の action: ${action}` });
   } catch (e) {
     console.error('❌ [premium-plus-eligibility]', e.message);
@@ -165,11 +201,28 @@ exports.handler = async (event) => {
 
 
 /**
+ * 予約台帳を**読めていない**ことを表す既定値。
+ *
+ * ⚠️ 既定を「空の台帳」にしない。台帳を渡し忘れた呼び出しが
+ *    「クーポン所持中・予約 0 件」と**断定表示**してしまうため、
+ *    **渡し忘れ = 確認できない**へ倒す（fail closed）。
+ */
+const UNREAD_LEDGER = Object.freeze({
+  rows: null, available: false, reason: LEDGER_UNAVAILABLE.NOT_PROVIDED,
+});
+
+/**
  * 1 レコード → 管理一覧の 1 行。**list と lookup で同じ組み立てを使う**
  * （別々に書くと「一覧の値」と「個別検索の値」がズレる）。
  * `candidate.listed` は呼び出し側が判断に使う（ここでは落とさない）。
+ *
+ * @param {object} rec Airtable の 1 レコード
+ * @param {number} now 判定に使う現在時刻
+ * @param {{ rows: object[]|null, available: boolean, reason: string }} ledger
+ *   クーポン予約台帳。**`available:false` を空配列へ潰さないこと**
+ *   （「読めた結果 0 件」と「確認できない」は別の事実）。
  */
-function buildAdminRow(rec, now) {
+function buildAdminRow(rec, now, ledger = UNREAD_LEDGER) {
     const fields = rec.fields || {};
     const member = resolvePlusMemberFromFields(fields, { nowMs: now });
     // 販売導線（UpsellTarget）込みの実表示。管理者が「設定値」と「実際に見えるもの」を
@@ -271,6 +324,29 @@ function buildAdminRow(rec, now) {
         reopenCouponSource: reopenCoupon.source,
         /** 取得の記録が本番で保存できる状態か（画面の注意表示に使う） */
         reopenCouponWritable: isReopenCouponEnabled(process.env),
+        // 価格条件は**単一源が作った文字列**をそのまま載せる（管理画面で数値を組み立てない）
+        reopenCouponTerms: describeCouponTerms(),
+        reopenCouponDiscountText: describeCouponDiscount(),
+        reopenCouponPriceText: describeCouponPrice(),
+        reopenCouponExpiryText: describeCouponExpiry(),
+        // クーポンのライフサイクル（所持中 / 利用予約 / 使用済み / 予約取消 / 要修復）。
+        // ⚠️ 通常の販促オファーとは**別軸**。Airtable を直接見に行かせないための表示。
+        // 管理者が今この会員に対して行える操作（**表示用**。可否はサーバーが再判定する）
+        couponAdmin: describeCouponAdminActions({
+          fields,
+          offerRows: ledger.available ? ledger.rows : null,
+          ledgerAvailable: ledger.available === true,
+          env: process.env,
+          customerRecordId: rec.id,
+        }),
+        couponLifecycle: describeCouponLifecycle({
+          fields,
+          // ⚠️ 読めていないときは null のまま渡す（[] へ潰すと 0 件と断定される）
+          offerRows: ledger.available ? ledger.rows : null,
+          ledgerAvailable: ledger.available === true,
+          ledgerReason: ledger.reason,
+          customerRecordId: rec.id,
+        }),
         /**
          * 停止/再開の操作が本番で受け付けられる状態か（画面のボタン活性に使う）。
          */
@@ -537,8 +613,10 @@ async function handleLookup({ KEY, BASE, now, req }) {
     });
   }
 
+  // 一覧と**同じ台帳・同じ判定**を使う（片方だけ台帳を見ないと状態が食い違う）
+  const ledger = await readReservationLedger({ KEY, BASE });
   const rows = recs.map((rec) => {
-    const row = buildAdminRow(rec, now);
+    const row = buildAdminRow(rec, now, ledger);
     return {
       ...row,
       /** 一覧の絞り込み対象に入っているか（false = 検索でしか出てこない人） */
@@ -551,6 +629,8 @@ async function handleLookup({ KEY, BASE, now, req }) {
   return json(200, {
     found: true,
     rows,
+    // 予約台帳を読めたか（一覧と同じ塊。読めていないなら画面に「確認できない」と出す）
+    couponLedger: describeLedger(ledger),
     // 個別検索でも一覧と同じ実閲覧の情報（段階・初回/最終/回数）を返す
     funnel,
     query: raw,
@@ -561,7 +641,471 @@ async function handleLookup({ KEY, BASE, now, req }) {
   });
 }
 
+/** 予約台帳のページ上限（暴走防止）。上限に当たったら「確認できない」として返す。 */
+const LEDGER_MAX_PAGES = 10;
+
+/**
+ * クーポン利用予約の台帳を読む（**read-only**）。
+ *
+ * 返すのは **`{ rows, available, reason }`**。
+ * `available:false` は「予約 0 件」ではなく「**確認できない**」で、理由は次の 3 つ:
+ *   - `gate_off`     … 台帳が有効化されていない
+ *   - `read_failed`  … Airtable の読み取りに失敗した
+ *   - `page_limit`   … 全件を読み切れなかった
+ *
+ * ⚠️ 呼び出し側は `rows || []` のように**空配列へ潰さないこと**。
+ *    潰すと「読めていない」が「予約 0 件（＝クーポン所持中）」として断定表示される。
+ */
+async function readReservationLedger({ KEY, BASE }) {
+  const unavailable = (reason) => ({ rows: null, available: false, reason });
+  if (!isOfferTableEnabled(process.env)) return unavailable(LEDGER_UNAVAILABLE.GATE_OFF);
+  const out = [];
+  let offset;
+  let pages = 0;
+  try {
+    do {
+      const res = await fetch(
+        `https://api.airtable.com/v0/${BASE}/${encodeURIComponent(OFFERS_TABLE)}/listRecords`,
+        {
+          method: 'POST',
+          headers: { ...airtableHeaders(KEY), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pageSize: 100, ...(offset ? { offset } : {}) }),
+        },
+      );
+      if (!res.ok) return unavailable(LEDGER_UNAVAILABLE.READ_FAILED);
+      const data = await res.json();
+      out.push(...(data.records || []));
+      offset = data.offset;
+      pages += 1;
+      // 全部見きれていない = 確認できない（読めた分だけを「全部」として返さない）
+      if (pages >= LEDGER_MAX_PAGES && offset) return unavailable(LEDGER_UNAVAILABLE.PAGE_LIMIT);
+    } while (offset);
+    // ここまで来たら読み切れている。**空配列は「読めた結果 0 件」**
+    return { rows: out, available: true, reason: '' };
+  } catch {
+    return unavailable(LEDGER_UNAVAILABLE.READ_FAILED);
+  }
+}
+
+/** 台帳の状態を画面へそのまま出すための塊（一覧・個別検索で同じものを返す）*/
+function describeLedger(ledger) {
+  return {
+    available: ledger.available === true,
+    reason: ledger.reason || '',
+    note: ledger.available === true ? '' : describeLedgerUnavailable(ledger.reason),
+  };
+}
+
+/**
+ * 再募集クーポンの**管理者操作**（付与 / 予約取消 / 誤取得訂正 / 再発行）。
+ *
+ * 認可はハンドラ先頭の `x-admin-secret` 検証だけが根拠（この画面は /admin/* の
+ * Basic 認証の背後だが、**API 直叩きでも同じ制約を通す**）。
+ *
+ * 安全条件（**すべてサーバー側で再判定する**。画面がボタンを出したかは根拠にしない）:
+ *   - 対象は `recordId` で名指しした **1 会員だけ**。他会員のレコードは読み書きしない
+ *   - 予約台帳を読めなければ**全操作を拒否**（使用済みか判断できないまま書き換えない）
+ *   - **使用済み**のクーポンは取得状態へ戻さない・再発行しない
+ *   - 取得済みへの二重付与 / 取消済み予約の二重取消は状態遷移で構造的に防ぐ
+ *   - 書けるのはクーポン 3 列（Customers）または予約行の 2 列（台帳）だけ。
+ *     資格 / 停止 / 会員権 / 決済 / メールは**1 バイトも触らない**
+ *   - 操作者・理由は必須。監査値は `Source` / `Notes` に構造化して残す
+ */
+async function handleCouponAdmin({ KEY, BASE, now, req }) {
+  const recordId = String(req.recordId || '').trim();
+  const couponAction = String(req.couponAction || '').trim();
+  const actor = String(req.actor || '').trim();
+  const reason = String(req.reason || '').trim();
+  if (!recordId) return json(400, { error: 'recordId が必要です', sideEffects: 'none' });
+
+  /** 現状（Customers + 予約台帳）を読み直す。**クライアント申告は一切信用しない** */
+  const readState = async () => {
+    const res = await fetch(`https://api.airtable.com/v0/${BASE}/${CUSTOMERS_TABLE}/${recordId}`, {
+      headers: airtableHeaders(KEY),
+    });
+    if (!res.ok) return null;
+    const fields = (await res.json()).fields || {};
+    const ledger = await readReservationLedger({ KEY, BASE });
+    return { fields, ledger };
+  };
+  const describe = (fields, ledger) => describeCouponAdminState({
+    fields,
+    offerRows: ledger.available ? ledger.rows : null,
+    ledgerAvailable: ledger.available === true,
+    customerRecordId: recordId,
+  });
+  const makePlan = (fields, ledger) => resolveCouponAdminPlanFor({
+    action: couponAction,
+    fields,
+    offerRows: ledger.available ? ledger.rows : null,
+    ledgerAvailable: ledger.available === true,
+    env: process.env,
+    actor, reason, nowMs: now,
+    customerRecordId: recordId,
+  });
+  const rejectStatus = (code) => ({
+    unknown_action: 400, missing_actor: 400, missing_reason: 400,
+    ledger_unavailable: 503, coupon_storage_disabled: 503,
+  })[code] || 409;
+
+  // ── ① 現状を read ──────────────────────────────────────────
+  const first = await readState();
+  if (!first) return json(404, { error: 'Record not found', sideEffects: 'none' });
+  const before = describe(first.fields, first.ledger);
+  // 対象会員を取り違えないよう、応答に必ず本人の識別情報を載せる
+  const subject = {
+    recordId,
+    email: first.fields['Email'] || '',
+    name: first.fields['氏名'] || '',
+    plan: first.fields['プラン'] || '',
+  };
+
+  // ── ② 安定 OperationId を算出（現在時刻は材料にしない）────
+  const planned = makePlan(first.fields, first.ledger);
+  if (!planned.ok) {
+    return json(rejectStatus(planned.code), {
+      error: planned.message, code: planned.code, subject, before,
+      couponLedger: describeLedger(first.ledger), sideEffects: 'none',
+    });
+  }
+
+  // ── ③ **状態変更より前に**排他を取る ───────────────────────
+  //    ⚠️ 鍵は **entity id（会員 × 商品 × クーポン）**。OperationId を鍵にすると
+  //       claim と grant のような**別種の操作が同時に state を書けてしまう**。
+  //    ここを history append の直前にすると、同時 2 本が両方 PATCH に成功し、
+  //    Customers の最終監査値と履歴が食い違う。
+  const entityId = couponEntityIdFor(recordId);
+  const lock = createCouponOperationLock({ redisCmd: makeRedisCmd(process.env) });
+  const got = await lock.acquire({ entityId });
+  if (got.status !== LOCK_RESULT.ACQUIRED) {
+    const lost = got.status === LOCK_RESULT.LOST;
+    return json(lost ? 409 : 503, {
+      error: LOCK_REJECT_TEXT[lost ? 'lost' : 'unavailable'],
+      code: lost ? 'operation_in_progress' : 'lock_unavailable',
+      operationId: planned.operationId,
+      subject, before, sideEffects: 'none',
+    });
+  }
+
+  try {
+    // ── ④ lock 取得後に**もう一度** read（TOCTOU を閉じる）──
+    //    ⚠️ PATCH の判断材料は**この読み直した値だけ**。①の値は使わない。
+    const fresh = await readState();
+    if (!fresh) return json(404, { error: 'Record not found', sideEffects: 'none' });
+    const currentFields = fresh.fields;
+
+    // ── ⑤ サーバー側の条件を**再判定** ───────────────────────
+    const plan = makePlan(currentFields, fresh.ledger);
+    if (!plan.ok) {
+      return json(rejectStatus(plan.code), {
+        error: plan.message, code: plan.code, subject,
+        before: describe(currentFields, fresh.ledger),
+        couponLedger: describeLedger(fresh.ledger), sideEffects: 'none',
+      });
+    }
+    // 読み直した状態で OperationId が変わった = 別の操作が先に通った
+    if (plan.operationId !== planned.operationId) {
+      return json(409, {
+        error: 'この会員の状態が操作の直前に変わりました。再読込して状態を確認してから、もう一度実行してください。',
+        code: 'stale_state',
+        subject, before: describe(currentFields, fresh.ledger), sideEffects: 'none',
+      });
+    }
+
+    // ── ⑥ 状態変更（書く直前に lock を検証。奪われていたら書かない）──
+    const held = await lock.verify({ entityId, token: got.token });
+    if (!held.ok) {
+      return json(409, {
+        error: LOCK_REJECT_TEXT.lost, code: 'operation_lock_lost',
+        operationId: plan.operationId, subject, sideEffects: 'none',
+      });
+    }
+
+    if (plan.target === 'reservation') {
+      const target = (fresh.ledger.rows || []).find((r) => r.id === plan.reservationRecordId);
+      const built = buildReservationRevokeFields({ record: target, nowMs: now, reason: plan.note });
+      if (!built.fields) {
+        return json(409, {
+          error: `利用予約を取り消せません（${built.skipped}）`, code: built.skipped,
+          subject, before, sideEffects: 'none',
+        });
+      }
+      if (!assertOnlyOfferFields(built.fields)) return json(500, { error: 'field allow-list violation' });
+      const res = await fetch(
+        `https://api.airtable.com/v0/${BASE}/${encodeURIComponent(OFFERS_TABLE)}/${plan.reservationRecordId}`,
+        {
+          method: 'PATCH',
+          headers: { ...airtableHeaders(KEY), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fields: built.fields }),
+        },
+      );
+      if (!res.ok) {
+        const detail = await res.text();
+        console.error('❌ [premium-plus-eligibility] 予約取消 PATCH failed:', res.status);
+        return json(502, {
+          error: '予約台帳の更新に失敗しました', status: res.status, detail: detail.slice(0, 300),
+          subject, before,
+        });
+      }
+      console.log('✅ [premium-plus-eligibility] 利用予約を取消:', { recordId, actor });
+      // 台帳が変わったので**読み直す**（手元の ledger を使い回さない）
+      const after = await reloadCouponState({ KEY, BASE, recordId });
+      // ⑦ 履歴（同じ lock の中・同じ OperationId）。失敗しても状態は巻き戻さない
+      const history = await appendOperationHistory({
+        KEY, BASE, recordId, plan, actor, reason, before, after, detail: plan.note,
+      });
+      return json(200, {
+        success: true, couponAction, subject, before, after,
+        changed: true,
+        operationId: plan.operationId,
+        history,
+        /** Customers 側は 1 バイトも書いていない */
+        customerFieldsUnchanged: true,
+        note: '利用予約を取り消しました。クーポンの取得（保有）はそのまま残っています。',
+        rollback: '同じクーポンで改めてお申し込みいただけます。'
+          + '取り消した予約行を issued へ戻す操作は用意していません（二重予約を防ぐため）。',
+        sideEffects: 'coupon_reservation_revoked',
+      });
+    }
+
+    // 付与 / 誤取得訂正 / 再発行: Customers のクーポン 3 列だけ
+    const res = await fetch(`https://api.airtable.com/v0/${BASE}/${CUSTOMERS_TABLE}/${recordId}`, {
+      method: 'PATCH',
+      headers: { ...airtableHeaders(KEY), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fields: plan.fields, typecast: true }),
+    });
+    if (!res.ok) {
+      const detail = await res.text();
+      console.error('❌ [premium-plus-eligibility] クーポン操作 PATCH failed:', res.status);
+      return json(502, {
+        error: 'Airtable update failed', status: res.status, detail: detail.slice(0, 300),
+        subject, before,
+      });
+    }
+    console.log('✅ [premium-plus-eligibility] クーポン操作:', { recordId, couponAction, actor });
+
+    // ── ⑦ 履歴は同じ OperationId で積む（**本番テーブル未作成のため未接続**）──
+    //    状態変更が成功していれば、監査文字列に残した op= から後で
+    //    history-only で積み直せる（⑧ 部分成功の回復）。
+    const after = await reloadCouponState({ KEY, BASE, recordId });
+    // ⑦ 履歴（同じ lock の中・同じ OperationId）。失敗しても状態は巻き戻さない
+    const history = await appendOperationHistory({
+      KEY, BASE, recordId, plan, actor, reason, before, after,
+      detail: String(plan.fields[PP_REOPEN_COUPON_FIELDS.SOURCE] || ''),
+    });
+    return json(200, {
+      success: true,
+      couponAction,
+      subject,
+      before,
+      after,
+      changed: true,
+      operationId: plan.operationId,
+      history,
+      /** 資格・停止・会員権・決済は変更していない（応答でも明示して履歴に残す） */
+      eligibilityUnchanged: true,
+      membershipUnchanged: true,
+      rollback: couponAction === PP_COUPON_ADMIN_ACTION.CORRECT
+        ? '「クーポンを再発行」で取得状態へ戻せます（訂正前の取得日時は監査記録に残っています）。'
+        : '「誤取得を訂正」で取得を取り消せます。',
+      sideEffects: 'coupon_fields_updated',
+    });
+  } finally {
+    // ── ⑨ 解放（token 一致時のみ）。失敗しても TTL で必ず回復する ──
+    await lock.release({ entityId, token: got.token });
+  }
+}
+
+/**
+ * この会員 × この商品 × このクーポンの **排他の鍵**（entity id）。
+ *
+ * ⚠️ **OperationId ではない。** OperationId は操作種別ごとに変わるので、
+ *    鍵にすると `claim` と `grant` のような別種の操作が同時に state を書ける。
+ */
+function couponEntityIdFor(recordId) {
+  return computeCouponEntityId({
+    customerRecordId: recordId,
+    productKey: PP_COUPON_BINDING.productKey,
+    couponId: PP_COUPON_BINDING.couponId,
+    version: PP_COUPON_BINDING.version,
+  });
+}
+
+/**
+ * 操作の履歴を 1 行積む（**append-only**）。
+ *
+ * ⚠️ **呼び出せるのは operation lock を保持したまま**（状態変更と同じ鍵の中）。
+ * ⚠️ **失敗しても状態変更を巻き戻さない。** 監査に残した `op=` から
+ *    `couponHistoryRepair` で後から同じ OperationId で積み直せる。
+ * ⚠️ gate（`COUPON_HISTORY_TABLE_READY`）が off なら**何もしない**。
+ */
+async function appendOperationHistory({
+  KEY, BASE, recordId, plan, actor, reason, before, after, detail,
+}) {
+  if (!isCouponHistoryEnabled(process.env)) {
+    return { appended: false, reason: 'history_disabled' };
+  }
+  const record = buildHistoryRecord({
+    customerRecordId: recordId,
+    productKey: PP_COUPON_BINDING.productKey,
+    couponId: PP_COUPON_BINDING.couponId,
+    version: PP_COUPON_BINDING.version,
+    operationType: plan.operation || plan.action,
+    actor, reason,
+    beforeState: (before && before.lifecycle) || '',
+    afterState: (after && after.lifecycle) || '',
+    detail: detail || '',
+    atIso: plan.atIso || new Date().toISOString(),
+    operationId: plan.operationId,
+  });
+  if (!record) return { appended: false, reason: 'no_record' };
+  const store = createCouponHistoryStore({ apiKey: KEY, baseId: BASE, env: process.env });
+  const out = await store.append({ record, lockStatus: 'acquired' });
+  if (!out.appended && out.reason !== 'already_recorded') {
+    // 状態は成功している。**巻き戻さず**、未記録として運営者に見せる
+    console.warn('⚠️ [premium-plus-eligibility] 履歴を積めませんでした:',
+      { recordId, operationId: plan.operationId, reason: out.reason });
+  }
+  return out;
+}
+
+/**
+ * 会員 1 人ぶんのクーポン操作履歴を**時系列で返す**（read-only）。
+ *
+ * これがあるので、通常運用で **Airtable を直接見る必要がない**。
+ * ⚠️ 他会員の行は混ざらない（`CustomerRecordId` 一致だけを引く）。
+ * ⚠️ gate が off / 読めないときは **0 件と断定しない**（「確認できない」を返す）。
+ */
+async function handleCouponHistory({ KEY, BASE, req }) {
+  const recordId = String(req.recordId || '').trim();
+  if (!recordId) return json(400, { error: 'recordId が必要です', sideEffects: 'none' });
+
+  const store = createCouponHistoryStore({ apiKey: KEY, baseId: BASE, env: process.env });
+  const got = await store.listForCustomer({ customerRecordId: recordId });
+  return json(200, {
+    recordId,
+    available: got.available,
+    reason: got.reason,
+    note: got.available ? '' : (got.reason === 'history_disabled'
+      ? '操作履歴の保存はこの本番環境でまだ有効化されていません（COUPON_HISTORY_TABLE_READY 未設定）。'
+        + 'これまでの操作は記録されていないため、履歴は表示できません。'
+      : '操作履歴を読み取れませんでした。0 件と判断しないでください。'),
+    rows: (got.rows || []).map((r) => ({
+      operationId: r.fields.OperationId || '',
+      occurredAt: r.fields.OccurredAt || '',
+      operationType: r.fields.OperationType || '',
+      actor: r.fields.Actor || '',
+      reason: r.fields.Reason || '',
+      beforeState: r.fields.BeforeState || '',
+      afterState: r.fields.AfterState || '',
+      productKey: r.fields.ProductKey || '',
+      couponId: r.fields.CouponId || '',
+      couponVersion: r.fields.CouponVersion ?? null,
+    })),
+    sideEffects: 'none',
+  });
+}
+
+/**
+ * **history-only repair**（状態は成功したが履歴だけ未記録、を収束させる）。
+ *
+ * 監査文字列に残した `op=<OperationId>` を根拠に、履歴に無い分だけを
+ * **同じ OperationId** で積み直す。**状態は 1 バイトも触らない。**
+ *
+ * ⚠️ 同じ OperationId の operation lock を取ってから積む（並行 repair でも 1 件）。
+ * ⚠️ 何度実行しても増えない（既に積まれていれば `already_recorded` でスキップ）。
+ */
+async function handleCouponHistoryRepair({ KEY, BASE, now, req }) {
+  const recordId = String(req.recordId || '').trim();
+  if (!recordId) return json(400, { error: 'recordId が必要です', sideEffects: 'none' });
+  if (!isCouponHistoryEnabled(process.env)) {
+    return json(503, {
+      error: '操作履歴の保存が有効化されていないため修復できません（COUPON_HISTORY_TABLE_READY 未設定）。',
+      code: 'history_disabled', sideEffects: 'none',
+    });
+  }
+
+  const getRes = await fetch(`https://api.airtable.com/v0/${BASE}/${CUSTOMERS_TABLE}/${recordId}`, {
+    headers: airtableHeaders(KEY),
+  });
+  if (!getRes.ok) return json(404, { error: 'Record not found', sideEffects: 'none' });
+  const fields = (await getRes.json()).fields || {};
+
+  const store = createCouponHistoryStore({ apiKey: KEY, baseId: BASE, env: process.env });
+  const existing = await store.listForCustomer({ customerRecordId: recordId });
+  if (!existing.available) {
+    return json(503, {
+      error: '操作履歴を読み取れないため修復できません。', code: existing.reason, sideEffects: 'none',
+    });
+  }
+
+  // Customers に残っている**直近 1 回**の監査から未記録を拾う
+  const audit = parseCouponAudit(readReopenCoupon(fields).source);
+  const targets = findHistoryRepairTargets({
+    audits: [{ customerRecordId: recordId, audit }], rows: existing.rows,
+  });
+  if (targets.length === 0) {
+    return json(200, {
+      recordId, repaired: 0, note: '未記録の操作はありません（履歴は state と一致しています）。',
+      sideEffects: 'none',
+    });
+  }
+
+  const lock = createCouponOperationLock({ redisCmd: makeRedisCmd(process.env) });
+  // repair も**同じ entity lock**を取る（進行中の操作と直列化する）
+  const entityId = couponEntityIdFor(recordId);
+  const results = [];
+  for (const t of targets) {
+    const got = await lock.acquire({ entityId });
+    if (got.status !== LOCK_RESULT.ACQUIRED) {
+      results.push({ operationId: t.operationId, appended: false, reason: got.status });
+      continue;
+    }
+    try {
+      const record = buildRepairRecord({
+        customerRecordId: recordId,
+        productKey: PP_COUPON_BINDING.productKey,
+        couponId: PP_COUPON_BINDING.couponId,
+        version: PP_COUPON_BINDING.version,
+        audit: t.audit,
+        // 当時の前後状態は残っていないので**推測しない**（空のまま積む）
+        beforeState: '', afterState: '',
+      });
+      const out = await store.append({ record, lockStatus: 'acquired' });
+      results.push({ operationId: t.operationId, ...out });
+    } finally {
+      await lock.release({ entityId, token: got.token });
+    }
+  }
+  return json(200, {
+    recordId,
+    repaired: results.filter((r) => r.appended).length,
+    results,
+    note: '履歴だけを積み直しました。**会員の状態は 1 バイトも変更していません。**',
+    sideEffects: 'coupon_history_appended',
+  });
+}
+
+/** 操作後の状態を **Airtable から読み直して**返す（送った値が通った前提にしない） */
+async function reloadCouponState({ KEY, BASE, recordId, ledger }) {
+  const fresh = await fetch(`https://api.airtable.com/v0/${BASE}/${CUSTOMERS_TABLE}/${recordId}`, {
+    headers: airtableHeaders(KEY),
+  });
+  if (!fresh.ok) return null;   // 読めなければ null（成功したことにしない）
+  const fields = (await fresh.json()).fields || {};
+  const led = ledger || await readReservationLedger({ KEY, BASE });
+  return describeCouponAdminState({
+    fields,
+    offerRows: led.available ? led.rows : null,
+    ledgerAvailable: led.available === true,
+    customerRecordId: recordId,
+  });
+}
+
 async function handleList({ KEY, BASE, now, onlyReview }) {
+  // 予約台帳は**1 回だけ**読む（会員ごとに引かない）。
+  // ⚠️ 読めなければ available:false＝「確認できない」。**[] へ潰さない**
+  const ledger = await readReservationLedger({ KEY, BASE });
   const rows = [];
   let offset;
   let pages = 0;
@@ -591,7 +1135,7 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
     const data = await res.json();
 
     for (const rec of data.records || []) {
-      const row = buildAdminRow(rec, now);
+      const row = buildAdminRow(rec, now, ledger);
       if (!row.__listed) continue;
       if (onlyReview && row.eligibility !== PP_ELIGIBILITY.REVIEW) continue;
       rows.push(row);
@@ -623,6 +1167,9 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
 
   return json(200, {
     rows,
+    // 予約台帳を読めたか（個別検索と同じ塊）。
+    // ⚠️ 読めていないときは件数も状態も確定していない。画面は「確認できない」と出す。
+    couponLedger: describeLedger(ledger),
     // いま販売している対象日（16:30 以降は翌日分）と開催区分。
     // 例外リストの確認期限切れは**警告するだけ**（販売は止めない）。
     saleTarget: (() => {
@@ -649,6 +1196,17 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
       // 再募集クーポンの取得済み。**資格・停止のどちらの内訳でもない**ので別に数える。
       // 再募集時に「取得済み会員だけを抽出する」ための件数でもある。
       reopenCouponClaimed: rows.filter((r) => r.reopenCouponClaimed === true).length,
+      // クーポンの**利用状態**の内訳。⚠️ 台帳を読めていないときは数えない（null）。
+      // 0 と返すと「予約 0 件」と読まれる（確認できないことを 0 件にしない）。
+      couponReserved: ledger.available
+        ? rows.filter((r) => r.couponLifecycle && r.couponLifecycle.state === COUPON_LIFECYCLE.RESERVED).length
+        : null,
+      couponRedeemed: ledger.available
+        ? rows.filter((r) => r.couponLifecycle && r.couponLifecycle.state === COUPON_LIFECYCLE.REDEEMED).length
+        : null,
+      couponNeedsRepair: ledger.available
+        ? rows.filter((r) => r.couponLifecycle && r.couponLifecycle.needsRepair === true).length
+        : null,
       // route 未成立のまま一覧に出している区分（表示専用。販売資格は付与していない）
       waiting30d: rows.filter((r) => r.candidateKind === PP_CANDIDATE.WAITING_30D).length,
       anchorMissing: rows.filter((r) => r.candidateKind === PP_CANDIDATE.ANCHOR_MISSING).length,
@@ -683,6 +1241,8 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
       fieldsReady: isReopenCouponEnabled(process.env),
       name: PP_REOPEN_COUPON.name,
       termsDetermined: PP_REOPEN_COUPON.terms.determined === true,
+      termsText: describeCouponTerms(),
+      expiryDetermined: PP_REOPEN_COUPON.terms.expiresDetermined === true,
     },
     // 「自動」の意味を管理画面に常設するための文言（正本は upsellExplain.js）
     upsellAutoRules: UPSELL_AUTO_RULE_TEXT,

@@ -139,8 +139,35 @@ const LEGEND = [
     </div>
   </header>
 
-  {view.venues.map((venue: any) => (
-    <div class="rvb-venue">
+  {/* 会場タブ。複数開催（JRA 3 場 / 南関 2 場）で全会場を縦に並べると 10 画面ぶんになるため、
+      1 会場ずつ出す。**JS が動かない環境ではタブを出さず、全会場を縦に並べたまま**にする
+      （情報を落とさない）。有効化は下の venueTabs() が :root[data-rvb-venuetabs="on"] を付けたとき。 */}
+  {view.venues.length > 1 && (
+    <div class="rvb-venuebar" role="tablist" aria-label="会場を切り替える">
+      {view.venues.map((venue: any, vi: number) => (
+        <button
+          type="button"
+          class="rvb-venuetab"
+          role="tab"
+          id={`rvb-venuetab-${vi}`}
+          aria-controls={`rvb-venue-${vi}`}
+          aria-selected={vi === 0 ? 'true' : 'false'}
+        >
+          <span class="rvb-venuetab-name">{venue.venue}</span>
+          <span class="rvb-venuetab-count">{venue.races.length}R</span>
+        </button>
+      ))}
+    </div>
+  )}
+
+  {view.venues.map((venue: any, vi: number) => (
+    <div
+      class="rvb-venue"
+      id={`rvb-venue-${vi}`}
+      data-active={vi === 0 ? 'true' : 'false'}
+      role={view.venues.length > 1 ? 'tabpanel' : undefined}
+      aria-labelledby={view.venues.length > 1 ? `rvb-venuetab-${vi}` : undefined}
+    >
       <h2 class="rvb-venue-name">{venue.venue}<span class="rvb-venue-count">{venue.races.length}R</span></h2>
 
       <div class="rvb-highlight">
@@ -414,6 +441,79 @@ const LEGEND = [
     else init();
   })();
 
+  // ── 会場タブ（複数開催）──────────────────────────────────────
+  // JRA は 1 日 3 場、南関も 2 場開催の日がある。全会場を縦に連結すると
+  // 36 レース = デスクトップで 10 画面ぶんになり、目的のレースに辿り着けない。
+  //   ① 会場ごとに 1 つだけ表示し、タブで切り替える
+  //   ② タブはスクロール追従（sticky）。どの会場を見ているか常に分かる
+  //   ③ **JS が動かない環境ではタブを出さず、全会場が縦に並んだまま**（情報は落とさない）
+  (function venueTabs() {
+    function init() {
+      const bar = document.querySelector('.rvb-venuebar');
+      const venues = Array.from(document.querySelectorAll('.rvb-venue'));
+      if (!bar || venues.length < 2) return;
+      const tabs = Array.from(bar.querySelectorAll('.rvb-venuetab'));
+      if (tabs.length !== venues.length) return;
+
+      // サイトヘッダーは position: fixed。その実高さを sticky の基準にする
+      // （固定値だと画面幅でヘッダー高が変わったときに潜り込む）
+      function syncStickyTop() {
+        const hdr = document.querySelector('.header');
+        const h = hdr ? Math.round(hdr.getBoundingClientRect().height) : 0;
+        document.documentElement.style.setProperty('--rvb-sticky-top', (h || 92) + 'px');
+      }
+      syncStickyTop();
+      window.addEventListener('resize', syncStickyTop);
+
+      function stickyTopPx() {
+        const v = getComputedStyle(document.documentElement).getPropertyValue('--rvb-sticky-top');
+        return parseInt(v, 10) || 92;
+      }
+
+      function select(index, scroll) {
+        venues.forEach((v, n) => {
+          v.setAttribute('data-active', n === index ? 'true' : 'false');
+          // 隠れる会場のレースを開いたままにしない（戻ったとき開きっぱなしで迷子になる）
+          if (n !== index) {
+            v.querySelectorAll('details.rvb-detail[open]').forEach((d) => { d.open = false; });
+          }
+        });
+        tabs.forEach((t, n) => t.setAttribute('aria-selected', n === index ? 'true' : 'false'));
+        if (scroll) {
+          const top = bar.getBoundingClientRect().top + window.scrollY - stickyTopPx() - 8;
+          window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+        }
+      }
+
+      document.documentElement.setAttribute('data-rvb-venuetabs', 'on');
+      select(0, false);
+
+      bar.addEventListener('click', (e) => {
+        const btn = e.target instanceof Element ? e.target.closest('.rvb-venuetab') : null;
+        if (!btn) return;
+        const i = tabs.indexOf(btn);
+        if (i >= 0) select(i, true);
+      });
+
+      // 左右キーで切り替え（tablist の作法）。
+      // ⚠️ このファイルでは**キー既定動作の抑止を一切書かない**。summary の既定トグルが
+      //    生きていることを accordionClose.guard.test.mjs がファイル全体の文字列検査で
+      //    確かめており、抑止の呼び出し名が 1 か所でもあると落ちる（意図した厳しさ）。
+      //    矢印キーの既定動作は横スクロールだけなので、抑止しなくても実害が無い。
+      bar.addEventListener('keydown', (e) => {
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+        const cur = tabs.findIndex((t) => t.getAttribute('aria-selected') === 'true');
+        const next = e.key === 'ArrowRight'
+          ? (cur + 1) % tabs.length
+          : (cur - 1 + tabs.length) % tabs.length;
+        select(next, false);
+        tabs[next].focus();
+      });
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+    else init();
+  })();
+
   // ── 無料会員向け拡張表示の出し分け ────────────────────────────
   // 既定は「未登録」の見え方（拡張は隠す / 登録 CTA を出す）。JS で登録済みなら入れ替える。
   //
@@ -509,6 +609,62 @@ const LEGEND = [
   .lg-nodata   { color: #e5e7eb; border-color: #6b7280; background: rgba(107,114,128,.2); }
   .lg-pending  { color: #fed7aa; border-color: #fb923c; background: rgba(251,146,60,.16); }
 
+  /* ── 会場タブ（複数開催）──────────────────────────────────────
+     既定（= JS なし）ではタブを出さず、全会場を縦に並べたまま読める。
+     JS が :root[data-rvb-venuetabs="on"] を付けたときだけ 1 会場表示に切り替わる。
+     選択中は色だけでなく「表示中」の文字でも示す（色だけに意味を持たせない）。 */
+  .rvb-venuebar { display: none; }
+  :root[data-rvb-venuetabs="on"] .rvb-venuebar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    position: sticky;
+    top: var(--rvb-sticky-top, 92px);
+    z-index: 20;
+    margin: 22px 0 0;
+    padding: 8px;
+    background: rgba(15, 23, 42, .96);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(148, 163, 184, .28);
+    border-radius: 12px;
+  }
+  .rvb-venuetab {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+    padding: 9px 16px;
+    border: 1px solid transparent;
+    border-radius: 9px;
+    background: rgba(2, 6, 23, .5);
+    color: #cbd5e1;
+    font-size: .95rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .rvb-venuetab:hover { background: rgba(124, 58, 237, .18); color: #e2e8f0; }
+  .rvb-venuetab:focus-visible { outline: 2px solid #22d3ee; outline-offset: 2px; }
+  .rvb-venuetab-count { font-size: .74rem; font-weight: 700; opacity: .85; }
+  .rvb-venuetab[aria-selected="true"] {
+    background: linear-gradient(135deg, #7c3aed 0%, #4f46e5 100%);
+    border-color: #a78bfa;
+    color: #fff;
+  }
+  .rvb-venuetab[aria-selected="true"]::after {
+    content: '表示中';
+    font-size: .68rem;
+    font-weight: 700;
+    color: #ede9fe;
+    background: rgba(2, 6, 23, .4);
+    border-radius: 999px;
+    padding: 2px 7px;
+  }
+  :root[data-rvb-venuetabs="on"] .rvb-venue[data-active="false"] { display: none; }
+  :root[data-rvb-venuetabs="on"] .rvb-venue { margin-top: 18px; }
+  @media (max-width: 768px) {
+    .rvb-venuetab { padding: 8px 12px; font-size: .9rem; }
+    .rvb-venuetab[aria-selected="true"]::after { content: '●'; padding: 0 2px; background: none; }
+  }
+
   .rvb-venue { margin-top: 34px; }
   .rvb-venue-name { font-size: 1.3rem; font-weight: 800; color: #f8fafc; border-left: 5px solid #7c3aed; padding-left: 10px; margin: 0 0 12px; }
   .rvb-venue-count { color: #c4b5fd; font-size: .8rem; margin-left: 8px; }
@@ -531,7 +687,13 @@ const LEGEND = [
 
   .rvb-row-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
   .rvb-time { color: #cbd5e1; font-variant-numeric: tabular-nums; font-size: .85rem; }
-  .rvb-r { font-weight: 800; color: #38bdf8; min-width: 2.6em; }
+  /* レース番号（2026-08-21・MK 目視判断）。
+     もとは #38bdf8 で、閉じたアコーディオンの塗りと**同じ水色**だったため、
+     1 枚のカードに水色の要素が 2 つ並んでいた。薄い緑へ変更して分離する。
+     枠も塗りも付けない（文字色だけ）。番号は識別子なので装飾を足さない。
+     ⚠️ 濃い緑（#16a34a 5.3:1）ではなく薄い緑（#86efac **12.4:1**）を選んでいる。
+        濃い色は暗い濃紺の背景に沈み、番号が読みにくくなる。 */
+  .rvb-r { font-weight: 800; color: #86efac; min-width: 2.6em; }
   .rvb-name { font-weight: 700; color: #f1f5f9; }
   .rvb-meta { color: #cbd5e1; font-size: .82rem; margin-left: auto; }
 
@@ -553,6 +715,21 @@ const LEGEND = [
   .rvb-detail[open], .rvb-detail.is-open { border-color: #22d3ee; background: rgba(8,47,73,.55); box-shadow: 0 0 0 2px rgba(34,211,238,.18) inset; }
   .rvb-detail-sum { cursor: pointer; color: #7dd3fc; font-size: .84rem; list-style: none; padding: 8px 12px; display: flex; align-items: center; gap: 8px; font-weight: 700; }
   .rvb-detail-sum::-webkit-details-marker { display: none; }
+
+  /* 閉じている状態は「押せるボタン」に見せる（2026-08-21・MK 目視判断）。
+     細い枠線＋カードと同じ濃紺の背景だと押せることが伝わらず、
+     全レースが同じ見た目で並ぶため一覧が白と水色のツートンで単調に見えていた。
+     **色相は変えない（水色のまま）**。枠線ではなく塗りにすることで解決する。
+     ⚠️ ボタン化・バッジ化してクリック領域を縮めないこと。
+        コンパクト化案は押せる幅が 931px → 約 230px になり、
+        スマホで押しづらくなるため見送った。フル幅を維持する。
+     開いている状態は従来どおり（シアン）。`:not([open])` なので開くと自然に解除される。 */
+  .rvb-detail:not([open]) {
+    border-color: rgba(56, 189, 248, .6);
+    background: linear-gradient(180deg, rgba(56, 189, 248, .24), rgba(3, 105, 161, .20));
+  }
+  .rvb-detail:not([open]) .rvb-detail-sum { color: #f0f9ff; }
+  .rvb-detail:not([open]) .rvb-detail-ic { background: #38bdf8; border-color: #7dd3fc; color: #082f49; }
   .rvb-detail-ic { display: inline-flex; width: 20px; height: 20px; align-items: center; justify-content: center; border-radius: 6px; background: rgba(56,189,248,.2); border: 1px solid rgba(56,189,248,.5); font-weight: 800; }
   .rvb-detail[open] .rvb-detail-sum { color: #ecfeff; }
   .rvb-detail[open] .rvb-detail-ic { background: #22d3ee; color: #082f49; border-color: #22d3ee; }

@@ -21,7 +21,7 @@
  *   - 未取得なら取得 CTA / 取得済みなら取得日時と「二重取得させない」表示
  */
 
-import { PP_REOPEN_COUPON_TERMS_NOTE } from './premiumPlusReopenCoupon.js';
+import { describeCouponDiscount, describeCouponPrice } from './premiumPlusReopenCoupon.js';
 
 /** クーポン取得 API のパス（画面とサーバーで 1 か所に固定する） */
 export const COUPON_API_PATH = '/api/premium-plus-coupon.json';
@@ -37,8 +37,21 @@ export const PAUSE_NOTICE_COPY = Object.freeze({
   couponLead: '募集を再開した際には、今回ご検討いただいた方にご利用いただける'
     + '優待クーポンをご用意しております。',
   couponAsk: '今のうちにクーポンを取得しておきますか？',
-  cta: '再募集時に使える優待クーポンを取得する',
 });
+
+/**
+ * 取得する具体的なメリットを**一目で**伝える見出しと CTA。
+ * ⚠️ 金額は書き写さず、必ず単一源（describeCouponDiscount / describeCouponPrice）から作る。
+ */
+export function benefitHeadline() {
+  return `再募集時に使える ${describeCouponDiscount()} クーポン`;
+}
+export function benefitPriceLine() {
+  return describeCouponPrice();
+}
+export function claimCtaLabel() {
+  return `${describeCouponDiscount()} クーポンを取得する`;
+}
 
 /** クーポンページの文言 */
 export const COUPON_PAGE_COPY = Object.freeze({
@@ -84,6 +97,9 @@ p{margin:0 0 16px;font-size:0.98rem;color:#cbd5e1}
   border:1px solid #334155;background:#0f1a2e}
 .coupon-name{font-size:1.05rem;font-weight:700;color:#f8fafc;margin:0 0 6px}
 .coupon-desc{font-size:0.9rem;color:#94a3b8;margin:0 0 14px}
+.benefit-head{font-size:1.02rem;font-weight:700;color:#f8fafc;margin:0 0 16px}
+.coupon-benefit{font-size:1.32rem;font-weight:800;color:#6ee7b7;margin:0 0 4px;letter-spacing:.01em}
+.coupon-price{font-size:1rem;color:#e2e8f0;margin:0 0 14px}
 .state{display:inline-block;font-size:0.84rem;font-weight:700;padding:5px 12px;
   border-radius:999px;margin:0 0 12px}
 .state.held{background:#064e3b;color:#6ee7b7;border:1px solid #10b981}
@@ -92,6 +108,11 @@ dl{margin:0;font-size:0.9rem}
 dt{color:#94a3b8;font-size:0.82rem;margin:10px 0 2px}
 dd{margin:0;color:#e2e8f0}
 .note{font-size:0.84rem;color:#94a3b8;margin:14px 0 0}
+a.order-cta{display:block;text-align:center;margin:20px 0 0;padding:15px 18px;border-radius:12px;
+  background:#2563eb;color:#fff;font-size:0.98rem;font-weight:700;text-decoration:none}
+a.order-cta:hover{background:#1d4ed8}
+.order-wait{margin:20px 0 0;padding:14px 16px;border-radius:12px;background:#1e293b;
+  border:1px solid #475569;color:#cbd5e1;font-size:0.94rem;font-weight:700;text-align:center}
 button.claim{display:block;width:100%;margin:20px 0 0;padding:15px 18px;border:0;
   border-radius:12px;background:#2563eb;color:#fff;font-size:0.98rem;font-weight:700;
   cursor:pointer;font-family:inherit}
@@ -132,25 +153,22 @@ function couponBlock(view) {
   const rows = [];
   rows.push(`<p class="coupon-name">${escapeHtml(v.name)}</p>`);
   rows.push(`<p class="coupon-desc">${escapeHtml(v.description)}</p>`);
+  // 割引の中身を**最初に**出す（何が得なのかが一目で分かるように）
+  if (v.discountText) rows.push(`<p class="coupon-benefit">${escapeHtml(v.discountText)}</p>`);
+  if (v.priceText) rows.push(`<p class="coupon-price">${escapeHtml(v.priceText)}</p>`);
+  rows.push(v.claimed ? '<span class="state held">取得済み</span>' : '<span class="state none">未取得</span>');
+  rows.push('<dl>');
   if (v.claimed) {
-    rows.push('<span class="state held">取得済み</span>');
-    rows.push('<dl>');
     const at = formatClaimedAtJst(v.claimedAtIso);
     if (at) rows.push(`<dt>取得日時</dt><dd>${escapeHtml(at)}</dd>`);
-    rows.push(`<dt>ご利用時期</dt><dd>${escapeHtml(v.usableNote)}</dd>`);
-    if (v.paused) rows.push('<dt>現在の受付状況</dt><dd>新規受付を休止しております</dd>');
-    rows.push('</dl>');
-    rows.push('<p class="note">既に取得済みのため、あらためてお手続きいただく必要はございません。</p>');
-  } else {
-    rows.push('<span class="state none">未取得</span>');
-    rows.push('<dl>');
-    rows.push(`<dt>ご利用時期</dt><dd>${escapeHtml(v.usableNote)}</dd>`);
-    if (v.paused) rows.push('<dt>現在の受付状況</dt><dd>新規受付を休止しております</dd>');
-    rows.push('</dl>');
   }
-  // 条件が未確定であることを隠さない（金額・割引率をここで作らない）
-  if (v.termsDetermined !== true) {
-    rows.push(`<p class="note">${escapeHtml(v.termsNote || PP_REOPEN_COUPON_TERMS_NOTE)}</p>`);
+  rows.push(`<dt>ご利用時期</dt><dd>${escapeHtml(v.usableNote)}</dd>`);
+  // 有効期限は**未確定**。日付を作らずそう伝える
+  rows.push(`<dt>有効期限</dt><dd>${escapeHtml(v.expiryText)}</dd>`);
+  if (v.paused) rows.push('<dt>現在の受付状況</dt><dd>新規受付を休止しております</dd>');
+  rows.push('</dl>');
+  if (v.claimed) {
+    rows.push('<p class="note">既に取得済みのため、あらためてお手続きいただく必要はございません。</p>');
   }
   return `<div class="coupon">${rows.join('\n')}</div>`;
 }
@@ -162,7 +180,7 @@ function claimForm({ source, storageReady }) {
     ? '<p class="blocker">ただいま取得のお手続きを承れません。'
       + 'お手数ですが、時間をおいて再度お試しください。</p>'
     : '';
-  return `<button type="button" class="claim" id="claimBtn"${disabled}>${escapeHtml(PAUSE_NOTICE_COPY.cta)}</button>
+  return `<button type="button" class="claim" id="claimBtn"${disabled}>${escapeHtml(claimCtaLabel())}</button>
 ${blocker}
 <p class="msg" id="claimMsg" role="status" aria-live="polite"></p>
 <script>
@@ -181,7 +199,7 @@ ${blocker}
       .then(function(o){
         if(o.s===200&&o.j&&o.j.claimed===true){
           msg.className='msg ok';
-          msg.textContent='クーポンを取得しました。募集再開時にご利用いただけます。';
+          msg.textContent=${JSON.stringify(`${describeCouponDiscount()} クーポンを取得しました。募集再開時にご利用いただけます。`)};
           setTimeout(function(){location.href=${JSON.stringify(COUPON_PAGE_PATH)};},1200);
           return;
         }
@@ -209,11 +227,13 @@ export function renderPauseNoticeHtml({ coupon, source = 'pause-notice' } = {}) 
   parts.push(`<p class="lead">${escapeHtml(PAUSE_NOTICE_COPY.lead)}</p>`);
   parts.push(`<p>${escapeHtml(PAUSE_NOTICE_COPY.body)}</p>`);
   parts.push(`<p>${escapeHtml(PAUSE_NOTICE_COPY.couponLead)}</p>`);
+  parts.push(`<p class="benefit-head">${escapeHtml(benefitHeadline())}</p>`);
   if (!v.claimed) parts.push(`<p>${escapeHtml(PAUSE_NOTICE_COPY.couponAsk)}</p>`);
   parts.push(couponBlock(v));
   if (v.showClaimCta) {
     parts.push(claimForm({ source, storageReady: v.storageReady }));
   }
+  parts.push(orderCtaBlock(v.orderCta));
   parts.push(`<p class="links"><a href="${escapeHtml(COUPON_PAGE_PATH)}">取得済みクーポンを確認する</a></p>`);
   return shell({ title: PAUSE_NOTICE_COPY.title, inner: parts.join('\n') });
 }
@@ -232,5 +252,20 @@ export function renderCouponPageHtml({ coupon, source = 'coupon-page' } = {}) {
   if (v.showClaimCta) {
     parts.push(claimForm({ source, storageReady: v.storageReady }));
   }
+  parts.push(orderCtaBlock(v.orderCta));
   return shell({ title: COUPON_PAGE_COPY.title, inner: parts.join('\n') });
+}
+
+/**
+ * 申込導線（主 CTA）。
+ * ⚠️ **購入できないときはリンクにしない**（押せる購入 CTA を偽装しない）。
+ */
+function orderCtaBlock(cta) {
+  const c = cta || {};
+  if (c.show !== true) return '';
+  if (c.purchasable === true) {
+    return `<a class="order-cta" href="${escapeHtml(c.href)}">${escapeHtml(c.label)}</a>`;
+  }
+  return `<p class="order-wait">${escapeHtml(c.label)}</p>`
+    + (c.note ? `<p class="note">${escapeHtml(c.note)}</p>` : '');
 }

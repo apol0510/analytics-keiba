@@ -37,6 +37,7 @@ import { lookupCustomerFields, invalidateCustomerFields } from '../../lib/premiu
 import { resolveUpsellForCustomer } from '../../lib/upsell/upsellTarget.js';
 import {
   readReopenCoupon,
+  PP_REOPEN_COUPON_FIELDS,
   buildReopenCouponClaimFields,
   resolveCouponClaimDecision,
   assertOnlyCouponFields,
@@ -44,6 +45,22 @@ import {
   normalizeCouponSource,
   COUPON_CLAIM_REJECT,
 } from '../../lib/premiumPlus/premiumPlusReopenCoupon.js';
+import {
+  COUPON_OPERATION,
+  computeCouponEntityId,
+  computeCouponOperationId,
+} from '../../lib/coupons/couponPlatform.js';
+import {
+  createCouponOperationLock,
+  LOCK_RESULT,
+} from '../../lib/coupons/couponOperationLock.js';
+import { createCouponHistoryStore } from '../../lib/coupons/couponHistoryStore.js';
+import {
+  buildHistoryRecord,
+  isCouponHistoryEnabled,
+} from '../../lib/coupons/couponOperationHistory.js';
+import { PP_COUPON_BINDING } from '../../lib/premiumPlus/premiumPlusCouponAdmin.js';
+import { makeRedisCmd } from '../../lib/premiumPlus/premiumPlusFunnelServer.js';
 
 /** Airtable PATCH のタイムアウト（ms）。取得ボタンを長く待たせない。 */
 const PATCH_TIMEOUT_MS = 4000;
@@ -148,29 +165,139 @@ export async function POST({ request }) {
     });
   }
 
-  const built = buildReopenCouponClaimFields({ current: fields, now, source, enabled });
-  if (!built || built.changed !== true) {
-    return json(503, {
-      ok: false, claimed: false,
-      code: COUPON_CLAIM_REJECT.STORAGE_UNAVAILABLE, sideEffects: 'none',
-    });
-  }
-
-  const wrote = await patchCouponFields({ recordId, fields: built.fields, env: process.env });
-  if (!wrote) {
-    // 保存できていないのに「取得しました」と言わない
-    return json(503, {
-      ok: false, claimed: false,
-      code: COUPON_CLAIM_REJECT.STORAGE_UNAVAILABLE, sideEffects: 'none',
-    });
-  }
-  // 自分の更新だけキャッシュから落とす（直後のページ表示が「未取得」に戻らないように）
-  invalidateCustomerFields(recordId);
-
-  return json(200, {
-    ok: true, claimed: true, alreadyClaimed: false,
-    claimedAt: built.claimedAtIso, sideEffects: 'coupon_only',
+  // ── ここから先は管理操作と**同じ手順**（claim を例外にしない）──────
+  //   ① 最初の read（上で完了）→ ② entity lock → ③ 再 read → ④ 再判定
+  //   → ⑤ OperationId 算出 → ⑥ lock verify → ⑦ state 変更 → ⑧ history append
+  const entityId = computeCouponEntityId({
+    customerRecordId: recordId,
+    productKey: PP_COUPON_BINDING.productKey,
+    couponId: PP_COUPON_BINDING.couponId,
+    version: PP_COUPON_BINDING.version,
   });
+  const lock = createCouponOperationLock({ redisCmd: makeRedisCmd(process.env) });
+  const got = await lock.acquire({ entityId });
+  if (got.status !== LOCK_RESULT.ACQUIRED) {
+    // ⚠️ 排他できないまま書かない（fail closed）。取得したことにもしない
+    return json(503, {
+      ok: false, claimed: false,
+      code: got.status === LOCK_RESULT.LOST ? 'coupon_operation_in_progress' : 'coupon_lock_unavailable',
+      sideEffects: 'none',
+    });
+  }
+
+  try {
+    // ③ lock 取得後に**読み直す**（TOCTOU を閉じる）。キャッシュを使わない
+    invalidateCustomerFields(recordId);
+    const freshFields = await lookupCustomerFields({ recordId, env: process.env, now });
+    const freshCoupon = readReopenCoupon(freshFields);
+    // ④ 再判定。lock 待ちの間に別の実行が取得していれば**既取得として 200**
+    const freshDecision = resolveCouponClaimDecision({
+      pauseNotice: resolveUpsellForCustomer({
+        fields: freshFields, nowMs: now,
+        fallbackAnchor: process.env.PREMIUM_PLUS_FUNNEL_ANCHOR,
+      }).pauseNotice,
+      coupon: freshCoupon,
+      enabled,
+    });
+    if (!freshDecision.ok) {
+      if (freshDecision.reason === COUPON_CLAIM_REJECT.NOT_ELIGIBLE) return notFound();
+      return json(503, {
+        ok: false, claimed: false, code: freshDecision.reason, sideEffects: 'none',
+      });
+    }
+    if (freshDecision.alreadyClaimed) {
+      return json(200, {
+        ok: true, claimed: true, alreadyClaimed: true,
+        claimedAt: freshCoupon.claimedAtIso, sideEffects: 'none',
+      });
+    }
+
+    // ⑤ 履歴の冪等キー（**現在時刻を材料にしない**。未取得からの claim なので anchor は 'none'）
+    const operationId = computeCouponOperationId({
+      productKey: PP_COUPON_BINDING.productKey,
+      couponId: PP_COUPON_BINDING.couponId,
+      version: PP_COUPON_BINDING.version,
+      customerRecordId: recordId,
+      operationType: COUPON_OPERATION.CLAIM,
+      anchor: 'none',
+    });
+
+    const built = buildReopenCouponClaimFields({
+      current: freshFields, now, source, enabled, operationId,
+    });
+    if (!built || built.changed !== true) {
+      return json(503, {
+        ok: false, claimed: false,
+        code: COUPON_CLAIM_REJECT.STORAGE_UNAVAILABLE, sideEffects: 'none',
+      });
+    }
+
+    // ⑥ 書く直前に lock を検証（奪われていたら書かない）
+    const held = await lock.verify({ entityId, token: got.token });
+    if (!held.ok) {
+      return json(503, {
+        ok: false, claimed: false, code: 'coupon_operation_in_progress', sideEffects: 'none',
+      });
+    }
+
+    // ⑦ state 変更（クーポン 3 列だけ）
+    const wrote = await patchCouponFields({ recordId, fields: built.fields, env: process.env });
+    if (!wrote) {
+      // 保存できていないのに「取得しました」と言わない
+      return json(503, {
+        ok: false, claimed: false,
+        code: COUPON_CLAIM_REJECT.STORAGE_UNAVAILABLE, sideEffects: 'none',
+      });
+    }
+    // 自分の更新だけキャッシュから落とす（直後のページ表示が「未取得」に戻らないように）
+    invalidateCustomerFields(recordId);
+
+    // ⑧ 履歴（同じ lock の中・同じ OperationId）。
+    // ⚠️ **失敗しても取得は巻き戻さない。** `Source` に残した `op=` から
+    //    後で history-only repair で積み直せる。
+    const history = await appendClaimHistory({
+      recordId, operationId, now, source, built, coupon: freshCoupon,
+    });
+
+    return json(200, {
+      ok: true, claimed: true, alreadyClaimed: false,
+      claimedAt: built.claimedAtIso, sideEffects: 'coupon_only',
+      historyRecorded: history.appended === true,
+    });
+  } finally {
+    // ⑨ token 一致時のみ解放（crash 時は TTL で回復）
+    await lock.release({ entityId, token: got.token });
+  }
+}
+
+/**
+ * 取得の履歴を 1 行積む（**gate が off なら何もしない**）。
+ * ⚠️ 失敗しても取得自体は成功のまま。`op=` から後で repair できる。
+ */
+async function appendClaimHistory({ recordId, operationId, now, source, built }) {
+  if (!isCouponHistoryEnabled(process.env)) return { appended: false, reason: 'history_disabled' };
+  const record = buildHistoryRecord({
+    customerRecordId: recordId,
+    productKey: PP_COUPON_BINDING.productKey,
+    couponId: PP_COUPON_BINDING.couponId,
+    version: PP_COUPON_BINDING.version,
+    operationType: COUPON_OPERATION.CLAIM,
+    // お客様ご自身の操作。管理者名は入らない
+    actor: 'customer',
+    reason: `お客様ご自身の取得（${normalizeCouponSource(source)}）`,
+    beforeState: 'none',
+    afterState: 'held',
+    detail: String(built.fields[PP_REOPEN_COUPON_FIELDS.SOURCE] || ''),
+    atIso: built.claimedAtIso || new Date(now).toISOString(),
+    operationId,
+  });
+  if (!record) return { appended: false, reason: 'no_record' };
+  const store = createCouponHistoryStore({
+    apiKey: process.env.AIRTABLE_API_KEY,
+    baseId: process.env.AIRTABLE_BASE_ID,
+    env: process.env,
+  });
+  return store.append({ record, lockStatus: 'acquired' });
 }
 
 /** GET は使わせない（プリフェッチで意図せず取得させないため） */

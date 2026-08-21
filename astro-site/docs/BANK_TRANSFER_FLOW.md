@@ -33,6 +33,46 @@
 **禁止事項**: Function 内で `プラン` / `有効期限` / `Status='active'` を直書きしない。
 必ず `bankPaymentFlow.js` 経由。guard テストが直書きを検知する。
 
+### 🚨 「入金確認・昇格が済んだか」の判定（**`Status=active` だけで判定しない**）
+
+**このフローで一番間違えやすい点。** 申込の時点で既存 active 会員は
+**`Status='active'` のまま**であり、権限も変わらない。
+したがって **`Status='active'` は「この申込の入金確認が済んだ」を意味しない。**
+
+済んだかどうかは、次の **3 条件がすべて揃ったとき**だけ真とする（**fail closed**）:
+
+| # | 条件 | 根拠 |
+|---|---|---|
+| 1 | `Status === 'active'`（かつ `プラン` が空でない）| `buildConfirmationFields()` が承認時に確定させる |
+| 2 | `RequestedPlan` が**空** | 承認時に `Requested*` をクリアする（下の冪等性）|
+| 3 | `PaymentConfirmed === true` | 承認済みの**痕跡として残る**（クリアしない）|
+
+各段階でどう見えるか:
+
+| 段階 | Status | RequestedPlan | PaymentConfirmed | 判定 |
+|---|---|---|---|---|
+| 申込前（既存 active 会員）| active | 空 | false | **未確定** |
+| 申込直後 | active（**変わらない**）| あり | false | **未確定** |
+| MK がチェック | active | あり | true | **未確定**（confirm 未実行）|
+| confirm 成功後 | active | **空** | **true** | **確定** |
+
+- **`PaymentConfirmed` は厳密に `true` のみ**を受け付ける（`'true'` / `1` / truthy は不可）。
+  `confirm-bank-payment.js` の認可（`fields['PaymentConfirmed'] !== true` で 403）と同じ読み方。
+- 条件 2 だけ、条件 3 だけでの判定も禁止。**手動で active にした会員・旧データ**を
+  「入金確認済み」と読み替えないため、3 つ揃わなければ未確定に倒す。
+
+**判定の実装**: `src/lib/premiumPlus/couponRedeemReconcile.js` の `isCustomerSettled()`。
+Premium Plus 再募集クーポンの「利用予約 → 使用済み」の突き合わせに使う。
+
+> **過去事例（2026-08-19）**: `プラン` + `Status='active'` だけを見ていたため、
+> **既に active な三連複会員**が Premium Plus を申し込んだ瞬間から「入金確認済み」と
+> 判定され、利用予約（`issued`）が**常に「要修復」**に化けていた。
+> admin に「クーポン利用予約（入金確認待ち）」が一度も出ない状態だった。
+> 同種の判定を新しく書くときも、**必ず上の 3 条件を使うこと**。
+
+検証: `node --test src/lib/premiumPlus/couponRedeemReconcile.test.mjs`
+（`check:safety` の `test:premium-plus-media` に組込済み）
+
 ### 認可・冪等性・二重メール防止
 
 - **認可**: `confirm-bank-payment.js` は公開 URL。Airtable の `PaymentConfirmed=true` を

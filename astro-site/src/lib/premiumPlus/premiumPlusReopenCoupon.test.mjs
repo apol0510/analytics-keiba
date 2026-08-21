@@ -35,18 +35,25 @@ const NOTICE_ON = { showPauseNotice: true };
 const NOTICE_OFF = { showPauseNotice: false };
 
 // ── 割引条件を創作していない ───────────────────────────────────
-test('クーポンの割引条件は未確定のまま（金額・割引率・期限を持たない）', () => {
-  assert.equal(PP_REOPEN_COUPON.terms.determined, false);
-  assert.equal(PP_REOPEN_COUPON.terms.discountType, null);
-  assert.equal(PP_REOPEN_COUPON.terms.discountValue, null);
-  assert.equal(PP_REOPEN_COUPON.terms.offerPrice, null);
-  assert.equal(PP_REOPEN_COUPON.terms.expiresAt, null);
+test('割引条件は確定済み: 10,000円OFF / 68,000円 → 58,000円', () => {
+  const t = PP_REOPEN_COUPON.terms;
+  assert.equal(t.determined, true);
+  assert.equal(t.discountType, 'amount');
+  assert.equal(t.discountValue, 10000);
+  assert.equal(t.regularPrice, 68000);
+  assert.equal(t.offerPrice, 58000);
+  // 引き算で導出している（68,000 と 58,000 を別々に書いていない）
+  assert.equal(t.regularPrice - t.discountValue, t.offerPrice);
 });
 
-test('顧客向けの文言に金額・割引率・「好評につき」を含めない', () => {
-  const texts = [PP_REOPEN_COUPON.name, PP_REOPEN_COUPON.description];
-  for (const t of texts) {
-    assert.doesNotMatch(t, /[0-9]{3,}|%|OFF|好評/i, `文言に条件らしき値がある: ${t}`);
+test('有効期限は未確定のまま（勝手に補完しない）', () => {
+  assert.equal(PP_REOPEN_COUPON.terms.expiresAt, null);
+  assert.equal(PP_REOPEN_COUPON.terms.expiresDetermined, false);
+});
+
+test('顧客向けの文言に事実確認できない表現を含めない', () => {
+  for (const t of [PP_REOPEN_COUPON.name, PP_REOPEN_COUPON.description]) {
+    assert.doesNotMatch(t, /好評|大反響|完売|残りわずか|殺到/, `裏づけの無い表現がある: ${t}`);
   }
 });
 
@@ -181,10 +188,13 @@ test('未取得でも案内対象でなければ取得 CTA を出さない', () 
   assert.equal(v.showClaimCta, false);
 });
 
-test('条件が未確定であることを表示モデルが隠さない', () => {
+test('表示モデルが割引・価格・期限を単一源から返す', () => {
   const v = describeCouponForMember({ coupon: { claimed: false }, paused: true, claimable: true });
-  assert.equal(v.termsDetermined, false);
-  assert.ok(v.termsNote.length > 0);
+  assert.equal(v.termsDetermined, true);
+  assert.equal(v.discountText, '10,000円OFF');
+  assert.equal(v.priceText, '通常 68,000円 → 58,000円');
+  assert.match(v.expiryText, /14日間/);
+  assert.equal(v.expiryDetermined, false);
   assert.equal(v.showClaimCta, true);
 });
 

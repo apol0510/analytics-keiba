@@ -1279,6 +1279,34 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   /* 一時停止は「販売対象外(赤)」と別色（琥珀＝止まっているだけ・戻せる） */
   .ppe .sumbar .s.paused .v { color: #fcd34d; }
   .ppe .sumbar .s.coupon .v { color: #5eead4; }
+  /* クーポンの管理操作（この画面唯一のクーポン write 入口） */
+  .ppe .coupon-ops { margin-top: 12px; padding: 10px 12px; border: 1px solid rgba(148,163,184,.22); border-radius: 10px; background: #0f172a; }
+  .ppe .coupon-ops h4 { margin: 0 0 6px; font-size: .92rem; color: #e2e8f0; }
+  .ppe .coupon-ops-who { margin: 0 0 6px; font-size: .86rem; font-weight: 700; color: #f8fafc; }
+  .ppe .coupon-ops-form { margin: 8px 0; }
+  .ppe .coupon-ops-reason { width: 100%; padding: .45rem .6rem; border-radius: 8px; border: 1px solid rgba(148,163,184,.35); background: #111c33; color: #e2e8f0; font-size: .86rem; }
+  .ppe .coupon-ops .dt-ops { display: flex; flex-wrap: wrap; gap: .4rem; }
+  .ppe .b-coupon { padding: .4rem .8rem; font-size: .84rem; border-radius: 8px; }
+  .ppe .b-coupon:disabled { opacity: .45; cursor: not-allowed; }
+  .ppe .b-coupon.danger { border-color: rgba(248,113,113,.5); color: #fca5a5; }
+  .ppe .coupon-ops-msg { margin: 8px 0 0; font-size: .84rem; }
+  .ppe .coupon-ops-msg.ok { color: #34d399; }
+  .ppe .coupon-ops-msg.err { color: #f87171; }
+  /* 操作履歴（読み取り専用・時系列） */
+  .ppe .coupon-hist { margin-top: 10px; border-top: 1px solid rgba(148,163,184,.18); padding-top: 8px; }
+  .ppe .coupon-hist-body { margin-top: 8px; }
+  .ppe .coupon-hist-list { list-style: none; margin: 0; padding: 0; }
+  .ppe .coupon-hist-list li { padding: .4rem 0; border-bottom: 1px dashed rgba(148,163,184,.16); font-size: .84rem; }
+  .ppe .coupon-hist-list li:last-child { border-bottom: none; }
+  .ppe .coupon-hist-why { color: #94a3b8; font-size: .8rem; margin-top: .15rem; }
+  @media (max-width: 768px) {
+    .ppe .coupon-ops .dt-ops { flex-direction: column; }
+    .ppe .b-coupon { width: 100%; }
+  }
+
+  /* 「確認できない」は件数ではない。0 件（緑・青）と同じ見た目にしない */
+  .ppe .sumbar .s.warn .v { color: #fb923c; font-size: .82rem; font-weight: 800; }
+  .ppe .sumbar .s.warn .k { color: #fdba74; }
 
   /* 「一時停止は本番でまだ使えない」の明示。見落とされない強さで出す */
   .ppe .pause-off {
@@ -2886,6 +2914,23 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         $('fState').value = 'all'; $('fPause').value = 'all'; $('fCoupon').value = 'claimed'; render();
       });
       bar.appendChild(cb2);
+      // 予約台帳を読めていないときは、件数の隣に**確認できない**ことを常設で出す。
+      // ⚠️ 「クーポン取得済み」件数は Customers 側の記録なので読めているが、
+      //    その人が**使ったかどうか**は台帳が読めないと分からない。
+      const cLedger = (lastData && lastData.couponLedger) || null;
+      if (cLedger && cLedger.available === false) {
+        const wsp = document.createElement('span'); wsp.className = 'sep'; wsp.textContent = '｜';
+        bar.appendChild(wsp);
+        const wb = document.createElement('span');
+        wb.className = 's warn';
+        wb.title = cLedger.note || '予約台帳を確認できませんでした。';
+        const wk = document.createElement('span'); wk.className = 'k';
+        wk.textContent = 'クーポン利用状態';
+        const wv = document.createElement('span'); wv.className = 'v';
+        wv.textContent = '確認できない';
+        wb.appendChild(wk); wb.appendChild(wv);
+        bar.appendChild(wb);
+      }
       $('summarySub').textContent = 'ROUTE A（三連複） ' + (c.routeA == null ? 0 : c.routeA)
         + '　/　ROUTE B（Premium 30日） ' + (c.routeB == null ? 0 : c.routeB)
         + '　/　ROUTE B 待機中 ' + (c.waiting30d == null ? 0 : c.waiting30d)
@@ -3564,6 +3609,196 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       dl.appendChild(dt); dl.appendChild(dd);
     }
 
+    /**
+     * クーポンの管理操作パネル（**この画面で Airtable を直接編集しなくて済むように**）。
+     *
+     * 4 操作: 付与 / 利用予約の取消 / 誤取得訂正 / 再発行。
+     * ⚠️ 可否の判定は**サーバー**（premium-plus-eligibility の couponAdmin）。
+     *    ここでボタンを活性にしても、サーバーが 409 / 503 で断る。
+     * ⚠️ 操作者名と理由は**必須**（監査記録に残る）。
+     */
+    /**
+     * 直前のクーポン操作の結果（**再描画で消さない**）。
+     * 操作すると詳細パネルを作り直すので、結果表示をパネル内の要素に持たせると
+     * 「何が起きたか」が一瞬で消える。会員 1 人ぶんだけ覚えて描き直す。
+     */
+    let lastCouponOp = null;
+
+    function renderCouponOps(sec, r) {
+      const ca = r.couponAdmin;
+      if (!ca) return;
+      const box = document.createElement('div'); box.className = 'coupon-ops';
+      const h = document.createElement('h4'); h.textContent = 'クーポンの管理操作';
+      box.appendChild(h);
+
+      const note = document.createElement('p'); note.className = 'muted';
+      note.style.fontSize = '0.82rem'; note.style.margin = '0 0 8px';
+      note.textContent = '対象は下に表示している 1 名だけです。'
+        + '資格・一時停止・会員権・決済・メールは変更しません。'
+        + '操作者名と理由は監査記録として保存されます。';
+      box.appendChild(note);
+
+      // 誰に対する操作かを必ず出す（取り違え防止）
+      const who = document.createElement('p'); who.className = 'coupon-ops-who';
+      who.textContent = '対象: ' + (r.name || '(氏名なし)') + '（' + (r.email || 'アドレスなし') + '）';
+      box.appendChild(who);
+
+      // 操作前の状態
+      const st = document.createElement('p'); st.className = 'muted';
+      st.style.fontSize = '0.82rem';
+      st.textContent = '現在の状態: ' + (ca.state && ca.state.lifecycleLabel ? ca.state.lifecycleLabel : '—');
+      box.appendChild(st);
+
+      if (ca.lifecycleIsUnknown) {
+        const w = document.createElement('p'); w.className = 'blocker';
+        w.textContent = '⚠️ 予約台帳を確認できないため、クーポンの管理操作はすべて受け付けません。'
+          + '使用済みかどうかを判断できない状態で書き換えると、'
+          + '使用済みクーポンを再利用可能にしてしまうためです。';
+        box.appendChild(w);
+      }
+      if (ca.redeemed) {
+        const w = document.createElement('p'); w.className = 'blocker';
+        w.textContent = '⚠️ このクーポンは既に使用済みです。取得状態へ戻す・再発行することはできません。';
+        box.appendChild(w);
+      }
+
+      const form = document.createElement('div'); form.className = 'coupon-ops-form';
+      const reason = document.createElement('input');
+      reason.type = 'text'; reason.maxLength = 160;
+      reason.placeholder = '操作理由（必須・監査記録に残ります）';
+      reason.className = 'coupon-ops-reason';
+      form.appendChild(reason);
+      box.appendChild(form);
+
+      const msg = document.createElement('p'); msg.className = 'coupon-ops-msg'; msg.hidden = true;
+      // 再描画されても直前の操作結果（操作前 → 操作後 / 戻し方）を出し続ける
+      if (lastCouponOp && lastCouponOp.recordId === r.recordId) {
+        msg.hidden = false;
+        msg.className = 'coupon-ops-msg ' + lastCouponOp.cls;
+        msg.textContent = lastCouponOp.text;
+      }
+      const ops = document.createElement('div'); ops.className = 'dt-ops';
+      for (const a of (ca.actions || [])) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'b-coupon' + (a.action === 'correct' ? ' danger' : '');
+        b.textContent = a.label;
+        b.disabled = a.enabled !== true;
+        if (a.blockedBy) b.title = a.blockedBy;
+        b.addEventListener('click', async () => {
+          const actor = $('actor').value.trim();
+          if (!actor) { msg.hidden = false; msg.className = 'coupon-ops-msg err'; msg.textContent = '操作者名を入力してください（変更履歴に残ります）'; $('connBody').hidden = false; return; }
+          const why = reason.value.trim();
+          if (!why) { msg.hidden = false; msg.className = 'coupon-ops-msg err'; msg.textContent = '操作理由を入力してください（監査記録に残ります）'; return; }
+          if (!confirm(a.label + '\n\n対象: ' + (r.email || r.recordId) + '\n理由: ' + why + '\n\n実行しますか？')) return;
+          b.disabled = true;
+          const out = await call({
+            action: 'couponAdmin', recordId: r.recordId, couponAction: a.action,
+            actor, reason: why,
+          });
+          b.disabled = false;
+          msg.hidden = false;
+          if (!out) { msg.className = 'coupon-ops-msg err'; msg.textContent = '実行できませんでした'; return; }
+          const show = (cls, text) => {
+            lastCouponOp = { recordId: r.recordId, cls, text };
+            msg.className = 'coupon-ops-msg ' + cls;
+            msg.textContent = text;
+          };
+          if (out.__unknown) {
+            // ⚠️ 通信断は「書かれたか不明」。成功とも失敗とも言わない
+            show('err', '通信が切れました。書き込まれたかどうか分かりません。再読込で確認してください。');
+            return;
+          }
+          if (!out.success) {
+            show('err', (out.error || '実行できませんでした') + (out.code ? '（' + out.code + '）' : ''));
+            return;
+          }
+          const bef = (out.before && out.before.lifecycleLabel) || '—';
+          const aft = (out.after && out.after.lifecycleLabel) || '（再読込で確認してください）';
+          show('ok', a.label + ' を実行しました。操作前: ' + bef + ' → 操作後: ' + aft
+            + (out.rollback ? '　戻すには: ' + out.rollback : ''));
+          reason.value = '';
+          // Airtable から読み直して詳細を再構成する（送った値が通った前提にしない）
+          await refreshOne(r.recordId);
+          renderDetail();
+        });
+        ops.appendChild(b);
+      }
+      box.appendChild(ops);
+      box.appendChild(msg);
+
+      // ── 操作履歴（時系列）────────────────────────────────
+      // ⚠️ **通常運用で Airtable を直接見なくて済むように**、この画面で全部見せる。
+      //    読み取り専用。0 件と「確認できない」を混同しない。
+      const hist = document.createElement('div'); hist.className = 'coupon-hist';
+      const hb = document.createElement('button');
+      hb.type = 'button'; hb.className = 'btn-ghost btn-sm';
+      hb.textContent = '操作履歴を表示（読み取りのみ）';
+      const hbody = document.createElement('div'); hbody.className = 'coupon-hist-body'; hbody.hidden = true;
+      hb.addEventListener('click', async () => {
+        hb.disabled = true;
+        const out = await call({ action: 'couponHistory', recordId: r.recordId });
+        hb.disabled = false;
+        hbody.hidden = false;
+        hbody.innerHTML = '';
+        if (!out || out.__unknown) {
+          const p = document.createElement('p'); p.className = 'blocker';
+          p.textContent = '履歴を取得できませんでした。0 件と判断しないでください。';
+          hbody.appendChild(p); return;
+        }
+        if (out.available !== true) {
+          const p = document.createElement('p'); p.className = 'blocker';
+          p.textContent = '⚠️ ' + (out.note || '履歴を確認できません。');
+          hbody.appendChild(p); return;
+        }
+        if (!out.rows.length) {
+          const p = document.createElement('p'); p.className = 'muted';
+          p.textContent = 'この会員の操作履歴は 0 件です（記録開始後に操作がありません）。';
+          hbody.appendChild(p); return;
+        }
+        const ul = document.createElement('ul'); ul.className = 'coupon-hist-list';
+        for (const row of out.rows) {
+          const li = document.createElement('li');
+          const head = document.createElement('b');
+          head.textContent = (OP_LABEL[row.operationType] || row.operationType);
+          const meta = document.createElement('span'); meta.className = 'muted';
+          meta.textContent = '　' + fmtDateTime(row.occurredAt)
+            + '　実行者: ' + (row.actor || '—')
+            + (row.beforeState || row.afterState ? '　' + (row.beforeState || '—') + ' → ' + (row.afterState || '—') : '');
+          li.appendChild(head); li.appendChild(meta);
+          if (row.reason) {
+            const why = document.createElement('div'); why.className = 'coupon-hist-why';
+            why.textContent = '理由: ' + row.reason;
+            li.appendChild(why);
+          }
+          ul.appendChild(li);
+        }
+        hbody.appendChild(ul);
+        const n = document.createElement('p'); n.className = 'muted';
+        n.style.fontSize = '0.78rem';
+        n.textContent = '新しい順・' + out.rows.length + ' 件。'
+          + 'この履歴は記録専用で、会員の権限・課金の根拠にはなりません。';
+        hbody.appendChild(n);
+      });
+      hist.appendChild(hb); hist.appendChild(hbody);
+      box.appendChild(hist);
+
+      sec.appendChild(box);
+    }
+
+    /** 操作種別の表示名（サーバーと同じ語彙） */
+    const OP_LABEL = {
+      claim: 'お客様ご自身の取得', grant: 'クーポンを付与', reissue: 'クーポンを再発行',
+      correct: '誤取得を訂正', revokeReservation: '利用予約を取り消す',
+    };
+
+    /** 日時（JST・分まで）。履歴は「いつ」が要るので日付だけにしない */
+    function fmtDateTime(iso) {
+      const t = Date.parse(String(iso || ''));
+      if (!Number.isFinite(t)) return '—';
+      return new Date(t).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', hour12: false });
+    }
+
     function renderDetail() {
       renderOpWarning();
       const data = lastData;
@@ -3880,23 +4115,67 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       const rcNote = document.createElement('p'); rcNote.className = 'muted';
       rcNote.style.margin = '0 0 8px'; rcNote.style.fontSize = '0.82rem';
       rcNote.textContent = '販売を一時停止している間に、お客様が受付休止ページからご自身で'
-        + '取得されたクーポンの保有状況です。管理者が付与・取消する操作はありません。'
+        + '取得されたクーポンの保有状況です。管理者が付与・取消する操作は現状ありません'
+        + '（確定仕様ではなく現行実装。取消・訂正は Airtable の直接編集に依存します）。'
         + '取得しても販売資格・一時停止・段階公開（PHASE）・会員権・決済は変わりません。'
-        + '優待の具体的な条件は未確定で、募集再開時に決めます。';
+        + '割引条件は確定済み（下記）。有効期限だけがまだ未確定です。';
       rcSec.appendChild(rcNote);
 
       const rcKv = document.createElement('dl'); rcKv.className = 'kv';
       kvRow(rcKv, 'いま販売を止めているか', r.salePaused ? '⏸ 一時停止中' : '✅ 停止していない',
         r.salePaused ? '' : 'muted');
       kvRow(rcKv, 'クーポン', r.reopenCouponName || '—', r.reopenCouponName ? '' : 'muted');
+      // 価格条件は Function が単一源から作った文字列。画面側で数値を組み立てない
+      if (r.reopenCouponDiscountText) kvRow(rcKv, '割引', r.reopenCouponDiscountText);
+      if (r.reopenCouponPriceText) kvRow(rcKv, '価格', r.reopenCouponPriceText);
+      if (r.reopenCouponExpiryText) kvRow(rcKv, '有効期限', r.reopenCouponExpiryText, 'muted');
+      // ライフサイクル（所持中 / 利用予約 / 使用済み / 予約取消 / 要修復）。
+      // ⚠️ 通常の販促オファーとは別軸。Airtable を直接見に行かせないための表示。
+      // ⚠️ 台帳を読めていないとき（gate off / 読み取り失敗 / 打ち切り）は
+      //    「クーポン所持中」「予約 0 件」と**断定しない**。確認できないことを出す。
+      if (r.couponLifecycle) {
+        const unread = r.couponLifecycle.ledgerAvailable === false;
+        kvRow(rcKv, '利用状態', unread ? '確認できない' : (r.couponLifecycle.label || '—'),
+          (unread || r.couponLifecycle.needsRepair) ? '' : 'muted');
+        kvRow(rcKv, '予約台帳', unread ? '確認できない' : '確認できた', unread ? '' : 'muted');
+        if (unread) {
+          kvRow(rcKv, '利用予約の件数', '確認できない', '');
+        } else if (r.couponLifecycle.reservationCount) {
+          kvRow(rcKv, '利用予約の件数', String(r.couponLifecycle.reservationCount), 'muted');
+        }
+      }
       kvRow(rcKv, '取得状況', r.reopenCouponClaimed ? '🎟 取得済み' : '未取得',
         r.reopenCouponClaimed ? '' : 'muted');
       if (r.reopenCouponClaimed) {
         kvRow(rcKv, '取得日時', fmtDate(r.reopenCouponClaimedAt));
-        if (r.reopenCouponSource) kvRow(rcKv, '取得元', r.reopenCouponSource, 'muted');
         if (r.reopenCouponId) kvRow(rcKv, 'クーポン識別子', r.reopenCouponId, 'muted');
       }
+      // 直近 1 回の操作（誰が・いつ・なぜ）。お客様ご自身の取得ならその旨を出す。
+      // ⚠️ 訂正済みでも消さない。**訂正されたという事実**が読めることが監査の要件。
+      if (r.couponAdmin && r.couponAdmin.state && r.couponAdmin.state.auditText) {
+        kvRow(rcKv, '最後の操作', r.couponAdmin.state.auditText,
+          r.couponAdmin.state.audit && r.couponAdmin.state.audit.byAdmin ? '' : 'muted');
+      } else if (r.reopenCouponSource) {
+        kvRow(rcKv, '取得元', r.reopenCouponSource, 'muted');
+      }
       rcSec.appendChild(rcKv);
+      // 要修復・異常はここで手順まで出す（運営者が Airtable を開かなくて済むように）
+      if (r.couponLifecycle && r.couponLifecycle.needsRepair) {
+        const w = document.createElement('p'); w.className = 'blocker';
+        w.textContent = (r.couponLifecycle.redeemLabel || '') + ' — ' + (r.couponLifecycle.repair || '');
+        rcSec.appendChild(w);
+      }
+      // 台帳を読めていない理由と、判断してはいけないことを明示する。
+      // ⚠️ ここを出さずに「クーポン所持中」だけを見せると、実在する利用予約・使用済みが
+      //    見えないまま「未使用」と判断されてしまう。
+      if (r.couponLifecycle && r.couponLifecycle.ledgerAvailable === false) {
+        const w = document.createElement('p'); w.className = 'blocker';
+        w.textContent = '⚠️ ' + (r.couponLifecycle.ledgerNote || '予約台帳を確認できませんでした。')
+          + ' 利用予約の有無・使用済みかどうかは判断できません'
+          + '（「予約なし」「未使用」と扱わないでください）。'
+          + '取得状況（下記）は Customers 側の記録なので、これだけは確認できます。';
+        rcSec.appendChild(w);
+      }
       if (r.reopenCouponWritable === false) {
         const w = document.createElement('p'); w.className = 'blocker';
         w.textContent = '⚠️ クーポンの取得記録は現在この本番環境に保存できません。'
@@ -3906,6 +4185,12 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           + '（取得したのに記録が残らず、再開時にご案内できない事故を防ぐため）。';
         rcSec.appendChild(w);
       }
+
+      // ── クーポンの管理操作（付与 / 予約取消 / 誤取得訂正 / 再発行）────────
+      // ⚠️ ここが**唯一の write 入口**。可否はサーバーが再判定するので、
+      //    ボタンの活性はあくまで案内（押しても通らないものは理由まで出す）。
+      renderCouponOps(rcSec, r);
+
       body.appendChild(rcSec);
 
       const pvSec = document.createElement('div'); pvSec.className = 'dt-sec';
