@@ -8,6 +8,67 @@
 
 ---
 
+## 2026-08-21 — Premium Plus 再募集の開始日時は admin のボタン押下時のサーバー時刻で確定する（first-write-wins・上書き経路なし）
+
+### Status
+
+**Accepted**（2026-08-21 / MK 決定）。実装済み・テスト済み。
+**本番の `reopenStartsAt` はまだ確定していない**（＝ボタンは押していない）。
+
+### Context
+
+優待クーポンの有効期限は「**再募集開始日時から 14 日間**」で確定していた（2026-08-19 MK）が、
+`reopenStartsAt` 自体が未決定で `premiumPlusReopenCoupon.js` に **null 固定**で置かれていた。
+そのため:
+
+- `resolveCouponExpiry()` が期限を導出できず、顧客画面は「募集再開日から14日間」の未確定表示のまま
+- `buildReservationFields()` が null を返し、**利用予約（issued）の write が fail closed**
+- 期限を入れるには**コード変更 + deploy** が必要で、運用（MK）が自分で決められなかった
+
+日付を先にコードへ書いてしまうと「実際の再募集」とズレる。逆に人手で env / コードへ入れる運用は
+deploy 待ちが発生し、しかも**書き換えられる**（＝顧客へ案内した期限が後から動く）。
+
+### Decision
+
+1. **admin に「Premium Plus 再募集を開始」ボタンを置く。** 押した瞬間の
+   **サーバー時刻**を `reopenStartsAt` として確定する。
+2. **client 時刻を正本にしない。** 要求 body の時刻（`startsAt` / `now` / `expiresAt`）は
+   1 つも読まない。受け取るのは `actor`（操作者名）だけ。
+3. **first-write-wins。** 二重押下・再送・並行要求でも**上書きしない**。
+   2 回目以降は冪等に既存の開始日時を返す。
+4. 期限は既存の単一源が `reopenStartsAt + 14 日` で**導出**する（日数を 2 か所に書かない）。
+5. **保存先は Upstash Redis の 1 キー**（`ak:pp:reopen:v1:start`・TTL なし）。
+   `SET ... NX` が原子的な first-write-wins そのもので、**新しい env / Airtable schema /
+   外部サービスを増やさない**（同じ接続を `couponOperationLock.js`・
+   `premiumPlusFunnelStore.js`・rollout が本番で使用中）。
+6. **上書き・削除の API をコードとして持たない**（`read()` と `start()` だけ）。
+   rollback は Upstash コンソールでの手動削除のみ。
+7. **未設定のあいだは現在どおり fail closed**（予約 write を作らない）。
+8. **読めなかったときは「未開始」と言わない**（`unknown` として理由を出し、ボタンを出さない）。
+9. 顧客画面・クーポン取得・申込・admin は**同じ 1 か所**を読む
+   （`loadReopenStart()` → `withReopenStart()`）。URL 直打ち・API 直呼び・古いタブでも
+   サーバー側判定は同じ。
+
+### Consequences
+
+- 運用（MK）が **deploy なしで**再募集の開始日時を確定でき、クーポン期限も同時に確定する。
+- 開始日時は**あとから変えられない**。誤操作の巻き戻しは Upstash の手動削除に限られる
+  （顧客へ期限を案内したあとの削除は不整合を生むので不可）。
+- Redis が落ちている間は「確認できない」になり、期限は未確定表示へ倒れる（fail closed）。
+  顧客の権利は消えない（クーポン保有は Airtable の 3 列が正本）。
+- 「再募集の開始」と「販売停止の解除」は**別軸**。開始しただけでは誰も購入できない。
+
+### 検討して採らなかった案
+
+| 案 | 不採用の理由 |
+|---|---|
+| Airtable に列・テーブルを追加 | **本番 schema 変更**（高リスク境界）。会員 1 行 1 会員の表に「サイト全体で 1 個の設定」を置くことになり、unique 制約も無いので二重作成を防げない |
+| Netlify Blobs | eventual consistency の問題が本番で発生した経緯（2026-07-16）。「一度きりの確定値」に向かない |
+| env 変数へ直書き | 変更に deploy が必要で、ボタン 1 つで確定できない（要件と矛盾）。書き換えも容易 |
+| admin に「取消」ボタンを付ける | 「一度開始したら上書きしない」を壊す。誤りは Upstash の手動削除で対処する |
+
+---
+
 ## 2026-08-19 — 無料コンテンツを 2 層に分ける（`/free-prediction/` はプレビューとして維持し、毎日使える無料は別ページに新設。買い目は出さない）
 
 ### Status

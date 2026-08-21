@@ -22,16 +22,51 @@
 | **共通クーポン基盤**（`src/lib/coupons/`・商品非依存）| ✅ **本番稼働**（#380）|
 | **`CouponOperationHistory`（append-only 監査履歴）** | ✅ **本番稼働**（gate `COUPON_HISTORY_TABLE_READY=1`）|
 | **利用予約 → 使用済みのライフサイクル**（既存 schema のみ）| ✅ 純粋ロジック実装済み。**予約 write は `reopenStartsAt` 未定のため fail closed** |
+| **再募集の開始操作**（admin ボタン → サーバー時刻で `reopenStartsAt` 確定 → 期限自動導出）| ✅ **実装・テスト完了 / Draft PR**（2026-08-21）。**本番ではまだ押していない** |
 | **redeem の部分成功の検出・収束**（4 状態 + 修復手順の admin 表示）| ✅ 実装・テスト済み。**confirm への配線は未了** |
 
 ## ⛳ 本件の未完了（**これだけ**・2026-08-21 時点）
 
-**実装・本番反映・本番 canary はすべて完了した。残っているのは次の 2 つだけ。**
+**残っているのは次の 3 つだけ。**
 
 | # | 未完了 | 誰が |
 |---|---|---|
-| 1 | **実際の再募集開始日時（`reopenStartsAt`）の決定** | **MK** |
-| 2 | **1 の後の実運用確認**（予約 write の有効化 → 実顧客での取得 → 申込 → 入金確認 → redeem）| 1 の決定後 |
+| 0 | **再募集の開始操作を本番へ反映する**（Draft PR の merge → deploy）| **MK の承認** |
+| 1 | **本番で「Premium Plus 再募集を開始」を押す**（＝ `reopenStartsAt` の確定）| **MK** |
+| 2 | **1 の後の実運用確認**（予約 write の有効化 → 実顧客での取得 → 申込 → 入金確認 → redeem）| 1 の後 |
+
+### 🆕 新たに確定した仕様（2026-08-21 MK）— **開始日時の決め方**
+
+`reopenStartsAt` を「MK が日時を決めて誰かがコードへ書く」のではなく、
+**admin のボタンを押した瞬間のサーバー時刻で確定する**方式に確定した。
+
+| 項目 | 確定内容 |
+|---|---|
+| 操作 | admin `/admin/premium-plus-eligibility/` の「**Premium Plus 再募集を開始**」ボタン |
+| 値 | **押下時のサーバー時刻**。client 時刻・要求 body の時刻は**一切採用しない** |
+| 期限 | `reopenStartsAt + 14 日` を既存の単一源から**自動導出**（日数を 2 か所に書かない）|
+| 二重押下・並行要求 | **上書きしない**（`SET NX` の first-write-wins）。2 回目以降は冪等に既存値を返す |
+| 確認 | 押下時に**確認ダイアログ**（「取り消せない」ことを明示）|
+| 表示 | admin に「未開始 / 開始済み / 確認できない」＋「開始日時」＋「クーポン期限」|
+| 未設定中 | **現在どおり fail closed**（予約 write を作らない）|
+| 参照 | 顧客画面・クーポン取得・申込・admin が**同じ単一源**を読む（URL 直打ち・API 直呼びでも同じ判定）|
+
+**保存先は Upstash Redis の 1 キー**（`ak:pp:reopen:v1:start`・TTL なし）。
+**新しい production env / Airtable schema / 外部サービスは 1 つも増やしていない**
+（同じ Redis 接続を `couponOperationLock.js` / funnel / rollout が本番で使用中）。
+上書き・削除の API は**コードとして持たない**（rollback は Upstash の手動削除のみ）。
+
+正本: `docs/decisions.md` §2026-08-21 ／
+`astro-site/docs/PREMIUM_PLUS_STAGED_RELEASE.md` §有効期限 →「`reopenStartsAt` は admin のボタンで確定する」
+
+### 完成条件（本件をクローズできる条件）
+
+1. Draft PR が merge され production に反映されている
+2. 本番の admin で開始ボタンを押し、`reopenStartsAt` が確定している（**MK の操作**）
+3. 顧客画面・申込画面・admin の 3 面で**同じ期限**が出ていることを目視で確認している
+4. 実顧客で **取得 → 申込 → 入金確認 → redeem** が 1 件通っている
+
+⚠️ 「コードがある」「テストが通る」「CI green」だけでは完成扱いにしない。
 
 完了済み（2026-08-20〜21）:
 
@@ -115,9 +150,10 @@ repair もできない**。したがって **gate を 0 に戻さない**こと�
 
 ### いま残っているもの
 
-1. **`reopenStartsAt`（再募集開始日時）の決定** — 現在 **null**。
-   これが入るまで予約 write は fail closed（`buildReservationFields()` が null を返す）
-2. **その後の実運用確認** — 予約 write の有効化 → 実顧客での取得 → 申込 → 入金確認 → redeem
+1. **開始操作の本番反映** — Draft PR（`feat/premium-plus-reopen-start`）の merge → deploy。**MK 承認待ち**
+2. **本番で開始ボタンを押す** — 押すまで `reopenStartsAt` は未設定で、
+   予約 write は fail closed のまま（`buildReservationFields()` が null を返す）
+3. **その後の実運用確認** — 予約 write の有効化 → 実顧客での取得 → 申込 → 入金確認 → redeem
 
 ## 未完了・必ず継続する任務
 
@@ -970,9 +1006,11 @@ PC / mobile とも MK が目視し、上記の画面を**現段階では一旦 O
    クーポン基盤が本番反映済みである事実は変わらない）。
    `COUPON_HISTORY_TABLE_READY=1` で履歴は本番稼働、canary も成功済み。
    **残るのは `reopenStartsAt` の決定と、その後の実運用確認だけ**（上の「本番反映と canary の記録」）。
-1. **MK に 2 点を確認する: ①実際の再募集開始日時（`reopenStartsAt`）
-   ②クーポン操作の「積み上げ式 履歴」を持つか（3-C の 🛑・**本番 schema 変更**）。**
-   ①が決まれば有効期限が確定し、予約 write と `confirm-bank-payment` 配線へ進める。
+1. **① の方式は 2026-08-21 に確定・実装済み**（admin のボタン押下時のサーバー時刻）。
+   次は **Draft PR `feat/premium-plus-reopen-start` の目視 → merge → deploy**、
+   そのうえで **MK が本番で開始ボタンを押す**。押した時点で有効期限が確定し、
+   予約 write と `confirm-bank-payment` 配線へ進める。
+   **② クーポン操作の「積み上げ式 履歴」を持つか（3-C の 🛑・本番 schema 変更）は引き続き MK 判断待ち。**
    割引条件（10,000円OFF / 68,000→58,000）、期限ルール（開始日 + 14 日）、
    利用ライフサイクル、redeem 部分成功対策、**admin の 4 操作**は確定・実装済み。
 2. **②が「要る」なら履歴テーブル（案 A）を作ってから読み手を足す。**
@@ -1475,6 +1513,60 @@ MK 要望の 5 項目のうち、**確実に出せる 3 つ**を入れた。
 | `pt` / 指数 / 役割 / 特徴量を丸め・ランク化して無料へ出す | 不採用（実質そのままの開示）|
 
 ---
+
+## 2026-08-21 — 【機能】再募集の開始日時を admin のボタンで確定する（Draft PR・**本番では未押下**）
+
+`reopenStartsAt` が null 固定で、クーポンの有効期限が導出できず予約 write が fail closed
+だった件を、**運用が deploy なしで確定できる**形にした。
+
+### 何を作ったか
+
+| | |
+|---|---|
+| 判定（純粋）| `src/lib/premiumPlus/premiumPlusReopenStart.js`（状態の語彙・正規化・実効定義の合成・admin 表示モデル・確認文言）|
+| 保存（I/O）| `src/lib/premiumPlus/premiumPlusReopenStartStore.js`（Upstash Redis・`SET NX`・**read/start だけ**）|
+| admin API | `premium-plus-eligibility` に `action='reopenStatus'`（read）/ `action='reopenStart'`（write）|
+| admin UI | 一覧上部の「💠 Premium Plus 再募集」パネル（状態・開始日時・クーポン期限・確認ダイアログ付きボタン）|
+| 配線 | 受付休止ページ ×2 / クーポンページ / マイページ / 申込画面 / 申込受付 / admin が**同じ単一源**を読む |
+
+### 安全条件（テストで固定）
+
+- 開始日時は**サーバー時刻**。要求 body の `startsAt` / `now` / `expiresAt` を**読まない**
+  （smoke テストで 2020 年を送っても採用されないことを確認）
+- **初回だけ保存**。2 回目・8 本同時でも `created` は 1 本だけ・全員が同じ開始日時を返す
+- **Airtable へは 1 バイトも書かない**（Customers / PromotionalOffers / 履歴すべて 0 件を検査）
+- 保存先が使えないときは **503 + `sideEffects:'none'`**（「開始した」と言わない）
+- 読めないときは `unknown`。**「未開始」と言わない・ボタンを出さない**
+- 未開始のあいだは `buildReservationFields()` が null（**予約 write は fail closed のまま**）
+- 開始後は期限が `開始 + 14 日` で導出され、admin 表示とサーバー実効状態が一致する
+- 資格 / 停止 / PHASE / route / plan / 決済 / 通常価格は 1 つも変わらない
+
+テスト: `premiumPlusReopenStart.test.mjs`（14）/ `premiumPlusReopenStartStore.test.mjs`（13）/
+`adminReopenStart.smoke.test.mjs`（9・**本物の handler を実行**）/
+`reopenStartWiring.guard.test.mjs`（10・配線を構造で固定）。
+`npm run test:premium-plus-media` = 1,112 pass / 0 fail。
+
+### 保存方式の選定（**新しい env / schema / 外部サービスを増やしていない**）
+
+Upstash Redis の 1 キー `ak:pp:reopen:v1:start`（TTL なし）。`SET ... NX` が
+原子的な first-write-wins そのもので、接続は本番稼働中のものをそのまま使う
+（`couponOperationLock.js` / `premiumPlusFunnelStore.js` / rollout と同じ）。
+不採用: Airtable の列・テーブル追加（**本番 schema 変更**）／ Netlify Blobs（eventual consistency）／
+env 直書き（変更に deploy が要る）。判断の記録は `docs/decisions.md` §2026-08-21。
+
+### ⚠️ まだ本番では何も起きていない
+
+- **Draft PR のまま**（merge も deploy もしていない）
+- **本番の開始ボタンは押していない**（`reopenStartsAt` は未設定のまま）
+- Redis に鍵は 1 つも作っていない。Customers / PromotionalOffers / 履歴への書き込みも 0 件
+- 実顧客の取得・申込・入金確認・redeem は 1 件も実行していない
+
+### rollback
+
+- コード: PR を merge しなければ本番は現状のまま。merge 後なら通常の revert
+- 開始済みを戻す: **Upstash コンソールで `ak:pp:reopen:v1:start` を削除する**しかない
+  （admin に取消ボタンは無い＝「上書きしない」を構造で守るため）。
+  顧客へ期限を案内したあとの削除は不整合になるので不可
 
 ## 2026-08-19 — 【修正】ジョブだけ作れて配信行が作れない途中状態を成功にしない（orphan PENDING）
 

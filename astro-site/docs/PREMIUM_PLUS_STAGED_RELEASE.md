@@ -972,13 +972,65 @@ payment のいずれも動かさない。
   Customers の「クーポン取得済み」は消さない
 - admin は `Source='premium-plus-coupon-reservation'` で通常の販促 offer と区別する
 
-#### 有効期限（2026-08-19 MK 確定）
+#### 有効期限（2026-08-19 MK 確定 / 開始日時の決め方は 2026-08-21 確定）
 
 **再募集開始日時から 14 日間**（`expiryDays = 14`）。
-ただし **`reopenStartsAt`（実際の再募集開始日時）は未決定**なので、
 `expiresAt` は `reopenStartsAt + 14 日` で**導出**する（`resolveCouponExpiry()`）。
 ⚠️ **開始日時を捏造しない。** 未設定のあいだは `buildReservationFields()` が null を返し、
 **本番の予約 write は fail closed**。
+
+##### `reopenStartsAt` は admin のボタンで確定する（2026-08-21 MK 確定）
+
+| 項目 | 確定内容 |
+|---|---|
+| 決め方 | 管理画面 `/admin/premium-plus-eligibility/` の「**Premium Plus 再募集を開始**」ボタン |
+| 値 | **押した瞬間のサーバー時刻**（`Date.now()`）|
+| client 時刻 | **正本にしない**。要求 body の時刻（`startsAt` / `now` / `expiresAt`）は 1 つも読まない |
+| 期限 | `reopenStartsAt + 14 日` を既存の単一源から**自動導出** |
+| 二重押下・並行要求 | **上書きしない**（first-write-wins）。2 回目以降は冪等に既存値を返す |
+| 確認 | 押下時に**確認ダイアログ**（文言の正本は `REOPEN_START_CONFIRM_TEXT`）|
+| 未設定中 | **現在どおり fail closed**（予約 write を作らない・顧客画面は「募集再開日から14日間」）|
+
+**保存先は Upstash Redis の 1 キー**（`REOPEN_START_KEY = ak:pp:reopen:v1:start`・TTL なし）。
+
+- 選定理由: `SET key value NX` が**原子的な first-write-wins そのもの**で、
+  **新しい env も Airtable schema も外部サービスも増えない**
+  （`UPSTASH_REDIS_REST_URL` / `_TOKEN` は `couponOperationLock.js` /
+  `premiumPlusFunnelStore.js` / rollout が本番で使用中）。
+- 不採用: Airtable への列・テーブル追加（**本番 schema 変更**であり、
+  「サイト全体で 1 個の設定」を会員 1 行 1 会員の表に置くことになる）／
+  Netlify Blobs（eventual consistency）／env 直書き（変更に deploy が要る）。
+- **上書き・削除の API をコードとして持たない**（`read()` と `start()` だけ）。
+  「一度開始したら上書きしない」を運用ルールではなく**構造**で守る。
+
+##### 誤って開始したときの rollback（**画面からは戻せない**）
+
+admin に取消ボタンは**無い**（作らない）。戻す必要が生じた場合は
+**Upstash コンソールで `ak:pp:reopen:v1:start` を削除する**しかない。
+削除すると「未開始」に戻り、期限は再び未確定・予約 write は fail closed になる。
+⚠️ すでに顧客へ期限を案内したあとで削除すると**案内と実状態が食い違う**ので、
+削除は「開始直後に誤りと判明した場合」に限る。
+
+##### 読めなかったときは「未開始」と言わない
+
+Redis を読めない（未設定・失敗・タイムアウト）ときは `state='unknown'`（**確認できない**）を返す。
+admin は理由をそのまま表示し、**開始ボタンを出さない**。
+顧客画面は従来どおり「募集再開日から14日間」の未確定表示のまま（＝ fail closed）。
+
+##### どこが同じ値を読むか（**単一源**）
+
+`loadReopenStart()`（保存先） → `withReopenStart()`（実効クーポン定義）の 2 段だけ。
+
+| 面 | 使う |
+|---|---|
+| 受付休止ページ `/premium-plus/` `/premium-plus-v2/` | `describeCouponForMember({ def })` |
+| クーポンページ `/premium-plus-coupon/` | 同上 |
+| マイページ `/api/upsell.json` | 同上 |
+| 申込画面 `/api/premium-plus-order.json` | `listApplicableCoupons({ def })` / `resolveOrderPricing({ def })` |
+| 申込受付 `bank-transfer-application` | `resolveOrderPricing({ def })` |
+| 管理画面 `premium-plus-eligibility` | `resolveReopenStatus()` ＋ 同じ `def` で行を組み立て |
+
+配線が外れていないことは `reopenStartWiring.guard.test.mjs` が構造で検査する。
 
 #### redeem の部分成功（実装済み）
 
@@ -1050,13 +1102,15 @@ URL 直打ち・fetch の直接呼び出し・古いタブからの再送でも�
 
 ### 再募集するときの手順
 
-1. `promotionOfferCatalog.js` に Premium Plus 用の `purchase_offer` を追加する
-   （**金額・割引率・TTL はそこが正本**。`/pricing/` との突き合わせ guard も効く）
-2. 管理画面 `/admin/premium-plus-eligibility/` の「クーポン取得済み」で対象会員を抽出する
-3. 既存の offer 発行経路（`promotionalOffer.js` / `PromotionalOffers`）で offer を発行する
+1. 管理画面 `/admin/premium-plus-eligibility/` の「**Premium Plus 再募集を開始**」を押す
+   （押した瞬間のサーバー時刻が `reopenStartsAt` になり、**クーポン期限が確定する**）
+2. 管理画面の「クーポン取得済み」で対象会員を抽出する
+3. 会員個別の販売停止（`PremiumPlusSalePaused`）を外す
+   ⚠️ **1 の開始操作は販売停止を解除しない**（軸が違う）。購入できるようにするのは 3。
+4. 必要なら `promotionOfferCatalog.js` に Premium Plus 用の `purchase_offer` を追加し、
+   既存の offer 発行経路（`promotionalOffer.js` / `PromotionalOffers`）で offer を発行する
 
-**本 PR は 1〜2 の抽出までしか用意していない。** 3 の発行・実メール送信・queue 登録・
-価格変更・課金は含まない。
+⚠️ **1 と 3 は別操作**。開始しただけでは誰も買えないし、停止を外しただけでは期限が確定しない。
 
 ### 管理画面（3 つの軸を混ぜない）
 
@@ -1065,6 +1119,10 @@ URL 直打ち・fetch の直接呼び出し・古いタブからの再送でも�
 | 販売資格 | `PremiumPlusEligibility` / PHASE | 既存の資格バッジ（停止で動かさない） |
 | 販売の一時停止 | `PremiumPlusSalePaused` | `一時停止中`（琥珀）バッジ + `fPause` |
 | **再募集クーポン** | 顧客本人が取得した事実 | `クーポン取得済み`（青緑）バッジ + `fCoupon` + 件数 |
+| **再募集の開始**（会員別ではない）| `reopenStartsAt`（サイト全体で 1 個）| 一覧上部の「💠 Premium Plus 再募集」パネル（未開始 / 開始済み / 確認できない・開始日時・クーポン期限）|
+
+⚠️ 「再募集の開始」だけは**会員 1 人の操作ではない**。詳細パネル（会員別）ではなく
+一覧の上に常設し、押せるのは**未開始と確認できたときだけ**。
 
 #### ⚠️ 管理者の付与・取消について（**確定仕様ではなく現行実装**）
 
@@ -1085,6 +1143,8 @@ Claude が「顧客の意思表示だから管理者は触らない」と判断�
 | 目的 | ファイル |
 |---|---|
 | クーポン保有状態の単一源 | `src/lib/premiumPlus/premiumPlusReopenCoupon.js` |
+| **再募集開始日時の判定（純粋）** | `src/lib/premiumPlus/premiumPlusReopenStart.js` |
+| **再募集開始日時の保存（Redis / first-write-wins）** | `src/lib/premiumPlus/premiumPlusReopenStartStore.js` |
 | 休止ページを出す条件 | `src/lib/premiumPlus/premiumPlusRelease.js` (`resolvePlusPauseNoticeView`) |
 | 顧客への配布 | `src/lib/upsell/upsellTarget.js` (`pauseNotice`) |
 | 休止 / クーポンページの HTML | `src/lib/premiumPlus/premiumPlusPauseNoticePage.js` |

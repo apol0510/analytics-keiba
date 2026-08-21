@@ -20,6 +20,11 @@ import {
   PP_REOPEN_COUPON_SOURCE,
 } from '../lib/premiumPlus/premiumPlusReopenCoupon.js';
 import { renderCouponPageHtml } from '../lib/premiumPlus/premiumPlusPauseNoticePage.js';
+// 再募集の開始日時（`reopenStartsAt`）の単一源。**全ての面がここから読む**。
+// ⚠️ ここで言う期限はクーポンの利用期限（開始 + 14 日）。会員権の期限とは無関係で、
+//    このページは会員判定を一切再実装しない（正本は resolveEntitlements）。
+import { loadReopenStart } from '../lib/premiumPlus/premiumPlusReopenStartStore.js';
+import { withReopenStart } from '../lib/premiumPlus/premiumPlusReopenStart.js';
 
 const now = Date.now();
 
@@ -58,12 +63,17 @@ const noticeTarget = view.pauseNotice?.showPauseNotice === true;
 // どちらでもない相手には存在を知らせない。
 if (!coupon.claimed && !noticeTarget) return notFound();
 
+// 再募集の開始状態（読めなければ従来どおり「期限未確定」表示のまま）
+const reopen = await loadReopenStart({ env: process.env });
+const couponDef = withReopenStart(reopen.startsAtIso);
+
 const couponView = describeCouponForMember({
   coupon,
   paused: view.plusRelease?.salePaused === true,
   // 取得 CTA は「いま案内対象」のときだけ。停止解除後に新規取得はさせない。
   claimable: noticeTarget,
   storageReady: isReopenCouponEnabled(process.env),
+  def: couponDef,
 });
 
 const html = renderCouponPageHtml({

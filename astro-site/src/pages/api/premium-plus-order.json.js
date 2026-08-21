@@ -30,6 +30,9 @@ import { resolveUpsellForCustomer } from '../../lib/upsell/upsellTarget.js';
 import {
   listApplicableCoupons, resolveOrderPricing, describeOrderBreakdown,
 } from '../../lib/premiumPlus/premiumPlusCouponApply.js';
+// 有効期限は「再募集の開始日時 + 14 日」。開始状態は 1 か所からしか読まない
+import { loadReopenStart } from '../../lib/premiumPlus/premiumPlusReopenStartStore.js';
+import { withReopenStart } from '../../lib/premiumPlus/premiumPlusReopenStart.js';
 
 function notFound() {
   return new Response('Not Found', {
@@ -60,11 +63,17 @@ export async function GET({ request, url }) {
     || view.pauseNotice?.showPauseNotice === true;
   if (!plusVisible) return notFound();
 
+  // 再募集の開始状態（＝有効期限の確定に使う）。client からは受け取らない
+  const reopen = await loadReopenStart({ env: process.env });
+  const couponDef = withReopenStart(reopen.startsAtIso);
+
   // 選択は受け取るが、価格はサーバーが Airtable の実データから決める
-  const pricing = resolveOrderPricing({ fields, couponId: url.searchParams.get('couponId'), nowMs: now });
+  const pricing = resolveOrderPricing({
+    fields, couponId: url.searchParams.get('couponId'), nowMs: now, def: couponDef,
+  });
 
   return new Response(JSON.stringify({
-    coupons: listApplicableCoupons({ fields, nowMs: now }),
+    coupons: listApplicableCoupons({ fields, nowMs: now, def: couponDef }),
     pricing: {
       regularPrice: pricing.regularPrice,
       discount: pricing.discount,
