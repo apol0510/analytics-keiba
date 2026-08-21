@@ -1814,6 +1814,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   .ppe .kv { display: grid; grid-template-columns: max-content 1fr; gap: .3rem .9rem; font-size: .8rem; margin: 0; }
   .ppe .kv dt { color: #93a4bd; }
   .ppe .kv dd { margin: 0; font-weight: 700; overflow-wrap: anywhere; }
+  /* 「開始済みだが販売が止まっている」等、注意して読む必要がある値 */
+  .ppe .kv dd.warn { color: #fcd34d; }
   .ppe .memo-view { background: rgba(11,17,32,.6); border-left: 3px solid rgba(245,196,81,.5); border-radius: 6px; padding: .5rem .7rem; font-size: .78rem; color: #cbd5e6; margin-top: .6rem; }
   /* 三連複保有バッジ。プラン名を書き換えず、隣に添えて一目で分かるようにする */
   .ppe .srp-badge {
@@ -2760,6 +2762,15 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         n.textContent = String(st.started == null ? '—' : st.started) + ' 名';
         line.appendChild(n);
         line.appendChild(document.createTextNode(' / 表示中 ' + ((lastData.rows || []).length) + ' 名'));
+        // 「販売再開が未完了」は放置すると期限だけ進むので、件数を必ず出す
+        const bad = (lastData.counts && lastData.counts.reopenIncomplete) || 0;
+        if (bad > 0) {
+          box.classList.add('unknown');
+          const w = document.createElement('span');
+          w.className = 'rs-state';
+          w.textContent = ' ／ ⚠️ 販売再開が未完了 ' + bad + ' 名';
+          line.appendChild(w);
+        }
       } else {
         box.classList.add('unknown');
         line.className = 'rs-state';
@@ -4116,6 +4127,18 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       }
       psSec.appendChild(psKv);
 
+      // ⚠️ 「販売を再開する」と「再募集を開始する」を**並べない**（どちらを先に押すか迷わせない）。
+      //    どのスイッチを出してよいかは**サーバーの判断**（reopenLaunch.action）に従う:
+      //      未開始 + 停止中 → 出さない（主操作「この会員の再募集を開始する」が同時に再開する）
+      //      未開始 + 販売中 → 停止スイッチだけ
+      //      開始済み + 販売中 → 停止スイッチだけ（緊急停止）
+      //      開始済み + 停止中（緊急停止）→ 再開スイッチだけ
+      //      途中成功・確認できない → 出さない（再募集セクションの復旧操作を使う）
+      const psAction = (r.reopenLaunch && r.reopenLaunch.action) || null;
+      const psShowToggle = psAction
+        ? (r.salePaused ? psAction.showResumeSwitch === true : psAction.showPauseSwitch === true)
+        : true;   // 情報が無い応答（旧デプロイ）は従来どおり出す
+
       const psOps = document.createElement('div'); psOps.className = 'ops';
       const psBtn = document.createElement('button');
       psBtn.type = 'button';
@@ -4168,8 +4191,19 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         }
         renderDetail();
       });
-      psOps.appendChild(psBtn);
-      psSec.appendChild(psOps);
+      if (psShowToggle) {
+        psOps.appendChild(psBtn);
+        psSec.appendChild(psOps);
+      } else {
+        // 出さない理由を必ず書く（ボタンが消えた＝壊れた、と読ませない）
+        const w = document.createElement('p'); w.className = 'muted';
+        w.style.margin = '6px 0 0'; w.style.fontSize = '0.8rem';
+        w.textContent = (r.reopenLaunch && r.reopenLaunch.state === 'not_started')
+          ? 'この会員はまだ再募集を開始していません。販売の再開は下の「再募集（この会員）」の'
+            + '「この会員の再募集を開始する」で、14日間の開始と同時に行います。'
+          : 'この操作はいまこの会員には出していません。下の「再募集（この会員）」を参照してください。';
+        psSec.appendChild(w);
+      }
 
       if (!psUsable) {
         const w = document.createElement('p'); w.className = 'blocker';
@@ -4182,95 +4216,135 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       body.appendChild(psSec);
 
       // ── 再募集（**この会員だけ**）────────────────────────────
-      // ⚠️ 資格・停止・段階公開・クーポン保有とは**別の軸**。
-      //    ここで決まるのは「この会員のクーポン有効期限の起点」だけで、
-      //    **売れるようにする操作ではない**（購入可否は上の一時停止・資格が決める）。
-      // ⚠️ 他の会員には一切影響しない。全体を一括で開始する操作は用意しない。
+      // 「この会員の再募集を開始する」＝**1 つの業務操作**で
+      //   ① この会員の販売一時停止を解除し ② 開始日時をサーバー時刻で確定し
+      //   ③ そこから14日間のクーポン期限を開始する。
+      // ⚠️ 資格・段階公開（PHASE）・route・会員権・決済・クーポン保有は変えない。
+      // ⚠️ 状態ごとに**主操作は必ず 1 つだけ**（「販売を再開する」と並べない）。
       const rsSec = document.createElement('div'); rsSec.className = 'dt-sec';
       const rsH = document.createElement('h3'); rsH.textContent = '再募集（この会員）';
       rsSec.appendChild(rsH);
       const rs = r.reopenStart || null;
+      const lc = r.reopenLaunch || null;
+      const act = (lc && lc.action) || null;
+
       const rsKv = document.createElement('dl'); rsKv.className = 'kv';
-      if (!rs) {
+      if (!lc) {
         // 情報が無い応答は「未開始」と決めつけない
         kvRow(rsKv, '状態', '確認できない（この応答では取得できていません）', 'muted');
-      } else if (rs.state === 'unknown') {
+      } else if (lc.state === 'unknown') {
         kvRow(rsKv, '状態', '⚠️ 確認できない');
         kvRow(rsKv, '開始日時', '確認できない', 'muted');
         kvRow(rsKv, 'クーポン期限', '確認できない', 'muted');
-      } else if (rs.state === 'started') {
-        kvRow(rsKv, '状態', '✅ 開始済み');
-        kvRow(rsKv, '開始日時', fmtDate(rs.startsAtIso));
-        kvRow(rsKv, 'クーポン期限', rs.expiryDetermined ? (rs.expiresAtText + '（JST）') : rs.expiresAtText);
-      } else {
-        kvRow(rsKv, '状態', '⏹ 未開始', 'muted');
+      } else if (lc.state === 'not_started') {
+        kvRow(rsKv, '状態', '⏹ 再募集 未開始', 'muted');
         kvRow(rsKv, '開始日時', '—（まだ確定していません）', 'muted');
-        kvRow(rsKv, 'クーポン期限', rs.expiresAtText, 'muted');
+        kvRow(rsKv, 'クーポン期限', (rs && rs.expiresAtText) || '—', 'muted');
+        kvRow(rsKv, '販売状態', r.salePaused ? '⏸ 一時停止中（開始と同時に再開します）' : '✅ 販売中');
+      } else {
+        // 開始済み（live / paused_after_start / incomplete）
+        const badge = lc.state === 'live' ? '✅ 再募集 開始済み / 販売中'
+          : (lc.state === 'incomplete'
+            ? '⚠️ 再募集開始済み / 販売再開が未完了'
+            : '⏸ 再募集開始済み / 販売一時停止中');
+        kvRow(rsKv, '状態', badge, lc.state === 'live' ? '' : 'warn');
+        kvRow(rsKv, '開始日時', fmtDate(lc.startsAtIso));
+        kvRow(rsKv, 'クーポン期限',
+          (rs && rs.expiryDetermined) ? (rs.expiresAtText + '（JST）') : ((rs && rs.expiresAtText) || '—'));
+        kvRow(rsKv, '販売状態', r.salePaused ? '⏸ 一時停止中' : '✅ 販売中');
+        if (r.salePaused && lc.pausedAtIso) kvRow(rsKv, '停止した日時', fmtDate(lc.pausedAtIso), 'muted');
       }
       rsSec.appendChild(rsKv);
 
       const rsNote = document.createElement('p'); rsNote.className = 'muted';
       rsNote.style.margin = '6px 0 0'; rsNote.style.fontSize = '0.8rem';
-      rsNote.textContent = (rs && rs.note)
-        ? rs.note
-        : 'この会員の再募集の開始状態です。開始しても販売資格・一時停止・段階公開・会員権・決済は変わりません。';
+      rsNote.textContent = (lc && lc.note)
+        ? lc.note
+        : 'この会員の再募集の状態です。開始しても販売資格・段階公開・会員権・決済は変わりません。';
       rsSec.appendChild(rsNote);
 
-      // 開始済み・確認できない状態では**ボタンを出さない**（押せる操作を偽装しない）
-      if (rs && rs.startable === true) {
-        const rsOps = document.createElement('div'); rsOps.className = 'dt-ops';
+      // 主操作は状態ごとに 1 つだけ（start / repair / 無し）
+      if (act && (act.kind === 'start' || act.kind === 'repair')) {
+        const rsOps = document.createElement('div'); rsOps.className = 'ops';
         const rsBtn = document.createElement('button');
         rsBtn.type = 'button';
-        rsBtn.className = 'btn-danger';
-        rsBtn.textContent = '▶ この会員の再募集を開始する';
+        rsBtn.className = act.kind === 'repair' ? 'btn-primary' : 'btn-danger';
+        rsBtn.textContent = act.label;
+        rsBtn.disabled = act.enabled !== true;
+        if (act.enabled !== true) {
+          rsBtn.title = '本番でまだ有効化されていないため実行できません';
+        }
         rsBtn.addEventListener('click', async () => {
-          const actor = ($('actor') && $('actor').value.trim()) || '';
+          const actor = currentActor();
           if (!actor) {
             msg('操作者名を入力してください（開始の記録に残ります）', 'err');
             $('connBody').hidden = false; renderDetail(); return;
           }
           // 取り消せない操作。文言は**サーバーが配る**単一源（対象会員入り）。
-          // ⚠️ 受け取れていないなら押させない（「取り消せない」「この会員だけ」が伝わらないため）。
-          if (!rs.confirmText) {
+          // ⚠️ 受け取れていないなら押させない。
+          if (!act.confirmText) {
             msg('確認文言を取得できていません。再読み込みしてからもう一度お試しください。', 'err');
             return;
           }
-          if (!window.confirm(rs.confirmText)) return;
+          if (!window.confirm(act.confirmText)) return;
           rsBtn.disabled = true;
-          msg('この会員の再募集の開始日時を確定中…');
+          msg(act.kind === 'repair' ? '販売再開をやり直しています…' : 'この会員の再募集を開始しています…');
           // ⚠️ 時刻を送らない。開始日時は**サーバーが決める**
           const out = await call({
             action: 'reopenStart', recordId: r.recordId, email: r.email, actor,
           });
           const logged = {
             kind: 'reopenStart', actor, recordId: r.recordId, email: r.email, at: Date.now(),
-            from: '未開始', to: '開始済み',
+            from: act.kind === 'repair' ? '販売再開が未完了' : '未開始',
+            to: '開始済み / 販売中',
           };
           if (isUnknownResult(out)) {
             opLog.add({ ...logged, result: 'unknown', detail: '通信が切れました' });
-            msg('通信が切れたため、開始できたか分かりません。再読み込みで状態を確認してください。', 'err');
+            msg('通信が切れたため、どこまで完了したか分かりません。'
+              + '再読み込みで状態を確認してください。', 'err');
           } else if (!out) {
             opLog.add({ ...logged, result: 'failed' });
             rsBtn.disabled = false;
+          } else if (out.ok === false) {
+            // 途中成功（開始だけ済んで販売再開が失敗）も**成功と言わない**
+            opLog.add({
+              ...logged, result: 'unknown',
+              detail: (out.code || '') + ' / ' + (out.sideEffects || ''),
+            });
+            msg(out.note || out.error || '実行できませんでした', 'err');
+            await refreshOne(r.recordId);
           } else {
             opLog.add({
               ...logged, result: 'ok',
-              detail: out.created === false ? '既に開始済み（上書きしていません）' : '',
+              detail: [
+                out.startWritten ? '開始日時を確定' : '開始日時は既存のまま',
+                out.saleResumed ? '販売を再開' : '販売状態は変更なし',
+              ].join(' / '),
             });
             // 送った値が通った前提にせず、サーバーの確定値を読み直す
             await refreshOne(r.recordId);
-            msg(out.created === false
-              ? 'この会員は既に開始済みでした（開始日時は上書きしていません）'
-              : 'この会員の再募集を開始しました（クーポン期限も確定しました）', 'ok');
+            msg([
+              out.startWritten ? 'この会員の再募集を開始しました（クーポン期限も確定）'
+                : 'この会員は既に開始済みでした（開始日時は変更していません）',
+              out.saleResumed ? '販売も再開しました' : '',
+            ].filter(Boolean).join(' / '), 'ok');
           }
           renderDetail();
         });
         rsOps.appendChild(rsBtn);
         const rsWarn = document.createElement('span');
         rsWarn.className = 'muted'; rsWarn.style.fontSize = '0.78rem';
-        rsWarn.textContent = '※ 押した時点のサーバー時刻で確定します。あとから変更できません。';
+        rsWarn.textContent = act.kind === 'repair'
+          ? '※ 開始日時は変わりません。販売の一時停止だけを解除します。'
+          : '※ 押した時点のサーバー時刻で確定します。あとから変更できません。';
         rsOps.appendChild(rsWarn);
         rsSec.appendChild(rsOps);
+        if (act.note) {
+          const n2 = document.createElement('p'); n2.className = 'muted';
+          n2.style.margin = '6px 0 0'; n2.style.fontSize = '0.78rem';
+          n2.textContent = act.note;
+          rsSec.appendChild(n2);
+        }
       }
       body.appendChild(rsSec);
 

@@ -1,19 +1,21 @@
 /**
  * adminReopenStart.smoke.test.mjs — 「この会員の再募集を開始」を **Function 越しに**動かす
  *
- * 合成 Redis（`HSETNX` は本物どおり）＋ 合成 Airtable に対して本物の handler を実行する。
+ * 合成 Redis（`HSETNX` / lock を本物どおり）＋ 合成 Airtable に対して本物の handler を実行する。
  *
  * 固定する安全条件:
+ *   - **未開始 + 販売停止中 → 1 操作**で「販売再開」と「開始日時の確定」を両方行う
  *   - 開始日時は**サーバー時刻**。client が `startsAt` / `now` を送っても採用しない
- *   - **その会員だけ**開始される（A を開始しても B は未開始）
- *   - 同一会員の 2 回目・並行 8 要求では**上書きしない**（created は 1 回）
- *   - **Airtable へは 1 バイトも書かない**（Customers / PromotionalOffers / 履歴のいずれも）
- *   - **他会員の Customers / 予約 / 履歴を変更しない**
- *   - 保存先が使えなければ 503 で「開始した」と言わない（副作用ゼロ）
- *   - admin secret が無ければ実行できない（API 直叩き・URL 直打ちでも同じ）
- *   - 会員指定が不正なら 400（任意文字列で鍵空間を汚さない）
- *   - 一覧・個別検索の期限表示が**会員ごとに**サーバー実効状態と一致する
- *   - `salePaused` は再募集開始で 1 バイトも変わらない（購入可否は既存判定のまま）
+ *   - 期限は**開始 + 14 日**
+ *   - 同じ操作を再送しても開始日時が変わらない／**不要な PATCH をしない**
+ *   - 並行 8 要求でも開始は 1 回だけ
+ *   - **A を開始しても B は不変**（他会員の Customers を 1 バイトも変えない）
+ *   - eligibility / override / phase / route / plan / payment を変更しない
+ *   - 開始済み会員を**後から販売一時停止できる**／その後**再開しても開始日時は変わらない**
+ *   - **partial success**（Redis は書けたが Airtable が落ちた）→ 途中成功を曖昧にせず、
+ *     同じボタンの再送で復旧できる
+ *   - Redis 失敗 / Airtable 失敗 / read 不能 → **fail closed**（開始だけ確定させない）
+ *   - admin secret 無し・不正 recordId → API 直叩き・URL 直打ちでも止まる
  */
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -23,6 +25,8 @@ const FN = fileURLToPath(new URL('../../../netlify/functions/premium-plus-eligib
 const { REOPEN_MEMBERS_KEY } = await import('./premiumPlusReopenStartStore.js');
 const { withReopenStart } = await import('./premiumPlusReopenStart.js');
 const { describeCouponExpiry } = await import('./premiumPlusReopenCoupon.js');
+const { PP_SALE_PAUSE_FIELDS } = await import('./premiumPlusRelease.js');
+const { LAUNCH_STATE } = await import('./premiumPlusReopenLaunch.js');
 
 const SECRET = 'admin-secret-for-test';
 /** 開始する会員 */
@@ -31,21 +35,23 @@ const A = 'recAAAAAAAAAAAAAA';
 const B = 'recBBBBBBBBBBBBBB';
 const A_MAIL = 'a-synthetic@example.invalid';
 const B_MAIL = 'b-synthetic@example.invalid';
+/** 開始より前の停止時刻（＝途中成功の再現に使う） */
+const PAUSED_BEFORE = '2026-08-19T00:00:00.000Z';
 
 let db;
 let redis;
 let realFetch;
 let realEnv;
 
-/** HSETNX / HGET / HMGET を本物どおりに実装した合成 Redis */
+/** HSETNX / HGET / HMGET / SET NX / EVAL(lock) を本物どおりに実装した合成 Redis */
 function makeRedis({ down = false } = {}) {
   const hashes = new Map();
-  /** 書き込み用（無ければ作る）*/
+  const plain = new Map();
   const h = (k) => {
     if (!hashes.has(k)) hashes.set(k, new Map());
     return hashes.get(k);
   };
-  /** 読み取り用。⚠️ **読んだだけで鍵を作らない**（本物と同じ挙動にする）*/
+  /** 読み取り用。⚠️ **読んだだけで鍵を作らない** */
   const ro = (k) => hashes.get(k) || new Map();
   const cmd = async (args) => {
     if (down) throw new Error('redis_down');
@@ -58,16 +64,33 @@ function makeRedis({ down = false } = {}) {
     }
     if (op === 'HGET') return ro(key).has(rest[0]) ? ro(key).get(rest[0]) : null;
     if (op === 'HMGET') return rest.map((f) => (ro(key).has(f) ? ro(key).get(f) : null));
-    if (op === 'INCR') { const n = Number(h('n').get(key) || 0) + 1; h('n').set(key, String(n)); return n; }
+    if (op === 'INCR') { const n = Number(plain.get(key) || 0) + 1; plain.set(key, String(n)); return n; }
+    if (op === 'SET') {
+      const [value, ...opts] = rest;
+      if (opts.includes('NX') && plain.has(key)) return null;
+      plain.set(key, value);
+      return 'OK';
+    }
+    if (op === 'EVAL') {
+      const [script, , k, token] = [key, ...rest];   // EVAL <script> <n> <key> <token>
+      const lockKey = rest[1];
+      const tok = rest[2];
+      const cur = plain.get(lockKey);
+      if (cur === undefined) return 'LOST';
+      if (cur !== tok) return 'STOLEN';
+      if (String(script).includes('DEL')) plain.delete(lockKey);
+      return 'OK';
+    }
     return null;
   };
-  return { cmd, hashes, member: (f) => ro(REOPEN_MEMBERS_KEY).get(f) };
+  return { cmd, hashes, plain, member: (f) => ro(REOPEN_MEMBERS_KEY).get(f) };
 }
 
 const member = (over = {}) => ({
   'プラン': 'Premium Sanrenpuku', 'Status': 'active', '有効期限': '2099-12-31',
   'SanrenpukuPaidAt': '2020-01-01T00:00:00.000Z',
   'PremiumPlusEligibility': 'eligible',
+  'PremiumPlusReleaseOverride': '',
   PremiumPlusReopenCouponClaimedAt: '2026-08-18T22:07:54.000Z',
   PremiumPlusReopenCouponId: 'premium-plus-reopen-priority@v1',
   PremiumPlusReopenCouponSource: 'pause-notice',
@@ -77,12 +100,33 @@ const member = (over = {}) => ({
 function makeDb() {
   return {
     customers: {
-      [A]: { Email: A_MAIL, '氏名': 'テストA', ...member() },
-      // B は販売一時停止中（開始しても停止は解除されないことを検査する）
-      [B]: { Email: B_MAIL, '氏名': 'テストB', ...member({ PremiumPlusSalePaused: true }) },
+      // A: 未開始 + 販売停止中（今回の主シナリオ）
+      [A]: {
+        Email: A_MAIL,
+        '氏名': 'テストA',
+        ...member({
+          [PP_SALE_PAUSE_FIELDS.PAUSED]: true,
+          [PP_SALE_PAUSE_FIELDS.UPDATED_AT]: PAUSED_BEFORE,
+          [PP_SALE_PAUSE_FIELDS.UPDATED_BY]: 'MK',
+          [PP_SALE_PAUSE_FIELDS.REASON]: '募集停止中',
+        }),
+      },
+      // B: 未開始 + 販売停止中（巻き添えが無いことの検査用）
+      [B]: {
+        Email: B_MAIL,
+        '氏名': 'テストB',
+        ...member({
+          [PP_SALE_PAUSE_FIELDS.PAUSED]: true,
+          [PP_SALE_PAUSE_FIELDS.UPDATED_AT]: PAUSED_BEFORE,
+        }),
+      },
     },
-    /** **あらゆる Airtable への書き込み**を記録する（0 件であることを検査する） */
+    /** Customers への PATCH を記録する */
     writes: [],
+    /** Customers 以外（予約台帳・履歴）への書き込み */
+    otherWrites: [],
+    /** Customers の PATCH を落とす（partial success の再現） */
+    patchFails: false,
   };
 }
 
@@ -98,19 +142,28 @@ function stubFetch() {
       try { return ok({ result: await redis.cmd(args) }); } catch { return err(500); }
     }
     if (u.includes('api.airtable.com')) {
-      if ((method === 'PATCH' || method === 'POST' || method === 'DELETE') && !u.endsWith('/listRecords')) {
-        db.writes.push({ url: u, method, body: init.body });
-        return err(403);
-      }
       if (u.includes('/Customers/listRecords')) {
         return ok({ records: Object.entries(db.customers).map(([id, fields]) => ({ id, fields })) });
       }
-      if (u.includes('/PromotionalOffers')) return ok({ records: [] });
+      if (u.includes('/PromotionalOffers') || u.includes('/CouponOperationHistory')) {
+        if (method !== 'GET' && !u.endsWith('/listRecords')) {
+          db.otherWrites.push({ url: u, method });
+          return err(403);
+        }
+        return ok({ records: [] });
+      }
       if (u.includes('/CampaignDeliveries')) return ok({ records: [] });
-      if (u.includes('/CouponOperationHistory')) return ok({ records: [] });
       if (u.includes('/Customers/')) {
         const id = u.split('/Customers/')[1];
-        return db.customers[id] ? ok({ id, fields: db.customers[id] }) : err(404);
+        if (!db.customers[id]) return err(404);
+        if (method === 'PATCH') {
+          const body = JSON.parse(init.body || '{}');
+          db.writes.push({ id, fields: body.fields });
+          if (db.patchFails) return err(500);
+          Object.assign(db.customers[id], body.fields);
+          return ok({ id, fields: db.customers[id] });
+        }
+        return ok({ id, fields: db.customers[id] });
       }
       return ok({ records: [] });
     }
@@ -138,11 +191,15 @@ async function post(body, { secret = SECRET } = {}) {
   return { statusCode: res.statusCode, body: JSON.parse(res.body) };
 }
 
+const launch = (id = A, over = {}) => post({
+  action: 'reopenStart', recordId: id, email: id === A ? A_MAIL : B_MAIL, actor: 'MK', ...over,
+});
 const stored = (id) => {
   const raw = redis.member(id);
   return raw ? JSON.parse(raw) : null;
 };
 const rowOf = (res, id) => (res.body.rows || []).find((r) => r.recordId === id);
+const paused = (id) => db.customers[id][PP_SALE_PAUSE_FIELDS.PAUSED] === true;
 
 beforeEach(() => {
   realFetch = globalThis.fetch;
@@ -167,167 +224,242 @@ afterEach(() => {
   Object.assign(process.env, realEnv);
 });
 
-test('secret が無ければ開始できない（API 直叩き・URL 直打ちでも同じ）', async () => {
-  for (const secret of ['', 'wrong']) {
-    const res = await post({ action: 'reopenStart', recordId: A, actor: 'MK' }, { secret });
-    assert.equal(res.statusCode, 403);
-  }
-  assert.equal(redis.hashes.size, 0, '1 件も書いていない');
-  assert.deepEqual(db.writes, []);
-});
+// ── 主シナリオ: 1 操作で両方 ────────────────────────────────
+test('未開始 + 販売停止中 → 1 操作で販売再開 + 再募集開始', async () => {
+  const before = Date.now();
+  const res = await launch();
+  const after = Date.now();
 
-test('会員の指定が不正なら 400（鍵空間を汚さない）', async () => {
-  for (const bad of [undefined, '', 'nope', 'recSHORT', 'rec../x']) {
-    const res = await post({ action: 'reopenStart', recordId: bad, actor: 'MK' });
-    assert.equal(res.statusCode, 400, String(bad));
-    assert.equal(res.body.sideEffects, 'none');
-  }
-  const st = await post({ action: 'reopenStatus', recordId: 'nope' });
-  assert.equal(st.statusCode, 400);
-  assert.equal(redis.hashes.size, 0);
-});
-
-test('開始前は「未開始」（読み取りだけ・書き込みゼロ）', async () => {
-  const res = await post({ action: 'reopenStatus', recordId: A, email: A_MAIL });
   assert.equal(res.statusCode, 200);
-  assert.equal(res.body.reopenStart.state, 'not_started');
-  assert.equal(res.body.reopenStart.startable, true);
-  assert.equal(res.body.reopenStart.expiryDetermined, false);
-  assert.equal(res.body.sideEffects, 'none');
-  assert.equal(redis.hashes.size, 0);
-  assert.deepEqual(db.writes, []);
-  // 確認文言に対象会員が入っている（取り違え防止）
-  assert.match(res.body.reopenStart.confirmText, /a-synthetic@example\.invalid/);
+  assert.equal(res.body.ok, true);
+  assert.equal(res.body.startWritten, true, '開始日時を書いた');
+  assert.equal(res.body.saleResumed, true, '販売を再開した');
+  assert.equal(res.body.sideEffects, 'reopen_start_and_sale_resume');
+  assert.equal(res.body.launch.state, LAUNCH_STATE.LIVE);
+
+  // Redis: サーバー時刻で確定
+  const saved = stored(A);
+  assert.ok(saved, '保存されている');
+  const ms = Date.parse(saved.startsAt);
+  assert.ok(ms >= before && ms <= after, 'サーバー時刻の範囲');
+
+  // Airtable: 販売停止だけ解除。資格・会員権・決済は不変
+  assert.equal(paused(A), false);
+  assert.equal(db.writes.length, 1, 'PATCH は 1 回だけ');
+  assert.deepEqual(Object.keys(db.writes[0].fields).sort(), [
+    PP_SALE_PAUSE_FIELDS.PAUSED, PP_SALE_PAUSE_FIELDS.REASON,
+    PP_SALE_PAUSE_FIELDS.UPDATED_AT, PP_SALE_PAUSE_FIELDS.UPDATED_BY,
+  ].sort(), '販売停止の 4 列以外を書いていない');
+
+  // 期限は開始 + 14 日
+  const def = withReopenStart(saved.startsAt);
+  assert.equal(res.body.reopenStart.expiresAtIso, def.terms.expiresAt);
+  assert.equal(Date.parse(def.terms.expiresAt) - ms, 14 * 24 * 3600 * 1000);
 });
 
 test('開始日時は client の申告ではなくサーバー時刻', async () => {
-  const before = Date.now();
-  const res = await post({
-    action: 'reopenStart', recordId: A, email: A_MAIL, actor: 'MK',
-    // ⚠️ client が時刻を偽装しようとしても採用されないこと
+  const res = await launch(A, {
     startsAt: '2020-01-01T00:00:00.000Z',
     reopenStartsAt: '2020-01-01T00:00:00.000Z',
     now: Date.parse('2020-01-01T00:00:00.000Z'),
     expiresAt: '2099-01-01T00:00:00.000Z',
   });
-  const after = Date.now();
-
-  assert.equal(res.statusCode, 200);
-  assert.equal(res.body.created, true);
-  const saved = stored(A);
-  assert.ok(saved && !saved.startsAt.startsWith('2020-'), 'client の値を採用していない');
-  const ms = Date.parse(saved.startsAt);
-  assert.ok(ms >= before && ms <= after, 'サーバー時刻の範囲に入っている');
-  // 期限も client の申告ではなく「開始 + 14 日」
-  assert.equal(res.body.reopenStart.expiresAtIso, withReopenStart(saved.startsAt).terms.expiresAt);
+  assert.equal(res.body.startWritten, true);
+  assert.ok(!stored(A).startsAt.startsWith('2020-'));
   assert.notEqual(res.body.reopenStart.expiresAtIso, '2099-01-01T00:00:00.000Z');
 });
 
-test('A を開始しても B は未開始（他会員へ影響しない）', async () => {
-  await post({ action: 'reopenStart', recordId: A, email: A_MAIL, actor: 'MK' });
-
-  const stB = await post({ action: 'reopenStatus', recordId: B, email: B_MAIL });
-  assert.equal(stB.body.reopenStart.state, 'not_started');
-  assert.equal(stB.body.reopenStart.startable, true);
-  assert.equal(redis.member(B), undefined, 'B のフィールドは作られていない');
-
-  const list = await post({ action: 'list' });
-  assert.equal(rowOf(list, A).reopenStart.state, 'started');
-  assert.equal(rowOf(list, B).reopenStart.state, 'not_started');
-  assert.equal(list.body.counts.reopenStarted, 1);
+test('eligibility / override / plan / payment / クーポン保有は変わらない', async () => {
+  const keep = ['PremiumPlusEligibility', 'PremiumPlusReleaseOverride', 'プラン', 'Status',
+    '有効期限', 'SanrenpukuPaidAt', 'PremiumPlusReopenCouponClaimedAt'];
+  const before = Object.fromEntries(keep.map((k) => [k, db.customers[A][k]]));
+  await launch();
+  for (const k of keep) assert.deepEqual(db.customers[A][k], before[k], k);
+  assert.equal(db.otherWrites.length, 0, '予約台帳・履歴に書いていない');
 });
 
-test('Airtable には 1 バイトも書かない（他会員のレコードも変更しない）', async () => {
-  const snapshot = JSON.stringify(db.customers);
-  await post({ action: 'reopenStart', recordId: A, email: A_MAIL, actor: 'MK' });
-  await post({ action: 'reopenStart', recordId: A, email: A_MAIL, actor: 'MK' });
-  await post({ action: 'reopenStatus', recordId: B });
-  assert.deepEqual(db.writes, [], 'Customers / PromotionalOffers / 履歴のどれにも書いていない');
-  assert.equal(JSON.stringify(db.customers), snapshot, '会員レコードが 1 文字も変わっていない');
-  // 触った Redis の鍵も 1 本だけ
-  assert.deepEqual([...redis.hashes.keys()], [REOPEN_MEMBERS_KEY]);
+test('A を開始しても B は 1 バイトも変わらない', async () => {
+  const bBefore = JSON.stringify(db.customers[B]);
+  await launch(A);
+  assert.equal(JSON.stringify(db.customers[B]), bBefore);
+  assert.equal(redis.member(B), undefined, 'B の開始日時は作られていない');
+  assert.ok(db.writes.every((w) => w.id === A), '他会員を PATCH していない');
 });
 
-test('同一会員の 2 回目は上書きしない（冪等）', async () => {
-  const first = await post({ action: 'reopenStart', recordId: A, email: A_MAIL, actor: 'MK' });
+// ── 冪等・並行 ─────────────────────────────────────────────
+test('同じ操作を再送しても開始日時は変わらず、不要な PATCH もしない', async () => {
+  const first = await launch();
   const saved1 = stored(A).startsAt;
+  const writes1 = db.writes.length;
 
-  const second = await post({ action: 'reopenStart', recordId: A, email: A_MAIL, actor: 'あとから押した人' });
+  const second = await launch(A, { actor: 'あとから押した人' });
   assert.equal(second.statusCode, 200);
-  assert.equal(second.body.created, false, '2 回目は書いていない');
-  assert.equal(second.body.alreadyStarted, true);
+  assert.equal(second.body.startWritten, false, '2 回目は開始日時を書いていない');
+  assert.equal(second.body.saleResumed, false, '既に販売中なので PATCH しない');
   assert.equal(second.body.sideEffects, 'none');
-  assert.equal(second.body.reopenStart.startsAtIso, first.body.reopenStart.startsAtIso);
   assert.equal(stored(A).startsAt, saved1);
   assert.equal(stored(A).actor, 'MK', '最初の操作者のまま');
+  assert.equal(db.writes.length, writes1, 'PATCH が増えていない');
+  assert.equal(second.body.reopenStart.expiresAtIso, first.body.reopenStart.expiresAtIso);
 });
 
-test('同一会員への並行 8 要求でも created は 1 回', async () => {
-  const results = await Promise.all(
-    Array.from({ length: 8 }, (_, i) => post({ action: 'reopenStart', recordId: A, actor: `A${i}` })),
-  );
-  assert.ok(results.every((r) => r.statusCode === 200));
-  assert.equal(results.filter((r) => r.body.created === true).length, 1);
-  const isos = new Set(results.map((r) => r.body.reopenStart.startsAtIso));
-  assert.equal(isos.size, 1);
+test('並行 8 要求でも開始は 1 回だけ（排他が効く）', async () => {
+  const results = await Promise.all(Array.from({ length: 8 }, () => launch()));
+  const started = results.filter((r) => r.statusCode === 200 && r.body.startWritten === true);
+  assert.equal(started.length, 1, '開始日時を書いたのは 1 本だけ');
+  // 競合した実行は「進行中」で断られる（副作用ゼロ）か、冪等な成功のいずれか
+  for (const r of results) {
+    if (r.statusCode === 200) continue;
+    assert.equal(r.statusCode, 503);
+    assert.equal(r.body.sideEffects, 'none');
+  }
+  const isos = new Set(results.filter((r) => r.statusCode === 200)
+    .map((r) => r.body.reopenStart.startsAtIso));
+  assert.equal(isos.size, 1, '成功した応答はすべて同じ開始日時');
   assert.equal([...isos][0], stored(A).startsAt);
+  assert.ok(db.writes.length <= 1, '販売再開の PATCH も 1 回まで');
 });
 
-test('保存先が使えないときは 503（開始したと言わない・副作用ゼロ）', async () => {
+// ── 途中成功と復旧 ──────────────────────────────────────────
+test('Airtable が落ちたら途中成功として返し、再送で復旧できる', async () => {
+  db.patchFails = true;
+  const bad = await launch();
+
+  assert.equal(bad.statusCode, 502);
+  assert.equal(bad.body.ok, false, '成功と言わない');
+  assert.equal(bad.body.startWritten, true);
+  assert.equal(bad.body.saleResumed, false);
+  assert.equal(bad.body.sideEffects, 'reopen_start_only', '途中成功を曖昧にしない');
+  assert.equal(bad.body.launch.state, LAUNCH_STATE.INCOMPLETE);
+  assert.match(bad.body.note, /販売の再開に失敗/);
+  assert.equal(paused(A), true, '販売は停止したまま（お金の経路は閉じている）');
+  const saved = stored(A).startsAt;
+
+  // 復旧: 同じボタンをもう一度
+  db.patchFails = false;
+  const fixed = await launch();
+  assert.equal(fixed.statusCode, 200);
+  assert.equal(fixed.body.startWritten, false, '開始日時は書き直さない');
+  assert.equal(fixed.body.saleResumed, true, '販売だけ再開する');
+  assert.equal(fixed.body.sideEffects, 'sale_resume_only');
+  assert.equal(stored(A).startsAt, saved, '開始日時は不変');
+  assert.equal(paused(A), false);
+  assert.equal(fixed.body.launch.state, LAUNCH_STATE.LIVE);
+});
+
+test('Redis が落ちたら何も書かない（Airtable も触らない）', async () => {
   redis = makeRedis({ down: true });
-  const res = await post({ action: 'reopenStart', recordId: A, actor: 'MK' });
+  const res = await launch();
   assert.equal(res.statusCode, 503);
-  assert.equal(res.body.ok, false);
-  assert.equal(res.body.started, false);
-  assert.equal(res.body.code, 'reopen_store_unavailable');
   assert.equal(res.body.sideEffects, 'none');
+  assert.deepEqual(db.writes, [], 'Airtable を触っていない');
+  assert.equal(paused(A), true, '販売は停止したまま');
+});
+
+test('販売停止フィールドが未有効なら開始日時も書かない（片側状態を作らない）', async () => {
+  delete process.env.PREMIUM_PLUS_SALE_PAUSE_READY;
+  const res = await launch();
+  assert.equal(res.statusCode, 503);
+  assert.equal(res.body.code, 'sale_pause_not_ready');
+  assert.equal(res.body.sideEffects, 'none');
+  assert.equal(redis.member(A), undefined, '開始日時を書いていない');
   assert.deepEqual(db.writes, []);
+});
 
-  // 読めないときは「未開始」と言わない
-  const st = await post({ action: 'reopenStatus', recordId: A });
-  assert.equal(st.body.reopenStart.state, 'unknown');
-  assert.equal(st.body.reopenStart.startable, false);
+// ── 開始後の安全スイッチ ────────────────────────────────────
+test('開始済み会員を後から販売一時停止でき、再開しても開始日時は変わらない', async () => {
+  await launch();
+  const saved = stored(A).startsAt;
 
-  // 一覧でも「全員未開始」に丸めない（件数も出さない）
+  // 緊急停止（独立した安全スイッチ）
+  const stop = await post({ action: 'setSalePause', recordId: A, paused: true, reason: '緊急', actor: 'MK' });
+  assert.equal(stop.statusCode, 200);
+  assert.equal(paused(A), true);
+  assert.equal(stored(A).startsAt, saved, '停止しても開始日時は変わらない');
+
+  // この状態で「再募集を開始」は**断られる**（緊急停止を勝手に解除しない）
+  const denied = await launch();
+  assert.equal(denied.statusCode, 409);
+  assert.equal(denied.body.code, 'reopen_deliberately_paused');
+  assert.equal(denied.body.sideEffects, 'none');
+  assert.equal(paused(A), true, '解除されていない');
+
+  // 明示的な「販売を再開する」でだけ戻せる
+  const resume = await post({ action: 'setSalePause', recordId: A, paused: false, actor: 'MK' });
+  assert.equal(resume.statusCode, 200);
+  assert.equal(paused(A), false);
+  assert.equal(stored(A).startsAt, saved, '再開しても開始日時は変わらない');
+});
+
+// ── 直叩き・入力検証 ────────────────────────────────────────
+test('secret 無し / 不正 recordId は止まる（URL 直打ち・API 直呼び）', async () => {
+  for (const secret of ['', 'wrong']) {
+    const res = await post({ action: 'reopenStart', recordId: A, email: A_MAIL, actor: 'MK' }, { secret });
+    assert.equal(res.statusCode, 403, `secret=${JSON.stringify(secret)}`);
+  }
+  for (const bad of [undefined, '', 'nope', 'recSHORT', 'rec../x']) {
+    const res = await post({ action: 'reopenStart', recordId: bad, actor: 'MK' });
+    assert.equal(res.statusCode, 400, String(bad));
+    assert.equal(res.body.sideEffects, 'none');
+  }
+  assert.equal(redis.hashes.size, 0, '1 件も書いていない');
+  assert.deepEqual(db.writes, []);
+});
+
+test('存在しない会員は 404（何も書かない）', async () => {
+  const res = await post({ action: 'reopenStart', recordId: 'recZZZZZZZZZZZZZZ', actor: 'MK' });
+  assert.equal(res.statusCode, 404);
+  assert.equal(res.body.sideEffects, 'none');
+  assert.equal(redis.hashes.size, 0);
+});
+
+// ── 一覧・個別検索の表示 ────────────────────────────────────
+test('一覧が会員ごとの状態と期限を返す（開始した人だけ確定）', async () => {
+  const before = await post({ action: 'list' });
+  assert.equal(rowOf(before, A).reopenLaunch.state, LAUNCH_STATE.NOT_STARTED);
+  assert.equal(rowOf(before, A).reopenLaunch.action.kind, 'start');
+  // 未開始 + 停止中では「販売を再開する」を出さない（主操作と並べない）
+  assert.equal(rowOf(before, A).reopenLaunch.action.showResumeSwitch, false);
+  assert.match(rowOf(before, A).reopenCouponExpiryText, /募集再開日から14日間/);
+
+  await launch(A);
+  const def = withReopenStart(stored(A).startsAt);
+  const after = await post({ action: 'list' });
+
+  assert.equal(rowOf(after, A).reopenLaunch.state, LAUNCH_STATE.LIVE);
+  assert.equal(rowOf(after, A).reopenLaunch.action.kind, 'none');
+  assert.equal(rowOf(after, A).reopenLaunch.action.showPauseSwitch, true, '緊急停止は残す');
+  assert.equal(rowOf(after, A).reopenCouponExpiryText, describeCouponExpiry(def));
+  assert.equal(rowOf(after, A).salePaused, false);
+  // B は未開始・停止中のまま
+  assert.equal(rowOf(after, B).reopenLaunch.state, LAUNCH_STATE.NOT_STARTED);
+  assert.equal(rowOf(after, B).salePaused, true);
+  assert.match(rowOf(after, B).reopenCouponExpiryText, /募集再開日から14日間/);
+  assert.equal(after.body.counts.reopenStarted, 1);
+  assert.equal(after.body.counts.reopenIncomplete, 0);
+
+  // 個別検索でも同じ
+  const look = await post({ action: 'lookup', query: A_MAIL });
+  assert.equal(rowOf(look, A).reopenLaunch.state, LAUNCH_STATE.LIVE);
+});
+
+test('途中成功の会員は一覧で「販売再開が未完了」として数えられる', async () => {
+  db.patchFails = true;
+  await launch(A);
+  db.patchFails = false;
+  const list = await post({ action: 'list' });
+  assert.equal(rowOf(list, A).reopenLaunch.state, LAUNCH_STATE.INCOMPLETE);
+  assert.equal(rowOf(list, A).reopenLaunch.action.kind, 'repair');
+  assert.equal(list.body.counts.reopenIncomplete, 1);
+});
+
+test('read 不能時は unknown で、操作を出さない（fail closed）', async () => {
+  redis = makeRedis({ down: true });
   const list = await post({ action: 'list' });
   assert.equal(list.body.reopenStarts.available, false);
-  assert.equal(list.body.counts.reopenStarted, null);
-  assert.equal(rowOf(list, A).reopenStart.state, 'unknown');
-});
-
-test('一覧・個別検索の期限表示が会員ごとにサーバー実効状態と一致する', async () => {
-  const before = await post({ action: 'list' });
-  assert.match(rowOf(before, A).reopenCouponExpiryText, /募集再開日から14日間/);
-  assert.match(rowOf(before, B).reopenCouponExpiryText, /募集再開日から14日間/);
-
-  await post({ action: 'reopenStart', recordId: A, email: A_MAIL, actor: 'MK' });
-  const defA = withReopenStart(stored(A).startsAt);
-
-  const after = await post({ action: 'list' });
-  assert.equal(rowOf(after, A).reopenCouponExpiryText, describeCouponExpiry(defA));
-  assert.match(rowOf(after, A).reopenCouponExpiryText, /まで$/);
-  // B は未開始のまま＝未確定表示（A の期限が漏れない）
-  assert.match(rowOf(after, B).reopenCouponExpiryText, /募集再開日から14日間/);
-  assert.equal(rowOf(after, A).reopenStart.expiresAtIso, defA.terms.expiresAt);
-
-  // 個別検索でも同じ値
-  const look = await post({ action: 'lookup', query: A_MAIL });
-  assert.equal(rowOf(look, A).reopenCouponExpiryText, rowOf(after, A).reopenCouponExpiryText);
-  assert.equal(look.body.reopenStarts.available, true);
-
-  assert.deepEqual(db.writes, []);
-});
-
-test('再募集を開始しても販売の一時停止・資格・プラン・決済は変わらない', async () => {
-  // B は停止中。開始しても停止は解除されない（購入可否は既存判定のまま）
-  const snapshot = JSON.stringify(db.customers[B]);
-  await post({ action: 'reopenStart', recordId: B, email: B_MAIL, actor: 'MK' });
-  assert.equal(JSON.stringify(db.customers[B]), snapshot);
-
-  const list = await post({ action: 'list' });
-  const b = rowOf(list, B);
-  assert.equal(b.reopenStart.state, 'started', '開始はされている');
-  assert.equal(b.salePaused, true, 'それでも一時停止中のまま');
-  assert.equal(b.eligibility, 'eligible', '資格も変わらない');
-  assert.deepEqual(db.writes, []);
+  assert.equal(list.body.counts.reopenStarted, null, '0 名と言わない');
+  assert.equal(list.body.counts.reopenIncomplete, null);
+  assert.equal(rowOf(list, A).reopenLaunch.state, LAUNCH_STATE.UNKNOWN);
+  assert.equal(rowOf(list, A).reopenLaunch.action.kind, 'none');
+  assert.equal(rowOf(list, A).reopenLaunch.action.showResumeSwitch, false);
 });

@@ -151,6 +151,16 @@ import {
   createReopenStartStore,
   REOPEN_ADMIN_TIMEOUT_MS,
 } from '../../src/lib/premiumPlus/premiumPlusReopenStartStore.js';
+// 「販売再開 ＋ 再募集開始」を 1 つの業務操作として扱う単一源（純粋）
+import {
+  classifyLaunch,
+  planReopenLaunch,
+  describeLaunchAction,
+  computeReopenLockId,
+  computeReopenOperationId,
+  LAUNCH_STATE,
+  LAUNCH_REJECT,
+} from '../../src/lib/premiumPlus/premiumPlusReopenLaunch.js';
 
 const CUSTOMERS_TABLE = process.env.AIRTABLE_CUSTOMERS_TABLE || 'Customers';
 /** 配信履歴。**名指しでしか引かない**（14,000 行超あり全件走査は不可能）。 */
@@ -206,8 +216,9 @@ exports.handler = async (event) => {
     if (action === 'couponHistoryRepair') return await handleCouponHistoryRepair({ KEY, BASE, now, req });
     // **会員ごとの**再募集の開始状態を読むだけ（write なし）
     if (action === 'reopenStatus') return await handleReopenStatus({ req });
-    // **会員ごとに**再募集を開始する（**サーバー時刻で first-write-wins**。上書き経路は持たない）
-    if (action === 'reopenStart') return await handleReopenStart({ now, req });
+    // **会員ごとに**「販売再開 ＋ 再募集期間の開始」を 1 操作で行う
+    // （**サーバー時刻で first-write-wins**。上書き経路は持たない）
+    if (action === 'reopenStart') return await handleReopenStart({ KEY, BASE, now, req });
     return json(400, { error: `未知の action: ${action}` });
   } catch (e) {
     console.error('❌ [premium-plus-eligibility]', e.message);
@@ -1177,10 +1188,26 @@ async function readReopenStates(rows) {
  */
 async function attachReopenStart(rows) {
   const st = await readReopenStates(rows);
+  const saleWritable = isSalePauseEnabled(process.env);
   for (const r of rows) {
     r.reopenStart = st.statusOf(r);
     // ⚠️ **その会員の**開始日時から導出する（未開始なら「募集再開日から14日間」のまま）
     r.reopenCouponExpiryText = describeCouponExpiry(st.defOf(r));
+    // 「再募集 × 販売」を 1 つの状態として出す（運営者が主操作を迷わないため）。
+    // ⚠️ 販売状態は行が既に持っている値をそのまま使う（別経路で読み直さない）。
+    const view = classifyLaunch({
+      reopen: { available: st.available, startsAtIso: r.reopenStart.startsAtIso, reason: st.reason },
+      fields: {
+        [PP_SALE_PAUSE_FIELDS.PAUSED]: r.salePaused === true,
+        [PP_SALE_PAUSE_FIELDS.UPDATED_AT]: r.salePausedAt || '',
+      },
+    });
+    r.reopenLaunch = {
+      ...view,
+      action: describeLaunchAction({
+        view, memberLabel: r.email || r.name || '', salePauseWritable: saleWritable,
+      }),
+    };
   }
   return {
     available: st.available,
@@ -1210,76 +1237,241 @@ async function handleReopenStatus({ req }) {
 }
 
 /**
- * action='reopenStart' — **その会員 1 人の**再募集を開始する。
+ * action='reopenStart' — **その会員 1 人の「販売再開 ＋ 再募集期間の開始」**（1 業務操作）。
  *
- * ## 何を書くか
+ * ## 何を書くか（2 か所・順序が意味を持つ）
  *
- * **Upstash Redis の HASH の、その会員のフィールド 1 つだけ**
- * （鍵名の正本は `premiumPlusReopenStartStore.js`）。
- * Airtable（Customers / PromotionalOffers / CouponOperationHistory）へは**一切書かない**。
- * 資格・停止・プラン・決済・PHASE・route・通常価格・クーポン保有は 1 バイトも変わらない。
- * **他会員のフィールドにも触れない。**
+ * | 順 | 保存先 | 内容 | 冪等性 |
+ * |---|---|---|---|
+ * | ④ | Upstash Redis | その会員の `reopenStartsAt` | `HSETNX`（**再送しても変わらない**）|
+ * | ⑥ | Airtable Customers | `PremiumPlusSalePaused=false`（+ 監査 3 列）| 既に false なら **PATCH しない** |
+ *
+ * **Redis を先に書く。** ⑥ が落ちても残るのは「開始済み・販売は停止したまま」＝
+ * **お金の経路は閉じたまま**（fail closed）で、同じボタンの再送で復旧できる。
+ * 逆順にすると「販売だけ開いて再募集期間が始まっていない」という悪い側に倒れる。
+ *
+ * ## 何を書かないか
+ *
+ * `PremiumPlusEligibility` / `PremiumPlusReleaseOverride` / `PremiumPlusEligibleAt` /
+ * PHASE / route / プラン / 会員権 / 決済 / クーポン保有（3 列）は **1 バイトも変えない**。
+ * **他会員のレコードにも触れない。**
  *
  * ## 時刻はサーバーが決める
  *
- * `reopenStartsAt` は **この Function が見ている現在時刻**。
- * ⚠️ 要求 body に入っている時刻（開始日時・現在時刻・期限）は**一切読まない**
- *    （読めば、古いタブ・改ざん要求で任意の開始日時＝任意の期限を作れてしまう）。
- *    この関数が受け取るのは `recordId`（対象会員）と `actor`（操作者名）だけ。
+ * ⚠️ 要求 body の時刻（開始日時・現在時刻・期限）は**一切読まない**。
+ *    受け取るのは `recordId`（対象会員）と `actor`（操作者名）だけ。
  *
- * ## これは「売れるようにする」操作ではない
+ * ## 前提が 1 つでも確認できなければ**何も書かない**
  *
- * 購入可否は従来どおり **販売の一時停止 / 販売資格 / PHASE / route** が決める。
- * 開始済みでも `salePaused` の会員は購入できない。
+ * gate（Plus フィールド / 販売停止フィールド）・Airtable の read・Redis の read・排他。
+ * 特に「停止中なのに販売停止フィールドが未有効」なら、**開始日時も書かない**
+ * （開始だけ確定して売れない片側状態を作らない）。
  *
- * ## 二重押下・並行要求
+ * ## 緊急停止は勝手に解除しない
  *
- * `HSETNX` が原子的に 1 本だけ通す。2 本目以降は**上書きせず**
- * 既存の開始日時をそのまま返す（`created:false` / `alreadyStarted:true`）。
+ * 開始後に運営者が止めた会員（`pausedAt >= startsAt`、または停止時刻が不明）は
+ * **409 で断る**。解除は独立した「販売を再開する」で明示的に行わせる。
  */
-async function handleReopenStart({ now, req }) {
+async function handleReopenStart({ KEY, BASE, now, req }) {
   const recordId = String((req && req.recordId) || '').trim();
   if (!isSafeCustomerRecordId(recordId)) {
     return json(400, {
-      error: '会員の指定が不正です', code: REOPEN_START_REJECT.INVALID_MEMBER, sideEffects: 'none',
+      error: '会員の指定が不正です', code: LAUNCH_REJECT.INVALID_MEMBER, sideEffects: 'none',
     });
   }
+  const actor = String((req && req.actor) || 'admin');
+  const memberLabel = String((req && req.email) || '');
   const store = createReopenStartStore({ redisCmd: makeRedisCmd(process.env) });
-  // ⚠️ 時刻は **now（サーバー）**。req から時刻を受け取る口を作らない
-  const out = await store.start({ recordId, nowMs: now, actor: req && req.actor });
 
-  if (out.ok !== true) {
-    // 保存できていないのに「開始した」と言わない（fail closed）
+  /** Airtable の 1 レコードを読む（read できなければ **null**＝何も書かない） */
+  const readMember = async () => {
+    const res = await fetch(`https://api.airtable.com/v0/${BASE}/${CUSTOMERS_TABLE}/${recordId}`, {
+      headers: airtableHeaders(KEY),
+    });
+    if (!res.ok) return null;
+    return (await res.json()).fields || {};
+  };
+
+  const gates = {
+    plusFieldsReady: isPlusFieldsEnabled(process.env),
+    salePauseWritable: isSalePauseEnabled(process.env),
+  };
+
+  // ① 前提の確認（両方の read）。読めなければ **何も書かない**
+  const fields0 = await readMember();
+  if (!fields0) {
+    return json(404, { error: 'Record not found', code: LAUNCH_REJECT.UNAVAILABLE, sideEffects: 'none' });
+  }
+  const reopen0 = await store.read({ recordId, timeoutMs: REOPEN_ADMIN_TIMEOUT_MS });
+  const plan0 = planReopenLaunch({ reopen: reopen0, fields: fields0, recordId, ...gates });
+  if (!plan0.ok) return denyLaunch(plan0, recordId);
+
+  // ② 排他（取れなければ書かない）。⑨ で必ず解放する
+  const entityId = computeReopenLockId(recordId);
+  const lock = createCouponOperationLock({ redisCmd: makeRedisCmd(process.env) });
+  const got = await lock.acquire({ entityId });
+  if (got.status !== LOCK_RESULT.ACQUIRED) {
     return json(503, {
       ok: false,
-      started: false,
-      recordId,
-      code: REOPEN_START_REJECT.UNAVAILABLE,
-      reason: out.reason,
-      error: 'この会員の再募集の開始日時を保存できませんでした。保存先（Upstash Redis）へ'
-        + '到達できないため、開始したことにはしていません。時間をおいて再実行してください。',
+      code: got.status === LOCK_RESULT.LOST ? 'reopen_operation_in_progress' : 'reopen_lock_unavailable',
+      error: got.status === LOCK_RESULT.LOST ? LOCK_REJECT_TEXT.lost : LOCK_REJECT_TEXT.unavailable,
       sideEffects: 'none',
     });
   }
 
-  // 書けた / 既に開始済み。どちらでも**現在の確定値**を返す
-  const status = resolveReopenStatus({
-    available: out.startsAtIso ? true : false,
-    startsAtIso: out.startsAtIso,
-    reason: out.reason,
-    memberLabel: String((req && req.email) || ''),
+  let startWritten = false;
+  let saleResumed = false;
+  try {
+    // ③ lock 後に**読み直して**判断し直す（TOCTOU を閉じる）
+    const fields = await readMember();
+    if (!fields) {
+      return json(404, { error: 'Record not found', code: LAUNCH_REJECT.UNAVAILABLE, sideEffects: 'none' });
+    }
+    const reopen = await store.read({ recordId, timeoutMs: REOPEN_ADMIN_TIMEOUT_MS });
+    const plan = planReopenLaunch({ reopen, fields, recordId, ...gates });
+    if (!plan.ok) return denyLaunch(plan, recordId);
+
+    // 既に開始済みで販売中 = 何もしない（冪等な成功）
+    if (plan.noop) {
+      return await launchResult({
+        KEY, BASE, recordId, store, memberLabel, gates,
+        startWritten: false, saleResumed: false, created: false, alreadyStarted: true,
+        note: '既にこの会員の再募集は開始済みで、販売も開いています（変更していません）。',
+      });
+    }
+
+    // ④ Redis（HSETNX）。**書く直前に排他を検証する**
+    if (plan.writeStart) {
+      const held = await lock.verify({ entityId, token: got.token });
+      if (!held.ok) {
+        return json(503, {
+          ok: false, code: 'reopen_operation_in_progress',
+          error: LOCK_REJECT_TEXT.lost, sideEffects: 'none',
+        });
+      }
+      const out = await store.start({ recordId, nowMs: now, actor });
+      if (out.ok !== true) {
+        // 保存できていないのに「開始した」と言わない（この時点で副作用ゼロ）
+        return json(503, {
+          ok: false, started: false, recordId,
+          code: 'reopen_store_unavailable', reason: out.reason,
+          error: 'この会員の再募集の開始日時を保存できませんでした。'
+            + '何も変更していません。時間をおいて再実行してください。',
+          sideEffects: 'none',
+        });
+      }
+      startWritten = out.created === true;
+    }
+
+    // ⑥ Airtable（販売停止の解除）。**必要なときだけ** PATCH する
+    if (plan.resumeSale) {
+      const held = await lock.verify({ entityId, token: got.token });
+      if (!held.ok) {
+        // 開始日時は書けている可能性がある。**曖昧にせず**そのまま返す
+        return await launchResult({
+          KEY, BASE, recordId, store, memberLabel, gates,
+          startWritten, saleResumed: false, created: startWritten, alreadyStarted: !plan.writeStart,
+          status: 503, ok: false, code: 'reopen_operation_in_progress',
+          note: '別の実行と競合したため、販売の再開は行っていません。'
+            + '画面を再読込して状態を確認してください。',
+        });
+      }
+      const built = buildSalePauseFields({
+        paused: false,
+        current: fields[PP_SALE_PAUSE_FIELDS.PAUSED],
+        reason: '',
+        // 監査に「どの操作で再開したか」を残す（冪等キーは再送で同じ値）
+        actor: `${actor} / reopen-start op=${computeReopenOperationId(recordId)}`,
+        now: new Date(now),
+        enabled: true,
+      });
+      // 既に false なら PATCH しない（監査日時を無意味に更新しない）
+      if (built && built.changed) {
+        if (!assertOnlyPlusFields(built.fields)) {
+          return json(500, { error: 'field allow-list violation', sideEffects: startWritten ? 'reopen_start_only' : 'none' });
+        }
+        const res = await fetch(`https://api.airtable.com/v0/${BASE}/${CUSTOMERS_TABLE}/${recordId}`, {
+          method: 'PATCH',
+          headers: { ...airtableHeaders(KEY), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fields: built.fields, typecast: true }),
+        });
+        if (!res.ok) {
+          console.error('❌ [premium-plus-eligibility] 再募集開始: 販売再開 PATCH failed:', res.status);
+          // **途中成功を曖昧にしない**。開始日時は確定・販売は停止のまま
+          return await launchResult({
+            KEY, BASE, recordId, store, memberLabel, gates,
+            startWritten, saleResumed: false, created: startWritten, alreadyStarted: !plan.writeStart,
+            status: 502, ok: false, code: 'sale_resume_failed',
+            note: '再募集の開始日時は確定しましたが、**販売の再開に失敗しました**。'
+              + 'この会員はまだ購入できません。もう一度同じボタンを実行すると、'
+              + '開始日時はそのままで販売だけ再開します。',
+          });
+        }
+        saleResumed = true;
+      }
+    }
+
+    return await launchResult({
+      KEY, BASE, recordId, store, memberLabel, gates,
+      startWritten, saleResumed, created: startWritten, alreadyStarted: !plan.writeStart,
+      note: '',
+    });
+  } finally {
+    // ⑨ token 一致時のみ解放（crash 時は TTL で回復）
+    await lock.release({ entityId, token: got.token });
+  }
+}
+
+/** 計画段階で断ったときの応答（**副作用ゼロ**であることを明示する） */
+function denyLaunch(plan, recordId) {
+  const status = plan.reason === LAUNCH_REJECT.INVALID_MEMBER ? 400
+    : (plan.reason === LAUNCH_REJECT.DELIBERATELY_PAUSED ? 409 : 503);
+  return json(status, {
+    ok: false, recordId, code: plan.reason, state: plan.state,
+    error: plan.message, sideEffects: 'none',
   });
-  return json(200, {
-    ok: true,
-    started: true,
+}
+
+/**
+ * 実行後の**実状態を読み直して**返す（送った値が通った前提にしない）。
+ * `startWritten` / `saleResumed` を**別々に**返し、途中成功を曖昧にしない。
+ */
+async function launchResult({
+  KEY, BASE, recordId, store, memberLabel, gates,
+  startWritten, saleResumed, created, alreadyStarted, note, status = 200, ok = true, code,
+}) {
+  const res = await fetch(`https://api.airtable.com/v0/${BASE}/${CUSTOMERS_TABLE}/${recordId}`, {
+    headers: airtableHeaders(KEY),
+  });
+  const fields = res.ok ? ((await res.json()).fields || {}) : null;
+  const reopen = await store.read({ recordId, timeoutMs: REOPEN_ADMIN_TIMEOUT_MS });
+  const view = classifyLaunch({ reopen, fields });
+  const sideEffects = startWritten && saleResumed ? 'reopen_start_and_sale_resume'
+    : (startWritten ? 'reopen_start_only' : (saleResumed ? 'sale_resume_only' : 'none'));
+  return json(status, {
+    ok,
+    ...(code ? { code } : {}),
     recordId,
-    /** この呼び出しが実際に書いたか（false = 既に開始済みで**上書きしていない**） */
-    created: out.created === true,
-    alreadyStarted: out.alreadyStarted === true,
-    reopenStart: status,
-    startedBy: out.actor || '',
-    // 書いたのは Redis のその会員のフィールドだけ。Airtable には触れていない
-    sideEffects: out.created === true ? 'reopen_start_only' : 'none',
+    /** この呼び出しが**実際に**開始日時を書いたか（false = 既にあったので書いていない）*/
+    startWritten: startWritten === true,
+    /** この呼び出しが**実際に**販売停止を解除したか */
+    saleResumed: saleResumed === true,
+    created: created === true,
+    alreadyStarted: alreadyStarted === true,
+    reopenStart: resolveReopenStatus({
+      available: reopen.available, startsAtIso: reopen.startsAtIso, reason: reopen.reason,
+      memberLabel,
+    }),
+    launch: {
+      ...view,
+      action: describeLaunchAction({
+        view, memberLabel, salePauseWritable: gates.salePauseWritable,
+      }),
+    },
+    /** 資格・段階公開・会員権・決済は触っていない（画面の履歴に残す）*/
+    eligibilityUnchanged: true,
+    note: note || '',
+    sideEffects,
   });
 }
 
@@ -1383,6 +1575,13 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
       // 0 と返すと「誰も開始していない」と読まれる（確認できないことを 0 件にしない）。
       reopenStarted: reopen.available
         ? rows.filter((r) => r.reopenStart && r.reopenStart.state === 'started').length
+        : null,
+      /**
+       * **販売再開が未完了**（開始日時は確定したが停止解除が終わっていない）人数。
+       * ⚠️ 放置すると「期限だけ進んで買えない」会員になるので、運営者に必ず見せる。
+       */
+      reopenIncomplete: reopen.available
+        ? rows.filter((r) => r.reopenLaunch && r.reopenLaunch.state === LAUNCH_STATE.INCOMPLETE).length
         : null,
       // クーポンの**利用状態**の内訳。⚠️ 台帳を読めていないときは数えない（null）。
       // 0 と返すと「予約 0 件」と読まれる（確認できないことを 0 件にしない）。

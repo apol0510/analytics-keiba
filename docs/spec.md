@@ -593,6 +593,7 @@ PHASE 4 の会員に実際に見えるのは:
 |---|---|
 | 単位 | **会員単位**。admin で対象顧客を選んで開始する |
 | 操作 | `/admin/premium-plus-eligibility/` の**各顧客詳細**「再募集（この会員）」 |
+| 粒度 | **1 操作**。「販売再開」と「再募集期間の開始」を**同時に**行う（2 段階運用は廃止）|
 | 値 | **押下時のサーバー時刻**が、その会員の `reopenStartsAt` |
 | client 指定日時 | **信用しない**（要求 body の時刻は 1 つも読まない）|
 | 期限 | その会員の `reopenStartsAt + 14 日` を既存の単一源から導出 |
@@ -601,13 +602,38 @@ PHASE 4 の会員に実際に見えるのは:
 | 他会員 | **影響しない** |
 | 保存先 | Upstash Redis の HASH `ak:pp:reopen:v1:members`（field = recordId）。**本番 schema を増やさない** |
 
+### 「販売再開 + 再募集期間開始」は 1 つの業務操作（2026-08-22 確定）
+
+> **Superseded**: 「再募集の開始は販売を開ける操作ではない」「販売再開と再募集開始は
+> 運営上別操作」という **2026-08-22 午前までの記述は無効**。
+
+「この会員の再募集を開始する」の 1 操作で、同時に:
+
+1. その会員の **`PremiumPlusSalePaused` を解除**する
+2. その会員の **`reopenStartsAt` を押下時のサーバー時刻で初回確定**する
+3. その時刻から **14 日間**のクーポン期限が開始する
+
+**「販売を再開する」を通常の再募集フローで単独に押させない。**
+ただし開始後の緊急停止用に「**販売を一時停止する**」は**独立した安全スイッチ**として残す
+（停止しても開始日時と期限は変わらない）。緊急停止の解除だけは明示的な
+「販売を再開する」で行い、**再募集の開始操作では自動解除しない**。
+
+#### 2 つの保存先にまたがる（順序と失敗の意味を固定）
+
+`reopenStartsAt` は Redis、`salePaused` は Airtable。分散トランザクションは無いので:
+
+- **前提（gate / 両方の read / 排他）が 1 つでも欠けたら何も書かない**
+- **Redis → Airtable の順**（⑥ が落ちても「販売は閉じたまま」＝ fail closed に倒れる）
+- 途中成功は `startWritten` / `saleResumed` を**別々に**返し、`incomplete` として
+  admin に出す。復旧は**同じボタンの再送**（開始日時は変わらない）
+- 「途中成功」と「開始後の緊急停止」は**停止時刻**で区別する
+  （`pausedAt < startsAt` なら途中成功。判別できないときは自動再開しない）
+
 ### 別軸であるもの（開始しても 1 バイトも変えない）
 
 `PremiumPlusEligibility` / `PremiumPlusReleaseOverride` / PHASE / route /
-`PremiumPlusSalePaused` / 販売 CTA / クーポン保有（3 列）/ プラン / 決済。
-
-⚠️ **再募集の開始は「売れるようにする」操作ではない。** 開始済みでも
-`salePaused` の会員は従来どおり購入できない（購入可否は既存判定のまま）。
+販売 CTA / クーポン保有（3 列）/ プラン / 会員権 / 決済。
+（`PremiumPlusSalePaused` は上記のとおり**この操作が解除する**唯一の例外）
 
 ### 参照の単一源
 
@@ -621,11 +647,14 @@ URL 直打ち・API 直呼び・古いタブでも、サーバーが recordId �
 
 - **サイト全体で 1 個の開始日時を復活させない**（旧 `ak:pp:reopen:v1:start` は廃止済み・本番未使用）
 - admin に**一括開始ボタン・取消ボタンを置かない**（rollback は Upstash の `HDEL` のみ）
+- **「販売を再開する」と「再募集を開始する」を並べて出さない**（主操作は状態ごとに 1 つだけ）
+- 緊急停止（開始後の停止）を**再募集の開始操作で自動解除しない**
 - 期限日数（14）を `premiumPlusReopenCoupon.js` 以外に書かない
 - 「読めない」を「未開始」に丸めない（`unknown` として理由を出す）
 
-単一源: `src/lib/premiumPlus/premiumPlusReopenStart.js`（判定・純粋）/
-`premiumPlusReopenStartStore.js`（保存・Redis）。
+単一源: `src/lib/premiumPlus/premiumPlusReopenStart.js`（開始日時の判定・純粋）/
+`premiumPlusReopenStartStore.js`（保存・Redis）/
+**`premiumPlusReopenLaunch.js`（1 操作の計画・状態分類・admin の主操作決定・純粋）**。
 詳細は `astro-site/docs/PREMIUM_PLUS_STAGED_RELEASE.md`、判断の記録は `docs/decisions.md` §2026-08-22。
 
 ## 見込み客プール（外部リスト・2026-08-06）
