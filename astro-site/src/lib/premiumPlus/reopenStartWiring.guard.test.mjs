@@ -25,6 +25,7 @@ const STORE_LIB = read('./premiumPlusReopenStartStore.js');
 const ADMIN_FN = read('../../../netlify/functions/premium-plus-eligibility.js');
 const BANK_FN = read('../../../netlify/functions/bank-transfer-application.js');
 const ADMIN_PAGE = read('../../pages/admin/premium-plus-eligibility.astro');
+const LAUNCH_LIB = read('./premiumPlusReopenLaunch.js');
 
 /** クーポンの条件・期限を顧客へ出す面（**全部ここから、本人の recordId で読む**） */
 const SURFACES = Object.freeze([
@@ -66,7 +67,7 @@ test('admin も同じ単一源を読む（画面用に別経路を作らない�
 
 test('開始日時を client から受け取らない（サーバー時刻だけ）', () => {
   // handler は now（サーバー）を渡している
-  assert.match(ADMIN_FN, /store\.start\(\{\s*recordId,\s*nowMs:\s*now/);
+  assert.match(ADMIN_FN, /store\.start\(\{ recordId, nowMs: now/);
   // client の申告時刻を読む口を作らない
   for (const bad of [
     /req\.startsAt/, /req\.reopenStartsAt/, /req\.expiresAt/, /req\.now\b/,
@@ -152,25 +153,73 @@ test('保存先の鍵名は 1 か所（他のファイルで書き写さない�
 });
 
 test('確認ダイアログの文言はサーバーが配る（対象会員入り・画面で作り直さない）', () => {
-  // 文言の実体は判定モジュールにだけある
-  assert.match(START_LIB, /export function buildReopenStartConfirmText/);
-  assert.match(START_LIB, /confirmText: buildReopenStartConfirmText\(\{ memberLabel \}\)/);
+  // 文言の実体は判断モジュールにだけある（1 操作の内容を含む）
+  assert.match(LAUNCH_LIB, /export function buildLaunchConfirmText/);
+  assert.match(LAUNCH_LIB, /confirmText: buildLaunchConfirmText\(/);
   // 画面はサーバーが返した文字列を使う（受け取れていなければ押させない）
-  assert.match(ADMIN_PAGE, /rs\.confirmText/);
-  assert.match(ADMIN_PAGE, /if \(!rs\.confirmText\)/);
+  assert.match(ADMIN_PAGE, /act\.confirmText/);
+  assert.match(ADMIN_PAGE, /if \(!act\.confirmText\)/);
   assert.ok(!/再募集を開始します。/.test(ADMIN_PAGE), '確認文言を画面側で組み立てている');
   // ⚠️ 判定モジュールを client bundle へ入れない（共通クーポン基盤が node:crypto に依存する）
   const clientImports = ADMIN_PAGE.slice(
     ADMIN_PAGE.indexOf('<script>'), ADMIN_PAGE.indexOf('<script is:inline>'),
   );
   assert.ok(!/premiumPlusReopenStart/.test(clientImports), 'client へ import している');
-  // ボタンは startable のときだけ出す
-  assert.match(ADMIN_PAGE, /rs\.startable === true/);
+  // ボタンはサーバーが「出してよい」と言ったときだけ出す
+  assert.match(ADMIN_PAGE, /act\.enabled !== true/);
+});
+
+test('「販売再開 ＋ 再募集開始」は 1 操作（順序と fail closed を構造で守る）', () => {
+  // 判断は純粋モジュールが持つ（Function 側で条件を書き直さない）
+  assert.match(ADMIN_FN, /planReopenLaunch\(/);
+  assert.match(ADMIN_FN, /classifyLaunch\(/);
+  assert.match(ADMIN_FN, /describeLaunchAction\(/);
+  // 販売停止の解除は既存の単一源だけを通す（生フィールドを直書きしない）
+  assert.match(ADMIN_FN, /buildSalePauseFields\(\{[\s\S]{0,80}paused: false/);
+  assert.ok(!/PP_SALE_PAUSE_FIELDS\.PAUSED\]: false/.test(ADMIN_FN), '販売停止フラグを直書きしている');
+  // ⚠️ Redis（開始日時）→ Airtable（販売再開）の順序。逆にすると
+  //    「販売だけ開いて再募集期間が始まっていない」側へ倒れる
+  const body = ADMIN_FN.slice(ADMIN_FN.indexOf('async function handleReopenStart'));
+  const iStart = body.indexOf('store.start(');
+  const iPatch = body.indexOf('buildSalePauseFields(');
+  assert.ok(iStart > 0 && iPatch > iStart, 'Redis より先に Airtable を書いている');
+  // 排他を取ってから書く（既存 primitive を再利用）
+  assert.match(ADMIN_FN, /createCouponOperationLock\(/);
+  assert.match(ADMIN_FN, /computeReopenLockId\(/);
+  const iLock = body.indexOf('lock.acquire(');
+  assert.ok(iLock > 0 && iLock < iStart, '排他の前に状態を書いている');
+  // 途中成功を曖昧にしない
+  assert.match(ADMIN_FN, /startWritten/);
+  assert.match(ADMIN_FN, /saleResumed/);
+  assert.match(ADMIN_FN, /'reopen_start_only'/);
+});
+
+test('緊急停止を勝手に解除しない / 停止できない環境では開始も書かない', () => {
+  assert.match(LAUNCH_LIB, /DELIBERATELY_PAUSED/);
+  assert.match(LAUNCH_LIB, /SALE_PAUSE_NOT_READY/);
+  // 「停止中なのに解除できない」なら開始も書かない（片側状態を作らない）
+  assert.match(LAUNCH_LIB, /if \(resumeSale && salePauseWritable !== true\) return deny/);
+  // 緊急停止と途中成功は**停止時刻**で分ける
+  assert.match(LAUNCH_LIB, /pausedMs < startMs/);
+});
+
+test('admin は状態ごとに主操作を 1 つだけ出す（販売再開と再募集開始を並べない）', () => {
+  // 販売スイッチの表示はサーバー判断（showPauseSwitch / showResumeSwitch）に従う
+  assert.match(ADMIN_PAGE, /psAction\.showResumeSwitch === true/);
+  assert.match(ADMIN_PAGE, /psAction\.showPauseSwitch === true/);
+  // 未開始 + 停止中でスイッチを出さない理由を必ず書く
+  assert.match(ADMIN_PAGE, /この会員の再募集を開始する」で、14日間の開始と同時に行います/);
+  // 再募集セクションの主操作は start / repair のどちらか 1 つ
+  assert.match(ADMIN_PAGE, /act\.kind === 'start' \|\| act\.kind === 'repair'/);
+  // 開始済み + 停止中は「再募集開始済み / 販売一時停止中」と明確に分けて出す
+  assert.match(ADMIN_PAGE, /再募集開始済み \/ 販売一時停止中/);
+  assert.match(ADMIN_PAGE, /再募集開始済み \/ 販売再開が未完了/);
 });
 
 test('判定モジュールは I/O を持たない（純粋のまま）', () => {
   for (const bad of [/\bfetch\(/, /@netlify\/blobs/, /UPSTASH/, /process\.env/]) {
     assert.ok(!bad.test(START_LIB), `純粋モジュールに I/O が入った: ${bad}`);
+    assert.ok(!bad.test(LAUNCH_LIB), `1 操作の判断モジュールに I/O が入った: ${bad}`);
   }
 });
 
