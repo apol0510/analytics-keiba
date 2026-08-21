@@ -46,26 +46,57 @@ function stub(fields) {
   };
 }
 
+/**
+ * Function の標準出力を stderr へ逃がす（Node 20 の node --test 対策）。
+ *
+ * Node 20 のテストランナーは、子プロセスの **標準出力** にテスト結果を枠付きで流し、
+ * 親がそれを v8 デシリアライズして読む（#proccessRawBuffer / FileTest.parseMessage）。
+ * そこへ被テストコードの生の出力が割り込むと枠がずれ、親が
+ * `Unable to deserialize cloned data due to invalid or unsupported version.` で落ちる。
+ *
+ * このファイルは premiumPlus のテスト 57 本の中で **唯一 Netlify Function を実行**し、
+ * その Function は 43 箇所で console 出力する（絵文字・日本語・複数行のオブジェクト）。
+ * そのため並列実行時にこのファイルだけが落ちていた（Node 20 で 60 回中 8 回 = 13.3%）。
+ * 単独実行では起きない。テスト自体は毎回すべて合格しており、壊れるのは結果の通信路だけ。
+ *
+ * ⚠️ 握り潰さないこと。stdout を避けて **stderr へ回すだけ**にする。
+ *    stderr は結果の通信路ではないので枠を壊さず、ログは親が診断として拾い直すため
+ *    **出力は 16 行のまま欠けない**（実測で修正前後とも 16 行）。
+ *
+ * 実測: Node 20 で 60 回中 0 回。Node 22 / 24 は元から 0 回。
+ *       CI の node-version を 22 以上へ上げればこの対処は不要になる。
+ */
+function routeStdoutToStderr() {
+  const saved = { log: console.log, info: console.info, debug: console.debug };
+  console.log = console.info = console.debug = (...args) => console.error(...args);
+  return () => Object.assign(console, saved);
+}
+
 async function post(body) {
-  globalThis.exports = {};
-  globalThis.module = { exports: globalThis.exports };
-  // ESM import + exports.handler の混在（Netlify の bundler と同じ扱い）
-  await import(`${FN}?t=${Math.random()}`);
-  const handler = globalThis.exports.handler;
-  const res = await handler({
-    httpMethod: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      fullName: 'テスト', email: 'synthetic@example.invalid',
-      transferDate: '2026-08-19', transferTime: '10:00',
-      transferName: 'テスト', productName: 'Premium Plus',
-      paymentCompletedConfirm: true,
-      ...body,
-    }),
-  }, {});
-  let parsed = {};
-  try { parsed = JSON.parse(res.body); } catch { parsed = {}; }
-  return { status: res.statusCode, body: parsed };
+  const restoreConsole = routeStdoutToStderr();
+  try {
+    globalThis.exports = {};
+    globalThis.module = { exports: globalThis.exports };
+    // ESM import + exports.handler の混在（Netlify の bundler と同じ扱い）
+    await import(`${FN}?t=${Math.random()}`);
+    const handler = globalThis.exports.handler;
+    const res = await handler({
+      httpMethod: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        fullName: 'テスト', email: 'synthetic@example.invalid',
+        transferDate: '2026-08-19', transferTime: '10:00',
+        transferName: 'テスト', productName: 'Premium Plus',
+        paymentCompletedConfirm: true,
+        ...body,
+      }),
+    }, {});
+    let parsed = {};
+    try { parsed = JSON.parse(res.body); } catch { parsed = {}; }
+    return { status: res.statusCode, body: parsed };
+  } finally {
+    restoreConsole();
+  }
 }
 
 beforeEach(() => {
