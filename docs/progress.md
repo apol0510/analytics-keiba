@@ -22,49 +22,58 @@
 | **共通クーポン基盤**（`src/lib/coupons/`・商品非依存）| ✅ **本番稼働**（#380）|
 | **`CouponOperationHistory`（append-only 監査履歴）** | ✅ **本番稼働**（gate `COUPON_HISTORY_TABLE_READY=1`）|
 | **利用予約 → 使用済みのライフサイクル**（既存 schema のみ）| ✅ 純粋ロジック実装済み。**予約 write は `reopenStartsAt` 未定のため fail closed** |
-| **再募集の開始操作**（admin ボタン → サーバー時刻で `reopenStartsAt` 確定 → 期限自動導出）| ✅ **実装・テスト完了 / Draft PR**（2026-08-21）。**本番ではまだ押していない** |
+| **再募集の開始操作**（サイト全体で 1 個）| ⛔ **廃止**（2026-08-22 仕様変更）。`91059921` で本番反映したが**ボタンは 1 度も押していない**ので実害なし |
+| **再募集の開始操作（会員ごと）**（admin の各顧客詳細 → サーバー時刻で**その会員の** `reopenStartsAt` 確定 → その会員の期限を導出）| ✅ **実装・テスト完了 / Draft PR**（2026-08-22）。**本番ではまだ押していない** |
 | **redeem の部分成功の検出・収束**（4 状態 + 修復手順の admin 表示）| ✅ 実装・テスト済み。**confirm への配線は未了** |
 
-## ⛳ 本件の未完了（**これだけ**・2026-08-21 時点）
+## ⛳ 本件の未完了（**これだけ**・2026-08-22 時点）
 
 **残っているのは次の 3 つだけ。**
 
 | # | 未完了 | 誰が |
 |---|---|---|
-| 0 | **再募集の開始操作を本番へ反映する**（Draft PR の merge → deploy）| **MK の承認** |
-| 1 | **本番で「Premium Plus 再募集を開始」を押す**（＝ `reopenStartsAt` の確定）| **MK** |
+| 0 | **会員ごとの開始操作を本番へ反映する**（Draft PR `feat/premium-plus-reopen-per-member` の merge → deploy）| **MK の承認** |
+| 1 | **本番で対象会員を選び「この会員の再募集を開始」を押す**（＝**その会員の** `reopenStartsAt` 確定）| **MK** |
 | 2 | **1 の後の実運用確認**（予約 write の有効化 → 実顧客での取得 → 申込 → 入金確認 → redeem）| 1 の後 |
 
-### 🆕 新たに確定した仕様（2026-08-21 MK）— **開始日時の決め方**
+⚠️ 2026-08-21 に入れた「サイト全体で 1 個の開始」は **2026-08-22 に廃止**した。
+本番では 1 度も押しておらず（read-only 実測で write 0 件）、旧グローバル鍵は**正本として残していない**。
 
-`reopenStartsAt` を「MK が日時を決めて誰かがコードへ書く」のではなく、
-**admin のボタンを押した瞬間のサーバー時刻で確定する**方式に確定した。
+### 🆕 新たに確定した仕様（2026-08-22 MK）— **再募集の開始は会員ごと**
 
 | 項目 | 確定内容 |
 |---|---|
-| 操作 | admin `/admin/premium-plus-eligibility/` の「**Premium Plus 再募集を開始**」ボタン |
-| 値 | **押下時のサーバー時刻**。client 時刻・要求 body の時刻は**一切採用しない** |
-| 期限 | `reopenStartsAt + 14 日` を既存の単一源から**自動導出**（日数を 2 か所に書かない）|
-| 二重押下・並行要求 | **上書きしない**（`SET NX` の first-write-wins）。2 回目以降は冪等に既存値を返す |
-| 確認 | 押下時に**確認ダイアログ**（「取り消せない」ことを明示）|
-| 表示 | admin に「未開始 / 開始済み / 確認できない」＋「開始日時」＋「クーポン期限」|
-| 未設定中 | **現在どおり fail closed**（予約 write を作らない）|
-| 参照 | 顧客画面・クーポン取得・申込・admin が**同じ単一源**を読む（URL 直打ち・API 直呼びでも同じ判定）|
+| 単位 | **会員単位**。対象顧客を admin で選択して開始する |
+| 操作 | admin `/admin/premium-plus-eligibility/` の**各顧客詳細**「再募集（この会員）」 |
+| 値 | **押下時のサーバー時刻**が、**その会員の** `reopenStartsAt`。client 指定日時は**信用しない** |
+| 期限 | **その会員の** `reopenStartsAt + 14 日`（既存の単一源から導出。日数を 2 か所に書かない）|
+| 二重押下・並行要求 | **上書きしない**（`HSETNX` の会員ごと first-write-wins）|
+| 未開始の会員 | **fail closed**（販売も予約も開かない・期限を出さない）|
+| 他会員 | **影響しない**（A を開始しても B は未開始）|
+| 別軸 | eligibility / override / phase / route / sale pause / CTA / クーポン保有とは**別**。開始は「売れるようにする」操作ではない |
+| 確認 | **対象会員名入り**の確認ダイアログ |
+| 表示 | 各会員の「未開始 / 開始済み / 確認できない」＋「開始日時」＋「期限」 |
+| 全体ボタン | **通常運用から外す**（一覧上部は読むだけの要約。操作ボタンなし）|
+| 取得済みクーポン | **その会員の**再募集開始後に 14 日間利用できる |
 
-**保存先は Upstash Redis の 1 キー**（`ak:pp:reopen:v1:start`・TTL なし）。
-**新しい production env / Airtable schema / 外部サービスは 1 つも増やしていない**
-（同じ Redis 接続を `couponOperationLock.js` / funnel / rollout が本番で使用中）。
-上書き・削除の API は**コードとして持たない**（rollback は Upstash の手動削除のみ）。
+**保存先は Upstash Redis の HASH 1 本** `ak:pp:reopen:v1:members`（field = recordId・TTL なし）。
+`HSETNX` が会員ごとの原子的な first-write-wins そのもので、一覧は `HMGET` 1 回で読む。
+**新しい production env / Airtable schema / 外部サービスは 1 つも増やしていない**。
+上書き・削除・一括開始の API は**コードとして持たない**
+（rollback は Upstash の `HDEL <key> <recordId>` のみ。admin に取消ボタンは作らない）。
+⚠️ **旧グローバル鍵 `ak:pp:reopen:v1:start` は正本として残していない**（本番未使用のまま撤去）。
 
-正本: `docs/decisions.md` §2026-08-21 ／
-`astro-site/docs/PREMIUM_PLUS_STAGED_RELEASE.md` §有効期限 →「`reopenStartsAt` は admin のボタンで確定する」
+正本: `docs/spec.md` §Premium Plus の再募集は会員ごと ／ `docs/decisions.md` §2026-08-22 ／
+`astro-site/docs/PREMIUM_PLUS_STAGED_RELEASE.md`
 
 ### 完成条件（本件をクローズできる条件）
 
-1. Draft PR が merge され production に反映されている
-2. 本番の admin で開始ボタンを押し、`reopenStartsAt` が確定している（**MK の操作**）
-3. 顧客画面・申込画面・admin の 3 面で**同じ期限**が出ていることを目視で確認している
-4. 実顧客で **取得 → 申込 → 入金確認 → redeem** が 1 件通っている
+1. 会員ごとの開始操作の Draft PR が merge され production に反映されている
+2. 本番の admin で**対象会員を選んで**開始ボタンを押し、**その会員の** `reopenStartsAt` が
+   確定している（**MK の操作**）
+3. **その会員の**顧客画面・申込画面・admin の 3 面で**同じ期限**が出ていることを目視で確認している
+4. **選んでいない会員が未開始のまま**であることを確認している（他会員へ波及していない）
+5. 実顧客で **取得 → 申込 → 入金確認 → redeem** が 1 件通っている
 
 ⚠️ 「コードがある」「テストが通る」「CI green」だけでは完成扱いにしない。
 
@@ -150,8 +159,9 @@ repair もできない**。したがって **gate を 0 に戻さない**こと�
 
 ### いま残っているもの
 
-1. **開始操作の本番反映** — Draft PR（`feat/premium-plus-reopen-start`）の merge → deploy。**MK 承認待ち**
-2. **本番で開始ボタンを押す** — 押すまで `reopenStartsAt` は未設定で、
+1. **会員ごとの開始操作の本番反映** — Draft PR（`feat/premium-plus-reopen-per-member`）の
+   merge → deploy。**MK 承認待ち**
+2. **本番で対象会員を選んで開始ボタンを押す** — 押すまで**その会員の** `reopenStartsAt` は未設定で、
    予約 write は fail closed のまま（`buildReservationFields()` が null を返す）
 3. **その後の実運用確認** — 予約 write の有効化 → 実顧客での取得 → 申込 → 入金確認 → redeem
 
@@ -1006,9 +1016,10 @@ PC / mobile とも MK が目視し、上記の画面を**現段階では一旦 O
    クーポン基盤が本番反映済みである事実は変わらない）。
    `COUPON_HISTORY_TABLE_READY=1` で履歴は本番稼働、canary も成功済み。
    **残るのは `reopenStartsAt` の決定と、その後の実運用確認だけ**（上の「本番反映と canary の記録」）。
-1. **① の方式は 2026-08-21 に確定・実装済み**（admin のボタン押下時のサーバー時刻）。
-   次は **Draft PR `feat/premium-plus-reopen-start` の目視 → merge → deploy**、
-   そのうえで **MK が本番で開始ボタンを押す**。押した時点で有効期限が確定し、
+1. **① の方式は 2026-08-22 に「会員ごと」へ変更・実装完了**（admin の各顧客詳細で押した時点の
+   サーバー時刻）。次は **Draft PR `feat/premium-plus-reopen-per-member` の目視 → merge → deploy**、
+   そのうえで **MK が本番で対象会員を選んで「この会員の再募集を開始」を押す**。
+   押した時点で**その会員の**有効期限が確定し、
    予約 write と `confirm-bank-payment` 配線へ進める。
    **② クーポン操作の「積み上げ式 履歴」を持つか（3-C の 🛑・本番 schema 変更）は引き続き MK 判断待ち。**
    割引条件（10,000円OFF / 68,000→58,000）、期限ルール（開始日 + 14 日）、
@@ -1514,7 +1525,71 @@ MK 要望の 5 項目のうち、**確実に出せる 3 つ**を入れた。
 
 ---
 
-## 2026-08-21 — 【機能】再募集の開始日時を admin のボタンで確定する（Draft PR・**本番では未押下**）
+## 2026-08-22 — 【仕様変更】再募集の開始を**会員ごと**にする（Draft PR・**本番では未押下**）
+
+前日に入れた「サイト全体で 1 個の開始日時」を廃止し、**admin で対象顧客を選んで
+会員ごとに開始する**方式へ変更した（MK 仕様変更）。
+
+### なぜ変えたか
+
+「誰に再募集を開けるか」は元から**会員単位**（`PremiumPlusSalePaused` の解除は会員ごと）。
+全体 1 個の開始日時だと、段階的に開けたときに**後から開けた会員ほど残り日数が短く**なり、
+「全員に開始から 14 日」を保証できなかった。
+
+### 何を作ったか
+
+| | |
+|---|---|
+| 判定（純粋・会員単位）| `premiumPlusReopenStart.js`（状態の語彙・正規化・recordId 検証・実効定義・**対象会員名入り**の確認文言）|
+| 保存（I/O）| `premiumPlusReopenStartStore.js`（Redis **HASH** `ak:pp:reopen:v1:members` / field=recordId / `HSETNX` / `HMGET`）|
+| admin API | `reopenStatus` / `reopenStart` を**会員指定**に変更（`recordId` 必須・不正なら 400）|
+| admin UI | 各顧客詳細に「**再募集（この会員）**」を新設。一覧上部の全体パネルは**読むだけの要約**（開始済み N 名）へ格下げし、**操作ボタンを撤去** |
+| 配線 | 受付休止 ×2 / クーポンページ / マイページ / 申込画面 / 申込受付 / admin が**本人の recordId で**読む |
+
+### 安全条件（テストで固定）
+
+- **A を開始しても B は未開始**（他会員の Customers / 予約 / 履歴も変更しない）
+- **B を後日開始すると B はその時点から 14 日**（A とは別の期限）
+- 同一会員の**二重押下で開始日時が変わらない**／**並行 8 要求でも created は 1 回**
+- 開始日時は**サーバー時刻**（client の `startsAt` / `now` / `expiresAt` を送っても採用しない）
+- **未開始の会員は申込・予約が fail closed**（`buildReservationFields()` が null）
+- **開始済みの会員だけ**期限を計算する
+- **sale pause 中なら開始済みでも購入可否は既存の sale-pause 判定に従う**
+- eligibility / override / phase / route / plan / payment を**変更しない**
+- **URL 直打ち・API 直呼び**でもサーバーが recordId を検証し、保存先を読み直す
+- **read 不能時は `unknown`**（「未開始」「0 名」と言わない）
+
+テスト: `premiumPlusReopenStart.test.mjs`（16）/ `premiumPlusReopenStartStore.test.mjs`（17）/
+`adminReopenStart.smoke.test.mjs`（11・**本物の handler**）/ `reopenStartWiring.guard.test.mjs`（13）。
+`npm run test:premium-plus-media` = 1,123 pass / 0 fail。
+
+### 保存方式（**本番 schema を増やさない**）
+
+Redis の HASH 1 本（`HSETNX` = 会員ごとの原子的 first-write-wins、一覧は `HMGET` 1 回）。
+Airtable 列追加を採らなかったのは**本番 schema 変更**であることに加え、
+**unique 制約も CAS も無く、read → write の間に割り込まれる lost update を防げない**ため。
+記録は `docs/decisions.md` §2026-08-22。
+
+### 旧グローバル鍵の扱い
+
+`ak:pp:reopen:v1:start` は **正本として残していない**（コードから撤去）。
+本番では 1 度も書かれていない（2026-08-21 の read-only 実測で write 0 件）ため、
+**移行も掃除も不要**。ガードテストが復活を検知する。
+
+### ⚠️ まだ本番では何も起きていない
+
+- **Draft PR のまま**（merge も deploy もしていない）
+- **本番の開始ボタンは 1 会員ぶんも押していない**
+- Redis に `members` HASH は作っていない。Customers / PromotionalOffers / 履歴への書き込みも 0 件
+- 実顧客の取得・申込・入金確認・redeem は 1 件も実行していない
+
+### rollback
+
+- コード: PR を merge しなければ本番は現状のまま。merge 後なら通常の revert
+- 開始済みの会員を戻す: **Upstash で `HDEL ak:pp:reopen:v1:members <recordId>`** のみ
+  （admin に取消ボタンは無い＝「上書きしない」を構造で守るため）。**他会員を巻き込まないこと**
+
+## 2026-08-21 — 【機能】再募集の開始日時を admin のボタンで確定する（**2026-08-22 に「会員ごと」へ変更・全体 1 個は廃止**）
 
 `reopenStartsAt` が null 固定で、クーポンの有効期限が導出できず予約 write が fail closed
 だった件を、**運用が deploy なしで確定できる**形にした。
@@ -1554,19 +1629,35 @@ Upstash Redis の 1 キー `ak:pp:reopen:v1:start`（TTL なし）。`SET ... NX
 不採用: Airtable の列・テーブル追加（**本番 schema 変更**）／ Netlify Blobs（eventual consistency）／
 env 直書き（変更に deploy が要る）。判断の記録は `docs/decisions.md` §2026-08-21。
 
-### ⚠️ まだ本番では何も起きていない
+### 本番反映と read-only 確認（2026-08-21・**確定事実**）
 
-- **Draft PR のまま**（merge も deploy もしていない）
-- **本番の開始ボタンは押していない**（`reopenStartsAt` は未設定のまま）
-- Redis に鍵は 1 つも作っていない。Customers / PromotionalOffers / 履歴への書き込みも 0 件
+| | 値 |
+|---|---|
+| squash merge | **`91059921`**（PR #400）|
+| production deploy | `6a87f4ec` **ready** / published commit `91059921` / 2026-08-21T06:50:18Z |
+| main の CI | Safety Check **success** |
+
+**read-only で実測した本番の状態**（write は 1 件も行っていない）:
+
+| 確認項目 | 実測 |
+|---|---|
+| `action='reopenStatus'`（当時は全体 1 個）| `state='not_started'` / `startable=true` / `available=true` / `sideEffects='none'` |
+| **Redis への開始 write** | **0 件**。`available=true`（Upstash へ到達）かつ `not_started`＝**旧グローバル鍵は存在しない** |
+| admin の `action='list'` | 17 行**すべて**の有効期限表示が「募集再開日から14日間…」＝ fail closed |
+| Airtable | 変更 0 件。クーポン取得済みは **1 件のまま** |
+| 公開ページ / Premium Plus 系（未ログイン）| 200 / **404**（存在秘匿・従来どおり）|
+
+⚠️ **この「write 0 件」の実測が、2026-08-22 に旧グローバル鍵を移行なしで撤去できる根拠。**
+⚠️ admin 画面の HTML は Basic 認証（401）で未取得。会員としての顧客画面も
+`SESSION_SIGNING_SECRET` が masked secret のため本番では確認していない。
+
+### ⚠️ 本番では 1 度も押されないまま廃止された
+
+- **サイト全体の開始ボタンは 1 度も押していない**（旧グローバル鍵は作られていない）
+- Customers / PromotionalOffers / 履歴への書き込みも 0 件
 - 実顧客の取得・申込・入金確認・redeem は 1 件も実行していない
 
-### rollback
-
-- コード: PR を merge しなければ本番は現状のまま。merge 後なら通常の revert
-- 開始済みを戻す: **Upstash コンソールで `ak:pp:reopen:v1:start` を削除する**しかない
-  （admin に取消ボタンは無い＝「上書きしない」を構造で守るため）。
-  顧客へ期限を案内したあとの削除は不整合になるので不可
+→ そのため **2026-08-22 の「会員ごと」への変更で、データ移行も鍵の掃除も不要だった**。
 
 ## 2026-08-19 — 【修正】ジョブだけ作れて配信行が作れない途中状態を成功にしない（orphan PENDING）
 

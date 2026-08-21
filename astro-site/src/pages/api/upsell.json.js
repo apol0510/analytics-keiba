@@ -71,8 +71,11 @@ export async function GET({ request }) {
   // 本人のクーポン保有状態。文言・条件は単一源（describeCouponForMember）に作らせる。
   // ⚠️ ここで条件文や価格を組み立てないこと。条件が確定したら単一源だけが変わる。
   const held = readReopenCoupon(fields);
-  // 取得済みの人にだけ期限を出す。読めなければ従来どおり「未確定」表示のまま（fail closed）
-  const reopen = held.claimed ? await loadReopenStart({ env: process.env }) : { startsAtIso: null };
+  // 取得済みの人にだけ期限を出す。読めなければ従来どおり「未確定」表示のまま（fail closed）。
+  // ⚠️ 会員ごとの開始日時。**本人（セッション由来）の recordId だけ**を渡す
+  const reopen = held.claimed
+    ? await loadReopenStart({ recordId: access.payload?.sub || null, env: process.env })
+    : { startsAtIso: null };
   const couponBody = held.claimed
     ? (() => {
       const v = describeCouponForMember({

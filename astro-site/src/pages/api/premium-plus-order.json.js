@@ -63,8 +63,9 @@ export async function GET({ request, url }) {
     || view.pauseNotice?.showPauseNotice === true;
   if (!plusVisible) return notFound();
 
-  // 再募集の開始状態（＝有効期限の確定に使う）。client からは受け取らない
-  const reopen = await loadReopenStart({ env: process.env });
+  // この会員の再募集の開始状態（＝有効期限の確定に使う）。client からは受け取らない。
+  // ⚠️ 対象は **`ak_session` から解決した recordId 1 件だけ**（他会員の開始日時は読まない）
+  const reopen = await loadReopenStart({ recordId, env: process.env });
   const couponDef = withReopenStart(reopen.startsAtIso);
 
   // 選択は受け取るが、価格はサーバーが Airtable の実データから決める

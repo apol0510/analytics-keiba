@@ -99,7 +99,11 @@ if (ppUpsell.channel !== UPSELL_CHANNEL.PLUS || !ppRelease.showProductPage) {
   //    見られたはずの人だけ）。それ以外は従来どおり 404 のまま。
   if (ppUpsell.pauseNotice?.showPauseNotice === true) {
     const ppCoupon = readReopenCoupon(ppFields);
-    const ppReopen = await loadReopenStart({ env: process.env });
+    // ⚠️ 再募集の開始は**会員ごと**。必ず**この会員の** recordId で読む
+    //    （サイト全体で 1 個の開始日時は存在しない）。
+    const ppReopen = await loadReopenStart({
+      recordId: access.payload?.sub || null, env: process.env,
+    });
     const ppCouponView = describeCouponForMember({
       coupon: ppCoupon,
       paused: true,

@@ -584,6 +584,50 @@ PHASE 4 の会員に実際に見えるのは:
 | 顧客に見えるものの再現 | `src/lib/premiumPlus/premiumPlusPreview.js`（`buildPreviewSnapshot`） |
 | 規約の固定 | `src/lib/premiumPlus/premiumPlusImmediateSale.test.mjs` |
 
+## Premium Plus の再募集は**会員ごと**（2026-08-22 確定）
+
+優待クーポンの有効期限は「**再募集の開始日時 + 14 日**」。その **`reopenStartsAt` は
+会員ごとに持つ**（サイト全体で 1 個ではない）。
+
+| 項目 | 確定内容 |
+|---|---|
+| 単位 | **会員単位**。admin で対象顧客を選んで開始する |
+| 操作 | `/admin/premium-plus-eligibility/` の**各顧客詳細**「再募集（この会員）」 |
+| 値 | **押下時のサーバー時刻**が、その会員の `reopenStartsAt` |
+| client 指定日時 | **信用しない**（要求 body の時刻は 1 つも読まない）|
+| 期限 | その会員の `reopenStartsAt + 14 日` を既存の単一源から導出 |
+| 二重押下・並行要求 | **上書きしない**（`HSETNX` の first-write-wins）|
+| 未開始の会員 | **fail closed**（販売も予約も開かない・期限を出さない）|
+| 他会員 | **影響しない** |
+| 保存先 | Upstash Redis の HASH `ak:pp:reopen:v1:members`（field = recordId）。**本番 schema を増やさない** |
+
+### 別軸であるもの（開始しても 1 バイトも変えない）
+
+`PremiumPlusEligibility` / `PremiumPlusReleaseOverride` / PHASE / route /
+`PremiumPlusSalePaused` / 販売 CTA / クーポン保有（3 列）/ プラン / 決済。
+
+⚠️ **再募集の開始は「売れるようにする」操作ではない。** 開始済みでも
+`salePaused` の会員は従来どおり購入できない（購入可否は既存判定のまま）。
+
+### 参照の単一源
+
+`loadReopenStart({ recordId })` → `withReopenStart()` の 2 段だけ。
+顧客画面（受付休止 / クーポンページ / マイページ）・申込画面・申込受付・admin が
+**同じ経路**で、**その会員の** recordId を渡して読む。
+URL 直打ち・API 直呼び・古いタブでも、サーバーが recordId を検証してから
+保存先を読み直すので判定は一致する。
+
+### やってはいけないこと
+
+- **サイト全体で 1 個の開始日時を復活させない**（旧 `ak:pp:reopen:v1:start` は廃止済み・本番未使用）
+- admin に**一括開始ボタン・取消ボタンを置かない**（rollback は Upstash の `HDEL` のみ）
+- 期限日数（14）を `premiumPlusReopenCoupon.js` 以外に書かない
+- 「読めない」を「未開始」に丸めない（`unknown` として理由を出す）
+
+単一源: `src/lib/premiumPlus/premiumPlusReopenStart.js`（判定・純粋）/
+`premiumPlusReopenStartStore.js`（保存・Redis）。
+詳細は `astro-site/docs/PREMIUM_PLUS_STAGED_RELEASE.md`、判断の記録は `docs/decisions.md` §2026-08-22。
+
 ## 見込み客プール（外部リスト・2026-08-06）
 
 外部 CSV の 1 万数千件は **Airtable Customers へ入れない**。Redis の見込み客プールで扱い、

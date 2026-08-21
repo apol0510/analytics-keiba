@@ -979,47 +979,73 @@ payment のいずれも動かさない。
 ⚠️ **開始日時を捏造しない。** 未設定のあいだは `buildReservationFields()` が null を返し、
 **本番の予約 write は fail closed**。
 
-##### `reopenStartsAt` は admin のボタンで確定する（2026-08-21 MK 確定）
+##### `reopenStartsAt` は **会員ごと**に admin のボタンで確定する（2026-08-22 MK 確定）
+
+⚠️ **2026-08-21 の「サイト全体で 1 個」方式は廃止した。** 全体で 1 個の開始日時は
+**正本ではない**（本番では 1 度も書かれていない状態で撤去）。復活させないこと。
 
 | 項目 | 確定内容 |
 |---|---|
-| 決め方 | 管理画面 `/admin/premium-plus-eligibility/` の「**Premium Plus 再募集を開始**」ボタン |
-| 値 | **押した瞬間のサーバー時刻**（`Date.now()`）|
-| client 時刻 | **正本にしない**。要求 body の時刻（`startsAt` / `now` / `expiresAt`）は 1 つも読まない |
-| 期限 | `reopenStartsAt + 14 日` を既存の単一源から**自動導出** |
-| 二重押下・並行要求 | **上書きしない**（first-write-wins）。2 回目以降は冪等に既存値を返す |
-| 確認 | 押下時に**確認ダイアログ**（文言の正本は `REOPEN_START_CONFIRM_TEXT`）|
-| 未設定中 | **現在どおり fail closed**（予約 write を作らない・顧客画面は「募集再開日から14日間」）|
+| 単位 | **会員ごと**。対象顧客を admin で選んで開始する |
+| 操作 | 管理画面 `/admin/premium-plus-eligibility/` の**各顧客の詳細パネル**「再募集（この会員）」|
+| 値 | **押下時のサーバー時刻**が、**その会員の** `reopenStartsAt` |
+| client 時刻 | **信用しない**。要求 body の時刻（`startsAt` / `now` / `expiresAt`）は 1 つも読まない |
+| 期限 | **その会員の** `reopenStartsAt + 14 日` を既存の単一源から自動導出 |
+| 二重押下・並行要求 | **上書きしない**（`HSETNX` の first-write-wins）。2 回目以降は冪等に既存値を返す |
+| 未開始の会員 | **fail closed**（期限を出さない・予約 write を作らない・販売も予約も開かない）|
+| 他会員 | **影響しない**（A を開始しても B は未開始のまま）|
+| 確認 | 押下時に**確認ダイアログ**（**対象会員名入り**・取り消せないことを明示）|
+| 表示 | admin の各顧客で「未開始 / 開始済み / 確認できない」＋「開始日時」＋「期限」|
+| 顧客画面・申込・API | **その会員の**開始日時を同じ単一源から参照する |
+| URL 直打ち・API 直呼び | サーバーが**会員別状態を再検証**する（recordId の形式検証 → 保存先の再読込）|
 
-**保存先は Upstash Redis の 1 キー**（`REOPEN_START_KEY = ak:pp:reopen:v1:start`・TTL なし）。
+**他の軸とは独立**: `eligibility` / `override` / PHASE / route / `salePaused` / 販売 CTA /
+クーポン保有（3 列）とは**別軸**で、開始してもこれらを 1 バイトも変えない。
+⚠️ **再募集の開始は「売れるようにする」操作ではない。** 開始済みでも `salePaused` の会員は
+**従来どおり購入できない**（購入可否の判定は既存の単一源のまま）。
 
-- 選定理由: `SET key value NX` が**原子的な first-write-wins そのもの**で、
-  **新しい env も Airtable schema も外部サービスも増えない**
-  （`UPSTASH_REDIS_REST_URL` / `_TOKEN` は `couponOperationLock.js` /
-  `premiumPlusFunnelStore.js` / rollout が本番で使用中）。
-- 不採用: Airtable への列・テーブル追加（**本番 schema 変更**であり、
-  「サイト全体で 1 個の設定」を会員 1 行 1 会員の表に置くことになる）／
-  Netlify Blobs（eventual consistency）／env 直書き（変更に deploy が要る）。
-- **上書き・削除の API をコードとして持たない**（`read()` と `start()` だけ）。
-  「一度開始したら上書きしない」を運用ルールではなく**構造**で守る。
+##### 保存先（**本番 schema を増やさない**）
+
+**Upstash Redis の HASH 1 本**。
+
+```
+HASH  ak:pp:reopen:v1:members     ← REOPEN_MEMBERS_KEY（TTL なし）
+  field = Customers の recordId（rec… 14 桁）
+  value = {"startsAt":"…ISO…","actor":"MK"}
+```
+
+- `HSETNX` が**会員ごとの原子的な first-write-wins そのもの**。
+- 一覧は会員数ぶんを **`HMGET` 1 回**で読む（会員ごとに引かない）。
+- 接続は本番稼働中のものをそのまま使う（`couponOperationLock.js` / funnel / rollout と同じ）。
+  **新しい env も Airtable schema も外部サービスも増えない。**
+- 不採用: **Airtable に列追加**（本番 schema 変更。しかも unique 制約・CAS が無く、
+  read → write の間に割り込まれる lost update を防げない）／ Netlify Blobs（eventual consistency）。
+- **上書き・削除・一括開始の API をコードとして持たない**（`read` / `readMany` / `start` だけ）。
 
 ##### 誤って開始したときの rollback（**画面からは戻せない**）
 
 admin に取消ボタンは**無い**（作らない）。戻す必要が生じた場合は
-**Upstash コンソールで `ak:pp:reopen:v1:start` を削除する**しかない。
-削除すると「未開始」に戻り、期限は再び未確定・予約 write は fail closed になる。
-⚠️ すでに顧客へ期限を案内したあとで削除すると**案内と実状態が食い違う**ので、
-削除は「開始直後に誤りと判明した場合」に限る。
+**Upstash コンソールでその会員のフィールドを削除する**しかない。
+
+```
+HDEL ak:pp:reopen:v1:members <recordId>
+```
+
+削除するとその会員は「未開始」に戻り、期限は再び未確定・予約 write は fail closed になる。
+⚠️ すでにその会員へ期限を案内したあとで削除すると**案内と実状態が食い違う**ので、
+削除は「開始直後に誤りと判明した場合」に限る。**他会員のフィールドを巻き込まないこと。**
 
 ##### 読めなかったときは「未開始」と言わない
 
 Redis を読めない（未設定・失敗・タイムアウト）ときは `state='unknown'`（**確認できない**）を返す。
-admin は理由をそのまま表示し、**開始ボタンを出さない**。
-顧客画面は従来どおり「募集再開日から14日間」の未確定表示のまま（＝ fail closed）。
+admin は理由をそのまま表示し、**開始ボタンを出さない**。一覧の「開始済み **N** 名」も
+**件数を出さない**（0 名と言わない）。顧客画面は従来どおり「募集再開日から14日間」の
+未確定表示のまま（＝ fail closed）。
 
 ##### どこが同じ値を読むか（**単一源**）
 
-`loadReopenStart()`（保存先） → `withReopenStart()`（実効クーポン定義）の 2 段だけ。
+`loadReopenStart({ recordId })`（保存先） → `withReopenStart()`（実効クーポン定義）の 2 段だけ。
+⚠️ **どの面も「その会員の recordId」を必ず渡す**（顧客画面はセッション由来の recordId のみ）。
 
 | 面 | 使う |
 |---|---|
@@ -1028,7 +1054,7 @@ admin は理由をそのまま表示し、**開始ボタンを出さない**。
 | マイページ `/api/upsell.json` | 同上 |
 | 申込画面 `/api/premium-plus-order.json` | `listApplicableCoupons({ def })` / `resolveOrderPricing({ def })` |
 | 申込受付 `bank-transfer-application` | `resolveOrderPricing({ def })` |
-| 管理画面 `premium-plus-eligibility` | `resolveReopenStatus()` ＋ 同じ `def` で行を組み立て |
+| 管理画面 `premium-plus-eligibility` | `readMany()` → 行ごとに `resolveReopenStatus()` / `withReopenStart()` |
 
 配線が外れていないことは `reopenStartWiring.guard.test.mjs` が構造で検査する。
 
@@ -1102,15 +1128,18 @@ URL 直打ち・fetch の直接呼び出し・古いタブからの再送でも�
 
 ### 再募集するときの手順
 
-1. 管理画面 `/admin/premium-plus-eligibility/` の「**Premium Plus 再募集を開始**」を押す
-   （押した瞬間のサーバー時刻が `reopenStartsAt` になり、**クーポン期限が確定する**）
-2. 管理画面の「クーポン取得済み」で対象会員を抽出する
-3. 会員個別の販売停止（`PremiumPlusSalePaused`）を外す
-   ⚠️ **1 の開始操作は販売停止を解除しない**（軸が違う）。購入できるようにするのは 3。
+1. 管理画面の「クーポン取得済み」などで**再募集する対象会員を決める**
+2. **その会員の詳細パネル**「再募集（この会員）」で「▶ この会員の再募集を開始する」を押す
+   （押した瞬間のサーバー時刻が**その会員の** `reopenStartsAt` になり、**その会員の
+   クーポン期限が確定する**）。対象が複数なら**会員ごとに繰り返す**
+3. その会員の販売停止（`PremiumPlusSalePaused`）を外す
+   ⚠️ **2 の開始操作は販売停止を解除しない**（軸が違う）。購入できるようにするのは 3。
 4. 必要なら `promotionOfferCatalog.js` に Premium Plus 用の `purchase_offer` を追加し、
    既存の offer 発行経路（`promotionalOffer.js` / `PromotionalOffers`）で offer を発行する
 
-⚠️ **1 と 3 は別操作**。開始しただけでは誰も買えないし、停止を外しただけでは期限が確定しない。
+⚠️ **2 と 3 は別操作**。開始しただけでは買えないし、停止を外しただけでは期限が確定しない。
+⚠️ **選んでいない会員には販売も予約も開かない**（未開始のまま fail closed）。
+⚠️ 段階的に開けると、**会員ごとに期限が違う**（各自の開始 + 14 日）。これは仕様どおり。
 
 ### 管理画面（3 つの軸を混ぜない）
 
@@ -1119,10 +1148,10 @@ URL 直打ち・fetch の直接呼び出し・古いタブからの再送でも�
 | 販売資格 | `PremiumPlusEligibility` / PHASE | 既存の資格バッジ（停止で動かさない） |
 | 販売の一時停止 | `PremiumPlusSalePaused` | `一時停止中`（琥珀）バッジ + `fPause` |
 | **再募集クーポン** | 顧客本人が取得した事実 | `クーポン取得済み`（青緑）バッジ + `fCoupon` + 件数 |
-| **再募集の開始**（会員別ではない）| `reopenStartsAt`（サイト全体で 1 個）| 一覧上部の「💠 Premium Plus 再募集」パネル（未開始 / 開始済み / 確認できない・開始日時・クーポン期限）|
+| **再募集の開始** | `reopenStartsAt`（**会員ごと**・Redis）| 詳細パネル「再募集（この会員）」（未開始 / 開始済み / 確認できない・開始日時・クーポン期限）。一覧上部は**読むだけの要約**（開始済み N 名）|
 
-⚠️ 「再募集の開始」だけは**会員 1 人の操作ではない**。詳細パネル（会員別）ではなく
-一覧の上に常設し、押せるのは**未開始と確認できたときだけ**。
+⚠️ 押せるのは**未開始と確認できたときだけ**。開始済み・確認できないときはボタンを出さない。
+⚠️ 一覧上部のパネルに**一括開始ボタンを置かない**（会員ごとの操作であることを崩さない）。
 
 #### ⚠️ 管理者の付与・取消について（**確定仕様ではなく現行実装**）
 
@@ -1143,8 +1172,8 @@ Claude が「顧客の意思表示だから管理者は触らない」と判断�
 | 目的 | ファイル |
 |---|---|
 | クーポン保有状態の単一源 | `src/lib/premiumPlus/premiumPlusReopenCoupon.js` |
-| **再募集開始日時の判定（純粋）** | `src/lib/premiumPlus/premiumPlusReopenStart.js` |
-| **再募集開始日時の保存（Redis / first-write-wins）** | `src/lib/premiumPlus/premiumPlusReopenStartStore.js` |
+| **再募集開始日時の判定（純粋・会員単位）** | `src/lib/premiumPlus/premiumPlusReopenStart.js` |
+| **再募集開始日時の保存（Redis HASH / 会員ごと first-write-wins）** | `src/lib/premiumPlus/premiumPlusReopenStartStore.js` |
 | 休止ページを出す条件 | `src/lib/premiumPlus/premiumPlusRelease.js` (`resolvePlusPauseNoticeView`) |
 | 顧客への配布 | `src/lib/upsell/upsellTarget.js` (`pauseNotice`) |
 | 休止 / クーポンページの HTML | `src/lib/premiumPlus/premiumPlusPauseNoticePage.js` |

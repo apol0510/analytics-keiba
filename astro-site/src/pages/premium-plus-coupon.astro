@@ -63,8 +63,11 @@ const noticeTarget = view.pauseNotice?.showPauseNotice === true;
 // どちらでもない相手には存在を知らせない。
 if (!coupon.claimed && !noticeTarget) return notFound();
 
-// 再募集の開始状態（読めなければ従来どおり「期限未確定」表示のまま）
-const reopen = await loadReopenStart({ env: process.env });
+// この会員の再募集の開始状態（読めなければ従来どおり「期限未確定」表示のまま）。
+// ⚠️ 会員ごとの値。**セッション由来の recordId 以外を渡さない**（他会員の期限は出さない）。
+const reopen = await loadReopenStart({
+  recordId: access.payload?.sub || null, env: process.env,
+});
 const couponDef = withReopenStart(reopen.startsAtIso);
 
 const couponView = describeCouponForMember({

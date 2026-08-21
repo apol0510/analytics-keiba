@@ -143,12 +143,12 @@ import {
 import {
   withReopenStart,
   resolveReopenStatus,
-  REOPEN_START_CONFIRM_TEXT,
+  isSafeCustomerRecordId,
   REOPEN_START_REJECT,
+  REOPEN_UNAVAILABLE,
 } from '../../src/lib/premiumPlus/premiumPlusReopenStart.js';
 import {
   createReopenStartStore,
-  loadReopenStart,
   REOPEN_ADMIN_TIMEOUT_MS,
 } from '../../src/lib/premiumPlus/premiumPlusReopenStartStore.js';
 
@@ -204,9 +204,9 @@ exports.handler = async (event) => {
     if (action === 'couponAdmin') return await handleCouponAdmin({ KEY, BASE, now, req });
     if (action === 'couponHistory') return await handleCouponHistory({ KEY, BASE, req });
     if (action === 'couponHistoryRepair') return await handleCouponHistoryRepair({ KEY, BASE, now, req });
-    // 再募集の開始状態を読むだけ（write なし）
-    if (action === 'reopenStatus') return await handleReopenStatus();
-    // 再募集を開始する（**サーバー時刻で first-write-wins**。上書き経路は持たない）
+    // **会員ごとの**再募集の開始状態を読むだけ（write なし）
+    if (action === 'reopenStatus') return await handleReopenStatus({ req });
+    // **会員ごとに**再募集を開始する（**サーバー時刻で first-write-wins**。上書き経路は持たない）
     if (action === 'reopenStart') return await handleReopenStart({ now, req });
     return json(400, { error: `未知の action: ${action}` });
   } catch (e) {
@@ -238,7 +238,7 @@ const UNREAD_LEDGER = Object.freeze({
  *   クーポン予約台帳。**`available:false` を空配列へ潰さないこと**
  *   （「読めた結果 0 件」と「確認できない」は別の事実）。
  */
-function buildAdminRow(rec, now, ledger = UNREAD_LEDGER, couponDef = PP_REOPEN_COUPON) {
+function buildAdminRow(rec, now, ledger = UNREAD_LEDGER) {
     const fields = rec.fields || {};
     const member = resolvePlusMemberFromFields(fields, { nowMs: now });
     // 販売導線（UpsellTarget）込みの実表示。管理者が「設定値」と「実際に見えるもの」を
@@ -341,11 +341,15 @@ function buildAdminRow(rec, now, ledger = UNREAD_LEDGER, couponDef = PP_REOPEN_C
         /** 取得の記録が本番で保存できる状態か（画面の注意表示に使う） */
         reopenCouponWritable: isReopenCouponEnabled(process.env),
         // 価格条件は**単一源が作った文字列**をそのまま載せる（管理画面で数値を組み立てない）
-        reopenCouponTerms: describeCouponTerms(couponDef),
-        reopenCouponDiscountText: describeCouponDiscount(couponDef),
-        reopenCouponPriceText: describeCouponPrice(couponDef),
-        // 有効期限は再募集の開始日時から導出する（未開始なら「募集再開日から14日間」のまま）
-        reopenCouponExpiryText: describeCouponExpiry(couponDef),
+        // 割引・価格は会員によらず同じ（正本の静的な条件）
+        reopenCouponTerms: describeCouponTerms(),
+        reopenCouponDiscountText: describeCouponDiscount(),
+        reopenCouponPriceText: describeCouponPrice(),
+        // ⚠️ **有効期限だけは会員ごと**（その会員の再募集開始日時 + 14 日）。
+        //    ここでは基準（未確定）を入れ、後段の attachReopenStart が会員ごとに解き直す。
+        reopenCouponExpiryText: describeCouponExpiry(),
+        /** その会員の再募集開始状態（attachReopenStart が入れる） */
+        reopenStart: null,
         // クーポンのライフサイクル（所持中 / 利用予約 / 使用済み / 予約取消 / 要修復）。
         // ⚠️ 通常の販促オファーとは**別軸**。Airtable を直接見に行かせないための表示。
         // 管理者が今この会員に対して行える操作（**表示用**。可否はサーバーが再判定する）
@@ -632,10 +636,8 @@ async function handleLookup({ KEY, BASE, now, req }) {
 
   // 一覧と**同じ台帳・同じ判定**を使う（片方だけ台帳を見ないと状態が食い違う）
   const ledger = await readReservationLedger({ KEY, BASE });
-  // 一覧と同じ「再募集の開始状態」を使う（一覧と個別検索で期限がズレないように）
-  const reopen = await readReopenState();
   const rows = recs.map((rec) => {
-    const row = buildAdminRow(rec, now, ledger, reopen.def);
+    const row = buildAdminRow(rec, now, ledger);
     return {
       ...row,
       /** 一覧の絞り込み対象に入っているか（false = 検索でしか出てこない人） */
@@ -644,14 +646,17 @@ async function handleLookup({ KEY, BASE, now, req }) {
   });
   const { measurement, funnel } = await attachRealViews(rows);
   const { notified } = await attachPlusNotified({ KEY, BASE, rows });
+  // 会員ごとの再募集開始状態（一覧と同じ経路。片方だけ別に解くと表示がズレる）
+  const reopen = await attachReopenStart(rows);
 
   return json(200, {
     found: true,
     rows,
     // 予約台帳を読めたか（一覧と同じ塊。読めていないなら画面に「確認できない」と出す）
     couponLedger: describeLedger(ledger),
-    // 再募集の開始状態（未開始 / 開始済み / 確認できない）。一覧と同じ単一源
-    reopenStart: reopen.status,
+    // 再募集の開始は**会員ごと**。全体の値は無く、行の `reopenStart` を見る。
+    // ここに出すのは「読めたか」と「開始済みの人数」だけ。
+    reopenStarts: { available: reopen.available, reason: reopen.reason, started: reopen.started },
     // 個別検索でも一覧と同じ実閲覧の情報（段階・初回/最終/回数）を返す
     funnel,
     query: raw,
@@ -1124,71 +1129,134 @@ async function reloadCouponState({ KEY, BASE, recordId, ledger }) {
 }
 
 /**
- * 再募集の開始状態を読む（**write なし**）。
+ * **会員ごとの**再募集開始状態を読む（**write なし**）。
  *
- * 返すのは「表示用の status」と「実効クーポン定義 def」の 2 つで、**必ず同じ値から作る**。
- * ⚠️ 片方だけ別経路で作らないこと（admin の表示とサーバーの実効状態がズレる）。
+ * 一覧は会員数ぶんを **1 回の `HMGET`** で読む（会員ごとに引かない）。
+ * ⚠️ 読めなかったときは `available:false`＝「確認できない」。**「全員未開始」に丸めない**。
+ *
+ * @param {{ rows: Array<{recordId:string,email?:string}> }} input
+ * @returns {Promise<{ available: boolean, reason: string,
+ *                     statusOf: (row:object)=>object, defOf: (row:object)=>object }>}
  */
-async function readReopenState() {
-  const state = await loadReopenStart({
-    env: process.env, timeoutMs: REOPEN_ADMIN_TIMEOUT_MS,
-  });
+async function readReopenStates(rows) {
+  const store = createReopenStartStore({ redisCmd: makeRedisCmd(process.env) });
+  let out;
+  try {
+    out = await store.readMany({
+      recordIds: (rows || []).map((r) => r.recordId), timeoutMs: REOPEN_ADMIN_TIMEOUT_MS,
+    });
+  } catch {
+    out = { available: false, reason: REOPEN_UNAVAILABLE.READ_FAILED, rows: new Map() };
+  }
+  const startsOf = (row) => {
+    const hit = out.rows.get(String(row && row.recordId)) || null;
+    return hit ? hit.startsAtIso : null;
+  };
   return {
-    status: resolveReopenStatus({
-      available: state.available, startsAtIso: state.startsAtIso, reason: state.reason,
+    available: out.available === true,
+    reason: out.reason || '',
+    /** 表示用の状態（会員 1 人ぶん）。確認ダイアログの文言も**対象会員入り**で作る */
+    statusOf: (row) => resolveReopenStatus({
+      available: out.available === true,
+      startsAtIso: startsOf(row),
+      reason: out.reason,
+      memberLabel: (row && (row.email || row.name)) || '',
     }),
-    // 読めない / 未開始なら基準定義のまま = 期限未確定 = 予約 write は fail closed
-    def: state.available === true ? withReopenStart(state.startsAtIso) : PP_REOPEN_COUPON,
-    actor: state.actor || '',
+    /**
+     * その会員の実効クーポン定義。
+     * ⚠️ 読めない / 未開始なら基準定義のまま = 期限未確定 = 予約 write は fail closed。
+     * ⚠️ **会員ごとに呼ぶこと**（1 人ぶんの def を他会員へ使い回さない）。
+     */
+    defOf: (row) => (out.available === true ? withReopenStart(startsOf(row)) : PP_REOPEN_COUPON),
   };
 }
 
-/** action='reopenStatus'（read-only）。画面の再読込・押下後の確認に使う */
-async function handleReopenStatus() {
-  const reopen = await readReopenState();
+/**
+ * 行に**会員ごとの**再募集状態を載せる（一覧・個別検索で共用）。
+ * 有効期限の表示だけがこの軸に依存するので、そこだけ会員ごとに解き直す。
+ */
+async function attachReopenStart(rows) {
+  const st = await readReopenStates(rows);
+  for (const r of rows) {
+    r.reopenStart = st.statusOf(r);
+    // ⚠️ **その会員の**開始日時から導出する（未開始なら「募集再開日から14日間」のまま）
+    r.reopenCouponExpiryText = describeCouponExpiry(st.defOf(r));
+  }
+  return {
+    available: st.available,
+    reason: st.reason,
+    /** 開始済みの人数（読めていないときは null＝件数を確定できない） */
+    started: st.available ? rows.filter((r) => r.reopenStart.state === 'started').length : null,
+  };
+}
+
+/**
+ * action='reopenStatus'（read-only・**会員 1 人ぶん**）。押下後の確認・再読込に使う。
+ */
+async function handleReopenStatus({ req }) {
+  const recordId = String((req && req.recordId) || '').trim();
+  if (!isSafeCustomerRecordId(recordId)) {
+    return json(400, {
+      error: '会員の指定が不正です', code: REOPEN_START_REJECT.INVALID_MEMBER, sideEffects: 'none',
+    });
+  }
+  const st = await readReopenStates([{ recordId, email: String((req && req.email) || '') }]);
+  const row = { recordId, email: String((req && req.email) || '') };
   return json(200, {
-    reopenStart: reopen.status,
-    startedBy: reopen.actor,
-    confirmText: REOPEN_START_CONFIRM_TEXT,
+    recordId,
+    reopenStart: st.statusOf(row),
     sideEffects: 'none',
   });
 }
 
 /**
- * action='reopenStart' — 再募集を開始する。
+ * action='reopenStart' — **その会員 1 人の**再募集を開始する。
  *
  * ## 何を書くか
  *
- * **Upstash Redis の 1 キーだけ**（`REOPEN_START_KEY`。鍵名の正本は
- * `premiumPlusReopenStartStore.js`）。
+ * **Upstash Redis の HASH の、その会員のフィールド 1 つだけ**
+ * （鍵名の正本は `premiumPlusReopenStartStore.js`）。
  * Airtable（Customers / PromotionalOffers / CouponOperationHistory）へは**一切書かない**。
- * 会員の資格・停止・プラン・決済・PHASE・route・通常価格は 1 バイトも変わらない。
+ * 資格・停止・プラン・決済・PHASE・route・通常価格・クーポン保有は 1 バイトも変わらない。
+ * **他会員のフィールドにも触れない。**
  *
  * ## 時刻はサーバーが決める
  *
  * `reopenStartsAt` は **この Function が見ている現在時刻**。
  * ⚠️ 要求 body に入っている時刻（開始日時・現在時刻・期限）は**一切読まない**
  *    （読めば、古いタブ・改ざん要求で任意の開始日時＝任意の期限を作れてしまう）。
- *    この関数が受け取るのは `actor`（操作者名）だけ。
+ *    この関数が受け取るのは `recordId`（対象会員）と `actor`（操作者名）だけ。
+ *
+ * ## これは「売れるようにする」操作ではない
+ *
+ * 購入可否は従来どおり **販売の一時停止 / 販売資格 / PHASE / route** が決める。
+ * 開始済みでも `salePaused` の会員は購入できない。
  *
  * ## 二重押下・並行要求
  *
- * `SET ... NX` が原子的に 1 本だけ通す。2 本目以降は**上書きせず**
+ * `HSETNX` が原子的に 1 本だけ通す。2 本目以降は**上書きせず**
  * 既存の開始日時をそのまま返す（`created:false` / `alreadyStarted:true`）。
  */
 async function handleReopenStart({ now, req }) {
+  const recordId = String((req && req.recordId) || '').trim();
+  if (!isSafeCustomerRecordId(recordId)) {
+    return json(400, {
+      error: '会員の指定が不正です', code: REOPEN_START_REJECT.INVALID_MEMBER, sideEffects: 'none',
+    });
+  }
   const store = createReopenStartStore({ redisCmd: makeRedisCmd(process.env) });
   // ⚠️ 時刻は **now（サーバー）**。req から時刻を受け取る口を作らない
-  const out = await store.start({ nowMs: now, actor: req && req.actor });
+  const out = await store.start({ recordId, nowMs: now, actor: req && req.actor });
 
   if (out.ok !== true) {
     // 保存できていないのに「開始した」と言わない（fail closed）
     return json(503, {
       ok: false,
       started: false,
+      recordId,
       code: REOPEN_START_REJECT.UNAVAILABLE,
       reason: out.reason,
-      error: '再募集の開始日時を保存できませんでした。保存先（Upstash Redis）へ'
+      error: 'この会員の再募集の開始日時を保存できませんでした。保存先（Upstash Redis）へ'
         + '到達できないため、開始したことにはしていません。時間をおいて再実行してください。',
       sideEffects: 'none',
     });
@@ -1199,16 +1267,18 @@ async function handleReopenStart({ now, req }) {
     available: out.startsAtIso ? true : false,
     startsAtIso: out.startsAtIso,
     reason: out.reason,
+    memberLabel: String((req && req.email) || ''),
   });
   return json(200, {
     ok: true,
     started: true,
+    recordId,
     /** この呼び出しが実際に書いたか（false = 既に開始済みで**上書きしていない**） */
     created: out.created === true,
     alreadyStarted: out.alreadyStarted === true,
     reopenStart: status,
     startedBy: out.actor || '',
-    // 書いたのは Redis の 1 キーだけ。Airtable には触れていない
+    // 書いたのは Redis のその会員のフィールドだけ。Airtable には触れていない
     sideEffects: out.created === true ? 'reopen_start_only' : 'none',
   });
 }
@@ -1217,8 +1287,6 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
   // 予約台帳は**1 回だけ**読む（会員ごとに引かない）。
   // ⚠️ 読めなければ available:false＝「確認できない」。**[] へ潰さない**
   const ledger = await readReservationLedger({ KEY, BASE });
-  // 再募集の開始状態。**1 回だけ読んで全行で共有する**（行ごとに読まない）
-  const reopen = await readReopenState();
   const rows = [];
   let offset;
   let pages = 0;
@@ -1248,7 +1316,7 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
     const data = await res.json();
 
     for (const rec of data.records || []) {
-      const row = buildAdminRow(rec, now, ledger, reopen.def);
+      const row = buildAdminRow(rec, now, ledger);
       if (!row.__listed) continue;
       if (onlyReview && row.eligibility !== PP_ELIGIBILITY.REVIEW) continue;
       rows.push(row);
@@ -1277,6 +1345,8 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
   const { measurement, funnel } = await attachRealViews(rows);
   // 案内済み（こちらから送ったか）を足す。表示判定とも実閲覧とも別の軸。
   const { notified } = await attachPlusNotified({ KEY, BASE, rows });
+  // 会員ごとの再募集開始状態（**1 回の HMGET**）。有効期限の表示もここで会員ごとに解き直す。
+  const reopen = await attachReopenStart(rows);
 
   return json(200, {
     rows,
@@ -1309,6 +1379,11 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
       // 再募集クーポンの取得済み。**資格・停止のどちらの内訳でもない**ので別に数える。
       // 再募集時に「取得済み会員だけを抽出する」ための件数でもある。
       reopenCouponClaimed: rows.filter((r) => r.reopenCouponClaimed === true).length,
+      // **会員ごとの**再募集を開始済みの人数。⚠️ 読めていないときは数えない（null）。
+      // 0 と返すと「誰も開始していない」と読まれる（確認できないことを 0 件にしない）。
+      reopenStarted: reopen.available
+        ? rows.filter((r) => r.reopenStart && r.reopenStart.state === 'started').length
+        : null,
       // クーポンの**利用状態**の内訳。⚠️ 台帳を読めていないときは数えない（null）。
       // 0 と返すと「予約 0 件」と読まれる（確認できないことを 0 件にしない）。
       couponReserved: ledger.available
@@ -1354,12 +1429,16 @@ async function handleList({ KEY, BASE, now, onlyReview }) {
       fieldsReady: isReopenCouponEnabled(process.env),
       name: PP_REOPEN_COUPON.name,
       termsDetermined: PP_REOPEN_COUPON.terms.determined === true,
-      termsText: describeCouponTerms(reopen.def),
-      // ⚠️ 期限が確定するのは「再募集を開始したあと」だけ（下の reopenStart と必ず一致する）
-      expiryDetermined: reopen.def.terms.expiresDetermined === true,
+      termsText: describeCouponTerms(),
+      // ⚠️ 期限が確定するのは「**その会員の**再募集を開始したあと」だけ。
+      //    全体で確定するものではないので、ここでは常に false を返す（行ごとに見る）。
+      expiryDetermined: false,
     },
-    // 再募集の開始状態（未開始 / 開始済み / 確認できない）＋ 開始日時 ＋ クーポン期限
-    reopenStart: reopen.status,
+    /**
+     * 再募集の開始は**会員ごと**（全体で 1 個の開始日時は存在しない）。
+     * ここに出すのは「読めたか」と「開始済みの人数」だけで、状態は各行の `reopenStart`。
+     */
+    reopenStarts: { available: reopen.available, reason: reopen.reason, started: reopen.started },
     // 「自動」の意味を管理画面に常設するための文言（正本は upsellExplain.js）
     upsellAutoRules: UPSELL_AUTO_RULE_TEXT,
     truncated,
