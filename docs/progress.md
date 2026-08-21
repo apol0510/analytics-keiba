@@ -38,7 +38,7 @@
 | 項目 | 結果 |
 |---|---|
 | #377 / #379 / #380 の merge | ✅ **すべて squash merge 済み**（`b67705b1` / `aa606906` / `05725386`）|
-| production 反映 | ✅ **main / production = `05725386`** |
+| production 反映 | ✅ **反映時点の commit = `05725386`**（現在値は下記「本番反映と canary の記録」を参照）|
 | admin の付与 / 予約取消 / 誤取得訂正 / 再発行 | ✅ 本番稼働 |
 | 操作履歴（append-only）| ✅ `CouponOperationHistory` を本番作成・**gate `COUPON_HISTORY_TABLE_READY=1` で有効** |
 | 本番 canary | ✅ 成功（下記「本番 canary の記録」）|
@@ -61,7 +61,21 @@
 | #379 | 優待条件の確定（10,000円OFF / 68,000 → 58,000）| `aa606906` |
 | #380 | 申込画面でのクーポン適用 ＋ 共通クーポン基盤 ＋ admin 4 操作 ＋ 履歴配線 | `05725386` |
 
-**main / production = `05725386`**（Netlify production deploy ready・health 正常）。
+**クーポン基盤を本番反映した時点の commit = `05725386`**（Netlify production deploy ready・health 正常）。
+
+⚠️ **`05725386` は「反映した時点」の commit であって、`main` / production の現在値ではない。**
+main は無料ページ改善や日次の自動取込で**毎日前進する**ので、ここに現在値を固定して書かない。
+現在値は必ず `git log origin/main -1` と Netlify の published deploy で確認すること。
+
+| | 値 | 意味 |
+|---|---|---|
+| クーポン基盤の本番反映 commit | **`05725386`** | #380 の squash merge。**この事実は後から変わらない** |
+| 確認時点の `main` HEAD | `59800f95`（2026-08-21 04:01 JST 時点）| **参考値**。以後も前進する |
+| 確認時点の production published deploy | `59800f95`（同上・ready）| **参考値**。同上 |
+
+`05725386` 以降に main へ入ったのは**クーポン基盤とは無関係な変更**
+（無料ページの改善 #397 / 会場タブ、日次の自動取込）だけで、
+**クーポン基盤が本番反映済みである事実は変わらない**。
 
 ⚠️ **stacked PR を squash merge すると、後続 PR に「同じ内容が二重に存在する」競合が必ず出る。**
 #379 / #380 とも発生し、**通常 merge のみ**（rebase / force / reset / amend / cherry-pick は不使用）で
@@ -951,7 +965,9 @@ PC / mobile とも MK が目視し、上記の画面を**現段階では一旦 O
 
 ## ▶ 次作業（次回セッションはここから）
 
-0. **状況**: #377 / #379 / #380 は **merge・本番反映済み**（main = `05725386`）。
+0. **状況**: #377 / #379 / #380 は **merge・本番反映済み**（反映時点の commit = `05725386`。
+   main / production の**現在値はその都度確認**すること。後続の無関係な main 変更があっても
+   クーポン基盤が本番反映済みである事実は変わらない）。
    `COUPON_HISTORY_TABLE_READY=1` で履歴は本番稼働、canary も成功済み。
    **残るのは `reopenStartsAt` の決定と、その後の実運用確認だけ**（上の「本番反映と canary の記録」）。
 1. **MK に 2 点を確認する: ①実際の再募集開始日時（`reopenStartsAt`）
