@@ -1595,6 +1595,55 @@ Light 約 15,000 名 rollout（#372 系列）の修復。#369 反映後に再開
 - **正常除外を含め全員が barrier 上で解決済み**（`granted === resolved`）
 - duplicate grant / queue / send = **0**
 
+## 2026-08-21 — 【本番実行 → 即停止】rolloutResume を 1 度試し、tick が 1 件も処理できず kill へ戻した
+
+承認のうえ `rolloutResume`（05:36:43Z・展開状態 version 83→84）。その後 **15 分・6 tick 連続で
+`skip / reason: tick_busy`（各 0.3〜0.7 秒）しか出ず、ジョブも配信行も 1 件も作られなかった**ため、
+停止条件（PENDING が進まない / `tick_busy` の連発）に該当として **`rolloutKill`**（05:51:15Z・version 84→85）。
+
+### 本番書込みの実数（**「書込みゼロ」ではない**）
+
+| 対象 | 件数 |
+|---|---|
+| `Customers` | **0** |
+| `ScheduledEmails` | **0** |
+| `CampaignDeliveries` | **0** |
+| 実送信 | **0** |
+| **rollout の Redis state** | **2 回**（resume: 83→84 / kill: 84→85）|
+
+### 観測できた事実
+
+| 事実 | 実測 |
+|---|---|
+| tick のログ | 05:38 / 05:40 / 05:44 / 05:46 / 05:48 の 6 本すべて `tick_busy`・0.3〜0.7 秒 |
+| 仕事をした invocation | **ログを 1 行も残していない**（長時間実行の完了ログも queue のログも無し）|
+| `action=sequence` の所要 | **体験中 19.5 秒 / 終了後 21.3 秒**（tick は毎回**両方**読む＝約 41 秒）|
+| `action=jobs` | 3.5 秒 |
+| kill 前（送信起動だけ）の tick | 47〜59 秒（最長 59,022ms）|
+| tick 排他 | TTL **110 秒**（schedule は `*/2` = 120 秒）。取れなかった側は `tick_busy` で**副作用ゼロ** |
+
+### 確定 / 未確定
+
+- **確定**: 1 tick の仕事量が上限に近い。フェーズ読みだけで約 41 秒、そこへ follow-up の
+  **due 全件**（当時 396 名、のち 593 名）の dry-run → queue → 読み戻し → 印外しが乗る。
+- **確定**: 排他は設計どおり動いた（重なった実行は副作用ゼロ）。**#393 の防御で被害ゼロ**。
+- **未確定**: 仕事をした invocation の**終了理由**（実行時間切れか、別の失敗か）。
+  当該実行のログが取得できないため **「timeout 確定」とは書かない**。
+
+### 直したこと（仕様は変えない）
+
+`src/lib/marketing/tickWorkload.js`（純粋）を新設し、cron から使う:
+
+| 直し方 | 内容 |
+|---|---|
+| **1 tick 1 ジョブぶん** | follow-up と Step1 救済で積む宛先を **既存の `RECIPIENTS_PER_JOB`（100）**まで。残りは次の tick が**単一源から取り直して**続ける。**新しい件数仕様は作らない** |
+| **結論が変わらないフェーズ読みを飛ばす** | 体験中フェーズに due があれば終了後フェーズを読まない（採用ロジックは不変・読めなければ従来どおり `null` で fail closed）|
+| **黙って打ち切らない** | 切ったぶんを `dueRemaining` / `boundedBy` としてログと戻り値に出す |
+
+⚠️ 変えていないもの: due 判定（単一源）／ suppression・購入・間隔・頻度上限 ／ `DeliveryKey` ／
+`planFingerprint` ／ `queue:unverified` と読み戻し ／ fail closed ／ 1 tick 1 段階 ／
+`killed` と `paused` の意味 ／ 新規付与の仕様。
+
 ## 2026-08-21 — 【本番実行】Light Step2 を 598 通 実送信（provider delivered 598 / failed 0）
 
 Step1 の救済（159 通）に続き、**Step2 の滞留 598 名へ実送信**した。automation は

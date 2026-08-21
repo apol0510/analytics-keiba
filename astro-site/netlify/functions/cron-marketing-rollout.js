@@ -76,6 +76,7 @@ import { handler as dispatchHandler, resolveDispatchSecret } from './marketing-c
 import {
   createDispatchLock, TICK_LOCK_ROOT, LOCK_FAIL, isSafeJobId,
 } from '../../src/lib/marketing/dispatchLock.js';
+import { boundQueueBatch, needsMorePhases } from '../../src/lib/marketing/tickWorkload.js';
 
 /**
  * この展開が対象とする道のり。**2 キャンペーンで 1 本**（合計 24 接点）。
@@ -331,8 +332,16 @@ async function readNextDueStep() {
   for (const p of JOURNEY_PHASES) {
     // eslint-disable-next-line no-await-in-loop
     const r = await readPhaseDue(p.campaignId).catch(() => null);
-    if (!r) return null;
+    if (!r) return null;                       // 読めなければ fail closed（従来どおり）
     phases.push(r);
+    /**
+     * ⚠️ **結論が変わらない読みは飛ばす。** 採用するのは「最初に due があるフェーズ」なので、
+     *    体験中フェーズに due があるなら終了後フェーズを読んでも選ぶものは変わらない。
+     *    `action=sequence` は 1 フェーズ 19〜21 秒（2026-08-21 実測）かかり、
+     *    毎 tick 両方読むだけで約 41 秒を消費していた。
+     * ⚠️ due が無いフェーズのときは**必ず次を読む**（取りこぼさない）。
+     */
+    if (!needsMorePhases(r)) break;
   }
   const pick = phases.find((r) => r.step && r.due > 0) || phases[0];
   const nextAt = phases
@@ -847,8 +856,10 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
         log({ ...view, skipped: 'no_handoff', sideEffects: 'none' });
         return { ok: false, ...view, abort: 'no_handoff', sideEffects: 'none' };
       }
+      // ⚠️ 救済も **1 tick 1 ジョブぶん**（残りは次の tick が単一源から取り直す）
+      const rescueBound = boundQueueBatch(due.recordIds);
       const rescue = await queueStep({
-        campaignId: ROLLOUT_CAMPAIGN_ID, step: STEP1, recordIds: due.recordIds,
+        campaignId: ROLLOUT_CAMPAIGN_ID, step: STEP1, recordIds: rescueBound.take,
       });
       if (!rescue.ok) {
         log({ ...view, ok: false, stage: rescue.stage, error: rescue.error, sideEffects: 'none' });
@@ -860,8 +871,16 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
         jobSteps: { ...state.jobSteps, ...Object.fromEntries(rescue.jobIds.map((id) => [id, rescue.touch])) },
       });
       await bumpSteps({ [rescue.touch]: { queued: rescue.queued } });
-      log({ ...view, queued: rescue.queued, via: 'sequence', sideEffects: 'queued_only' });
-      return { ok: true, ...view, queued: rescue.queued, jobs: rescue.jobIds, sideEffects: 'queued_only' };
+      log({
+        ...view, queued: rescue.queued, via: 'sequence',
+        dueRemaining: rescueBound.remaining, boundedBy: rescueBound.bounded ? rescueBound.limit : null,
+        sideEffects: 'queued_only',
+      });
+      return {
+        ok: true, ...view, queued: rescue.queued, jobs: rescue.jobIds,
+        dueRemaining: rescueBound.remaining, boundedBy: rescueBound.bounded ? rescueBound.limit : null,
+        sideEffects: 'queued_only',
+      };
     }
     // ⚠️ 論理バッチぶん（最大 3 回の付与）をまとめて積む。**1 tick 1 段階**は保つ
     //    （段階は「queue」のまま。相手が 3 回ぶんに分かれているだけ）。
@@ -1003,8 +1022,17 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
       // 事実が変わった（誰かが購入・配信停止した等）。**この tick では積まない**
       return { ok: false, ...view, abort: 'no_due_recipients', sideEffects: 'none' };
     }
+    /**
+     * ⚠️ **1 tick で積むのは既存の 1 ジョブぶん（`RECIPIENTS_PER_JOB`）まで。**
+     *    残りは次の tick が**単一源から取り直して**続きを積む（積んだ人は `queued` になり
+     *    due から外れるので、同じ人を二度積まない）。
+     *    due 全件（実測 396〜593 名）を 1 tick で dry-run → queue → 読み戻し → 印外し まで
+     *    やると、フェーズ読み（19〜21 秒）と合わせて 1 回の実行が長くなりすぎる。
+     * ⚠️ **新しい件数仕様を作らない**（既存の分割契約をそのまま使う）。
+     */
+    const bound = boundQueueBatch(due.recordIds);
     const res = await queueStep({
-      campaignId: due.campaignId, step: due.step, recordIds: due.recordIds,
+      campaignId: due.campaignId, step: due.step, recordIds: bound.take,
     });
     if (!res.ok) {
       log({ ...view, ok: false, stage: res.stage, step: due.step, error: res.error, sideEffects: 'none' });
@@ -1018,11 +1046,16 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
     await bumpSteps({ [res.touch]: { queued: res.queued } });
     log({
       ...view, step: due.step, touch: res.touch, campaignId: due.campaignId,
-      queued: res.queued, jobs: res.jobIds.length, sideEffects: 'queued_only',
+      queued: res.queued, jobs: res.jobIds.length,
+      /** 切ったぶんは**必ず数で出す**（黙って打ち切らない） */
+      dueRemaining: bound.remaining, boundedBy: bound.bounded ? bound.limit : null,
+      sideEffects: 'queued_only',
     });
     return {
       ok: true, ...view, step: due.step, touch: res.touch, campaignId: due.campaignId,
-      queued: res.queued, jobs: res.jobIds, sideEffects: 'queued_only',
+      queued: res.queued, jobs: res.jobIds,
+      dueRemaining: bound.remaining, boundedBy: bound.bounded ? bound.limit : null,
+      sideEffects: 'queued_only',
     };
   }
 
