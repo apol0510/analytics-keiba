@@ -425,6 +425,12 @@ export async function fetchRacebookData(date, category = 'jra', client = sharedC
         horses: (r.horses || []).map(h => ({
           number: h.number, name: h.name, totalScore: h.totalScore || 0, assignment: h.assignment || '無',
           jockey: h.jockey || '', trainer: h.trainer || '', seirei: h.sexAge || '',
+          // 父（血統）。racebook には元から入っているが、ここで写し取っていなかったため
+          // 予想 JSON まで届かず、/free/jra/ で父だけ出せなかった（南関は importPrediction.js で取得済み）。
+          // ⚠️ normalizePrediction.js はホワイトリスト方式で、racebook 由来の拡張は
+          //    `_` 付きの名前でしか通さない（_pastRaces / _training / _sire と同じ規約）。
+          //    `sire` のまま渡すと正規化で捨てられる。
+          _sire: h.sire || null,
           kinryo: h.weight != null ? String(h.weight) : '', computerIndex: h.computerIndex || null,
           marks: h.marks || [], ranking: h.ranking || null,
           // 過去走（5走分まで保持。convertToLegacyFormat で recentRaces に変換）
@@ -569,6 +575,8 @@ function convertToLegacyFormat(data, date) {
             trainer: h.trainer || h.kyusya || '', // 厩舎
             age: h.age || h.seirei || '', // 馬齢
             weight: h.weight || h.kinryo || '', // 斤量
+            // 父（血統）。正規化を通ってきた _sire を公開名 sire に戻す（南関 importPrediction.js と同じ）
+            ...(h._sire ? { sire: h._sire } : {}),
             // 役割再計算（adjustPrediction フォールバック）に必要なフィールド
             computerIndex: h.computerIndex != null ? h.computerIndex : null,
             // 2026-05-14: 元 racebook 指数（pt 生成の正規ソース）
