@@ -1512,6 +1512,51 @@ Light 約 15,000 名 rollout（#372 系列）の修復。#369 反映後に再開
 - **正常除外を含め全員が barrier 上で解決済み**（`granted === resolved`）
 - duplicate grant / queue / send = **0**
 
+## 2026-08-21 — 【本番実行】Light Step2 を 598 通 実送信（provider delivered 598 / failed 0）
+
+Step1 の救済（159 通）に続き、**Step2 の滞留 598 名へ実送信**した。automation は
+**`killed: true` のまま**で、すべて管理経路から人が 1 件ずつ実行している。
+
+### 実行内容
+
+| 工程 | 方法 | 結果 |
+|---|---|---|
+| queue | 50 名 × 11 + 48 名 = **12 batch**。各 batch で `action:'sequence'` を読み直し → その batch だけ dry-run → 同一 `planFingerprint` で live → 配信行を読み戻し ＋ **未検証印（`queue:unverified`）が外れたことを確認** | 598 行すべて `queued` / 鍵重複 0 / expected = verified / missing 0 |
+| dispatch | `jobId` 名指しで **1 ジョブずつ**（48 名 canary → 50 × 11）。各回 dry-run → `expectedWillSend` → live 1 回 → 台帳 read-back | **実送信 598 / failed 0 / skipped 0 / duplicate 0**、12 ジョブすべて `SENT`、配信行 598 行すべて `sent` |
+| provider | SendGrid **Activity API** | 該当 subject **598 通すべて `delivered`**（bounce / block / spam / deferred 0）|
+
+⚠️ `/v3/stats` の日次集計は反映が遅れる（実行直後は 523 requests と出た）。**per-message の Activity が正**。
+
+### 実行後の状態
+
+- **Step2 PENDING 0 / queued 残 0**、`killed: true` / `stage: paused` / `autoStopped: true` 維持
+- **新規 grant 0**（`batch.lastRunDay: 2026-08-18`）・**Step3 以降の queue 0**（`dueByStep{3..6}` = 0）
+- 送信後の再計測で **Step2 due が 396 に増加**。これは待機中だった 949 名のうち
+  間隔（`minIntervalDays: 3`）を越えた人が**新たに due になった**もので、
+  **今回送った 598 名との交差 0 / 8-20 に Step1 を送った 159 名との交差 0**。
+  **「送ったのに残っている」ではない。** この 396 名は**未処理のまま残す**（手動送信しない）。
+- `rolloutResume` は**未実行**。automation は人が resume するまで動かない。
+
+### 数え方の食い違いを解消（`granted 1,570` と `totalGranted 1,400`）
+
+**別概念で両方正しい**。詳細は `astro-site/docs/MARKETING_ROLLOUT.md` の「📏 数え方の正本」。
+
+| 値 | 出所 | 意味 |
+|---|---|---|
+| **1,570** | Airtable `Customers`（`ComebackGrantSource='light-trial-autogrant'`）| **権利を持つ人の実数**。全ページ走査で実測。10 オペレーション / 4 日（8-13: 10 / 8-16: 100 / 8-17: 500 / 8-18: 960）・すべて `LightGrantedBy: 'cron-light-trial'` |
+| **1,400** | Redis の展開状態 `totalGranted` | **rollout の tick が自分で付与した累計**（`applyRolloutRun` が加算）|
+
+差 **170** は rollout の tick を経由しなかった付与（カナリア・日次 cron 単独実行など）。
+Redis 側はオペレーション履歴を持たないため、**内訳は read-only では復元できない**（推測で埋めない）。
+**在籍数の正本は Airtable 側（barrier の `granted`）。**
+
+### `sentByStep` は実送信数ではない
+
+`sentByStep` は `queued` を含む「その step が届く経路に乗った人数」（`REACHED_STATUSES = {queued, sent}`）。
+実際に queue しただけの段階でも増える（今回も queue 直後に `sentByStep{2}` が 608 になっている）。
+**実送信の正本は provider（Activity / Event Webhook）→ `CampaignDeliveries.Status='sent'` →
+`ScheduledEmails.SentCount` の順**で、`sentByStep` と Redis の `steps[]` は進行度・増分集計。
+
 ## 2026-08-20 — 【本番実行】Light rollout の救済（kill → orphan 取消 → Step1 159 名を再 queue → 実送信）
 
 Light 約 15,000 名 rollout の滞留を解消した。**Step1 の outstanding は 0 になった。**

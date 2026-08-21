@@ -885,3 +885,41 @@ CAS で停止を確定できない（`state_write_conflict` は「止めた」�
 
 停止すると `stage: paused` + `autoStopped: true` + `stopReason` が残り、
 **人が `rolloutStart` するまで再開しない**（`alwaysArmed` も外れる）。
+
+## 📏 数え方の正本（名前だけで「送信済み」と読まない）
+
+同じ「granted」「sent」でも**出所が違えば別の概念**。2026-08-21 に
+`granted 1,570` と `totalGranted 1,400` の食い違いを調べた結論をここに固定する。
+
+### 付与人数（granted）
+
+| 表示 | 出所 | フィールド / キー | 何を数えているか |
+|---|---|---|---|
+| `action=trialGrant` の `barrier.granted` | **Airtable `Customers`** | `ComebackGrantSource = 'light-trial-autogrant'` | **権利を持っている人の実数**（誰がいつ付与したかを問わない）|
+| `action=rollout` の `batch.totalGranted` | **Redis の展開状態** | `totalGranted` | **rollout の tick が自分で付与した累計**（`applyRolloutRun` が加算）|
+
+⚠️ **両方正しい。同じ概念ではない。** 2026-08-21 実測: Airtable **1,570 件**
+（全ページ走査・10 オペレーション / 4 日・すべて `LightGrantedBy: 'cron-light-trial'`）に対し、
+Redis の `totalGranted` は **1,400**。差 **170** は **rollout の tick を経由しなかった付与**
+（カナリア・日次 cron `cron-light-trial-grant` 単独実行など）。Redis 側は**オペレーション履歴を持たない**ので、
+差分の内訳は read-only では復元できない。
+
+**「何人が権利を持っているか」の正本は Airtable（barrier 側）**。`totalGranted` は
+rollout 運転手の進捗表示であり、**在籍数ではない**。
+
+### 送信数（sent）
+
+| 表示 | 出所 | 何を数えているか | 実送信の正本か |
+|---|---|---|---|
+| **provider（SendGrid Activity / Event Webhook）** | SendGrid | **実際に配送されたか**（delivered / bounce / block）| ✅ **最終的な正本** |
+| `CampaignDeliveries.Status = 'sent'` | Airtable 台帳 | **1 通単位**で送信基盤へ渡した記録（dispatcher が書く）| ✅ AK 側の正本 |
+| `ScheduledEmails.SentCount` | Airtable 台帳 | **ジョブ単位**の集計（dispatcher が書く）| ✅ ジョブ単位の正本 |
+| `action=sequence` の **`sentByStep`** | 進行度の計算 | **`queued` を含む**「その step が届く経路に乗った人数」| ❌ **実送信数ではない** |
+| `action=rollout` の `steps[].sent` / `steps[].queued` | Redis 増分集計 | **cron が加算した分だけ**（管理経路の手動 queue / dispatch では増えない）| ❌ 実数ではない |
+
+⚠️ **`sentByStep` は queue 済みを含む**（`sequenceProgress.js` の `REACHED_STATUSES = {queued, sent}` 由来）。
+実際に 1 通も出していない段階でも増えるので、**この数字を「送った」と読まない**。
+2026-08-20 の Step2 でも、queue 直後に `sentByStep{2}` が 608 になっている（実送信は 0 の時点）。
+
+⚠️ Redis の `steps[]` は cron が加算する設計。**管理経路から手動で queue / dispatch すると増えない**
+（2026-08-20 の Step1 159 通・Step2 598 通はいずれも `steps[]` に反映されていない）。実数は台帳で数える。
