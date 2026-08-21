@@ -22,7 +22,7 @@
 | **共通クーポン基盤**（`src/lib/coupons/`・商品非依存）| ✅ **本番稼働**（#380）|
 | **`CouponOperationHistory`（append-only 監査履歴）** | ✅ **本番稼働**（gate `COUPON_HISTORY_TABLE_READY=1`）|
 | **利用予約 → 使用済みのライフサイクル**（既存 schema のみ）| ✅ 純粋ロジック実装済み。**予約 write は `reopenStartsAt` 未定のため fail closed** |
-| **再募集の開始操作**（admin ボタン → サーバー時刻で `reopenStartsAt` 確定 → 期限自動導出）| ✅ **実装・テスト完了 / Draft PR**（2026-08-21）。**本番ではまだ押していない** |
+| **再募集の開始操作**（admin ボタン → サーバー時刻で `reopenStartsAt` 確定 → 期限自動導出）| ✅ **本番反映済み**（PR #400 squash merge `91059921` / 2026-08-21）。**本番ではまだ押していない** |
 | **redeem の部分成功の検出・収束**（4 状態 + 修復手順の admin 表示）| ✅ 実装・テスト済み。**confirm への配線は未了** |
 
 ## ⛳ 本件の未完了（**これだけ**・2026-08-21 時点）
@@ -31,9 +31,11 @@
 
 | # | 未完了 | 誰が |
 |---|---|---|
-| 0 | **再募集の開始操作を本番へ反映する**（Draft PR の merge → deploy）| **MK の承認** |
 | 1 | **本番で「Premium Plus 再募集を開始」を押す**（＝ `reopenStartsAt` の確定）| **MK** |
 | 2 | **1 の後の実運用確認**（予約 write の有効化 → 実顧客での取得 → 申込 → 入金確認 → redeem）| 1 の後 |
+
+~~0. 開始操作の本番反映~~ → **2026-08-21 完了**（PR #400 squash merge `91059921` /
+production deploy `6a87f4ec` ready・published commit `91059921`）。
 
 ### 🆕 新たに確定した仕様（2026-08-21 MK）— **開始日時の決め方**
 
@@ -150,10 +152,11 @@ repair もできない**。したがって **gate を 0 に戻さない**こと�
 
 ### いま残っているもの
 
-1. **開始操作の本番反映** — Draft PR（`feat/premium-plus-reopen-start`）の merge → deploy。**MK 承認待ち**
-2. **本番で開始ボタンを押す** — 押すまで `reopenStartsAt` は未設定で、
+1. **本番で開始ボタンを押す** — 押すまで `reopenStartsAt` は未設定で、
    予約 write は fail closed のまま（`buildReservationFields()` が null を返す）
-3. **その後の実運用確認** — 予約 write の有効化 → 実顧客での取得 → 申込 → 入金確認 → redeem
+2. **その後の実運用確認** — 予約 write の有効化 → 実顧客での取得 → 申込 → 入金確認 → redeem
+
+（開始操作そのものの本番反映は 2026-08-21 に完了。下記「本番反映と read-only 確認」を参照）
 
 ## 未完了・必ず継続する任務
 
@@ -1006,9 +1009,8 @@ PC / mobile とも MK が目視し、上記の画面を**現段階では一旦 O
    クーポン基盤が本番反映済みである事実は変わらない）。
    `COUPON_HISTORY_TABLE_READY=1` で履歴は本番稼働、canary も成功済み。
    **残るのは `reopenStartsAt` の決定と、その後の実運用確認だけ**（上の「本番反映と canary の記録」）。
-1. **① の方式は 2026-08-21 に確定・実装済み**（admin のボタン押下時のサーバー時刻）。
-   次は **Draft PR `feat/premium-plus-reopen-start` の目視 → merge → deploy**、
-   そのうえで **MK が本番で開始ボタンを押す**。押した時点で有効期限が確定し、
+1. **① の方式は 2026-08-21 に確定・実装・本番反映まで完了**（admin のボタン押下時のサーバー時刻 /
+   `91059921`）。次は **MK が本番 admin で「Premium Plus 再募集を開始」を押す**。押した時点で有効期限が確定し、
    予約 write と `confirm-bank-payment` 配線へ進める。
    **② クーポン操作の「積み上げ式 履歴」を持つか（3-C の 🛑・本番 schema 変更）は引き続き MK 判断待ち。**
    割引条件（10,000円OFF / 68,000→58,000）、期限ルール（開始日 + 14 日）、
@@ -1554,16 +1556,41 @@ Upstash Redis の 1 キー `ak:pp:reopen:v1:start`（TTL なし）。`SET ... NX
 不採用: Airtable の列・テーブル追加（**本番 schema 変更**）／ Netlify Blobs（eventual consistency）／
 env 直書き（変更に deploy が要る）。判断の記録は `docs/decisions.md` §2026-08-21。
 
-### ⚠️ まだ本番では何も起きていない
+### 本番反映と read-only 確認（2026-08-21・**確定事実**）
 
-- **Draft PR のまま**（merge も deploy もしていない）
+| | 値 |
+|---|---|
+| squash merge | **`91059921`**（PR #400。この事実は後から変わらない）|
+| production deploy | `6a87f4ec` **ready** / published commit `91059921` / 2026-08-21T06:50:18Z |
+| main の CI | Safety Check **success**（`91059921`）|
+
+**read-only で実測した本番の状態**（write は 1 件も行っていない）:
+
+| 確認項目 | 実測 |
+|---|---|
+| `action='reopenStatus'`（write 経路を持たない）| `state='not_started'` / `label='未開始'` / `startable=true` / `started=false` / `startsAtIso=''` / `expiryDetermined=false` / `sideEffects='none'` |
+| **Redis への開始 write** | **0 件**。`available=true`（＝ Upstash へ到達できている）かつ `state='not_started'`＝**鍵 `ak:pp:reopen:v1:start` が存在しない** |
+| admin パネルが読む `action='list'` | `reopenStart` を返す（未開始）／`reopenCoupon.expiryDetermined=false`／17 行**すべて**の有効期限表示が「募集再開日から14日間…」＝ fail closed |
+| Airtable | 変更 0 件。クーポン取得済みは **1 件（canary 前と同じ）**のまま |
+| 公開ページ | `/` `/free/nankan/` `/pricing/` `/results-showcase/nankan/` `/dashboard/` すべて 200 |
+| Premium Plus 系（未ログイン）| `/premium-plus/` `/premium-plus-coupon/` `/api/premium-plus-order.json` `/api/upsell.json` すべて **404**（存在秘匿・従来どおり）|
+
+⚠️ **admin 画面の HTML そのものは取得していない**（`/admin/*` は Basic 認証で 401。設計どおり）。
+パネルの見た目は **MK の目視**が必要。パネルが読むデータ（上表 `action='list'`）と、
+出荷された `renderReopenPanel` の描画結果（未開始 / 開始済み / 確認できない の 3 状態）は確認済み。
+⚠️ **会員としての顧客画面も本番では確認していない**。`SESSION_SIGNING_SECRET` は masked secret で
+**会員セッションを作れない**（正しい設計）。未ログインの 404 までが確認範囲。
+
+### ⚠️ 本番の「開始」はまだ押していない
+
+- **本番の開始ボタンは未押下**（`reopenStartsAt` は未設定のまま）
 - **本番の開始ボタンは押していない**（`reopenStartsAt` は未設定のまま）
 - Redis に鍵は 1 つも作っていない。Customers / PromotionalOffers / 履歴への書き込みも 0 件
 - 実顧客の取得・申込・入金確認・redeem は 1 件も実行していない
 
 ### rollback
 
-- コード: PR を merge しなければ本番は現状のまま。merge 後なら通常の revert
+- コード: 通常の revert（`91059921`）。**開始前なら revert しても顧客影響は無い**
 - 開始済みを戻す: **Upstash コンソールで `ak:pp:reopen:v1:start` を削除する**しかない
   （admin に取消ボタンは無い＝「上書きしない」を構造で守るため）。
   顧客へ期限を案内したあとの削除は不整合になるので不可
