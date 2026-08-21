@@ -90,6 +90,8 @@ function buildHorseRows(entries, horseFlags, prevByNumber, pastByNumber, today) 
       trainer: row.trainer,
       weight: row.weight,
       ageGender: row.ageGender,
+      // 父（血統）。公開 DTO には元からあるが、ここで落ちていて画面まで届いていなかった。
+      sire: row.sire,
       isHeadline: row.isHeadline,
       headlineMark: row.headlineMark,
       headlineKind: row.headlineKind,
