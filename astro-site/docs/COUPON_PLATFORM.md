@@ -47,8 +47,15 @@
 ┌─ 商品固有 ────────────────────────────────────────────────────────────┐
 │ Premium Plus: premiumPlusReopenCoupon.js（3 列 + 割引条件）             │
 │               premiumPlusCouponAdmin.js（binding のみ）                 │
+│               premiumPlusReopenStart.js / …StartStore.js                │
+│                 （再募集開始日時＝この商品の期限の起点。**商品固有**）  │
 └────────────────────────────────────────────────────────────────────────┘
 ```
+
+⚠️ **有効期限の「起点」は商品固有**。Premium Plus は「再募集の開始日時 + 14 日」で、
+その開始日時は admin のボタン押下時のサーバー時刻（`SET NX` の first-write-wins）で確定する。
+2 商品目が同じ仕組みを必要とするとは限らないので、**共通層へ持ち上げない**
+（詳細は `PREMIUM_PLUS_STAGED_RELEASE.md`）。
 
 **binding の契約**:
 

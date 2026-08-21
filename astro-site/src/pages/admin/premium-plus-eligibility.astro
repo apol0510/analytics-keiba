@@ -59,6 +59,14 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
     <!-- 販売の一時停止が本番で使えないときの明示。使えるように見せない（完成の誤認を防ぐ） -->
     <div class="pause-off" id="pauseOff" hidden></div>
+
+    <!--
+      Premium Plus 再募集の開始（**サイト全体で 1 回だけ**の操作）。
+      押した瞬間のサーバー時刻が reopenStartsAt になり、優待クーポンの有効期限
+      （開始日時 + 14 日）が確定する。会員個別の操作ではないのでここ（一覧の上）に置く。
+      ⚠️ 開始済みならボタンは出さない。上書き・取消の経路は画面にもサーバーにも無い。
+    -->
+    <div class="reopen" id="reopenPanel" hidden></div>
     <div class="sumbar" id="summary"></div>
     <div class="sumsub" id="summarySub"></div>
 
@@ -1315,6 +1323,27 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   }
   .ppe .pause-off b { color: #fcd34d; }
   .ppe .pause-off ol { margin: .4rem 0 0; padding-left: 1.3rem; }
+
+  /* ── Premium Plus 再募集の開始（サイト全体で 1 回だけ）── */
+  .ppe .reopen {
+    background: #0f1a2e; border: 1px solid #24354f; border-radius: 10px;
+    padding: .8rem .95rem; margin-bottom: .6rem; font-size: .84rem; line-height: 1.75;
+  }
+  .ppe .reopen.started { border-color: rgba(45,212,191,.5); background: #07231f; }
+  .ppe .reopen.unknown { border-color: rgba(245,158,11,.55); background: #3a1d05; }
+  .ppe .reopen h3 { margin: 0 0 .4rem; font-size: .9rem; color: #e2e8f0; font-weight: 800; }
+  .ppe .reopen .rs-state { font-weight: 800; }
+  .ppe .reopen.started .rs-state { color: #5eead4; }
+  .ppe .reopen.unknown .rs-state { color: #fcd34d; }
+  .ppe .reopen .rs-kv { display: grid; grid-template-columns: max-content 1fr; gap: .15rem .7rem; margin: .35rem 0 0; }
+  .ppe .reopen .rs-k { color: #93a4bd; font-size: .78rem; }
+  .ppe .reopen .rs-v { color: #e2e8f0; font-size: .82rem; }
+  .ppe .reopen .rs-note { color: #93a4bd; font-size: .76rem; margin-top: .45rem; }
+  .ppe .reopen .rs-act { margin-top: .6rem; display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
+  @media (max-width: 640px) {
+    .ppe .reopen .rs-kv { grid-template-columns: 1fr; gap: 0; }
+    .ppe .reopen .rs-act button { width: 100%; }
+  }
   .ppe .sumbar .sep { color: rgba(148,163,184,.35); }
   .ppe .sumsub { font-size: .74rem; color: #93a4bd; margin-bottom: 1rem; padding-left: .3rem; }
 
@@ -2704,6 +2733,115 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     }
 
     /**
+     * Premium Plus 再募集の開始パネル（**サイト全体で 1 つの状態**）。
+     *
+     * ⚠️ 表示は必ずサーバーが返した `reopenStart` をそのまま出す。
+     *    画面側で「未開始だろう」と推測しない（読めていないときは「確認できない」）。
+     */
+    function renderReopenPanel() {
+      const box = $('reopenPanel');
+      if (!box) return;
+      const st = lastData && lastData.reopenStart;
+      box.textContent = '';
+      box.className = 'reopen';
+      // 情報が無い応答（旧デプロイ・未取得）は「未開始」と決めつけない
+      if (!st) { box.hidden = true; return; }
+      box.hidden = false;
+      if (st.state === 'started') box.classList.add('started');
+      if (st.state === 'unknown') box.classList.add('unknown');
+
+      const h = document.createElement('h3');
+      h.textContent = '💠 Premium Plus 再募集';
+      box.appendChild(h);
+
+      const line = document.createElement('div');
+      line.appendChild(document.createTextNode('状態: '));
+      const stateEl = document.createElement('span');
+      stateEl.className = 'rs-state';
+      stateEl.textContent = st.state === 'started' ? '✅ 開始済み'
+        : (st.state === 'unknown' ? '⚠️ 確認できない' : '⏹ 未開始');
+      line.appendChild(stateEl);
+      box.appendChild(line);
+
+      const kv = document.createElement('div'); kv.className = 'rs-kv';
+      const row = (k, v) => {
+        const kEl = document.createElement('div'); kEl.className = 'rs-k'; kEl.textContent = k;
+        const vEl = document.createElement('div'); vEl.className = 'rs-v'; vEl.textContent = v;
+        kv.appendChild(kEl); kv.appendChild(vEl);
+      };
+      // ⚠️ 読めていないときに「まだ確定していません」と断定しない（開始済みかもしれない）
+      const unknown = st.state === 'unknown';
+      row('開始日時', unknown ? '確認できない'
+        : (st.startsAtText ? st.startsAtText + '（JST）' : '—（まだ確定していません）'));
+      row('クーポン期限', unknown ? '確認できない'
+        : (st.expiryDetermined ? st.expiresAtText + '（JST）' : st.expiresAtText));
+      box.appendChild(kv);
+
+      const note = document.createElement('p'); note.className = 'rs-note';
+      note.textContent = st.note || '';
+      box.appendChild(note);
+
+      // 開始済み・確認できない状態では**ボタンを出さない**（押せる操作を偽装しない）
+      if (st.startable !== true) return;
+
+      const act = document.createElement('div'); act.className = 'rs-act';
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn-danger';
+      btn.textContent = '▶ Premium Plus 再募集を開始する';
+      btn.addEventListener('click', async () => {
+        const actor = ($('actor') && $('actor').value.trim()) || '';
+        if (!actor) {
+          msg('操作者名を入力してください（開始の記録に残ります）', 'err');
+          $('connBody').hidden = false; return;
+        }
+        // 取り消せない操作。何が確定するかを明示して確認を取る。
+        // ⚠️ 文言は**サーバーが配る**単一源（premiumPlusReopenStart.js の
+        //    REOPEN_START_CONFIRM_TEXT）。画面側で作り直さない。
+        //    判定モジュールを client へ import すると共通クーポン基盤（node:crypto）を
+        //    巻き込んでビルドが落ちるため、`reopenStart.confirmText` として受け取る。
+        //    受け取れていないなら**押させない**（「取り消せない」ことが伝わらないため）。
+        if (!st.confirmText) {
+          msg('確認文言を取得できていません。再読み込みしてからもう一度お試しください。', 'err');
+          return;
+        }
+        if (!window.confirm(st.confirmText)) return;
+        btn.disabled = true;
+        msg('再募集の開始日時を確定中…');
+        // ⚠️ 時刻を送らない。開始日時は**サーバーが決める**
+        const out = await call({ action: 'reopenStart', actor });
+        const logged = {
+          kind: 'reopenStart', actor, recordId: '', email: '', at: Date.now(),
+          from: '未開始', to: '開始済み',
+        };
+        if (isUnknownResult(out)) {
+          opLog.add({ ...logged, result: 'unknown', detail: '通信が切れました' });
+          msg('通信が切れたため、開始できたか分かりません。再読み込みで状態を確認してください。', 'err');
+        } else if (!out) {
+          opLog.add({ ...logged, result: 'failed' });
+          btn.disabled = false;
+        } else {
+          opLog.add({
+            ...logged, result: 'ok',
+            detail: out.created === false ? '既に開始済み（上書きしていません）' : '',
+          });
+          // 送った値が通った前提にせず、サーバーの確定値を読み直す
+          await load();
+          msg(out.created === false
+            ? '既に開始済みでした（開始日時は上書きしていません）'
+            : '再募集を開始しました（開始日時が確定し、クーポン期限も確定しました）', 'ok');
+        }
+      });
+      act.appendChild(btn);
+      const warn = document.createElement('span');
+      warn.className = 'rs-note';
+      warn.style.margin = '0';
+      warn.textContent = '※ 押した時点のサーバー時刻で確定します。あとから変更できません。';
+      act.appendChild(warn);
+      box.appendChild(act);
+    }
+
+    /**
      * 一時停止バッジ（資格バッジに**添える**。置き換えない）。
      * 停止していなければ null を返す＝通常会員の見た目は一切変わらない。
      */
@@ -2847,6 +2985,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     function renderSummary(c) {
       const bar = $('summary');
       bar.innerHTML = '';
+      // 再募集の開始状態は件数の有無と無関係に出す（件数が無くても状態は伝える）
+      renderReopenPanel();
       // 取得が確定していないときは件数を出さない（0 を「本当に 0 件」と誤読させない）
       if (!c) {
         const w = document.createElement('span');
@@ -4118,7 +4258,11 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         + '取得されたクーポンの保有状況です。管理者が付与・取消する操作は現状ありません'
         + '（確定仕様ではなく現行実装。取消・訂正は Airtable の直接編集に依存します）。'
         + '取得しても販売資格・一時停止・段階公開（PHASE）・会員権・決済は変わりません。'
-        + '割引条件は確定済み（下記）。有効期限だけがまだ未確定です。';
+        + '割引条件は確定済み（下記）。'
+        // 有効期限は「再募集を開始したか」で決まる。画面の上の再募集パネルと必ず同じ根拠を使う
+        + ((lastData && lastData.reopenStart && lastData.reopenStart.expiryDetermined === true)
+          ? '有効期限も確定済みです（再募集の開始日時から14日間）。'
+          : '有効期限は再募集を開始すると確定します（画面上部の「Premium Plus 再募集」を参照）。');
       rcSec.appendChild(rcNote);
 
       const rcKv = document.createElement('dl'); rcKv.className = 'kv';

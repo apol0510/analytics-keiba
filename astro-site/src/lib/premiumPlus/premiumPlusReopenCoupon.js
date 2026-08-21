@@ -50,6 +50,24 @@ export function formatYen(n) {
 }
 
 /**
+ * ISO → JST の「YYYY年M月D日 HH:MM」。**日時表記もここ 1 か所**。
+ *
+ * ⚠️ サーバーの TZ に依存させない（Netlify は UTC）。UTC へ 9 時間足して
+ *    `getUTC*` で読むことで、実行環境に関係なく JST になる。
+ * ⚠️ 各画面で `toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })` を書き直さないこと
+ *    （環境差・ロケール差で表記がズレる）。
+ */
+export function formatJstDateTime(iso) {
+  if (!iso) return '';
+  const ms = Date.parse(String(iso));
+  if (!Number.isFinite(ms)) return '';
+  const d = new Date(ms + 9 * 60 * 60 * 1000);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}年${d.getUTCMonth() + 1}月${d.getUTCDate()}日 `
+    + `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`;
+}
+
+/**
  * 割引額（円）。**この 1 か所だけが割引の実体**。
  * ⚠️ 画面・API・管理画面で数値を書き写さないこと（ズレたら guard テストが落ちる）。
  */
@@ -366,10 +384,18 @@ export function resolveCouponExpiry(def = PP_REOPEN_COUPON) {
   };
 }
 
-/** 有効期限の表示。**未確定のあいだは日付を作らない** */
+/**
+ * 有効期限の表示。**未確定のあいだは日付を作らない**。
+ *
+ * 確定後（＝ admin で再募集を開始したあと）は **JST の日時**を返す。
+ * ⚠️ ISO 文字列をそのまま顧客画面へ出さない（`2026-09-04T…Z` は読めない・UTC と誤読される）。
+ */
 export function describeCouponExpiry(def = PP_REOPEN_COUPON) {
   const t = (def && def.terms) || {};
-  if (t.expiresDetermined === true && t.expiresAt) return String(t.expiresAt);
+  if (t.expiresDetermined === true && t.expiresAt) {
+    const text = formatJstDateTime(t.expiresAt);
+    return text ? `${text}（JST）まで` : PP_REOPEN_COUPON_EXPIRY_NOTE;
+  }
   return PP_REOPEN_COUPON_EXPIRY_NOTE;
 }
 
@@ -404,8 +430,10 @@ export const PP_ORDER_PATH = '/premium-plus-v2/';
  * @returns {{ show: boolean, purchasable: boolean, label: string, href: string|null,
  *             note: string, detailLabel: string, detailHref: string }}
  */
-export function describeCouponOrderCta({ claimed, purchasable, source = 'dashboard' } = {}) {
-  const discount = describeCouponDiscount();
+export function describeCouponOrderCta({
+  claimed, purchasable, source = 'dashboard', def = PP_REOPEN_COUPON,
+} = {}) {
+  const discount = describeCouponDiscount(def);
   const base = {
     show: claimed === true,
     detailLabel: 'クーポン詳細を確認',
@@ -446,8 +474,15 @@ export function describeCouponForMember({
   purchasable = false,
   /** CTA の導線元（`?from=` に載る） */
   ctaSource = 'dashboard',
+  /**
+   * **実効クーポン定義**（`withReopenStart()` の戻り値）。
+   * 再募集を開始していれば有効期限が確定した定義が渡る。省略時は基準定義＝期限未確定。
+   * ⚠️ ここで `PP_REOPEN_COUPON` を直接読み直さないこと（面ごとに期限がズレる）。
+   */
+  def = PP_REOPEN_COUPON,
 } = {}) {
   const held = coupon || { claimed: false, claimedAtIso: '' };
+  const terms = (def && def.terms) || {};
   return {
     /**
      * 「いまの優待条件」として**全ての面に出す 1 本の文字列**。
@@ -459,23 +494,23 @@ export function describeCouponForMember({
      * **すべて自動で同じ表示に変わる**。
      * ⚠️ 各画面で条件文を組み立て直さないこと（表示がズレる）。
      */
-    termsText: describeCouponTerms(),
+    termsText: describeCouponTerms(def),
     /** 「10,000円OFF」だけ（見出し・バッジ用） */
-    discountText: describeCouponDiscount(),
+    discountText: describeCouponDiscount(def),
     /** 「通常 68,000円 → 58,000円」だけ */
-    priceText: describeCouponPrice(),
+    priceText: describeCouponPrice(def),
     /** 有効期限（未確定のあいだは「未定」と伝える） */
-    expiryText: describeCouponExpiry(),
+    expiryText: describeCouponExpiry(def),
     /** 期限が確定しているか（未確定を隠さない） */
-    expiryDetermined: PP_REOPEN_COUPON.terms.expiresDetermined === true,
-    name: PP_REOPEN_COUPON.name,
-    description: PP_REOPEN_COUPON.description,
+    expiryDetermined: terms.expiresDetermined === true,
+    name: def.name,
+    description: def.description,
     claimed: held.claimed === true,
     claimedAtIso: held.claimedAtIso || '',
     /** 募集再開時に利用できる旨（取得済みのときだけ意味を持つ） */
     usableNote: PP_REOPEN_COUPON_USABLE_NOTE,
     /** 条件が未確定であることを隠さない */
-    termsDetermined: PP_REOPEN_COUPON.terms.determined === true,
+    termsDetermined: terms.determined === true,
     termsNote: PP_REOPEN_COUPON_EXPIRY_NOTE,
     /** 現在受付休止中か */
     paused: paused === true,
@@ -486,7 +521,7 @@ export function describeCouponForMember({
      * ⚠️ 呼び出し側は `purchasable` を見てリンクにするか決めること。
      */
     orderCta: describeCouponOrderCta({
-      claimed: held.claimed === true, purchasable: purchasable === true, source: ctaSource,
+      claimed: held.claimed === true, purchasable: purchasable === true, source: ctaSource, def,
     }),
     /** 保存先が有効化されていない（押しても取得できない）ことを隠さない */
     storageReady: storageReady !== false,

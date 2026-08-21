@@ -41,6 +41,11 @@ import {
   PP_REOPEN_COUPON_SOURCE,
 } from '../lib/premiumPlus/premiumPlusReopenCoupon.js';
 import { renderPauseNoticeHtml } from '../lib/premiumPlus/premiumPlusPauseNoticePage.js';
+// 再募集の開始日時（`reopenStartsAt`）の単一源。**全ての面がここから読む**。
+// ⚠️ ここで言う期限はクーポンの利用期限（開始 + 14 日）。会員権の期限とは無関係で、
+//    このページは会員判定を一切再実装しない（正本は resolveEntitlements）。
+import { loadReopenStart } from '../lib/premiumPlus/premiumPlusReopenStartStore.js';
+import { withReopenStart } from '../lib/premiumPlus/premiumPlusReopenStart.js';
 // 申込モーダル内のクーポン適用 UI（金額はサーバーの単一源から取る）
 import PremiumPlusCouponApply from '../components/PremiumPlusCouponApply.astro';
 import { lookupCustomerFields } from '../lib/premiumPlus/purchaseAnchorLookup.js';
@@ -94,11 +99,13 @@ if (ppUpsell.channel !== UPSELL_CHANNEL.PLUS || !ppRelease.showProductPage) {
   //    見られたはずの人だけ）。それ以外は従来どおり 404 のまま。
   if (ppUpsell.pauseNotice?.showPauseNotice === true) {
     const ppCoupon = readReopenCoupon(ppFields);
+    const ppReopen = await loadReopenStart({ env: process.env });
     const ppCouponView = describeCouponForMember({
       coupon: ppCoupon,
       paused: true,
       claimable: true,
       storageReady: isReopenCouponEnabled(process.env),
+      def: withReopenStart(ppReopen.startsAtIso),
     });
     return new Response(
       renderPauseNoticeHtml({

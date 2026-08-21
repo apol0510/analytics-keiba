@@ -55,12 +55,18 @@ export const OP_KIND = Object.freeze({
   UPSELL: 'upsell',
   /** 会員単位の「販売中 ⇔ 一時停止」。資格（ELIGIBILITY）とは別の軸なので別種別にする */
   SALE_PAUSE: 'salePause',
+  /**
+   * **サイト全体**の「Premium Plus 再募集を開始」。会員 1 人の操作ではないので
+   * recordId / email は空のまま記録される（会員別の操作と混同しない）。
+   */
+  REOPEN_START: 'reopenStart',
 });
 
 export const OP_KIND_LABEL = Object.freeze({
   eligibility: '販売資格',
   upsell: '販売CTA',
   salePause: '販売の一時停止',
+  reopenStart: 'Premium Plus 再募集の開始',
 });
 
 const str = (v) => String(v ?? '').trim();

@@ -300,7 +300,8 @@ test('予約台帳を読めないときは 0 件と断定しない（gate off / 
   // 一覧と個別検索が**同じ台帳**を読む（片方だけ読まないと状態がズレる）
   const lookup = fn.slice(fn.indexOf('async function handleLookup'), fn.indexOf('async function readReservationLedger'));
   assert.match(lookup, /readReservationLedger\(\{ KEY, BASE \}\)/, '個別検索が台帳を読んでいない');
-  assert.match(lookup, /buildAdminRow\(rec, now, ledger\)/, '個別検索が台帳を渡していない');
+  // 第 3 引数は台帳、第 4 引数は再募集の開始状態（どちらも一覧と同じものを渡す）
+  assert.match(lookup, /buildAdminRow\(rec, now, ledger[,)]/, '個別検索が台帳を渡していない');
 });
 
 test('台帳の状態は画面にも出す（「確認できない」を無言で 0 件表示にしない）', () => {

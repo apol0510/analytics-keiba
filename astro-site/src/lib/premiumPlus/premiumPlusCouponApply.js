@@ -63,22 +63,29 @@ export const COUPON_PRODUCT = Object.freeze({ PREMIUM_PLUS: 'premium_plus' });
  *
  * @param {{ fields: object|null, nowMs?: number, product?: string }} input
  */
-export function listApplicableCoupons({ fields, nowMs = Date.now(), product = COUPON_PRODUCT.PREMIUM_PLUS } = {}) {
+export function listApplicableCoupons({
+  fields, nowMs = Date.now(), product = COUPON_PRODUCT.PREMIUM_PLUS,
+  /**
+   * **実効クーポン定義**（`withReopenStart()` の戻り値）。再募集を開始していれば
+   * 有効期限が確定した定義が渡る。省略時は基準定義（＝期限未確定＝期限で弾かない）。
+   */
+  def = PP_REOPEN_COUPON,
+} = {}) {
   if (product !== COUPON_PRODUCT.PREMIUM_PLUS) return [];
   const held = readReopenCoupon(fields);
   if (held.claimed !== true) return [];
-  if (isExpired(nowMs)) return [];
+  if (isExpired(nowMs, def)) return [];
   if (isUsed(fields)) return [];
 
-  const price = resolveCouponPrice();
+  const price = resolveCouponPrice(def);
   if (!price) return [];
   return [{
     couponId: couponIdWithVersion(),
-    name: PP_REOPEN_COUPON.name,
-    discountText: describeCouponDiscount(),
-    priceText: describeCouponPrice(),
-    expiryText: describeCouponExpiry(),
-    expiryDetermined: PP_REOPEN_COUPON.terms.expiresDetermined === true,
+    name: def.name,
+    discountText: describeCouponDiscount(def),
+    priceText: describeCouponPrice(def),
+    expiryText: describeCouponExpiry(def),
+    expiryDetermined: def.terms.expiresDetermined === true,
     usableNote: PP_REOPEN_COUPON_USABLE_NOTE,
     claimedAtIso: held.claimedAtIso,
     ...price,
@@ -89,8 +96,8 @@ export function listApplicableCoupons({ fields, nowMs = Date.now(), product = CO
  * 有効期限切れか。**期限が未確定のあいだは期限切れにしない**
  * （勝手に日付を作って弾かない）。
  */
-function isExpired(nowMs) {
-  const t = PP_REOPEN_COUPON.terms;
+function isExpired(nowMs, def = PP_REOPEN_COUPON) {
+  const t = (def && def.terms) || {};
   if (t.expiresDetermined !== true || !t.expiresAt) return false;
   const ms = Date.parse(String(t.expiresAt));
   return Number.isFinite(ms) ? ms <= nowMs : false;
@@ -115,8 +122,10 @@ function isUsed() {
  */
 export function resolveOrderPricing({
   fields, couponId, nowMs = Date.now(), product = COUPON_PRODUCT.PREMIUM_PLUS,
+  /** **実効クーポン定義**（`withReopenStart()` の戻り値）。期限判定にだけ効く */
+  def = PP_REOPEN_COUPON,
 } = {}) {
-  const base = resolveCouponPrice();
+  const base = resolveCouponPrice(def);
   // 通常価格は常に正本から。クーポンが無くても・弾かれても、ここが基準
   const regularPrice = base ? base.regularPrice : null;
   const none = (reason = null) => ({
@@ -134,7 +143,7 @@ export function resolveOrderPricing({
   const held = readReopenCoupon(fields);
   if (held.claimed !== true) return none(COUPON_APPLY_REJECT.NOT_HELD);
   if (isUsed(fields)) return none(COUPON_APPLY_REJECT.ALREADY_USED);
-  if (isExpired(nowMs)) return none(COUPON_APPLY_REJECT.EXPIRED);
+  if (isExpired(nowMs, def)) return none(COUPON_APPLY_REJECT.EXPIRED);
 
   // ⚠️ 入力価格から引かない。正本の通常価格から**1 回だけ**引いた確定値を返す
   return {
@@ -143,7 +152,7 @@ export function resolveOrderPricing({
     finalPrice: base.offerPrice,
     couponApplied: {
       couponId: couponIdWithVersion(),
-      name: PP_REOPEN_COUPON.name,
+      name: def.name,
       discountType: base.discountType,
       discountValue: base.discountValue,
     },
