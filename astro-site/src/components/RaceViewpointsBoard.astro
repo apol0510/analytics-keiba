@@ -30,6 +30,22 @@ const fmtDate = (d: string) => {
   const [y, m, day] = String(d).split('-');
   return `${y}年${parseInt(m, 10)}月${parseInt(day, 10)}日`;
 };
+// 表示しているデータが「今日ぶん」かどうか。
+// 中央は平日開催が無いため、金曜に開くと前の土日のデータが日付だけ添えて出る。
+// 5 日前の内容を今日のものと誤解されるので、ズレているときだけ注記を出す。
+// ⚠️ 次回開催日は**断定しない**。開催カレンダー(premiumPlusRaceCalendar.json)は
+//    「中央・南関とも開催が無い日」の例外リストで、次に開催がある日は答えられない。
+//    土日と決め打ちすると開催の無い週末で嘘になるため、日付は書かない。
+// 両ページとも prerender=false（SSR）なので、この判定はアクセスのたびに評価される。
+const todayJst = (() => {
+  const now = new Date();
+  const jstMs = now.getTime() + 9 * 60 * 60 * 1000;
+  return new Date(jstMs).toISOString().slice(0, 10);
+})();
+// 'YYYY-MM-DD' は辞書順比較で日付順になる
+const freshness: 'today' | 'past' | 'future' =
+  view?.date === todayJst ? 'today' : (view?.date < todayJst ? 'past' : 'future');
+
 const stateClass = (s: string) =>
   s === RACE_STATE.TAGGED ? 'is-tagged'
   : s === RACE_STATE.NEUTRAL ? 'is-neutral'
@@ -82,6 +98,14 @@ const LEGEND = [
     <h1 class="rvb-title">無料予想<span class="rvb-cat">{categoryLabel}</span></h1>
     <p class="rvb-subtitle">今日のレースの見どころ</p>
     <p class="rvb-date">{fmtDate(view.date)}</p>
+    {freshness !== 'today' && (
+      <p class={`rvb-freshness rvb-freshness-${freshness}`}>
+        <span class="rvb-freshness-ic" aria-hidden="true">{freshness === 'past' ? '📅' : '⏩'}</span>
+        {freshness === 'past'
+          ? `今日（${fmtDate(todayJst)}）ぶんはまだありません。表示しているのは前回の開催（${fmtDate(view.date)}）の内容です。`
+          : `${fmtDate(view.date)}（次回の開催）ぶんを先に出しています。今日の開催ではありません。`}
+      </p>
+    )}
     <p class="rvb-lead">
       出走馬の<strong>近走（前走の会場・距離・騎手）</strong>だけを数えて、レースごとに
       「何が替わったか」「近走を見比べやすいか」を出しています。
@@ -138,6 +162,13 @@ const LEGEND = [
       <p class="rvb-topmember-body">{MEMBER_EXTRAS.topMemberBody}</p>
     </div>
   </header>
+
+  {/* 有料版の直近実績への導線。「見どころ」を読んだ人に、同じ日の買い目がどうなったかを見せる。
+      ⚠️ 実績バナーの中身は **ページ側から slot で差し込む**。ここで直接 import すると、
+         resultsShowcase.js → mainRaceBetting.js と有料ロジックがこの純粋な表示部品に
+         入り込み、board.guard.test.mjs の「有料データを読むモジュールを import しない」
+         方針を骨抜きにするため。差し込みが無ければ何も出ない。 */}
+  <div class="rvb-resultslot"><slot name="results" /></div>
 
   {/* 会場タブ。複数開催（JRA 3 場 / 南関 2 場）で全会場を縦に並べると 10 画面ぶんになるため、
       1 会場ずつ出す。**JS が動かない環境ではタブを出さず、全会場を縦に並べたまま**にする
@@ -676,6 +707,16 @@ const LEGEND = [
     .rvb-venuetab { padding: 8px 12px; font-size: .9rem; }
     .rvb-venuetab[aria-selected="true"]::after { content: '●'; padding: 0 2px; background: none; }
   }
+
+  /* 表示中データが今日ぶんでないときの注記。色だけでなく記号と文で示す。 */
+  .rvb-freshness { display: flex; gap: 7px; align-items: flex-start; justify-content: center;
+    max-width: 660px; margin: 0 auto 12px; padding: 9px 12px; border-radius: 10px;
+    font-size: .84rem; line-height: 1.75; text-align: left;
+    background: rgba(245,158,11,.14); border: 1px solid rgba(245,158,11,.55); color: #fde68a; }
+  .rvb-freshness-future { background: rgba(56,189,248,.14); border-color: rgba(56,189,248,.55); color: #bae6fd; }
+  .rvb-freshness-ic { flex: none; }
+
+  .rvb-resultslot:not(:empty) { margin: 20px 0 0; }
 
   .rvb-venue { margin-top: 34px; }
   .rvb-venue-name { font-size: 1.3rem; font-weight: 800; color: #f8fafc; border-left: 5px solid #7c3aed; padding-left: 10px; margin: 0 0 12px; }

@@ -175,8 +175,14 @@ export const RESERVATION_REJECT = Object.freeze({
  */
 export function resolveReservationDecision({
   fields, offerRows = [], customerRecordId, nowMs, env,
+  /**
+   * **実効クーポン定義**（`withReopenStart()` の戻り値）。
+   * 再募集が未開始（＝ `reopenStartsAt` 未設定）なら期限が確定せず、
+   * ここが `EXPIRY_UNDETERMINED` で止める＝**予約 write は fail closed のまま**。
+   */
+  def = PP_REOPEN_COUPON,
 } = {}) {
-  const terms = PP_REOPEN_COUPON.terms || {};
+  const terms = (def && def.terms) || {};
   // 期限が未確定なら本番で予約を作らない（fail closed）
   if (terms.expiresDetermined !== true || !terms.expiresAt) {
     return { ok: false, reason: RESERVATION_REJECT.EXPIRY_UNDETERMINED };
@@ -195,7 +201,7 @@ export function resolveReservationDecision({
   if (hasRedeemedReservation({ records: offerRows, customerRecordId })) {
     return { ok: false, reason: RESERVATION_REJECT.ALREADY_REDEEMED };
   }
-  if (!isReservationEnabled(env)) {
+  if (!isReservationEnabled(env, def)) {
     return { ok: false, reason: RESERVATION_REJECT.EXPIRY_UNDETERMINED };
   }
   return { ok: true, reason: null };

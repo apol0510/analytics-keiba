@@ -8,6 +8,10 @@ import { SUPPORT_EMAIL, ADMIN_EMAIL, FROM_EMAIL } from './config/email-config.js
 import { buildApplicationFields } from '../../src/lib/payments/bankPaymentFlow.js';
 // 申込価格の正本（クーポン適用込み）。**クライアントの言い値を使わない**
 import { resolveOrderPricing } from '../../src/lib/premiumPlus/premiumPlusCouponApply.js';
+// 有効期限は「再募集の開始日時 + 14 日」。開始状態はサーバー側の単一源からしか読まない
+// （client が期限・開始日時を送ってきても採用しない）。
+import { loadReopenStart } from '../../src/lib/premiumPlus/premiumPlusReopenStartStore.js';
+import { withReopenStart } from '../../src/lib/premiumPlus/premiumPlusReopenStart.js';
 import { checkMemberOnlyPricing } from '../../src/lib/pricing/pricingEligibility.js';
 import { resolveOrderSaleDate, buildSaleProductName, isPremiumPlusProductName } from '../../src/lib/premiumPlus/premiumPlusSaleDate.js';
 import { shapeRaceCalendar } from '../../src/lib/premiumPlus/premiumPlusRaceCalendar.js';
@@ -289,7 +293,11 @@ exports.handler = async (event, context) => {
     //
     //    クーポンを**最初から選んでいない**申込は従来どおり通常価格で進む。
     let serverPricing = null;
+    // 再募集の開始状態（＝クーポン有効期限の確定）。読めなければ期限未確定のまま進む
+    let plusCouponDef = null;
     if (isPremiumPlusOrder) {
+      const reopenState = await loadReopenStart({ env: process.env });
+      plusCouponDef = withReopenStart(reopenState.startsAtIso);
       const selectedCouponId = String(couponId ?? '').trim();
       if (selectedCouponId) {
         try {
@@ -297,6 +305,7 @@ exports.handler = async (event, context) => {
             fields: plusCustomerFields,
             couponId: selectedCouponId,
             nowMs: Date.now(),
+            def: plusCouponDef,
           });
         } catch (e) {
           serverPricing = null;  // 判定不能。下で拒否する
@@ -718,6 +727,7 @@ exports.handler = async (event, context) => {
         // クーポン未選択のときは通常価格を採用する。
         const pricing = serverPricing || resolveOrderPricing({
           fields: plusCustomerFields, couponId: null, nowMs: Date.now(),
+          def: plusCouponDef || undefined,
         });
         if (Number.isFinite(pricing.finalPrice)) {
           requestedAmount = pricing.finalPrice;

@@ -30,6 +30,9 @@ import {
   readReopenCoupon, describeCouponForMember,
 } from '../../lib/premiumPlus/premiumPlusReopenCoupon.js';
 import { formatClaimedAtJst, COUPON_PAGE_PATH } from '../../lib/premiumPlus/premiumPlusPauseNoticePage.js';
+// 再募集の開始日時の単一源（開始済みなら有効期限が確定した定義になる）
+import { loadReopenStart } from '../../lib/premiumPlus/premiumPlusReopenStartStore.js';
+import { withReopenStart } from '../../lib/premiumPlus/premiumPlusReopenStart.js';
 
 const PRODUCT_HREF = '/premium-plus-v2/';
 
@@ -68,6 +71,8 @@ export async function GET({ request }) {
   // 本人のクーポン保有状態。文言・条件は単一源（describeCouponForMember）に作らせる。
   // ⚠️ ここで条件文や価格を組み立てないこと。条件が確定したら単一源だけが変わる。
   const held = readReopenCoupon(fields);
+  // 取得済みの人にだけ期限を出す。読めなければ従来どおり「未確定」表示のまま（fail closed）
+  const reopen = held.claimed ? await loadReopenStart({ env: process.env }) : { startsAtIso: null };
   const couponBody = held.claimed
     ? (() => {
       const v = describeCouponForMember({
@@ -78,6 +83,7 @@ export async function GET({ request }) {
         // いま購入できるか。**停止中・再募集前は false** で、押せる CTA を出さない
         purchasable: view.plusRelease?.purchaseEnabled === true,
         ctaSource: 'dashboard',
+        def: withReopenStart(reopen.startsAtIso),
       });
       return {
         claimed: true,
