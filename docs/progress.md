@@ -1730,7 +1730,31 @@ Light 約 15,000 名 rollout（#372 系列）の修復。#369 反映後に再開
 |---|---|
 | **1 tick 1 ジョブぶん** | follow-up と Step1 救済で積む宛先を **既存の `RECIPIENTS_PER_JOB`（100）**まで。残りは次の tick が**単一源から取り直して**続ける。**新しい件数仕様は作らない** |
 | **結論が変わらないフェーズ読みを飛ばす** | 体験中フェーズに due があれば終了後フェーズを読まない（採用ロジックは不変・読めなければ従来どおり `null` で fail closed）|
-| **黙って打ち切らない** | 切ったぶんを `dueRemaining` / `boundedBy` としてログと戻り値に出す |
+| **窓の残りと全体の残りを分ける** | `remainingInWindow`（`next.recordIds` の窓の残り）/ `sourceTruncated` / `totalDueBefore` / `totalDueRemaining`（**単一源の `summary.dueByStep[step]` から作る。分からなければ `null`**）を出す |
+
+⚠️ **`next.recordIds` は最大 500 件（`MAX_RECIPIENTS_PER_SEND`）の窓**。総 due 593 / 窓 500 で 100 積んだとき、
+**窓の残りは 400、全体の残りは 493**。窓の残りを「残り 400 名」と読ませない。
+
+### フェーズ読み省略の安全性（集計を壊さない）
+
+`due.phases` は **journey totals の同期**（`buildJourneyTotals` → Redis 集計）にも使われる。
+省略した tick では **同期しない**（`journey_totals_skipped` / `reason: phase_read_skipped` をログ）。
+
+- `buildJourneyTotals` は終了後フェーズの `summary` が無ければ **`ok:false`**（`post_expiry_summary_missing`）で、
+  **0 件へ倒れない**（既存契約・テストで固定）
+- 集計は**前回値のまま据え置き**。画面は `metricsUpdatedAt` で古さが分かる
+- **送信対象の選定には影響しない**（採用は単一源 `action=sequence` の `next` のまま）
+
+### 593 名を処理するのに必要な tick 数（PENDING 優先のため交互になる）
+
+`tickRollout` は **① PENDING があれば dispatch → ② queue → ③ follow-up → ④ 付与** の順。
+したがって **queue → dispatch → queue → dispatch …** と交互に進む。
+
+- queue tick: **約 6 回**（100 × 5 + 93）
+- dispatch tick: **約 6 回**（queue した各ジョブを起動）
+- ＋ background 送信の settlement 待ちで**追加 tick が入り得る**
+
+⚠️ 「6 tick で queue 完了」は誤り。**最低でも queue 6 + dispatch 6 の計 12 tick 程度**必要。
 
 ⚠️ 変えていないもの: due 判定（単一源）／ suppression・購入・間隔・頻度上限 ／ `DeliveryKey` ／
 `planFingerprint` ／ `queue:unverified` と読み戻し ／ fail closed ／ 1 tick 1 段階 ／

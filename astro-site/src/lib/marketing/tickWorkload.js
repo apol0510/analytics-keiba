@@ -30,22 +30,47 @@
 import { chunkRecipients, RECIPIENTS_PER_JOB } from './campaignSend.js';
 
 /**
- * この tick で積む宛先を**1 ジョブぶん**に切る。
+ * この tick で積む宛先を**1 ジョブぶん**に切り、**何がどれだけ残るか**を正確に返す。
  *
- * @param {string[]} recordIds 単一源（`action=sequence` の `next.recordIds`）の順序のまま
- * @returns {{take: string[], remaining: number, bounded: boolean, limit: number}}
+ * ⚠️ **窓の残りと全体の残りを混同しない。**
+ *    `action=sequence` の `next.recordIds` は **最大 500 件（`MAX_RECIPIENTS_PER_SEND`）の窓**で、
+ *    `truncated: true` のときは窓の外にまだ対象がいる。例: 総 due 593 / 窓 500 / 今回 100 なら
+ *    **窓の残りは 400、全体の残りは 493**。窓の残り 400 を「残り 400 名」と出すと嘘になる。
+ * ⚠️ 全体の残りは**単一源が同じ scope で返している総数**（`summary.dueByStep[step]`）からのみ作る。
+ *    渡されなければ `null`（**推測しない**）。
+ *
+ * @param {{recordIds: string[], truncated?: boolean, totalDue?: number|null}} input
+ *   `totalDue` … その step の due **総数**（窓ではない）。`action=sequence` の
+ *                `summary.dueByStep[step]`。不明なら省略する
+ * @returns {{take: string[], queued: number, remainingInWindow: number,
+ *            sourceTruncated: boolean, boundedBy: number|null,
+ *            totalDueBefore: number|null, totalDueRemaining: number|null, limit: number}}
  */
-export function boundQueueBatch(recordIds) {
+export function describeQueueBatch({ recordIds, truncated, totalDue } = {}) {
   const list = (Array.isArray(recordIds) ? recordIds : []).filter(Boolean);
-  if (list.length === 0) return { take: [], remaining: 0, bounded: false, limit: RECIPIENTS_PER_JOB };
   // 既存の分割契約をそのまま使う（1 ジョブ = RECIPIENTS_PER_JOB 件）
-  const take = chunkRecipients(list)[0] || [];
+  const take = list.length === 0 ? [] : (chunkRecipients(list)[0] || []);
+  const before = Number.isFinite(Number(totalDue)) ? Number(totalDue) : null;
   return {
     take,
-    remaining: Math.max(0, list.length - take.length),
-    bounded: list.length > take.length,
+    queued: take.length,
+    /** **この窓の中の**残り。全体の残りではない */
+    remainingInWindow: Math.max(0, list.length - take.length),
+    /** 単一源の窓が切られていたか（true なら窓の外にもまだ対象がいる） */
+    sourceTruncated: truncated === true,
+    boundedBy: list.length > take.length ? RECIPIENTS_PER_JOB : null,
+    /** その step の due 総数（単一源の集計）。不明なら null */
+    totalDueBefore: before,
+    /** 総数が分かるときだけ「全体の残り」を出す。**分からなければ null** */
+    totalDueRemaining: before === null ? null : Math.max(0, before - take.length),
     limit: RECIPIENTS_PER_JOB,
   };
+}
+
+/** 後方互換の薄いラッパ（宛先の切り出しだけが必要なとき） */
+export function boundQueueBatch(recordIds) {
+  const r = describeQueueBatch({ recordIds });
+  return { take: r.take, remainingInWindow: r.remainingInWindow, boundedBy: r.boundedBy, limit: r.limit };
 }
 
 /**
@@ -67,4 +92,4 @@ export function needsMorePhases(phase) {
   return !(phase.step && Number(phase.due) > 0);  // due があれば以降は読まなくてよい
 }
 
-export default boundQueueBatch;
+export default describeQueueBatch;

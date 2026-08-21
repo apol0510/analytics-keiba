@@ -17,61 +17,113 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { boundQueueBatch, needsMorePhases } from './tickWorkload.js';
-import { RECIPIENTS_PER_JOB, chunkRecipients } from './campaignSend.js';
+import { describeQueueBatch, boundQueueBatch, needsMorePhases } from './tickWorkload.js';
+import { RECIPIENTS_PER_JOB, chunkRecipients, MAX_RECIPIENTS_PER_SEND } from './campaignSend.js';
+import { buildSequenceProgress, selectNextDueStep } from './sequenceProgress.js';
 
 const ids = (n, prefix = 'rec') => Array.from({ length: n }, (_, i) => `${prefix}${i}`);
 
 // ── 1 tick の処理量が bounded ────────────────────────────────
 test('【重要】593 名の due でも 1 tick で積むのは 1 ジョブぶんだけ', () => {
-  const r = boundQueueBatch(ids(593));
-  assert.equal(r.take.length, RECIPIENTS_PER_JOB, '1 tick で全件積もうとしている');
-  assert.equal(r.remaining, 593 - RECIPIENTS_PER_JOB);
-  assert.equal(r.bounded, true);
+  const r = describeQueueBatch({ recordIds: ids(593), totalDue: 593 });
+  assert.equal(r.queued, RECIPIENTS_PER_JOB, '1 tick で全件積もうとしている');
+  assert.equal(r.totalDueRemaining, 593 - RECIPIENTS_PER_JOB);
+  assert.equal(r.boundedBy, RECIPIENTS_PER_JOB);
 });
 
 test('【重要】切ったぶんは数で分かる（黙って打ち切らない）', () => {
-  assert.equal(boundQueueBatch(ids(593)).remaining, 493);
-  assert.equal(boundQueueBatch(ids(120)).remaining, 20);
+  assert.equal(describeQueueBatch({ recordIds: ids(593), totalDue: 593 }).totalDueRemaining, 493);
+  assert.equal(describeQueueBatch({ recordIds: ids(120), totalDue: 120 }).totalDueRemaining, 20);
 });
 
 test('【重要】1 ジョブぶん以下ならそのまま全部積む（無意味に遅くしない）', () => {
-  const r = boundQueueBatch(ids(48));
-  assert.equal(r.take.length, 48);
-  assert.equal(r.remaining, 0);
-  assert.equal(r.bounded, false);
+  const r = describeQueueBatch({ recordIds: ids(48), totalDue: 48 });
+  assert.equal(r.queued, 48);
+  assert.equal(r.remainingInWindow, 0);
+  assert.equal(r.totalDueRemaining, 0);
+  assert.equal(r.boundedBy, null);
+});
+
+// ── 窓の残り と 全体の残り を混同しない ─────────────────────────
+test('【重要】truncated=true のとき、窓の残りを「全体の残り」と出さない', () => {
+  // 単一源: 総 due 593 / 窓 500（cap） / 今回 100 を積む
+  const r = describeQueueBatch({ recordIds: ids(MAX_RECIPIENTS_PER_SEND), truncated: true, totalDue: 593 });
+  assert.equal(r.queued, 100);
+  assert.equal(r.remainingInWindow, 400, '窓の残りが違う');
+  assert.equal(r.totalDueRemaining, 493, '全体の残りが違う');
+  assert.notEqual(r.remainingInWindow, r.totalDueRemaining, '窓と全体を同じ値にしている');
+  assert.equal(r.sourceTruncated, true, '窓が切られていることを出していない');
+});
+
+test('【重要】総数が分からなければ「全体の残り」を出さない（推測しない）', () => {
+  const r = describeQueueBatch({ recordIds: ids(MAX_RECIPIENTS_PER_SEND), truncated: true });
+  assert.equal(r.totalDueBefore, null);
+  assert.equal(r.totalDueRemaining, null, '総数不明なのに残数を作っている');
+  assert.equal(r.remainingInWindow, 400);
+});
+
+test('【重要】窓が切られていなければ 窓の残り = 全体の残り', () => {
+  const r = describeQueueBatch({ recordIds: ids(300), truncated: false, totalDue: 300 });
+  assert.equal(r.remainingInWindow, 200);
+  assert.equal(r.totalDueRemaining, 200);
+  assert.equal(r.sourceTruncated, false);
+});
+
+// ── 全体 due 総数は単一源の同一 scope から取れる ────────────────
+test('【重要】summary.dueByStep は窓（cap）に切られない＝全体 due の正本', () => {
+  const rows = Array.from({ length: 250 }, (_, i) => ({
+    recordId: `rec${i}`, email: `u${i}@example.com`,
+    status: 'due', nextStep: 2, currentStep: 1, sentSteps: [1],
+  }));
+  const progress = {
+    ok: true, rows,
+    summary: { due: 250, waiting: 0, completed: 0, stopped: 0, byStopReason: {},
+      dueByStep: { 1: 0, 2: 250 }, sentByStep: { 1: 250, 2: 0 }, byCurrentStep: { 1: 250 } },
+  };
+  const picked = selectNextDueStep(progress, { maxRecipients: RECIPIENTS_PER_JOB });
+  assert.equal(picked.recordIds.length, RECIPIENTS_PER_JOB, '窓が効いていない');
+  assert.equal(picked.truncated, true);
+  // **同じ progress から作られた集計**なので scope が一致する
+  assert.equal(picked.counts[2], 250, 'dueByStep が窓に引きずられている');
+  assert.equal(progress.summary.dueByStep[2], 250);
+  const r = describeQueueBatch({
+    recordIds: picked.recordIds, truncated: picked.truncated, totalDue: picked.counts[2],
+  });
+  assert.equal(r.totalDueRemaining, 150);
+  assert.equal(r.remainingInWindow, 0, '窓 100 件をすべて積んだのに窓の残りが 0 でない');
 });
 
 test('【重要】新しい件数仕様を作らない（既存の分割契約と同じ）', () => {
   const list = ids(250);
-  assert.deepEqual(boundQueueBatch(list).take, chunkRecipients(list)[0]);
-  assert.equal(boundQueueBatch(list).limit, RECIPIENTS_PER_JOB);
+  assert.deepEqual(describeQueueBatch({ recordIds: list }).take, chunkRecipients(list)[0]);
+  assert.equal(describeQueueBatch({ recordIds: list }).limit, RECIPIENTS_PER_JOB);
 });
 
 test('【重要】単一源が返した順序を変えない（独自の並べ替え・抽選をしない）', () => {
   const list = ids(300);
-  assert.deepEqual(boundQueueBatch(list).take, list.slice(0, RECIPIENTS_PER_JOB));
+  assert.deepEqual(describeQueueBatch({ recordIds: list }).take, list.slice(0, RECIPIENTS_PER_JOB));
 });
 
 test('【重要】残りは次の tick で続く（取り直した集合の先頭から積む）', () => {
   // 1 tick 目で積んだ 100 人は `queued` になり、単一源の due から外れる
   const all = ids(250);
-  const first = boundQueueBatch(all).take;
+  const first = describeQueueBatch({ recordIds: all }).take;
   const remainAfterQueue = all.filter((id) => !first.includes(id));   // 単一源の再取得に相当
-  const second = boundQueueBatch(remainAfterQueue).take;
+  const second = describeQueueBatch({ recordIds: remainAfterQueue }).take;
   assert.equal(second.length, RECIPIENTS_PER_JOB);
   // ── 同一 recipient を次 tick で再 queue しない ──
   assert.equal(second.some((id) => first.includes(id)), false, '同じ人を二度積んでいる');
-  const third = boundQueueBatch(remainAfterQueue.filter((id) => !second.includes(id))).take;
+  const third = describeQueueBatch({ recordIds: remainAfterQueue.filter((id) => !second.includes(id)) }).take;
   assert.equal(third.length, 50);
   assert.equal(new Set([...first, ...second, ...third]).size, 250, '取りこぼし / 重複がある');
 });
 
 test('宛先ゼロは何も積まない', () => {
   for (const v of [[], null, undefined]) {
-    const r = boundQueueBatch(v);
+    const r = describeQueueBatch({ recordIds: v });
     assert.deepEqual(r.take, []);
-    assert.equal(r.remaining, 0);
+    assert.equal(r.remainingInWindow, 0);
+    assert.equal(r.queued, 0);
   }
 });
 
@@ -102,16 +154,24 @@ const CRON = 'netlify/functions/cron-marketing-rollout.js';
 test('【重要】follow-up は 1 tick 1 ジョブぶんに絞ってから queue する', () => {
   const src = readRel(CRON);
   const fu = src.slice(src.indexOf('if (decision.action === TICK_ACTION.FOLLOW_UP)'), src.indexOf('// ── ④ 付与'));
-  assert.ok(/const bound = boundQueueBatch\(due\.recordIds\);/.test(fu), '絞っていない');
-  assert.ok(/recordIds: bound\.take/.test(fu), '絞った結果を使っていない');
-  assert.equal(/recordIds: due\.recordIds/.test(fu), false, 'due 全件を渡している');
-  assert.ok(/dueRemaining: bound\.remaining/.test(fu), '残数を出していない（黙って打ち切っている）');
+  assert.ok(/const bound = describeQueueBatch\(\{/.test(fu), '絞っていない');
+  // queueStep へ渡すのは**絞った結果だけ**（due 全件を渡していない）
+  const call = fu.slice(fu.indexOf('const res = await queueStep('), fu.indexOf('if (!res.ok)'));
+  assert.ok(/recordIds: bound\.take/.test(call), '絞った結果を使っていない');
+  assert.equal(/recordIds: due\.recordIds/.test(call), false, 'due 全件を queue へ渡している');
+  assert.ok(/remainingInWindow: bound\.remainingInWindow/.test(fu), '窓の残りを出していない');
+  assert.ok(/totalDueRemaining: bound\.totalDueRemaining/.test(fu), '全体の残りを出していない');
+  assert.ok(/sourceTruncated: bound\.sourceTruncated/.test(fu), '窓が切られたことを出していない');
+  assert.equal(/[^a-zA-Z]dueRemaining:/.test(fu), false, '窓と全体を混同する名前が残っている');
+  assert.ok(/summary\.dueByStep\[due\.step\]/.test(fu), '全体 due を単一源の集計から取っていない');
 });
 
 test('【重要】Step1 の救済も同じ単位で絞る', () => {
   const src = readRel(CRON);
-  assert.ok(/const rescueBound = boundQueueBatch\(due\.recordIds\);/.test(src), '救済経路が絞られていない');
-  assert.ok(/recordIds: rescueBound\.take/.test(src));
+  assert.ok(/const rescueBound = describeQueueBatch\(\{/.test(src), '救済経路が絞られていない');
+  const rc = src.slice(src.indexOf('const rescue = await queueStep('), src.indexOf('if (!rescue.ok)'));
+  assert.ok(/recordIds: rescueBound\.take/.test(rc), '救済で絞った結果を使っていない');
+  assert.equal(/recordIds: due\.recordIds/.test(rc), false, '救済が due 全件を渡している');
 });
 
 test('【重要】結論が変わらないフェーズ読みだけを飛ばす（fail closed は維持）', () => {
@@ -143,4 +203,33 @@ test('【重要】tick 排他・kill・paused の意味を変えていない', (
   const orch = readRel('src/lib/marketing/rolloutOrchestrator.js');
   assert.ok(/if \(s\.killed === true\) \{/.test(orch), 'kill switch が最優先でない');
   assert.equal(/stage === ROLLOUT_STAGE\.PAUSED/.test(orch), false, 'tick 側で paused を独自判定している');
+});
+
+// ── フェーズ読み省略が集計を壊さない ────────────────────────────
+test('【重要】フェーズを省略した tick では集計を同期しない（0 件へ倒れない）', () => {
+  const src = readRel(CRON);
+  assert.ok(/due\.phasesComplete !== true/.test(src), '全フェーズを読んだかを見ていない');
+  const block = src.slice(src.indexOf("warn: 'journey_totals_skipped'") - 700,
+    src.indexOf("warn: 'journey_totals_skipped'") + 200);
+  assert.ok(/reason: 'phase_read_skipped'/.test(block), '省略の理由を残していない');
+  assert.ok(/sideEffects: 'none'/.test(block), '省略した tick が副作用を持っている');
+  // 同期そのものは全フェーズを読んだときだけ
+  const sync = src.slice(src.indexOf('const built = buildJourneyTotals('), src.indexOf('// 集計へ写す'));
+  assert.ok(/reconcileTotals\(/.test(sync));
+});
+
+test('【重要】集計の単一源は欠けたフェーズを 0 と読み替えない（fail closed）', async () => {
+  const { buildJourneyTotals } = await import('./journeyTotals.js');
+  const active = { total: 10, due: 3, waiting: 7, completed: 0, stopped: 0, byStopReason: {} };
+  const r = buildJourneyTotals({ active, postExpiry: null });
+  assert.equal(r.ok, false, '終了後フェーズが無いのに集計を作っている');
+  assert.equal(r.reason, 'post_expiry_summary_missing');
+});
+
+test('【重要】フェーズ省略は送信対象の選定に影響しない（採用は単一源の next のまま）', () => {
+  const src = readRel(CRON);
+  const fn = src.slice(src.indexOf('async function readNextDueStep()'), src.indexOf('/** 同期 dispatcher'));
+  // 採用は「最初に due があるフェーズ」＝省略しても選ぶものは変わらない
+  assert.ok(/phases\.find\(\(r\) => r\.step && r\.due > 0\)/.test(fn));
+  assert.ok(/phasesComplete: phases\.length === JOURNEY_PHASES\.length/.test(fn), '読み切ったかを持ち回っていない');
 });

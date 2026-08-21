@@ -76,7 +76,7 @@ import { handler as dispatchHandler, resolveDispatchSecret } from './marketing-c
 import {
   createDispatchLock, TICK_LOCK_ROOT, LOCK_FAIL, isSafeJobId,
 } from '../../src/lib/marketing/dispatchLock.js';
-import { boundQueueBatch, needsMorePhases } from '../../src/lib/marketing/tickWorkload.js';
+import { describeQueueBatch, needsMorePhases } from '../../src/lib/marketing/tickWorkload.js';
 
 /**
  * この展開が対象とする道のり。**2 キャンペーンで 1 本**（合計 24 接点）。
@@ -347,7 +347,15 @@ async function readNextDueStep() {
   const nextAt = phases
     .map((r) => r.nextScheduledAt).filter(Boolean)
     .sort()[0] || null;
-  return { ...pick, phases, nextScheduledAt: pick.nextScheduledAt || nextAt };
+  /**
+   * ⚠️ **全フェーズを読んだかどうかを持ち回る。** 集計の同期（`buildJourneyTotals`）は
+   *    終了後フェーズの `summary` が要るので、省略した tick では**同期しない**
+   *    （`buildJourneyTotals` は欠けていれば `ok:false` を返し、**0 件へ倒れない**）。
+   */
+  return {
+    ...pick, phases, phasesComplete: phases.length === JOURNEY_PHASES.length,
+    nextScheduledAt: pick.nextScheduledAt || nextAt,
+  };
 }
 
 /** 同期 dispatcher を**同じプロセス内で**呼ぶ（read-only の再確認に使う） */
@@ -717,7 +725,16 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
   //    `action=sequence` は既に受信対象だけを名指しで読んでいる。
   //    その結果をここで写しておけば、管理画面は Redis の 2 GET で開ける。
   //    ⚠️ 人を二重に数えないよう、まとめ方は `journeyTotals.js` が単一源。
-  if (due && Array.isArray(due.phases)) {
+  if (due && Array.isArray(due.phases) && due.phasesComplete !== true) {
+    /**
+     * ⚠️ フェーズ読みを省略した tick（体験中に due があるとき）は**集計を同期しない**。
+     *    ここで欠けたまま作ると人数が壊れる。`buildJourneyTotals` も
+     *    終了後フェーズが無ければ `ok:false`（**0 件へ倒れない**）。
+     *    集計は据え置き（前回値のまま）＝画面は `metricsUpdatedAt` で古さが分かる。
+     *    ⚠️ **送信判断には影響しない**（対象の選定は単一源の `next` のまま）。
+     */
+    log({ ok: true, warn: 'journey_totals_skipped', reason: 'phase_read_skipped', sideEffects: 'none' });
+  } else if (due && Array.isArray(due.phases)) {
     const active = due.phases.find((p) => p.campaignId === ROLLOUT_CAMPAIGN_ID);
     const post = due.phases.find((p) => p.campaignId === POST_EXPIRY_CAMPAIGN_ID);
     const built = buildJourneyTotals({
@@ -857,7 +874,11 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
         return { ok: false, ...view, abort: 'no_handoff', sideEffects: 'none' };
       }
       // ⚠️ 救済も **1 tick 1 ジョブぶん**（残りは次の tick が単一源から取り直す）
-      const rescueBound = boundQueueBatch(due.recordIds);
+      const rescueBound = describeQueueBatch({
+        recordIds: due.recordIds,
+        truncated: due.truncated,
+        totalDue: due.summary && due.summary.dueByStep ? due.summary.dueByStep[due.step] : null,
+      });
       const rescue = await queueStep({
         campaignId: ROLLOUT_CAMPAIGN_ID, step: STEP1, recordIds: rescueBound.take,
       });
@@ -873,12 +894,16 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
       await bumpSteps({ [rescue.touch]: { queued: rescue.queued } });
       log({
         ...view, queued: rescue.queued, via: 'sequence',
-        dueRemaining: rescueBound.remaining, boundedBy: rescueBound.bounded ? rescueBound.limit : null,
+        remainingInWindow: rescueBound.remainingInWindow, sourceTruncated: rescueBound.sourceTruncated,
+        totalDueBefore: rescueBound.totalDueBefore, totalDueRemaining: rescueBound.totalDueRemaining,
+        boundedBy: rescueBound.boundedBy,
         sideEffects: 'queued_only',
       });
       return {
         ok: true, ...view, queued: rescue.queued, jobs: rescue.jobIds,
-        dueRemaining: rescueBound.remaining, boundedBy: rescueBound.bounded ? rescueBound.limit : null,
+        remainingInWindow: rescueBound.remainingInWindow, sourceTruncated: rescueBound.sourceTruncated,
+        totalDueBefore: rescueBound.totalDueBefore, totalDueRemaining: rescueBound.totalDueRemaining,
+        boundedBy: rescueBound.boundedBy,
         sideEffects: 'queued_only',
       };
     }
@@ -1030,7 +1055,12 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
      *    やると、フェーズ読み（19〜21 秒）と合わせて 1 回の実行が長くなりすぎる。
      * ⚠️ **新しい件数仕様を作らない**（既存の分割契約をそのまま使う）。
      */
-    const bound = boundQueueBatch(due.recordIds);
+    const bound = describeQueueBatch({
+      recordIds: due.recordIds,
+      truncated: due.truncated,
+      // その step の due **総数**（窓ではない）。単一源の集計から取る
+      totalDue: due.summary && due.summary.dueByStep ? due.summary.dueByStep[due.step] : null,
+    });
     const res = await queueStep({
       campaignId: due.campaignId, step: due.step, recordIds: bound.take,
     });
@@ -1048,13 +1078,18 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
       ...view, step: due.step, touch: res.touch, campaignId: due.campaignId,
       queued: res.queued, jobs: res.jobIds.length,
       /** 切ったぶんは**必ず数で出す**（黙って打ち切らない） */
-      dueRemaining: bound.remaining, boundedBy: bound.bounded ? bound.limit : null,
+      /** ⚠️ **窓の残りと全体の残りを分けて出す**（混ぜると人数を誤読する）*/
+      remainingInWindow: bound.remainingInWindow, sourceTruncated: bound.sourceTruncated,
+      totalDueBefore: bound.totalDueBefore, totalDueRemaining: bound.totalDueRemaining,
+      boundedBy: bound.boundedBy,
       sideEffects: 'queued_only',
     });
     return {
       ok: true, ...view, step: due.step, touch: res.touch, campaignId: due.campaignId,
       queued: res.queued, jobs: res.jobIds,
-      dueRemaining: bound.remaining, boundedBy: bound.bounded ? bound.limit : null,
+      remainingInWindow: bound.remainingInWindow, sourceTruncated: bound.sourceTruncated,
+      totalDueBefore: bound.totalDueBefore, totalDueRemaining: bound.totalDueRemaining,
+      boundedBy: bound.boundedBy,
       sideEffects: 'queued_only',
     };
   }
