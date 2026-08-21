@@ -3,7 +3,14 @@
   command = "npm run build"
 
 [build.environment]
-  NODE_VERSION = "20"
+  # ⚠️ repo 直下の netlify.toml と**必ず同じ値**にすること。
+  #    2026-08-21 まで root="22" / ここ="20" と食い違っており、どちらが効くのか
+  #    設定を読んでも判断できない状態だった（実測では両ファイルの redirects が
+  #    どちらも本番で発火しており、precedence を推測で決められなかった）。
+  #    値を揃えてあれば、どちらが読まれても結果は同じになる。
+  # Node 20 は CI 自身が deprecated 警告を出す版のため 22 へ。
+  # NPM_VERSION="10" 固定と整合するのも 22（Node 24 は npm 11 を同梱）。
+  NODE_VERSION = "22"
   NPM_VERSION = "10"
   # Force cache clear
   NETLIFY_CACHE_VERSION = "v9"

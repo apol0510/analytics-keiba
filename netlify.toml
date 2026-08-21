@@ -5,6 +5,7 @@
 
 
 [build.environment]
+  # ⚠️ astro-site/netlify.toml の NODE_VERSION と**必ず同じ値**にすること（2026-08-21 に統一）。
   NODE_VERSION = "22"
 
 # Headers for security
