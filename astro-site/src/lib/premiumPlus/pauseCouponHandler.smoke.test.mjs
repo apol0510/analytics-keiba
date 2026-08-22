@@ -279,30 +279,30 @@ test('body で他人の recordId / email を指定しても自分のレコード
 });
 
 // ── 取得できない ────────────────────────────────────────────
-test('販売中でも開始済みなら取得できる（**停止は取得の条件ではない**・2026-08-22）', async () => {
-  // ⚠️ 旧仕様は「停止中の会員だけ取得可」だった。再募集の開始が販売停止の解除を
-  //    含む 1 操作になったため、停止を条件にすると**開始した瞬間に取得できなくなる**。
+test('いま購入できる会員には配らない（クーポンは買えない人への埋め合わせ）', async () => {
+  // この機能の目的は「買おうとしたが売っていない → 代わりにクーポン」。
+  // 買える人に配る必要はない。
   const db = { recACTIVE00000010: { ...SALEABLE } };
   stubAirtable(db);
   const res = await post({ cookie: await cookieFor('recACTIVE00000010') });
+  assert.equal(res.status, 409);
+  assert.equal((await res.json()).code, 'plus_on_sale');
+  assert.equal(patches().length, 0);
+});
+
+test('再募集が未開始でも、販売停止中なら配る（**目的どおり**）', async () => {
+  // ⚠️ ここを「開始済みだけ」にすると、再募集の開始＝販売再開なので
+  //    「買える人だけ取得できる」＝目的と正反対になる（2026-08-22 に一度やった）。
+  const db = { recNOSTART0000010: { ...SALEABLE, PremiumPlusSalePaused: true } };
+  stubAirtable(db);
+  clearReopenStart('recNOSTART0000010');
+  const res = await post({ cookie: await cookieFor('recNOSTART0000010') });
   assert.equal(res.status, 200);
   assert.equal((await res.json()).claimed, true);
   assert.equal(patches().length, 1, 'クーポン列だけを 1 レコードへ書く');
 });
 
-test('未開始の会員は取得できない（409・PATCH しない）', async () => {
-  const db = { recNOSTART0000010: { ...SALEABLE, PremiumPlusSalePaused: true } };
-  stubAirtable(db);
-  clearReopenStart('recNOSTART0000010');
-  const res = await post({ cookie: await cookieFor('recNOSTART0000010') });
-  assert.equal(res.status, 409);
-  const body = await res.json();
-  assert.equal(body.code, 'reopen_not_started');
-  assert.equal(body.sideEffects, 'none');
-  assert.equal(patches().length, 0);
-});
-
-test('開始状態を読めないときは「未開始」に丸めず 503（fail closed）', async () => {
+test('Redis が落ちていれば排他が取れないので書かない（fail closed）', async () => {
   const db = { recUNREAD00000010: { ...SALEABLE, PremiumPlusSalePaused: true } };
   stubAirtable(db);
   redis = makeRedis({ down: true });

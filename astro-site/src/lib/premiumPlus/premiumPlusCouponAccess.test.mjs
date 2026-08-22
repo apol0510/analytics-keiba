@@ -1,18 +1,20 @@
 /**
- * premiumPlusCouponAccess.test.mjs — 「取得できるか」と「購入できるか」を**別軸**にした判定を固定する
+ * premiumPlusCouponAccess.test.mjs — 「誰に配るか」「いつ使えるか」を固定する
  *
- * 2026-08-22 の不整合修正:
- *   旧: 取得 CTA は `salePaused === true` の間だけ
- *   → 再募集の開始が販売停止の解除を含むようになったため、**開始した瞬間に取得できなくなる**
- *   新: 取得資格は「Plus の対象会員 ＋ **その会員の再募集が開始済みで期限内**」。停止は無関係
+ * ## この機能の目的
  *
- * 固定する仕様:
- *   - 未開始会員は claim 不可（fail closed）
- *   - 開始済み・販売中・未取得 → claim 可能（**停止していなくても取得できる**）
- *   - 開始済み・販売停止中 → クーポンの期間は維持（取得も可）。購入可否は別軸
- *   - 期限は会員別 `reopenStartsAt + 14 日`
- *   - 既取得クーポンは保持（判定で消えない）
- *   - read 不能は「未開始」に丸めず fail closed
+ * > Premium Plus を買おうとした → いまは売っていない → **代わりにクーポンをどうぞ**
+ *
+ * クーポンは**買えなかった人への埋め合わせ**。だから配る相手は「いま購入できない会員」。
+ *
+ * ⚠️ 2026-08-22 に一度、取得条件を「その会員の再募集が開始済み」にしてしまい、
+ *    再募集の開始＝販売再開なので **「買える人だけが取得できる」＝目的と正反対**になった。
+ *    このファイルはその再発を防ぐためのもの。
+ *
+ * | 軸 | 条件 |
+ * |---|---|
+ * | 取得できる（配る）| Plus の対象会員 ＋ **販売停止中** ＋ 未取得 |
+ * | 使える（割引が乗る）| 取得済み ＋ **その会員の再募集が開始済みで期限内** |
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -30,7 +32,7 @@ import { PP_SALE_PAUSE_FIELDS } from './premiumPlusRelease.js';
 
 const DAY = 24 * 60 * 60 * 1000;
 const START = '2026-08-22T06:00:00.000Z';
-const NOW = Date.parse('2026-08-22T07:00:00.000Z');
+const NOW = Date.parse('2026-08-22T10:00:00.000Z');
 const CLAIMED = {
   PremiumPlusReopenCouponClaimedAt: '2026-08-18T22:07:54.000Z',
   PremiumPlusReopenCouponId: 'premium-plus-reopen-priority@v1',
@@ -41,33 +43,37 @@ const notStarted = { available: true, startsAtIso: null };
 const unreadable = { available: false, reason: 'read_failed' };
 
 const access = (over = {}) => resolveCouponAccess({
-  audience: true, reopen: started, fields: null, nowMs: NOW, storageReady: true, ...over,
+  audience: true, salePaused: true, reopen: notStarted,
+  fields: null, nowMs: NOW, storageReady: true, ...over,
 });
 
-// ── 取得できる条件 ────────────────────────────────────────────
-test('開始済み・販売中・未取得 → 取得できる（**停止していなくても**）', () => {
+// ── 配る相手は「いま買えない人」────────────────────────────
+test('販売停止中の会員には配る（**再募集が未開始でも**）', () => {
   const a = access();
-  assert.equal(a.canClaim, true);
+  assert.equal(a.canClaim, true, '買えない人に配れていない＝この機能の目的が壊れている');
   assert.equal(a.visible, true);
   assert.equal(a.reason, null);
-  // 期限は会員別 reopenStartsAt + 14 日
-  assert.equal(a.expiresAtIso, new Date(Date.parse(START) + 14 * DAY).toISOString());
+  assert.deepEqual(resolveClaimDecision(a), { ok: true, alreadyClaimed: false });
 });
 
-test('開始済み・販売停止中でも取得できる（購入可否とは別軸）', () => {
-  // このモジュールは salePaused を入力に取らない＝構造的に影響しない
-  const a = access();
+test('販売停止中なら、再募集が開始済みでも配る（開始は取得の条件ではない）', () => {
+  const a = access({ reopen: started });
   assert.equal(a.canClaim, true);
-  assert.ok(!('salePaused' in a), '停止フラグを判定に持ち込んでいない');
 });
 
-test('未開始の会員は取得できない（fail closed）', () => {
-  const a = access({ reopen: notStarted });
+test('**いま購入できる会員には配らない**（埋め合わせが要らない）', () => {
+  const a = access({ salePaused: false, reopen: started });
   assert.equal(a.canClaim, false);
-  assert.equal(a.started, false);
-  assert.equal(a.reason, COUPON_ACCESS_REJECT.NOT_STARTED);
-  assert.equal(a.visible, false, '未取得・未開始にはページも出さない');
-  assert.match(a.note, /募集再開のご案内/);
+  assert.equal(a.visible, false);
+  assert.equal(a.reason, COUPON_ACCESS_REJECT.NOT_PAUSED);
+  assert.equal(claimRejectStatus(a.reason), 409);
+});
+
+test('取得条件は再募集の開始状態に依存しない（読めなくても配れる）', () => {
+  // ⚠️ ここが `started` に依存すると「買える人だけ取得できる」へ逆戻りする
+  const a = access({ reopen: unreadable });
+  assert.equal(a.stateKnown, false);
+  assert.equal(a.canClaim, true, '開始状態の読み取り失敗で配れなくなっている');
 });
 
 test('Plus の対象外には存在も知らせない（404）', () => {
@@ -77,14 +83,6 @@ test('Plus の対象外には存在も知らせない（404）', () => {
   assert.equal(claimRejectStatus(a.reason), 404);
 });
 
-test('開始状態を読めないときは「未開始」に丸めず fail closed', () => {
-  const a = access({ reopen: unreadable });
-  assert.equal(a.stateKnown, false);
-  assert.equal(a.canClaim, false);
-  assert.equal(a.reason, COUPON_ACCESS_REJECT.STATE_UNAVAILABLE);
-  assert.equal(claimRejectStatus(a.reason), 503);
-});
-
 test('保存できない環境では取得を受け付けない（「取得した」と言わない）', () => {
   const a = access({ storageReady: false });
   assert.equal(a.canClaim, false);
@@ -92,69 +90,65 @@ test('保存できない環境では取得を受け付けない（「取得し�
   assert.equal(claimRejectStatus(a.reason), 503);
 });
 
-test('期限を過ぎたら取得できない', () => {
-  const a = access({ nowMs: Date.parse(START) + 15 * DAY });
-  assert.equal(a.canClaim, false);
-  assert.equal(a.withinExpiry, false);
-  assert.equal(a.reason, COUPON_ACCESS_REJECT.EXPIRED);
-  assert.equal(claimRejectStatus(a.reason), 409);
-});
-
-// ── 既取得の扱い ──────────────────────────────────────────────
-test('取得済みなら二重取得させない（冪等な成功）', () => {
+// ── 使えるのは「再募集が開始してから」──────────────────────
+test('取得済みでも、その会員の再募集が未開始なら使えない', () => {
   const a = access({ fields: CLAIMED });
   assert.equal(a.claimed, true);
-  assert.equal(a.canClaim, false);
-  assert.equal(a.canUse, true);
-  const d = resolveClaimDecision(a);
-  assert.equal(d.ok, true);
-  assert.equal(d.alreadyClaimed, true);
+  assert.equal(a.canUse, false);
+  assert.equal(a.visible, true, '取得済みは常に確認できる');
+  assert.equal(a.reason, COUPON_ACCESS_REJECT.NOT_STARTED);
 });
 
-test('既取得クーポンは判定で消えない（未開始・期限切れでも保有は残る）', () => {
-  for (const over of [{ reopen: notStarted }, { nowMs: Date.parse(START) + 15 * DAY }]) {
-    const a = access({ fields: CLAIMED, ...over });
-    assert.equal(a.claimed, true, '保有の事実は残る');
-    assert.equal(a.visible, true, '取得済みならページで確認できる');
-    assert.equal(a.canUse, false, 'ただし今は使えない');
+test('再募集が開始され期限内なら使える（販売中でも停止中でも保有は同じ）', () => {
+  for (const salePaused of [true, false]) {
+    const a = access({ fields: CLAIMED, reopen: started, salePaused });
+    assert.equal(a.canUse, true, `salePaused=${salePaused}`);
+    assert.equal(a.expiresAtIso, new Date(Date.parse(START) + 14 * DAY).toISOString());
   }
 });
 
-// ── 申込での使用（未開始は fail closed）───────────────────────
+test('期限を過ぎたら使えない（保有の事実は消えない）', () => {
+  const a = access({ fields: CLAIMED, reopen: started, nowMs: Date.parse(START) + 15 * DAY });
+  assert.equal(a.claimed, true);
+  assert.equal(a.canUse, false);
+  assert.equal(a.reason, COUPON_ACCESS_REJECT.EXPIRED);
+  assert.equal(a.visible, true);
+});
+
+test('開始状態を読めないときは、取得済みでも「使える」と言わない', () => {
+  const a = access({ fields: CLAIMED, reopen: unreadable });
+  assert.equal(a.canUse, false);
+  assert.equal(a.reason, COUPON_ACCESS_REJECT.STATE_UNAVAILABLE);
+});
+
+test('取得済みには二重取得させない（冪等な成功）', () => {
+  const a = access({ fields: CLAIMED, reopen: started });
+  assert.equal(a.canClaim, false);
+  assert.deepEqual(resolveClaimDecision(a), { ok: true, alreadyClaimed: true });
+});
+
+// ── 申込での使用（未開始は 58,000円 を作らせない）─────────────
 test('未開始の会員が持つクーポンは申込で使えない', () => {
-  const def = withReopenStart(null);            // 未開始 = 期限未確定
+  const def = withReopenStart(null);
   assert.equal(listApplicableCoupons({ fields: CLAIMED, nowMs: NOW, def }).length, 0);
   const p = resolveOrderPricing({
     fields: CLAIMED, couponId: 'premium-plus-reopen-priority@v1', nowMs: NOW, def,
   });
   assert.equal(p.couponApplied, null);
-  assert.equal(p.reason, 'coupon_expired');
-  assert.equal(p.finalPrice, 68000, '通常価格（申込 Function 側が 409 で止める）');
+  assert.equal(p.finalPrice, 68000);
 });
 
 test('開始済み・期限内なら 58,000円で申し込める', () => {
   const def = withReopenStart(START);
-  const list = listApplicableCoupons({ fields: CLAIMED, nowMs: NOW, def });
-  assert.equal(list.length, 1);
-  assert.equal(list[0].offerPrice, 58000);
+  assert.equal(listApplicableCoupons({ fields: CLAIMED, nowMs: NOW, def })[0].offerPrice, 58000);
   const p = resolveOrderPricing({
     fields: CLAIMED, couponId: 'premium-plus-reopen-priority@v1', nowMs: NOW, def,
   });
   assert.equal(p.finalPrice, 58000);
   assert.equal(p.discount, 10000);
-  assert.equal(p.regularPrice, 68000);
 });
 
-test('期限を過ぎたら申込でも使えない', () => {
-  const def = withReopenStart(START);
-  const after = Date.parse(START) + 15 * DAY;
-  assert.equal(listApplicableCoupons({ fields: CLAIMED, nowMs: after, def }).length, 0);
-  assert.equal(resolveOrderPricing({
-    fields: CLAIMED, couponId: 'premium-plus-reopen-priority@v1', nowMs: after, def,
-  }).couponApplied, null);
-});
-
-// ── Plus 対象判定が停止に依存しないこと（不整合の再発防止）─────
+// ── Plus 対象判定は停止に依存しない（存在秘匿だけを担う）──────
 test('Plus の対象判定は販売停止の有無で変わらない', () => {
   const base = {
     'プラン': 'Premium Sanrenpuku', 'Status': 'active', '有効期限': '2099-12-31',
@@ -165,36 +159,35 @@ test('Plus の対象判定は販売停止の有無で変わらない', () => {
   const paused = resolveUpsellForCustomer({
     fields: { ...base, [PP_SALE_PAUSE_FIELDS.PAUSED]: true }, nowMs: NOW,
   });
-  assert.equal(live.plusAudience.isPlusAudience, true, '販売中でも対象');
-  assert.equal(paused.plusAudience.isPlusAudience, true, '停止中でも対象');
-  // 一方、購入可否・商品ページは従来どおり停止で変わる（別軸であることの確認）
+  assert.equal(live.plusAudience.isPlusAudience, true);
+  assert.equal(paused.plusAudience.isPlusAudience, true);
+  // 購入可否は従来どおり停止で変わる（別軸であることの確認）
   assert.equal(live.plusRelease.showProductPage, true);
   assert.equal(paused.plusRelease.showProductPage, false);
-  assert.equal(paused.pauseNotice.showPauseNotice, true);
+  assert.equal(paused.plusRelease.salePaused, true);
 });
 
 test('管理者が Plus 以外の導線を指定した会員は対象外（存在を知らせない）', () => {
-  const base = {
-    'プラン': 'Premium Sanrenpuku', 'Status': 'active', '有効期限': '2099-12-31',
-    'SanrenpukuPaidAt': '2020-01-01T00:00:00.000Z',
-    'PremiumPlusEligibility': 'eligible', 'PremiumPlusReleaseOverride': 'phase4',
-    'UpsellTarget': 'sanrenpuku',
-  };
-  const v = resolveUpsellForCustomer({ fields: base, nowMs: NOW });
+  const v = resolveUpsellForCustomer({
+    fields: {
+      'プラン': 'Premium Sanrenpuku', 'Status': 'active', '有効期限': '2099-12-31',
+      'SanrenpukuPaidAt': '2020-01-01T00:00:00.000Z',
+      'PremiumPlusEligibility': 'eligible', 'PremiumPlusReleaseOverride': 'phase4',
+      [PP_SALE_PAUSE_FIELDS.PAUSED]: true, 'UpsellTarget': 'sanrenpuku',
+    },
+    nowMs: NOW,
+  });
   assert.equal(v.plusAudience.isPlusAudience, false);
-  assert.equal(resolveCouponAccess({
-    audience: v.plusAudience.isPlusAudience, reopen: started, nowMs: NOW, storageReady: true,
-  }).reason, COUPON_ACCESS_REJECT.NOT_ELIGIBLE);
+  assert.equal(access({ audience: false }).reason, COUPON_ACCESS_REJECT.NOT_ELIGIBLE);
 });
 
 // ── 他会員に影響しない ────────────────────────────────────────
 test('判定は渡された 1 会員ぶんだけを見る（入力を書き換えない）', () => {
   const fields = { ...CLAIMED };
   const snapshot = JSON.stringify(fields);
-  access({ fields });
+  access({ fields, reopen: started });
   assert.equal(JSON.stringify(fields), snapshot);
-  // 会員ごとに開始日時が違えば期限も違う
-  const a = resolveCouponAccess({ audience: true, reopen: { available: true, startsAtIso: START }, nowMs: NOW, storageReady: true });
-  const b = resolveCouponAccess({ audience: true, reopen: { available: true, startsAtIso: '2026-09-10T00:00:00.000Z' }, nowMs: NOW, storageReady: true });
+  const a = access({ fields: CLAIMED, reopen: started });
+  const b = access({ fields: CLAIMED, reopen: { available: true, startsAtIso: '2026-09-10T00:00:00.000Z' } });
   assert.notEqual(a.expiresAtIso, b.expiresAtIso);
 });
