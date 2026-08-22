@@ -113,6 +113,18 @@ test('クライアントは「いま取得できる」も通す（サーバー�
 });
 
 // ── dashboard ───────────────────────────────────────────────
+test('hidden にした要素が必ず消える（空の CTA が帯として残らない）', () => {
+  // ⚠️ 2026-08-22 本番で発生: `.coupon-cta` は display を指定しているため、
+  //    作者スタイルが UA の `[hidden] { display: none }` を上書きし、
+  //    `el.hidden = true` にしても**空の青いボタンが残っていた**。
+  assert.match(DASH, /\.coupon-card \[hidden\]\s*\{[^}]*display:\s*none\s*!important/);
+  // JS は表示制御に hidden を使っている（この前提が変わったら上の CSS も見直す）
+  const fn = DASH.slice(DASH.indexOf('function renderReopenCoupon'));
+  assert.match(fn, /ctaEl\.hidden = true; waitEl\.hidden = true; noteEl\.hidden = true;/);
+  // display を直接いじる実装へ戻っていない（2 系統の制御を混ぜない）
+  assert.ok(!/ctaEl\.style\.display/.test(fn), 'hidden と style.display が混在している');
+});
+
 test('dashboard は既定でカードを隠し、取得済み or 取得できるときだけ出す', () => {
   assert.match(DASH, /id="reopen-coupon-section"[^>]*style="display: none;"/);
   const fn = DASH.slice(DASH.indexOf('function renderReopenCoupon'));
