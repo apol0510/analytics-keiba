@@ -2043,6 +2043,49 @@ Light 約 15,000 名 rollout（#372 系列）の修復。#369 反映後に再開
 - **正常除外を含め全員が barrier 上で解決済み**（`granted === resolved`）
 - duplicate grant / queue / send = **0**
 
+## 2026-08-22 — 【決定】新規 grant 再開時の運用 stage = `scale`
+
+約 15,000 名の同日完走を再開するにあたり、**運用 stage を `scale` とする**（MK 決定）。
+
+⚠️ これは **`rolloutTarget.js` の数値仕様の変更ではない**。`stage` は正本
+（`rolloutTarget.js` / `docs/decisions.md` 2026-08-17 Accepted）に固定値が無い唯一の項目で、
+**今回の再開でどの段階として動かすか**という運用上の選択。
+
+### 再開時に `rolloutStart` へ渡す値（確定）
+
+| 引数 | 値 | 出所 |
+|---|---|---|
+| `stage` | **`scale`** | **本決定**（正本に固定値が無いため運用で確定）|
+| `dailyLimit` | **15000** | 正本 `ROLLOUT_TARGET.dailyLimit`（2026-08-17 Accepted）|
+| `batchSize` | **500** | 正本 `ROLLOUT_TARGET.batchSize` |
+| `alwaysArmed` | **true** | 正本の決定「開始は 1 回だけ」|
+| `expectedVersion` | **実行直前の最新値**（CAS）| `action=rollout` の `stateVersion` |
+
+参考（**変更しない**正本値）: `sameDay: true` / `grantOperationMax: 200` /
+`grantSplit: [200, 200, 100]` / `ticksPerGrant: 3` / `ticksPerBatch: 9`。
+
+⚠️ `dailyLimit` を明示するので、`stage` ごとの既定上限（canary 10 / steady 100 / scale 500）は
+**使われない**。`stage` は「止まっているか（`paused` / `completed`）」の判定と段階表示に効く。
+
+### 1 tick あたりの実際の処理量（現行コードで確認・2026-08-22）
+
+| tick | 処理量 |
+|---|---|
+| GRANT | **200 名**（`GRANT_OPERATION_MAX` = min(`HARD_MAX_BATCH_SIZE` 500, `MAX_GRANT_RECORDS` 200)）|
+| QUEUE（handoff）| **その grant op の 200 名を 1 tick で** dry-run → queue（`chunkRecipients` が **2 ジョブ × 100**）|
+| DISPATCH | `startDispatch` が **pending 全ジョブ（= 2 本）** を起動 → **最大 200 通** |
+| 合計 | 1 grant = **3 tick** ／ 500 名バッチ = **9 tick**（`ticksPerGrant` / `ticksPerBatch` と一致）|
+
+⚠️ **#399 の「1 tick 100 名」は follow-up と opId 無しの Step1 救済だけ**に効く。
+**通常の grant handoff（`grantOperationId` 経路）は 200 名をそのまま `queueStep` へ渡す。**
+
+### 残リスク（承認時に見ておくこと）
+
+**現行コード（#393 の読み戻し・印の解除 ＋ #399）での 200 名 handoff の完走実績は無い。**
+台帳に残る 200 名 handoff は **2026-08-17T06:46（200 名 = 100+100）/ 06:56（199 名）** で、
+どちらも **#393 / #399 より前**のコード。現行コードで確認できているのは **100 名単位**まで。
+加えて新規 grant 時は follow-up due が 0 なので、tick は**両フェーズを読む経路**（実測 約 41 秒）に戻る。
+
 ## 2026-08-22 — 【完了】既存コホートの follow-up automation 復旧（Step2 を automation が自走で完走）
 
 #399（1 tick の仕事量を 1 ジョブぶんに収める）を本番反映したうえで `rolloutResume` を再試験し、
