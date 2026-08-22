@@ -4348,17 +4348,19 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       }
       body.appendChild(rsSec);
 
-      // ── 再募集クーポン（資格・停止とは**別の第 3 の軸**。読み取り専用）────
-      // ⚠️ ここは管理者が付与するものではない。停止中に受付休止ページから
-      //    **お客様自身が取得した**という事実を確認するだけ。
+      // ── 再募集クーポン（資格・停止とは**別の第 3 の軸**）────────────
+      // ⚠️ 原則は「**お客様自身が受け取る**もの」。
+      //    「買おうとした → いまは売っていない → 代わりにクーポンをどうぞ」の埋め合わせなので、
+      //    受け取れるのは **Plus の対象会員かつ販売を止めている会員**（下の「いま受け取れるか」）。
+      //    管理者の付与・取消は**例外的な救済**（下の操作ボタン。監査行が必ず残る）。
       //    取得しても資格・停止・段階公開・会員権・決済は一切変わらない。
       const rcSec = document.createElement('div'); rcSec.className = 'dt-sec';
       const rcH = document.createElement('h3'); rcH.textContent = '再募集クーポン'; rcSec.appendChild(rcH);
       const rcNote = document.createElement('p'); rcNote.className = 'muted';
       rcNote.style.margin = '0 0 8px'; rcNote.style.fontSize = '0.82rem';
-      rcNote.textContent = '販売を一時停止している間に、お客様が受付休止ページからご自身で'
-        + '取得されたクーポンの保有状況です。管理者が付与・取消する操作は現状ありません'
-        + '（確定仕様ではなく現行実装。取消・訂正は Airtable の直接編集に依存します）。'
+      rcNote.textContent = '販売を止めている間に、お客様ご自身が受け取るクーポンです'
+        + '（受付休止ページ／三連複会員ページの導線を押したその場）。'
+        + '管理者の付与・取消は例外的な救済としてこの画面から行えます（操作は履歴に残ります）。'
         + '取得しても販売資格・一時停止・段階公開（PHASE）・会員権・決済は変わりません。'
         + '割引条件は確定済み（下記）。'
         // ⚠️ 有効期限は「**この会員の**再募集を開始したか」で決まる。
@@ -4371,6 +4373,15 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       const rcKv = document.createElement('dl'); rcKv.className = 'kv';
       kvRow(rcKv, 'いま販売を止めているか', r.salePaused ? '⏸ 一時停止中' : '✅ 停止していない',
         r.salePaused ? '' : 'muted');
+      // 「いまお客様が受け取れるか」。⚠️ 判定は**サーバー**（顧客側と同じ関数）。
+      //    画面側でここを条件から組み立て直さない（見立てと実挙動がズレる）。
+      if (r.reopenCouponAccess) {
+        kvRow(rcKv, 'いま受け取れるか', r.reopenCouponAccess.label,
+          r.reopenCouponAccess.canClaim || r.reopenCouponAccess.canUse ? '' : 'muted');
+        if (r.reopenCouponAccess.why) {
+          kvRow(rcKv, '理由', r.reopenCouponAccess.why, 'muted');
+        }
+      }
       kvRow(rcKv, 'クーポン', r.reopenCouponName || '—', r.reopenCouponName ? '' : 'muted');
       // 価格条件は Function が単一源から作った文字列。画面側で数値を組み立てない
       if (r.reopenCouponDiscountText) kvRow(rcKv, '割引', r.reopenCouponDiscountText);

@@ -143,7 +143,8 @@ test('phase 未指定・不正値は待機中の文言（fail closed）', () => 
 
 // ── 5. 配線（source guard）──────────────────────────────────────
 test('stage API は route と phase の両方を渡している', () => {
-  assert.match(ENDPOINT, /teaserCopyForRoute\(release\.route,\s*release\.phase\)/);
+  // 停止中は「停止していなければ出ていたはずの表示」(shown) から作る＝見た目が変わらない
+  assert.match(ENDPOINT, /teaserCopyForRoute\(shown\.route,\s*shown\.phase\)/);
 });
 
 test('コンポーネントは導線ラベルを SSR から受け取る（ベタ書きしない）', () => {

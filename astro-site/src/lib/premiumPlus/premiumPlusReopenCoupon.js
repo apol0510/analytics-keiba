@@ -177,6 +177,8 @@ export const PP_REOPEN_COUPON_SOURCE = Object.freeze({
   PAUSE_NOTICE: 'pause-notice',
   /** クーポンページ */
   COUPON_PAGE: 'coupon-page',
+  /** 三連複会員ページの導線を押したその場（販売停止中に遷移させず案内した画面） */
+  SANRENPUKU_CTA: 'sanrenpuku-cta',
 });
 
 const SOURCES = new Set(Object.values(PP_REOPEN_COUPON_SOURCE));
