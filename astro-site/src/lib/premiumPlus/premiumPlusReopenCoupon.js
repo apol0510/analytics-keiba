@@ -253,39 +253,15 @@ export function assertOnlyCouponFields(fields) {
   return keys.every((k) => WRITABLE.has(k));
 }
 
-/** 取得を断る理由（呼び出し側が握りつぶさずそのまま返す） */
-export const COUPON_CLAIM_REJECT = Object.freeze({
-  /** 取得条件を満たさない（停止中の対象会員ではない）→ 存在秘匿のため 404 */
-  NOT_ELIGIBLE: 'not_eligible',
-  /** 保存先が本番でまだ有効化されていない → 503（取得したことにしない） */
-  STORAGE_UNAVAILABLE: 'coupon_storage_unavailable',
-});
-
 /**
- * 取得してよいかを決める（**サーバー側の唯一の判定**）。
+ * 取得を断る理由。
  *
- * URL 直打ち・API 直接呼び出しでも必ずここを通す。画面が CTA を出していたかどうかは
- * 判定材料にしない（クライアントの状態は根拠にならない）。
- *
- * @param {{ pauseNotice?: object|null, coupon?: object|null, enabled?: boolean }} input
- * @returns {{ ok: true, alreadyClaimed: boolean } | { ok: false, reason: string }}
+ * ⚠️ **判定の本体は `premiumPlusCouponAccess.js` へ移した**（2026-08-22）。
+ *    ここは既存の呼び出し名を保つための再エクスポートだけ。
+ *    「取得できるか」は `salePaused` ではなく
+ *    **Plus の対象会員 ＋ その会員の再募集が開始済みで期限内**で決まる。
  */
-export function resolveCouponClaimDecision({ pauseNotice, coupon, enabled } = {}) {
-  const notice = pauseNotice || {};
-  const held = coupon || { claimed: false };
-
-  // 停止中の対象会員以外には、存在も知らせない
-  if (notice.showPauseNotice !== true) {
-    return { ok: false, reason: COUPON_CLAIM_REJECT.NOT_ELIGIBLE };
-  }
-  // 既に持っているなら**何も書かない**で成功を返す（冪等・二重取得なし）
-  if (held.claimed === true) return { ok: true, alreadyClaimed: true };
-
-  if (enabled !== true) {
-    return { ok: false, reason: COUPON_CLAIM_REJECT.STORAGE_UNAVAILABLE };
-  }
-  return { ok: true, alreadyClaimed: false };
-}
+export { COUPON_ACCESS_REJECT as COUPON_CLAIM_REJECT } from './premiumPlusCouponAccess.js';
 
 /**
  * 取得を記録する fields を組み立てる。
@@ -469,7 +445,12 @@ export function describeCouponOrderCta({
  * @param {{ coupon: object, paused: boolean, claimable: boolean, storageReady?: boolean }} input
  */
 export function describeCouponForMember({
-  coupon, paused, claimable, storageReady = true,
+  coupon, paused,
+  /**
+   * 取得 CTA を出してよいか。**単一源 `resolveCouponAccess().canClaim` を渡すこと。**
+   * ⚠️ `salePaused` から導かないこと（2026-08-22 の不整合修正）。
+   */
+  claimable, storageReady = true,
   /** いま購入できるか（`plusRelease.purchaseEnabled`）。停止中は false */
   purchasable = false,
   /** CTA の導線元（`?from=` に載る） */

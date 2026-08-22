@@ -777,13 +777,39 @@ export function resolvePlusPauseNoticeView(input) {
       wouldShowPurchaseCta: false,
     };
   }
-  // 停止フラグ**だけ**を外して解き直す。他の条件は一切変えない。
-  const resumed = resolvePremiumPlusRelease({ ...input, salePaused: false });
-  const wouldShowProductPage = resumed.showProductPage === true;
+  const reach = resolvePlusAudienceView(input);
   return {
     paused: true,
-    showPauseNotice: wouldShowProductPage,
-    wouldShowProductPage,
+    showPauseNotice: reach.wouldShowProductPage,
+    wouldShowProductPage: reach.wouldShowProductPage,
+    wouldShowPurchaseCta: reach.wouldShowPurchaseCta,
+  };
+}
+
+/**
+ * 「**販売の一時停止を外したら** Premium Plus を見られる人か」（＝ Plus の対象会員か）。
+ *
+ * ## なぜ停止に依存しない判定が要るか（2026-08-22）
+ *
+ * 再募集の開始は **販売停止の解除を含む 1 操作**になった。
+ * そのため「クーポンを取得できる人」を `salePaused === true` で判定すると、
+ * **再募集を開始した瞬間に取得できなくなる**（停止が解除されるため）という矛盾が起きる。
+ *
+ * クーポンの取得資格は「**この会員が Plus の対象か**」＋「**その会員の再募集が開始済みで期限内か**」
+ * で決めるべきで、**いま販売が開いているかどうか（`salePaused`）とは別軸**にする。
+ * 購入できるかどうかは従来どおり `salePaused` を含む販売判定が決める（この関数は使わない）。
+ *
+ * ⚠️ 判定は**停止フラグだけを false にして同じ単一源を解き直す**ので、
+ *    条件を書き写すことによるズレが構造的に生まれない。
+ * ⚠️ 購入可否には使わないこと。
+ *
+ * @param {Parameters<typeof resolvePremiumPlusRelease>[0]} input
+ * @returns {{ wouldShowProductPage: boolean, wouldShowPurchaseCta: boolean }}
+ */
+export function resolvePlusAudienceView(input) {
+  const resumed = resolvePremiumPlusRelease({ ...(input || {}), salePaused: false });
+  return {
+    wouldShowProductPage: resumed.showProductPage === true,
     wouldShowPurchaseCta: resumed.showPurchaseCta === true,
   };
 }

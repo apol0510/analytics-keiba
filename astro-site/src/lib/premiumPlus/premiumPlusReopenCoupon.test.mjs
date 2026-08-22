@@ -20,7 +20,6 @@ import {
   COUPON_CLAIM_REJECT,
   readReopenCoupon,
   buildReopenCouponClaimFields,
-  resolveCouponClaimDecision,
   assertOnlyCouponFields,
   isReopenCouponEnabled,
   normalizeCouponSource,
@@ -29,6 +28,7 @@ import {
   couponIdWithVersion,
 } from './premiumPlusReopenCoupon.js';
 
+const COUPON_MODULE = await import('./premiumPlusReopenCoupon.js');
 const NOW = Date.parse('2026-08-18T02:30:00.000Z');
 const ENV_ON = { PREMIUM_PLUS_FIELDS_READY: '1', PREMIUM_PLUS_REOPEN_COUPON_READY: '1' };
 const NOTICE_ON = { showPauseNotice: true };
@@ -84,32 +84,18 @@ test('壊れた日時は「未取得」に倒す（嘘の取得済みを作ら�
 });
 
 // ── 取得可否（サーバー側の唯一の判定）──────────────────────────
-test('停止中の案内対象でなければ取得できない（API 直打ち防止）', () => {
-  const r = resolveCouponClaimDecision({ pauseNotice: NOTICE_OFF, coupon: { claimed: false }, enabled: true });
-  assert.deepEqual(r, { ok: false, reason: COUPON_CLAIM_REJECT.NOT_ELIGIBLE });
-});
-
-test('pauseNotice が未指定でも取得できない（fail closed）', () => {
-  for (const n of [null, undefined, {}, { showPauseNotice: 'true' }]) {
-    const r = resolveCouponClaimDecision({ pauseNotice: n, coupon: { claimed: false }, enabled: true });
-    assert.equal(r.ok, false);
-    assert.equal(r.reason, COUPON_CLAIM_REJECT.NOT_ELIGIBLE);
-  }
-});
-
-test('対象でも保存先が有効化されていなければ取得させない（fail closed）', () => {
-  const r = resolveCouponClaimDecision({ pauseNotice: NOTICE_ON, coupon: { claimed: false }, enabled: false });
-  assert.deepEqual(r, { ok: false, reason: COUPON_CLAIM_REJECT.STORAGE_UNAVAILABLE });
-});
-
-test('対象・有効化済み・未取得なら取得できる', () => {
-  const r = resolveCouponClaimDecision({ pauseNotice: NOTICE_ON, coupon: { claimed: false }, enabled: true });
-  assert.deepEqual(r, { ok: true, alreadyClaimed: false });
-});
-
-test('取得済みは「取得済み」として成功（gate が off でも書き込みへ進まない）', () => {
-  const r = resolveCouponClaimDecision({ pauseNotice: NOTICE_ON, coupon: { claimed: true }, enabled: false });
-  assert.deepEqual(r, { ok: true, alreadyClaimed: true });
+/**
+ * ⚠️ 2026-08-22 整合修正:
+ *   取得の判定は `premiumPlusCouponAccess.js` へ移した（`resolveCouponAccess` /
+ *   `resolveClaimDecision`）。**`salePaused` は取得資格の条件ではない**。
+ *   ここでは「旧判定がこのモジュールから消えている」ことだけを固定する。
+ *   判定そのものの仕様は `premiumPlusCouponAccess.test.mjs` が持つ。
+ */
+test('旧 claim 判定（停止中だけ取得可）をこのモジュールへ戻さない', () => {
+  assert.equal(typeof COUPON_MODULE.resolveCouponClaimDecision, 'undefined');
+  // 理由コードは単一源からの再エクスポートで、停止に依存する語彙を持たない
+  assert.ok(!('NOT_PAUSED' in COUPON_CLAIM_REJECT));
+  assert.equal(COUPON_CLAIM_REJECT.NOT_STARTED, 'reopen_not_started');
 });
 
 // ── 書き込み ────────────────────────────────────────────────

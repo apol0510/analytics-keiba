@@ -58,6 +58,24 @@ function makeRedis({ down = false } = {}) {
         store.set(key, value);
         return 'OK';
       }
+      if (op === 'HSETNX') {
+        const [key, field, value] = rest;
+        const h = store.get(key) instanceof Map ? store.get(key) : new Map();
+        store.set(key, h);
+        if (h.has(field)) return 0;
+        h.set(field, value);
+        return 1;
+      }
+      if (op === 'HGET') {
+        const [key, field] = rest;
+        const h = store.get(key);
+        return h instanceof Map && h.has(field) ? h.get(field) : null;
+      }
+      if (op === 'HMGET') {
+        const [key, ...fs] = rest;
+        const h = store.get(key);
+        return fs.map((f) => (h instanceof Map && h.has(f) ? h.get(f) : null));
+      }
       if (op === 'EVAL') {
         const [script, , key, token] = rest;
         const cur = store.get(key);
@@ -71,7 +89,27 @@ function makeRedis({ down = false } = {}) {
   };
 }
 
+/**
+ * ⚠️ 2026-08-22 整合修正: クーポンを取得できるのは
+ * **その会員の再募集が開始済みで期限内**のときだけ（`salePaused` は条件ではない）。
+ * 取得できるはずのテストは、その会員の開始日時を合成 Redis へ入れてから実行する。
+ */
+const REOPEN_MEMBERS_KEY = 'ak:pp:reopen:v1:members';
+function clearReopenStart(recordId) {
+  const h = redis.store.get(REOPEN_MEMBERS_KEY);
+  if (h instanceof Map) h.delete(recordId);
+}
+function seedReopenStart(recordId, startsAtIso = '2026-08-22T00:00:00.000Z') {
+  const h = redis.store.get(REOPEN_MEMBERS_KEY) instanceof Map
+    ? redis.store.get(REOPEN_MEMBERS_KEY) : new Map();
+  redis.store.set(REOPEN_MEMBERS_KEY, h);
+  h.set(recordId, JSON.stringify({ startsAt: startsAtIso, actor: 'MK' }));
+}
+
 function stubAirtable(recordsById) {
+  // 既定では**全員が開始済み**（取得できる前提）。未開始の挙動を見るテストは
+  // `clearReopenStart()` で明示的に消す。
+  for (const id of Object.keys(recordsById || {})) seedReopenStart(id);
   globalThis.fetch = async (url, init = {}) => {
     const method = init.method || 'GET';
     calls.push({ url: String(url), method, body: init.body ? JSON.parse(init.body) : null });
@@ -165,9 +203,9 @@ afterEach(() => {
 
 // ── 取得成功 ────────────────────────────────────────────────
 test('停止中の対象会員は取得できる（クーポン 3 フィールドだけを 1 レコードへ）', async () => {
-  const db = { recPAUSED0000001: { ...SALEABLE, PremiumPlusSalePaused: true } };
+  const db = { recPAUSED00000010: { ...SALEABLE, PremiumPlusSalePaused: true } };
   stubAirtable(db);
-  const res = await post({ cookie: await cookieFor('recPAUSED0000001') });
+  const res = await post({ cookie: await cookieFor('recPAUSED00000010') });
   const json = await res.json();
 
   assert.equal(res.status, 200);
@@ -176,7 +214,7 @@ test('停止中の対象会員は取得できる（クーポン 3 フィール�
 
   assert.equal(patches().length, 1, 'PATCH は 1 回だけ');
   const p = patches()[0];
-  assert.match(p.url, /\/Customers\/recPAUSED0000001$/);
+  assert.match(p.url, /\/Customers\/recPAUSED00000010$/);
   assert.deepEqual(Object.keys(p.body.fields).sort(), [
     PP_REOPEN_COUPON_FIELDS.CLAIMED_AT,
     PP_REOPEN_COUPON_FIELDS.COUPON_ID,
@@ -186,86 +224,110 @@ test('停止中の対象会員は取得できる（クーポン 3 フィール�
 
 test('取得しても資格 / 停止 / 会員権 / 決済は 1 つも変わらない', async () => {
   const before = { ...SALEABLE, PremiumPlusSalePaused: true, PremiumPlusReleaseOverride: 'phase4' };
-  const db = { recPAUSED0000002: { ...before } };
+  const db = { recPAUSED00000020: { ...before } };
   stubAirtable(db);
-  await post({ cookie: await cookieFor('recPAUSED0000002') });
+  await post({ cookie: await cookieFor('recPAUSED00000020') });
 
   for (const k of Object.keys(before)) {
-    assert.deepEqual(db.recPAUSED0000002[k], before[k], `${k} が変わっている`);
+    assert.deepEqual(db.recPAUSED00000020[k], before[k], `${k} が変わっている`);
   }
 });
 
 test('二重取得しない（2 回目は PATCH せず取得日時も変わらない）', async () => {
-  const db = { recPAUSED0000003: { ...SALEABLE, PremiumPlusSalePaused: true } };
+  const db = { recPAUSED00000030: { ...SALEABLE, PremiumPlusSalePaused: true } };
   stubAirtable(db);
-  const first = await (await post({ cookie: await cookieFor('recPAUSED0000003') })).json();
-  const claimedAt = db.recPAUSED0000003[PP_REOPEN_COUPON_FIELDS.CLAIMED_AT];
+  const first = await (await post({ cookie: await cookieFor('recPAUSED00000030') })).json();
+  const claimedAt = db.recPAUSED00000030[PP_REOPEN_COUPON_FIELDS.CLAIMED_AT];
   assert.equal(patches().length, 1);
 
   clearAnchorCache();
-  const second = await (await post({ cookie: await cookieFor('recPAUSED0000003') })).json();
+  const second = await (await post({ cookie: await cookieFor('recPAUSED00000030') })).json();
   assert.equal(second.claimed, true);
   assert.equal(second.alreadyClaimed, true);
   assert.equal(patches().length, 1, '2 回目に PATCH している（二重取得）');
-  assert.equal(db.recPAUSED0000003[PP_REOPEN_COUPON_FIELDS.CLAIMED_AT], claimedAt);
+  assert.equal(db.recPAUSED00000030[PP_REOPEN_COUPON_FIELDS.CLAIMED_AT], claimedAt);
   assert.equal(first.claimed, true);
 });
 
 test('他会員のレコードには一切触れない', async () => {
   const other = { ...SALEABLE, PremiumPlusSalePaused: true };
   const db = {
-    recPAUSED0000004: { ...SALEABLE, PremiumPlusSalePaused: true },
-    recOTHER00000005: { ...other },
+    recPAUSED00000040: { ...SALEABLE, PremiumPlusSalePaused: true },
+    recOTHER000000050: { ...other },
   };
   stubAirtable(db);
-  await post({ cookie: await cookieFor('recPAUSED0000004') });
+  await post({ cookie: await cookieFor('recPAUSED00000040') });
 
-  assert.deepEqual(db.recOTHER00000005, other, '他会員のレコードが変わっている');
-  for (const c of calls) assert.doesNotMatch(c.url, /recOTHER00000005/);
+  assert.deepEqual(db.recOTHER000000050, other, '他会員のレコードが変わっている');
+  for (const c of calls) assert.doesNotMatch(c.url, /recOTHER000000050/);
 });
 
 test('body で他人の recordId / email を指定しても自分のレコードしか触らない', async () => {
   const db = {
-    recPAUSED0000006: { ...SALEABLE, PremiumPlusSalePaused: true },
-    recVICTIM0000007: { ...SALEABLE, PremiumPlusSalePaused: true },
+    recPAUSED00000060: { ...SALEABLE, PremiumPlusSalePaused: true },
+    recVICTIM00000070: { ...SALEABLE, PremiumPlusSalePaused: true },
   };
   stubAirtable(db);
   const res = await post({
-    cookie: await cookieFor('recPAUSED0000006'),
-    body: { recordId: 'recVICTIM0000007', id: 'recVICTIM0000007', email: 'someone@example.com' },
+    cookie: await cookieFor('recPAUSED00000060'),
+    body: { recordId: 'recVICTIM00000070', id: 'recVICTIM00000070', email: 'someone@example.com' },
   });
   assert.equal(res.status, 200);
   assert.equal(patches().length, 1);
-  assert.match(patches()[0].url, /recPAUSED0000006$/);
-  assert.equal(PP_REOPEN_COUPON_FIELDS.CLAIMED_AT in db.recVICTIM0000007, false);
+  assert.match(patches()[0].url, /recPAUSED00000060$/);
+  assert.equal(PP_REOPEN_COUPON_FIELDS.CLAIMED_AT in db.recVICTIM00000070, false);
 });
 
 // ── 取得できない ────────────────────────────────────────────
-test('停止していない会員は 404（取得も PATCH もしない）', async () => {
-  const db = { recACTIVE0000001: { ...SALEABLE } };
+test('販売中でも開始済みなら取得できる（**停止は取得の条件ではない**・2026-08-22）', async () => {
+  // ⚠️ 旧仕様は「停止中の会員だけ取得可」だった。再募集の開始が販売停止の解除を
+  //    含む 1 操作になったため、停止を条件にすると**開始した瞬間に取得できなくなる**。
+  const db = { recACTIVE00000010: { ...SALEABLE } };
   stubAirtable(db);
-  const res = await post({ cookie: await cookieFor('recACTIVE0000001') });
-  assert.equal(res.status, 404);
+  const res = await post({ cookie: await cookieFor('recACTIVE00000010') });
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).claimed, true);
+  assert.equal(patches().length, 1, 'クーポン列だけを 1 レコードへ書く');
+});
+
+test('未開始の会員は取得できない（409・PATCH しない）', async () => {
+  const db = { recNOSTART0000010: { ...SALEABLE, PremiumPlusSalePaused: true } };
+  stubAirtable(db);
+  clearReopenStart('recNOSTART0000010');
+  const res = await post({ cookie: await cookieFor('recNOSTART0000010') });
+  assert.equal(res.status, 409);
+  const body = await res.json();
+  assert.equal(body.code, 'reopen_not_started');
+  assert.equal(body.sideEffects, 'none');
+  assert.equal(patches().length, 0);
+});
+
+test('開始状態を読めないときは「未開始」に丸めず 503（fail closed）', async () => {
+  const db = { recUNREAD00000010: { ...SALEABLE, PremiumPlusSalePaused: true } };
+  stubAirtable(db);
+  redis = makeRedis({ down: true });
+  const res = await post({ cookie: await cookieFor('recUNREAD00000010') });
+  assert.equal(res.status, 503);
   assert.equal(patches().length, 0);
 });
 
 test('販売対象外(blocked)は停止中でも 404', async () => {
-  const db = { recBLOCKED000001: { ...SALEABLE, PremiumPlusSalePaused: true, PremiumPlusEligibility: 'blocked' } };
+  const db = { recBLOCKED0000010: { ...SALEABLE, PremiumPlusSalePaused: true, PremiumPlusEligibility: 'blocked' } };
   stubAirtable(db);
-  const res = await post({ cookie: await cookieFor('recBLOCKED000001') });
+  const res = await post({ cookie: await cookieFor('recBLOCKED0000010') });
   assert.equal(res.status, 404);
   assert.equal(patches().length, 0);
 });
 
 test('Plus の候補ではない会員（Premium 加入直後）は 404', async () => {
   const db = {
-    recNOTPLUS000001: {
+    recNOTPLUS0000010: {
       'プラン': 'Premium', 'Status': 'active', '有効期限': '2099-12-31',
       'PaidAt': new Date().toISOString(), PremiumPlusSalePaused: true,
     },
   };
   stubAirtable(db);
-  const res = await post({ cookie: await cookieFor('recNOTPLUS000001', 'premium') });
+  const res = await post({ cookie: await cookieFor('recNOTPLUS0000010', 'premium') });
   assert.equal(res.status, 404);
   assert.equal(patches().length, 0);
 });
@@ -278,8 +340,8 @@ test('未ログイン（Cookie なし）は 404', async () => {
 });
 
 test('署名が違う Cookie は 404', async () => {
-  stubAirtable({ recPAUSED0000008: { ...SALEABLE, PremiumPlusSalePaused: true } });
-  const cookie = await cookieFor('recPAUSED0000008');
+  stubAirtable({ recPAUSED00000080: { ...SALEABLE, PremiumPlusSalePaused: true } });
+  const cookie = await cookieFor('recPAUSED00000080');
   const res = await post({ cookie: `${cookie}tampered` });
   assert.equal(res.status, 404);
   assert.equal(patches().length, 0);
@@ -287,9 +349,9 @@ test('署名が違う Cookie は 404', async () => {
 
 test('保存先 gate が未設定なら 503（PATCH せず「取得した」と言わない）', async () => {
   delete process.env.PREMIUM_PLUS_REOPEN_COUPON_READY;
-  const db = { recPAUSED0000009: { ...SALEABLE, PremiumPlusSalePaused: true } };
+  const db = { recPAUSED00000090: { ...SALEABLE, PremiumPlusSalePaused: true } };
   stubAirtable(db);
-  const res = await post({ cookie: await cookieFor('recPAUSED0000009') });
+  const res = await post({ cookie: await cookieFor('recPAUSED00000090') });
   const json = await res.json();
   assert.equal(res.status, 503);
   assert.equal(json.claimed, false);
@@ -298,7 +360,7 @@ test('保存先 gate が未設定なら 503（PATCH せず「取得した」と�
 });
 
 test('Airtable の PATCH が失敗したら 503（成功と言わない）', async () => {
-  const db = { recPAUSED0000010: { ...SALEABLE, PremiumPlusSalePaused: true } };
+  const db = { recPAUSED00000100: { ...SALEABLE, PremiumPlusSalePaused: true } };
   stubAirtable(db);
   const inner = globalThis.fetch;
   globalThis.fetch = async (url, init = {}) => {
@@ -308,15 +370,15 @@ test('Airtable の PATCH が失敗したら 503（成功と言わない）', asy
     }
     return inner(url, init);
   };
-  const res = await post({ cookie: await cookieFor('recPAUSED0000010') });
+  const res = await post({ cookie: await cookieFor('recPAUSED00000100') });
   const json = await res.json();
   assert.equal(res.status, 503);
   assert.equal(json.claimed, false);
-  assert.equal(PP_REOPEN_COUPON_FIELDS.CLAIMED_AT in db.recPAUSED0000010, false);
+  assert.equal(PP_REOPEN_COUPON_FIELDS.CLAIMED_AT in db.recPAUSED00000100, false);
 });
 
 test('GET では取得できない（プリフェッチで勝手に取得しない）', async () => {
-  stubAirtable({ recPAUSED0000011: { ...SALEABLE, PremiumPlusSalePaused: true } });
+  stubAirtable({ recPAUSED00000110: { ...SALEABLE, PremiumPlusSalePaused: true } });
   const mod = await import('../../pages/api/premium-plus-coupon.json.js');
   const res = mod.GET();
   assert.equal(res.status, 404);
@@ -324,7 +386,7 @@ test('GET では取得できない（プリフェッチで勝手に取得しな�
 });
 
 // ── 共通クーポン基盤への配線（entity lock / 履歴 / repair）─────────
-const REC = 'recPAUSED0000001';
+const REC = 'recPAUSED00000010';
 const paused = () => ({ [REC]: { ...SALEABLE, PremiumPlusSalePaused: true } });
 const P = await import('../coupons/couponPlatform.js');
 
@@ -354,7 +416,12 @@ test('Redis が使えないときは state を書かず 503（fail closed）', a
   const res = await post({ cookie: await cookieFor(REC) });
   const json = await res.json();
   assert.equal(res.status, 503);
-  assert.equal(json.code, 'coupon_lock_unavailable');
+  // ⚠️ 2026-08-22: 再募集の開始状態も Redis から読むようになったため、
+  //    排他（lock）へ進む**前に**「状態を確認できない」で止まる。どちらも fail closed。
+  assert.ok(
+    ['reopen_state_unavailable', 'coupon_lock_unavailable'].includes(json.code),
+    `想定外の理由: ${json.code}`,
+  );
   assert.equal(json.sideEffects, 'none');
   assert.equal(patches().length, 0, '排他できないのに書いている');
 });

@@ -74,7 +74,8 @@ export function listApplicableCoupons({
   if (product !== COUPON_PRODUCT.PREMIUM_PLUS) return [];
   const held = readReopenCoupon(fields);
   if (held.claimed !== true) return [];
-  if (isExpired(nowMs, def)) return [];
+  // 未開始・期限切れはどちらも「使えない」（未開始を通さない）
+  if (!isUsable(nowMs, def)) return [];
   if (isUsed(fields)) return [];
 
   const price = resolveCouponPrice(def);
@@ -93,14 +94,17 @@ export function listApplicableCoupons({
 }
 
 /**
- * 有効期限切れか。**期限が未確定のあいだは期限切れにしない**
- * （勝手に日付を作って弾かない）。
+ * **いま使えるクーポンか**（＝その会員の再募集が開始済みで、期限内か）。
+ *
+ * ⚠️ 2026-08-22 変更: 期限が**未確定（＝その会員の再募集が未開始）なら使えない**。
+ *    旧実装は「未確定なら期限切れではない」として**通していた**が、
+ *    未開始の会員に 58,000円 の申込を作らせないため **fail closed** にする。
  */
-function isExpired(nowMs, def = PP_REOPEN_COUPON) {
+function isUsable(nowMs, def = PP_REOPEN_COUPON) {
   const t = (def && def.terms) || {};
-  if (t.expiresDetermined !== true || !t.expiresAt) return false;
+  if (t.expiresDetermined !== true || !t.expiresAt) return false;   // 未開始 = 使えない
   const ms = Date.parse(String(t.expiresAt));
-  return Number.isFinite(ms) ? ms <= nowMs : false;
+  return Number.isFinite(ms) ? ms > nowMs : false;
 }
 
 /**
@@ -143,7 +147,9 @@ export function resolveOrderPricing({
   const held = readReopenCoupon(fields);
   if (held.claimed !== true) return none(COUPON_APPLY_REJECT.NOT_HELD);
   if (isUsed(fields)) return none(COUPON_APPLY_REJECT.ALREADY_USED);
-  if (isExpired(nowMs, def)) return none(COUPON_APPLY_REJECT.EXPIRED);
+  // 未開始（期限未確定）も期限切れも同じく使えない。**通常価格へ黙って落とさない**
+  // （申込 Function 側が 409 で申込ごと止める）
+  if (!isUsable(nowMs, def)) return none(COUPON_APPLY_REJECT.EXPIRED);
 
   // ⚠️ 入力価格から引かない。正本の通常価格から**1 回だけ**引いた確定値を返す
   return {

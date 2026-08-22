@@ -85,9 +85,9 @@ test('dashboard は主 CTA を申込導線にし、購入不可ならリンク�
   assert.match(dash, /id="reopen-coupon-cta"/);
   assert.match(dash, /id="reopen-coupon-wait"/);
   const fn = dash.slice(dash.indexOf('function renderReopenCoupon'));
-  assert.match(fn.slice(0, 2200), /cta\.purchasable === true && cta\.href/);
+  assert.match(fn.slice(0, 4200), /cta\.purchasable === true && cta\.href/);
   // 停止中は wait 表示（リンクにしない）
-  assert.match(fn.slice(0, 2200), /waitEl\.textContent = cta\.label/);
+  assert.match(fn.slice(0, 4200), /waitEl\.textContent = cta\.label/);
 });
 
 test('dashboard の CTA に href="#" のプレースホルダを置かない', () => {
@@ -101,7 +101,7 @@ test('dashboard の CTA に href="#" のプレースホルダを置かない', (
 
 test('dashboard は価格・文言をハードコードせずサーバーの値を使う', () => {
   const dash = read('../../pages/dashboard.astro');
-  const fn = dash.slice(dash.indexOf('function renderReopenCoupon'), dash.indexOf('function renderReopenCoupon') + 2400);
+  const fn = dash.slice(dash.indexOf('function renderReopenCoupon'), dash.indexOf('function renderReopenCoupon') + 4400);
   assert.doesNotMatch(fn, /68,?000|58,?000|10,?000|申し込む'/, '文言・金額を直書きしている');
   assert.match(fn, /cta\.label/);
   assert.match(fn, /cta\.href/);

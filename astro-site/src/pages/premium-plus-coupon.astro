@@ -25,6 +25,8 @@ import { renderCouponPageHtml } from '../lib/premiumPlus/premiumPlusPauseNoticeP
 //    このページは会員判定を一切再実装しない（正本は resolveEntitlements）。
 import { loadReopenStart } from '../lib/premiumPlus/premiumPlusReopenStartStore.js';
 import { withReopenStart } from '../lib/premiumPlus/premiumPlusReopenStart.js';
+// 「取得できるか」の単一源。**販売停止フラグではなく、その会員の再募集開始で決まる**
+import { resolveCouponAccess } from '../lib/premiumPlus/premiumPlusCouponAccess.js';
 
 const now = Date.now();
 
@@ -57,24 +59,33 @@ const view = resolveUpsellForCustomer({
   fallbackAnchor: process.env.PREMIUM_PLUS_FUNNEL_ANCHOR,
 });
 const coupon = readReopenCoupon(fields);
-const noticeTarget = view.pauseNotice?.showPauseNotice === true;
 
-// 取得済みの人は停止が解除された後もここで確認できる。
-// どちらでもない相手には存在を知らせない。
-if (!coupon.claimed && !noticeTarget) return notFound();
-
-// この会員の再募集の開始状態（読めなければ従来どおり「期限未確定」表示のまま）。
+// この会員の再募集の開始状態（読めなければ「期限未確定」＝取得もさせない fail closed）。
 // ⚠️ 会員ごとの値。**セッション由来の recordId 以外を渡さない**（他会員の期限は出さない）。
 const reopen = await loadReopenStart({
   recordId: access.payload?.sub || null, env: process.env,
 });
 const couponDef = withReopenStart(reopen.startsAtIso);
 
+// ⚠️ 取得できるかは **販売停止中かどうかではなく**、
+//    「Plus の対象会員 ＋ その会員の再募集が開始済みで期限内」で決まる（単一源）。
+const couponAccess = resolveCouponAccess({
+  audience: view.plusAudience?.isPlusAudience === true,
+  reopen,
+  fields,
+  nowMs: now,
+  storageReady: isReopenCouponEnabled(process.env),
+});
+
+// 取得済みの人はいつでもここで確認できる。
+// 取得もできず保有もしていない相手には存在を知らせない。
+if (!couponAccess.visible) return notFound();
+
 const couponView = describeCouponForMember({
   coupon,
   paused: view.plusRelease?.salePaused === true,
-  // 取得 CTA は「いま案内対象」のときだけ。停止解除後に新規取得はさせない。
-  claimable: noticeTarget,
+  // 取得 CTA は単一源が「取得してよい」と言ったときだけ
+  claimable: couponAccess.canClaim,
   storageReady: isReopenCouponEnabled(process.env),
   def: couponDef,
 });
