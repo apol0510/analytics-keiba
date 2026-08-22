@@ -2481,6 +2481,14 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
             color: #fff; text-decoration: none; font-size: 1rem; font-weight: 800; text-align: center;
         }
         .coupon-cta:hover { filter: brightness(1.1); }
+        /*
+         * ⚠️ `hidden` を必ず効かせる。
+         * `.coupon-cta` は `display: block` を指定しているため、**作者スタイルが
+         * UA の `[hidden] { display: none }` を上書きしてしまい**、JS で
+         * `el.hidden = true` にしても**空の青いボタンが帯として残る**（2026-08-22 本番で発生）。
+         * カード内の要素は hidden なら必ず消す。
+         */
+        .coupon-card [hidden] { display: none !important; }
         .coupon-wait {
             margin: 1.1rem 0 0; padding: .8rem 1rem; border-radius: .7rem;
             background: rgba(148,163,184,.12); border: 1px solid rgba(148,163,184,.35);
