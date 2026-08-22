@@ -1983,6 +1983,57 @@ Light 約 15,000 名 rollout（#372 系列）の修復。#369 反映後に再開
 - **正常除外を含め全員が barrier 上で解決済み**（`granted === resolved`）
 - duplicate grant / queue / send = **0**
 
+## 2026-08-22 — 【完了】既存コホートの follow-up automation 復旧（Step2 を automation が自走で完走）
+
+#399（1 tick の仕事量を 1 ジョブぶんに収める）を本番反映したうえで `rolloutResume` を再試験し、
+**automation だけで Step2 を配り切った**。人手の queue / dispatch は一切行っていない。
+
+### 結果（2026-08-22T09:31Z 時点・read-only 実測）
+
+| 項目 | 実測 |
+|---|---|
+| #399 | **production 反映済み**（main `92ae7855` / deploy `6a882554` ready）|
+| resume 時点の Step2 due | **789 名** |
+| automation が作ったジョブ | **8 件**（100 × 7 + **89** = 789）|
+| ScheduledEmails | **SENT 8 件 / SentCount 合計 789 / FailedCount 0** |
+| CampaignDeliveries | **sent 789 行** |
+| duplicate（JobId / DeliveryKey）| **0 / 0** |
+| `queue:unverified` | **0** |
+| PENDING | **0** |
+| 現在の due | **Step2 = 0 / Step3 以降 = 0** |
+| waiting | **1,555 名**（配信間隔待ち。期日が来れば automation が拾う）|
+| killed / stage | **false** / **paused** |
+| 新規 grant | **0**（`lastRunDay: 2026-08-18` / `totalGranted: 1,400` 不変）|
+
+tick の実測: 働いた tick は **44.9 秒で完了ログあり**（#399 前は完了ログすら出ずゼロ進捗だった）。
+`action: followUp` は `queued: 100` / `boundedBy: 100` / `remainingInWindow: 400` /
+`sourceTruncated: true` / `totalDueBefore: 789` / `totalDueRemaining: 689` を出しており、
+**窓の残りと全体の残りを取り違えていない**。重なった invocation は `tick_busy` /
+`sideEffects: none`（**進捗があるので異常ではない**）。
+
+### provider（**789 通の 1:1 証明ではない**）
+
+同じ件名を前日の手動 598 通でも使っており、Activity の `last_event_time` は開封等で
+後から進むため、件名＋時間窓の集合には**古い送信が混じり得る**。
+
+| 観測 | 件数 |
+|---|---|
+| 件名＋窓（08-21T10:30Z〜08-22T09:35Z）で観測できたメッセージ | **810** |
+| └ delivered | **809** |
+| └ not_delivered | **1**（processed → delivered → **bounce** 08-21T10:51:01Z）|
+| └ processing / blocked / dropped | **0** |
+| `DeliveryKey` 指定のサンプル照合 | **5 件中 5 件 delivered** |
+
+⚠️ **「789 通すべて delivered」とは書かない。** 全件を 1:1 で突き合わせるには
+`delivery_key` を 789 回引く必要があり、未実施。
+
+### 完了 / 未完了の線引き
+
+- ✅ **既存コホートの follow-up automation 復旧は完了**（Step1 の滞留 → Step2 の滞留とも解消し、
+  automation が自走して due 0 に到達）
+- ❌ **約 15,000 名への新規 grant 展開は未完了**（`lastRunDay: 2026-08-18` のまま・
+  `totalGranted` 1,400 / 権利保有 1,570。再開には別途 preflight と承認が要る）
+
 ## 2026-08-21 — 【本番実行 → 即停止】rolloutResume を 1 度試し、tick が 1 件も処理できず kill へ戻した
 
 承認のうえ `rolloutResume`（05:36:43Z・展開状態 version 83→84）。その後 **15 分・6 tick 連続で
