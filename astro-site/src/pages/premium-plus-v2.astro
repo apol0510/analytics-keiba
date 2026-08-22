@@ -46,6 +46,8 @@ import { renderPauseNoticeHtml } from '../lib/premiumPlus/premiumPlusPauseNotice
 //    このページは会員判定を一切再実装しない（正本は resolveEntitlements）。
 import { loadReopenStart } from '../lib/premiumPlus/premiumPlusReopenStartStore.js';
 import { withReopenStart } from '../lib/premiumPlus/premiumPlusReopenStart.js';
+// 「取得できるか」の単一源（**販売停止フラグでは決めない**）
+import { resolveCouponAccess } from '../lib/premiumPlus/premiumPlusCouponAccess.js';
 // 申込モーダル内のクーポン適用 UI（金額はサーバーの単一源から取る）
 import PremiumPlusCouponApply from '../components/PremiumPlusCouponApply.astro';
 import { lookupCustomerFields } from '../lib/premiumPlus/purchaseAnchorLookup.js';
@@ -104,10 +106,19 @@ if (ppUpsell.channel !== UPSELL_CHANNEL.PLUS || !ppRelease.showProductPage) {
     const ppReopen = await loadReopenStart({
       recordId: access.payload?.sub || null, env: process.env,
     });
+    // ⚠️ 取得できるかは**停止中かどうかではない**。その会員の再募集が開始済みで期限内か。
+    //    未開始の会員には取得 CTA を出さない（「募集再開のご案内をお待ちください」になる）。
+    const ppCouponAccess = resolveCouponAccess({
+      audience: ppUpsell.plusAudience?.isPlusAudience === true,
+      reopen: ppReopen,
+      fields: ppFields,
+      nowMs: ppNow,
+      storageReady: isReopenCouponEnabled(process.env),
+    });
     const ppCouponView = describeCouponForMember({
       coupon: ppCoupon,
       paused: true,
-      claimable: true,
+      claimable: ppCouponAccess.canClaim,
       storageReady: isReopenCouponEnabled(process.env),
       def: withReopenStart(ppReopen.startsAtIso),
     });

@@ -33,6 +33,9 @@ import { formatClaimedAtJst, COUPON_PAGE_PATH } from '../../lib/premiumPlus/prem
 // 再募集の開始日時の単一源（開始済みなら有効期限が確定した定義になる）
 import { loadReopenStart } from '../../lib/premiumPlus/premiumPlusReopenStartStore.js';
 import { withReopenStart } from '../../lib/premiumPlus/premiumPlusReopenStart.js';
+// 「取得できるか」の単一源（**販売停止フラグでは決めない**）
+import { resolveCouponAccess } from '../../lib/premiumPlus/premiumPlusCouponAccess.js';
+import { isReopenCouponEnabled } from '../../lib/premiumPlus/premiumPlusReopenCoupon.js';
 
 const PRODUCT_HREF = '/premium-plus-v2/';
 
@@ -71,25 +74,38 @@ export async function GET({ request }) {
   // 本人のクーポン保有状態。文言・条件は単一源（describeCouponForMember）に作らせる。
   // ⚠️ ここで条件文や価格を組み立てないこと。条件が確定したら単一源だけが変わる。
   const held = readReopenCoupon(fields);
-  // 取得済みの人にだけ期限を出す。読めなければ従来どおり「未確定」表示のまま（fail closed）。
-  // ⚠️ 会員ごとの開始日時。**本人（セッション由来）の recordId だけ**を渡す
-  const reopen = held.claimed
-    ? await loadReopenStart({ recordId: access.payload?.sub || null, env: process.env })
-    : { startsAtIso: null };
-  const couponBody = held.claimed
+  // ⚠️ 会員ごとの開始日時。**本人（セッション由来）の recordId だけ**を渡す。
+  //    未取得の人にも読む: 「取得できる状態か」を判定するため（停止フラグでは決めない）。
+  const reopen = await loadReopenStart({
+    recordId: access.payload?.sub || null, env: process.env,
+  });
+  const couponAccess = resolveCouponAccess({
+    audience: view.plusAudience?.isPlusAudience === true,
+    reopen,
+    fields,
+    nowMs: now,
+    storageReady: isReopenCouponEnabled(process.env),
+  });
+  // 取得済み、または**いま取得できる**ならマイページにカードを出す。
+  // ⚠️ 旧実装は「取得済みのときだけ」で、取得導線を知らないと辿り着けなかった。
+  const couponBody = couponAccess.visible
     ? (() => {
       const v = describeCouponForMember({
         coupon: held,
         paused: view.plusRelease?.salePaused === true,
-        // マイページから新規取得はさせない（取得はクーポンページ / 受付休止ページ）
-        claimable: false,
-        // いま購入できるか。**停止中・再募集前は false** で、押せる CTA を出さない
+        // マイページからも取得できる（判定は単一源。停止中かどうかでは決めない）
+        claimable: couponAccess.canClaim,
+        // いま購入できるか。**停止中は false** で、押せる CTA を出さない
         purchasable: view.plusRelease?.purchaseEnabled === true,
         ctaSource: 'dashboard',
         def: withReopenStart(reopen.startsAtIso),
       });
       return {
-        claimed: true,
+        claimed: held.claimed === true,
+        /** まだ取得していないが、いま取得できる（マイページに取得 CTA を出す） */
+        canClaim: couponAccess.canClaim === true,
+        /** 取得ページ（実際の取得はここで行う） */
+        claimHref: COUPON_PAGE_PATH,
         name: v.name,
         claimedAt: held.claimedAtIso,
         claimedAtText: formatClaimedAtJst(held.claimedAtIso),
@@ -106,7 +122,7 @@ export async function GET({ request }) {
         cta: v.orderCta,
       };
     })()
-    : { claimed: false };
+    : { claimed: false, canClaim: false };
 
   const body = {
     channel: view.channel,

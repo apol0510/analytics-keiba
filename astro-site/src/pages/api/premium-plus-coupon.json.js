@@ -3,8 +3,9 @@
  *
  * ## 取得できるのは誰か（サーバー側でしか判定しない）
  *
- * **販売を一時停止している対象会員だけ**。判定は 1 か所（`resolveCouponClaimDecision`）で、
- * 材料は `resolveUpsellForCustomer().pauseNotice`（＝停止フラグを外したら商品ページを
+ * **Plus の対象会員のうち、その会員の再募集が開始済みで期限内の人だけ**。
+ * 判定は 1 か所（`resolveCouponAccess` / `resolveClaimDecision`）で、材料は
+ * 「Plus の対象会員か（停止フラグを外したら商品ページを
  * 見られたはずの人か）。
  *
  * URL 直打ち・fetch の直接呼び出し・古いタブからの再送でも同じ判定を通る。
@@ -39,12 +40,19 @@ import {
   readReopenCoupon,
   PP_REOPEN_COUPON_FIELDS,
   buildReopenCouponClaimFields,
-  resolveCouponClaimDecision,
   assertOnlyCouponFields,
   isReopenCouponEnabled,
   normalizeCouponSource,
-  COUPON_CLAIM_REJECT,
 } from '../../lib/premiumPlus/premiumPlusReopenCoupon.js';
+// 「取得してよいか」の**単一源**。⚠️ 販売停止フラグでは決めない（2026-08-22 修正）
+import {
+  resolveCouponAccess,
+  resolveClaimDecision,
+  claimRejectStatus,
+  COUPON_ACCESS_REJECT,
+  describeCouponAccessReject,
+} from '../../lib/premiumPlus/premiumPlusCouponAccess.js';
+import { loadReopenStart } from '../../lib/premiumPlus/premiumPlusReopenStartStore.js';
 import {
   COUPON_OPERATION,
   computeCouponEntityId,
@@ -141,19 +149,24 @@ export async function POST({ request }) {
   const coupon = readReopenCoupon(fields);
   const enabled = isReopenCouponEnabled(process.env);
 
-  const decision = resolveCouponClaimDecision({
-    pauseNotice: view.pauseNotice,
-    coupon,
-    enabled,
+  // ⚠️ **その会員の**再募集開始状態。読めなければ「未開始」に丸めず fail closed
+  const reopen = await loadReopenStart({ recordId, env: process.env });
+  const couponAccess = resolveCouponAccess({
+    audience: view.plusAudience?.isPlusAudience === true,
+    reopen,
+    fields,
+    nowMs: now,
+    storageReady: enabled,
   });
+  const decision = resolveClaimDecision(couponAccess);
   if (!decision.ok) {
-    // 対象外は存在を知らせない
-    if (decision.reason === COUPON_CLAIM_REJECT.NOT_ELIGIBLE) return notFound();
-    // 保存先が本番でまだ有効化されていない。**取得したことにしない**（fail closed）
-    return json(503, {
+    // 対象外は存在を知らせない。未開始・期限切れ・保存不可は理由を返す
+    if (decision.reason === COUPON_ACCESS_REJECT.NOT_ELIGIBLE) return notFound();
+    return json(claimRejectStatus(decision.reason), {
       ok: false,
       claimed: false,
       code: decision.reason,
+      error: describeCouponAccessReject(decision.reason),
       sideEffects: 'none',
     });
   }
@@ -191,18 +204,23 @@ export async function POST({ request }) {
     const freshFields = await lookupCustomerFields({ recordId, env: process.env, now });
     const freshCoupon = readReopenCoupon(freshFields);
     // ④ 再判定。lock 待ちの間に別の実行が取得していれば**既取得として 200**
-    const freshDecision = resolveCouponClaimDecision({
-      pauseNotice: resolveUpsellForCustomer({
+    const freshReopen = await loadReopenStart({ recordId, env: process.env });
+    const freshAccess = resolveCouponAccess({
+      audience: resolveUpsellForCustomer({
         fields: freshFields, nowMs: now,
         fallbackAnchor: process.env.PREMIUM_PLUS_FUNNEL_ANCHOR,
-      }).pauseNotice,
-      coupon: freshCoupon,
-      enabled,
+      }).plusAudience?.isPlusAudience === true,
+      reopen: freshReopen,
+      fields: freshFields,
+      nowMs: now,
+      storageReady: enabled,
     });
+    const freshDecision = resolveClaimDecision(freshAccess);
     if (!freshDecision.ok) {
-      if (freshDecision.reason === COUPON_CLAIM_REJECT.NOT_ELIGIBLE) return notFound();
-      return json(503, {
-        ok: false, claimed: false, code: freshDecision.reason, sideEffects: 'none',
+      if (freshDecision.reason === COUPON_ACCESS_REJECT.NOT_ELIGIBLE) return notFound();
+      return json(claimRejectStatus(freshDecision.reason), {
+        ok: false, claimed: false, code: freshDecision.reason,
+        error: describeCouponAccessReject(freshDecision.reason), sideEffects: 'none',
       });
     }
     if (freshDecision.alreadyClaimed) {
@@ -228,7 +246,7 @@ export async function POST({ request }) {
     if (!built || built.changed !== true) {
       return json(503, {
         ok: false, claimed: false,
-        code: COUPON_CLAIM_REJECT.STORAGE_UNAVAILABLE, sideEffects: 'none',
+        code: COUPON_ACCESS_REJECT.STORAGE_UNAVAILABLE, sideEffects: 'none',
       });
     }
 
@@ -246,7 +264,7 @@ export async function POST({ request }) {
       // 保存できていないのに「取得しました」と言わない
       return json(503, {
         ok: false, claimed: false,
-        code: COUPON_CLAIM_REJECT.STORAGE_UNAVAILABLE, sideEffects: 'none',
+        code: COUPON_ACCESS_REJECT.STORAGE_UNAVAILABLE, sideEffects: 'none',
       });
     }
     // 自分の更新だけキャッシュから落とす（直後のページ表示が「未取得」に戻らないように）

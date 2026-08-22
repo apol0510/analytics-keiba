@@ -67,11 +67,21 @@ test('API はセッション由来の recordId しか使わない（他会員の
   assert.doesNotMatch(code, /searchParams/);
 });
 
-test('API は未取得のとき claimed:false だけを返す（名称も条件も返さない）', () => {
+test('API は「取得できない相手」には条件も名称も返さない（2026-08-22 整合修正）', () => {
+  // ⚠️ 旧仕様は「取得済みのときだけカードを返す」だった。
+  //    再募集が会員ごとになり、**取得できる相手にはマイページからも取得させる**ため、
+  //    `visible`（取得済み or いま取得できる）で返すように変えた。
+  //    取得もできず保有もしていない相手には従来どおり最小限しか返さない。
   const code = stripComments(API);
-  assert.match(code, /:\s*\{\s*claimed:\s*false\s*\}/);
+  assert.match(code, /:\s*\{\s*claimed:\s*false,\s*canClaim:\s*false\s*\}/);
   assert.match(code, /readReopenCoupon\(fields\)/);
   assert.match(code, /describeCouponForMember\(/);
+  // 取得できるかは**単一源**が決める（API 側で条件を書き直さない）
+  assert.match(code, /resolveCouponAccess\(/);
+  assert.match(code, /couponAccess\.visible/);
+  assert.match(code, /claimable: couponAccess\.canClaim/);
+  // ⚠️ 停止フラグで取得可否を決めていない
+  assert.ok(!/claimable:\s*[^,\n]*salePaused/.test(code), '停止フラグで取得可否を決めている');
 });
 
 test('API は書き込みをしない（表示のためにレコードを変えない）', () => {
@@ -93,10 +103,13 @@ test('クライアントは追加の通信をせず、取得できなければ�
 });
 
 // ── dashboard ───────────────────────────────────────────────
-test('dashboard は既定でカードを隠し、claimed のときだけ出す', () => {
+test('dashboard は既定でカードを隠し、取得済み or 取得できるときだけ出す', () => {
   assert.match(DASH, /id="reopen-coupon-section"[^>]*style="display: none;"/);
   const fn = DASH.slice(DASH.indexOf('function renderReopenCoupon'));
-  assert.match(fn.slice(0, 800), /c\.claimed !== true\)\s*\{\s*sec\.style\.display = 'none'; return; \}/);
+  // ⚠️ 2026-08-22: 未取得でも**いま取得できる**ならカードを出す（取得導線をマイページにも置く）
+  assert.match(fn.slice(0, 900), /c\.claimed !== true && c\.canClaim !== true\)+\s*\{\s*sec\.style\.display = 'none'; return; \}/);
+  // 取得できるかはサーバーの値をそのまま使う（画面で条件を作らない）
+  assert.match(fn.slice(0, 1200), /const canClaim = c\.claimed !== true && c\.canClaim === true;/);
 });
 
 test('dashboard は表示に必要な項目をすべて出す', () => {

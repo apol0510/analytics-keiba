@@ -50,11 +50,19 @@ test('取得 API は ak_session を検証し、対象は必ずセッション由
 test('取得 API は単一源の判定だけを使い、条件を書き直さない', () => {
   const code = stripComments(API);
   assert.match(code, /resolveUpsellForCustomer\(/);
-  assert.match(code, /resolveCouponClaimDecision\(/);
+  // ⚠️ 2026-08-22: 判定は `premiumPlusCouponAccess.js` が単一源
+  assert.match(code, /resolveCouponAccess\(/);
+  assert.match(code, /resolveClaimDecision\(/);
+  // **その会員の**再募集開始状態を読んでから判定する
+  assert.match(code, /loadReopenStart\(\{ recordId/);
+  // Plus の対象かは停止に依存しない単一源から取る
+  assert.match(code, /plusAudience\?\.isPlusAudience/);
   // 停止フラグ・資格を API 側で直接解釈しない
   assert.doesNotMatch(code, /SalePaused/);
   assert.doesNotMatch(code, /PremiumPlusEligibility/);
   assert.doesNotMatch(code, /showPurchaseCta|purchaseEnabled/);
+  // ⚠️ 旧条件（停止中だけ取得可）を復活させない
+  assert.doesNotMatch(code, /showPauseNotice/, '停止フラグで取得可否を決めている');
 });
 
 test('取得 API は POST だけ（GET でプリフェッチ取得させない）', () => {
@@ -63,8 +71,10 @@ test('取得 API は POST だけ（GET でプリフェッチ取得させない�
 });
 
 test('取得 API は対象外に 404（存在を漏らさない・401/403 を使わない）', () => {
-  assert.match(API, /COUPON_CLAIM_REJECT\.NOT_ELIGIBLE\) return notFound\(\)/);
+  assert.match(API, /COUPON_ACCESS_REJECT\.NOT_ELIGIBLE\) return notFound\(\)/);
   assert.doesNotMatch(API, /status:\s*40[13]/);
+  // 未開始・期限切れは理由を返す（404 で握りつぶさない）
+  assert.match(API, /claimRejectStatus\(/);
 });
 
 // ── 3. 取得 API の副作用 ───────────────────────────────────────
@@ -87,7 +97,7 @@ test('取得 API はメール送信・queue 登録・課金・昇格を一切し
 
 test('取得 API は保存できなければ「取得した」と言わない（fail closed）', () => {
   assert.match(API, /if \(!wrote\)/);
-  assert.match(API, /claimed: false,\s*\n?\s*code: COUPON_CLAIM_REJECT\.STORAGE_UNAVAILABLE/);
+  assert.match(API, /claimed: false,\s*\n?\s*code: COUPON_ACCESS_REJECT\.STORAGE_UNAVAILABLE/);
 });
 
 // ── 4. 商品ページの直 URL ─────────────────────────────────────
@@ -119,13 +129,18 @@ test('クーポンページは認可 → 本人 1 件のみ参照（他会員は
 });
 
 test('クーポンページは対象外に 404（存在秘匿）で、購入導線を持たない', () => {
-  assert.match(COUPON_PAGE, /if \(!coupon\.claimed && !noticeTarget\) return notFound\(\);/);
+  // ⚠️ 2026-08-22: 「取得済み or いま取得できる」を単一源が判定する
+  assert.match(COUPON_PAGE, /if \(!couponAccess\.visible\) return notFound\(\);/);
   assert.match(COUPON_PAGE, /status:\s*404/);
   assert.doesNotMatch(COUPON_PAGE, /openBankModal|showPurchaseCta|68000|98000/);
 });
 
-test('停止解除後は新規取得させない（取得 CTA は案内対象のときだけ）', () => {
-  assert.match(COUPON_PAGE, /claimable: noticeTarget/);
+test('取得 CTA は単一源が「取得してよい」と言ったときだけ（停止では決めない）', () => {
+  // ⚠️ 旧仕様は `claimable: noticeTarget`（＝停止中だけ）。再募集の開始が
+  //    販売停止の解除を含むようになったため、停止を条件にすると矛盾する。
+  assert.match(COUPON_PAGE, /claimable: couponAccess\.canClaim/);
+  assert.match(COUPON_PAGE, /resolveCouponAccess\(/);
+  assert.doesNotMatch(COUPON_PAGE, /claimable: noticeTarget/);
 });
 
 // ── 6. 管理画面 ───────────────────────────────────────────────

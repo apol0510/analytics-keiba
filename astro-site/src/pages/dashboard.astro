@@ -5501,7 +5501,10 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
       function renderReopenCoupon(c) {
         const sec = document.getElementById('reopen-coupon-section');
         if (!sec) return;
-        if (!c || c.claimed !== true) { sec.style.display = 'none'; return; }
+        // 取得済み、または**いま取得できる**ならカードを出す。
+        // ⚠️ 取得できるかはサーバーの単一源が決める（販売停止中かどうかでは決めない）。
+        if (!c || (c.claimed !== true && c.canClaim !== true)) { sec.style.display = 'none'; return; }
+        const canClaim = c.claimed !== true && c.canClaim === true;
         const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v || ''; };
         set('reopen-coupon-name', c.name);
         // 割引・価格・期限は**サーバーの単一源が作った文字列**をそのまま出す
@@ -5513,6 +5516,17 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
         const link = document.getElementById('reopen-coupon-link');
         if (link && c.detailHref) link.setAttribute('href', c.detailHref);
 
+        // 未取得（取得可）のときは見出し・バッジ・取得日時の行を切り替える
+        const titleEl = document.querySelector('#reopen-coupon-section .coupon-title');
+        const badgeEl = document.querySelector('#reopen-coupon-section .coupon-badge');
+        const claimedDt = document.querySelector('#reopen-coupon-section .coupon-kv dt');
+        if (titleEl) titleEl.textContent = canClaim ? '受け取れるクーポン' : '取得済みクーポン';
+        if (badgeEl) badgeEl.textContent = canClaim ? '未取得' : '取得済み';
+        if (claimedDt) claimedDt.textContent = canClaim ? '取得' : '取得日時';
+        set('reopen-coupon-claimed-at', canClaim ? 'まだ受け取っていません' : c.claimedAtText);
+        if (link) link.textContent = canClaim ? '🎟 クーポンを受け取る' : 'クーポン詳細を確認';
+        if (link && canClaim && c.claimHref) link.setAttribute('href', c.claimHref);
+
         // 主 CTA（申込導線）。**購入できないときはリンクにしない**（押せる CTA を偽装しない）。
         // 文言・遷移先はサーバーの単一源が返した値をそのまま使う。
         const cta = c.cta || {};
@@ -5521,7 +5535,11 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
         const noteEl = document.getElementById('reopen-coupon-note');
         if (ctaEl && waitEl && noteEl) {
             ctaEl.hidden = true; waitEl.hidden = true; noteEl.hidden = true;
-            if (cta.show === true && cta.purchasable === true && cta.href) {
+            if (canClaim) {
+                // 未取得のうちは申込 CTA を出さない（先に受け取ってもらう）
+                waitEl.textContent = 'クーポンを受け取ると、お申し込み時に割引が適用されます。';
+                waitEl.hidden = false;
+            } else if (cta.show === true && cta.purchasable === true && cta.href) {
                 ctaEl.textContent = cta.label;
                 ctaEl.setAttribute('href', cta.href);
                 ctaEl.hidden = false;

@@ -31,13 +31,31 @@ let calls;
 let realFetch;
 let realEnv;
 
+/**
+ * ⚠️ 2026-08-22 整合修正: クーポンが使えるのは
+ * **その会員の再募集が開始済みで期限内**のときだけ。
+ * 申込 Function はその会員の開始日時を Redis から読むので、合成 Redis で与える。
+ */
+const REOPEN_MEMBERS_KEY = 'ak:pp:reopen:v1:members';
+let reopenStarts;
+
 function stub(fields) {
   globalThis.fetch = async (url, init = {}) => {
     const u = String(url);
     const m = (init.method || 'GET').toUpperCase();
+    if (u.includes('redis.example.invalid')) {
+      const [op, key, ...rest] = JSON.parse(init.body || '[]');
+      if (op === 'HGET' && key === REOPEN_MEMBERS_KEY) {
+        const v = reopenStarts.get(rest[0]);
+        return new Response(JSON.stringify({ result: v ?? null }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return new Response(JSON.stringify({ result: null }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
     if (u.includes('api.airtable.com')) {
       if (m !== 'GET') { calls.push('AIRTABLE_' + m); return new Response('{}', { status: 200 }); }
-      return new Response(JSON.stringify({ records: [{ id: 'recSYNTH00000001', fields }] }),
+      return new Response(JSON.stringify({ records: [{ id: 'recSYNTH000000010', fields }] }),
         { status: 200, headers: { 'Content-Type': 'application/json' } });
     }
     if (u.includes('sendgrid')) { calls.push('SENDGRID'); return new Response('{}', { status: 202 }); }
@@ -109,6 +127,12 @@ beforeEach(() => {
   process.env.PREMIUM_PLUS_FIELDS_READY = '1';
   process.env.PREMIUM_PLUS_REOPEN_COUPON_READY = '1';
   process.env.PREMIUM_PLUS_SALE_PAUSE_READY = '1';
+  process.env.UPSTASH_REDIS_REST_URL = 'https://redis.example.invalid';
+  process.env.UPSTASH_REDIS_REST_TOKEN = 'stub';
+  // 既定では**この会員は再募集 開始済み**（クーポンを使える前提）
+  reopenStarts = new Map([['recSYNTH000000010', JSON.stringify({
+    startsAt: new Date(Date.now() - 24 * 3600 * 1000).toISOString(), actor: 'MK',
+  })]]);
 });
 afterEach(() => {
   globalThis.fetch = realFetch;

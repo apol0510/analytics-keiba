@@ -26,7 +26,9 @@
 
 import { resolveEntitlements, fromAirtableFields } from '../entitlements/resolveEntitlements.js';
 import { resolvePlusMemberFromFields } from '../premiumPlus/premiumPlusMember.js';
-import { resolvePremiumPlusRelease, resolvePlusPauseNoticeView, PP_INTAKE } from '../premiumPlus/premiumPlusRelease.js';
+import {
+  resolvePremiumPlusRelease, resolvePlusPauseNoticeView, resolvePlusAudienceView, PP_INTAKE,
+} from '../premiumPlus/premiumPlusRelease.js';
 import { resolveSaleTarget } from '../premiumPlus/premiumPlusSaleDate.js';
 
 /** 管理者が選ぶ値。Airtable `UpsellTarget`（singleSelect）と 1:1。 */
@@ -288,6 +290,17 @@ export function resolveUpsellForCustomer({
   // ⚠️ 管理者が Plus 以外の導線を指定している会員には出さない。
   //    `none` は「販売導線を出さない」、`sanrenpuku` は「三連複だけを見せる」という
   //    管理者の判断なので、休止案内で Plus の存在を知らせてはいけない。
+  // ── Plus の対象会員か（**販売停止に依存しない**）────────────────────
+  // クーポンの取得資格は「停止中かどうか」ではなく「Plus の対象で、再募集が開始済みか」で決める。
+  // ⚠️ 再募集の開始は販売停止の解除を含むので、停止を条件にすると
+  //    **開始した瞬間に取得できなくなる**（2026-08-22 に判明した不整合）。
+  const plusAudience = (() => {
+    const v = resolvePlusAudienceView({
+      ...member, ...adminFlags, nowMs, nextDaySellable,
+    });
+    const targetAllows = target === UPSELL_TARGET.AUTO || target === UPSELL_TARGET.PLUS;
+    return { ...v, isPlusAudience: v.wouldShowProductPage === true && targetAllows };
+  })();
   const pauseNotice = (() => {
     // ⚠️ release と**同じ入力**で解く。片方だけ条件を足すと
     //    「商品ページは 404 なのに休止案内は出る」ようなズレが生まれる。
@@ -300,7 +313,7 @@ export function resolveUpsellForCustomer({
     const targetAllows = target === UPSELL_TARGET.AUTO || target === UPSELL_TARGET.PLUS;
     return { ...v, showPauseNotice: v.showPauseNotice === true && targetAllows };
   })();
-  return { ...view, entitlements, plusRelease, member, saleTarget, pauseNotice };
+  return { ...view, entitlements, plusRelease, member, saleTarget, pauseNotice, plusAudience };
 }
 
 /** 管理画面の「実表示」列に出す短い説明 */

@@ -104,11 +104,12 @@ test('未開始の会員は予約 write ができない（fail closed）', () =>
   assert.equal(d.reason, RESERVATION_REJECT.EXPIRY_UNDETERMINED);
 });
 
-test('未開始でも「期限切れ」で弾かない（勝手に日付を作らない）', () => {
-  const list = listApplicableCoupons({ fields: CLAIMED, nowMs: Date.parse('2099-01-01T00:00:00Z') });
-  assert.equal(list.length, 1);
-  assert.equal(list[0].expiryDetermined, false);
-  assert.equal(list[0].expiryText, PP_REOPEN_COUPON_EXPIRY_NOTE);
+test('未開始の会員はクーポンを申込に使えない（2026-08-22 整合修正で fail closed へ）', () => {
+  // ⚠️ 旧仕様は「期限が未確定なら期限切れにしない」＝**通していた**。
+  //    再募集が会員ごとになった今、未開始の会員に 58,000円 の申込を作らせないため使えなくする。
+  //    「勝手に日付を作らない」は維持（期限の表示は未確定のまま）。
+  assert.equal(listApplicableCoupons({ fields: CLAIMED, nowMs: Date.parse('2099-01-01T00:00:00Z') }).length, 0);
+  assert.equal(describeCouponExpiry(PP_REOPEN_COUPON), PP_REOPEN_COUPON_EXPIRY_NOTE);
 });
 
 // ── 期限の導出（計算式は 1 か所）────────────────────────────
