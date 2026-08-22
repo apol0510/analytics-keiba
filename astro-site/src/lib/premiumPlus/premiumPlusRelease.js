@@ -811,6 +811,12 @@ export function resolvePlusAudienceView(input) {
   return {
     wouldShowProductPage: resumed.showProductPage === true,
     wouldShowPurchaseCta: resumed.showPurchaseCta === true,
+    /**
+     * 停止を外したときの判定そのもの。
+     * ⚠️ 「停止していなければ**出ていたはずの表示**」を作るのに使う
+     *    （停止中も三連複ページの枠を通常どおり出すため）。購入可否には使わない。
+     */
+    resumed,
   };
 }
 

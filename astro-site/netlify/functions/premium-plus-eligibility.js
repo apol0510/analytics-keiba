@@ -139,6 +139,8 @@ import {
   describeCouponPrice,
   describeCouponExpiry,
 } from '../../src/lib/premiumPlus/premiumPlusReopenCoupon.js';
+// 「いま受け取れるか」の**単一源**（顧客側と同じ関数を管理画面でも使う）
+import { resolveCouponAccess } from '../../src/lib/premiumPlus/premiumPlusCouponAccess.js';
 // 再募集の開始日時（`reopenStartsAt`）。**顧客画面・申込・admin が同じ値を読む**
 import {
   withReopenStart,
@@ -351,6 +353,16 @@ function buildAdminRow(rec, now, ledger = UNREAD_LEDGER) {
         reopenCouponSource: reopenCoupon.source,
         /** 取得の記録が本番で保存できる状態か（画面の注意表示に使う） */
         reopenCouponWritable: isReopenCouponEnabled(process.env),
+        /**
+         * Plus の対象会員か（停止を外したら商品ページを見られたはずの人か）。
+         * ⚠️ クーポンを**配ってよい相手か**の判定材料。停止の有無では変わらない。
+         */
+        plusAudience: upsell.plusAudience?.isPlusAudience === true,
+        /**
+         * いまお客様自身がクーポンを受け取れるか（attachReopenStart が入れる）。
+         * ⚠️ 顧客側と**同じ単一源**で解く。管理画面だけ別の条件で表示しない。
+         */
+        reopenCouponAccess: null,
         // 価格条件は**単一源が作った文字列**をそのまま載せる（管理画面で数値を組み立てない）
         // 割引・価格は会員によらず同じ（正本の静的な条件）
         reopenCouponTerms: describeCouponTerms(),
@@ -1207,6 +1219,38 @@ async function attachReopenStart(rows) {
       action: describeLaunchAction({
         view, memberLabel: r.email || r.name || '', salePauseWritable: saleWritable,
       }),
+    };
+
+    // ── 「いまこの会員はクーポンを受け取れるか」──────────────────
+    // ⚠️ 顧客側（/api/premium-plus-coupon.json・三連複ページの導線）と**同じ関数**で解く。
+    //    管理画面だけ別条件で表示すると、運営者の見立てと実際の挙動がズレる。
+    //    配る相手は「Plus の対象会員 ＋ **いま購入できない（停止中）** ＋ 未取得」。
+    const acc = resolveCouponAccess({
+      audience: r.plusAudience === true,
+      salePaused: r.salePaused === true,
+      reopen: { available: st.available, startsAtIso: r.reopenStart.startsAtIso, reason: st.reason },
+      fields: r.reopenCouponClaimedAt
+        ? { [PP_REOPEN_COUPON_FIELDS.CLAIMED_AT]: r.reopenCouponClaimedAt }
+        : null,
+      nowMs: Date.now(),
+      storageReady: r.reopenCouponWritable === true,
+    });
+    r.reopenCouponAccess = {
+      canClaim: acc.canClaim === true,
+      canUse: acc.canUse === true,
+      reason: acc.reason || '',
+      note: acc.note || '',
+      /** 運営者向けの一行。**画面側で文言を組み立てない** */
+      label: acc.claimed === true
+        ? (acc.canUse === true ? '取得済み・いま使える' : '取得済み・いまは使えない')
+        : (acc.canClaim === true ? 'いま受け取れる' : '受け取れない'),
+      why: acc.claimed === true
+        ? (acc.canUse === true ? '' : (acc.note || ''))
+        : (acc.canClaim === true
+          ? '販売を止めているので、お客様が導線を押すとクーポンをご案内します。'
+          : (acc.reason === 'plus_on_sale'
+            ? 'いま購入できる状態なので配りません（クーポンは買えなかった方への埋め合わせです）。'
+            : (acc.note || ''))),
     };
   }
   return {

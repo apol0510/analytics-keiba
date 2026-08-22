@@ -73,6 +73,22 @@
     padding-bottom: 2px;
   }
 
+  /* 販売停止中に「押したその場」で開く案内。見た目はカードの続きに揃える */
+  .pp-stage-notice {
+    margin-top: 1.2rem;
+    padding-top: 1.1rem;
+    border-top: 1px solid rgba(245, 196, 81, 0.22);
+  }
+  .pp-stage-notice-title { font-size: 0.98rem; font-weight: 700; margin: 0 0 0.6rem; color: #f5c451; }
+  .pp-stage-notice p { font-size: 0.82rem; line-height: 1.9; color: #cbd5e6; margin: 0 0 0.5rem; }
+  .pp-stage-claim {
+    display: inline-block; margin-top: 0.7rem; padding: 0.7rem 1.4rem;
+    font-size: 0.86rem; font-weight: 700; color: #12203a; cursor: pointer;
+    background: linear-gradient(135deg, #f5c451, #e0a92e);
+    border: 0; border-radius: 999px;
+  }
+  .pp-stage-claim[disabled] { opacity: 0.6; cursor: default; }
+
   @media (max-width: 640px) {
     .pp-stage-card { padding: 1.3rem 1.05rem; border-radius: 14px; }
   }
@@ -82,6 +98,62 @@
   (async () => {
     const slot = document.getElementById('ppStageSlot');
     if (!slot) return;
+
+    // ⚠️ この script は is:inline。**コメントごと未ログイン者の HTML に載る**ので、
+    //    商品名・状態・条件を表す語を 1 つも書かない（構造 guard が検査する）。
+    //    文言はすべてサーバー（n）が持つ。ここは組み立てるだけ。
+    function openNotice(card, n) {
+      if (card.querySelector('.pp-stage-notice')) return;   // 二度開かない
+      const box = document.createElement('div');
+      box.className = 'pp-stage-notice';
+
+      const h = document.createElement('p');
+      h.className = 'pp-stage-notice-title';
+      h.textContent = n.title || '';
+      box.appendChild(h);
+
+      for (const t of [n.body, n.couponLead, n.discountText, n.priceText, n.couponAsk]) {
+        if (!t) continue;
+        const p = document.createElement('p');
+        p.textContent = t;
+        box.appendChild(p);
+      }
+
+      if (n.claimed === true) {
+        const a = document.createElement('a');
+        a.className = 'pp-stage-link';
+        a.href = n.claimedHref || '#';
+        a.textContent = n.claimedHrefLabel || '';
+        box.appendChild(a);
+      } else if (n.canClaim === true) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'pp-stage-claim';
+        btn.textContent = n.claimLabel || '';
+        btn.addEventListener('click', async () => {
+          btn.disabled = true;
+          try {
+            const r = await fetch('/api/premium-plus-coupon.json', {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ source: 'sanrenpuku-cta' }),
+            });
+            // 成否はサーバーの応答だけで決める
+            if (!r.ok) throw new Error('claim failed');
+            const j = await r.json();
+            if (!j || j.claimed !== true) throw new Error('claim failed');
+            btn.textContent = n.thanksLabel || '';
+          } catch {
+            btn.textContent = n.errorLabel || '';
+            btn.disabled = false;
+          }
+        });
+        box.appendChild(btn);
+      }
+
+      card.appendChild(box);
+    }
     try {
       const res = await fetch('/api/premium-plus-stage.json', { credentials: 'same-origin' });
       if (!res.ok) return; // 404 = 非会員 / PHASE 1 → 何も出さない
@@ -117,6 +189,15 @@
         link.href = data.productHref + (data.productHref.indexOf('?') >= 0 ? '&' : '?') + 'from=sanrenpuku';
         link.textContent = linkLabel;
         card.appendChild(link);
+
+        // 押す前の見た目は変えない。サーバーが data.paused を立てたときだけ、
+        // 遷移させずにサーバー由来の内容をこの場へ開く。判定はサーバーのみ。
+        if (data.paused === true && data.pausedNotice) {
+          link.addEventListener('click', (ev) => {
+            ev.preventDefault();
+            openNotice(card, data.pausedNotice);
+          });
+        }
       }
 
       slot.appendChild(card);

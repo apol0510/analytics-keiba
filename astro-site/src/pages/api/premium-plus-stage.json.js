@@ -23,6 +23,13 @@ import { verifyPlanAccess, PREMIUM_PLUS_CANDIDATE_PLANS } from '../../lib/auth/i
 import { PP_PHASE, teaserCopyForRoute } from '../../lib/premiumPlus/premiumPlusRelease.js';
 import { lookupCustomerFields } from '../../lib/premiumPlus/purchaseAnchorLookup.js';
 import { resolveUpsellForCustomer, UPSELL_CHANNEL } from '../../lib/upsell/upsellTarget.js';
+// 販売停止中に「押したその場で」出す文言とクーポン（**文言は必ずサーバーから配る**）
+import { PAUSE_NOTICE_COPY, COUPON_PAGE_PATH } from '../../lib/premiumPlus/premiumPlusPauseNoticePage.js';
+import { resolveCouponAccess } from '../../lib/premiumPlus/premiumPlusCouponAccess.js';
+import { loadReopenStart } from '../../lib/premiumPlus/premiumPlusReopenStartStore.js';
+import {
+  isReopenCouponEnabled, describeCouponDiscount, describeCouponPrice,
+} from '../../lib/premiumPlus/premiumPlusReopenCoupon.js';
 
 const PRODUCT_HREF = '/premium-plus-v2/';
 
@@ -58,23 +65,70 @@ export async function GET({ request }) {
     nowMs: now,
     fallbackAnchor: process.env.PREMIUM_PLUS_FUNNEL_ANCHOR,
   });
-  if (upsell.channel !== UPSELL_CHANNEL.PLUS) return notFound();
-
   const release = upsell.plusRelease;
+  const paused = release.salePaused === true;
+
+  // ── 販売停止中も枠を消さない（2026-08-22）────────────────────────
+  // ⚠️ 停止すると channel が none になり、この枠ごと消えていた。
+  //    その結果「買おうとする入口」が無くなり、
+  //    「お申し込みが殺到しております → 代わりにクーポン」へ**到達できなかった**。
+  //    停止中は **通常と同じ見た目**（停止を外したときの文言）で枠を出し、
+  //    押した先で殺到のご案内とクーポンを出す（遷移はさせない）。
+  if (!paused && upsell.channel !== UPSELL_CHANNEL.PLUS) return notFound();
+  if (paused && upsell.plusAudience?.isPlusAudience !== true) return notFound();
+
+  // 停止中は「停止していなければ出ていたはずの表示」を使う（見た目を変えない）
+  const shown = paused ? (upsell.plusAudience.resumed || release) : release;
 
   // PHASE 1 / 販売資格なし / route 対象外 は「まだ何も知らせない」＝存在秘匿を維持する。
-  if (!release.showTeaser) return notFound();
+  if (!shown.showTeaser) return notFound();
 
   // 文言は route + phase で決まる。PHASE 2/3（待機中）は「準備しています」、
   // PHASE 4（開通済み）は用意済みであることを静かに伝える文言＋導線ラベルを返す。
-  const teaser = teaserCopyForRoute(release.route, release.phase);
+  const teaser = teaserCopyForRoute(shown.route, shown.phase);
   if (!teaser) return notFound();
 
+  // 停止中に「押したその場で」出す内容。**文言はここで作ってクライアントへ渡す**
+  // （teaser の script は is:inline で未ログイン者の HTML にも載るため、
+  //  クライアント側に Premium Plus の文言を 1 文字も書かない）。
+  let pausedNotice = null;
+  if (paused) {
+    const reopen = await loadReopenStart({ recordId: access.payload?.sub || null, env: process.env });
+    const couponAccess = resolveCouponAccess({
+      audience: true,
+      salePaused: true,
+      reopen,
+      fields,
+      nowMs: now,
+      storageReady: isReopenCouponEnabled(process.env),
+    });
+    pausedNotice = {
+      title: PAUSE_NOTICE_COPY.title,
+      body: PAUSE_NOTICE_COPY.body,
+      couponLead: PAUSE_NOTICE_COPY.couponLead,
+      couponAsk: PAUSE_NOTICE_COPY.couponAsk,
+      discountText: describeCouponDiscount(),
+      priceText: describeCouponPrice(),
+      /** いま受け取れるか（判定は単一源。停止中の未取得なら true）*/
+      canClaim: couponAccess.canClaim === true,
+      claimed: couponAccess.claimed === true,
+      claimLabel: 'クーポンを受け取る',
+      claimedLabel: 'クーポンは受け取り済みです',
+      claimedHref: COUPON_PAGE_PATH,
+      claimedHrefLabel: 'クーポンを確認する',
+      thanksLabel: 'クーポンを受け取りました',
+      errorLabel: '受け取れませんでした。時間をおいてもう一度お試しください。',
+    };
+  }
+
   return new Response(JSON.stringify({
-    phase: release.phase,
-    route: release.route,
+    phase: shown.phase,
+    route: shown.route,
     teaser,
-    productHref: release.phase >= PP_PHASE.PREVIEW ? PRODUCT_HREF : null,
+    productHref: shown.phase >= PP_PHASE.PREVIEW ? PRODUCT_HREF : null,
+    /** 販売停止中か。true なら**リンクを押しても遷移させず**、下の案内をその場で出す */
+    paused,
+    pausedNotice,
   }), {
     status: 200,
     headers: {
