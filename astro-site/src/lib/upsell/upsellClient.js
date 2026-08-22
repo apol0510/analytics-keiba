@@ -61,17 +61,22 @@ export async function canShowSanrenpukuUpsell() {
 }
 
 /**
- * 本人の取得済みクーポン（マイページのカード用）。
+ * 本人のクーポン（マイページのカード用）。
  *
  * 追加の通信はしない（`getUpsellDecision()` の結果を使い回す）。
- * 取得できない / 未取得のときは `{ claimed: false }` を返し、呼び出し側は**何も出さない**。
- * ⚠️ 表示文言・条件はサーバー（単一源）が返した文字列をそのまま使うこと。
+ *
+ * ⚠️ **取得済みだけでなく「いま取得できる」場合も返す**（2026-08-22 修正）。
+ *    旧実装は `claimed === true` だけを通していたため、
+ *    サーバーが `canClaim: true` を返してもマイページにカードが出なかった。
+ *    どちらを出すかの判定は**サーバーの単一源**（`resolveCouponAccess`）が決める。
+ * ⚠️ 表示文言・条件はサーバーが返した文字列をそのまま使うこと。
  *    クライアントで条件文や価格を組み立てない。
  */
 export async function getReopenCoupon() {
   const d = await getUpsellDecision();
   const c = d && d.coupon;
-  return c && c.claimed === true ? c : { claimed: false };
+  const show = !!c && (c.claimed === true || c.canClaim === true);
+  return show ? c : { claimed: false, canClaim: false };
 }
 
 /** Premium Plus の導線を出してよいか（unknown は従来どおり Plus 側 API の判定に委ねる） */
