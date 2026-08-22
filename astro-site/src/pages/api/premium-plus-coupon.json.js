@@ -153,6 +153,8 @@ export async function POST({ request }) {
   const reopen = await loadReopenStart({ recordId, env: process.env });
   const couponAccess = resolveCouponAccess({
     audience: view.plusAudience?.isPlusAudience === true,
+    // ⚠️ 配る相手は「**いま買えない人**」。買える人には出さない
+    salePaused: view.plusRelease?.salePaused === true,
     reopen,
     fields,
     nowMs: now,
@@ -205,11 +207,13 @@ export async function POST({ request }) {
     const freshCoupon = readReopenCoupon(freshFields);
     // ④ 再判定。lock 待ちの間に別の実行が取得していれば**既取得として 200**
     const freshReopen = await loadReopenStart({ recordId, env: process.env });
+    const freshView = resolveUpsellForCustomer({
+      fields: freshFields, nowMs: now,
+      fallbackAnchor: process.env.PREMIUM_PLUS_FUNNEL_ANCHOR,
+    });
     const freshAccess = resolveCouponAccess({
-      audience: resolveUpsellForCustomer({
-        fields: freshFields, nowMs: now,
-        fallbackAnchor: process.env.PREMIUM_PLUS_FUNNEL_ANCHOR,
-      }).plusAudience?.isPlusAudience === true,
+      audience: freshView.plusAudience?.isPlusAudience === true,
+      salePaused: freshView.plusRelease?.salePaused === true,
       reopen: freshReopen,
       fields: freshFields,
       nowMs: now,

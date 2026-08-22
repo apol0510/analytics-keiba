@@ -71,6 +71,8 @@ const couponDef = withReopenStart(reopen.startsAtIso);
 //    「Plus の対象会員 ＋ その会員の再募集が開始済みで期限内」で決まる（単一源）。
 const couponAccess = resolveCouponAccess({
   audience: view.plusAudience?.isPlusAudience === true,
+  // ⚠️ 配る相手は「**いま買えない人**」。買える人には出さない
+  salePaused: view.plusRelease?.salePaused === true,
   reopen,
   fields,
   nowMs: now,

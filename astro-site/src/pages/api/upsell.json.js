@@ -81,6 +81,8 @@ export async function GET({ request }) {
   });
   const couponAccess = resolveCouponAccess({
     audience: view.plusAudience?.isPlusAudience === true,
+    // ⚠️ 配る相手は「**いま買えない人**」。買える人には出さない
+    salePaused: view.plusRelease?.salePaused === true,
     reopen,
     fields,
     nowMs: now,
