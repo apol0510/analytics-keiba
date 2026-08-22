@@ -91,10 +91,10 @@ test('壊れた日時は「未取得」に倒す（嘘の取得済みを作ら�
  *   ここでは「旧判定がこのモジュールから消えている」ことだけを固定する。
  *   判定そのものの仕様は `premiumPlusCouponAccess.test.mjs` が持つ。
  */
-test('旧 claim 判定（停止中だけ取得可）をこのモジュールへ戻さない', () => {
+test('claim の判定はこのモジュールに置かない（単一源は couponAccess 側）', () => {
   assert.equal(typeof COUPON_MODULE.resolveCouponClaimDecision, 'undefined');
-  // 理由コードは単一源からの再エクスポートで、停止に依存する語彙を持たない
-  assert.ok(!('NOT_PAUSED' in COUPON_CLAIM_REJECT));
+  // 理由コードは単一源からの再エクスポート
+  assert.equal(COUPON_CLAIM_REJECT.NOT_PAUSED, 'plus_on_sale');
   assert.equal(COUPON_CLAIM_REJECT.NOT_STARTED, 'reopen_not_started');
 });
 

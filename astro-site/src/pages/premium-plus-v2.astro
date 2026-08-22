@@ -110,6 +110,8 @@ if (ppUpsell.channel !== UPSELL_CHANNEL.PLUS || !ppRelease.showProductPage) {
     //    未開始の会員には取得 CTA を出さない（「募集再開のご案内をお待ちください」になる）。
     const ppCouponAccess = resolveCouponAccess({
       audience: ppUpsell.plusAudience?.isPlusAudience === true,
+      // ここは販売停止中の会員に出す受付休止ページ。配る相手はまさに「買えない人」
+      salePaused: ppRelease.salePaused === true,
       reopen: ppReopen,
       fields: ppFields,
       nowMs: ppNow,
