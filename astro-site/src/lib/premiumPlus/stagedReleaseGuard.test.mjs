@@ -166,7 +166,11 @@ test('stage エンドポイント: 認可 NG と PHASE 1 はどちらも 404', (
   assert.match(ENDPOINT, /export const prerender = false/);
   assert.match(ENDPOINT, /verifyPlanAccess\s*\(/);
   assert.match(ENDPOINT, /if \(!access\.ok\) return notFound\(\);/);
-  assert.match(ENDPOINT, /if \(!release\.showTeaser\) return notFound\(\);/);
+  // ⚠️ 販売停止中は「停止していなければ出ていたはずの表示」(shown) で判定する。
+  //    停止で枠ごと消すと、買おうとする入口が無くなりご案内へ到達できない（2026-08-22）。
+  assert.match(ENDPOINT, /if \(!shown\.showTeaser\) return notFound\(\);/);
+  assert.match(ENDPOINT, /if \(paused && upsell\.plusAudience\?\.isPlusAudience !== true\) return notFound\(\);/,
+    '停止中に対象外へも枠を出している（存在秘匿が崩れる）');
   assert.match(ENDPOINT, /status:\s*404/);
   assert.doesNotMatch(ENDPOINT, /status:\s*40[13]/);
   assert.match(ENDPOINT, /private, no-store/);
@@ -177,7 +181,7 @@ test('stage エンドポイント: 価格・口座情報を返さない', () => 
 });
 
 test('stage エンドポイント: 商品ページ URL は PHASE 3 以降だけ返す', () => {
-  assert.match(ENDPOINT, /release\.phase >= PP_PHASE\.PREVIEW \? PRODUCT_HREF : null/);
+  assert.match(ENDPOINT, /shown\.phase >= PP_PHASE\.PREVIEW \? PRODUCT_HREF : null/);
 });
 
 // ── PHASE 4 受付時間（2026-07-30 確定仕様）────────────────────────
