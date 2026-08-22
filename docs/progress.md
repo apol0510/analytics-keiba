@@ -2043,6 +2043,100 @@ Light 約 15,000 名 rollout（#372 系列）の修復。#369 反映後に再開
 - **正常除外を含め全員が barrier 上で解決済み**（`granted === resolved`）
 - duplicate grant / queue / send = **0**
 
+## 2026-08-22 — 【決定】新規 grant 再開時の運用 stage = `scale`
+
+約 15,000 名の同日完走を再開するにあたり、**運用 stage を `scale` とする**（MK 決定）。
+
+⚠️ これは **`rolloutTarget.js` の数値仕様の変更ではない**。`stage` は正本
+（`rolloutTarget.js` / `docs/decisions.md` 2026-08-17 Accepted）に固定値が無い唯一の項目で、
+**今回の再開でどの段階として動かすか**という運用上の選択。
+
+### 再開時に `rolloutStart` へ渡す値（確定）
+
+| 引数 | 値 | 出所 |
+|---|---|---|
+| `stage` | **`scale`** | **本決定**（正本に固定値が無いため運用で確定）|
+| `dailyLimit` | **15000** | 正本 `ROLLOUT_TARGET.dailyLimit`（2026-08-17 Accepted）|
+| `batchSize` | **500** | 正本 `ROLLOUT_TARGET.batchSize` |
+| `alwaysArmed` | **true** | 正本の決定「開始は 1 回だけ」|
+| `expectedVersion` | **実行直前の最新値**（CAS）| `action=rollout` の `stateVersion` |
+
+参考（**変更しない**正本値）: `sameDay: true` / `grantOperationMax: 200` /
+`grantSplit: [200, 200, 100]` / `ticksPerGrant: 3` / `ticksPerBatch: 9`。
+
+⚠️ `dailyLimit` を明示するので、`stage` ごとの既定上限（canary 10 / steady 100 / scale 500）は
+**使われない**。`stage` は「止まっているか（`paused` / `completed`）」の判定と段階表示に効く。
+
+### 1 tick あたりの実際の処理量（現行コードで確認・2026-08-22）
+
+| tick | 処理量 |
+|---|---|
+| GRANT | **200 名**（`GRANT_OPERATION_MAX` = min(`HARD_MAX_BATCH_SIZE` 500, `MAX_GRANT_RECORDS` 200)）|
+| QUEUE（handoff）| **その grant op の 200 名を 1 tick で** dry-run → queue（`chunkRecipients` が **2 ジョブ × 100**）|
+| DISPATCH | `startDispatch` が **pending 全ジョブ（= 2 本）** を起動 → **最大 200 通** |
+| 合計 | 1 grant = **3 tick** ／ 500 名バッチ = **9 tick**（`ticksPerGrant` / `ticksPerBatch` と一致）|
+
+⚠️ **#399 の「1 tick 100 名」は follow-up と opId 無しの Step1 救済だけ**に効く。
+**通常の grant handoff（`grantOperationId` 経路）は 200 名をそのまま `queueStep` へ渡す。**
+
+### 残リスク（承認時に見ておくこと）
+
+**現行コード（#393 の読み戻し・印の解除 ＋ #399）での 200 名 handoff の完走実績は無い。**
+台帳に残る 200 名 handoff は **2026-08-17T06:46（200 名 = 100+100）/ 06:56（199 名）** で、
+どちらも **#393 / #399 より前**のコード。現行コードで確認できているのは **100 名単位**まで。
+加えて新規 grant 時は follow-up due が 0 なので、tick は**両フェーズを読む経路**（実測 約 41 秒）に戻る。
+
+## 2026-08-22 — 【完了】既存コホートの follow-up automation 復旧（Step2 を automation が自走で完走）
+
+#399（1 tick の仕事量を 1 ジョブぶんに収める）を本番反映したうえで `rolloutResume` を再試験し、
+**automation だけで Step2 を配り切った**。人手の queue / dispatch は一切行っていない。
+
+### 結果（2026-08-22T09:31Z 時点・read-only 実測）
+
+| 項目 | 実測 |
+|---|---|
+| #399 | **production 反映済み**（main `92ae7855` / deploy `6a882554` ready）|
+| resume 時点の Step2 due | **789 名** |
+| automation が作ったジョブ | **8 件**（100 × 7 + **89** = 789）|
+| ScheduledEmails | **SENT 8 件 / SentCount 合計 789 / FailedCount 0** |
+| CampaignDeliveries | **sent 789 行** |
+| duplicate（JobId / DeliveryKey）| **0 / 0** |
+| `queue:unverified` | **0** |
+| PENDING | **0** |
+| 現在の due | **Step2 = 0 / Step3 以降 = 0** |
+| waiting | **1,555 名**（配信間隔待ち。期日が来れば automation が拾う）|
+| killed / stage | **false** / **paused** |
+| 新規 grant | **0**（`lastRunDay: 2026-08-18` / `totalGranted: 1,400` 不変）|
+
+tick の実測: 働いた tick は **44.9 秒で完了ログあり**（#399 前は完了ログすら出ずゼロ進捗だった）。
+`action: followUp` は `queued: 100` / `boundedBy: 100` / `remainingInWindow: 400` /
+`sourceTruncated: true` / `totalDueBefore: 789` / `totalDueRemaining: 689` を出しており、
+**窓の残りと全体の残りを取り違えていない**。重なった invocation は `tick_busy` /
+`sideEffects: none`（**進捗があるので異常ではない**）。
+
+### provider（**789 通の 1:1 証明ではない**）
+
+同じ件名を前日の手動 598 通でも使っており、Activity の `last_event_time` は開封等で
+後から進むため、件名＋時間窓の集合には**古い送信が混じり得る**。
+
+| 観測 | 件数 |
+|---|---|
+| 件名＋窓（08-21T10:30Z〜08-22T09:35Z）で観測できたメッセージ | **810** |
+| └ delivered | **809** |
+| └ not_delivered | **1**（processed → delivered → **bounce** 08-21T10:51:01Z）|
+| └ processing / blocked / dropped | **0** |
+| `DeliveryKey` 指定のサンプル照合 | **5 件中 5 件 delivered** |
+
+⚠️ **「789 通すべて delivered」とは書かない。** 全件を 1:1 で突き合わせるには
+`delivery_key` を 789 回引く必要があり、未実施。
+
+### 完了 / 未完了の線引き
+
+- ✅ **既存コホートの follow-up automation 復旧は完了**（Step1 の滞留 → Step2 の滞留とも解消し、
+  automation が自走して due 0 に到達）
+- ❌ **約 15,000 名への新規 grant 展開は未完了**（`lastRunDay: 2026-08-18` のまま・
+  `totalGranted` 1,400 / 権利保有 1,570。再開には別途 preflight と承認が要る）
+
 ## 2026-08-21 — 【本番実行 → 即停止】rolloutResume を 1 度試し、tick が 1 件も処理できず kill へ戻した
 
 承認のうえ `rolloutResume`（05:36:43Z・展開状態 version 83→84）。その後 **15 分・6 tick 連続で
