@@ -5558,7 +5558,6 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
         renderReopenCoupon(await getReopenCoupon());
         showCouponNewBadge(noticeAtLoad);
         renderNotifications(noticeAtLoad);
-        await markCouponCardSeenWhenVisible(noticeAtLoad);
       })();
 
       /**
@@ -5657,12 +5656,37 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
         a.textContent = notice.label;
         a.addEventListener('click', (ev) => {
           ev.preventDefault();
+          // ⚠️ **開いた（読んだ）ときに既読**。通りかかっただけでは消さない
+          markNoticeRead(notice);
           const card = document.getElementById('reopen-coupon-section');
           if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
         });
         li.appendChild(a);
         list.appendChild(li);
         sec.style.display = '';
+
+        // ベル（🔔）から来た人は、お知らせを開いたのと同じ扱いにする
+        if (location.hash === '#notifications') markNoticeRead(notice);
+      }
+
+      /**
+       * お知らせを読んだので、ベルの赤い件数を消す。
+       *
+       * ⚠️ **マイページを開いただけでは既読にしない。**
+       *    以前はカードが画面に入った時点で既読にしていたため、
+       *    別の用事でマイページを開いただけで通知が消え、
+       *    「届いたのに気づけない」状態になっていた（2026-08-23 の報告）。
+       *    消えるのは**ベルから来た**か、**お知らせを押した**ときだけ。
+       * ⚠️ カードの NEW はこの訪問のあいだ残す（消えるところを見せないと伝わらない）。
+       */
+      function markNoticeRead(notice) {
+        if (!notice || notice.unseen !== true || !notice.signature) return;
+        markCouponNoticeSeen(notice.signature);
+        for (const dot of document.querySelectorAll('[data-notice-dot]')) dot.hidden = true;
+        for (const id of ['nav-notice', 'mobile-nav-notice']) {
+          const li = document.getElementById(id);
+          if (li) li.style.display = 'none';
+        }
       }
 
       /**
@@ -5677,44 +5701,5 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
         el.hidden = !(notice && notice.unseen === true);
       }
 
-      /**
-       * クーポンのカードが**実際に画面に入ったとき**だけ既読にする。
-       *
-       * ⚠️ 描画しただけで既読にしない。マイページを開いても下までスクロールしなければ
-       *    見ていないので、そこで赤い点を消すと「知らないうちに通知が消えた」になる。
-       * ⚠️ 既読にできない環境（保存不可）でも画面は壊さない。赤い点が出続けるだけ。
-       */
-      async function markCouponCardSeenWhenVisible(noticeAtLoad) {
-        try {
-          const notice = noticeAtLoad || await getCouponNotice();
-          if (!notice || notice.unseen !== true || !notice.signature) return;
-          const sec = document.getElementById('reopen-coupon-section');
-          if (!sec || sec.style.display === 'none') return;
-
-          const seen = () => {
-            markCouponNoticeSeen(notice.signature);
-            // ナビの赤い点だけ消す。**カードの NEW はこの訪問のあいだ残す**
-            //（消えるところを見せないと、届いたこと自体が伝わらない）
-            for (const dot of document.querySelectorAll('[data-notice-dot]')) dot.hidden = true;
-          };
-          if (typeof IntersectionObserver !== 'function') { seen(); return; }
-          let timer = null;
-          const io = new IntersectionObserver((entries) => {
-            for (const e of entries) {
-              if (!e.isIntersecting) {
-                // 通り過ぎただけでは既読にしない
-                if (timer) { clearTimeout(timer); timer = null; }
-                continue;
-              }
-              if (timer) continue;
-              // ⚠️ 一瞬映っただけで既読にしない。**目に入る時間**を待つ
-              timer = setTimeout(() => { io.disconnect(); seen(); }, 1500);
-            }
-          }, { threshold: 0.5 });
-          io.observe(sec);
-        } catch {
-          // お知らせの既読化に失敗しても画面は壊さない
-        }
-      }
     </script>
 </BaseLayout>
