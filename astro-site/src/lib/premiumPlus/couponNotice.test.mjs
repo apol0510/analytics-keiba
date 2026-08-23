@@ -80,6 +80,35 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
 
+test('お知らせは専用のナビ（🔔）に件数で出す', () => {
+  // MK 要望（2026-08-23）: マイページ横の点ではなく、
+  // 通知アイコン + 件数（アプリの通知バッジのような形）にしたい。
+  const layout = read('../../layouts/BaseLayout.astro');
+  assert.match(layout, /id="nav-notice"/, 'お知らせ専用のナビが無い');
+  assert.match(layout, /id="mobile-nav-notice"/, 'モバイルにお知らせのナビが無い');
+  assert.match(layout, /🔔/, '通知アイコンが無い');
+  // ベルから行き先へ飛べる
+  assert.match(layout, /href="\/dashboard\/#notifications"/);
+  // ⚠️ 0 件のベルを常設しない（付いても目立たなくなる）
+  assert.match(layout, /li\.style\.display = 'block'/);
+  // マイページ側の点は廃止（指標を 2 つ出さない）
+  const dash = layout.slice(layout.indexOf('id="nav-dashboard"'), layout.indexOf('id="nav-dashboard"') + 300);
+  assert.ok(!dash.includes('data-notice-dot'), 'マイページ横にも点が残っている');
+});
+
+test('ベルの行き先にお知らせの中身がある（飛んだ先が空にならない）', () => {
+  const page = read('../../pages/dashboard.astro');
+  assert.match(page, /id="notifications"/, 'ベルの行き先が無い');
+  assert.match(page, /function renderNotifications/, 'お知らせを描画していない');
+  const fn = page.slice(page.indexOf('function renderNotifications'));
+  const body = fn.slice(0, fn.indexOf('\n      }\n'));
+  // 未読が無ければ出さない（空の「お知らせ」を見せない）
+  assert.match(body, /notice\.unseen !== true/);
+  // 文言はサーバー由来（画面で作らない）
+  assert.match(body, /notice\.label/);
+  assert.doesNotMatch(body, /クーポン/, '画面で文言を組み立てている');
+});
+
 test('ナビの赤い点に商品名・中身を書かない（未ログイン者も見るため）', () => {
   const layout = read('../../layouts/BaseLayout.astro');
   const i = layout.indexOf('data-notice-dot');

@@ -183,6 +183,20 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                 </div>
             </div>
 
+            <!-- 🔔 お知らせ。ナビのベルはここへ来る（#notifications）。
+                 ⚠️ 件数・文言はサーバー由来（/api/upsell.json → couponNotice.js）。
+                    ここで文言を組み立てないこと。何も無ければセクションごと出さない。 -->
+            <div class="notice-section" id="notifications" style="display: none;">
+                <div class="notice-card">
+                    <div class="notice-head">
+                        <span class="notice-icon">🔔</span>
+                        <span class="notice-title">お知らせ</span>
+                        <span class="notice-count" id="notice-count"></span>
+                    </div>
+                    <ul class="notice-list" id="notice-list"></ul>
+                </div>
+            </div>
+
             <!-- 取得済みクーポン（本人が取得済みのときだけ表示）。
                  判定・文言・条件はサーバーの単一源（/api/upsell.json → premiumPlusReopenCoupon.js）が返す。
                  ⚠️ dashboard 側で条件文・価格・割引率を組み立てないこと。
@@ -2494,6 +2508,31 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
          * カード内の要素は hidden なら必ず消す。
          */
         .coupon-card [hidden] { display: none !important; }
+        /* 🔔 お知らせ */
+        .notice-section { margin-bottom: 1.5rem; }
+        .notice-card {
+            background: rgba(239, 68, 68, .07);
+            border: 1px solid rgba(239, 68, 68, .35);
+            border-radius: 14px;
+            padding: 1.1rem 1.2rem;
+        }
+        .notice-head { display: flex; align-items: center; gap: .5rem; margin-bottom: .7rem; }
+        .notice-icon { font-size: 1.15rem; }
+        .notice-title { font-weight: 800; }
+        .notice-count {
+            margin-left: auto;
+            padding: .15rem .55rem;
+            border-radius: 999px;
+            background: #ef4444;
+            color: #fff;
+            font-size: .72rem;
+            font-weight: 800;
+        }
+        .notice-list { list-style: none; margin: 0; padding: 0; }
+        .notice-list li { padding: .5rem 0; border-top: 1px solid rgba(148,163,184,.2); }
+        .notice-list li:first-child { border-top: 0; }
+        .notice-list a { font-weight: 700; text-decoration: none; }
+        .notice-list a:hover { text-decoration: underline; }
         /* 新しく届いたクーポン。既読にしてもこの訪問のあいだは消さない */
         .coupon-new {
             padding: .18rem .5rem;
@@ -5518,6 +5557,7 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
         const noticeAtLoad = await getCouponNotice();
         renderReopenCoupon(await getReopenCoupon());
         showCouponNewBadge(noticeAtLoad);
+        renderNotifications(noticeAtLoad);
         await markCouponCardSeenWhenVisible(noticeAtLoad);
       })();
 
@@ -5593,6 +5633,35 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
         // 使い終わったクーポンを「これから使える」ように見せない
         const usableDd = document.getElementById('reopen-coupon-usable');
         if (usableDd && usage.note) usableDd.textContent = usage.note;
+        sec.style.display = '';
+      }
+
+      /**
+       * 🔔 お知らせの一覧。ナビのベルから来た人がここで内容を読む。
+       *
+       * ⚠️ 文言はサーバー由来（`couponNotice.js`）。ここで組み立てない。
+       * ⚠️ 未読が無ければセクションごと出さない（空の「お知らせ」を見せない）。
+       */
+      function renderNotifications(notice) {
+        const sec = document.getElementById('notifications');
+        const list = document.getElementById('notice-list');
+        const count = document.getElementById('notice-count');
+        if (!sec || !list || !count) return;
+        if (!notice || notice.unseen !== true || !notice.count) { sec.style.display = 'none'; return; }
+
+        count.textContent = `${notice.count} 件`;
+        list.innerHTML = '';
+        const li = document.createElement('li');
+        const a = document.createElement('a');
+        a.href = '#reopen-coupon-section';
+        a.textContent = notice.label;
+        a.addEventListener('click', (ev) => {
+          ev.preventDefault();
+          const card = document.getElementById('reopen-coupon-section');
+          if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        });
+        li.appendChild(a);
+        list.appendChild(li);
         sec.style.display = '';
       }
 

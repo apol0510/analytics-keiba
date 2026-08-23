@@ -858,6 +858,12 @@ const fullTitle = pageTitle
             vertical-align: middle;
         }
         .nav-notice-dot[hidden] { display: none !important; }
+        /* 「お知らせ」ナビ。件数バッジをベルの右上へ寄せる */
+        #nav-notice > a, #mobile-nav-notice > a { position: relative; }
+        #nav-notice .nav-notice-dot, #mobile-nav-notice .nav-notice-dot {
+            margin-left: .25em;
+            transform: translateY(-.35em);
+        }
     </style>
     <!-- 開発環境用テスト認証スクリプト -->
     {import.meta.env.DEV && <script src="/test-auth.js" is:inline></script>}
@@ -922,7 +928,8 @@ const fullTitle = pageTitle
                         <li><a href="/contact/"><span class="nav-icon">📧</span> <span class="nav-text">ご質問</span></a></li>
                         <li id="nav-signup" class="nav-auth-item"><a href="/free-signup/"><span class="nav-icon">✨</span> <span class="nav-text">無料で始める</span></a></li>
                         <li id="nav-login" class="nav-auth-item"><a href="/dashboard/" class="login-link"><span class="nav-icon">🔐</span> <span class="nav-text">マイページ</span></a></li>
-                        <li id="nav-dashboard" class="nav-auth-item" style="display: none;"><a href="/dashboard/" class="dashboard-link"><span class="nav-icon">👤</span> <span class="nav-text">マイページ</span><span class="nav-notice-dot" data-notice-dot hidden aria-hidden="true"></span></a></li>
+                        <li id="nav-notice" class="nav-auth-item" style="display: none;"><a href="/dashboard/#notifications" class="notice-link" aria-label="お知らせ"><span class="nav-icon">🔔</span> <span class="nav-text">お知らせ</span><span class="nav-notice-dot" data-notice-dot hidden aria-hidden="true"></span></a></li>
+                        <li id="nav-dashboard" class="nav-auth-item" style="display: none;"><a href="/dashboard/" class="dashboard-link"><span class="nav-icon">👤</span> <span class="nav-text">マイページ</span></a></li>
                     </ul>
                     
                     
@@ -961,7 +968,8 @@ const fullTitle = pageTitle
                     <li id="mobile-nav-signup" class="nav-auth-item"><a href="/free-signup/" onclick="document.getElementById('mobile-nav-menu').classList.remove('active')"><span class="mobile-nav-icon">✨</span> 無料で始める</a></li>
                     <li class="mobile-nav-separator nav-auth-item" id="mobile-nav-separator"></li>
                     <li id="mobile-nav-login" class="nav-auth-item"><a href="/dashboard/" onclick="document.getElementById('mobile-nav-menu').classList.remove('active')"><span class="mobile-nav-icon">🔐</span> マイページ</a></li>
-                    <li id="mobile-nav-dashboard" class="nav-auth-item" style="display: none;"><a href="/dashboard/" onclick="document.getElementById('mobile-nav-menu').classList.remove('active')"><span class="mobile-nav-icon">👤</span> マイページ<span class="nav-notice-dot" data-notice-dot hidden aria-hidden="true"></span></a></li>
+                    <li id="mobile-nav-notice" class="nav-auth-item" style="display: none;"><a href="/dashboard/#notifications" onclick="document.getElementById('mobile-nav-menu').classList.remove('active')"><span class="mobile-nav-icon">🔔</span> お知らせ<span class="nav-notice-dot" data-notice-dot hidden aria-hidden="true"></span></a></li>
+                    <li id="mobile-nav-dashboard" class="nav-auth-item" style="display: none;"><a href="/dashboard/" onclick="document.getElementById('mobile-nav-menu').classList.remove('active')"><span class="mobile-nav-icon">👤</span> マイページ</a></li>
                 </ul>
             </div>
         </nav>
@@ -1081,6 +1089,14 @@ const fullTitle = pageTitle
                     dot.setAttribute('aria-hidden', 'false');
                     dot.setAttribute('aria-label', `新しいお知らせ ${n.count} 件`);
                     dot.hidden = false;
+                }
+                // ⚠️ 「お知らせ」ナビは**件数があるときだけ**出す。
+                //    0 件のベルを常設すると、赤い点が付いても目立たなくなる。
+                //    お知らせが返るのは**本人のセッションがあるときだけ**（未ログインは 404）
+                //    なので、ここで出す＝ログイン済みであることも同時に満たす。
+                for (const id of ['nav-notice', 'mobile-nav-notice']) {
+                    const li = document.getElementById(id);
+                    if (li) li.style.display = 'block';
                 }
             } catch {
                 // お知らせの取得に失敗してもナビは壊さない
