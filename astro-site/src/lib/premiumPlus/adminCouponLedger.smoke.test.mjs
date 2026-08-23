@@ -61,6 +61,16 @@ const reservation = (status, over = {}) => ({
   },
 });
 
+/**
+ * 長く `issued` のまま残っている予約（＝記録漏れか入金なしの疑い）。
+ * ⚠️ Premium Plus は Customers に申込内容を書かないため、入金確認の有無は
+ *    Customers から判定できない。**滞留だけが実データで拾える事実**。
+ */
+const staleReservation = () => reservation('issued', {
+  StartsAt: new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString(),
+  ExpiresAt: new Date(Date.now() - 16 * 24 * 3600 * 1000).toISOString(),
+});
+
 /** 通常の販促 offer（クーポン予約ではない） */
 const marketingOffer = {
   id: 'recPROMO0000001',
@@ -191,20 +201,19 @@ test('使用済み・予約取消も一覧と個別検索で一致する', async
   }
 });
 
-test('入金確認と使用済みの食い違い（要修復 / 異常）も両方の経路で同じに出る', async () => {
-  // 昇格済み + 予約 issued = 要修復（needs_redeem）
-  stub({ offers: [reservation(OFFER_STATUS.ISSUED)], member: MEMBER });
+test('長く残った利用予約は要修復として両方の経路で同じに出る', async () => {
+  stub({ offers: [staleReservation()], member: MEMBER });
   let v = await bothViews();
   assert.equal(v.listRow.couponLifecycle.state, COUPON_LIFECYCLE.NEEDS_REPAIR);
   assert.equal(v.listRow.couponLifecycle.redeemState, 'needs_redeem');
   assert.ok(v.listRow.couponLifecycle.repair.length > 0, '修復手順が出ていない');
   assert.deepEqual(v.lookupRow.couponLifecycle, v.listRow.couponLifecycle);
 
-  // 未確定 + 予約 redeemed = 異常（anomaly）
+  // 使用済みは完了。Customers の姿では変わらない（Plus は Customers から判定できない）
   stub({ offers: [reservation(OFFER_STATUS.REDEEMED)], member: MEMBER_UNSETTLED });
   v = await bothViews();
-  assert.equal(v.listRow.couponLifecycle.state, COUPON_LIFECYCLE.NEEDS_REPAIR);
-  assert.equal(v.listRow.couponLifecycle.redeemState, 'anomaly');
+  assert.equal(v.listRow.couponLifecycle.state, COUPON_LIFECYCLE.REDEEMED);
+  assert.equal(v.listRow.couponLifecycle.needsRepair, false);
   assert.deepEqual(v.lookupRow.couponLifecycle, v.listRow.couponLifecycle);
 });
 
@@ -226,10 +235,13 @@ test('active だけでは「入金確認済み」と判定しない（admin の�
   assert.equal(v.listRow.couponLifecycle.needsRepair, false);
   assert.deepEqual(v.lookupRow.couponLifecycle, v.listRow.couponLifecycle);
 
-  // ③ 承認済み: RequestedPlan 空 + PaymentConfirmed=true + issued → 要修復（redeem 未完了）
+  // ③ ⚠️ 2026-08-23 修正: Customers が「入金確認済み」に見えても、
+  //    受理直後の予約を要修復にしない。Premium Plus の申込は Customers を書き換えないため、
+  //    既に有料会員の申込者は**申し込む前から確定済みに見える**（＝入金前の誤警告になる）。
   stub({ offers: [reservation(OFFER_STATUS.ISSUED)], member: MEMBER });
   v = await bothViews();
-  assert.equal(v.listRow.couponLifecycle.redeemState, 'needs_redeem');
+  assert.equal(v.listRow.couponLifecycle.redeemState, 'waiting');
+  assert.equal(v.listRow.couponLifecycle.needsRepair, false, '入金前に修復を促している');
   assert.deepEqual(v.lookupRow.couponLifecycle, v.listRow.couponLifecycle);
 });
 

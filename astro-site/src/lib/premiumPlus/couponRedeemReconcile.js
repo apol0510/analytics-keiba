@@ -27,13 +27,17 @@ import { isReservationRow } from '../promotions/couponReservationSource.js';
 
 /** Customers と予約行の突き合わせ結果 */
 export const REDEEM_STATE = Object.freeze({
-  /** Customers 未確定 + 予約 issued … 通常の入金確認待ち */
+  /** 予約 issued … 入金確認待ち */
   WAITING: 'waiting',
-  /** Customers 確定 + 予約 issued … redeem 未完了（**修復対象**）*/
+  /** 予約 issued のまま長く残っている … 記録漏れの疑い（**修復対象**）*/
   NEEDS_REDEEM: 'needs_redeem',
-  /** Customers 確定 + 予約 redeemed … 正常完了 */
+  /** 予約 redeemed … 完了 */
   COMPLETE: 'complete',
-  /** Customers 未確定 + 予約 redeemed … **異常**（自動修復しない）*/
+  /**
+   * 使われていない状態（**現在は発生しない**）。
+   * 旧: 「Customers 未確定 + 予約 redeemed」。Premium Plus では入金確認の有無を
+   * Customers から判定できないため、この推定はしない（値は後方互換のため残す）。
+   */
   ANOMALY: 'anomaly',
   /** 予約が取り消されている */
   REVOKED: 'revoked',
@@ -48,7 +52,7 @@ export const REDEEM_STATE = Object.freeze({
 
 export const REDEEM_STATE_LABEL = Object.freeze({
   waiting: '入金確認待ち（クーポン利用予約あり）',
-  needs_redeem: '⚠️ 要修復: 昇格済みだがクーポンが未使用のまま',
+  needs_redeem: '⚠️ 要確認: 利用予約が長く残ったままです',
   complete: '完了（クーポン使用済み）',
   anomaly: '🚨 異常: クーポンだけ使用済みで、入金確認・昇格が未確定',
   revoked: 'クーポン予約取消',
@@ -58,13 +62,14 @@ export const REDEEM_STATE_LABEL = Object.freeze({
 
 /** 運営者に出す修復方針（**自動で直さない**ものは手順を示す） */
 export const REDEEM_STATE_REPAIR = Object.freeze({
-  waiting: 'そのままお待ちください。入金を確認したら PaymentConfirmed にチェックします。',
-  needs_redeem: '入金確認をもう一度実行してください。'
-    + '昇格は既に完了しているため二重にはならず、クーポンの使用済み化だけが再試行されます。',
+  waiting: '入金を確認したら「利用予約を使用済みにする」を実行してください。'
+    + '（Premium Plus は単品購入で申込内容を顧客レコードに書かないため、'
+    + '入金確認の Automation では自動的に使用済みになりません）',
+  needs_redeem: '入金を確認できているなら「利用予約を使用済みにする」を、'
+    + '入金が無いなら「利用予約を取り消す」を実行してください。'
+    + '放置すると、この会員は同じクーポンで申し込み直せないままになります。',
   complete: '対応は不要です。',
-  anomaly: '⚠️ 自動修復しません。入金の有無を確認したうえで、'
-    + '入金済みなら通常どおり PaymentConfirmed で昇格させてください。'
-    + '入金が無いなら、クーポンの予約行を取り消して（予約取消）お客様へご連絡ください。'
+  anomaly: '⚠️ 自動修復しません。入金の有無を確認してから対応してください。'
     + '**クーポンの使用済みを勝手に戻したり、確認なしに昇格させたりしないこと。**',
   revoked: '対応は不要です。必要なら同じクーポンで再度お申し込みいただけます。',
   no_reservation: '対応は不要です。',
@@ -109,6 +114,22 @@ export function isCustomerSettled(fields) {
   return f['PaymentConfirmed'] === true;
 }
 
+/**
+ * 予約が長く `issued` のまま残っている日数のしきい値。
+ *
+ * クーポンの利用期間（14 日）と同じにする。これを超えて入金確認の記録が無いなら、
+ * 「使用済みにし忘れた」か「入金が無かった」のどちらかで、**どちらも人の判断が要る**。
+ */
+export const RESERVATION_STALE_DAYS = 14;
+
+/** 報告受理（`StartsAt`）から `RESERVATION_STALE_DAYS` 以上経った `issued` か */
+export function isReservationStale(reservation, nowMs) {
+  const f = (reservation && reservation.fields) || {};
+  const started = Date.parse(String(f.StartsAt || ''));
+  if (!Number.isFinite(started) || !Number.isFinite(nowMs)) return false;
+  return nowMs - started >= RESERVATION_STALE_DAYS * 24 * 60 * 60 * 1000;
+}
+
 function reservationStatus(reservation) {
   if (!reservation || !isReservationRow(reservation)) return null;
   const f = (reservation && reservation.fields) || {};
@@ -127,7 +148,9 @@ function reservationStatus(reservation) {
  * @returns {{ state: string, label: string, repair: string, ledgerAvailable: boolean,
  *             customerSettled: boolean, needsRepair: boolean }}
  */
-export function resolveRedeemState({ fields, reservation, ledgerAvailable = true } = {}) {
+export function resolveRedeemState({
+  fields, reservation, ledgerAvailable = true, nowMs = Date.now(),
+} = {}) {
   const settled = isCustomerSettled(fields);
   // 台帳が読めていないなら**予約の有無を判定しない**（0 件と断定しない）
   if (ledgerAvailable !== true) {
@@ -143,12 +166,26 @@ export function resolveRedeemState({ fields, reservation, ledgerAvailable = true
   }
   const status = reservationStatus(reservation);
 
+  // ── なぜ Customers の「確定」で判定しないか（2026-08-23 修正）────────────
+  // Premium Plus は**単品購入で Customers を書き換えない**（`bank-transfer-application.js`
+  // の Airtable 登録ブロックは Plus を除外している）。つまり `RequestedPlan` は書かれず、
+  // 入金確認 Function も「申込フォーム未経由」として**昇格ごとスキップ**する。
+  //
+  // その状態で `isCustomerSettled()` を使うと、**既に有料会員である申込者は
+  // 申し込んだ瞬間から「確定済み」に見え、予約ができた途端に「要修復」へ化ける**
+  // （入金前なのに修復を促す誤警告）。逆に、使用済みにしても Customers は動かないので
+  // 「異常」にも化ける。どちらもこの商品では**判定材料が存在しない**。
+  //
+  // したがって予約の状態は**予約行そのもの**から決め、完了の合図は
+  // 管理画面の「利用予約を使用済みにする」操作にする。
+  // 代わりに、**長く残りっぱなしの予約**という実データで拾える事実だけを修復対象にする。
   let state = REDEEM_STATE.NO_RESERVATION;
   if (status === OFFER_STATUS.REVOKED) state = REDEEM_STATE.REVOKED;
   else if (status === OFFER_STATUS.ISSUED) {
-    state = settled ? REDEEM_STATE.NEEDS_REDEEM : REDEEM_STATE.WAITING;
+    state = isReservationStale(reservation, nowMs)
+      ? REDEEM_STATE.NEEDS_REDEEM : REDEEM_STATE.WAITING;
   } else if (status === OFFER_STATUS.REDEEMED) {
-    state = settled ? REDEEM_STATE.COMPLETE : REDEEM_STATE.ANOMALY;
+    state = REDEEM_STATE.COMPLETE;
   }
   return {
     state,
@@ -191,23 +228,32 @@ export function planRedeemAfterConfirm({
   // Customers の更新に失敗した回は redeem しない（先に redeem しない・巻き戻しもしない）
   if (customerUpdateOk !== true) return { action: REDEEM_ACTION.NONE, reason: 'customer_update_failed' };
 
-  const view = resolveRedeemState({ fields, reservation, ledgerAvailable });
   // 台帳が読めていない回は**何もしない**（確認できないまま書かない）
-  if (view.state === REDEEM_STATE.UNKNOWN) {
+  if (ledgerAvailable !== true) {
     return { action: REDEEM_ACTION.NONE, reason: 'ledger_unavailable' };
   }
-  if (view.state === REDEEM_STATE.NEEDS_REDEEM) {
+  // ⚠️ ここは **Customers の入金確認から redeem を導ける商品**のための計画。
+  //    Premium Plus は単品購入で Customers に申込内容を書かないため**この経路には乗らない**
+  //    （入金確認 Function が「申込フォーム未経由」として昇格ごとスキップする）。
+  //    Plus の完了は管理画面の「利用予約を使用済みにする」で確定させる。
+  //    そのため表示用の `resolveRedeemState` とは判定を分け、ここでは Customers を直接見る。
+  const settled = isCustomerSettled(fields);
+  const status = reservationStatus(reservation);
+
+  if (status === OFFER_STATUS.REDEEMED) {
+    // 勝手に redeemed を戻さない。未確定なら運営者へ出すだけ
+    return settled
+      ? { action: REDEEM_ACTION.NONE, reason: REDEEM_STATE.COMPLETE }
+      : { action: REDEEM_ACTION.NONE, reason: 'anomaly_requires_operator' };
+  }
+  if (status === OFFER_STATUS.ISSUED) {
     // 昇格済み + 予約 issued → **redeem だけ**を再試行する
-    return { action: REDEEM_ACTION.REDEEM_ONLY, reason: 'settled_pending_redeem' };
+    return settled
+      ? { action: REDEEM_ACTION.REDEEM_ONLY, reason: 'settled_pending_redeem' }
+      : { action: REDEEM_ACTION.NONE, reason: 'customer_not_settled' };
   }
-  if (view.state === REDEEM_STATE.WAITING) {
-    return { action: REDEEM_ACTION.NONE, reason: 'customer_not_settled' };
-  }
-  if (view.state === REDEEM_STATE.ANOMALY) {
-    // 勝手に昇格させない・redeemed を戻さない。運営者へ出すだけ
-    return { action: REDEEM_ACTION.NONE, reason: 'anomaly_requires_operator' };
-  }
-  return { action: REDEEM_ACTION.NONE, reason: view.state };
+  if (status === OFFER_STATUS.REVOKED) return { action: REDEEM_ACTION.NONE, reason: REDEEM_STATE.REVOKED };
+  return { action: REDEEM_ACTION.NONE, reason: REDEEM_STATE.NO_RESERVATION };
 }
 
 /**

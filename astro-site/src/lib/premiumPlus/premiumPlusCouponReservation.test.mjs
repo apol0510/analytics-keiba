@@ -242,11 +242,15 @@ test('ライフサイクルの 4 状態を区別できる', () => {
   assert.equal(s([row()]), L.RESERVED);
   // 申込中は active でも「利用予約（待ち）」。要修復にしない
   assert.equal(s([row()], APPLIED), L.RESERVED);
-  // 使用済みは **Customers も確定している**ときだけ「正常完了」。
-  // 未確定のまま redeemed なら要修復（異常）として拾う
-  assert.equal(s([row({ Status: OFFER_STATUS.REDEEMED })], SETTLED), L.REDEEMED);
-  assert.equal(s([row({ Status: OFFER_STATUS.REDEEMED })], HELD), L.NEEDS_REPAIR);
-  assert.equal(s([row({ Status: OFFER_STATUS.REDEEMED })], APPLIED), L.NEEDS_REPAIR);
+  // ⚠️ 2026-08-23 修正: 使用済みは **Customers の姿によらず完了**。
+  //    Premium Plus は単品購入で Customers に申込内容を書かないため、
+  //    「入金確認が済んだか」を Customers から判定できない（旧実装は
+  //    未確定に見える会員の使用済みを「異常」に化けさせていた）。
+  for (const f of [SETTLED, HELD, APPLIED]) {
+    assert.equal(s([row({ Status: OFFER_STATUS.REDEEMED })], f), L.REDEEMED);
+  }
+  // 受理直後の予約は、Customers が確定して見えても要修復にしない
+  assert.equal(s([row()], SETTLED), L.RESERVED);
   assert.equal(s([row({ Status: OFFER_STATUS.REVOKED })]), L.REVOKED);
   assert.equal(s([], {}), L.NONE);
 });

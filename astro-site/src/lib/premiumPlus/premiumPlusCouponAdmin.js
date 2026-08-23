@@ -72,6 +72,12 @@ import {
 export const PP_COUPON_ADMIN_ACTION = Object.freeze({
   GRANT: COUPON_OPERATION.GRANT,
   REVOKE_RESERVATION: COUPON_OPERATION.REVOKE_RESERVATION,
+  /**
+   * 利用予約を使用済みにする。
+   * ⚠️ Premium Plus は単品購入で Customers に申込内容を書かないため、
+   *    入金確認 Function からは自動で確定できない。**この操作が唯一の完了手段**。
+   */
+  REDEEM_RESERVATION: COUPON_OPERATION.REDEEM_RESERVATION,
   CORRECT: COUPON_OPERATION.CORRECT,
   REISSUE: COUPON_OPERATION.REISSUE,
 });

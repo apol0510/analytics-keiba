@@ -12,7 +12,7 @@ const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)),
 
 const {
   REDEEM_STATE, REDEEM_ACTION, resolveRedeemState, planRedeemAfterConfirm,
-  isCustomerSettled, listRepairTargets,
+  isCustomerSettled, listRepairTargets, RESERVATION_STALE_DAYS,
 } = await import('./couponRedeemReconcile.js');
 const { RESERVATION_SOURCE } = await import('../promotions/couponReservationSource.js');
 const { buildReservationRedeemFields, describeCouponLifecycle, COUPON_LIFECYCLE } =
@@ -24,6 +24,21 @@ const res = (status, over = {}) => ({
     Status: status, StartsAt: '2026-09-01T00:00:00.000Z', ExpiresAt: '2026-09-15T00:00:00.000Z', ...over,
   },
 });
+/**
+ * 長く `issued` のまま残っている予約（＝記録漏れか入金なしの疑い）。
+ * ⚠️ Premium Plus は Customers に申込内容を書かないため、
+ *    「入金確認が済んだか」は Customers から判定できない。**滞留だけが実データで拾える事実**。
+ */
+const stale = (over = {}) => res('issued', {
+  StartsAt: new Date(Date.now() - (RESERVATION_STALE_DAYS + 1) * 24 * 3600 * 1000).toISOString(),
+  ExpiresAt: new Date(Date.now() - 1 * 24 * 3600 * 1000).toISOString(),
+  ...over,
+});
+/** 受理したばかりの予約（滞留していない） */
+const fresh = (over = {}) => res('issued', {
+  StartsAt: new Date(Date.now() - 60 * 1000).toISOString(), ...over,
+});
+
 const UNSETTLED = { 'Email': 'a@example.invalid' };
 /**
  * 承認済み（confirm-bank-payment 完了後）の姿。
@@ -50,11 +65,24 @@ test('Customers 未確定 + issued → 通常の確認待ち', () => {
   assert.equal(v.needsRepair, false);
 });
 
-test('Customers 確定 + issued → redeem 未完了（修復対象）', () => {
-  const v = resolveRedeemState({ fields: SETTLED, reservation: res('issued') });
+test('Customers が確定して見えても、受理直後の予約は「要修復」にしない（2026-08-23 修正）', () => {
+  // ⚠️ Premium Plus の申込は Customers を書き換えないため、既に有料会員の申込者は
+  //    **申し込む前から `settled` に見える**。旧実装はこれで予約ができた瞬間に
+  //    「要修復」と表示していた（入金前なのに修復を促す誤警告）。
+  const v = resolveRedeemState({ fields: SETTLED, reservation: fresh() });
+  assert.equal(v.state, REDEEM_STATE.WAITING);
+  assert.equal(v.needsRepair, false);
+  assert.match(v.repair, /使用済みにする/, '完了させる操作を案内していない');
+});
+
+test('予約が長く残ったままなら要修復として拾う（滞留は実データで判る）', () => {
+  const v = resolveRedeemState({ fields: SETTLED, reservation: stale() });
   assert.equal(v.state, REDEEM_STATE.NEEDS_REDEEM);
   assert.equal(v.needsRepair, true);
-  assert.match(v.repair, /入金確認をもう一度/);
+  assert.match(v.repair, /使用済みにする|取り消す/);
+  // 判定は Customers ではなく予約行の滞留（同じ予約なら Customers の姿に依らない）
+  assert.equal(resolveRedeemState({ fields: UNSETTLED, reservation: stale() }).state,
+    REDEEM_STATE.NEEDS_REDEEM);
 });
 
 test('Customers 確定 + redeemed → 正常完了', () => {
@@ -63,11 +91,12 @@ test('Customers 確定 + redeemed → 正常完了', () => {
   assert.equal(v.needsRepair, false);
 });
 
-test('Customers 未確定 + redeemed → 異常として検出する', () => {
-  const v = resolveRedeemState({ fields: UNSETTLED, reservation: res('redeemed') });
-  assert.equal(v.state, REDEEM_STATE.ANOMALY);
-  assert.equal(v.needsRepair, true);
-  assert.match(v.repair, /自動修復しません/);
+test('使用済みなら Customers の姿によらず完了（Plus は Customers から判定できない）', () => {
+  for (const fields of [SETTLED, UNSETTLED]) {
+    const v = resolveRedeemState({ fields, reservation: res('redeemed') });
+    assert.equal(v.state, REDEEM_STATE.COMPLETE);
+    assert.equal(v.needsRepair, false);
+  }
 });
 
 // ── 順序 ────────────────────────────────────────────────────
@@ -92,8 +121,6 @@ test('Customers 成功 → redeem する', () => {
 test('Customers 成功 / redeem 失敗の状態から、再実行で redeem だけ完了する', () => {
   // 1 回目: redeem が失敗して issued のまま残った
   const stuck = { fields: SETTLED, reservation: res('issued') };
-  const v1 = resolveRedeemState(stuck);
-  assert.equal(v1.state, REDEEM_STATE.NEEDS_REDEEM, '昇格は維持されたまま issued が残る');
 
   // 2 回目（再実行）: redeem だけを行う計画になる
   const p = planRedeemAfterConfirm(stuck);
@@ -139,13 +166,13 @@ test('異常（redeemed なのに未確定）を自動で直さない', () => {
 // ── 修復対象の抽出 ──────────────────────────────────────────
 test('修復対象だけを抽出でき、他会員へ影響しない', () => {
   const entries = [
-    { id: 'recA', fields: SETTLED, reservation: res('issued') },      // 要修復
-    { id: 'recB', fields: SETTLED, reservation: res('redeemed') },    // 正常
-    { id: 'recC', fields: UNSETTLED, reservation: res('issued') },    // 待ち
-    { id: 'recD', fields: UNSETTLED, reservation: res('redeemed') },  // 異常
+    { id: 'recA', fields: SETTLED, reservation: stale() },            // 滞留 = 要修復
+    { id: 'recB', fields: SETTLED, reservation: res('redeemed') },    // 完了
+    { id: 'recC', fields: UNSETTLED, reservation: fresh() },          // 入金確認待ち
+    { id: 'recD', fields: UNSETTLED, reservation: res('revoked') },   // 取消済み
   ];
   const targets = listRepairTargets(entries);
-  assert.deepEqual(targets.map((t) => t.id), ['recA', 'recD']);
+  assert.deepEqual(targets.map((t) => t.id), ['recA']);
   // 元の配列を壊していない
   assert.equal(entries.length, 4);
   assert.equal(entries[1].view, undefined);
@@ -202,8 +229,6 @@ test('confirm 完了後（Requested* クリア + PaymentConfirmed=true）は RED
     ...APPLIED, 'プラン': 'Premium Plus', 'RequestedPlan': '', 'RequestedPlanType': '',
     'RequestedAmount': null, 'PaymentConfirmed': true,
   };
-  const v = resolveRedeemState({ fields: afterConfirm, reservation: res('issued') });
-  assert.equal(v.state, REDEEM_STATE.NEEDS_REDEEM);
   const p = planRedeemAfterConfirm({ fields: afterConfirm, reservation: res('issued') });
   assert.equal(p.action, REDEEM_ACTION.REDEEM_ONLY);
   assert.equal(p.reason, 'settled_pending_redeem');
@@ -217,13 +242,13 @@ test('confirm 完了後（Requested* クリア + PaymentConfirmed=true）は RED
   assert.equal(buildReservationRedeemFields({ record: res('redeemed'), nowMs: Date.now() }).skipped, 'already_redeemed');
 });
 
-test('確定判定は他会員のレコードを参照しない（渡された 1 件だけを見る）', () => {
+test('判定は渡された 1 件だけを見る（他会員のレコードを参照しない）', () => {
   const others = [
-    { id: 'recX', fields: { ...SETTLED, Email: 'x@example.invalid' }, reservation: res('issued') },
-    { id: 'recY', fields: APPLIED, reservation: res('issued') },
+    { id: 'recX', fields: { ...SETTLED, Email: 'x@example.invalid' }, reservation: stale() },
+    { id: 'recY', fields: APPLIED, reservation: fresh() },
   ];
   const targets = listRepairTargets(others);
-  // APPLIED（入金確認待ち）は修復対象に入らない。SETTLED の 1 件だけ
+  // 受理したばかりの予約は修復対象に入らない。滞留している 1 件だけ
   assert.deepEqual(targets.map((t) => t.id), ['recX']);
   // 関数は fields を破壊しない
   assert.equal(others[1].fields.PaymentConfirmed, false);
@@ -276,7 +301,7 @@ test('ライフサイクルも「確認できない」と「0 件」を分ける
 test('admin は要修復を独立した状態として出す', () => {
   const held = { PremiumPlusReopenCouponClaimedAt: '2026-08-18T00:00:00Z' };
   const life = describeCouponLifecycle({
-    fields: { ...held, ...SETTLED }, offerRows: [res('issued')], customerRecordId: 'recA',
+    fields: { ...held, ...SETTLED }, offerRows: [stale()], customerRecordId: 'recA',
   });
   assert.equal(life.state, COUPON_LIFECYCLE.NEEDS_REPAIR);
   assert.equal(life.needsRepair, true);
