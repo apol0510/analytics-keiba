@@ -108,6 +108,29 @@ test('描画しただけで既読にしない（実際に見えたときだけ�
   assert.match(body, /markCouponNoticeSeen\(notice\.signature\)/);
   // 未読でなければ何もしない
   assert.match(body, /notice\.unseen !== true/);
+  // 一瞬映っただけで既読にしない
+  assert.match(body, /setTimeout\(/, '目に入る時間を待っていない');
+  assert.match(body, /clearTimeout\(timer\)/, '通り過ぎただけで既読にしている');
+});
+
+test('マイページでも「届いた」ことが見える（本番で赤い点が出なかった原因）', () => {
+  // ⚠️ 2026-08-23 MK 報告「マイページで赤い 1 出ないぞ」。
+  //    ナビの赤い点はカードを見た時点で消えるため、**マイページ上では常に消えた後**だった。
+  //    カード側にも新着を出し、その訪問のあいだは消さない。
+  const page = read('../../pages/dashboard.astro');
+  assert.match(page, /id="reopen-coupon-new"/, 'カードに新着の目印が無い');
+  assert.match(page, /function showCouponNewBadge/, '新着をカードへ反映していない');
+
+  // ⚠️ 既読にする**前**に未読を確定させること（先に既読化すると常に新着なしになる）
+  const load = page.slice(page.indexOf('const noticeAtLoad'), page.indexOf('markCouponCardSeenWhenVisible(noticeAtLoad)'));
+  assert.ok(load.includes('showCouponNewBadge(noticeAtLoad)'), '既読化の後に判定している');
+  assert.ok(load.indexOf('getCouponNotice()') < load.indexOf('showCouponNewBadge'),
+    '未読の確定より先に表示を決めている');
+
+  // カードの NEW は既読化で消さない（消えるところを見せないと届いたことが伝わらない）
+  const seenFn = page.slice(page.indexOf('const seen = () =>'));
+  const seenBody = seenFn.slice(0, seenFn.indexOf('};'));
+  assert.doesNotMatch(seenBody, /reopen-coupon-new/, '既読化でカードの新着まで消している');
 });
 
 test('既読は端末の保存だけ（本番 schema を増やさない）', () => {
