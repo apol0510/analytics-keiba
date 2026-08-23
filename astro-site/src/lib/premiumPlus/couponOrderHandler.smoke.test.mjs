@@ -30,6 +30,8 @@ const PAUSED_HELD = {
 let calls;
 let realFetch;
 let realEnv;
+/** 合成 PromotionalOffers（既定は予約なし＝まだ使っていない） */
+let offerRows = [];
 
 /**
  * ⚠️ 2026-08-22 整合修正: クーポンが使えるのは
@@ -51,6 +53,12 @@ function stub(fields) {
           { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
       return new Response(JSON.stringify({ result: null }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    // ⚠️ 2026-08-23: 申込 Function は**クーポンをもう使っていないか**を予約台帳で確かめる。
+    //    台帳を読めないと fail closed（409）になるので、合成台帳を返す。
+    if (u.includes('PromotionalOffers')) {
+      return new Response(JSON.stringify({ records: offerRows }),
         { status: 200, headers: { 'Content-Type': 'application/json' } });
     }
     if (u.includes('api.airtable.com')) {
@@ -127,6 +135,8 @@ beforeEach(() => {
   process.env.PREMIUM_PLUS_FIELDS_READY = '1';
   process.env.PREMIUM_PLUS_REOPEN_COUPON_READY = '1';
   process.env.PREMIUM_PLUS_SALE_PAUSE_READY = '1';
+  process.env.COMEBACK_OFFER_TABLE_READY = '1';
+  offerRows = [];
   process.env.UPSTASH_REDIS_REST_URL = 'https://redis.example.invalid';
   process.env.UPSTASH_REDIS_REST_TOKEN = 'stub';
   // 既定では**この会員は再募集 開始済み**（クーポンを使える前提）

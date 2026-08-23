@@ -512,6 +512,64 @@ export function describeCouponForMember({
 }
 
 /**
+ * お客様向けの「このクーポンはいまどうなっているか」（純粋・**文言の単一源**）。
+ *
+ * ## なぜ要るか（2026-08-23 / MK 報告）
+ *
+ * > Dashboard の取得済みクーポンが使用済みになりません。
+ *
+ * 保有（Customers の 3 列）は「渡した」という事実で、**使い終わっても消えない**。
+ * 使ったかどうかは予約台帳（`PromotionalOffers`）にしかない。
+ * マイページ・クーポンページは保有しか見ていなかったため、使用済みでも
+ * 「取得済み・ご利用いただけます」と出続けていた。
+ *
+ * ⚠️ **画面ごとに文言を作らない。** ここが返した値をそのまま出す。
+ * ⚠️ 台帳を読めていないときは「使用済み」とも「未使用」とも言わない（`known: false`）。
+ *
+ * @param {{ lifecycle?: string, ledgerAvailable?: boolean, claimed?: boolean }} input
+ *   `lifecycle` は `describeCouponLifecycle().state`
+ * @returns {{ known: boolean, used: boolean, reserved: boolean,
+ *             badge: string, note: string, blocksOrder: boolean }}
+ */
+export function describeCouponUsageForMember({
+  lifecycle, ledgerAvailable, claimed,
+} = {}) {
+  const state = String(lifecycle || '');
+  // 台帳を読めていない：断定しない。申込も止める（誤った金額で受け付けない）
+  if (ledgerAvailable !== true || state === 'unknown') {
+    return {
+      known: false, used: false, reserved: false,
+      badge: '取得済み',
+      note: 'ご利用状況を確認できませんでした。時間をおいてもう一度ご確認ください。',
+      blocksOrder: true,
+    };
+  }
+  if (state === 'redeemed') {
+    return {
+      known: true, used: true, reserved: false,
+      badge: 'ご利用済み',
+      note: 'このクーポンはお申し込みにご利用済みです。',
+      blocksOrder: true,
+    };
+  }
+  if (state === 'reserved' || state === 'needs_repair') {
+    return {
+      known: true, used: false, reserved: true,
+      badge: 'お申し込みに適用済み',
+      note: 'お申し込みにこのクーポンを適用しています。入金の確認をお待ちください。',
+      blocksOrder: true,
+    };
+  }
+  // held / revoked / none … まだ使っていない（revoked は取消済みなので使い直せる）
+  return {
+    known: true, used: false, reserved: false,
+    badge: claimed === true ? '取得済み' : '未取得',
+    note: '',
+    blocksOrder: false,
+  };
+}
+
+/**
  * 再募集時に「クーポン取得済み会員だけ」を抽出する述語（純粋）。
  * 抽出そのもの（Airtable の走査）は呼び出し側の責務。ここは 1 レコードの判定だけ。
  */

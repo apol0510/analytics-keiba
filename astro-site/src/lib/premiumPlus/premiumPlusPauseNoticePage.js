@@ -250,10 +250,14 @@ export function renderCouponPageHtml({ coupon, source = 'coupon-page' } = {}) {
   parts.push(`<h1>${escapeHtml(COUPON_PAGE_COPY.title)}</h1>`);
   parts.push(`<p class="lead">${escapeHtml(COUPON_PAGE_COPY.lead)}</p>`);
   parts.push(couponBlock(v));
-  if (v.showClaimCta) {
+  // ⚠️ 使ったかどうかは保有（Customers 3 列）では分からない。呼び出し側が
+  //    予約台帳から解いた `usage` を渡す。使用済みなら**取得も申込も出さない**。
+  const usage = v.usage || {};
+  if (usage.note) parts.push(`<p class="usage-note">${escapeHtml(usage.note)}</p>`);
+  if (v.showClaimCta && usage.blocksOrder !== true) {
     parts.push(claimForm({ source, storageReady: v.storageReady }));
   }
-  parts.push(orderCtaBlock(v.orderCta));
+  if (usage.blocksOrder !== true) parts.push(orderCtaBlock(v.orderCta));
   return shell({ title: COUPON_PAGE_COPY.title, inner: parts.join('\n') });
 }
 

@@ -11,7 +11,9 @@ import { resolveOrderPricing } from '../../src/lib/premiumPlus/premiumPlusCoupon
 // クーポンの「利用予約」。**振込完了報告が正常受理された時点でだけ**作る
 import {
   resolveReservationDecision, buildReservationFields, RESERVATION_REJECT,
+  describeCouponLifecycle,
 } from '../../src/lib/premiumPlus/premiumPlusCouponReservation.js';
+import { describeCouponUsageForMember } from '../../src/lib/premiumPlus/premiumPlusReopenCoupon.js';
 import {
   listReservationsFor, createReservation,
 } from '../../src/lib/premiumPlus/premiumPlusCouponReservationStore.js';
@@ -310,6 +312,41 @@ exports.handler = async (event, context) => {
       plusCouponDef = withReopenStart(reopenState.startsAtIso);
       const selectedCouponId = String(couponId ?? '').trim();
       if (selectedCouponId) {
+        // ⚠️ **もう使ったクーポンで割引の申込を作らせない**（2026-08-23）。
+        //    保有（Customers の 3 列）は使い終わっても消えないため、
+        //    保有だけを見ていると同じクーポンで何度でも 58,000円 の申込が通る。
+        //    読めないときも通さない（誤った金額で受け付けない＝ fail closed）。
+        let couponUsable = false;
+        try {
+          const ledger = await listReservationsFor({
+            env: process.env, customerRecordId: plusCustomerRecordId || null,
+          });
+          couponUsable = ledger.available === true && describeCouponUsageForMember({
+            lifecycle: describeCouponLifecycle({
+              fields: plusCustomerFields,
+              offerRows: ledger.records,
+              ledgerAvailable: true,
+              customerRecordId: plusCustomerRecordId || '',
+            }).state,
+            ledgerAvailable: true,
+            claimed: true,
+          }).blocksOrder !== true;
+        } catch (e) {
+          couponUsable = false;
+        }
+        if (!couponUsable) {
+          console.warn('🚫 [bank-transfer] 利用できないクーポンのため申込を停止');
+          return {
+            statusCode: 409,
+            headers,
+            body: JSON.stringify({
+              error: 'このクーポンはご利用済みか、ご利用状況を確認できませんでした。'
+                + 'お手数ですが、ページを再読み込みのうえ、もう一度お試しください。',
+              code: 'coupon_unavailable',
+              sideEffects: 'none',
+            }),
+          };
+        }
         try {
           serverPricing = resolveOrderPricing({
             fields: plusCustomerFields,
