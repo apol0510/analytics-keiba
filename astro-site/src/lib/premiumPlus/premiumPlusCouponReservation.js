@@ -46,6 +46,7 @@ import { OFFER_STATUS, assertOnlyOfferFields } from '../promotions/promotionalOf
 import { resolveRedeemState } from './couponRedeemReconcile.js';
 import {
   PP_REOPEN_COUPON, couponIdWithVersion, resolveCouponPrice, readReopenCoupon,
+  resolveCouponCycleStartIso, isCurrentCycleReservation,
 } from './premiumPlusReopenCoupon.js';
 
 /**
@@ -141,9 +142,11 @@ export function computeReservationKey({ customerRecordId, applicationId }) {
 }
 
 /** 既に有効な予約（issued）があるか。**同一クーポンで複数の申込を作らせない** */
-export function findActiveReservation({ records, customerRecordId }) {
+export function findActiveReservation({ records, customerRecordId, cycleStartIso = '' }) {
   for (const rec of records || []) {
     if (!isReservationRow(rec)) continue;
+    // ⚠️ 過去に受け取った分の行を混ぜない（同じ会員へ何度でも渡せるようにするため）
+    if (!isCurrentCycleReservation(rec, cycleStartIso)) continue;
     const f = (rec && rec.fields) || {};
     if (String(f.CustomerRecordId || '') !== String(customerRecordId)) continue;
     if (String(f.OfferId || '') !== couponIdWithVersion()) continue;
@@ -195,10 +198,12 @@ export function resolveReservationDecision({
   if (Number.isFinite(expiresMs) && expiresMs <= nowMs) {
     return { ok: false, reason: RESERVATION_REJECT.EXPIRED };
   }
-  if (findActiveReservation({ records: offerRows, customerRecordId })) {
+  // ⚠️ 判定は**いま持っている 1 枚**に属する行だけで行う（過去に使った分で塞がない）
+  const cycleStartIso = resolveCouponCycleStartIso(fields);
+  if (findActiveReservation({ records: offerRows, customerRecordId, cycleStartIso })) {
     return { ok: false, reason: RESERVATION_REJECT.ALREADY_RESERVED };
   }
-  if (hasRedeemedReservation({ records: offerRows, customerRecordId })) {
+  if (hasRedeemedReservation({ records: offerRows, customerRecordId, cycleStartIso })) {
     return { ok: false, reason: RESERVATION_REJECT.ALREADY_REDEEMED };
   }
   if (!isReservationEnabled(env, def)) {
@@ -214,9 +219,10 @@ export function resolveReservationDecision({
  *    MK のチェックし直し）。そのとき「予約が無い」と「もう使い終わっている」を
  *    取り違えると、応答から結果が消えて**二重 redeem を見逃す**。
  */
-export function findRedeemedReservation({ records, customerRecordId }) {
+export function findRedeemedReservation({ records, customerRecordId, cycleStartIso = '' }) {
   for (const rec of records || []) {
     if (!isReservationRow(rec)) continue;
+    if (!isCurrentCycleReservation(rec, cycleStartIso)) continue;
     const f = (rec && rec.fields) || {};
     if (String(f.CustomerRecordId || '') !== String(customerRecordId)) continue;
     if (String(f.Status || '').trim().toLowerCase() !== OFFER_STATUS.REDEEMED) continue;
@@ -225,8 +231,8 @@ export function findRedeemedReservation({ records, customerRecordId }) {
   return null;
 }
 
-function hasRedeemedReservation({ records, customerRecordId }) {
-  return !!findRedeemedReservation({ records, customerRecordId });
+function hasRedeemedReservation({ records, customerRecordId, cycleStartIso = '' }) {
+  return !!findRedeemedReservation({ records, customerRecordId, cycleStartIso });
 }
 
 /**
@@ -377,8 +383,13 @@ export function describeCouponLifecycle({
     };
   }
 
+  // ⚠️ **いま持っている 1 枚**に属する行だけを見る。過去に受け取って使い終わった行を
+  //    混ぜると、一度使った会員がずっと「使用済み」のまま＝二度と渡せなくなる。
+  //    台帳から消すわけではない（監査は残る）。判定に混ぜないだけ。
+  const cycleStartIso = resolveCouponCycleStartIso(fields);
   const mine = (offerRows || []).filter((rec) => isReservationRow(rec)
-    && String(((rec && rec.fields) || {}).CustomerRecordId || '') === String(customerRecordId));
+    && String(((rec && rec.fields) || {}).CustomerRecordId || '') === String(customerRecordId)
+    && isCurrentCycleReservation(rec, cycleStartIso));
   const statusOf = (rec) => String(((rec && rec.fields) || {}).Status || '').trim().toLowerCase();
 
   let state = held.claimed ? COUPON_LIFECYCLE.HELD : COUPON_LIFECYCLE.NONE;

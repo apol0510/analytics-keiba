@@ -34,6 +34,16 @@ const stale = (over = {}) => res('issued', {
   ExpiresAt: new Date(Date.now() - 1 * 24 * 3600 * 1000).toISOString(),
   ...over,
 });
+/**
+ * 予約より**前**に取得していること。
+ * ⚠️ 2026-08-23〜「いま持っている 1 枚」に属する予約行だけを見るようになったため、
+ *    取得日時より古い予約行は履歴として除外される（正しい挙動）。
+ *    滞留を見るテストでは、取得 → だいぶ後に予約、という現実の順序を作る。
+ */
+const claimedBefore = (rec) => ({
+  PremiumPlusReopenCouponClaimedAt:
+    new Date(Date.parse(rec.fields.StartsAt) - 24 * 3600 * 1000).toISOString(),
+});
 /** 受理したばかりの予約（滞留していない） */
 const fresh = (over = {}) => res('issued', {
   StartsAt: new Date(Date.now() - 60 * 1000).toISOString(), ...over,
@@ -300,8 +310,9 @@ test('ライフサイクルも「確認できない」と「0 件」を分ける
 // ── admin 表示 ──────────────────────────────────────────────
 test('admin は要修復を独立した状態として出す', () => {
   const held = { PremiumPlusReopenCouponClaimedAt: '2026-08-18T00:00:00Z' };
+  const row = stale();
   const life = describeCouponLifecycle({
-    fields: { ...held, ...SETTLED }, offerRows: [stale()], customerRecordId: 'recA',
+    fields: { ...held, ...SETTLED, ...claimedBefore(row) }, offerRows: [row], customerRecordId: 'recA',
   });
   assert.equal(life.state, COUPON_LIFECYCLE.NEEDS_REPAIR);
   assert.equal(life.needsRepair, true);

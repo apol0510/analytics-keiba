@@ -512,6 +512,45 @@ export function describeCouponForMember({
 }
 
 /**
+ * **いまのクーポン 1 枚ぶんの開始時刻**（サイクル境界）。
+ *
+ * ## なぜ要るか（2026-08-23）
+ *
+ * 1 会員が同じクーポンを**時期を変えて何度も受け取れる**ようにするため。
+ * 予約台帳（`PromotionalOffers`）には過去に使った行が残り続けるので、
+ * 「使ったか」を台帳の全行で見ると **一度使った会員には二度と渡せなくなる**。
+ *
+ * そこで **いま持っている 1 枚**に属する予約行だけを見る。境界は:
+ *
+ * | 保有 | 境界 |
+ * |---|---|
+ * | 取得済み | その取得日時（`ClaimedAt`）|
+ * | 未取得 | 直近の管理操作の時刻（`Source` の監査 `at=`）＝ 前の 1 枚を締めた時刻 |
+ * | どちらも無い | 空文字（＝全行を見る。従来どおり）|
+ *
+ * ⚠️ これは**過去の行を消す仕組みではない**。台帳には残したまま、
+ *    「いまの 1 枚」の判定に混ぜないだけ。監査は失われない。
+ */
+export function resolveCouponCycleStartIso(fields) {
+  const held = readReopenCoupon(fields);
+  if (held.claimed === true) return String(held.claimedAtIso || '');
+  return String(parseCouponAudit(held.source).atIso || '');
+}
+
+/**
+ * その予約行が**いまの 1 枚**に属するか（過去に使った分を混ぜない）。
+ * 境界が無いときは従来どおり全行が対象。
+ */
+export function isCurrentCycleReservation(record, cycleStartIso) {
+  const start = Date.parse(String(cycleStartIso || ''));
+  if (!Number.isFinite(start)) return true;
+  const at = Date.parse(String(((record && record.fields) || {}).StartsAt || ''));
+  // 開始時刻を読めない行は**除外しない**（判定材料が無いなら安全側＝現行として扱う）
+  if (!Number.isFinite(at)) return true;
+  return at >= start;
+}
+
+/**
  * お客様向けの「このクーポンはいまどうなっているか」（純粋・**文言の単一源**）。
  *
  * ## なぜ要るか（2026-08-23 / MK 報告）

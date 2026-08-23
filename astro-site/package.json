@@ -69,7 +69,7 @@
     "test:dedupe": "node --test scripts/dedupeCustomers.test.mjs",
     "test:results-showcase": "node --test src/lib/resultsShowcasePreview.test.mjs",
     "test:premium-plus": "node --test src/lib/premiumPlusShowcase.test.mjs src/lib/premiumPlusReceiptCardView.guard.test.mjs",
-    "test:order-ux": "node --test src/lib/premiumPlus/orderCompletionUx.test.mjs src/lib/premiumPlus/couponUsedVisible.test.mjs",
+    "test:order-ux": "node --test src/lib/premiumPlus/orderCompletionUx.test.mjs src/lib/premiumPlus/couponUsedVisible.test.mjs src/lib/premiumPlus/couponRegrant.test.mjs",
     "test:premium-plus-media": "node --test src/lib/premiumPlus/*.test.mjs",
     "test:marketing": "node --test src/lib/marketing/*.test.mjs",
     "test:comeback": "node --test src/lib/comeback/*.test.mjs",
