@@ -8,6 +8,13 @@ import { SUPPORT_EMAIL, ADMIN_EMAIL, FROM_EMAIL } from './config/email-config.js
 import { buildApplicationFields } from '../../src/lib/payments/bankPaymentFlow.js';
 // 申込価格の正本（クーポン適用込み）。**クライアントの言い値を使わない**
 import { resolveOrderPricing } from '../../src/lib/premiumPlus/premiumPlusCouponApply.js';
+// クーポンの「利用予約」。**振込完了報告が正常受理された時点でだけ**作る
+import {
+  resolveReservationDecision, buildReservationFields, RESERVATION_REJECT,
+} from '../../src/lib/premiumPlus/premiumPlusCouponReservation.js';
+import {
+  listReservationsFor, createReservation,
+} from '../../src/lib/premiumPlus/premiumPlusCouponReservationStore.js';
 // 有効期限は「再募集の開始日時 + 14 日」。開始状態はサーバー側の単一源からしか読まない
 // （client が期限・開始日時を送ってきても採用しない）。
 import { loadReopenStart } from '../../src/lib/premiumPlus/premiumPlusReopenStartStore.js';
@@ -1037,6 +1044,58 @@ exports.handler = async (event, context) => {
       }
     } else {
       console.log('ℹ️ Premium Plus - BlastMail registration skipped');
+    }
+
+    // ── クーポンの利用予約（Premium Plus・クーポン適用時のみ）─────────────
+    // ⚠️ **ここが無かったため、申込しても入金確認してもクーポンが「所持中」のまま残り、
+    //    同じクーポンで何度でも 58,000円 の申込ができる状態だった**（2026-08-23 修正）。
+    //
+    // 置き場所: 振込完了報告が**正常受理された後**（メール送信済み・この直後に 200 を返す）。
+    //   - 予約を作れなくても報告は受理する（決済を巻き戻さない＝ best effort）
+    //   - 台帳を読めなければ**作らない**（重複を検出できないまま行を増やさない）
+    //   - 既に予約済み / 使用済みなら作らない（`resolveReservationDecision` が判定）
+    //   - 使用済みにするのは入金確認（`confirm-bank-payment.js`）
+    if (isPremiumPlusOrder && serverPricing && serverPricing.couponApplied && plusCustomerRecordId) {
+      let reservationOutcome = null;
+      try {
+        const ledger = await listReservationsFor({
+          env: process.env, customerRecordId: plusCustomerRecordId,
+        });
+        if (!ledger.available) {
+          // 「読めなかった」を「予約 0 件」に丸めない
+          reservationOutcome = `ledger_unavailable:${ledger.reason}`;
+        } else {
+          const decision = resolveReservationDecision({
+            fields: plusCustomerFields,
+            offerRows: ledger.records,
+            customerRecordId: plusCustomerRecordId,
+            nowMs: Date.now(),
+            env: process.env,
+            def: plusCouponDef || undefined,
+          });
+          if (!decision.ok) {
+            // 既に予約済み・使用済みは**正常**（冪等）。それ以外は理由をそのまま残す
+            reservationOutcome = decision.reason === RESERVATION_REJECT.ALREADY_RESERVED
+              || decision.reason === RESERVATION_REJECT.ALREADY_REDEEMED
+              ? `skipped:${decision.reason}` : `rejected:${decision.reason}`;
+          } else {
+            const built = buildReservationFields({
+              customerRecordId: plusCustomerRecordId,
+              email,
+              // 同じ報告を再送しても 1 行のままにする冪等キーの材料
+              applicationId: `${transferDate || ''}|${transferTime || ''}|${transferAmount || ''}`,
+              nowMs: Date.now(),
+              def: plusCouponDef || undefined,
+            });
+            const created = await createReservation({ env: process.env, built });
+            reservationOutcome = created.outcome;
+          }
+        }
+      } catch (reservationError) {
+        reservationOutcome = 'failed_error';
+      }
+      // ⚠️ 識別子（メール / recordId）を載せない。何が起きたかだけを残す
+      console.log('🎟 [bank-transfer] クーポン利用予約:', { outcome: reservationOutcome });
     }
 
     console.log('✅ Bank transfer completion report submitted:', {
