@@ -77,7 +77,7 @@ export const COUPON_OPERATION = Object.freeze({
    */
   REDEEM_RESERVATION: 'redeemReservation',
   /**
-   * 使い終わったクーポンを**締めて、もう一度渡せるようにする**。
+   * 使い終わったクーポンに区切りをつけて、**もう一度渡せるようにする**。
    *
    * 使用済みの予約行はそのまま残し、保有（いま持っている 1 枚）だけを終わらせる。
    * 実行後、その会員は「未取得（履歴あり）」になるので
@@ -105,7 +105,9 @@ export const COUPON_OPERATION_LABEL = Object.freeze({
   correct: '誤取得を訂正（取得を取り消す）',
   revokeReservation: '利用予約を取り消す',
   redeemReservation: '利用予約を使用済みにする',
-  closeUsed: '使い終わったクーポンを締める（もう一度渡せるようにする）',
+  // ⚠️ 「締める」は運営者に何の操作か伝わらない（諦める・打ち切るとも読める）。
+  //    この操作でできることをそのまま書く。
+  closeUsed: 'もう一度渡せるようにする',
 });
 
 /**
@@ -176,8 +178,9 @@ export const COUPON_REJECT_TEXT = Object.freeze({
   reservation_not_revocable: 'この利用予約は既に使用済み／取消済みのため取り消せません。',
   reservation_not_redeemable: '使用済みにできる利用予約がありません'
     + '（入金確認待ちの予約がある場合だけ実行できます）。',
-  coupon_not_used_yet: 'まだ使い終わっていないため、締める必要がありません'
-    + '（使用済みのクーポンを持っている会員だけ実行できます）。',
+  coupon_not_used_yet: 'まだ使い終わっていないため、この操作は必要ありません'
+    + '（使い終わったクーポンを持っている会員だけ実行できます）。'
+    + 'いま持っているクーポンをそのままお使いいただけます。',
   coupon_history_exists: 'この会員には過去の取得履歴があります。'
     + '「クーポンを付与」ではなく「クーポンを再発行」を使ってください'
     + '（履歴のある会員への付与と、初めての付与を取り違えないため）。',
@@ -492,7 +495,7 @@ export function resolveCouponOperationPlan({
   // ── ここから先は保有状態（binding の保存先）を書く ──────────
   if (!binding || binding.isStorageEnabled(env) !== true) return deny(R.STORAGE_DISABLED);
 
-  // ── 使い終わった 1 枚を締める（もう一度渡せるようにする）──────────
+  // ── 使い終わった 1 枚に区切りをつける（もう一度渡せるようにする）──────
   // ⚠️ **使用済みの予約を未使用に戻すのではない。** 予約行はそのまま残し、
   //    保有（いま持っている 1 枚）だけを終わらせる。過去の利用実績は消えない。
   if (operation === O.CLOSE_USED) {

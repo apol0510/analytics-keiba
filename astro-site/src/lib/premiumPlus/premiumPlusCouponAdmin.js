@@ -75,7 +75,7 @@ export const PP_COUPON_ADMIN_ACTION = Object.freeze({
   GRANT: COUPON_OPERATION.GRANT,
   REVOKE_RESERVATION: COUPON_OPERATION.REVOKE_RESERVATION,
   /**
-   * 使い終わったクーポンを締めて、もう一度渡せるようにする。
+   * 使い終わったクーポンに区切りをつけて、もう一度渡せるようにする。
    * ⚠️ 使用済みの予約行はそのまま残る（過去の利用実績は消えない）。
    */
   CLOSE_USED: COUPON_OPERATION.CLOSE_USED,

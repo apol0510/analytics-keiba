@@ -14,7 +14,8 @@
  * 判定を **「いま持っている 1 枚」に属する予約行だけ**に絞る（`resolveCouponCycleStartIso`）。
  * 過去の行は**台帳に残したまま**、現在の判定に混ぜない（監査は失われない）。
  *
- * 使い終わった 1 枚は管理操作 `closeUsed` で締める。締めたあとは:
+ * 使い終わった 1 枚は管理操作 `closeUsed`（画面では「もう一度渡せるようにする」）で終わらせる。
+ * 実行後は:
  *   - 管理者は「再発行」で**いつでも**渡せる（販売停止中でなくてよい＝プレゼント）
  *   - 販売を止めていれば**お客様自身**も受け取り直せる
  */
@@ -32,8 +33,9 @@ import {
 } from './premiumPlusCouponAdmin.js';
 import { resolveCouponAccess } from './premiumPlusCouponAccess.js';
 import { RESERVATION_SOURCE } from '../promotions/couponReservationSource.js';
-import { COUPON_REJECT, COUPON_REJECT_TEXT, resolveCouponOperationPlan }
-  from '../coupons/couponPlatform.js';
+import {
+  COUPON_REJECT, COUPON_REJECT_TEXT, COUPON_OPERATION_LABEL, resolveCouponOperationPlan,
+} from '../coupons/couponPlatform.js';
 
 const REC = 'recSYNTH00000001';
 const ENV = {
@@ -69,7 +71,7 @@ test('取得済みなら、その取得日時が「いまの 1 枚」の始ま�
   assert.equal(resolveCouponCycleStartIso(claimedAt(T0)), iso(T0));
 });
 
-test('未取得なら、直近の管理操作の時刻が境界（前の 1 枚を締めた時刻）', () => {
+test('未取得なら、直近の管理操作の時刻が境界（前の 1 枚を終わらせた時刻）', () => {
   const closed = {
     [PP_REOPEN_COUPON_FIELDS.SOURCE]: `admin-close-used|by=MK|at=${iso(T0 + 30 * DAY)}|op=x|why=再送`,
   };
@@ -94,17 +96,17 @@ test('使い終わった直後は「使用済み」。まだ渡し直せない',
   const a = actions(usedFields, usedRows);
   assert.equal(a[PP_COUPON_ADMIN_ACTION.GRANT].enabled, false);
   assert.equal(a[PP_COUPON_ADMIN_ACTION.REISSUE].enabled, false);
-  // 締める操作だけが押せる
+  // 「もう一度渡せるようにする」だけが押せる
   assert.equal(a[PP_COUPON_ADMIN_ACTION.CLOSE_USED].enabled, true);
 });
 
-test('まだ使っていない会員に「締める」は出さない', () => {
+test('まだ使っていない会員には「もう一度渡せるようにする」を出さない', () => {
   const a = actions(claimedAt(T0), []);
   assert.equal(a[PP_COUPON_ADMIN_ACTION.CLOSE_USED].enabled, false);
   assert.match(a[PP_COUPON_ADMIN_ACTION.CLOSE_USED].blockedBy, /まだ使い終わっていない/);
 });
 
-test('締める操作は保有だけを終わらせ、予約行には触らない', () => {
+test('この操作は保有だけを終わらせ、予約行には触らない', () => {
   const plan = resolveCouponOperationPlan({
     operation: PP_COUPON_ADMIN_ACTION.CLOSE_USED,
     holding: PP_COUPON_BINDING.readHolding(usedFields),
@@ -125,8 +127,8 @@ test('締める操作は保有だけを終わらせ、予約行には触らな�
   assert.ok(plan.reason.length > 0);
 });
 
-// ── 締めたあと ──────────────────────────────────────────────
-/** 締めた直後の会員（未取得・履歴あり）。過去の使用済み行は台帳に残っている */
+// ── 実行したあと ────────────────────────────────────────────
+/** 実行直後の会員（未取得・履歴あり）。過去の使用済み行は台帳に残っている */
 const closedAtMs = T0 + 40 * DAY;
 const closedFields = {
   [PP_REOPEN_COUPON_FIELDS.CLAIMED_AT]: null,
@@ -134,7 +136,7 @@ const closedFields = {
     `admin-close-used|by=MK|at=${iso(closedAtMs)}|prev=${iso(T0)}|op=x|why=もう一度`,
 };
 
-test('締めたあとは「使用済み」ではなくなる（過去の行は残っている）', () => {
+test('実行後は「使用済み」ではなくなる（過去の行は残っている）', () => {
   const life = describeCouponLifecycle({ fields: closedFields, offerRows: usedRows, customerRecordId: REC });
   assert.equal(life.state, COUPON_LIFECYCLE.NONE, 'まだ使用済み扱いのまま');
   assert.equal(life.reservationCount, 0, 'いまの 1 枚には予約が無い');
@@ -142,7 +144,7 @@ test('締めたあとは「使用済み」ではなくなる（過去の行は�
   assert.equal(usedRows.length, 1);
 });
 
-test('締めたあとは管理者が **いつでも** 渡し直せる（販売停止中でなくてよい）', () => {
+test('実行後は管理者が **いつでも** 渡し直せる（販売停止中でなくてよい）', () => {
   const a = actions(closedFields, usedRows);
   assert.equal(a[PP_COUPON_ADMIN_ACTION.REISSUE].enabled, true, 'プレゼントできない');
   // 履歴があるので「付与」ではなく「再発行」を使う（取り違え防止は従来どおり）
@@ -150,7 +152,7 @@ test('締めたあとは管理者が **いつでも** 渡し直せる（販売�
   assert.match(a[PP_COUPON_ADMIN_ACTION.GRANT].blockedBy, /再発行/);
 });
 
-test('締めたあと、販売を止めればお客様自身も受け取り直せる', () => {
+test('実行後、販売を止めればお客様自身も受け取り直せる', () => {
   const started = { available: true, startsAtIso: iso(closedAtMs) };
   const a = resolveCouponAccess({
     audience: true, salePaused: true, reopen: started,
@@ -160,7 +162,7 @@ test('締めたあと、販売を止めればお客様自身も受け取り直�
   assert.equal(a.canClaim, true, '再取得できない');
 });
 
-test('締めたあとに受け取り直したクーポンは、また申し込める', () => {
+test('実行後に受け取り直したクーポンは、また申し込める', () => {
   const reclaimed = claimedAt(closedAtMs + DAY, 'pause-notice');
   const d = resolveReservationDecision({
     fields: reclaimed, offerRows: usedRows, customerRecordId: REC,
@@ -171,7 +173,7 @@ test('締めたあとに受け取り直したクーポンは、また申し込�
 });
 
 // ── 塞ぎすぎない / 緩めすぎない ──────────────────────────────
-test('締めずに再取得はできない（使ったまま二重取得させない）', () => {
+test('実行せずに再取得はできない（使ったまま二重取得させない）', () => {
   const started = { available: true, startsAtIso: iso(T0) };
   const a = resolveCouponAccess({
     audience: true, salePaused: true, reopen: started,
@@ -180,16 +182,25 @@ test('締めずに再取得はできない（使ったまま二重取得させ�
   assert.equal(a.canClaim, false, '保有したまま二重に取得できてしまう');
 });
 
-test('いまの 1 枚が入金確認待ちなら締められない（先に確定させる）', () => {
+test('いまの 1 枚が入金確認待ちなら実行できない（先に確定させる）', () => {
   const a = actions(claimedAt(T0), [row('issued', T0 + DAY)]);
   assert.equal(a[PP_COUPON_ADMIN_ACTION.CLOSE_USED].enabled, false);
 });
 
-test('台帳を読めないときは締められない（使用済みか判断できないまま書かない）', () => {
+test('台帳を読めないときは実行できない（使用済みか判断できないまま書かない）', () => {
   const view = describeCouponAdminActions({
     fields: usedFields, offerRows: usedRows, ledgerAvailable: false, env: ENV, customerRecordId: REC,
   });
   const close = view.actions.find((x) => x.action === PP_COUPON_ADMIN_ACTION.CLOSE_USED);
   assert.equal(close.enabled, false);
   assert.equal(close.blockedBy, COUPON_REJECT_TEXT[COUPON_REJECT.LEDGER_UNAVAILABLE]);
+});
+
+// ── 文言 ────────────────────────────────────────────────────
+test('操作名は「何ができるか」を書く（「締める」に戻さない）', () => {
+  // ⚠️ MK 指摘（2026-08-23）:「締める」は諦める・打ち切るとも読め、
+  //    運営者に何の操作か伝わらない。ボタンは効果をそのまま書く。
+  const label = COUPON_OPERATION_LABEL[PP_COUPON_ADMIN_ACTION.CLOSE_USED];
+  assert.ok(!label.includes('締め'), `運営者に伝わらない操作名: ${label}`);
+  assert.match(label, /渡せる/, '何ができるのかが読み取れない');
 });
