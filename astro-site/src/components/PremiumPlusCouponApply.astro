@@ -84,6 +84,14 @@
     // 振込金額欄もサーバーの確定値へ（画面で計算しない）
     var amount = document.getElementById('transferAmount');
     if (amount && typeof p.finalPrice === 'number') amount.value = String(p.finalPrice);
+    // ⚠️ 実際にお振込みいただく額を出している**表示側**も必ず同時に差し替える。
+    //    ここが取り残されると「お支払い金額（割引後）」と「振込金額（割引前）」が
+    //    食い違ったまま画面に出る（実際に起きた不具合）。
+    //    値はサーバーの transferText をそのまま入れる（画面で組み立てない）。
+    if (b.transferText) {
+      setText('ppTransferAmountText', b.transferText);
+      setText('ppTransferAmountStep', b.transferText);
+    }
     hidden.value = p.couponApplied ? p.couponApplied.couponId : '';
   }
 

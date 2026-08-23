@@ -50,6 +50,16 @@ export function formatYen(n) {
 }
 
 /**
+ * 振込金額の表記（`¥58,000`）。
+ *
+ * 銀行振込ブロックは昔から `¥` 前置なので、内訳の `58,000円` とは体裁が違う。
+ * **画面側で金額を組み立てさせないため**、この体裁もサーバー側の 1 か所で決める。
+ */
+export function formatTransferYen(n) {
+  return Number.isFinite(Number(n)) ? `¥${Number(n).toLocaleString('ja-JP')}` : '';
+}
+
+/**
  * ISO → JST の「YYYY年M月D日 HH:MM」。**日時表記もここ 1 か所**。
  *
  * ⚠️ サーバーの TZ に依存させない（Netlify は UTC）。UTC へ 9 時間足して

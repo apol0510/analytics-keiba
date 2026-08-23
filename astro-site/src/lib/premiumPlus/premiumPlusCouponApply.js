@@ -35,6 +35,7 @@ import {
   describeCouponPrice,
   describeCouponExpiry,
   formatYen,
+  formatTransferYen,
   PP_REOPEN_COUPON_USABLE_NOTE,
 } from './premiumPlusReopenCoupon.js';
 
@@ -173,6 +174,11 @@ export function describeOrderBreakdown(pricing) {
     regularText: `通常価格 ${formatYen(p.regularPrice)}`,
     discountText: p.discount > 0 ? `クーポン割引 -${formatYen(p.discount)}` : '',
     finalText: `お支払い金額 ${formatYen(p.finalPrice)}`,
+    /**
+     * 銀行振込ブロック（振込金額・お申し込み手順）に出す実際の振込額。
+     * 内訳の `finalText` と**必ず同じ値**であり、画面側で組み立てさせない。
+     */
+    transferText: formatTransferYen(p.finalPrice),
     applied: !!p.couponApplied,
   };
 }

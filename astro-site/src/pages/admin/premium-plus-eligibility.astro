@@ -3716,6 +3716,24 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
      */
     let lastCouponOp = null;
 
+    /**
+     * 操作ごとの既定の理由。
+     *
+     * 監査記録には理由を必ず残すが、**通常運用で毎回タイプさせない**ために
+     * 未入力時はここの文言を使う。特別な事情があるときだけ入力欄で上書きする。
+     * 未知の操作でも空にはせず、操作名から理由を作る（監査が空欄にならない）。
+     */
+    const DEFAULT_COUPON_OP_REASON = {
+      redeemReservation: '入金を確認したため使用済みにした',
+      revokeReservation: '利用予約を取り消した',
+      grant: '対象者へクーポンを付与した',
+      reissue: '訂正後にクーポンを再発行した',
+      correct: '誤って取得された状態を訂正した',
+    };
+    function defaultCouponOpReason(action, label) {
+      return DEFAULT_COUPON_OP_REASON[action] || `${label || action}（管理画面から実行）`;
+    }
+
     function renderCouponOps(sec, r) {
       const ca = r.couponAdmin;
       if (!ca) return;
@@ -3757,7 +3775,9 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       const form = document.createElement('div'); form.className = 'coupon-ops-form';
       const reason = document.createElement('input');
       reason.type = 'text'; reason.maxLength = 160;
-      reason.placeholder = '操作理由（必須・監査記録に残ります）';
+      // ⚠️ 毎回手で理由を打たせない。未入力なら操作ごとの既定理由を記録する
+      //    （監査記録は残しつつ、通常運用でタイプせずに済ませる）。
+      reason.placeholder = '操作理由（任意・未入力なら既定の理由を記録します）';
       reason.className = 'coupon-ops-reason';
       form.appendChild(reason);
       box.appendChild(form);
@@ -3780,8 +3800,9 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         b.addEventListener('click', async () => {
           const actor = $('actor').value.trim();
           if (!actor) { msg.hidden = false; msg.className = 'coupon-ops-msg err'; msg.textContent = '操作者名を入力してください（変更履歴に残ります）'; $('connBody').hidden = false; return; }
-          const why = reason.value.trim();
-          if (!why) { msg.hidden = false; msg.className = 'coupon-ops-msg err'; msg.textContent = '操作理由を入力してください（監査記録に残ります）'; return; }
+          // 未入力なら操作ごとの既定理由を使う。手入力を必須にしない
+          // （監査記録には必ず理由が残る。実行前に confirm でその文言を見せる）。
+          const why = reason.value.trim() || defaultCouponOpReason(a.action, a.label);
           // 使用済みは一方向。**戻せないことを押す前に伝える**
           const oneWay = a.action === 'redeemReservation'
             ? '\n\n⚠️ この操作は取り消せません（再利用を防ぐため）。'
