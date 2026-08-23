@@ -137,7 +137,8 @@ export const COUPON_REJECT_TEXT = Object.freeze({
   reservation_active: '入金確認待ちの利用予約が残っています。'
     + '先に「利用予約を取り消す」を行ってください'
     + '（予約を残したまま取得状態を書き換えると、予約と取得の整合が崩れます）。',
-  no_reservation: '取り消せる利用予約がありません。',
+  // ⚠️ 取消・使用済み化の**両方**が使う。どちらか一方の言い方にしない
+  no_reservation: '対象となる利用予約がありません。',
   reservation_not_revocable: 'この利用予約は既に使用済み／取消済みのため取り消せません。',
   reservation_not_redeemable: '使用済みにできる利用予約がありません'
     + '（入金確認待ちの予約がある場合だけ実行できます）。',
