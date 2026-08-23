@@ -1460,14 +1460,16 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
         </div>
         <div class="bank-item amount">
           <span class="k">振込金額</span>
-          <span class="v">¥{PRICE.toLocaleString('ja-JP')}</span>
+          {/* ⚠️ クーポン適用でここが変わる。**画面で計算せず**サーバーが返した文字列を入れる
+              （`PremiumPlusCouponApply.astro` の applyServerPricing）。初期値は通常価格 */}
+          <span class="v" id="ppPayAmountBank">¥{PRICE.toLocaleString('ja-JP')}</span>
         </div>
       </div>
 
       <div class="steps-box">
         <h4>📝 お申し込み手順</h4>
         <ol>
-          <li>上記の口座へ <strong>¥{PRICE.toLocaleString('ja-JP')}</strong> をお振込みください</li>
+          <li>上記の口座へ <strong id="ppPayAmountStep">¥{PRICE.toLocaleString('ja-JP')}</strong> をお振込みください</li>
           <li>振込完了後、下記フォームから必要情報をご送信ください</li>
           <li>入金確認が取れ次第、買い目の配信についてメールでご案内します</li>
         </ol>
@@ -1723,13 +1725,27 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
         if (!response.ok) throw new Error(result.error || '送信に失敗しました');
 
         form.reset();
+        // ⚠️ 2026-08-23: 送信後に**フォームだけ**を隠していたため、口座番号・振込手順・
+        //    クーポン欄が残り「送信したのに同じ画面」に見えていた。
+        //    申込が終わったモーダルは**申込の画面ではなくお礼の画面**に切り替える。
+        //    ここで隠し忘れると「送信できたのか分からない」状態に戻る。
+        const modalEl = document.getElementById('bankModal');
+        const doneHide = modalEl ? [
+          modalEl.querySelector('.modal-title'),
+          modalEl.querySelector('.bank-box'),
+          modalEl.querySelector('.steps-box'),
+          document.getElementById('ppCouponBlock'),
+        ] : [];
         window.SubmissionResult && window.SubmissionResult.showSuccessScreen({
           formEl: form,
           messageEl: formMessage,
+          hideEls: doneHide,
           options: {
-            title: 'お申し込みを受け付けました',
+            title: 'お振込みのご報告ありがとうございます',
             message: `${formData.productName} のお申し込みを受け付けました。`,
-            subMessage: '確認メールをお送りしましたのでご確認ください。マイページから申請状況も確認できます。',
+            subMessage: '確認メールをお送りしました。入金の確認が取れ次第、'
+              + '買い目の配信についてメールでご案内します。'
+              + 'お申し込みの状況はマイページからご確認いただけます。',
           },
           history: {
             type: 'bank-transfer',

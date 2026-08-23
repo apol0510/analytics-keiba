@@ -3757,7 +3757,11 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       const form = document.createElement('div'); form.className = 'coupon-ops-form';
       const reason = document.createElement('input');
       reason.type = 'text'; reason.maxLength = 160;
-      reason.placeholder = '操作理由（必須・監査記録に残ります）';
+      // 既定理由を持つ操作が 1 つでもあれば「必須」と言わない（打たなくても実行できる）
+      const hasDefault = (ca.actions || []).some((a) => a.defaultReason);
+      reason.placeholder = hasDefault
+        ? '操作理由（監査記録に残ります。空欄なら操作ごとの既定理由を記録します）'
+        : '操作理由（必須・監査記録に残ります）';
       reason.className = 'coupon-ops-reason';
       form.appendChild(reason);
       box.appendChild(form);
@@ -3780,14 +3784,18 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         b.addEventListener('click', async () => {
           const actor = $('actor').value.trim();
           if (!actor) { msg.hidden = false; msg.className = 'coupon-ops-msg err'; msg.textContent = '操作者名を入力してください（変更履歴に残ります）'; $('connBody').hidden = false; return; }
-          const why = reason.value.trim();
+          // 理由が常に同じ操作（使用済み化など）は**打たせない**。
+          // ⚠️ 既定理由は**サーバーが持つ**（a.defaultReason）。ここで文言を作らない。
+          const why = reason.value.trim() || (a.defaultReason || '');
           if (!why) { msg.hidden = false; msg.className = 'coupon-ops-msg err'; msg.textContent = '操作理由を入力してください（監査記録に残ります）'; return; }
           // 使用済みは一方向。**戻せないことを押す前に伝える**
           const oneWay = a.action === 'redeemReservation'
             ? '\n\n⚠️ この操作は取り消せません（再利用を防ぐため）。'
               + '入金を確認できている場合だけ実行してください。'
             : '';
-          if (!confirm(a.label + '\n\n対象: ' + (r.email || r.recordId) + '\n理由: ' + why + oneWay + '\n\n実行しますか？')) return;
+          // 何が記録されるかを押す前に必ず見せる（自動記録でも隠さない）
+          const whyLine = reason.value.trim() ? why : why + '（自動記録）';
+          if (!confirm(a.label + '\n\n対象: ' + (r.email || r.recordId) + '\n理由: ' + whyLine + oneWay + '\n\n実行しますか？')) return;
           b.disabled = true;
           const out = await call({
             action: 'couponAdmin', recordId: r.recordId, couponAction: a.action,

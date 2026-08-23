@@ -96,6 +96,25 @@ export const COUPON_OPERATION_LABEL = Object.freeze({
   redeemReservation: '利用予約を使用済みにする',
 });
 
+/**
+ * 理由を入力しなくてよい操作の既定理由。
+ *
+ * ⚠️ **全操作に既定理由を用意しない。** 付与・訂正・再発行・予約取消は
+ *    「なぜそうしたのか」が毎回違い、そこが監査の中身になる。
+ *    使用済み化だけは理由が常に同じ（入金を確認したから実行する）ので、
+ *    毎回同じ文字を打たせるのは手間なだけで監査の質は上がらない。
+ *
+ * 入力があればそちらを優先する（補足を書きたいときは書ける）。
+ */
+export const COUPON_OPERATION_DEFAULT_REASON = Object.freeze({
+  redeemReservation: '入金を確認したため',
+});
+
+/** その操作の理由（未入力なら既定。既定も無ければ空文字＝呼び出し側が断る）*/
+export function resolveOperationReason(operation, reason) {
+  return cleanReason(reason) || COUPON_OPERATION_DEFAULT_REASON[String(operation || '')] || '';
+}
+
 /** 操作を断る理由（**商品によらない**） */
 export const COUPON_REJECT = Object.freeze({
   UNKNOWN_ACTION: 'unknown_action',
@@ -386,7 +405,9 @@ export function resolveCouponOperationPlan({
 
   if (!ADMIN_OPS.includes(operation)) return deny(R.UNKNOWN_ACTION);
   if (!cleanToken(actor)) return deny(R.MISSING_ACTOR);
-  if (!cleanReason(reason)) return deny(R.MISSING_REASON);
+  // 使用済み化のように理由が常に同じ操作は既定理由で通す（監査には必ず何かが残る）
+  const auditReason = resolveOperationReason(operation, reason);
+  if (!auditReason) return deny(R.MISSING_REASON);
   const rv = reservations || {};
   if (rv.available !== true) return deny(R.LEDGER_UNAVAILABLE);
   if (!Number.isFinite(nowMs)) return deny(R.UNKNOWN_ACTION);
@@ -416,8 +437,10 @@ export function resolveCouponOperationPlan({
       reservationRecordId: rv.issuedRecordId,
       anchor,
       operationId,
+      /** 監査に残す理由（未入力なら既定）。**呼び出し側はこれを使う** */
+      reason: auditReason,
       note: encodeCouponAudit({
-        kind: COUPON_OPERATION_SOURCE.revokeReservation, actor, atIso, reason, operationId,
+        kind: COUPON_OPERATION_SOURCE.revokeReservation, actor, atIso, reason: auditReason, operationId,
       }),
       customerFieldsUnchanged: true,
     };
@@ -438,8 +461,10 @@ export function resolveCouponOperationPlan({
       reservationRecordId: rv.issuedRecordId,
       anchor,
       operationId,
+      /** 監査に残す理由（未入力なら既定）。**呼び出し側はこれを使う** */
+      reason: auditReason,
       note: encodeCouponAudit({
-        kind: COUPON_OPERATION_SOURCE.redeemReservation, actor, atIso, reason, operationId,
+        kind: COUPON_OPERATION_SOURCE.redeemReservation, actor, atIso, reason: auditReason, operationId,
       }),
       customerFieldsUnchanged: true,
     };
@@ -462,12 +487,15 @@ export function resolveCouponOperationPlan({
     if (!operationId) return deny(R.UNKNOWN_ACTION);
     const prev = parseCouponAudit(held.source);
     const fields = binding.buildClaimFields({
-      kind: COUPON_OPERATION_SOURCE[operation], actor, atIso, reason, operationId,
+      kind: COUPON_OPERATION_SOURCE[operation], actor, atIso, reason: auditReason, operationId,
       prevClaimedAtIso: prev.prevClaimedAtIso || '',
       prevSource: prev.byAdmin ? prev.prevSource : (prev.raw || ''),
     });
     if (!fields) return deny(R.FIELD_ALLOW_LIST);
-    return { ok: true, operation, target: 'holding', fields, atIso, history, anchor, operationId };
+    return {
+      ok: true, operation, target: 'holding', fields, atIso, history, anchor, operationId,
+      reason: auditReason,
+    };
   }
 
   if (operation === O.CORRECT) {
@@ -476,12 +504,15 @@ export function resolveCouponOperationPlan({
     if (!operationId) return deny(R.UNKNOWN_ACTION);
     const prev = parseCouponAudit(held.source);
     const fields = binding.buildClearFields({
-      kind: COUPON_OPERATION_SOURCE.correct, actor, atIso, reason, operationId,
+      kind: COUPON_OPERATION_SOURCE.correct, actor, atIso, reason: auditReason, operationId,
       prevClaimedAtIso: held.claimedAtIso || '',
       prevSource: prev.byAdmin ? prev.kind : (prev.raw || ''),
     });
     if (!fields) return deny(R.FIELD_ALLOW_LIST);
-    return { ok: true, operation, target: 'holding', fields, atIso, anchor, operationId };
+    return {
+      ok: true, operation, target: 'holding', fields, atIso, anchor, operationId,
+      reason: auditReason,
+    };
   }
 
   return deny(R.UNKNOWN_ACTION);
@@ -503,6 +534,8 @@ export function describeCouponOperationAvailability({
     label: COUPON_OPERATION_LABEL[operation],
     enabled: !blockedBy,
     blockedBy: blockedBy ? COUPON_REJECT_TEXT[blockedBy] : '',
+    /** 理由の手入力が要らない操作は、記録される既定理由をそのまま渡す（画面で作らない）*/
+    defaultReason: COUPON_OPERATION_DEFAULT_REASON[operation] || '',
   });
 
   if (rv.available !== true) {
