@@ -311,8 +311,11 @@ test('台帳の状態は画面にも出す（「確認できない」を無言�
   assert.match(page, /couponLifecycle\.ledgerNote/);
 });
 
-// ── まだ本番へ接続しない ────────────────────────────────────
-test('confirm-bank-payment へはまだ配線しない（本番 write 未接続）', () => {
+// ── 本番へ配線済み（2026-08-23）────────────────────────────
+test('入金確認が予約を使用済みにする（未配線だと使い放題に戻る）', () => {
   const confirm = read('../../../netlify/functions/confirm-bank-payment.js');
-  assert.doesNotMatch(confirm, /planRedeemAfterConfirm|buildReservationRedeemFields/);
+  assert.match(confirm, /buildReservationRedeemFields/, 'redeem の配線が消えている');
+  // 「読めなかった」を「予約なし」に丸めない（admin の要修復表示が効かなくなる）
+  assert.match(confirm, /ledger_unavailable/);
+  assert.match(confirm, /findRedeemedReservation/, '再実行時に二重 redeem を見分けられない');
 });

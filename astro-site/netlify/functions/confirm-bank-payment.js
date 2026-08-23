@@ -30,6 +30,14 @@
 import { SUPPORT_EMAIL, ADMIN_EMAIL } from './config/email-config.js';
 import { resolveVerifiedSender } from '../../src/lib/payments/senderIdentity.js';
 import { buildConfirmationFields } from '../../src/lib/payments/bankPaymentFlow.js';
+// クーポンの「利用予約 → 使用済み」。入金確認が正常完了した時点でだけ確定させる
+import {
+  findActiveReservation, findRedeemedReservation, buildReservationRedeemFields,
+} from '../../src/lib/premiumPlus/premiumPlusCouponReservation.js';
+import {
+  listReservationsFor, patchReservation,
+} from '../../src/lib/premiumPlus/premiumPlusCouponReservationStore.js';
+import { readReopenCoupon } from '../../src/lib/premiumPlus/premiumPlusReopenCoupon.js';
 import { recordPlusPurchase } from '../../src/lib/premiumPlus/premiumPlusFunnelServer.js';
 import { buildV2ConfirmationFields } from '../../src/lib/payments/promotionV2.js';
 import { parseGatesFromEnv, shouldConfirmUseV2 } from '../../src/lib/payments/paymentEmailState.js';
@@ -344,6 +352,59 @@ exports.handler = async (event) => {
       if (ok) console.log(line); else console.warn(line);
     }
 
+    // ── Step 4.6: クーポンを使用済みにする（best effort）──────────────
+    // ⚠️ **ここが無かったため、入金確認してもクーポンが「所持中」のまま残っていた**
+    //    （2026-08-23 修正）。予約は振込完了報告の時点で作られている。
+    //
+    //   - 予約が無ければ何もしない（クーポンを使っていない通常の申込）
+    //   - 期限判定は**報告受理時**で固定。MK の確認が期限をまたいでも失効させない
+    //     （判定は `buildReservationRedeemFields` が台帳から再現する）
+    //   - 失敗しても昇格・メールは巻き戻さない。ただし**無言で失敗させない**
+    //   - **クーポンを取得していない会員では台帳を読みに行かない**。
+    //     入金確認は全プランの決済経路なので、無関係な会員にまで新しい失敗要因を足さない
+    //     （保有は Customers の 3 列が正本。既に取得済みの fields から判定できる）
+    // クーポンを取得している会員だけを対象にする（他は台帳を読みにも行かない）
+    const holdsCoupon = readReopenCoupon(fields).claimed === true;
+    let couponRedeemOutcome = null;
+    if (holdsCoupon) try {
+      const ledger = await listReservationsFor({ env: process.env, customerRecordId: recordId });
+      if (!ledger.available) {
+        // 「読めなかった」を「予約なし」に丸めない
+        couponRedeemOutcome = `ledger_unavailable:${ledger.reason}`;
+      } else {
+        const active = findActiveReservation({
+          records: ledger.records, customerRecordId: recordId,
+        });
+        if (!active) {
+          // ⚠️ 「予約が無い」と「もう使い終わっている」を取り違えない。
+          //    入金確認は再実行されるので、2 回目以降はここに来る。
+          couponRedeemOutcome = findRedeemedReservation({
+            records: ledger.records, customerRecordId: recordId,
+          }) ? 'skipped:already_redeemed' : 'no_reservation';
+        } else {
+          const built = buildReservationRedeemFields({ record: active, nowMs: Date.now() });
+          if (built.skipped) {
+            couponRedeemOutcome = `skipped:${built.skipped}`;
+          } else {
+            const patched = await patchReservation({
+              env: process.env, recordId: active.id, fields: built.fields,
+            });
+            couponRedeemOutcome = patched.outcome;
+          }
+        }
+      }
+    } catch (redeemError) {
+      couponRedeemOutcome = 'failed_error';
+    }
+    if (couponRedeemOutcome && couponRedeemOutcome !== 'no_reservation') {
+      // ⚠️ 識別子を載せない。結果だけを残す（recordId は応答に含まれる）
+      const line = `🎟 [confirm-bank-payment] クーポン使用済み: ${JSON.stringify({
+        outcome: couponRedeemOutcome,
+        promotion: 'kept',
+      })}`;
+      if (couponRedeemOutcome === 'redeemed') console.log(line); else console.warn(line);
+    }
+
     // ── Step 5: 入金確認メール ────────────────────────────
     // v2 では confirm は送信しない。pending を作り、送信 worker に委譲する
     // （PaymentEmailStatus='pending' は Step 4 の PATCH で既に書かれている）。
@@ -380,6 +441,10 @@ exports.handler = async (event) => {
         sanrenpukuPlusInit: plusInitOutcome,
         sanrenpukuPaidAtRecorded: plusPaidAtRecorded,
       } : {}),
+      // クーポンを使った申込のときだけ、使用済みにできたかを返す。
+      // ⚠️ ここが 'redeemed' 以外でも昇格は成立している（決済成功を最優先で保持する設計）。
+      ...(couponRedeemOutcome && couponRedeemOutcome !== 'no_reservation'
+        ? { couponRedeem: couponRedeemOutcome } : {}),
     });
   } catch (error) {
     console.error('❌ [confirm-bank-payment] error:', error);

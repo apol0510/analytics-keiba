@@ -83,10 +83,25 @@ test('選択しただけでは予約を作らない（作るのは報告受理�
   assert.doesNotMatch(apply, /buildReservationFields/, '適用の判定が予約を作っている');
 });
 
-test('振込完了報告が失敗したら予約は作られない（受理後にだけ作る設計）', () => {
+test('予約を作るのは振込完了報告が受理されたあとだけ（2026-08-23 配線）', () => {
   const fn = read('../../../netlify/functions/bank-transfer-application.js');
-  // 現時点では未接続。接続時も「受理が確定したあと」でしか呼べないことを固定する
-  assert.doesNotMatch(fn, /buildReservationFields/, '受理前に予約を作る配線が入っている');
+  const call = fn.indexOf('buildReservationFields({');
+  assert.ok(call > 0, '予約の配線が消えている（クーポンが使い放題に戻る）');
+
+  // ① クーポン検証で止める 409 より**後**（止めた申込で予約を作らない）
+  const reject = fn.lastIndexOf("code: 'coupon_unavailable'");
+  assert.ok(reject > 0 && call > reject, '検証で止めた申込でも予約を作っている');
+
+  // ② 受理の応答（200）より**前**＝報告が成立した同じ処理の中で作る
+  const ok = fn.indexOf("success: true");
+  assert.ok(ok > 0 && call < ok, '受理と切り離された場所で予約を作っている');
+
+  // ③ **クーポンが実際に適用された申込だけ**
+  assert.match(fn, /serverPricing\.couponApplied && plusCustomerRecordId/,
+    'クーポン未適用の申込でも予約を作る配線になっている');
+
+  // ④ 台帳を読めないまま作らない（重複を検出できない状態で行を増やさない）
+  assert.match(fn, /ledger\.available/, '台帳の可読性を確かめずに作っている');
 });
 
 // ── 新規利用は期限内だけ ────────────────────────────────────
@@ -152,9 +167,21 @@ test('入金確認を再実行しても二重 redeem しない', () => {
   assert.equal(again.skipped, 'already_redeemed');
 });
 
-test('入金確認が成功する前に redeemed にしない（呼ぶのは confirm 完了時だけ）', () => {
+test('使用済みにするのは昇格が成功したあとだけ（2026-08-23 配線）', () => {
   const confirm = read('../../../netlify/functions/confirm-bank-payment.js');
-  assert.doesNotMatch(confirm, /buildReservationRedeemFields/, '未接続のはずが配線されている');
+  const call = confirm.indexOf('buildReservationRedeemFields({');
+  assert.ok(call > 0, 'redeem の配線が消えている（使っても「所持中」のまま残る）');
+
+  // ① 昇格 PATCH の失敗判定より**後**（昇格していない申込で使用済みにしない）
+  const patchFailed = confirm.indexOf("'❌ Airtable PATCH failed:'");
+  assert.ok(patchFailed > 0 && call > patchFailed, '昇格の成否より前に使用済みにしている');
+
+  // ② PaymentConfirmed の再検証（403）より**後**
+  const forbidden = confirm.indexOf("error: 'PaymentConfirmed is not checked'");
+  assert.ok(forbidden > 0 && call > forbidden, '認可より前に台帳を書いている');
+
+  // ③ 失敗しても昇格を巻き戻さない（best effort であることを構造で示す）
+  assert.match(confirm, /promotion: 'kept'/);
 });
 
 // ── 取消 ────────────────────────────────────────────────────

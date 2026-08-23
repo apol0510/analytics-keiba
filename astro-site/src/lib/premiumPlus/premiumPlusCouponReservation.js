@@ -207,13 +207,26 @@ export function resolveReservationDecision({
   return { ok: true, reason: null };
 }
 
-function hasRedeemedReservation({ records, customerRecordId }) {
-  return (records || []).some((rec) => {
-    if (!isReservationRow(rec)) return false;
+/**
+ * 使用済みの予約行を返す（無ければ null）。
+ *
+ * ⚠️ 入金確認は**同じレコードで何度でも再実行される**（Airtable Automation の再送・
+ *    MK のチェックし直し）。そのとき「予約が無い」と「もう使い終わっている」を
+ *    取り違えると、応答から結果が消えて**二重 redeem を見逃す**。
+ */
+export function findRedeemedReservation({ records, customerRecordId }) {
+  for (const rec of records || []) {
+    if (!isReservationRow(rec)) continue;
     const f = (rec && rec.fields) || {};
-    return String(f.CustomerRecordId || '') === String(customerRecordId)
-      && String(f.Status || '').trim().toLowerCase() === OFFER_STATUS.REDEEMED;
-  });
+    if (String(f.CustomerRecordId || '') !== String(customerRecordId)) continue;
+    if (String(f.Status || '').trim().toLowerCase() !== OFFER_STATUS.REDEEMED) continue;
+    return rec;
+  }
+  return null;
+}
+
+function hasRedeemedReservation({ records, customerRecordId }) {
+  return !!findRedeemedReservation({ records, customerRecordId });
 }
 
 /**
