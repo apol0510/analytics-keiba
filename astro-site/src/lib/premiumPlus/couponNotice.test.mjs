@@ -129,17 +129,23 @@ test('お知らせは追加の通信をしない（判定は既存の 1 回に�
   assert.doesNotMatch(fn.slice(0, 400), /fetch\(/, 'お知らせのために通信を増やしている');
 });
 
-test('描画しただけで既読にしない（実際に見えたときだけ消す）', () => {
+test('マイページを開いただけでは既読にしない（開いた／押したときだけ）', () => {
+  // ⚠️ 2026-08-23 MK 報告「変わらない」。カードが画面に入った時点で既読にしていたため、
+  //    別の用事でマイページを開いただけで通知が消え、届いたことに気づけなかった。
   const page = read('../../pages/dashboard.astro');
-  assert.match(page, /IntersectionObserver/, 'カードが見えたかを判定していない');
-  const fn = page.slice(page.indexOf('async function markCouponCardSeenWhenVisible'));
+  assert.ok(!page.includes('markCouponCardSeenWhenVisible'), '見えただけで既読にしている');
+  assert.ok(!page.includes('IntersectionObserver'), '可視判定で既読にしている');
+
+  assert.match(page, /function markNoticeRead/, '既読にする経路が無い');
+  const fn = page.slice(page.indexOf('function markNoticeRead'));
   const body = fn.slice(0, fn.indexOf('\n      }\n'));
   assert.match(body, /markCouponNoticeSeen\(notice\.signature\)/);
-  // 未読でなければ何もしない
   assert.match(body, /notice\.unseen !== true/);
-  // 一瞬映っただけで既読にしない
-  assert.match(body, /setTimeout\(/, '目に入る時間を待っていない');
-  assert.match(body, /clearTimeout\(timer\)/, '通り過ぎただけで既読にしている');
+
+  // 既読になるのは「ベルから来た」か「お知らせを押した」ときだけ
+  assert.match(page, /location\.hash === '#notifications'\) markNoticeRead/, 'ベル経由で既読にしていない');
+  const click = page.slice(page.indexOf("a.addEventListener('click'"));
+  assert.match(click.slice(0, 400), /markNoticeRead\(notice\)/, '押しても既読にならない');
 });
 
 test('マイページでも「届いた」ことが見える（本番で赤い点が出なかった原因）', () => {
