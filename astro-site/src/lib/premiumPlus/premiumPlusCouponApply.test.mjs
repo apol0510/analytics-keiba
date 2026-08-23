@@ -62,6 +62,25 @@ test('適用すると 68,000円 − 10,000円 = 58,000円', () => {
   assert.equal(b.regularText, '通常価格 68,000円');
   assert.equal(b.discountText, 'クーポン割引 -10,000円');
   assert.equal(b.finalText, 'お支払い金額 58,000円');
+  // 銀行振込ブロックへ出す実際の振込額。ここが取り残されると
+  // 「お支払い金額 58,000円 / 振込金額 ¥68,000」の食い違いが画面に出る
+  assert.equal(b.transferText, '¥58,000');
+});
+
+test('振込金額の表示は必ずお支払い金額と一致する（未適用時も）', () => {
+  const withoutCoupon = describeOrderBreakdown(
+    resolveOrderPricing({ fields: HELD, couponId: null, nowMs: NOW, def: DEF }),
+  );
+  assert.equal(withoutCoupon.finalText, 'お支払い金額 68,000円');
+  assert.equal(withoutCoupon.transferText, '¥68,000');
+
+  const withCoupon = describeOrderBreakdown(
+    resolveOrderPricing({ fields: HELD, couponId: ID, nowMs: NOW, def: DEF }),
+  );
+  // 金額部分（数字）が両者で一致していること＝表示の食い違いが起きない
+  const digitsOf = (s) => String(s).replace(/[^0-9]/g, '');
+  assert.equal(digitsOf(withCoupon.transferText), digitsOf(withCoupon.finalText));
+  assert.notEqual(digitsOf(withCoupon.transferText), digitsOf(withoutCoupon.transferText));
 });
 
 // ── 改ざん・なりすまし ───────────────────────────────────────

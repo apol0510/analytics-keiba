@@ -1460,14 +1460,15 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
         </div>
         <div class="bank-item amount">
           <span class="k">振込金額</span>
-          <span class="v">¥{PRICE.toLocaleString('ja-JP')}</span>
+          {/* クーポン適用時はサーバーが返した確定額へ差し替わる（PremiumPlusCouponApply） */}
+          <span class="v" id="ppTransferAmountText">¥{PRICE.toLocaleString('ja-JP')}</span>
         </div>
       </div>
 
       <div class="steps-box">
         <h4>📝 お申し込み手順</h4>
         <ol>
-          <li>上記の口座へ <strong>¥{PRICE.toLocaleString('ja-JP')}</strong> をお振込みください</li>
+          <li>上記の口座へ <strong id="ppTransferAmountStep">¥{PRICE.toLocaleString('ja-JP')}</strong> をお振込みください</li>
           <li>振込完了後、下記フォームから必要情報をご送信ください</li>
           <li>入金確認が取れ次第、買い目の配信についてメールでご案内します</li>
         </ol>
@@ -1723,13 +1724,28 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
         if (!response.ok) throw new Error(result.error || '送信に失敗しました');
 
         form.reset();
+        // ⚠️ 送信後は**モーダルの中身を完了画面に入れ替える**。
+        //    フォームだけ隠しても、上のクーポン欄・口座情報・手順・注意事項が残ったままだと
+        //    「送信したのに画面が変わらない」ように見える（実際に起きた不具合）。
+        const bankModalEl = document.getElementById('bankModal');
+        const hideOnSuccess = bankModalEl
+          ? [
+              bankModalEl.querySelector('.modal-title'),
+              document.getElementById('ppCouponBlock'),
+              bankModalEl.querySelector('.bank-box'),
+              bankModalEl.querySelector('.steps-box'),
+              bankModalEl.querySelector('.warning-box'),
+            ].filter(Boolean)
+          : [];
+
         window.SubmissionResult && window.SubmissionResult.showSuccessScreen({
           formEl: form,
           messageEl: formMessage,
+          hideEls: hideOnSuccess,
           options: {
-            title: 'お申し込みを受け付けました',
+            title: 'お申し込みありがとうございます',
             message: `${formData.productName} のお申し込みを受け付けました。`,
-            subMessage: '確認メールをお送りしましたのでご確認ください。マイページから申請状況も確認できます。',
+            subMessage: '確認メールをお送りしましたのでご確認ください。入金の確認が取れ次第、買い目の配信についてメールでご案内します。マイページから申請状況も確認できます。',
           },
           history: {
             type: 'bank-transfer',
@@ -1743,6 +1759,11 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
             },
           },
         });
+        // モーダルは長いので、完了画面が画面外に出ないよう先頭へ戻す。
+        const modalContent = bankModalEl && bankModalEl.querySelector('.modal-content');
+        if (modalContent && typeof modalContent.scrollTo === 'function') {
+          try { modalContent.scrollTo({ top: 0, behavior: 'smooth' }); } catch (e) { modalContent.scrollTop = 0; }
+        }
       } catch (error) {
         console.error('Form submission error:', error);
         formMessage.textContent = '❌ 送信に失敗しました。もう一度お試しいただくか、nankan-analytics@keiba.link までご連絡ください。';
