@@ -76,6 +76,16 @@ export const COUPON_OPERATION = Object.freeze({
    *    その商品では**この操作だけが「使い終わった」の唯一の合図**になる。
    */
   REDEEM_RESERVATION: 'redeemReservation',
+  /**
+   * 使い終わったクーポンを**締めて、もう一度渡せるようにする**。
+   *
+   * 使用済みの予約行はそのまま残し、保有（いま持っている 1 枚）だけを終わらせる。
+   * 実行後、その会員は「未取得（履歴あり）」になるので
+   *   - 管理者は「クーポンを再発行」で**いつでも**渡し直せる（販売停止中でなくてよい）
+   *   - お客様自身も、販売を止めているあいだなら受け取り直せる
+   * ⚠️ **使用済みの予約を未使用に戻す操作ではない**（過去の利用実績は消えない）。
+   */
+  CLOSE_USED: 'closeUsed',
 });
 
 /** `Source` 列などへ書く操作の印（**顧客の取得経路と混ざらない値**にする） */
@@ -85,6 +95,7 @@ export const COUPON_OPERATION_SOURCE = Object.freeze({
   reissue: 'admin-reissue',
   revokeReservation: 'admin-revoke-reservation',
   redeemReservation: 'admin-redeem-reservation',
+  closeUsed: 'admin-close-used',
 });
 
 export const COUPON_OPERATION_LABEL = Object.freeze({
@@ -94,6 +105,7 @@ export const COUPON_OPERATION_LABEL = Object.freeze({
   correct: '誤取得を訂正（取得を取り消す）',
   revokeReservation: '利用予約を取り消す',
   redeemReservation: '利用予約を使用済みにする',
+  closeUsed: '使い終わったクーポンを締める（もう一度渡せるようにする）',
 });
 
 /**
@@ -108,6 +120,7 @@ export const COUPON_OPERATION_LABEL = Object.freeze({
  */
 export const COUPON_OPERATION_DEFAULT_REASON = Object.freeze({
   redeemReservation: '入金を確認したため',
+  closeUsed: 'もう一度お渡しできるようにするため',
 });
 
 /** その操作の理由（未入力なら既定。既定も無ければ空文字＝呼び出し側が断る）*/
@@ -132,6 +145,8 @@ export const COUPON_REJECT = Object.freeze({
   RESERVATION_NOT_REVOCABLE: 'reservation_not_revocable',
   /** 使用済みにできる予約が無い（取消済み・報告が期限後 など） */
   RESERVATION_NOT_REDEEMABLE: 'reservation_not_redeemable',
+  /** 締める対象（使い終わったクーポン）が無い */
+  NOT_USED_YET: 'coupon_not_used_yet',
   /** 過去に取得履歴がある → 付与ではなく再発行 */
   HISTORY_EXISTS: 'coupon_history_exists',
   /** 過去の取得履歴が無い → 再発行ではなく付与 */
@@ -161,6 +176,8 @@ export const COUPON_REJECT_TEXT = Object.freeze({
   reservation_not_revocable: 'この利用予約は既に使用済み／取消済みのため取り消せません。',
   reservation_not_redeemable: '使用済みにできる利用予約がありません'
     + '（入金確認待ちの予約がある場合だけ実行できます）。',
+  coupon_not_used_yet: 'まだ使い終わっていないため、締める必要がありません'
+    + '（使用済みのクーポンを持っている会員だけ実行できます）。',
   coupon_history_exists: 'この会員には過去の取得履歴があります。'
     + '「クーポンを付与」ではなく「クーポンを再発行」を使ってください'
     + '（履歴のある会員への付与と、初めての付与を取り違えないため）。',
@@ -401,7 +418,9 @@ export function resolveCouponOperationPlan({
   const deny = (code) => ({ ok: false, code, message: COUPON_REJECT_TEXT[code] || '操作できません' });
   const O = COUPON_OPERATION;
   const R = COUPON_REJECT;
-  const ADMIN_OPS = [O.GRANT, O.REISSUE, O.CORRECT, O.REVOKE_RESERVATION, O.REDEEM_RESERVATION];
+  const ADMIN_OPS = [
+    O.GRANT, O.REISSUE, O.CORRECT, O.REVOKE_RESERVATION, O.REDEEM_RESERVATION, O.CLOSE_USED,
+  ];
 
   if (!ADMIN_OPS.includes(operation)) return deny(R.UNKNOWN_ACTION);
   if (!cleanToken(actor)) return deny(R.MISSING_ACTOR);
@@ -472,6 +491,27 @@ export function resolveCouponOperationPlan({
 
   // ── ここから先は保有状態（binding の保存先）を書く ──────────
   if (!binding || binding.isStorageEnabled(env) !== true) return deny(R.STORAGE_DISABLED);
+
+  // ── 使い終わった 1 枚を締める（もう一度渡せるようにする）──────────
+  // ⚠️ **使用済みの予約を未使用に戻すのではない。** 予約行はそのまま残し、
+  //    保有（いま持っている 1 枚）だけを終わらせる。過去の利用実績は消えない。
+  if (operation === O.CLOSE_USED) {
+    if (rv.hasRedeemed !== true) return deny(R.NOT_USED_YET);
+    if (held.claimed !== true) return deny(R.NOT_CLAIMED);
+    if (!operationId) return deny(R.UNKNOWN_ACTION);
+    const prevAudit = parseCouponAudit(held.source);
+    const closeFields = binding.buildClearFields({
+      kind: COUPON_OPERATION_SOURCE.closeUsed, actor, atIso, reason: auditReason, operationId,
+      prevClaimedAtIso: held.claimedAtIso || '',
+      prevSource: prevAudit.byAdmin ? prevAudit.kind : (prevAudit.raw || ''),
+    });
+    if (!closeFields) return deny(R.FIELD_ALLOW_LIST);
+    return {
+      ok: true, operation, target: 'holding', fields: closeFields, atIso,
+      history: describeCouponHistory(held), anchor, operationId, reason: auditReason,
+    };
+  }
+
   // **使用済みは何があっても触らない**（再利用させない）
   if (rv.hasRedeemed === true) return deny(R.ALREADY_REDEEMED);
 
@@ -541,8 +581,9 @@ export function describeCouponOperationAvailability({
   if (rv.available !== true) {
     // 台帳が読めないときは**全操作を伏せる**（押せるように見せない）
     return {
-      actions: [O.GRANT, O.REVOKE_RESERVATION, O.REDEEM_RESERVATION, O.CORRECT, O.REISSUE]
-        .map((o) => mk(o, R.LEDGER_UNAVAILABLE)),
+      actions: [
+        O.GRANT, O.REVOKE_RESERVATION, O.REDEEM_RESERVATION, O.CORRECT, O.REISSUE, O.CLOSE_USED,
+      ].map((o) => mk(o, R.LEDGER_UNAVAILABLE)),
       history: null,
       redeemed: null,
       ledgerAvailable: false,
@@ -564,6 +605,10 @@ export function describeCouponOperationAvailability({
     : (rv.hasIssued === true ? null
       : (rv.count ? R.RESERVATION_NOT_REDEEMABLE : R.NO_RESERVATION));
 
+  // 締められるのは「使い終わったクーポンを持っている」ときだけ
+  const closeBlock = rv.hasRedeemed !== true ? R.NOT_USED_YET
+    : (held.claimed !== true ? R.NOT_CLAIMED : (!storage ? R.STORAGE_DISABLED : null));
+
   return {
     actions: [
       mk(O.GRANT, grantBlock),
@@ -571,6 +616,7 @@ export function describeCouponOperationAvailability({
       mk(O.REDEEM_RESERVATION, redeemBlock),
       mk(O.CORRECT, correctBlock),
       mk(O.REISSUE, reissueBlock),
+      mk(O.CLOSE_USED, closeBlock),
     ],
     history,
     redeemed: rv.hasRedeemed === true,

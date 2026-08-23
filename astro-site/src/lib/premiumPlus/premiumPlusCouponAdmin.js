@@ -47,6 +47,8 @@ import {
   couponIdWithVersion,
   isReopenCouponEnabled,
   readReopenCoupon,
+  resolveCouponCycleStartIso,
+  isCurrentCycleReservation,
 } from './premiumPlusReopenCoupon.js';
 import { COUPON_LIFECYCLE, describeCouponLifecycle } from './premiumPlusCouponReservation.js';
 import { OFFER_STATUS } from '../promotions/promotionalOffer.js';
@@ -72,6 +74,11 @@ import {
 export const PP_COUPON_ADMIN_ACTION = Object.freeze({
   GRANT: COUPON_OPERATION.GRANT,
   REVOKE_RESERVATION: COUPON_OPERATION.REVOKE_RESERVATION,
+  /**
+   * 使い終わったクーポンを締めて、もう一度渡せるようにする。
+   * ⚠️ 使用済みの予約行はそのまま残る（過去の利用実績は消えない）。
+   */
+  CLOSE_USED: COUPON_OPERATION.CLOSE_USED,
   /**
    * 利用予約を使用済みにする。
    * ⚠️ Premium Plus は単品購入で Customers に申込内容を書かないため、
@@ -117,10 +124,16 @@ export function describeCouponHistory(fields) {
   return describeHistory(readReopenCoupon(fields));
 }
 
-/** その会員の予約行だけを取り出す（**他会員の行は一切見ない**） */
-export function ownReservations({ offerRows, customerRecordId }) {
+/**
+ * その会員の予約行だけを取り出す（**他会員の行は一切見ない**）。
+ *
+ * ⚠️ `cycleStartIso` を渡すと **いま持っている 1 枚**に属する行だけになる。
+ *    過去に受け取って使い終わった行を混ぜると、一度使った会員には二度と渡せない。
+ */
+export function ownReservations({ offerRows, customerRecordId, cycleStartIso = '' }) {
   return (offerRows || []).filter((rec) => isReservationRow(rec)
-    && String(((rec && rec.fields) || {}).CustomerRecordId || '') === String(customerRecordId));
+    && String(((rec && rec.fields) || {}).CustomerRecordId || '') === String(customerRecordId)
+    && isCurrentCycleReservation(rec, cycleStartIso));
 }
 
 const statusOf = (rec) => String(((rec && rec.fields) || {}).Status || '').trim().toLowerCase();
@@ -171,11 +184,13 @@ export const PP_COUPON_BINDING = Object.freeze({
 /**
  * 予約行から共通層の `ReservationView` を作る（**どの台帳から来たかを共通層に見せない**）。
  */
-export function describeReservationView({ offerRows, ledgerAvailable, customerRecordId }) {
+export function describeReservationView({
+  offerRows, ledgerAvailable, customerRecordId, cycleStartIso = '',
+}) {
   if (ledgerAvailable !== true) {
     return { available: false, hasIssued: false, hasRedeemed: false, issuedRecordId: null, count: null };
   }
-  const mine = ownReservations({ offerRows, customerRecordId });
+  const mine = ownReservations({ offerRows, customerRecordId, cycleStartIso });
   const issued = mine.find((r) => statusOf(r) === OFFER_STATUS.ISSUED) || null;
   return {
     available: true,
@@ -209,7 +224,10 @@ export function resolveCouponAdminPlanFor({
   const plan = resolveCouponOperationPlan({
     operation: action,
     holding: PP_COUPON_BINDING.readHolding(fields),
-    reservations: describeReservationView({ offerRows, ledgerAvailable, customerRecordId }),
+    reservations: describeReservationView({
+      offerRows, ledgerAvailable, customerRecordId,
+      cycleStartIso: resolveCouponCycleStartIso(fields),
+    }),
     binding: PP_COUPON_BINDING,
     customerRecordId,
     env, actor, reason, nowMs,
@@ -268,7 +286,10 @@ export function describeCouponAdminActions({
   // 可否の判定は**共通層**。ここは Premium Plus の保有・予約を共通の形へ読み替えるだけ。
   const view = describeCouponOperationAvailability({
     holding: PP_COUPON_BINDING.readHolding(fields),
-    reservations: describeReservationView({ offerRows, ledgerAvailable, customerRecordId }),
+    reservations: describeReservationView({
+      offerRows, ledgerAvailable, customerRecordId,
+      cycleStartIso: resolveCouponCycleStartIso(fields),
+    }),
     binding: PP_COUPON_BINDING,
     env,
   });

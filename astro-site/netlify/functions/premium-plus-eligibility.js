@@ -976,7 +976,12 @@ async function handleCouponAdmin({ KEY, BASE, now, req }) {
       membershipUnchanged: true,
       rollback: couponAction === PP_COUPON_ADMIN_ACTION.CORRECT
         ? '「クーポンを再発行」で取得状態へ戻せます（訂正前の取得日時は監査記録に残っています）。'
-        : '「誤取得を訂正」で取得を取り消せます。',
+        : (couponAction === PP_COUPON_ADMIN_ACTION.CLOSE_USED
+          ? 'この会員は「未取得（履歴あり）」になりました。'
+            + '「クーポンを再発行」でいつでも渡し直せます（販売停止中でなくても構いません）。'
+            + '販売を止めているあいだは、お客様ご自身でも受け取れます。'
+            + '⚠️ 過去の利用実績（使用済みの予約）は残っています。'
+          : '「誤取得を訂正」で取得を取り消せます。'),
       sideEffects: 'coupon_fields_updated',
     });
   } finally {

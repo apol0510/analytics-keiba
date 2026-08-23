@@ -202,7 +202,17 @@ test('使用済み・予約取消も一覧と個別検索で一致する', async
 });
 
 test('長く残った利用予約は要修復として両方の経路で同じに出る', async () => {
-  stub({ offers: [staleReservation()], member: MEMBER });
+  // ⚠️ 「いま持っている 1 枚」に属する予約行だけを見るので、
+  //    取得 → だいぶ後に予約、という現実の順序を作る（取得より古い行は履歴）
+  const row = staleReservation();
+  stub({
+    offers: [row],
+    member: {
+      ...MEMBER,
+      [PP_REOPEN_COUPON_FIELDS.CLAIMED_AT]:
+        new Date(Date.parse(row.fields.StartsAt) - 24 * 3600 * 1000).toISOString(),
+    },
+  });
   let v = await bothViews();
   assert.equal(v.listRow.couponLifecycle.state, COUPON_LIFECYCLE.NEEDS_REPAIR);
   assert.equal(v.listRow.couponLifecycle.redeemState, 'needs_redeem');
