@@ -16,10 +16,12 @@ import { verifyPlanAccess, PREMIUM_PLUS_CANDIDATE_PLANS } from '../lib/auth/inde
 import { lookupCustomerFields } from '../lib/premiumPlus/purchaseAnchorLookup.js';
 import { resolveUpsellForCustomer } from '../lib/upsell/upsellTarget.js';
 import {
-  readReopenCoupon, describeCouponForMember, isReopenCouponEnabled,
+  readReopenCoupon, describeCouponForMember, describeCouponUsageForMember, isReopenCouponEnabled,
   PP_REOPEN_COUPON_SOURCE,
 } from '../lib/premiumPlus/premiumPlusReopenCoupon.js';
 import { renderCouponPageHtml } from '../lib/premiumPlus/premiumPlusPauseNoticePage.js';
+import { listReservationsFor } from '../lib/premiumPlus/premiumPlusCouponReservationStore.js';
+import { describeCouponLifecycle } from '../lib/premiumPlus/premiumPlusCouponReservation.js';
 // 再募集の開始日時（`reopenStartsAt`）の単一源。**全ての面がここから読む**。
 // ⚠️ ここで言う期限はクーポンの利用期限（開始 + 14 日）。会員権の期限とは無関係で、
 //    このページは会員判定を一切再実装しない（正本は resolveEntitlements）。
@@ -83,6 +85,21 @@ const couponAccess = resolveCouponAccess({
 // 取得もできず保有もしていない相手には存在を知らせない。
 if (!couponAccess.visible) return notFound();
 
+// 「使ったか」は保有ではなく**予約台帳**にしかない。取得済みのときだけ読む。
+const usageLedger = coupon.claimed === true
+  ? await listReservationsFor({ env: process.env, customerRecordId: access.payload?.sub || null })
+  : { available: true, records: [] };
+const couponUsage = describeCouponUsageForMember({
+  lifecycle: describeCouponLifecycle({
+    fields,
+    offerRows: usageLedger.available ? usageLedger.records : null,
+    ledgerAvailable: usageLedger.available,
+    customerRecordId: access.payload?.sub || '',
+  }).state,
+  ledgerAvailable: usageLedger.available,
+  claimed: coupon.claimed === true,
+});
+
 const couponView = describeCouponForMember({
   coupon,
   paused: view.plusRelease?.salePaused === true,
@@ -93,7 +110,7 @@ const couponView = describeCouponForMember({
 });
 
 const html = renderCouponPageHtml({
-  coupon: couponView,
+  coupon: { ...couponView, usage: couponUsage },
   source: PP_REOPEN_COUPON_SOURCE.COUPON_PAGE,
 });
 

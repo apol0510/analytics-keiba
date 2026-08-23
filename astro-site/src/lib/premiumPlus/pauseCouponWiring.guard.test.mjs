@@ -34,8 +34,16 @@ test('申込 Function は販売停止で 403 sale_paused / sideEffects:none の�
   assert.match(BANK_FN, /sideEffects:\s*'none'/);
   assert.match(BANK_FN, /statusCode:\s*403/);
   assert.match(BANK_FN, /normalizeSalePaused\(plusCustomerFields\[PP_SALE_PAUSE_FIELDS\.PAUSED\]\)/);
-  // クーポンで申込制限を迂回できる経路を作っていない
-  assert.doesNotMatch(BANK_FN, /ReopenCoupon/);
+  // クーポンで申込制限を迂回できる経路を作っていない。
+  // ⚠️ 2026-08-23: クーポンの**利用状況を読む**配線が入ったので「ReopenCoupon という
+  //    文字が無い」では検査できなくなった。代わりに実際の性質を 2 つ固定する。
+  //  ① 販売停止の 403 は、クーポンの判定より**前**にある
+  const pausedAt = BANK_FN.indexOf("code: 'sale_paused'");
+  const couponAt = BANK_FN.indexOf('serverPricing = resolveOrderPricing');   // import 行ではなく呼び出し
+  assert.ok(pausedAt > 0 && couponAt > pausedAt,
+    'クーポン判定が販売停止の判定より前にある（停止中でも申込が通り得る）');
+  //  ② 保有（Customers のクーポン 3 列）を**書かない**
+  assert.doesNotMatch(BANK_FN, /PremiumPlusReopenCoupon\w*\s*:/, 'クーポン保有列を書いている');
 });
 
 // ── 2. 取得 API の認可 ─────────────────────────────────────────

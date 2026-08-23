@@ -27,10 +27,13 @@ import { lookupCustomerFields } from '../../lib/premiumPlus/purchaseAnchorLookup
 import { resolveUpsellForCustomer, UPSELL_CHANNEL } from '../../lib/upsell/upsellTarget.js';
 // 取得済みクーポンの保有状態（マイページのカード用）。判定・文言は単一源に任せる
 import {
-  readReopenCoupon, describeCouponForMember,
+  readReopenCoupon, describeCouponForMember, describeCouponUsageForMember,
 } from '../../lib/premiumPlus/premiumPlusReopenCoupon.js';
 import { formatClaimedAtJst, COUPON_PAGE_PATH } from '../../lib/premiumPlus/premiumPlusPauseNoticePage.js';
 // 再募集の開始日時の単一源（開始済みなら有効期限が確定した定義になる）
+// 「使ったか」は保有（Customers 3 列）ではなく**予約台帳**にしかない
+import { listReservationsFor } from '../../lib/premiumPlus/premiumPlusCouponReservationStore.js';
+import { describeCouponLifecycle } from '../../lib/premiumPlus/premiumPlusCouponReservation.js';
 import { loadReopenStart } from '../../lib/premiumPlus/premiumPlusReopenStartStore.js';
 import { withReopenStart } from '../../lib/premiumPlus/premiumPlusReopenStart.js';
 // 「取得できるか」の単一源（**販売停止フラグでは決めない**）
@@ -88,6 +91,25 @@ export async function GET({ request }) {
     nowMs: now,
     storageReady: isReopenCouponEnabled(process.env),
   });
+  // ── クーポンを「使ったか」──────────────────────────────────
+  // ⚠️ 保有（Customers の 3 列）は**使い終わっても消えない**（渡した事実だから）。
+  //    使用済みかどうかは予約台帳にしかない。ここを読まないと、マイページは
+  //    使用済みのクーポンを「ご利用いただけます」と出し続ける（2026-08-23 の報告）。
+  //    取得していない人では読みに行かない（無関係な会員に失敗要因を足さない）。
+  const usageLedger = held.claimed === true
+    ? await listReservationsFor({ env: process.env, customerRecordId: access.payload?.sub || null })
+    : { available: true, records: [] };
+  const usage = describeCouponUsageForMember({
+    lifecycle: describeCouponLifecycle({
+      fields,
+      offerRows: usageLedger.available ? usageLedger.records : null,
+      ledgerAvailable: usageLedger.available,
+      customerRecordId: access.payload?.sub || '',
+    }).state,
+    ledgerAvailable: usageLedger.available,
+    claimed: held.claimed === true,
+  });
+
   // 取得済み、または**いま取得できる**ならマイページにカードを出す。
   // ⚠️ 旧実装は「取得済みのときだけ」で、取得導線を知らないと辿り着けなかった。
   const couponBody = couponAccess.visible
@@ -120,8 +142,11 @@ export async function GET({ request }) {
         expiryDetermined: v.expiryDetermined,
         termsDetermined: v.termsDetermined,
         detailHref: COUPON_PAGE_PATH,
-        // 申込導線（主 CTA）。停止中は href が null の非購入表示になる
-        cta: v.orderCta,
+        /** いまどうなっているか（未使用 / 申込に適用済み / ご利用済み / 確認できない）*/
+        usage,
+        // 申込導線（主 CTA）。停止中は href が null の非購入表示になる。
+        // ⚠️ **使用済み・申込に適用済みなら申込導線を出さない**（二重に申し込ませない）
+        cta: usage.blocksOrder ? { show: false, purchasable: false, label: '', href: null } : v.orderCta,
       };
     })()
     : { claimed: false, canClaim: false };

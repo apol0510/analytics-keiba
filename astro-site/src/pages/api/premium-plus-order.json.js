@@ -33,6 +33,10 @@ import {
 // 有効期限は「再募集の開始日時 + 14 日」。開始状態は 1 か所からしか読まない
 import { loadReopenStart } from '../../lib/premiumPlus/premiumPlusReopenStartStore.js';
 import { withReopenStart } from '../../lib/premiumPlus/premiumPlusReopenStart.js';
+// 「もう使ったか」は保有（Customers 3 列）では分からない。予約台帳が正本。
+import { listReservationsFor } from '../../lib/premiumPlus/premiumPlusCouponReservationStore.js';
+import { describeCouponLifecycle } from '../../lib/premiumPlus/premiumPlusCouponReservation.js';
+import { describeCouponUsageForMember, readReopenCoupon } from '../../lib/premiumPlus/premiumPlusReopenCoupon.js';
 
 function notFound() {
   return new Response('Not Found', {
@@ -68,13 +72,36 @@ export async function GET({ request, url }) {
   const reopen = await loadReopenStart({ recordId, env: process.env });
   const couponDef = withReopenStart(reopen.startsAtIso);
 
-  // 選択は受け取るが、価格はサーバーが Airtable の実データから決める
-  const pricing = resolveOrderPricing({
-    fields, couponId: url.searchParams.get('couponId'), nowMs: now, def: couponDef,
+  // ── もう使ったクーポンを選ばせない（2026-08-23）──────────────────
+  // ⚠️ 保有（Customers の 3 列）は**使い終わっても消えない**ので、保有だけを見ると
+  //    使用済みのクーポンを何度でも割引価格で選べてしまう。
+  //    読めなかったときも選ばせない（誤った金額の申込を作らせない＝ fail closed）。
+  const held = readReopenCoupon(fields);
+  const ledger = held.claimed === true
+    ? await listReservationsFor({ env: process.env, customerRecordId: recordId })
+    : { available: true, records: [] };
+  const usage = describeCouponUsageForMember({
+    lifecycle: describeCouponLifecycle({
+      fields,
+      offerRows: ledger.available ? ledger.records : null,
+      ledgerAvailable: ledger.available,
+      customerRecordId: recordId,
+    }).state,
+    ledgerAvailable: ledger.available,
+    claimed: held.claimed === true,
   });
 
+  // 選択は受け取るが、価格はサーバーが Airtable の実データから決める
+  const pricing = usage.blocksOrder
+    ? resolveOrderPricing({ fields, couponId: null, nowMs: now, def: couponDef })
+    : resolveOrderPricing({
+      fields, couponId: url.searchParams.get('couponId'), nowMs: now, def: couponDef,
+    });
+
   return new Response(JSON.stringify({
-    coupons: listApplicableCoupons({ fields, nowMs: now, def: couponDef }),
+    coupons: usage.blocksOrder ? [] : listApplicableCoupons({ fields, nowMs: now, def: couponDef }),
+    /** クーポンの利用状況（使用済み・申込に適用済み・確認できない）。文言はサーバーが持つ */
+    usage,
     pricing: {
       regularPrice: pricing.regularPrice,
       discount: pricing.discount,

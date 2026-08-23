@@ -192,13 +192,18 @@ test('入金確認でその予約が使用済みになる', async () => {
   assert.ok(reservations()[0].fields.RedeemedAt, '使用日時が残っていない');
 });
 
-test('使用済みのあと、同じクーポンでもう一度申し込んでも予約は増えない', async () => {
+test('使用済みのクーポンでは申込そのものを受け付けない（割引を二度使わせない）', async () => {
   await apply();
   await confirm();
   calls = [];
+
+  // ⚠️ 2026-08-23: 保有（Customers の 3 列）は使い終わっても消えないため、
+  //    保有だけを見ていると同じクーポンで何度でも 58,000円 の申込が通ってしまう。
   const res = await apply();
-  assert.equal(res.status, 200, '申込自体は受理する');
-  assert.equal(reservations().length, 1, '使用済みクーポンで 2 行目ができている');
+  assert.equal(res.status, 409, '使用済みクーポンの申込が通っている');
+  assert.equal(res.body.code, 'coupon_unavailable');
+  assert.equal(res.body.sideEffects, 'none');
+  assert.equal(reservations().length, 1, '2 行目ができている');
   assert.ok(!calls.includes('OFFER_CREATE'));
 });
 
@@ -241,12 +246,15 @@ test('昇格が先に走っていても、redeem だけをやり直せる（取�
 });
 
 // ── fail closed ────────────────────────────────────────────
-test('台帳を読めないときは予約を作らない（重複を検出できないまま増やさない）', async () => {
+test('台帳を読めないときはクーポンの申込を受け付けない（誤った金額で受理しない）', async () => {
+  // ⚠️ 使用済みかどうかを確かめられないまま 58,000円 の申込を作らない。
+  //    通常価格へ黙って落とすのも禁止（58,000円のつもりの人が 68,000円で申し込まされる）。
   ledgerReadable = false;
   const res = await apply();
-  assert.equal(res.status, 200, '申込は受理する（決済を巻き戻さない）');
+  assert.equal(res.status, 409);
+  assert.equal(res.body.code, 'coupon_unavailable');
+  assert.equal(res.body.sideEffects, 'none');
   assert.equal(offers.length, 0);
-  assert.ok(!calls.includes('OFFER_CREATE'));
 });
 
 test('台帳を読めないときは「予約なし」と決めつけない（昇格は通す）', async () => {
@@ -257,9 +265,17 @@ test('台帳を読めないときは「予約なし」と決めつけない（�
   assert.match(String(res.body.couponRedeem), /^ledger_unavailable:/);
 });
 
-test('台帳の gate が閉じていれば何もしない', async () => {
+test('台帳の gate が閉じていればクーポンの申込を受け付けない', async () => {
   delete process.env.COMEBACK_OFFER_TABLE_READY;
   const res = await apply();
+  assert.equal(res.status, 409);
+  assert.equal(offers.length, 0);
+});
+
+test('クーポンを使わない申込は台帳の状態に左右されない', async () => {
+  // ⚠️ クーポンの都合で**通常価格の申込まで止めない**
+  ledgerReadable = false;
+  const res = await apply({ couponId: '', transferAmount: '68000' });
   assert.equal(res.status, 200);
   assert.equal(offers.length, 0);
 });
