@@ -74,9 +74,14 @@ test('クライアントは管理者操作を騙れない（顧客側 allow-list
   assert.equal(normalizeCouponSource('admin-grant'), 'pause-notice');
 });
 
-test('操作者・理由が無ければ実行しない（監査できない操作を通さない）', () => {
+test('操作者が無ければ実行しない（誰がやったか分からない操作を通さない）', () => {
   assert.equal(plan({ action: 'grant', actor: '' }).code, A.PP_COUPON_ADMIN_REJECT.MISSING_ACTOR);
-  assert.equal(plan({ action: 'grant', reason: '  ' }).code, A.PP_COUPON_ADMIN_REJECT.MISSING_REASON);
+});
+
+test('理由は打たなくてよい。ただし履歴は空にしない', () => {
+  const out = plan({ action: 'grant', reason: '  ' });
+  assert.equal(out.ok, true, '理由の手入力を強制している');
+  assert.ok(String(out.reason || '').trim().length > 0);
 });
 
 // ── 付与 ────────────────────────────────────────────────────

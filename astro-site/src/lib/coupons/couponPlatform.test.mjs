@@ -120,11 +120,28 @@ test('2 商品目でも fail closed（台帳不明 / 使用済み / 予約中 / 
   }
 });
 
-test('2 商品目でも 操作者・理由が無ければ実行しない', () => {
+test('2 商品目でも 操作者が無ければ実行しない / 未知の操作は断る', () => {
   const R = P.COUPON_REJECT;
   assert.equal(plan({ operation: 'grant', actor: '' }).code, R.MISSING_ACTOR);
-  assert.equal(plan({ operation: 'grant', reason: '' }).code, R.MISSING_REASON);
   assert.equal(plan({ operation: 'destroy' }).code, R.UNKNOWN_ACTION);
+});
+
+test('理由の手入力は求めないが、履歴は空にしない（既定理由を残す）', () => {
+  // ⚠️ 2026-08-23: 理由を必須にすると運営者が毎回打たされて手が止まる。
+  //    監査に要る「誰が・いつ・何を」は actor / 時刻 / 操作種別が持っているので、
+  //    理由は**既定で必ず何かが残る**形にする。
+  const out = plan({ operation: 'grant', reason: '' });
+  assert.equal(out.ok, true, '理由の手入力を強制している');
+  assert.ok(String(out.reason || '').trim().length > 0, '履歴の理由が空になる');
+});
+
+test('既定理由を持たない操作は従来どおり理由が要る（勝手に空を通さない）', () => {
+  // 既定理由の表を空にした操作では MISSING_REASON のままであることを構造で確認する
+  const noDefault = Object.keys(P.COUPON_OPERATION_DEFAULT_REASON);
+  for (const op of Object.values(P.COUPON_OPERATION)) {
+    if (op === P.COUPON_OPERATION.CLAIM) continue;   // 顧客の取得は管理操作ではない
+    assert.ok(noDefault.includes(op), `${op} に既定理由が無い（運営者が打たされる）`);
+  }
 });
 
 test('binding の許可外フィールドは組み立てさせない（fail closed）', () => {

@@ -3727,7 +3727,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       note.style.fontSize = '0.82rem'; note.style.margin = '0 0 8px';
       note.textContent = '対象は下に表示している 1 名だけです。'
         + '資格・一時停止・会員権・決済・メールは変更しません。'
-        + '操作者名と理由は監査記録として保存されます。';
+        + '操作者名は必須です。理由は任意で、空欄なら操作ごとの既定理由を記録します。';
       box.appendChild(note);
 
       // 誰に対する操作かを必ず出す（取り違え防止）
