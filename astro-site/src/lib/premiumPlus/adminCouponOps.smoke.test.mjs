@@ -999,6 +999,20 @@ test('予約が無ければ使用済みにできない', async () => {
   assert.equal(out.body.sideEffects, 'none');
 });
 
+test('押せない理由が操作ごとに正しい（取消の言い方を使い回さない）', async () => {
+  db = makeDb({ member: HELD_FIELDS });   // 予約なし
+  const { listRow } = await views();
+  const by = Object.fromEntries(
+    (listRow.couponAdmin.actions || []).map((a) => [a.action, a.blockedBy || '']),
+  );
+  // ⚠️ 本番で「利用予約を使用済みにする」の理由が『取り消せる利用予約がありません』
+  //    になっていた（別操作の言い方が出ていた）。両方が使う文言は中立にする。
+  assert.doesNotMatch(by[PP_COUPON_ADMIN_ACTION.REDEEM_RESERVATION], /取り消せる/,
+    '使用済み化の理由に取消の言い方が出ている');
+  assert.match(by[PP_COUPON_ADMIN_ACTION.REDEEM_RESERVATION], /利用予約がありません/);
+  assert.match(by[PP_COUPON_ADMIN_ACTION.REVOKE_RESERVATION], /利用予約がありません/);
+});
+
 test('取消済みの予約は使用済みにできない', async () => {
   withReservation(OFFER_STATUS.REVOKED);
   const out = await op(PP_COUPON_ADMIN_ACTION.REDEEM_RESERVATION, { reason: '入金を確認' });
