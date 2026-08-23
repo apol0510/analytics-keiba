@@ -96,6 +96,46 @@ test('お知らせは専用のナビ（🔔）に件数で出す', () => {
   assert.ok(!dash.includes('data-notice-dot'), 'マイページ横にも点が残っている');
 });
 
+test('スマホはメニューを開かなくても気づける（ハンバーガーの外に出す）', () => {
+  // ⚠️ 2026-08-23 MK 指摘: メニューの中だけだと、開いて最下部まで見ないと気づけない。
+  const layout = read('../../layouts/BaseLayout.astro');
+  const i = layout.indexOf('id="mobile-notice-bell"');
+  assert.ok(i > 0, 'ハンバーガーの外にお知らせが無い');
+  // ハンバーガーより**前**（左隣）に置く
+  assert.ok(i < layout.indexOf('class="mobile-menu-toggle"'), 'ハンバーガーの中／後ろにある');
+  // 件数があるときだけ出す
+  assert.match(layout, /bell\.style\.display = 'inline-flex'/);
+  // 中身を示す語は書かない（未ログイン者も見る）
+  const bell = layout.slice(i - 200, i + 400);
+  for (const w of ['クーポン', 'Premium Plus', '割引', '優待']) {
+    assert.ok(!bell.includes(w), `スマホの鈴に「${w}」が出ている`);
+  }
+});
+
+test('バッジは数字が読める大きさにする（小さくて気づけない を防ぐ）', () => {
+  const layout = read('../../layouts/BaseLayout.astro');
+  const css = layout.slice(layout.indexOf('.nav-notice-dot {'), layout.indexOf('.nav-notice-dot[hidden]'));
+  const min = /min-width:\s*(\d+)px/.exec(css);
+  const size = /font-size:\s*(\d+)px/.exec(css);
+  assert.ok(min && Number(min[1]) >= 18, `バッジが小さい: ${css}`);
+  assert.ok(size && Number(size[1]) >= 12, `文字が小さい: ${css}`);
+});
+
+test('マイページのお知らせは最上部・読める配色にする', () => {
+  const page = read('../../pages/dashboard.astro');
+  // ⚠️ 最上部（穴馬リンク・会員ステータスより前）に置く
+  const notice = page.indexOf('id="notifications"');
+  assert.ok(notice > 0);
+  assert.ok(notice < page.indexOf('穴馬ページリンク'), 'お知らせが下にある');
+  assert.ok(notice < page.indexOf('<!-- 会員ステータス -->'), 'お知らせが会員ステータスより下にある');
+
+  // ⚠️ 暗い赤に暗い文字だと読めない。明るい背景 + 濃い文字にする
+  const css = page.slice(page.indexOf('.notice-card {'), page.indexOf('.notice-list a:hover'));
+  assert.doesNotMatch(css, /background:\s*rgba\(239, 68, 68/, '暗い赤のままで読みにくい');
+  assert.match(css, /color: #1f2937/, '見出しの文字色を指定していない');
+  assert.match(css, /color: #7c2d12/, 'リンクが背景に埋もれる色のまま');
+});
+
 test('ベルの行き先にお知らせの中身がある（飛んだ先が空にならない）', () => {
   const page = read('../../pages/dashboard.astro');
   assert.match(page, /id="notifications"/, 'ベルの行き先が無い');
