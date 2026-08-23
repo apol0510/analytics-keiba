@@ -21,6 +21,7 @@ import { MAGIC_LINK_TTL_MINUTES, MAGIC_LINK_TTL_MS } from './constants.js';
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
 const sender = read('../../../netlify/functions/send-magic-link.js');
 const verifyPage = read('../../pages/auth/verify.astro');
+const loginPage = read('../../pages/login.astro');
 
 test('ESM 定数の分とミリ秒が整合する', () => {
   assert.equal(MAGIC_LINK_TTL_MS, MAGIC_LINK_TTL_MINUTES * 60 * 1000);
@@ -48,6 +49,31 @@ test('期限切れ画面の分数も定数から出す', () => {
   assert.match(verifyPage, /define:vars=\{\{\s*TTL_MIN:\s*MAGIC_LINK_TTL_MINUTES\s*\}\}/);
   assert.match(verifyPage, /有効期限（\$\{TTL_MIN\}分）/);
   assert.doesNotMatch(verifyPage, /有効期限（15分）/, '15 分が直書きで残っている');
+});
+
+test('ログイン画面の送信完了メッセージも定数から出す（直書きしない）', () => {
+  // 2026-08-23 の問い合わせ: 送信側 TTL は 60 分なのに、この画面だけ「15分以内」と
+  // 直書きしていた。キャリアメールの配信遅延で「もう切れた」と誤認させ、
+  // リンクを開かずに離脱する原因になる。
+  //
+  // ⚠️ verify.astro と違い `define:vars` は使えない（下のテストで固定）。
+  //    このページのスクリプトは TS を含む通常 <script> なので、data 属性で受け渡す。
+  assert.match(loginPage, /import \{ MAGIC_LINK_TTL_MINUTES \} from '\.\.\/lib\/auth\/constants\.js'/,
+    'login.astro が MAGIC_LINK_TTL_MINUTES を import していない');
+  assert.match(loginPage, /data-ttl-min=\{MAGIC_LINK_TTL_MINUTES\}/,
+    '定数を data-ttl-min で渡していない');
+  assert.match(loginPage, /Number\(form\.dataset\.ttlMin\)/,
+    'スクリプトが data-ttl-min を読んでいない');
+  assert.doesNotMatch(loginPage, /のメールを\s*\d+\s*分以内/,
+    '分数が直書きで残っている');
+});
+
+test('login.astro のスクリプトは define:vars にしない（TS を含むため）', () => {
+  // `define:vars` は `is:inline` を含意し、Astro が TS を落とさない。
+  // このページのスクリプトは型注釈を含むので、付けた瞬間に SyntaxError で
+  // フォームが 1 行も動かなくなる（2026-08-09 verify.astro 障害と同型）。
+  assert.doesNotMatch(loginPage, /<script[^>]*define:vars/,
+    'login.astro の <script> に define:vars が付いている');
 });
 
 test('配信遅延に耐える長さがある（30 分以上）', () => {
