@@ -107,6 +107,20 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                 </div>
             </div>
 
+            <!-- 🔔 お知らせ。ナビのベルはここへ来る（#notifications）。
+                 ⚠️ 件数・文言はサーバー由来（/api/upsell.json → couponNotice.js）。
+                    ここで文言を組み立てないこと。何も無ければセクションごと出さない。 -->
+            <div class="notice-section" id="notifications" style="display: none;">
+                <div class="notice-card">
+                    <div class="notice-head">
+                        <span class="notice-icon">🔔</span>
+                        <span class="notice-title">お知らせ</span>
+                        <span class="notice-count" id="notice-count"></span>
+                    </div>
+                    <ul class="notice-list" id="notice-list"></ul>
+                </div>
+            </div>
+
             <!-- 穴馬ページリンク -->
             <div class="dark-horse-link-section">
                 <a href="/dark-horse-picks/" class="dark-horse-link-btn">
@@ -180,20 +194,6 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                         </div>
                     </div>
                     
-                </div>
-            </div>
-
-            <!-- 🔔 お知らせ。ナビのベルはここへ来る（#notifications）。
-                 ⚠️ 件数・文言はサーバー由来（/api/upsell.json → couponNotice.js）。
-                    ここで文言を組み立てないこと。何も無ければセクションごと出さない。 -->
-            <div class="notice-section" id="notifications" style="display: none;">
-                <div class="notice-card">
-                    <div class="notice-head">
-                        <span class="notice-icon">🔔</span>
-                        <span class="notice-title">お知らせ</span>
-                        <span class="notice-count" id="notice-count"></span>
-                    </div>
-                    <ul class="notice-list" id="notice-list"></ul>
                 </div>
             </div>
 
@@ -2510,29 +2510,40 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
         .coupon-card [hidden] { display: none !important; }
         /* 🔔 お知らせ */
         .notice-section { margin-bottom: 1.5rem; }
+        /* ⚠️ 暗い赤に暗い文字だと読めない（2026-08-23 の指摘）。
+              背景は明るい琥珀、文字は濃色にしてコントラストを確保する。 */
         .notice-card {
-            background: rgba(239, 68, 68, .07);
-            border: 1px solid rgba(239, 68, 68, .35);
+            background: linear-gradient(135deg, #fde68a, #fcd34d);
+            border: 1px solid #f59e0b;
             border-radius: 14px;
             padding: 1.1rem 1.2rem;
+            box-shadow: 0 6px 18px rgba(245, 158, 11, .22);
         }
         .notice-head { display: flex; align-items: center; gap: .5rem; margin-bottom: .7rem; }
-        .notice-icon { font-size: 1.15rem; }
-        .notice-title { font-weight: 800; }
+        .notice-icon { font-size: 1.25rem; }
+        .notice-title { font-weight: 800; font-size: 1.02rem; color: #1f2937; }
         .notice-count {
             margin-left: auto;
-            padding: .15rem .55rem;
+            padding: .2rem .6rem;
             border-radius: 999px;
-            background: #ef4444;
+            background: #dc2626;
             color: #fff;
-            font-size: .72rem;
+            font-size: .78rem;
             font-weight: 800;
         }
         .notice-list { list-style: none; margin: 0; padding: 0; }
-        .notice-list li { padding: .5rem 0; border-top: 1px solid rgba(148,163,184,.2); }
+        .notice-list li { padding: .55rem 0; border-top: 1px solid rgba(120, 53, 15, .22); }
         .notice-list li:first-child { border-top: 0; }
-        .notice-list a { font-weight: 700; text-decoration: none; }
-        .notice-list a:hover { text-decoration: underline; }
+        /* 会員ページ共通のリンク色（青）は背景に埋もれるので、ここでは濃い茶で上書きする */
+        .notice-list a {
+            display: inline-block;
+            font-weight: 800;
+            font-size: 1rem;
+            color: #7c2d12;
+            text-decoration: underline;
+            text-underline-offset: 3px;
+        }
+        .notice-list a:hover { color: #9a3412; }
         /* 新しく届いたクーポン。既読にしてもこの訪問のあいだは消さない */
         .coupon-new {
             padding: .18rem .5rem;

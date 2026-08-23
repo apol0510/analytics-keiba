@@ -393,6 +393,21 @@ const fullTitle = pageTitle
 
         /* Mobile Menu */
 
+        /* スマホのお知らせ（ハンバーガーの外）。既定は非表示で、件数があるときだけ出す */
+        .mobile-notice-bell {
+            display: none;
+            position: relative;
+            align-items: center;
+            margin-right: 6px;
+            padding: 6px 8px;
+            font-size: 22px;
+            line-height: 1;
+            text-decoration: none;
+            border-radius: 8px;
+        }
+        /* PC ではハンバーガー横の鈴を出さない（ナビに「🔔 お知らせ」があるため） */
+        @media (min-width: 769px) { .mobile-notice-bell { display: none !important; } }
+
         .mobile-menu-toggle {
             display: none;
             background: none;
@@ -845,17 +860,19 @@ const fullTitle = pageTitle
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            min-width: 1.15em;
-            height: 1.15em;
-            margin-left: .35em;
-            padding: 0 .3em;
+            /* ⚠️ 小さいと気づけない（2026-08-23 の指摘）。数字が読める大きさにする */
+            min-width: 20px;
+            height: 20px;
+            margin-left: .4em;
+            padding: 0 5px;
             border-radius: 999px;
             background: #ef4444;
             color: #fff;
-            font-size: .68rem;
+            font-size: 12px;
             font-weight: 800;
             line-height: 1;
             vertical-align: middle;
+            box-shadow: 0 0 0 2px rgba(239, 68, 68, .28);
         }
         .nav-notice-dot[hidden] { display: none !important; }
         /* 「お知らせ」ナビ。件数バッジをベルの右上へ寄せる */
@@ -933,6 +950,12 @@ const fullTitle = pageTitle
                     </ul>
                     
                     
+                    <!-- スマホのお知らせ（ハンバーガーの**外**）。
+                         ⚠️ メニューの中だけだと、開いて最下部まで見ないと気づけない。
+                            件数があるときだけ出す。中身を示す語は書かない（未ログイン者も見る）。 -->
+                    <a id="mobile-notice-bell" class="mobile-notice-bell" href="/dashboard/#notifications"
+                       aria-label="お知らせ" style="display: none;">🔔<span class="nav-notice-dot" data-notice-dot hidden aria-hidden="true"></span></a>
+
                     <!-- Mobile Menu Toggle (Simple) -->
                     <button class="mobile-menu-toggle" onclick="this.classList.toggle('active'); document.getElementById('mobile-nav-menu').classList.toggle('active')">
                         <div class="hamburger-lines">
@@ -1098,6 +1121,9 @@ const fullTitle = pageTitle
                     const li = document.getElementById(id);
                     if (li) li.style.display = 'block';
                 }
+                // スマホはハンバーガーの外にも出す（開かないと気づけないため）
+                const bell = document.getElementById('mobile-notice-bell');
+                if (bell) bell.style.display = 'inline-flex';
             } catch {
                 // お知らせの取得に失敗してもナビは壊さない
             }
