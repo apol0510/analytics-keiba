@@ -5487,7 +5487,9 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
     <!-- 販売導線（三連複 / Premium Plus / なし）の取得。判定はサーバー側の単一源。
          取得できないとき（未ログイン・API 不在）は 'unknown' のままで従来動作を維持する。 -->
     <script>
-      import { getUpsellDecision, getReopenCoupon } from '../lib/upsell/upsellClient.js';
+      import {
+        getUpsellDecision, getReopenCoupon, getCouponNotice, markCouponNoticeSeen,
+      } from '../lib/upsell/upsellClient.js';
       import { installPlusFunnel } from '../lib/premiumPlus/premiumPlusFunnelClient.js';
       // 実閲覧の送信本体。導線が出る前に install しておく（先に積まれても取りこぼさない）
       installPlusFunnel(window);
@@ -5497,6 +5499,7 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
         // 会員データ描画より後に確定することがあるので、取得後にもう一度出し分ける
         if (typeof window.applyUpsellSections === 'function') window.applyUpsellSections();
         renderReopenCoupon(await getReopenCoupon());
+        await markCouponCardSeenWhenVisible();
       })();
 
       /**
@@ -5572,6 +5575,39 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
         const usableDd = document.getElementById('reopen-coupon-usable');
         if (usableDd && usage.note) usableDd.textContent = usage.note;
         sec.style.display = '';
+      }
+
+      /**
+       * クーポンのカードが**実際に画面に入ったとき**だけ既読にする。
+       *
+       * ⚠️ 描画しただけで既読にしない。マイページを開いても下までスクロールしなければ
+       *    見ていないので、そこで赤い点を消すと「知らないうちに通知が消えた」になる。
+       * ⚠️ 既読にできない環境（保存不可）でも画面は壊さない。赤い点が出続けるだけ。
+       */
+      async function markCouponCardSeenWhenVisible() {
+        try {
+          const notice = await getCouponNotice();
+          if (!notice || notice.unseen !== true || !notice.signature) return;
+          const sec = document.getElementById('reopen-coupon-section');
+          if (!sec || sec.style.display === 'none') return;
+
+          const seen = () => {
+            markCouponNoticeSeen(notice.signature);
+            // その場で赤い点も消す（次のページ遷移を待たせない）
+            for (const dot of document.querySelectorAll('[data-notice-dot]')) dot.hidden = true;
+          };
+          if (typeof IntersectionObserver !== 'function') { seen(); return; }
+          const io = new IntersectionObserver((entries) => {
+            for (const e of entries) {
+              if (!e.isIntersecting) continue;
+              io.disconnect();
+              seen();
+            }
+          }, { threshold: 0.5 });
+          io.observe(sec);
+        } catch {
+          // お知らせの既読化に失敗しても画面は壊さない
+        }
       }
     </script>
 </BaseLayout>

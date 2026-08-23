@@ -839,6 +839,25 @@ const fullTitle = pageTitle
                 padding: 0 10px;
             }
         }
+        /* 未読のお知らせ（マイページの赤い点）。**件数だけ**を出し、中身は書かない。
+           ⚠️ `[hidden]` は作者スタイルに負けやすいので !important で確実に隠す。 */
+        .nav-notice-dot {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 1.15em;
+            height: 1.15em;
+            margin-left: .35em;
+            padding: 0 .3em;
+            border-radius: 999px;
+            background: #ef4444;
+            color: #fff;
+            font-size: .68rem;
+            font-weight: 800;
+            line-height: 1;
+            vertical-align: middle;
+        }
+        .nav-notice-dot[hidden] { display: none !important; }
     </style>
     <!-- 開発環境用テスト認証スクリプト -->
     {import.meta.env.DEV && <script src="/test-auth.js" is:inline></script>}
@@ -903,7 +922,7 @@ const fullTitle = pageTitle
                         <li><a href="/contact/"><span class="nav-icon">📧</span> <span class="nav-text">ご質問</span></a></li>
                         <li id="nav-signup" class="nav-auth-item"><a href="/free-signup/"><span class="nav-icon">✨</span> <span class="nav-text">無料で始める</span></a></li>
                         <li id="nav-login" class="nav-auth-item"><a href="/dashboard/" class="login-link"><span class="nav-icon">🔐</span> <span class="nav-text">マイページ</span></a></li>
-                        <li id="nav-dashboard" class="nav-auth-item" style="display: none;"><a href="/dashboard/" class="dashboard-link"><span class="nav-icon">👤</span> <span class="nav-text">マイページ</span></a></li>
+                        <li id="nav-dashboard" class="nav-auth-item" style="display: none;"><a href="/dashboard/" class="dashboard-link"><span class="nav-icon">👤</span> <span class="nav-text">マイページ</span><span class="nav-notice-dot" data-notice-dot hidden aria-hidden="true"></span></a></li>
                     </ul>
                     
                     
@@ -942,7 +961,7 @@ const fullTitle = pageTitle
                     <li id="mobile-nav-signup" class="nav-auth-item"><a href="/free-signup/" onclick="document.getElementById('mobile-nav-menu').classList.remove('active')"><span class="mobile-nav-icon">✨</span> 無料で始める</a></li>
                     <li class="mobile-nav-separator nav-auth-item" id="mobile-nav-separator"></li>
                     <li id="mobile-nav-login" class="nav-auth-item"><a href="/dashboard/" onclick="document.getElementById('mobile-nav-menu').classList.remove('active')"><span class="mobile-nav-icon">🔐</span> マイページ</a></li>
-                    <li id="mobile-nav-dashboard" class="nav-auth-item" style="display: none;"><a href="/dashboard/" onclick="document.getElementById('mobile-nav-menu').classList.remove('active')"><span class="mobile-nav-icon">👤</span> マイページ</a></li>
+                    <li id="mobile-nav-dashboard" class="nav-auth-item" style="display: none;"><a href="/dashboard/" onclick="document.getElementById('mobile-nav-menu').classList.remove('active')"><span class="mobile-nav-icon">👤</span> マイページ<span class="nav-notice-dot" data-notice-dot hidden aria-hidden="true"></span></a></li>
                 </ul>
             </div>
         </nav>
@@ -1039,6 +1058,35 @@ const fullTitle = pageTitle
     </footer>
 
     <script>
+        // ── 未読のお知らせ（マイページの赤い点）──────────────────────
+        //
+        // ⚠️ 2026-08-23 追加。それまで会員へ何かをお渡ししても**知らせる手段が無く**、
+        //    たまたまマイページを開かない限り気づけなかった。
+        //
+        // ⚠️ このナビは**全ページ**（未ログイン者も見る）に出る。
+        //    バッジには**件数だけ**を出し、中身を示す語を 1 つも書かない。
+        //    何のお知らせかはマイページを開いて初めて分かる＝存在秘匿を壊さない。
+        //    詳細と判定は `couponNotice.js`（サーバー応答から導出）にある。
+        import { getCouponNotice } from '../lib/upsell/upsellClient.js';
+
+        (async () => {
+            try {
+                const dots = document.querySelectorAll('[data-notice-dot]');
+                if (!dots.length) return;
+                const n = await getCouponNotice();
+                if (!n || n.unseen !== true || !n.count) return;
+                for (const dot of dots) {
+                    dot.textContent = String(n.count);
+                    // 読み上げは件数だけ（中身を言わない）
+                    dot.setAttribute('aria-hidden', 'false');
+                    dot.setAttribute('aria-label', `新しいお知らせ ${n.count} 件`);
+                    dot.hidden = false;
+                }
+            } catch {
+                // お知らせの取得に失敗してもナビは壊さない
+            }
+        })();
+
         // 認証機能は一時的に無効化（MIMEエラー回避）
         // import { getUserWithPlan } from '../lib/auth-utils.js';
         
