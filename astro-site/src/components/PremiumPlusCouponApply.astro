@@ -81,9 +81,20 @@
     bd.hidden = false;
     var discountRow = bd.querySelector('.discount');
     if (discountRow) discountRow.style.display = p.discount > 0 ? '' : 'none';
-    // 振込金額欄もサーバーの確定値へ（画面で計算しない）
+    // ── お客様が実際に見る金額を**すべて**サーバーの確定値へ揃える ────────────
+    // ⚠️ 2026-08-23: ここが内訳と `#transferAmount`（readonly の入力欄）しか
+    //    更新していなかったため、**画面で目立つ「振込金額」と手順の金額が
+    //    通常価格のまま**で「適用しても金額が変わらない」ように見えていた。
+    //    振り込む金額が画面ごとに食い違うのは、お客様が誤った額を振り込む事故に直結する。
+    //    金額を出している要素は 1 つ残らずここで揃える（画面側で計算はしない）。
     var amount = document.getElementById('transferAmount');
     if (amount && typeof p.finalPrice === 'number') amount.value = String(p.finalPrice);
+    // 「お支払い金額」の表示用文字列はサーバーが作ったものをそのまま使う
+    var payText = (b.finalText || '').replace('お支払い金額 ', '');
+    if (payText) {
+      setText('ppPayAmountBank', payText);
+      setText('ppPayAmountStep', payText);
+    }
     hidden.value = p.couponApplied ? p.couponApplied.couponId : '';
   }
 

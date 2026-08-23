@@ -912,7 +912,9 @@ async function handleCouponAdmin({ KEY, BASE, now, req }) {
       const after = await reloadCouponState({ KEY, BASE, recordId });
       // ⑦ 履歴（同じ lock の中・同じ OperationId）。失敗しても状態は巻き戻さない
       const history = await appendOperationHistory({
-        KEY, BASE, recordId, plan, actor, reason, before, after, detail: plan.note,
+        // ⚠️ 理由は **plan が確定させた値**（未入力なら操作ごとの既定）を使う。
+        //    生の入力をそのまま渡すと、既定理由で通した操作の履歴が空欄になる。
+        KEY, BASE, recordId, plan, actor, reason: plan.reason || reason, before, after, detail: plan.note,
       });
       return json(200, {
         success: true, couponAction, subject, before, after,
@@ -957,7 +959,7 @@ async function handleCouponAdmin({ KEY, BASE, now, req }) {
     const after = await reloadCouponState({ KEY, BASE, recordId });
     // ⑦ 履歴（同じ lock の中・同じ OperationId）。失敗しても状態は巻き戻さない
     const history = await appendOperationHistory({
-      KEY, BASE, recordId, plan, actor, reason, before, after,
+      KEY, BASE, recordId, plan, actor, reason: plan.reason || reason, before, after,
       detail: String(plan.fields[PP_REOPEN_COUPON_FIELDS.SOURCE] || ''),
     });
     return json(200, {

@@ -14,6 +14,7 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
+import { readFileSync } from 'node:fs';
 
 const FN = fileURLToPath(new URL('../../../netlify/functions/premium-plus-eligibility.js', import.meta.url));
 const { couponIdWithVersion, PP_REOPEN_COUPON_FIELDS, PP_REOPEN_COUPON_WRITABLE_FIELDS,
@@ -1046,13 +1047,51 @@ test('台帳を読めないときは使用済みにしない（読めないま�
   assert.equal(offerRow().fields.Status, OFFER_STATUS.ISSUED);
 });
 
-test('操作者名・理由が無ければ実行しない（監査が残らない操作を許さない）', async () => {
-  for (const over of [{ actor: '' }, { reason: '' }]) {
-    withReservation(OFFER_STATUS.ISSUED);
-    const out = await op(PP_COUPON_ADMIN_ACTION.REDEEM_RESERVATION, over);
-    assert.notEqual(out.statusCode, 200);
-    assert.equal(offerRow().fields.Status, OFFER_STATUS.ISSUED);
-  }
+test('操作者名が無ければ実行しない（誰がやったか分からない操作を許さない）', async () => {
+  withReservation(OFFER_STATUS.ISSUED);
+  const out = await op(PP_COUPON_ADMIN_ACTION.REDEEM_RESERVATION, { actor: '' });
+  assert.notEqual(out.statusCode, 200);
+  assert.equal(offerRow().fields.Status, OFFER_STATUS.ISSUED);
+});
+
+test('理由は打たなくてよい。ただし履歴は空にしない（既定理由を記録する）', async () => {
+  // ⚠️ 使用済み化は理由が常に同じ（入金を確認したから）。毎回打たせても監査の質は上がらない。
+  //    だが履歴が空欄になるのは別問題なので、**既定理由を必ず残す**。
+  withReservation(OFFER_STATUS.ISSUED);
+  const out = await op(PP_COUPON_ADMIN_ACTION.REDEEM_RESERVATION, { reason: '' });
+
+  assert.equal(out.statusCode, 200, '理由の手入力を強制している');
+  assert.equal(offerRow().fields.Status, OFFER_STATUS.REDEEMED);
+  assert.equal(db.history.length, 1);
+  assert.ok(String(db.history[0].fields.Reason || '').trim().length > 0, '履歴の理由が空');
+  assert.match(String(db.history[0].fields.Reason), /入金/);
+});
+
+test('理由を書いたときはそちらを残す（既定で上書きしない）', async () => {
+  withReservation(OFFER_STATUS.ISSUED);
+  await op(PP_COUPON_ADMIN_ACTION.REDEEM_RESERVATION, { reason: '窓口で現金確認' });
+  assert.match(String(db.history[0].fields.Reason), /窓口で現金確認/);
+});
+
+test('理由の既定を持たない操作は、これまでどおり理由が必須', async () => {
+  // ⚠️ 付与・訂正・再発行・予約取消は「なぜそうしたか」が毎回違う＝そこが監査の中身。
+  //    使用済み化の都合で、こちらまで空欄を許してはいけない。
+  db = makeDb();
+  const out = await op(PP_COUPON_ADMIN_ACTION.GRANT, { reason: '' });
+  assert.notEqual(out.statusCode, 200);
+  assert.equal(db.history.length, 0);
+});
+
+test('画面が既定理由を自前で作らない（サーバーが配る）', async () => {
+  withReservation(OFFER_STATUS.ISSUED);
+  const { listRow } = await views();
+  const redeem = (listRow.couponAdmin.actions || [])
+    .find((a) => a.action === PP_COUPON_ADMIN_ACTION.REDEEM_RESERVATION);
+  assert.ok(redeem.defaultReason, 'サーバーが既定理由を返していない');
+  const page = readFileSync(
+    fileURLToPath(new URL('../../pages/admin/premium-plus-eligibility.astro', import.meta.url)), 'utf8');
+  assert.match(page, /a\.defaultReason/, '画面がサーバーの既定理由を使っていない');
+  assert.ok(!page.includes(redeem.defaultReason), '画面に既定理由をベタ書きしている');
 });
 
 test('他会員の予約行には触らない', async () => {
