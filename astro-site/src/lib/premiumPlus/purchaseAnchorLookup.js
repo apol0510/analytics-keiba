@@ -24,6 +24,21 @@ export const ANCHOR_LOOKUP_TIMEOUT_MS = 2500;
 /** 同一レコードの再取得を抑えるキャッシュ TTL（ms）。段階公開は日単位なので粗くてよい。 */
 export const ANCHOR_CACHE_TTL_MS = 10 * 60 * 1000;
 
+/**
+ * **すぐ反映されないと困る読み取り**の許容鮮度（ms）。
+ *
+ * ## なぜ要るか（2026-08-23 / MK 報告「反映されない」）
+ *
+ * クーポンの保有状態は**管理画面の操作で変わる**。ところが管理操作は別の Function で
+ * 動くため、こちらの**プロセス内キャッシュを無効化できない**。
+ * その結果、再発行しても顧客画面は最大 10 分**古いまま**で、
+ * 「渡したのに画面が変わらない」状態になっていた（実際に本番で発生）。
+ *
+ * 段階公開のアンカー（日単位）は 10 分で構わないが、
+ * **クーポンの保有・お知らせ・申込価格**は分単位で追いつく必要がある。
+ */
+export const FRESH_LOOKUP_MAX_AGE_MS = 60 * 1000;
+
 /** recordId → { fields, expiresAt } */
 const cache = new Map();
 
@@ -73,12 +88,19 @@ export async function lookupCustomerFieldsResult(input) {
   const { recordId, env = {}, now = Date.now(), fetchImpl } = input || {};
   if (!recordId || typeof recordId !== 'string') return { ok: false, reason: 'not_found' };
 
+  // ⚠️ `maxAgeMs` を渡すと、TTL 内でも**それより古い値は使わない**。
+  //    管理画面の操作（付与・再発行・訂正）は別 Function なので、こちらの
+  //    プロセス内キャッシュを無効化できない。すぐ反映が要る読み取りはここで鮮度を指定する。
+  const maxAgeMs = Number.isFinite(input.maxAgeMs) ? Number(input.maxAgeMs) : null;
   const cached = cache.get(recordId);
-  if (cached && cached.expiresAt > now) return { ok: true, fields: cached.fields };
+  const fresh = cached
+    && cached.expiresAt > now
+    && (maxAgeMs === null || now - cached.cachedAt <= maxAgeMs);
+  if (fresh) return { ok: true, fields: cached.fields };
 
   const r = await fetchCustomerFields({ recordId, env, fetchImpl });
   // ✅ 成功したときだけ入れる。失敗（not_found / unavailable）は入れない。
-  if (r.ok) cache.set(recordId, { fields: r.fields, expiresAt: now + ANCHOR_CACHE_TTL_MS });
+  if (r.ok) cache.set(recordId, { fields: r.fields, cachedAt: now, expiresAt: now + ANCHOR_CACHE_TTL_MS });
   return r;
 }
 

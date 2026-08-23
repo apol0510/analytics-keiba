@@ -23,7 +23,7 @@
 export const prerender = false;
 
 import { verifyPlanAccess, PREMIUM_PLUS_CANDIDATE_PLANS } from '../../lib/auth/index.js';
-import { lookupCustomerFields } from '../../lib/premiumPlus/purchaseAnchorLookup.js';
+import { lookupCustomerFields, FRESH_LOOKUP_MAX_AGE_MS } from '../../lib/premiumPlus/purchaseAnchorLookup.js';
 import { resolveUpsellForCustomer, UPSELL_CHANNEL } from '../../lib/upsell/upsellTarget.js';
 // 取得済みクーポンの保有状態（マイページのカード用）。判定・文言は単一源に任せる
 import {
@@ -64,7 +64,10 @@ export async function GET({ request }) {
     recordId: access.payload?.sub || null,
     env: process.env,
     now,
-  });
+  // ⚠️ マイページのお知らせ・クーポン表示は**管理画面の操作ですぐ変わる**。古い値を使うと
+  //    「渡したのに画面が変わらない」になる（2026-08-23 の報告）。
+  maxAgeMs: FRESH_LOOKUP_MAX_AGE_MS,
+});
 
   // 販売の一時停止（PremiumPlusSalePaused）は member → release の単一源が読む。
   // ここで個別に判定しない。

@@ -25,7 +25,7 @@
 export const prerender = false;
 
 import { verifyPlanAccess, PREMIUM_PLUS_CANDIDATE_PLANS } from '../../lib/auth/index.js';
-import { lookupCustomerFields } from '../../lib/premiumPlus/purchaseAnchorLookup.js';
+import { lookupCustomerFields, FRESH_LOOKUP_MAX_AGE_MS } from '../../lib/premiumPlus/purchaseAnchorLookup.js';
 import { resolveUpsellForCustomer } from '../../lib/upsell/upsellTarget.js';
 import {
   listApplicableCoupons, resolveOrderPricing, describeOrderBreakdown,
@@ -58,7 +58,11 @@ export async function GET({ request, url }) {
   const recordId = access.payload?.sub || '';
   if (!recordId) return notFound();
 
-  const fields = await lookupCustomerFields({ recordId, env: process.env, now });
+  const fields = await lookupCustomerFields({ recordId, env: process.env, now,
+  // ⚠️ 申込画面の価格は**管理画面の操作ですぐ変わる**。古い値を使うと
+  //    「渡したのに画面が変わらない」になる（2026-08-23 の報告）。
+  maxAgeMs: FRESH_LOOKUP_MAX_AGE_MS,
+});
   const view = resolveUpsellForCustomer({
     fields, nowMs: now, fallbackAnchor: process.env.PREMIUM_PLUS_FUNNEL_ANCHOR,
   });

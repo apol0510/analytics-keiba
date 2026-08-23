@@ -13,7 +13,7 @@ export const prerender = false;
  * 画面には購入 CTA も価格も出さない（販売停止中の導線は閉じたまま）。
  */
 import { verifyPlanAccess, PREMIUM_PLUS_CANDIDATE_PLANS } from '../lib/auth/index.js';
-import { lookupCustomerFields } from '../lib/premiumPlus/purchaseAnchorLookup.js';
+import { lookupCustomerFields, FRESH_LOOKUP_MAX_AGE_MS } from '../lib/premiumPlus/purchaseAnchorLookup.js';
 import { resolveUpsellForCustomer } from '../lib/upsell/upsellTarget.js';
 import {
   readReopenCoupon, describeCouponForMember, describeCouponUsageForMember, isReopenCouponEnabled,
@@ -54,6 +54,9 @@ const fields = await lookupCustomerFields({
   recordId: access.payload?.sub || null,
   env: process.env,
   now,
+  // ⚠️ クーポンページは**管理画面の操作ですぐ変わる**。古い値を使うと
+  //    「渡したのに画面が変わらない」になる（2026-08-23 の報告）。
+  maxAgeMs: FRESH_LOOKUP_MAX_AGE_MS,
 });
 const view = resolveUpsellForCustomer({
   fields,
