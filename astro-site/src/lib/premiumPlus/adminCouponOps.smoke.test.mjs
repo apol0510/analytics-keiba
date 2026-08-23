@@ -905,13 +905,10 @@ test('admin secret が無ければ実行できない', async () => {
   assert.equal(db.writes.length, 0);
 });
 
-test('操作者・理由が無い直叩きを断る', async () => {
-  let out = await op(PP_COUPON_ADMIN_ACTION.GRANT, { actor: '' });
+test('操作者が無い直叩きを断る', async () => {
+  const out = await op(PP_COUPON_ADMIN_ACTION.GRANT, { actor: '' });
   assert.equal(out.statusCode, 400);
   assert.equal(out.body.code, PP_COUPON_ADMIN_REJECT.MISSING_ACTOR);
-  out = await op(PP_COUPON_ADMIN_ACTION.GRANT, { reason: '' });
-  assert.equal(out.statusCode, 400);
-  assert.equal(out.body.code, PP_COUPON_ADMIN_REJECT.MISSING_REASON);
   assert.equal(db.writes.length, 0);
 });
 
@@ -1073,13 +1070,23 @@ test('理由を書いたときはそちらを残す（既定で上書きしな�
   assert.match(String(db.history[0].fields.Reason), /窓口で現金確認/);
 });
 
-test('理由の既定を持たない操作は、これまでどおり理由が必須', async () => {
-  // ⚠️ 付与・訂正・再発行・予約取消は「なぜそうしたか」が毎回違う＝そこが監査の中身。
-  //    使用済み化の都合で、こちらまで空欄を許してはいけない。
+test('付与でも理由を打たずに実行できる（履歴には既定理由が残る）', async () => {
+  // ⚠️ 2026-08-23: 理由を必須にしていたため、運営者が付与・再発行のたびに
+  //    打たされて手が止まった（MK 報告「クーポン再発行 また操作理由求められる」）。
   db = makeDb();
   const out = await op(PP_COUPON_ADMIN_ACTION.GRANT, { reason: '' });
-  assert.notEqual(out.statusCode, 200);
-  assert.equal(db.history.length, 0);
+  assert.equal(out.statusCode, 200, '理由の手入力を強制している');
+  assert.equal(db.history.length, 1);
+  assert.ok(String(db.history[0].fields.Reason || '').trim().length > 0, '履歴の理由が空');
+});
+
+test('再発行でも理由を打たずに実行できる', async () => {
+  db = makeDb({ member: HELD_FIELDS });
+  await op(PP_COUPON_ADMIN_ACTION.CORRECT, { reason: '' });   // 履歴を作る
+  const out = await op(PP_COUPON_ADMIN_ACTION.REISSUE, { reason: '' });
+  assert.equal(out.statusCode, 200);
+  assert.equal(readReopenCoupon(db.customers[REC]).claimed, true, '渡せていない');
+  assert.ok(String(db.history.at(-1).fields.Reason || '').trim().length > 0);
 });
 
 test('画面が既定理由を自前で作らない（サーバーが配る）', async () => {
