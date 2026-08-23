@@ -85,3 +85,40 @@ export async function canShowPlusUpsell() {
   if (d.channel === UPSELL_CLIENT_CHANNEL.UNKNOWN) return true;
   return d.channel === UPSELL_CLIENT_CHANNEL.PLUS;
 }
+
+// ── お知らせ（未読の赤い点）────────────────────────────────
+//
+// ⚠️ 2026-08-23 追加。それまでクーポンを渡しても**お客様に知らせる手段が無く**、
+//    たまたまマイページを開かない限り気づけなかった。
+//
+// 既読は**その端末の localStorage** に持つ（本番 schema を増やさない）。
+// 読めない環境（プライベートウィンドウ等）では「未読」に倒す＝見落としを作らない。
+
+import { describeCouponNotice, isCouponNoticeUnseen } from '../premiumPlus/couponNotice.js';
+
+const SEEN_KEY = 'ak:coupon-notice-seen';
+
+function readSeen() {
+  try { return localStorage.getItem(SEEN_KEY) || ''; } catch { return ''; }
+}
+
+/**
+ * いま出すべきお知らせ（無ければ `show: false`）。追加の通信はしない。
+ * @returns {Promise<{show: boolean, unseen: boolean, count: number, label: string, signature: string}>}
+ */
+export async function getCouponNotice() {
+  const d = await getUpsellDecision();
+  const notice = describeCouponNotice(d && d.coupon);
+  const unseen = isCouponNoticeUnseen(notice, readSeen());
+  return { ...notice, unseen, count: unseen ? notice.count : 0 };
+}
+
+/**
+ * 見てもらえたので赤い点を消す。
+ * ⚠️ **実際に画面へ出たときだけ**呼ぶこと（開いていないのに既読にしない）。
+ */
+export function markCouponNoticeSeen(signature) {
+  const sig = String(signature || '').trim();
+  if (!sig) return false;
+  try { localStorage.setItem(SEEN_KEY, sig); return true; } catch { return false; }
+}
