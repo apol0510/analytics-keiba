@@ -108,7 +108,9 @@ import {
   describeCouponAdminState,
   describeCouponAdminActions,
 } from '../../src/lib/premiumPlus/premiumPlusCouponAdmin.js';
-import { buildReservationRevokeFields } from '../../src/lib/premiumPlus/premiumPlusCouponReservation.js';
+import {
+  buildReservationRevokeFields, buildReservationRedeemFields,
+} from '../../src/lib/premiumPlus/premiumPlusCouponReservation.js';
 import {
   createCouponOperationLock,
   LOCK_RESULT,
@@ -872,10 +874,19 @@ async function handleCouponAdmin({ KEY, BASE, now, req }) {
 
     if (plan.target === 'reservation') {
       const target = (fresh.ledger.rows || []).find((r) => r.id === plan.reservationRecordId);
-      const built = buildReservationRevokeFields({ record: target, nowMs: now, reason: plan.note });
+      // 使用済みにする / 取り消す のどちらも**予約行だけ**を書く（Customers は 1 バイトも触らない）
+      const isRedeem = plan.operation === PP_COUPON_ADMIN_ACTION.REDEEM_RESERVATION;
+      const built = isRedeem
+        // ⚠️ 期限判定は**報告受理時**で固定（`buildReservationRedeemFields` が台帳から再現する）。
+        //    管理者の確認が期限をまたいでも、確認待ち時間を理由に失効させない。
+        ? buildReservationRedeemFields({ record: target, nowMs: now })
+        : buildReservationRevokeFields({ record: target, nowMs: now, reason: plan.note });
       if (!built.fields) {
         return json(409, {
-          error: `利用予約を取り消せません（${built.skipped}）`, code: built.skipped,
+          error: isRedeem
+            ? `利用予約を使用済みにできません（${built.skipped}）`
+            : `利用予約を取り消せません（${built.skipped}）`,
+          code: built.skipped,
           subject, before, sideEffects: 'none',
         });
       }
@@ -890,13 +901,13 @@ async function handleCouponAdmin({ KEY, BASE, now, req }) {
       );
       if (!res.ok) {
         const detail = await res.text();
-        console.error('❌ [premium-plus-eligibility] 予約取消 PATCH failed:', res.status);
+        console.error(`❌ [premium-plus-eligibility] ${isRedeem ? '予約 使用済み化' : '予約取消'} PATCH failed:`, res.status);
         return json(502, {
           error: '予約台帳の更新に失敗しました', status: res.status, detail: detail.slice(0, 300),
           subject, before,
         });
       }
-      console.log('✅ [premium-plus-eligibility] 利用予約を取消:', { recordId, actor });
+      console.log(`✅ [premium-plus-eligibility] ${isRedeem ? '利用予約を使用済みに' : '利用予約を取消'}:`, { recordId, actor });
       // 台帳が変わったので**読み直す**（手元の ledger を使い回さない）
       const after = await reloadCouponState({ KEY, BASE, recordId });
       // ⑦ 履歴（同じ lock の中・同じ OperationId）。失敗しても状態は巻き戻さない
@@ -910,10 +921,17 @@ async function handleCouponAdmin({ KEY, BASE, now, req }) {
         history,
         /** Customers 側は 1 バイトも書いていない */
         customerFieldsUnchanged: true,
-        note: '利用予約を取り消しました。クーポンの取得（保有）はそのまま残っています。',
-        rollback: '同じクーポンで改めてお申し込みいただけます。'
-          + '取り消した予約行を issued へ戻す操作は用意していません（二重予約を防ぐため）。',
-        sideEffects: 'coupon_reservation_revoked',
+        note: isRedeem
+          ? '利用予約を使用済みにしました。クーポンの取得（保有）はそのまま残ります'
+            + '（渡した事実と使った事実を別々に残すため）。'
+          : '利用予約を取り消しました。クーポンの取得（保有）はそのまま残っています。',
+        // ⚠️ 使用済みは**戻せない**。曖昧に書かず、戻せないことをそのまま伝える
+        rollback: isRedeem
+          ? '使用済みを取り消す操作はありません（再利用を防ぐため）。'
+            + '誤って使用済みにした場合は Airtable の予約行を直接修正してください。'
+          : '同じクーポンで改めてお申し込みいただけます。'
+            + '取り消した予約行を issued へ戻す操作は用意していません（二重予約を防ぐため）。',
+        sideEffects: isRedeem ? 'coupon_reservation_redeemed' : 'coupon_reservation_revoked',
       });
     }
 

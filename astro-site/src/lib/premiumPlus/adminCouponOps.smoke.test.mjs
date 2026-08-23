@@ -933,3 +933,120 @@ test('監査値（実行者・時刻・理由）が Airtable の値として残�
   assert.equal(audit.reason, 'サポート対応 #123');
   assert.ok(Date.parse(audit.atIso) > 0, '操作時刻が残っていない');
 });
+
+// ── 利用予約を使用済みにする（2026-08-23 追加）────────────────
+//
+// ⚠️ **Premium Plus の完了を確定させる唯一の操作**。
+//    Plus は単品購入で Customers に申込内容（`RequestedPlan`）を書かないため、
+//    入金確認 Function は「申込フォーム未経由」として昇格ごとスキップする＝
+//    自動では使用済みにならない。この操作が無いと予約が永久に `issued` のまま残る。
+const withReservation = (status) => {
+  db = makeDb({
+    member: HELD_FIELDS,
+    offers: [{ id: 'recOFFER0000001', fields: reservationFields(status) }],
+  });
+};
+const offerRow = () => ({ id: 'recOFFER0000001', fields: db.offers['recOFFER0000001'] });
+
+test('入金確認待ちの予約を使用済みにできる（予約行の 2 列だけ）', async () => {
+  withReservation(OFFER_STATUS.ISSUED);
+  const before = { ...offerRow().fields };
+  const out = await op(PP_COUPON_ADMIN_ACTION.REDEEM_RESERVATION, { reason: '入金を確認' });
+
+  assert.equal(out.statusCode, 200);
+  assert.equal(out.body.success, true);
+  assert.equal(out.body.sideEffects, 'coupon_reservation_redeemed');
+  assert.equal(offerRow().fields.Status, OFFER_STATUS.REDEEMED);
+  assert.ok(offerRow().fields.RedeemedAt, '使用日時が残っていない');
+  // 予約行で変わったのは 2 列だけ
+  const changed = Object.keys(offerRow().fields)
+    .filter((k) => offerRow().fields[k] !== before[k]);
+  assert.deepEqual(changed.sort(), ['RedeemedAt', 'Status']);
+});
+
+test('使用済みにしても「取得済み」は消さない（渡した事実と使った事実は別）', async () => {
+  withReservation(OFFER_STATUS.ISSUED);
+  const before = { ...db.customers[REC] };
+  const out = await op(PP_COUPON_ADMIN_ACTION.REDEEM_RESERVATION, { reason: '入金を確認' });
+  assert.equal(out.body.customerFieldsUnchanged, true);
+  assert.deepEqual(db.customers[REC], before, 'Customers を書き換えている');
+  assert.equal(readReopenCoupon(db.customers[REC]).claimed, true);
+});
+
+test('戻せないことを応答で伝える（曖昧にしない）', async () => {
+  withReservation(OFFER_STATUS.ISSUED);
+  const out = await op(PP_COUPON_ADMIN_ACTION.REDEEM_RESERVATION, { reason: '入金を確認' });
+  assert.match(out.body.rollback, /取り消す操作はありません/);
+});
+
+test('二重に使用済みにしない（2 回目は断る・副作用ゼロ）', async () => {
+  withReservation(OFFER_STATUS.ISSUED);
+  await op(PP_COUPON_ADMIN_ACTION.REDEEM_RESERVATION, { reason: '入金を確認' });
+  const at = offerRow().fields.RedeemedAt;
+  db.writes.length = 0;
+
+  const again = await op(PP_COUPON_ADMIN_ACTION.REDEEM_RESERVATION, { reason: 'もう一度' });
+  assert.notEqual(again.statusCode, 200);
+  assert.equal(again.body.sideEffects, 'none');
+  assert.equal(offerRow().fields.RedeemedAt, at, '使用日時が上書きされている');
+  assert.equal(db.writes.length, 0);
+});
+
+test('予約が無ければ使用済みにできない', async () => {
+  db = makeDb({ member: HELD_FIELDS });
+  const out = await op(PP_COUPON_ADMIN_ACTION.REDEEM_RESERVATION, { reason: '入金を確認' });
+  assert.notEqual(out.statusCode, 200);
+  assert.equal(out.body.sideEffects, 'none');
+});
+
+test('取消済みの予約は使用済みにできない', async () => {
+  withReservation(OFFER_STATUS.REVOKED);
+  const out = await op(PP_COUPON_ADMIN_ACTION.REDEEM_RESERVATION, { reason: '入金を確認' });
+  assert.notEqual(out.statusCode, 200);
+  assert.equal(out.body.sideEffects, 'none');
+  assert.equal(offerRow().fields.Status, OFFER_STATUS.REVOKED);
+});
+
+test('使用済みにした操作も履歴に残る（誰が・いつ・なぜ）', async () => {
+  withReservation(OFFER_STATUS.ISSUED);
+  const out = await op(PP_COUPON_ADMIN_ACTION.REDEEM_RESERVATION, { reason: '入金を確認しました' });
+  assert.equal(db.history.length, 1);
+  assert.equal(db.history[0].fields.OperationType, 'redeemReservation');
+  assert.equal(db.history[0].fields.OperationId, out.body.operationId);
+  assert.match(String(db.history[0].fields.Reason || ''), /入金を確認しました/);
+});
+
+test('同時 2 本でも使用済み化は 1 回だけ', async () => {
+  withReservation(OFFER_STATUS.ISSUED);
+  const r = await race2(PP_COUPON_ADMIN_ACTION.REDEEM_RESERVATION);
+  assert.equal(r.okCount, 1);
+  assert.equal(r.patches, 1);
+  assert.equal(r.rejected.body.sideEffects, 'none');
+});
+
+test('台帳を読めないときは使用済みにしない（読めないまま書かない）', async () => {
+  withReservation(OFFER_STATUS.ISSUED);
+  db.ledger = 'fail';
+  const out = await op(PP_COUPON_ADMIN_ACTION.REDEEM_RESERVATION, { reason: '入金を確認' });
+  assert.notEqual(out.statusCode, 200);
+  assert.equal(offerRow().fields.Status, OFFER_STATUS.ISSUED);
+});
+
+test('操作者名・理由が無ければ実行しない（監査が残らない操作を許さない）', async () => {
+  for (const over of [{ actor: '' }, { reason: '' }]) {
+    withReservation(OFFER_STATUS.ISSUED);
+    const out = await op(PP_COUPON_ADMIN_ACTION.REDEEM_RESERVATION, over);
+    assert.notEqual(out.statusCode, 200);
+    assert.equal(offerRow().fields.Status, OFFER_STATUS.ISSUED);
+  }
+});
+
+test('他会員の予約行には触らない', async () => {
+  withReservation(OFFER_STATUS.ISSUED);
+  db.offers['recOFFER0000009'] = {
+    ...reservationFields(OFFER_STATUS.ISSUED), CustomerRecordId: OTHER, OfferKey: 'k9',
+  };
+  await op(PP_COUPON_ADMIN_ACTION.REDEEM_RESERVATION, { reason: '入金を確認' });
+  assert.equal(db.offers['recOFFER0000009'].Status, OFFER_STATUS.ISSUED,
+    '他会員の予約を書き換えている');
+});

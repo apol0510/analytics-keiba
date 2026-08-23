@@ -67,6 +67,15 @@ export const COUPON_OPERATION = Object.freeze({
   CORRECT: 'correct',
   /** 入金確認前の利用予約の取消 */
   REVOKE_RESERVATION: 'revokeReservation',
+  /**
+   * 利用予約を**使用済み**にする（管理者の手動確定）。
+   *
+   * ⚠️ 自動で確定できない商品のために要る。Premium Plus は単品購入で
+   *    Customers に申込内容（`RequestedPlan`）を書かないため、入金確認 Function は
+   *    **昇格ごとスキップ**する＝ redeem に到達しない。
+   *    その商品では**この操作だけが「使い終わった」の唯一の合図**になる。
+   */
+  REDEEM_RESERVATION: 'redeemReservation',
 });
 
 /** `Source` 列などへ書く操作の印（**顧客の取得経路と混ざらない値**にする） */
@@ -75,6 +84,7 @@ export const COUPON_OPERATION_SOURCE = Object.freeze({
   correct: 'admin-correct',
   reissue: 'admin-reissue',
   revokeReservation: 'admin-revoke-reservation',
+  redeemReservation: 'admin-redeem-reservation',
 });
 
 export const COUPON_OPERATION_LABEL = Object.freeze({
@@ -83,6 +93,7 @@ export const COUPON_OPERATION_LABEL = Object.freeze({
   reissue: 'クーポンを再発行',
   correct: '誤取得を訂正（取得を取り消す）',
   revokeReservation: '利用予約を取り消す',
+  redeemReservation: '利用予約を使用済みにする',
 });
 
 /** 操作を断る理由（**商品によらない**） */
@@ -100,6 +111,8 @@ export const COUPON_REJECT = Object.freeze({
   RESERVATION_ACTIVE: 'reservation_active',
   NO_RESERVATION: 'no_reservation',
   RESERVATION_NOT_REVOCABLE: 'reservation_not_revocable',
+  /** 使用済みにできる予約が無い（取消済み・報告が期限後 など） */
+  RESERVATION_NOT_REDEEMABLE: 'reservation_not_redeemable',
   /** 過去に取得履歴がある → 付与ではなく再発行 */
   HISTORY_EXISTS: 'coupon_history_exists',
   /** 過去の取得履歴が無い → 再発行ではなく付与 */
@@ -126,6 +139,8 @@ export const COUPON_REJECT_TEXT = Object.freeze({
     + '（予約を残したまま取得状態を書き換えると、予約と取得の整合が崩れます）。',
   no_reservation: '取り消せる利用予約がありません。',
   reservation_not_revocable: 'この利用予約は既に使用済み／取消済みのため取り消せません。',
+  reservation_not_redeemable: '使用済みにできる利用予約がありません'
+    + '（入金確認待ちの予約がある場合だけ実行できます）。',
   coupon_history_exists: 'この会員には過去の取得履歴があります。'
     + '「クーポンを付与」ではなく「クーポンを再発行」を使ってください'
     + '（履歴のある会員への付与と、初めての付与を取り違えないため）。',
@@ -366,7 +381,7 @@ export function resolveCouponOperationPlan({
   const deny = (code) => ({ ok: false, code, message: COUPON_REJECT_TEXT[code] || '操作できません' });
   const O = COUPON_OPERATION;
   const R = COUPON_REJECT;
-  const ADMIN_OPS = [O.GRANT, O.REISSUE, O.CORRECT, O.REVOKE_RESERVATION];
+  const ADMIN_OPS = [O.GRANT, O.REISSUE, O.CORRECT, O.REVOKE_RESERVATION, O.REDEEM_RESERVATION];
 
   if (!ADMIN_OPS.includes(operation)) return deny(R.UNKNOWN_ACTION);
   if (!cleanToken(actor)) return deny(R.MISSING_ACTOR);
@@ -402,6 +417,28 @@ export function resolveCouponOperationPlan({
       operationId,
       note: encodeCouponAudit({
         kind: COUPON_OPERATION_SOURCE.revokeReservation, actor, atIso, reason, operationId,
+      }),
+      customerFieldsUnchanged: true,
+    };
+  }
+
+  // ── 使用済みにする（保有状態には触らない）──────────────────
+  // ⚠️ 取消と同じく**予約行だけ**を書く。Customers の「取得済み」は消さない
+  //    （使ったという事実と、渡したという事実は別々に残す）。
+  if (operation === O.REDEEM_RESERVATION) {
+    if (rv.hasRedeemed === true) return deny(R.ALREADY_REDEEMED);
+    if (!rv.count) return deny(R.NO_RESERVATION);
+    if (!rv.hasIssued || !rv.issuedRecordId) return deny(R.RESERVATION_NOT_REDEEMABLE);
+    if (!operationId) return deny(R.UNKNOWN_ACTION);
+    return {
+      ok: true,
+      operation,
+      target: 'reservation',
+      reservationRecordId: rv.issuedRecordId,
+      anchor,
+      operationId,
+      note: encodeCouponAudit({
+        kind: COUPON_OPERATION_SOURCE.redeemReservation, actor, atIso, reason, operationId,
       }),
       customerFieldsUnchanged: true,
     };
@@ -470,7 +507,7 @@ export function describeCouponOperationAvailability({
   if (rv.available !== true) {
     // 台帳が読めないときは**全操作を伏せる**（押せるように見せない）
     return {
-      actions: [O.GRANT, O.REVOKE_RESERVATION, O.CORRECT, O.REISSUE]
+      actions: [O.GRANT, O.REVOKE_RESERVATION, O.REDEEM_RESERVATION, O.CORRECT, O.REISSUE]
         .map((o) => mk(o, R.LEDGER_UNAVAILABLE)),
       history: null,
       redeemed: null,
@@ -488,11 +525,16 @@ export function describeCouponOperationAvailability({
   const correctBlock = base || (held.claimed !== true ? R.NOT_CLAIMED : null);
   const revokeBlock = rv.hasIssued === true ? null
     : (rv.count ? R.RESERVATION_NOT_REVOCABLE : R.NO_RESERVATION);
+  // 使用済みにできるのは「入金確認待ちの予約がある」ときだけ
+  const redeemBlock = rv.hasRedeemed === true ? R.ALREADY_REDEEMED
+    : (rv.hasIssued === true ? null
+      : (rv.count ? R.RESERVATION_NOT_REDEEMABLE : R.NO_RESERVATION));
 
   return {
     actions: [
       mk(O.GRANT, grantBlock),
       mk(O.REVOKE_RESERVATION, revokeBlock),
+      mk(O.REDEEM_RESERVATION, redeemBlock),
       mk(O.CORRECT, correctBlock),
       mk(O.REISSUE, reissueBlock),
     ],

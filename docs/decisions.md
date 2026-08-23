@@ -8,6 +8,66 @@
 
 ---
 
+## 2026-08-23（2） — Premium Plus の完了は**管理画面の操作**で確定させる
+
+### Status
+
+**Accepted**（2026-08-23 / MK 承認）。同日（1）で配線した redeem が
+**Premium Plus では発火しない**ことが分かったための追加対応。
+
+### Context
+
+同日（1）で `confirm-bank-payment` に redeem を配線した。ところが Premium Plus は
+**単品購入で Customers を書き換えない**（`bank-transfer-application.js` の Airtable 登録
+ブロックは `if (!isPremiumPlusProductName(...))` で Plus を除外している）。したがって:
+
+- `RequestedPlan` が書かれない
+- 入金確認 Function は「申込フォーム未経由」として **昇格ごとスキップ**する
+- → **redeem に到達しない**
+
+さらに `isCustomerSettled()`（Customers から入金確認の完了を推定する）は
+「申込時に `RequestedPlan` が書かれる」ことを前提にしていた。Plus では書かれないので、
+**既に有料会員の申込者は申し込む前から「確定済み」に見え**、予約ができた瞬間に
+「⚠️ 要修復」と表示される（入金前なのに修復を促す誤警告）。逆に使用済みにしても
+Customers は動かないので「🚨 異常」にも化ける。
+
+### Decision
+
+**1. 管理画面に「利用予約を使用済みにする」を追加する**（共通層 `COUPON_OPERATION.REDEEM_RESERVATION`）
+
+- Plus は手動決済なので、**この操作が完了の唯一の合図**
+- 予約行の 2 列（`Status` / `RedeemedAt`）だけを書く。**Customers の「取得済み」は消さない**
+  （渡した事実と使った事実を別々に残す）
+- 操作者名・理由が必須。履歴（`CouponOperationHistory`）に残る
+- **一方向**。戻す操作は用意しない（再利用を防ぐため）。応答と確認ダイアログで明示する
+
+**2. 予約の状態を Customers から推定しない**
+
+`resolveRedeemState()` は**予約行そのもの**から状態を決める。
+
+| 予約 | 状態 |
+|---|---|
+| `issued`（受理から 14 日未満）| 入金確認待ち |
+| `issued`（14 日以上）| ⚠️ 要確認（記録漏れか入金なし。**滞留は実データで判る**）|
+| `redeemed` | 完了（Customers の姿によらない）|
+| `revoked` | 取消済み |
+
+失われる推定（「昇格済みなのに未 redeem」「redeemed なのに未昇格」）は、
+**この商品では判定材料が存在しない**ので推定しない。代わりに**滞留**という
+実データで拾える事実だけを修復対象にする。
+
+`planRedeemAfterConfirm()`（Customers から redeem を導ける商品向け・現在未使用）は
+`isCustomerSettled()` を直接見る形へ分離し、表示用の判定とは切り離した。
+
+### Consequences
+
+- **入金を確認したら、管理画面で「利用予約を使用済みにする」を実行する運用が必須**になる。
+  実行し忘れると 14 日後に「要確認」として admin に出る
+- 同日（1）で入れた `confirm-bank-payment` 側の redeem は Plus では発火しないが、
+  他プランでは正しく動くため残す（クーポン未取得の会員では台帳を読みにも行かない）
+
+---
+
 ## 2026-08-23 — クーポンを「使ったら消える」ようにする（配線の欠落を塞ぐ）
 
 ### Status

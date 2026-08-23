@@ -3698,7 +3698,13 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     /**
      * クーポンの管理操作パネル（**この画面で Airtable を直接編集しなくて済むように**）。
      *
-     * 4 操作: 付与 / 利用予約の取消 / 誤取得訂正 / 再発行。
+     * 5 操作: 付与 / 利用予約の取消 / **利用予約を使用済みにする** / 誤取得訂正 / 再発行。
+     *
+     * ⚠️ 「利用予約を使用済みにする」は **Premium Plus の完了を確定させる唯一の操作**。
+     *    Plus は単品購入で顧客レコードに申込内容を書かないため、入金確認の Automation では
+     *    自動的に使用済みになりません（入金確認 Function は「申込フォーム未経由」として
+     *    昇格ごとスキップします）。入金を確認したら**必ずこの操作を実行**してください。
+     *    実行すると**戻せません**（再利用を防ぐため）。
      * ⚠️ 可否の判定は**サーバー**（premium-plus-eligibility の couponAdmin）。
      *    ここでボタンを活性にしても、サーバーが 409 / 503 で断る。
      * ⚠️ 操作者名と理由は**必須**（監査記録に残る）。
@@ -3776,7 +3782,12 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           if (!actor) { msg.hidden = false; msg.className = 'coupon-ops-msg err'; msg.textContent = '操作者名を入力してください（変更履歴に残ります）'; $('connBody').hidden = false; return; }
           const why = reason.value.trim();
           if (!why) { msg.hidden = false; msg.className = 'coupon-ops-msg err'; msg.textContent = '操作理由を入力してください（監査記録に残ります）'; return; }
-          if (!confirm(a.label + '\n\n対象: ' + (r.email || r.recordId) + '\n理由: ' + why + '\n\n実行しますか？')) return;
+          // 使用済みは一方向。**戻せないことを押す前に伝える**
+          const oneWay = a.action === 'redeemReservation'
+            ? '\n\n⚠️ この操作は取り消せません（再利用を防ぐため）。'
+              + '入金を確認できている場合だけ実行してください。'
+            : '';
+          if (!confirm(a.label + '\n\n対象: ' + (r.email || r.recordId) + '\n理由: ' + why + oneWay + '\n\n実行しますか？')) return;
           b.disabled = true;
           const out = await call({
             action: 'couponAdmin', recordId: r.recordId, couponAction: a.action,
