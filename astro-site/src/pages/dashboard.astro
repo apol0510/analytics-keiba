@@ -121,6 +121,20 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                 </div>
             </div>
 
+            <!-- 期間限定の割引（全会員向け）。
+                 ⚠️ 金額・文言・申込先はサーバー（/api/upsell.json → campaignOffers.js）が返す。
+                    ここで割引額や価格を組み立てないこと。対象が無ければ出さない。 -->
+            <div class="campaign-section" id="campaign-section" style="display: none;">
+                <div class="campaign-card">
+                    <div class="campaign-head">
+                        <span class="campaign-icon">🎫</span>
+                        <span class="campaign-title">期間限定のご優待</span>
+                        <span class="campaign-deadline" id="campaign-deadline"></span>
+                    </div>
+                    <ul class="campaign-list" id="campaign-list"></ul>
+                </div>
+            </div>
+
             <!-- 穴馬ページリンク -->
             <div class="dark-horse-link-section">
                 <a href="/dark-horse-picks/" class="dark-horse-link-btn">
@@ -2508,6 +2522,35 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
          * カード内の要素は hidden なら必ず消す。
          */
         .coupon-card [hidden] { display: none !important; }
+        /* 🎫 期間限定のご優待 */
+        .campaign-section { margin-bottom: 1.5rem; }
+        .campaign-card {
+            background: linear-gradient(135deg, rgba(45,212,191,.12), rgba(59,130,246,.10));
+            border: 1px solid rgba(45,212,191,.4);
+            border-radius: 14px;
+            padding: 1.1rem 1.2rem;
+        }
+        .campaign-head { display: flex; align-items: center; gap: .5rem; margin-bottom: .8rem; flex-wrap: wrap; }
+        .campaign-icon { font-size: 1.2rem; }
+        .campaign-title { font-weight: 800; font-size: 1.02rem; color: #f8fafc; }
+        .campaign-deadline { margin-left: auto; font-size: .8rem; color: #fca5a5; font-weight: 700; }
+        .campaign-list { list-style: none; margin: 0; padding: 0; }
+        .campaign-list li {
+            display: flex; align-items: center; gap: .8rem; flex-wrap: wrap;
+            padding: .7rem 0; border-top: 1px solid rgba(148,163,184,.2);
+        }
+        .campaign-list li:first-child { border-top: 0; }
+        .campaign-name { font-weight: 700; color: #e2e8f0; font-size: .95rem; }
+        .campaign-price { color: #94a3b8; font-size: .84rem; }
+        .campaign-price strong { color: #6ee7b7; font-size: 1rem; }
+        .campaign-apply {
+            margin-left: auto; padding: .5rem 1rem; border-radius: 999px;
+            background: #2563eb; color: #fff; font-weight: 700; font-size: .85rem;
+            text-decoration: none; white-space: nowrap;
+        }
+        .campaign-apply:hover { background: #1d4ed8; }
+        @media (max-width: 600px) { .campaign-apply { margin-left: 0; width: 100%; text-align: center; } }
+
         /* 🔔 お知らせ */
         .notice-section { margin-bottom: 1.5rem; }
         /* ⚠️ 暗い赤に暗い文字だと読めない（2026-08-23 の指摘）。
@@ -5553,7 +5596,7 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
          取得できないとき（未ログイン・API 不在）は 'unknown' のままで従来動作を維持する。 -->
     <script>
       import {
-        getUpsellDecision, getReopenCoupon, getCouponNotice, markCouponNoticeSeen,
+        getUpsellDecision, getReopenCoupon, getCouponNotice, markCouponNoticeSeen, markNoticesSeen,
       } from '../lib/upsell/upsellClient.js';
       import { installPlusFunnel } from '../lib/premiumPlus/premiumPlusFunnelClient.js';
       // 実閲覧の送信本体。導線が出る前に install しておく（先に積まれても取りこぼさない）
@@ -5568,6 +5611,7 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
         const noticeAtLoad = await getCouponNotice();
         renderReopenCoupon(await getReopenCoupon());
         showCouponNewBadge(noticeAtLoad);
+        renderCampaign(d && d.campaign);
         renderNotifications(noticeAtLoad);
       })();
 
@@ -5647,6 +5691,45 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
       }
 
       /**
+       * 🎫 期間限定のご優待。
+       * ⚠️ 金額・文言・申込先は**サーバーが返した値だけ**を出す（画面で作らない）。
+       */
+      function renderCampaign(campaign) {
+        const sec = document.getElementById('campaign-section');
+        const list = document.getElementById('campaign-list');
+        const deadline = document.getElementById('campaign-deadline');
+        if (!sec || !list || !deadline) return;
+        const offers = (campaign && campaign.active === true && Array.isArray(campaign.offers))
+          ? campaign.offers : [];
+        if (!offers.length) { sec.style.display = 'none'; return; }
+
+        deadline.textContent = campaign.deadlineText || '';
+        list.innerHTML = '';
+        for (const o of offers) {
+          const li = document.createElement('li');
+          const box = document.createElement('div');
+          const n = document.createElement('div');
+          n.className = 'campaign-name';
+          n.textContent = o.name;
+          const p = document.createElement('div');
+          p.className = 'campaign-price';
+          // 「通常 <通常価格> → <割引後>」。どちらもサーバーが整形済みの文字列
+          p.append(document.createTextNode('通常 ' + o.regularPriceText + ' → '));
+          const strong = document.createElement('strong');
+          strong.textContent = o.offerPriceText;
+          p.appendChild(strong);
+          box.appendChild(n); box.appendChild(p);
+          const a = document.createElement('a');
+          a.className = 'campaign-apply';
+          a.href = o.applyHref;
+          a.textContent = 'この価格で申し込む';
+          li.appendChild(box); li.appendChild(a);
+          list.appendChild(li);
+        }
+        sec.style.display = '';
+      }
+
+      /**
        * 🔔 お知らせの一覧。ナビのベルから来た人がここで内容を読む。
        *
        * ⚠️ 文言はサーバー由来（`couponNotice.js`）。ここで組み立てない。
@@ -5661,19 +5744,27 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
 
         count.textContent = `${notice.count} 件`;
         list.innerHTML = '';
-        const li = document.createElement('li');
-        const a = document.createElement('a');
-        a.href = '#reopen-coupon-section';
-        a.textContent = notice.label;
-        a.addEventListener('click', (ev) => {
-          ev.preventDefault();
-          // ⚠️ **開いた（読んだ）ときに既読**。通りかかっただけでは消さない
-          markNoticeRead(notice);
-          const card = document.getElementById('reopen-coupon-section');
-          if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        });
-        li.appendChild(a);
-        list.appendChild(li);
+        // ⚠️ お知らせは 1 種類ではない（クーポン / 期間限定のご優待）。全部出す。
+        const items = Array.isArray(notice.items) && notice.items.length
+          ? notice.items
+          : [{ kind: notice.kind, label: notice.label, signature: notice.signature }];
+        for (const it of items) {
+          const li = document.createElement('li');
+          const a = document.createElement('a');
+          // 種類ごとに行き先が違う
+          const targetId = it.kind === 'campaign' ? 'campaign-section' : 'reopen-coupon-section';
+          a.href = `#${targetId}`;
+          a.textContent = it.label;
+          a.addEventListener('click', (ev) => {
+            ev.preventDefault();
+            // ⚠️ **開いた（読んだ）ときに既読**。通りかかっただけでは消さない
+            markNoticeRead(notice);
+            const card = document.getElementById(targetId);
+            if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          });
+          li.appendChild(a);
+          list.appendChild(li);
+        }
         sec.style.display = '';
 
         // ベル（🔔）から来た人は、お知らせを開いたのと同じ扱いにする
@@ -5691,8 +5782,10 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
        * ⚠️ カードの NEW はこの訪問のあいだ残す（消えるところを見せないと伝わらない）。
        */
       function markNoticeRead(notice) {
-        if (!notice || notice.unseen !== true || !notice.signature) return;
-        markCouponNoticeSeen(notice.signature);
+        if (!notice || notice.unseen !== true) return;
+        // 表示していたお知らせを**種類ごとに**既読にする
+        if (Array.isArray(notice.items) && notice.items.length) markNoticesSeen(notice.items);
+        else if (notice.signature) markCouponNoticeSeen(notice.signature);
         for (const dot of document.querySelectorAll('[data-notice-dot]')) dot.hidden = true;
         for (const id of ['nav-notice', 'mobile-nav-notice']) {
           const li = document.getElementById(id);

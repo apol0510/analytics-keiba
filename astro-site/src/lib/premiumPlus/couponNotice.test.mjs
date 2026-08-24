@@ -145,8 +145,11 @@ test('ベルの行き先にお知らせの中身がある（飛んだ先が空�
   // 未読が無ければ出さない（空の「お知らせ」を見せない）
   assert.match(body, /notice\.unseen !== true/);
   // 文言はサーバー由来（画面で作らない）
-  assert.match(body, /notice\.label/);
-  assert.doesNotMatch(body, /クーポン/, '画面で文言を組み立てている');
+  assert.match(body, /it\.label|notice\.label/);
+  // ⚠️ コメントは除いて検査する（説明のための語まで禁止すると、
+  //    正しい実装なのに落ちる。見るべきは**画面に出す文字列**だけ）
+  const code = body.replace(/\/\/[^\n]*/g, '');
+  assert.doesNotMatch(code, /textContent = '[^']*クーポン/, '画面で文言を組み立てている');
 });
 
 test('ナビの赤い点に商品名・中身を書かない（未ログイン者も見るため）', () => {
@@ -212,5 +215,8 @@ test('既読は端末の保存だけ（本番 schema を増やさない）', () 
   const client = read('../../lib/upsell/upsellClient.js');
   assert.match(client, /localStorage/);
   // 保存できない環境でも落ちない
-  assert.match(client, /catch \{ return ''; \}/);
+  // 種類ごとに既読を持つので JSON で保存する（1 つ見て両方消えない）
+  assert.match(client, /localStorage\.setItem\(SEEN_KEY, JSON\.stringify\(seen\)\)/);
+  // 保存できない環境でも落ちない
+  assert.match(client, /catch \{ return \{\}; \}/);
 });

@@ -1,0 +1,228 @@
+---
+export const prerender = true;
+// 全会員向けキャンペーン割引の管理画面。
+//
+// 認可: /admin/* の Basic-Auth（Edge Function）背後。POST は x-admin-secret を
+// admin-campaign Function 側で検証する。secret はこのタブ限定（sessionStorage）。
+//
+// この画面が変更するのは **配布の停止スイッチと個別除外だけ**。
+// 割引額・期間はコード（campaignOffers.js）が正本で、ここからは変更できない。
+// Customers には 1 バイトも書かない。
+//
+// ⚠️ style は `is:global` + `.camp` 名前空間で書く。Astro の scoped style は
+//    JS で生成した要素に適用されないため（premium-plus-eligibility で本番事故あり）。
+import BaseLayout from '../../layouts/BaseLayout.astro';
+---
+
+<BaseLayout title="キャンペーン割引 管理" description="全会員向けキャンペーン割引の状態確認・停止・個別除外">
+  <div class="camp">
+    <h1>🎫 キャンペーン割引 管理</h1>
+
+    <section class="camp-sec">
+      <label class="camp-label">管理シークレット（このタブだけで保持）</label>
+      <input type="password" id="secret" class="camp-input" autocomplete="off" placeholder="x-admin-secret" />
+      <label class="camp-label">操作者名（書き込みに必須・ログに残ります）</label>
+      <input type="text" id="actor" class="camp-input" maxlength="32" placeholder="MK" />
+      <button type="button" id="load" class="camp-btn">状態を読み込む</button>
+      <label class="camp-check"><input type="checkbox" id="countTargets" /> 対象人数も数える（全件走査・時間がかかります）</label>
+      <p class="camp-msg" id="msg"></p>
+    </section>
+
+    <section class="camp-sec" id="statusSec" hidden>
+      <h2>いまの状態</h2>
+      <p class="camp-state" id="state"></p>
+      <p class="camp-note" id="stateNote"></p>
+      <dl class="camp-kv" id="kv"></dl>
+      <div class="camp-ops">
+        <button type="button" id="pause" class="camp-btn danger">配布を止める</button>
+        <button type="button" id="resume" class="camp-btn">配布を再開する</button>
+      </div>
+    </section>
+
+    <section class="camp-sec" id="offersSec" hidden>
+      <h2>配っている割引（コードが正本・ここでは変更できません）</h2>
+      <ul class="camp-list" id="offers"></ul>
+      <h3>契約ごとの出し分け</h3>
+      <dl class="camp-kv" id="byPlan"></dl>
+    </section>
+
+    <section class="camp-sec" id="excludeSec" hidden>
+      <h2>個別に対象外にする</h2>
+      <p class="camp-note">対象外にすると、その会員には案内も申込の割引も出なくなります。Customers は変更しません。</p>
+      <input type="text" id="recordId" class="camp-input" placeholder="rec から始まる 17 文字" />
+      <input type="text" id="reason" class="camp-input" maxlength="120" placeholder="理由（任意・ログに残ります）" />
+      <div class="camp-ops">
+        <button type="button" id="doExclude" class="camp-btn danger">対象外にする</button>
+        <button type="button" id="undoExclude" class="camp-btn">対象へ戻す</button>
+      </div>
+      <h3>現在の対象外</h3>
+      <ul class="camp-list" id="excluded"></ul>
+    </section>
+  </div>
+
+  <style is:global>
+    .camp { max-width: 860px; margin: 0 auto; padding: 2rem 1rem 4rem; color: #e2e8f0; }
+    .camp h1 { font-size: 1.4rem; margin-bottom: 1.4rem; }
+    .camp h2 { font-size: 1.1rem; margin: 0 0 .8rem; }
+    .camp h3 { font-size: .95rem; margin: 1.2rem 0 .6rem; color: #94a3b8; }
+    .camp-sec { background: rgba(30,41,59,.6); border: 1px solid rgba(148,163,184,.25);
+      border-radius: 12px; padding: 1.2rem; margin-bottom: 1.2rem; }
+    .camp-label { display: block; font-size: .82rem; color: #94a3b8; margin: .6rem 0 .25rem; }
+    .camp-input { width: 100%; padding: .6rem .7rem; border-radius: 8px;
+      border: 1px solid rgba(148,163,184,.35); background: #0f172a; color: #e2e8f0; margin-bottom: .5rem; }
+    .camp-check { display: block; font-size: .82rem; color: #94a3b8; margin: .5rem 0; }
+    .camp-btn { padding: .6rem 1.1rem; border: 0; border-radius: 8px; background: #2563eb;
+      color: #fff; font-weight: 700; cursor: pointer; margin-right: .5rem; }
+    .camp-btn:hover { background: #1d4ed8; }
+    .camp-btn.danger { background: #b91c1c; }
+    .camp-btn.danger:hover { background: #991b1b; }
+    .camp-ops { margin-top: .8rem; }
+    .camp-msg { margin: .8rem 0 0; font-size: .86rem; min-height: 1.2em; color: #6ee7b7; }
+    .camp-msg.err { color: #fca5a5; }
+    .camp-state { font-size: 1.15rem; font-weight: 800; margin: 0 0 .4rem; }
+    .camp-note { font-size: .84rem; color: #94a3b8; margin: 0 0 .6rem; }
+    .camp-kv { display: grid; grid-template-columns: auto 1fr; gap: .3rem 1rem; margin: 0; font-size: .88rem; }
+    .camp-kv dt { color: #94a3b8; }
+    .camp-kv dd { margin: 0; }
+    .camp-list { list-style: none; margin: 0; padding: 0; font-size: .88rem; }
+    .camp-list li { padding: .35rem 0; border-top: 1px solid rgba(148,163,184,.18); }
+    .camp-list li:first-child { border-top: 0; }
+  </style>
+
+  <script is:inline>
+    (function () {
+      var $ = function (id) { return document.getElementById(id); };
+      var msg = $('msg');
+      var SKEY = 'camp-admin-secret';
+      try { $('secret').value = sessionStorage.getItem(SKEY) || ''; } catch (e) {}
+      $('secret').addEventListener('change', function () {
+        try { sessionStorage.setItem(SKEY, $('secret').value.trim()); } catch (e) {}
+      });
+      try { $('actor').value = localStorage.getItem('pp-admin-actor') || ''; } catch (e) {}
+
+      function show(text, isErr) {
+        msg.textContent = text;
+        msg.className = isErr ? 'camp-msg err' : 'camp-msg';
+      }
+
+      async function call(body) {
+        var secret = $('secret').value.trim();
+        if (!secret) { show('管理シークレットを入力してください', true); return null; }
+        try {
+          var res = await fetch('/.netlify/functions/admin-campaign', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
+            body: JSON.stringify(body),
+          });
+          var out = await res.json();
+          if (!res.ok) { show((out && out.error) || '実行できませんでした', true); return null; }
+          return out;
+        } catch (e) {
+          // ⚠️ 通信断は「書かれたか不明」。成功とも失敗とも言わない
+          show('通信が切れました。書き込まれたか分かりません。再読込で確認してください。', true);
+          return null;
+        }
+      }
+
+      function kvRow(dl, k, v) {
+        var dt = document.createElement('dt'); dt.textContent = k;
+        var dd = document.createElement('dd'); dd.textContent = v;
+        dl.appendChild(dt); dl.appendChild(dd);
+      }
+
+      async function load() {
+        var out = await call({ action: 'status', countTargets: $('countTargets').checked });
+        if (!out) return;
+        $('statusSec').hidden = false;
+        $('offersSec').hidden = false;
+        $('excludeSec').hidden = false;
+
+        $('state').textContent = out.view.label;
+        $('stateNote').textContent = out.view.note || '';
+
+        var kv = $('kv'); kv.innerHTML = '';
+        kvRow(kv, '開催期間', out.window.startsAtIso + ' 〜 ' + out.window.endsAtIso);
+        kvRow(kv, '期限の表示', out.window.deadlineText);
+        kvRow(kv, '期間内か', out.window.withinWindow ? 'はい' : 'いいえ');
+        kvRow(kv, '対象外の人数', out.view.excludedCountText);
+        if (out.targets && out.targets.available) {
+          var b = out.targets.buckets;
+          kvRow(kv, '無料の方', b.free + ' 名');
+          kvRow(kv, 'Light の方', b.light + ' 名');
+          kvRow(kv, 'Premium の方', b.premium + ' 名');
+          kvRow(kv, '三連複の方（対象外）', b.sanrenpuku + ' 名');
+          kvRow(kv, '個別に対象外', b.excluded + ' 名');
+        } else if ($('countTargets').checked) {
+          kvRow(kv, '対象人数', '確認できない（' + (out.targets.reason || '') + '）');
+        }
+
+        var ol = $('offers'); ol.innerHTML = '';
+        (out.offers || []).forEach(function (o) {
+          var li = document.createElement('li'); li.textContent = o.line; ol.appendChild(li);
+        });
+
+        var bp = $('byPlan'); bp.innerHTML = '';
+        var labels = { free: '無料の方', light: 'Light の方', premium: 'Premium の方', sanrenpuku: '三連複の方' };
+        Object.keys(labels).forEach(function (k) {
+          var ids = (out.byPlan && out.byPlan[k]) || [];
+          kvRow(bp, labels[k], ids.length ? String(ids.length) + ' 件' : '出さない');
+        });
+
+        var ex = $('excluded'); ex.innerHTML = '';
+        if (!out.excluded.available) {
+          var li0 = document.createElement('li');
+          li0.textContent = '確認できない（読めていません）';
+          ex.appendChild(li0);
+        } else if (!out.excluded.ids.length) {
+          var li1 = document.createElement('li'); li1.textContent = '（なし）'; ex.appendChild(li1);
+        } else {
+          out.excluded.ids.forEach(function (id) {
+            var li = document.createElement('li'); li.textContent = id; ex.appendChild(li);
+          });
+        }
+        show('読み込みました');
+      }
+
+      function actor() {
+        var a = $('actor').value.trim();
+        if (a) { try { localStorage.setItem('pp-admin-actor', a); } catch (e) {} }
+        return a;
+      }
+
+      $('load').addEventListener('click', load);
+
+      $('pause').addEventListener('click', async function () {
+        if (!actor()) { show('操作者名を入力してください', true); return; }
+        if (!confirm('配布を止めます。\n案内も申込の割引も出なくなります。\n\n実行しますか？')) return;
+        var out = await call({ action: 'pause', paused: true, actor: actor() });
+        if (out) { show(out.note); load(); }
+      });
+
+      $('resume').addEventListener('click', async function () {
+        if (!actor()) { show('操作者名を入力してください', true); return; }
+        if (!confirm('配布を再開します。\n期間内なら案内と割引が出ます。\n\n実行しますか？')) return;
+        var out = await call({ action: 'pause', paused: false, actor: actor() });
+        if (out) { show(out.note); load(); }
+      });
+
+      $('doExclude').addEventListener('click', async function () {
+        if (!actor()) { show('操作者名を入力してください', true); return; }
+        var id = $('recordId').value.trim();
+        if (!confirm('この会員を対象外にします。\n対象: ' + id + '\n\n実行しますか？')) return;
+        var out = await call({
+          action: 'exclude', excluded: true, recordId: id, actor: actor(), reason: $('reason').value.trim(),
+        });
+        if (out) { show(out.note); load(); }
+      });
+
+      $('undoExclude').addEventListener('click', async function () {
+        if (!actor()) { show('操作者名を入力してください', true); return; }
+        var id = $('recordId').value.trim();
+        var out = await call({
+          action: 'exclude', excluded: false, recordId: id, actor: actor(), reason: $('reason').value.trim(),
+        });
+        if (out) { show(out.note); load(); }
+      });
+    })();
+  </script>
+</BaseLayout>

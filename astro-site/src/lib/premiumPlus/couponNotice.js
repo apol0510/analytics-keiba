@@ -93,3 +93,49 @@ export function isCouponNoticeUnseen(notice, seenSignature) {
   if (n.show !== true || !n.signature) return false;
   return String(seenSignature || '') !== n.signature;
 }
+
+// ── 複数のお知らせをまとめる ────────────────────────────────
+//
+// ⚠️ お知らせは 1 種類ではない。クーポン（Premium Plus）とキャンペーン割引は
+//    別の話なので、**件数はそれぞれ数えて合計する**。
+//    1 つ見たからといって、もう一方まで既読にしない。
+
+/**
+ * キャンペーン割引のお知らせ（`/api/upsell.json` の `campaign`）。
+ * @returns {{ show: boolean, kind: string, label: string, signature: string, count: number }}
+ */
+export function describeCampaignNotice(campaign) {
+  const c = campaign || {};
+  const offers = Array.isArray(c.offers) ? c.offers : [];
+  if (c.active !== true || !offers.length || !c.signature) {
+    return { show: false, kind: '', label: '', signature: '', count: 0 };
+  }
+  return {
+    show: true,
+    kind: 'campaign',
+    // ⚠️ 件数は「お知らせの数」＝1 件。割引の本数を出すと通知が水増しされる
+    label: offers.length === 1
+      ? `${offers[0].name}（${c.deadlineText}）`
+      : `割引のご案内が ${offers.length} 件あります（${c.deadlineText}）`,
+    signature: c.signature,
+    count: 1,
+  };
+}
+
+/**
+ * いま出すべきお知らせをすべて返す（未読だけ）。
+ *
+ * @param {{ coupon?: object, campaign?: object, seen?: Record<string,string> }} input
+ *   `seen` は種類ごとの既読 signature
+ * @returns {{ count: number, items: Array<{kind,label,signature}> }}
+ */
+export function describeAllNotices({ coupon, campaign, seen } = {}) {
+  const read = seen || {};
+  const items = [];
+  for (const n of [describeCouponNotice(coupon), describeCampaignNotice(campaign)]) {
+    if (isCouponNoticeUnseen(n, read[n.kind])) {
+      items.push({ kind: n.kind, label: n.label, signature: n.signature });
+    }
+  }
+  return { count: items.length, items };
+}

@@ -34,6 +34,11 @@ import { formatClaimedAtJst, COUPON_PAGE_PATH } from '../../lib/premiumPlus/prem
 // 「使ったか」は保有（Customers 3 列）ではなく**予約台帳**にしかない
 import { listReservationsFor } from '../../lib/premiumPlus/premiumPlusCouponReservationStore.js';
 import { describeCouponLifecycle } from '../../lib/premiumPlus/premiumPlusCouponReservation.js';
+// 全会員向けキャンペーン割引（Light / Premium / 三連複）。Premium Plus とは別物。
+import { describeCampaignForMember, isCampaignActive } from '../../lib/promotions/campaignOffers.js';
+import { campaignControlStore } from '../../lib/promotions/campaignControlStore.js';
+import { resolveCampaignAllowed } from '../../lib/promotions/campaignControl.js';
+import { fromAirtableFields, resolveEntitlements } from '../../lib/entitlements/resolveEntitlements.js';
 import { loadReopenStart } from '../../lib/premiumPlus/premiumPlusReopenStartStore.js';
 import { withReopenStart } from '../../lib/premiumPlus/premiumPlusReopenStart.js';
 // 「取得できるか」の単一源（**販売停止フラグでは決めない**）
@@ -154,10 +159,33 @@ export async function GET({ request }) {
     })()
     : { claimed: false, canClaim: false };
 
+  // ── 全会員向けキャンペーン割引 ────────────────────────────────
+  // ⚠️ 出し分けは単一源（`campaignOffers.js`）。**持っている商品は勧めない**。
+  //    Premium Plus と違い存在秘匿は不要（通常商品なので商品名も金額も出す）。
+  // ⚠️ 停止スイッチ・個別除外を**読めなければ案内しない**（fail closed）。
+  //    止めたはずの割引が出続けるより、出ない方が安全。
+  const campaignRecordId = access.payload?.sub || null;
+  const controlStore = campaignControlStore(process.env);
+  const [campaignControl, campaignExcluded] = await Promise.all([
+    controlStore.readControl(),
+    controlStore.isExcluded(campaignRecordId),
+  ]);
+  const campaignAllowed = resolveCampaignAllowed({
+    withinWindow: isCampaignActive(now),
+    control: campaignControl,
+    excluded: campaignExcluded,
+  });
+  const campaign = describeCampaignForMember({
+    entitlements: resolveEntitlements(fromAirtableFields(fields || {}), now),
+    nowMs: now,
+    allowed: campaignAllowed,
+  });
+
   const body = {
     channel: view.channel,
     reason: view.reason,
     coupon: couponBody,
+    campaign,
     // 三連複は「出してよいか」だけ。段階（予告/CTA）はクライアントが決める。
     sanrenpuku: { allowed: view.sanrenpuku.allowed },
     plus: view.channel === UPSELL_CHANNEL.PLUS

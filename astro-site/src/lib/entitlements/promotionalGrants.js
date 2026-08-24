@@ -48,11 +48,20 @@
 export const PROMO_TIER = Object.freeze({
   LIGHT: 'light',
   PREMIUM: 'premium',
+  /**
+   * 三連複（Premium Sanrenpuku）。
+   *
+   * ⚠️ **割引購入条件（`OFFER_KIND.PURCHASE`）専用**。無料付与の対象にはしない。
+   *    `isValidTier()` が false を返すので、付与の経路には構造的に乗らない
+   *    （三連複を無料開放する運用は無い。付けたいときは明示的に足すこと）。
+   */
+  SANRENPUKU: 'sanrenpuku',
 });
 
 export const PROMO_TIER_LABEL = Object.freeze({
   light: 'Light',
   premium: 'Premium',
+  sanrenpuku: 'Premium Sanrenpuku',
 });
 
 /**
