@@ -5611,6 +5611,7 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
     <script>
       import {
         getUpsellDecision, getReopenCoupon, getCouponNotice, markCouponNoticeSeen, markNoticesSeen,
+        getCampaign,
       } from '../lib/upsell/upsellClient.js';
       import { installPlusFunnel } from '../lib/premiumPlus/premiumPlusFunnelClient.js';
       // 実閲覧の送信本体。導線が出る前に install しておく（先に積まれても取りこぼさない）
@@ -5625,7 +5626,9 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
         const noticeAtLoad = await getCouponNotice();
         renderReopenCoupon(await getReopenCoupon());
         showCouponNewBadge(noticeAtLoad);
-        renderCampaign(d && d.campaign);
+        // ⚠️ 無料の方にはサーバーセッションが無いので、`d.campaign` は取れない。
+        //    `getCampaign()` が公開 API へ切り替えて必ず取りに行く。
+        renderCampaign(await getCampaign());
         renderNotifications(noticeAtLoad);
       })();
 

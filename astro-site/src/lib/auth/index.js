@@ -69,6 +69,7 @@ export {
   verifyPlanAccess,
   PREMIUM_PLUS_ALLOWED_PLANS,
   PREMIUM_PLUS_CANDIDATE_PLANS,
+  ALL_MEMBER_PLANS,
   PAGE_ACCESS_REJECT,
 } from './pageAccess.js';
 

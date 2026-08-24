@@ -102,10 +102,16 @@ export const REGULAR_PRICE = Object.freeze({
    */
   premium_plus: 68000,
   /**
-   * Premium Sanrenpuku（三連複のみ・月額）。
-   * 表示の正本は `/premium-sanrenpuku/` と `/plan-upgrade-guide/`（¥19,820/月）。
+   * Premium Sanrenpuku 買い切り（三連複・永久アクセス）。
+   *
+   * ⚠️ 実売の正本は**マイページの購入モーダル**
+   *    `openBankModal('Premium Sanrenpuku Lifetime', 78000, 'lifetime')`。
+   *    画面には「¥108,000 → ¥78,000」と出るが、**請求されるのは ¥78,000**。
+   * ⚠️ `/premium-sanrenpuku/` や `/plan-upgrade-guide/` の「¥19,820/月」は
+   *    旧体系の表示で、**現在その商品は売っていない**（2026-08-24 の点検で確認）。
+   *    ここに月額を書き戻さないこと。
    */
-  sanrenpuku_monthly: 19820,
+  sanrenpuku_lifetime: 78000,
 });
 
 /** 割引価格の下限（円）。これ未満は「実質無料」なので isFree の offer を使う */
@@ -359,43 +365,29 @@ export const PROMOTION_OFFERS = Object.freeze([
     enabled: true,
   },
   {
-    offerId: 'campaign-sanrenpuku-monthly-5000off',
-    name: 'Premium Sanrenpuku 5,000円OFF',
-    description: '通常 ¥19,820/月 を ¥14,820 で購入できる。Premium 会員向けキャンペーン。',
+    offerId: 'campaign-sanrenpuku-lifetime-10000off',
+    name: '三連複 買い切り 10,000円OFF',
+    description: '通常 ¥108,000 のところ ¥78,000 で販売中。さらに 10,000円引きの ¥68,000。',
     kind: OFFER_KIND.PURCHASE,
-    // ⚠️ 三連複は無料付与しない（`isValidTier` が false を返す＝付与経路に乗らない）
+    // ⚠️ 三連複は無料付与しない（`isTier` が false を返す＝付与経路に乗らない）
     targetTier: PROMO_TIER.SANRENPUKU,
-    term: BILLING_TERM.MONTHLY,
+    term: BILLING_TERM.LIFETIME,
     duration: null,
-    isLifetime: false,
-    regularPrice: REGULAR_PRICE.sanrenpuku_monthly,
-    offerPrice: REGULAR_PRICE.sanrenpuku_monthly - 5000,
+    isLifetime: true,
+    // ⚠️ 実売価格（購入モーダルが送る額）。画面の「¥108,000」は取り消し線の表示で、
+    //    請求されるのは ¥78,000。ここを ¥108,000 にすると請求額の検査が壊れる。
+    regularPrice: REGULAR_PRICE.sanrenpuku_lifetime,
+    offerPrice: REGULAR_PRICE.sanrenpuku_lifetime - 10000,
     discountType: DISCOUNT_TYPE.AMOUNT,
-    discountValue: 5000,
+    discountValue: 10000,
     isFree: false,
     // 三連複は Premium と別商品なので、申込プラン名を明示する
     planName: 'Premium Sanrenpuku',
-    planType: TERM_TO_PLAN_TYPE.monthly,
+    planType: TERM_TO_PLAN_TYPE.lifetime,
     applyPlanName: 'Premium Sanrenpuku',
-    applyPlanType: 'Monthly',
+    applyPlanType: 'Lifetime',
     version: 1,
-    /**
-     * ⛔ **停止中**（2026-08-24 の点検で発見）。
-     *
-     * この定義は `/premium-sanrenpuku/` と `/plan-upgrade-guide/` の表示（¥19,820/月）から
-     * 作ったが、**実際に売っている三連複はそれではない**。
-     * マイページの購入モーダルが送るのは
-     *   `openBankModal('Premium Sanrenpuku Lifetime', 78000, 'lifetime')`
-     * ＝ **買い切り ¥78,000**（通常 ¥108,000）。月額の三連複は現在売っていない。
-     *
-     * このまま出すと「存在しない商品の価格」を案内することになり、
-     * PlanType も違う（Monthly ≠ Lifetime）ので割引も一生適用されない。
-     *
-     * ⚠️ 正しい価格・割引額が確定するまで **enabled: false**。
-     *    推測で数字を入れ直さないこと（`campaignOfferReachable.test.mjs` が
-     *    実際の購入ボタンと突き合わせて落とす）。
-     */
-    enabled: false,
+    enabled: true,
   },
 
   // ── Premium: 割引購入条件（権限は付与しない）──

@@ -24,7 +24,7 @@ export const CAMPAIGN_OFFER_IDS = Object.freeze({
   LIGHT_MONTHLY: 'campaign-light-monthly-500off',
   PREMIUM_ANNUAL: 'campaign-premium-annual-5000off',
   PREMIUM_LIFETIME: 'campaign-premium-lifetime-10000off',
-  SANRENPUKU_MONTHLY: 'campaign-sanrenpuku-monthly-5000off',
+  SANRENPUKU_LIFETIME: 'campaign-sanrenpuku-lifetime-10000off',
 });
 
 /** キャンペーン割引の利用期限（日）。再募集クーポンと同じ 14 日（MK 確定） */
@@ -55,7 +55,7 @@ export function resolveCampaignOfferIdsFor(entitlements) {
   // 三連複を見られる方は最上位。売るものが無い
   if (e.canViewSanrenpuku === true) return [];
   // Premium を見られる方には三連複だけを案内する
-  if (e.canViewPremium === true) return [CAMPAIGN_OFFER_IDS.SANRENPUKU_MONTHLY];
+  if (e.canViewPremium === true) return [CAMPAIGN_OFFER_IDS.SANRENPUKU_LIFETIME];
 
   const out = [];
   // Light をお持ちでない方には Light も案内する（持っている方には出さない）
@@ -182,12 +182,12 @@ const APPLY_HREF = Object.freeze({
   [CAMPAIGN_OFFER_IDS.PREMIUM_ANNUAL]: '/pricing/',
   [CAMPAIGN_OFFER_IDS.PREMIUM_LIFETIME]: '/pricing/',
   // 行き先を持たない。画面が同じページのモーダルを開く
-  [CAMPAIGN_OFFER_IDS.SANRENPUKU_MONTHLY]: null,
+  [CAMPAIGN_OFFER_IDS.SANRENPUKU_LIFETIME]: null,
 });
 
 /** 行き先の代わりに画面へ頼む操作（同じページで完結するもの） */
 const APPLY_ACTION = Object.freeze({
-  [CAMPAIGN_OFFER_IDS.SANRENPUKU_MONTHLY]: 'open-sanrenpuku-modal',
+  [CAMPAIGN_OFFER_IDS.SANRENPUKU_LIFETIME]: 'open-sanrenpuku-modal',
 });
 
 const yen = (n) => `¥${Number(n).toLocaleString('ja-JP')}`;

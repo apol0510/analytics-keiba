@@ -22,7 +22,7 @@
  */
 export const prerender = false;
 
-import { verifyPlanAccess, PREMIUM_PLUS_CANDIDATE_PLANS } from '../../lib/auth/index.js';
+import { verifyPlanAccess, ALL_MEMBER_PLANS } from '../../lib/auth/index.js';
 import { lookupCustomerFields, FRESH_LOOKUP_MAX_AGE_MS } from '../../lib/premiumPlus/purchaseAnchorLookup.js';
 import { resolveUpsellForCustomer, UPSELL_CHANNEL } from '../../lib/upsell/upsellTarget.js';
 // 取得済みクーポンの保有状態（マイページのカード用）。判定・文言は単一源に任せる
@@ -60,8 +60,13 @@ export async function GET({ request }) {
     cookieHeader: request.headers.get('cookie') || '',
     secret: process.env.SESSION_SIGNING_SECRET,
     now,
-    // 有料階層は一通り入口に通す。何を売るかは下の resolver が決める。
-    allowedPlans: PREMIUM_PLUS_CANDIDATE_PLANS,
+    // ⚠️ **ログインしている会員は全員通す**（無料・Light を含む）。
+    //    ここを有料階層だけにしていたため、無料・Light の方は 404 になり
+    //    全会員向けのお知らせが 1 件も届いていなかった（2026-08-24 に本番で発覚）。
+    //    何を売るか・何を見せるかは下の resolver が決める。
+    //    Premium Plus は `plusAudience` と販売資格が別途 fail closed で判定するので、
+    //    ここを広げても Plus の存在は漏れない。
+    allowedPlans: ALL_MEMBER_PLANS,
   });
   if (!access.ok) return notFound();
 
