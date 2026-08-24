@@ -31,7 +31,8 @@ test('割引額と価格が確定内容どおり', () => {
     [CAMPAIGN_OFFER_IDS.LIGHT_MONTHLY, REGULAR_PRICE.light_monthly, 500, 4480],
     [CAMPAIGN_OFFER_IDS.PREMIUM_ANNUAL, REGULAR_PRICE.premium_annual, 5000, 44800],
     [CAMPAIGN_OFFER_IDS.PREMIUM_LIFETIME, REGULAR_PRICE.premium_lifetime, 10000, 68000],
-    [CAMPAIGN_OFFER_IDS.SANRENPUKU_MONTHLY, REGULAR_PRICE.sanrenpuku_monthly, 5000, 14820],
+    // ⚠️ 三連複は**停止中**（2026-08-24）。実売は買い切り ¥78,000 で、
+    //    この定義（月額 ¥19,820）は存在しない商品だった。下の専用テストで見る。
   ];
   for (const [id, regular, discount, final] of cases) {
     const o = offerOf(id);
@@ -47,7 +48,15 @@ test('通常価格は正本の価格表と一致する（表示とズレない�
   assert.equal(REGULAR_PRICE.light_monthly, 4980);
   assert.equal(REGULAR_PRICE.premium_annual, 49800);
   assert.equal(REGULAR_PRICE.premium_lifetime, 78000);
-  assert.equal(REGULAR_PRICE.sanrenpuku_monthly, 19820);
+});
+
+test('三連複の割引は停止している（実売と食い違っていた）', () => {
+  // ⚠️ 2026-08-24: `/premium-sanrenpuku/` の表示（¥19,820/月）から作ったが、
+  //    実際に売っているのは買い切り ¥78,000。存在しない商品を案内していた。
+  //    正しい値が決まるまで有効化しないこと。
+  // 停止した offer は解決自体が通らない（＝どの面にも出ない）
+  assert.equal(resolveOffer(CAMPAIGN_OFFER_IDS.SANRENPUKU_MONTHLY).ok, false);
+  assert.ok(!listCampaignOffers().some((o) => o.offerId === CAMPAIGN_OFFER_IDS.SANRENPUKU_MONTHLY));
 });
 
 test('Premium 月額は対象外（MK 判断）', () => {
@@ -87,9 +96,6 @@ test('申込プラン名が商品ごとに正しい（別商品の申込を作�
   assert.equal(offerOf(CAMPAIGN_OFFER_IDS.LIGHT_MONTHLY).planName, 'Light');
   assert.equal(offerOf(CAMPAIGN_OFFER_IDS.PREMIUM_ANNUAL).planName, 'Premium Annual');
   assert.equal(offerOf(CAMPAIGN_OFFER_IDS.PREMIUM_LIFETIME).planName, 'Premium Lifetime');
-  assert.equal(offerOf(CAMPAIGN_OFFER_IDS.SANRENPUKU_MONTHLY).planName, 'Premium Sanrenpuku');
-  // PlanType は既存 bank flow の語彙
-  assert.equal(offerOf(CAMPAIGN_OFFER_IDS.SANRENPUKU_MONTHLY).planType, 'Monthly');
   assert.equal(offerOf(CAMPAIGN_OFFER_IDS.PREMIUM_LIFETIME).planType, 'Lifetime');
 });
 
@@ -102,10 +108,13 @@ test('無料の方には Light と Premium（年額・買い切り）を案内�
   ]);
 });
 
-test('Premium の方には三連複だけを案内する', () => {
+test('Premium の方にはいま案内するものが無い（三連複を停止したため）', () => {
+  // 出し分けの規則としては三連複を返すが、停止中なので実際には出ない
   assert.deepEqual(resolveCampaignOfferIdsFor({ canViewPremium: true }), [
     CAMPAIGN_OFFER_IDS.SANRENPUKU_MONTHLY,
   ]);
+  assert.equal(describeCampaignOffersFor({ canViewPremium: true }).length, 0,
+    '停止した割引が Premium の方へ出ている');
 });
 
 test('すでに持っているものは勧めない', () => {
@@ -152,5 +161,6 @@ test('キャンペーンの offer だけを見分けられる', () => {
   assert.equal(isCampaignOffer('premium-annual-half'), false);
   assert.equal(isCampaignOffer('light-30d-free'), false);
   assert.equal(isCampaignOffer(''), false);
-  assert.equal(listCampaignOffers().length, 4);
+  // 三連複は停止中なので有効な一覧には出ない
+  assert.equal(listCampaignOffers().length, 3);
 });

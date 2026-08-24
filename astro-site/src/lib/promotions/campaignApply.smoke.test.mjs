@@ -199,3 +199,46 @@ test('停止していなければ従来どおり割り引く（塞ぎすぎな�
   await apply({ productName: 'Premium Annual (¥49,800)', transferAmount: '49800' });
   assert.equal(requested()['RequestedAmount'], 44800);
 });
+
+// ── 既に特別価格が付いている商品には触らない（2026-08-24 の点検で発見）──
+//
+// ⚠️ `/pricing/` には Light 限定の乗り換え特典（`Premium Annual - Campaign` ¥44,820）がある。
+//    そこへキャンペーン価格を上書きすると、画面に出ていた金額と請求額が食い違う。
+//    片方が安ければ得だが、逆なら「見た額より高い請求」という最悪の事故になる。
+
+test('乗り換え特典（- Campaign）の価格を上書きしない', { skip: !IN_WINDOW }, async () => {
+  record = FREE_MEMBER;
+  redisReply = () => null;
+  stubWithRedis();
+  await apply({ productName: 'Premium Annual - Campaign (¥44,820)', transferAmount: '44820' });
+  assert.equal(requested()['RequestedAmount'], 44820, '特別価格を上書きしている');
+});
+
+test('通常の商品には従来どおり適用する（塞ぎすぎない）', { skip: !IN_WINDOW }, async () => {
+  record = FREE_MEMBER;
+  redisReply = () => null;
+  stubWithRedis();
+  await apply({ productName: 'Premium Annual (¥49,800)', transferAmount: '49800' });
+  assert.equal(requested()['RequestedAmount'], 44800);
+});
+
+test('/pricing/ が実際に送る商品名すべてで、請求額が画面の額を上回らない', { skip: !IN_WINDOW }, async () => {
+  // ⚠️ 「見た額より高い請求」を作らないことを、**実際の商品名**で全部確かめる。
+  const cases = [
+    ['Light', 4980],
+    ['Premium Annual - Campaign (¥44,820)', 44820],
+    ['Premium Annual (¥49,800)', 49800],
+    ['Premium Lifetime (¥78,000)', 78000],
+    ['Premium Monthly (¥18,000)', 18000],
+  ];
+  for (const [productName, shown] of cases) {
+    patches = [];
+    record = FREE_MEMBER;
+    redisReply = () => null;
+    stubWithRedis();
+    await apply({ productName, transferAmount: String(shown) });
+    const amount = requested()['RequestedAmount'];
+    assert.ok(Number.isFinite(amount), `${productName}: 金額が記録されていない`);
+    assert.ok(amount <= shown, `${productName}: 画面 ${shown} 円より高い ${amount} 円で請求しようとしている`);
+  }
+});
