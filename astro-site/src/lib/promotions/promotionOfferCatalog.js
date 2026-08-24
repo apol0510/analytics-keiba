@@ -57,6 +57,22 @@ export const TERM_TO_PLAN_NAME = Object.freeze({
   lifetime: 'Premium Lifetime',
 });
 
+/**
+ * 申込プラン名を offer 側で上書きしたいときの明示指定。
+ *
+ * `TERM_TO_PLAN_NAME` は Premium 前提（monthly → 'Premium Monthly'）なので、
+ * 三連複のように**別商品**の月額はそのままでは正しい名前にならない。
+ * offer 定義に `planName` / `planType` を書いた場合はそれを優先する。
+ */
+function resolvePlanName(def) {
+  if (def.kind !== OFFER_KIND.PURCHASE) return null;
+  return def.planName || TERM_TO_PLAN_NAME[def.term] || null;
+}
+function resolvePlanType(def) {
+  if (def.kind !== OFFER_KIND.PURCHASE) return null;
+  return def.planType || TERM_TO_PLAN_TYPE[def.term] || null;
+}
+
 export const DISCOUNT_TYPE = Object.freeze({
   NONE: 'none',
   /** 割引率（%） */
@@ -85,6 +101,11 @@ export const REGULAR_PRICE = Object.freeze({
    *    ズレは `premiumPlusCouponTerms.test.mjs` が検知して落ちる。
    */
   premium_plus: 68000,
+  /**
+   * Premium Sanrenpuku（三連複のみ・月額）。
+   * 表示の正本は `/premium-sanrenpuku/` と `/plan-upgrade-guide/`（¥19,820/月）。
+   */
+  sanrenpuku_monthly: 19820,
 });
 
 /** 割引価格の下限（円）。これ未満は「実質無料」なので isFree の offer を使う */
@@ -259,6 +280,90 @@ export const PROMOTION_OFFERS = Object.freeze([
     discountType: DISCOUNT_TYPE.FREE,
     discountValue: 100,
     isFree: true,
+    version: 1,
+    enabled: true,
+  },
+
+  // ── 全会員向けキャンペーン（2026-08-24 MK 確定）───────────────────
+  //
+  // 無料の方  … Light 500円引き / Premium 年額 5,000円引き / 買い切り 10,000円引き
+  // Premium の方 … 三連複 5,000円引き
+  //
+  // ⚠️ **Premium 月額は対象外**（MK 判断）。毎月続くため割引の影響が大きい。
+  // ⚠️ どれも `PURCHASE`＝**権限は付与しない**。割って買えるだけ。
+  // ⚠️ 期限は 14 日（付与時に `StartsAt` + 14 日で決まる。ここには日付を持たない）。
+  {
+    offerId: 'campaign-light-monthly-500off',
+    name: 'Light 月額 500円OFF',
+    description: '通常 ¥4,980/月 を ¥4,480 で購入できる。全会員向けキャンペーン。',
+    kind: OFFER_KIND.PURCHASE,
+    targetTier: PROMO_TIER.LIGHT,
+    term: BILLING_TERM.MONTHLY,
+    duration: null,
+    isLifetime: false,
+    regularPrice: REGULAR_PRICE.light_monthly,
+    offerPrice: REGULAR_PRICE.light_monthly - 500,
+    discountType: DISCOUNT_TYPE.AMOUNT,
+    discountValue: 500,
+    isFree: false,
+    // Light は Premium とプラン名が違うので明示する
+    planName: 'Light',
+    planType: TERM_TO_PLAN_TYPE.monthly,
+    version: 1,
+    enabled: true,
+  },
+  {
+    offerId: 'campaign-premium-annual-5000off',
+    name: 'Premium 年額 5,000円OFF',
+    description: '通常 ¥49,800/年 を ¥44,800 で購入できる。全会員向けキャンペーン。',
+    kind: OFFER_KIND.PURCHASE,
+    targetTier: PROMO_TIER.PREMIUM,
+    term: BILLING_TERM.ANNUAL,
+    duration: null,
+    isLifetime: false,
+    regularPrice: REGULAR_PRICE.premium_annual,
+    offerPrice: REGULAR_PRICE.premium_annual - 5000,
+    discountType: DISCOUNT_TYPE.AMOUNT,
+    discountValue: 5000,
+    isFree: false,
+    version: 1,
+    enabled: true,
+  },
+  {
+    offerId: 'campaign-premium-lifetime-10000off',
+    name: 'Premium 買い切り 10,000円OFF',
+    description: '通常 ¥78,000 を ¥68,000 で購入できる。全会員向けキャンペーン。',
+    kind: OFFER_KIND.PURCHASE,
+    targetTier: PROMO_TIER.PREMIUM,
+    term: BILLING_TERM.LIFETIME,
+    duration: null,
+    isLifetime: true,
+    regularPrice: REGULAR_PRICE.premium_lifetime,
+    offerPrice: REGULAR_PRICE.premium_lifetime - 10000,
+    discountType: DISCOUNT_TYPE.AMOUNT,
+    discountValue: 10000,
+    isFree: false,
+    version: 1,
+    enabled: true,
+  },
+  {
+    offerId: 'campaign-sanrenpuku-monthly-5000off',
+    name: 'Premium Sanrenpuku 5,000円OFF',
+    description: '通常 ¥19,820/月 を ¥14,820 で購入できる。Premium 会員向けキャンペーン。',
+    kind: OFFER_KIND.PURCHASE,
+    // ⚠️ 三連複は無料付与しない（`isValidTier` が false を返す＝付与経路に乗らない）
+    targetTier: PROMO_TIER.SANRENPUKU,
+    term: BILLING_TERM.MONTHLY,
+    duration: null,
+    isLifetime: false,
+    regularPrice: REGULAR_PRICE.sanrenpuku_monthly,
+    offerPrice: REGULAR_PRICE.sanrenpuku_monthly - 5000,
+    discountType: DISCOUNT_TYPE.AMOUNT,
+    discountValue: 5000,
+    isFree: false,
+    // 三連複は Premium と別商品なので、申込プラン名を明示する
+    planName: 'Premium Sanrenpuku',
+    planType: TERM_TO_PLAN_TYPE.monthly,
     version: 1,
     enabled: true,
   },
@@ -499,8 +604,8 @@ export function resolveOffer(offerId, input = {}) {
       discountAmount,
       discountPercent,
       /** 購入条件のときだけ意味を持つ（既存 bank flow の語彙） */
-      planType: def.kind === OFFER_KIND.PURCHASE ? (TERM_TO_PLAN_TYPE[def.term] || null) : null,
-      planName: def.kind === OFFER_KIND.PURCHASE ? (TERM_TO_PLAN_NAME[def.term] || null) : null,
+      planType: resolvePlanType(def),
+      planName: resolvePlanName(def),
       /**
        * カムバック施策の宣言（あれば）。判定は `entitlements/comebackPolicy.js` に集約し、
        * ここでは**定義をそのまま渡すだけ**（解釈しない）。
