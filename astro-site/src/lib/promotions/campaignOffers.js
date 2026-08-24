@@ -169,13 +169,25 @@ export function resolveCampaignPricing({
 
 // ── 画面に出す形 ────────────────────────────────────────────
 //
-// ⚠️ 申込先は**商品ごとに違う**。Light / Premium は /pricing/、三連複は専用ページ。
-//    ここで 1 か所に持ち、画面側でパスを組み立てない。
+// ⚠️ 申込先は**商品ごとに違う**。ここで 1 か所に持ち、画面側でパスを組み立てない。
+//
+// ⚠️⚠️ **三連複には公開の販売ページが無い。**（2026-08-24 本番で事故）
+//    `/premium-sanrenpuku/` は **すでに三連複を持っている人だけが開ける会員ページ**で、
+//    購入導線ではない。そこへ送ると 302 → `/login/?r=not_entitled` になる。
+//    実際の購入導線は**マイページの「三連複を追加」ボタン → モーダル**（同じページ内）。
+//    リポジトリにも「三連複を説明・販売する公開ページが未確定。**推測で URL を作らない**」
+//    と明記されていた（`marketing/campaignCatalog.js`）。それを踏んだ。
 const APPLY_HREF = Object.freeze({
   [CAMPAIGN_OFFER_IDS.LIGHT_MONTHLY]: '/pricing/',
   [CAMPAIGN_OFFER_IDS.PREMIUM_ANNUAL]: '/pricing/',
   [CAMPAIGN_OFFER_IDS.PREMIUM_LIFETIME]: '/pricing/',
-  [CAMPAIGN_OFFER_IDS.SANRENPUKU_MONTHLY]: '/premium-sanrenpuku/',
+  // 行き先を持たない。画面が同じページのモーダルを開く
+  [CAMPAIGN_OFFER_IDS.SANRENPUKU_MONTHLY]: null,
+});
+
+/** 行き先の代わりに画面へ頼む操作（同じページで完結するもの） */
+const APPLY_ACTION = Object.freeze({
+  [CAMPAIGN_OFFER_IDS.SANRENPUKU_MONTHLY]: 'open-sanrenpuku-modal',
 });
 
 const yen = (n) => `¥${Number(n).toLocaleString('ja-JP')}`;
@@ -197,7 +209,9 @@ export function describeCampaignForMember({ entitlements, nowMs = Date.now(), al
       regularPriceText: yen(o.regularPrice),
       offerPriceText: yen(o.offerPrice),
       discountText: `${Number(o.discountValue).toLocaleString('ja-JP')}円OFF`,
-      applyHref: APPLY_HREF[o.offerId] || '/pricing/',
+      // ⚠️ 無い行き先を既定値で埋めない。埋めると「開けないページ」へ送ってしまう
+      applyHref: APPLY_HREF[o.offerId] || null,
+      applyAction: APPLY_ACTION[o.offerId] || null,
     }))
     : [];
   return {

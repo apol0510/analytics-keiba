@@ -379,7 +379,23 @@ export const PROMOTION_OFFERS = Object.freeze([
     applyPlanName: 'Premium Sanrenpuku',
     applyPlanType: 'Monthly',
     version: 1,
-    enabled: true,
+    /**
+     * ⛔ **停止中**（2026-08-24 の点検で発見）。
+     *
+     * この定義は `/premium-sanrenpuku/` と `/plan-upgrade-guide/` の表示（¥19,820/月）から
+     * 作ったが、**実際に売っている三連複はそれではない**。
+     * マイページの購入モーダルが送るのは
+     *   `openBankModal('Premium Sanrenpuku Lifetime', 78000, 'lifetime')`
+     * ＝ **買い切り ¥78,000**（通常 ¥108,000）。月額の三連複は現在売っていない。
+     *
+     * このまま出すと「存在しない商品の価格」を案内することになり、
+     * PlanType も違う（Monthly ≠ Lifetime）ので割引も一生適用されない。
+     *
+     * ⚠️ 正しい価格・割引額が確定するまで **enabled: false**。
+     *    推測で数字を入れ直さないこと（`campaignOfferReachable.test.mjs` が
+     *    実際の購入ボタンと突き合わせて落とす）。
+     */
+    enabled: false,
   },
 
   // ── Premium: 割引購入条件（権限は付与しない）──

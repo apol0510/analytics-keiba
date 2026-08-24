@@ -5733,11 +5733,32 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
           strong.textContent = o.offerPriceText;
           p.appendChild(strong);
           box.appendChild(n); box.appendChild(p);
-          const a = document.createElement('a');
-          a.className = 'campaign-apply';
-          a.href = o.applyHref;
-          a.textContent = 'この価格で申し込む';
-          li.appendChild(box); li.appendChild(a);
+          // ⚠️ 行き先が無い商品がある（三連複には公開の販売ページが存在しない）。
+          //    無い行き先を既定値で埋めると、開けないページへ送ってしまう
+          //    （2026-08-24 に本番で /premium-sanrenpuku/ → ログイン画面になった）。
+          //    その場合は**同じページのモーダル**を開く。
+          let cta;
+          if (o.applyHref) {
+            cta = document.createElement('a');
+            cta.href = o.applyHref;
+          } else if (o.applyAction === 'open-sanrenpuku-modal') {
+            cta = document.createElement('button');
+            cta.type = 'button';
+            cta.addEventListener('click', () => {
+              const modal = document.getElementById('premiumPlanModal');
+              if (modal) { modal.style.display = 'flex'; return; }
+              // モーダルが無い画面では**行き先を推測しない**。押せる見た目にもしない
+              cta.disabled = true;
+              cta.textContent = 'お手続きの窓口をご案内できませんでした';
+            });
+          }
+          // 行き先も操作も無ければ**ボタンを出さない**（押せないボタンを見せない）
+          li.appendChild(box);
+          if (cta) {
+            cta.className = 'campaign-apply';
+            cta.textContent = 'この価格で申し込む';
+            li.appendChild(cta);
+          }
           list.appendChild(li);
         }
         sec.style.display = '';

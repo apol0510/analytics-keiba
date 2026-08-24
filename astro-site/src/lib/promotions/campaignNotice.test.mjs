@@ -45,11 +45,68 @@ test('無料の方には 3 件。金額はサーバーが文字列で渡す', ()
   assert.equal(light.applyHref, '/pricing/');
 });
 
-test('Premium の方には三連複だけ。申込先も三連複のページ', () => {
+test('Premium の方には いま何も出さない（三連複を停止したため）', () => {
+  // ⚠️ 2026-08-24: 三連複の割引は実売（買い切り ¥78,000）と食い違っていたため停止。
+  //    正しい値が決まるまで、Premium の方には案内を出さない。
   const v = describeCampaignForMember({ entitlements: { canViewPremium: true }, nowMs: IN });
-  assert.equal(v.offers.length, 1);
-  assert.equal(v.offers[0].applyHref, '/premium-sanrenpuku/');
-  assert.equal(v.offers[0].offerPriceText, '¥14,820');
+  assert.equal(v.offers.length, 0);
+  assert.equal(v.signature, '', '出すものが無いのにお知らせが立つ');
+});
+
+// ── 申込先が**実際に開けるか**（2026-08-24 の本番事故）──────────────
+//
+// ⚠️ 以前のテストは `applyHref === '/premium-sanrenpuku/'` と、
+//    **自分が書いた値を自分で確認していただけ**で、そこが開けるかを見ていなかった。
+//    実際には会員専用ページで、Premium の方は 302 → ログイン画面へ飛ばされた。
+//    ここでは「その行き先が、案内する相手にとって開けるか」を検査する。
+
+/** そのページが会員資格を要求しているか（`AccessControl requiredPlan`）*/
+function requiredPlanOf(pathname) {
+  const file = pathname.replace(/^\/|\/$/g, '') || 'index';
+  let src = '';
+  try { src = read(`../../pages/${file}.astro`); } catch { return null; }
+  const m = /requiredPlan[=:]\s*["']([^"']+)["']/.exec(src);
+  return m ? m[1] : '';
+}
+
+test('案内する行き先は、その相手が開けるページだけ', () => {
+  const audiences = [
+    ['無料の方', {}],
+    ['Light の方', { canViewLight: true }],
+    ['Premium の方', { canViewPremium: true }],
+  ];
+  for (const [label, ent] of audiences) {
+    for (const o of describeCampaignForMember({ entitlements: ent, nowMs: IN }).offers) {
+      if (!o.applyHref) continue;   // 行き先が無いものは下のテストで見る
+      const required = requiredPlanOf(o.applyHref);
+      assert.notEqual(required, null, `${label}: ${o.applyHref} が存在しない`);
+      assert.equal(required, '',
+        `${label}: ${o.applyHref} は「${required}」が要る会員ページ。開けない相手へ案内している`);
+    }
+  }
+});
+
+test('三連複を再開するときは行き先を持たせない（開けないページへ送らない）', () => {
+  // ⚠️ `/premium-sanrenpuku/` は**すでに持っている人の会員ページ**。購入導線ではない。
+  //    リポジトリにも「推測で URL を作らない」と明記されている。
+  //    2026-08-24 にここへ送って `/login/?r=not_entitled` に飛ばした。
+  assert.equal(requiredPlanOf('/premium-sanrenpuku/'), 'Premium Sanrenpuku',
+    '前提が変わった。会員ページでなくなったなら行き先を見直すこと');
+  const src = read('./campaignOffers.js');
+  assert.doesNotMatch(src, /SANRENPUKU_MONTHLY\]: '\/premium-sanrenpuku\/'/,
+    '開けないページを行き先にしている');
+});
+
+test('行き先が無いときに既定値で埋めない（開けないページへ送らない）', () => {
+  const src = read('./campaignOffers.js');
+  assert.doesNotMatch(src, /APPLY_HREF\[o\.offerId\] \|\| '\/pricing\/'/,
+    '行き先が無い商品を /pricing/ で埋めている');
+  const page = read('../../pages/dashboard.astro');
+  const fn = page.slice(page.indexOf('function renderCampaign'));
+  const body = fn.slice(0, fn.indexOf('\n      }\n'));
+  // 行き先も操作も無ければボタンを出さない
+  assert.match(body, /if \(cta\) \{/, '押せないボタンを出している');
+  assert.match(body, /premiumPlanModal/, '同じページの購入導線を開いていない');
 });
 
 test('三連複をお持ちの方には出さない', () => {
@@ -67,8 +124,13 @@ test('割引が何本あっても、お知らせは 1 件として数える（�
 });
 
 test('1 本だけのときは商品名をそのまま出す', () => {
-  const n = describeCampaignNotice(describeCampaignForMember({ entitlements: { canViewPremium: true }, nowMs: IN }));
-  assert.match(n.label, /Sanrenpuku/);
+  // Light をお持ちの方は Premium 年額・買い切りの 2 本。1 本だけの状況を直接作る
+  const one = {
+    active: true, deadlineText: '2026年9月6日まで', signature: 'campaign:x:one',
+    offers: [{ offerId: 'x', name: 'テスト割引' }],
+  };
+  const n = describeCampaignNotice(one);
+  assert.match(n.label, /テスト割引/);
   assert.match(n.label, /まで/, '期限が入っていない');
 });
 
@@ -104,8 +166,10 @@ test('マイページは金額を組み立てない（サーバーの文字列�
   assert.match(body, /o\.offerPriceText/);
   assert.match(body, /o\.applyHref/, '申込先を画面で組み立てている');
   // 金額・割引率を画面で計算しない
-  assert.doesNotMatch(body, /[0-9]{3,}/, '金額を直書きしている');
-  assert.doesNotMatch(body, /toLocaleString/, '画面で金額を整形している');
+  // ⚠️ コメントは除いて見る（説明の日付・年号まで禁止すると正しい実装が落ちる）
+  const code = body.replace(/\/\/[^\n]*/g, '');
+  assert.doesNotMatch(code, /[0-9]{3,}/, '金額を直書きしている');
+  assert.doesNotMatch(code, /toLocaleString/, '画面で金額を整形している');
   // 対象が無ければ出さない
   assert.match(body, /if \(!offers\.length\)/);
 });

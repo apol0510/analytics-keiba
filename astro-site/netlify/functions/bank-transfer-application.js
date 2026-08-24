@@ -854,6 +854,15 @@ exports.handler = async (event, context) => {
         // ⚠️ 期間外・対象外なら通常価格のまま（fail closed）。
         // ⚠️ すでに持っている商品には乗らない（`resolveCampaignOfferIdsFor` が除外する）。
         try {
+          // ⚠️ **すでに特別価格が付いている商品には触らない。**
+          //    `/pricing/` には Light 限定の乗り換え特典（`Premium Annual - Campaign` ¥44,820）
+          //    のように、別の条件で値付けされた商品がある。そこへキャンペーン価格を
+          //    上書きすると、画面に出ていた金額と請求額が食い違う。
+          //    （2026-08-24 の点検で発見。片方が安ければ得だが、逆なら
+          //      「見た額より高い請求」という最悪の事故になる）
+          if (/campaign/i.test(fullPlanName)) {
+            throw { skipCampaign: true };
+          }
           const currentFields = existingRecords.length > 0 ? (existingRecords[0].fields || {}) : null;
           const ent = currentFields
             ? resolveEntitlements(fromAirtableFields(currentFields), Date.now())
@@ -892,8 +901,12 @@ exports.handler = async (event, context) => {
             console.log('ℹ️ [bank-transfer] キャンペーン割引の対象外:', { reason: c.reason });
           }
         } catch (campaignError) {
-          // 割引の判定で申込を止めない（通常価格のまま進む）
-          console.warn('⚠️ [bank-transfer] キャンペーン割引を判定できませんでした');
+          // 割引の判定で申込を止めない（画面に出ていた金額のまま進む）
+          if (campaignError && campaignError.skipCampaign) {
+            console.log('ℹ️ [bank-transfer] 既に特別価格の商品のためキャンペーンを適用しない');
+          } else {
+            console.warn('⚠️ [bank-transfer] キャンペーン割引を判定できませんでした');
+          }
         }
 
         if (existingRecords.length > 0) {

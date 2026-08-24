@@ -190,7 +190,11 @@ test('マイページを開いただけでは既読にしない（開いた／�
 
   // 既読になるのは「ベルから来た」か「お知らせを押した」ときだけ
   assert.match(page, /location\.hash === '#notifications'\) markNoticeRead/, 'ベル経由で既読にしていない');
-  const click = page.slice(page.indexOf("a.addEventListener('click'"));
+  // ⚠️ 検索は**お知らせの描画関数の中**に限る。ページ全体から探すと
+  //    別の関数の `cta.addEventListener('click'` にも当たってしまう。
+  const render = page.slice(page.indexOf('function renderNotifications'));
+  const renderBody = render.slice(0, render.indexOf('\n      }\n'));
+  const click = renderBody.slice(renderBody.indexOf("addEventListener('click'"));
   assert.match(click.slice(0, 400), /markNoticeRead\(notice\)/, '押しても既読にならない');
 });
 
