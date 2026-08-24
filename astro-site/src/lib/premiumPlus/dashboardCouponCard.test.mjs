@@ -98,8 +98,13 @@ test('クライアントは追加の通信をせず、取得できなければ�
   const code = stripComments(CLIENT);
   assert.match(code, /export async function getReopenCoupon\(\)/);
   assert.match(code, /coupon:\s*\{\s*claimed:\s*false\s*\}/);
-  // fetch は既存の 1 か所だけ（クーポン用に増やしていない）
-  assert.equal((code.match(/fetch\(/g) || []).length, 1);
+  // ⚠️ クーポンのために通信を増やさない。
+  //    2 か所目は**無料の方のキャンペーン案内**だけ（無料会員はサーバーセッションが
+  //    無く `/api/upsell.json` が 404 になるため、公開 API を叩くしかない）。
+  const fetches = code.match(/fetch\(([^)]*)/g) || [];
+  assert.equal(fetches.length, 2, `fetch が ${fetches.length} か所ある`);
+  assert.ok(fetches.some((f) => f.includes('ENDPOINT')), '既存の 1 回が消えている');
+  assert.ok(fetches.some((f) => f.includes('/api/campaign.json')), '想定外の通信が増えている');
 });
 
 test('クライアントは「いま取得できる」も通す（サーバー判定を握りつぶさない）', () => {

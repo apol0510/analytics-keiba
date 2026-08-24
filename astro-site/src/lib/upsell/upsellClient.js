@@ -116,8 +116,10 @@ function readSeen() {
  */
 export async function getCouponNotice() {
   const d = await getUpsellDecision();
+  // ⚠️ 無料の方はセッションが無く `d.campaign` が取れない。公開 API から取り直す
+  const campaign = (d && d.campaign) ? d.campaign : await getCampaign();
   const all = describeAllNotices({
-    coupon: d && d.coupon, campaign: d && d.campaign, seen: readSeen(),
+    coupon: d && d.coupon, campaign, seen: readSeen(),
   });
   const first = all.items[0] || null;
   return {
@@ -158,4 +160,46 @@ export function markNoticesSeen(items) {
     localStorage.setItem(SEEN_KEY, JSON.stringify(seen));
     return true;
   } catch { return false; }
+}
+
+
+// ── キャンペーン割引（無料の方にも届ける）────────────────────
+//
+// ⚠️ **無料会員にはサーバーセッションが無い**（有料判定用のため発行されない）。
+//    そのため `/api/upsell.json` は無料の方に 404 を返し、案内が届かなかった。
+//    セッションがあるときはそちらの結果を使い、無いときだけ公開 API を叩く。
+
+let campaignCached = null;
+
+/** 画面が知っている契約（localStorage）。**表示の出し分けにだけ**使う */
+function declaredPlan() {
+  try {
+    const raw = localStorage.getItem('user-plan');
+    if (!raw) return '';
+    const o = JSON.parse(raw);
+    return String((o && o.plan) || '');
+  } catch { return ''; }
+}
+
+/**
+ * いま案内するキャンペーン割引。
+ * ⚠️ 実際に割り引くかは**申込時にサーバーが決める**。ここは案内のための値。
+ */
+export async function getCampaign() {
+  if (campaignCached) return campaignCached;
+  campaignCached = (async () => {
+    const empty = { active: false, offers: [], deadlineText: '', signature: '' };
+    // 有料の方（セッションあり）は既存の 1 回の通信に相乗り
+    const d = await getUpsellDecision();
+    if (d && d.campaign) return d.campaign;
+    // 無料の方はセッションが無いので公開 API を使う
+    try {
+      const q = encodeURIComponent(declaredPlan());
+      const r = await fetch(`/api/campaign.json?plan=${q}`, { credentials: 'same-origin' });
+      if (!r.ok) return empty;
+      const j = await r.json();
+      return j && Array.isArray(j.offers) ? j : empty;
+    } catch { return empty; }
+  })();
+  return campaignCached;
 }

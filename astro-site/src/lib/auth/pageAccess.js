@@ -44,6 +44,32 @@ export const PREMIUM_PLUS_CANDIDATE_PLANS = Object.freeze([
   'premium-predictions',
 ]);
 
+/**
+ * **ログインしている会員全員**（無料・Light を含む）。
+ *
+ * ⚠️ 「有料か」ではなく「本人と確認できたか」だけを見たいときに使う。
+ *    全会員向けのお知らせ・キャンペーンがこれ。
+ *    `PREMIUM_PLUS_CANDIDATE_PLANS` を使うと**無料・Light の方が 404 になり、
+ *    案内が一切届かない**（2026-08-24 に本番で発生）。
+ *
+ * ⚠️ このリストで通しても、Premium Plus の可否は別途 `plusAudience` /
+ *    販売資格が決める。ここを広げても Plus は出ない（fail closed のまま）。
+ */
+export const ALL_MEMBER_PLANS = Object.freeze([
+  'free',
+  'free-registered',
+  'light',
+  'standard',
+  'premium',
+  'premium-predictions',
+  'premium-combo',
+  'premium-sanrenpuku',
+  'premium-sanrenpuku-lifetime',
+  'premium-plus',
+  'pro',
+  'pro-plus',
+]);
+
 export const PAGE_ACCESS_REJECT = Object.freeze({
   KEY_MISSING: 'key_missing',
   NO_COOKIE: 'no_cookie',

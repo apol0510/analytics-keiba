@@ -45,12 +45,11 @@ test('無料の方には 3 件。金額はサーバーが文字列で渡す', ()
   assert.equal(light.applyHref, '/pricing/');
 });
 
-test('Premium の方には いま何も出さない（三連複を停止したため）', () => {
-  // ⚠️ 2026-08-24: 三連複の割引は実売（買い切り ¥78,000）と食い違っていたため停止。
-  //    正しい値が決まるまで、Premium の方には案内を出さない。
+test('Premium の方には三連複（買い切り）だけを案内する', () => {
   const v = describeCampaignForMember({ entitlements: { canViewPremium: true }, nowMs: IN });
-  assert.equal(v.offers.length, 0);
-  assert.equal(v.signature, '', '出すものが無いのにお知らせが立つ');
+  assert.equal(v.offers.length, 1);
+  assert.equal(v.offers[0].regularPriceText, '¥78,000');
+  assert.equal(v.offers[0].offerPriceText, '¥68,000');
 });
 
 // ── 申込先が**実際に開けるか**（2026-08-24 の本番事故）──────────────
@@ -205,5 +204,10 @@ test('API がキャンペーンを返す（お知らせと同じ 1 回の通信�
   assert.match(api, /campaign,/, '応答に載せていない');
   const client = read('../../lib/upsell/upsellClient.js');
   assert.match(client, /d && d\.campaign/, 'クライアントが読んでいない');
-  assert.doesNotMatch(client.slice(client.indexOf('getCouponNotice')), /fetch\(/, '通信を増やしている');
+  // ⚠️ 有料の方は既存の 1 回に相乗りする（`getUpsellDecision()` の結果を使う）。
+  //    追加の通信は**無料の方だけ**（セッションが無く 404 になるため）。
+  const fn = client.slice(client.indexOf('export async function getCampaign'));
+  assert.match(fn, /const d = await getUpsellDecision\(\)/);
+  assert.match(fn, /if \(d && d\.campaign\) return d\.campaign/, '有料の方にも通信を増やしている');
+  assert.match(fn, /\/api\/campaign\.json/, '無料の方への経路が無い');
 });
