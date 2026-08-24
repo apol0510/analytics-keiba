@@ -110,6 +110,31 @@ test('マイページは金額を組み立てない（サーバーの文字列�
   assert.match(body, /if \(!offers\.length\)/);
 });
 
+test('JS で作る要素にスタイルが当たる（scoped では効かない）', () => {
+  // ⚠️ 2026-08-24 の本番不具合: 申込ボタンが**素のリンク**として出ていた。
+  //    Astro の scoped style は `[data-astro-cid-…]` へ変換されるため、
+  //    JS で生成した要素には一切適用されない。この 2 つのカードは中身を JS で作るので
+  //    **`is:global` で書かなければならない**。
+  const page = read('../../pages/dashboard.astro');
+  const globalStart = page.indexOf('<style is:global>');
+  assert.ok(globalStart > 0, 'is:global の style が無い');
+  const globalCss = page.slice(globalStart, page.indexOf('</style>', globalStart));
+
+  // JS で作る要素のクラスは**すべて** is:global 側にあること
+  for (const cls of [
+    '.campaign-apply', '.campaign-name', '.campaign-price',
+    '.notice-list a', '.notice-count',
+  ]) {
+    assert.ok(globalCss.includes(cls), `${cls} が scoped 側に残っている（スタイルが当たらない）`);
+  }
+
+  // 申込ボタンは**リンクに見せない**（押せると分かる見た目にする）
+  const btn = globalCss.slice(globalCss.indexOf('.campaign-apply {'));
+  assert.match(btn.slice(0, 400), /background: #2563eb/, 'ボタンの地色が無い');
+  assert.match(btn.slice(0, 400), /text-decoration: none !important/, '下線が残る');
+  assert.match(btn.slice(0, 400), /color: #fff !important/, '共通のリンク色に負ける');
+});
+
 test('API がキャンペーンを返す（お知らせと同じ 1 回の通信に相乗り）', () => {
   const api = read('../../pages/api/upsell.json.js');
   assert.match(api, /describeCampaignForMember/);

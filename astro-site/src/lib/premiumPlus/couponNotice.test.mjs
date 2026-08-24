@@ -129,11 +129,14 @@ test('マイページのお知らせは最上部・読める配色にする', ()
   assert.ok(notice < page.indexOf('穴馬ページリンク'), 'お知らせが下にある');
   assert.ok(notice < page.indexOf('<!-- 会員ステータス -->'), 'お知らせが会員ステータスより下にある');
 
-  // ⚠️ 暗い赤に暗い文字だと読めない。明るい背景 + 濃い文字にする
-  const css = page.slice(page.indexOf('.notice-card {'), page.indexOf('.notice-list a:hover'));
+  // ⚠️ 配色は 2026-08-24 に見直した（明るい黄色の地は暗いサイトから浮く）。
+  //    暗いカード + 左の色帯 + 明るい文字にする。
+  //    ⚠️ JS で作る要素に効かせるため **is:global 側**に置くこと。
+  const css = page.slice(page.indexOf('<style is:global>'), page.indexOf('</style>'));
   assert.doesNotMatch(css, /background:\s*rgba\(239, 68, 68/, '暗い赤のままで読みにくい');
-  assert.match(css, /color: #1f2937/, '見出しの文字色を指定していない');
-  assert.match(css, /color: #7c2d12/, 'リンクが背景に埋もれる色のまま');
+  assert.doesNotMatch(css, /linear-gradient\(135deg, #fde68a/, '明るい黄色の地のままで浮いている');
+  assert.match(css, /border-left: 4px solid #f59e0b/, 'お知らせの色帯が無い');
+  assert.match(css, /color: #fbbf24/, 'リンクが暗い地に沈む色のまま');
 });
 
 test('ベルの行き先にお知らせの中身がある（飛んだ先が空にならない）', () => {
