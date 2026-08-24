@@ -8,6 +8,9 @@ import { SUPPORT_EMAIL, ADMIN_EMAIL, FROM_EMAIL } from './config/email-config.js
 import { buildApplicationFields } from '../../src/lib/payments/bankPaymentFlow.js';
 // 申込価格の正本（クーポン適用込み）。**クライアントの言い値を使わない**
 import { resolveOrderPricing } from '../../src/lib/premiumPlus/premiumPlusCouponApply.js';
+// 全会員向けキャンペーン割引。**価格はサーバーが決める**（クライアントの申告は読まない）
+import { resolveCampaignPricing } from '../../src/lib/promotions/campaignOffers.js';
+import { fromAirtableFields, resolveEntitlements } from '../../src/lib/entitlements/resolveEntitlements.js';
 // クーポンの「利用予約」。**振込完了報告が正常受理された時点でだけ**作る
 import {
   resolveReservationDecision, buildReservationFields, RESERVATION_REJECT,
@@ -705,6 +708,12 @@ exports.handler = async (event, context) => {
     // ========================================
     // Airtable登録（Premium Plus以外の月額プラン）
     // ========================================
+    /**
+     * 適用されたキャンペーン割引。
+     * ⚠️ **この if ブロックの外**で宣言する。中で宣言すると最後のログから見えない
+     *    （実際に ReferenceError で申込が 500 になった）。
+     */
+    let campaignApplied = null;
     if (!isPremiumPlusProductName(productName)) {
       // プラン名から料金部分を削除（Airtable Single select用）
       // 例: "Premium Lifetime (¥78,000（永久アクセス）)" → "Premium Lifetime"
@@ -769,6 +778,7 @@ exports.handler = async (event, context) => {
       const clientAmount = Number.parseInt(transferAmount, 10);
       let requestedAmount = clientAmount;
       let appliedCoupon = null;
+      /** 適用されたキャンペーン割引（下の Airtable ブロックで確定する）*/
       if (isPremiumPlusOrder) {
         // 上で検証済みの結果をそのまま使う（ここで再計算すると判定が割れる）。
         // クーポン未選択のときは通常価格を採用する。
@@ -834,6 +844,40 @@ exports.handler = async (event, context) => {
         console.log(`🔍 [bank-transfer] Email 検索結果: ${existingRecords.length}件 ヒット（email=${email}）`);
         if (existingRecords.length > 1) {
           console.warn(`⚠️ [bank-transfer] 同一 Email で複数レコード検出: ${email} / recordIds=${existingRecords.map(r => r.id).join(',')}`);
+        }
+
+        // ── キャンペーン割引をサーバーが決める（2026-08-24）──────────────
+        // ⚠️ 判定材料は**申込プランと会員の実データだけ**。
+        //    画面が送ってきた金額は読まない（DevTools で書き換えられる）。
+        // ⚠️ 期間外・対象外なら通常価格のまま（fail closed）。
+        // ⚠️ すでに持っている商品には乗らない（`resolveCampaignOfferIdsFor` が除外する）。
+        try {
+          const currentFields = existingRecords.length > 0 ? (existingRecords[0].fields || {}) : null;
+          const ent = currentFields
+            ? resolveEntitlements(fromAirtableFields(currentFields), Date.now())
+            // レコードが無い＝新規＝無料の方と同じ扱い
+            : {};
+          const c = resolveCampaignPricing({
+            planName, planType, entitlements: ent, nowMs: Date.now(),
+          });
+          if (c.applied && Number.isFinite(c.finalPrice)) {
+            campaignApplied = c;
+            requestedAmount = c.finalPrice;
+            console.log('🎫 [bank-transfer] キャンペーン割引を適用:', {
+              offerId: c.offerId, regularPrice: c.regularPrice, finalPrice: c.finalPrice,
+            });
+            if (clientAmount !== requestedAmount) {
+              console.warn('⚠️ [bank-transfer] キャンペーン割引でサーバー確定値へ置き換え:', {
+                client: Number.isFinite(clientAmount) ? clientAmount : null,
+                server: requestedAmount, offerId: c.offerId,
+              });
+            }
+          } else {
+            console.log('ℹ️ [bank-transfer] キャンペーン割引の対象外:', { reason: c.reason });
+          }
+        } catch (campaignError) {
+          // 割引の判定で申込を止めない（通常価格のまま進む）
+          console.warn('⚠️ [bank-transfer] キャンペーン割引を判定できませんでした');
         }
 
         if (existingRecords.length > 0) {
@@ -1136,6 +1180,11 @@ exports.handler = async (event, context) => {
     }
 
     console.log('✅ Bank transfer completion report submitted:', {
+      // ⚠️ 管理者宛メールは Airtable 登録より**前**に送るため、割引の適用結果は
+      //    メールに載らない（既存の offer 経路と同じ）。請求すべき金額は
+      //    Airtable の `RequestedAmount`（サーバー確定値）が正本。
+      campaignOffer: campaignApplied ? campaignApplied.offerId : null,
+      campaignFinalPrice: campaignApplied ? campaignApplied.finalPrice : null,
       email,
       fullName,
       transferDate,

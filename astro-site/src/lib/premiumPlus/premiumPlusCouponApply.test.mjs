@@ -159,10 +159,16 @@ test('申込 Function はクライアントの金額を採用せずサーバー�
   const fn = stripComments(read('../../../netlify/functions/bank-transfer-application.js'));
   assert.match(fn, /resolveOrderPricing\(/);
   assert.match(fn, /requestedAmount = pricing\.finalPrice/);
-  // client からは couponId だけを読む
-  assert.doesNotMatch(fn, /\bdiscount\s*[,}]/, 'client の割引額を読んでいる');
-  assert.doesNotMatch(fn, /\bofferPrice\b/, 'client の適用価格を読んでいる');
-  assert.doesNotMatch(fn, /\bfinalPrice\s*[,}]/, 'client の最終価格を読んでいる');
+  // ⚠️ client から**価格を読まない**ことを、リクエスト本文の受け取り部分で検査する。
+  //    以前は Function 全体を grep していたが、サーバー側の判定結果を
+  //    `finalPrice` という名前で扱うだけでも落ちてしまい、
+  //    「サーバーが決めた価格を使う」正しい実装を禁止していた（2026-08-24 修正）。
+  const body = fn.slice(fn.indexOf('JSON.parse(event.body'));
+  const destructure = body.slice(0, body.indexOf('} ='));
+  for (const banned of ['discount', 'offerPrice', 'finalPrice', 'regularPrice']) {
+    assert.ok(!new RegExp(`\\b${banned}\\b`).test(destructure),
+      `client から ${banned} を受け取っている`);
+  }
   // 販売停止の 403 は従来どおり残っている
   assert.match(fn, /code:\s*'sale_paused'/);
 });

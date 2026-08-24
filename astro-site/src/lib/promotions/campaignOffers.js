@@ -84,3 +84,79 @@ export function describeCampaignOfferLine(offer) {
   if (!Number.isFinite(o.regularPrice) || !Number.isFinite(o.offerPrice)) return String(o.name || '');
   return `${o.name}（${yen(o.regularPrice)} → ${yen(o.offerPrice)}）`;
 }
+
+// ── 開催期間 ────────────────────────────────────────────────
+//
+// ⚠️ **期間外は 1 円も割り引かない**（fail closed）。
+//    「案内は出ているのに割引が乗らない」より、「割引が乗るのに案内が無い」より、
+//    **期間を 1 か所で持って両方を同じ値から出す**のが唯一の安全な形。
+//
+// 開始日は MK 確定（2026-08-24 開始・14 日間）。終わらせるときは `ENDS_AT` を過去にする。
+export const CAMPAIGN_WINDOW = Object.freeze({
+  startsAtIso: '2026-08-24T00:00:00+09:00',
+  /** 開始 + 14 日（JST の 24日 0:00 から 9月7日 0:00 まで） */
+  endsAtIso: '2026-09-07T00:00:00+09:00',
+});
+
+/** いまキャンペーン期間内か。日付が壊れていたら false（＝割り引かない） */
+export function isCampaignActive(nowMs = Date.now()) {
+  const s = Date.parse(CAMPAIGN_WINDOW.startsAtIso);
+  const e = Date.parse(CAMPAIGN_WINDOW.endsAtIso);
+  if (!Number.isFinite(s) || !Number.isFinite(e) || !Number.isFinite(nowMs)) return false;
+  return nowMs >= s && nowMs < e;
+}
+
+/** 期限の表示（画面・メールで同じ文字列を使う） */
+export function describeCampaignDeadline() {
+  const e = new Date(Date.parse(CAMPAIGN_WINDOW.endsAtIso) - 1);
+  const jst = new Date(e.getTime() + 9 * 60 * 60 * 1000);
+  return `${jst.getUTCFullYear()}年${jst.getUTCMonth() + 1}月${jst.getUTCDate()}日まで`;
+}
+
+/**
+ * 申込に割引を乗せてよいかを決める（**サーバーの唯一の判定**）。
+ *
+ * ⚠️ クライアントが送ってきた金額は判定材料にしない。
+ *    申込プラン（`planName` / `planType`）と**会員の実データ**だけで決める。
+ * ⚠️ 該当しないときは `applied: false` を返し、呼び出し側は通常価格のまま進む。
+ *
+ * @param {{ planName?: string, planType?: string,
+ *           entitlements?: object, nowMs?: number }} input
+ * @returns {{ applied: boolean, reason: string,
+ *             offerId?: string, name?: string,
+ *             regularPrice?: number, finalPrice?: number, discount?: number }}
+ */
+export function resolveCampaignPricing({ planName, planType, entitlements, nowMs = Date.now() } = {}) {
+  const no = (reason) => ({ applied: false, reason });
+  if (!isCampaignActive(nowMs)) return no('outside_window');
+
+  const name = String(planName || '').trim();
+  const type = String(planType || '').trim();
+  if (!name) return no('no_plan');
+
+  // この会員に案内してよい割引だけを候補にする（持っているものは勧めない）
+  const allowed = new Set(resolveCampaignOfferIdsFor(entitlements));
+  if (!allowed.size) return no('not_eligible');
+
+  // ⚠️ 突き合わせは**申込 Function の語彙**（`RequestedPlan` / `RequestedPlanType`）で行う。
+  //    あちらは productName を 'Premium' + 'Annual' のように 2 つへ分解するため、
+  //    表示用の 'Premium Annual' と比べると**永久に一致しない**（実際に一致しなかった）。
+  const hit = describeCampaignOffersFor(entitlements).find((o) => {
+    if (!allowed.has(o.offerId)) return false;
+    if (String(o.applyPlanName || '') !== name) return false;
+    // PlanType も一致させる（年額の割引で買い切りを買わせない）
+    return !type || String(o.applyPlanType || '') === type;
+  });
+  if (!hit) return no('no_match');
+  if (!Number.isFinite(hit.offerPrice) || hit.offerPrice <= 0) return no('invalid_price');
+
+  return {
+    applied: true,
+    reason: '',
+    offerId: hit.offerId,
+    name: hit.name,
+    regularPrice: hit.regularPrice,
+    finalPrice: hit.offerPrice,
+    discount: hit.regularPrice - hit.offerPrice,
+  };
+}

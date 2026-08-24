@@ -309,6 +309,14 @@ export const PROMOTION_OFFERS = Object.freeze([
     // Light は Premium とプラン名が違うので明示する
     planName: 'Light',
     planType: TERM_TO_PLAN_TYPE.monthly,
+    /**
+     * 申込 Function（`bank-transfer-application`）が使う語彙。
+     * ⚠️ あちらは `RequestedPlan='Premium' / 'Light' / 'Premium Sanrenpuku'` と
+     *    `RequestedPlanType='Monthly' / 'Annual' / 'Lifetime'` の**2 つに分解**する。
+     *    表示用の `planName`（'Premium Annual' 等）とは別物なので、突き合わせ用に明示する。
+     */
+    applyPlanName: 'Light',
+    applyPlanType: 'Monthly',
     version: 1,
     enabled: true,
   },
@@ -326,6 +334,8 @@ export const PROMOTION_OFFERS = Object.freeze([
     discountType: DISCOUNT_TYPE.AMOUNT,
     discountValue: 5000,
     isFree: false,
+    applyPlanName: 'Premium',
+    applyPlanType: 'Annual',
     version: 1,
     enabled: true,
   },
@@ -343,6 +353,8 @@ export const PROMOTION_OFFERS = Object.freeze([
     discountType: DISCOUNT_TYPE.AMOUNT,
     discountValue: 10000,
     isFree: false,
+    applyPlanName: 'Premium',
+    applyPlanType: 'Lifetime',
     version: 1,
     enabled: true,
   },
@@ -364,6 +376,8 @@ export const PROMOTION_OFFERS = Object.freeze([
     // 三連複は Premium と別商品なので、申込プラン名を明示する
     planName: 'Premium Sanrenpuku',
     planType: TERM_TO_PLAN_TYPE.monthly,
+    applyPlanName: 'Premium Sanrenpuku',
+    applyPlanType: 'Monthly',
     version: 1,
     enabled: true,
   },
@@ -606,6 +620,9 @@ export function resolveOffer(offerId, input = {}) {
       /** 購入条件のときだけ意味を持つ（既存 bank flow の語彙） */
       planType: resolvePlanType(def),
       planName: resolvePlanName(def),
+      /** 申込 Function の語彙（`RequestedPlan` / `RequestedPlanType`）。無ければ null */
+      applyPlanName: def.applyPlanName || null,
+      applyPlanType: def.applyPlanType || null,
       /**
        * カムバック施策の宣言（あれば）。判定は `entitlements/comebackPolicy.js` に集約し、
        * ここでは**定義をそのまま渡すだけ**（解釈しない）。
