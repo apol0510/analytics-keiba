@@ -21,6 +21,7 @@ const PREMIUM_MEMBER = {
   'プラン': 'Premium', 'Status': 'active', '有効期限': '2099-12-31',
 };
 
+/** ⚠️ Airtable の recordId は `rec` + 14 文字。短いと「会員を特定できない」扱いになる */
 let patches;
 let realFetch;
 let realEnv;
@@ -35,9 +36,9 @@ function stub() {
     if (u.includes('redis.example.invalid')) return json({ result: null });
     if (u.includes('PromotionalOffers')) return json({ records: [] });
     if (u.includes('api.airtable.com')) {
-      if (m === 'GET') return json({ records: record ? [{ id: 'recSYNTH00000001', fields: record }] : [] });
+      if (m === 'GET') return json({ records: record ? [{ id: 'recSYNTH000000010', fields: record }] : [] });
       patches.push({ method: m, body: JSON.parse(init.body || '{}') });
-      return json({ id: 'recSYNTH00000001', fields: record || {} });
+      return json({ id: 'recSYNTH000000010', fields: record || {} });
     }
     return new Response('blocked', { status: 403 });
   };
@@ -143,4 +144,58 @@ test('権限フィールドは 1 つも書かない（申込は昇格させな�
   assert.equal(f['PaymentConfirmed'], false);
   // 既存 active 会員の Status は据え置き（pending へ降格させない）
   assert.ok(f['Status'] === undefined || f['Status'] === 'pending', `Status=${f['Status']}`);
+});
+
+// ── 運営の停止スイッチ・個別除外（管理画面から操作する）────────────
+//
+// ⚠️ 案内を見てから申し込むまでに止めたなら、割引は乗らないのが正しい。
+//    「案内が出ていたから」は理由にならない（申込のたびにサーバーが見る）。
+
+/** 合成 Redis の応答を差し替える */
+let redisReply = () => null;
+function stubWithRedis() {
+  const base = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    if (String(url).includes('redis.example.invalid')) {
+      const args = JSON.parse(init.body || '[]');
+      return new Response(JSON.stringify({ result: redisReply(args) }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    return base(url, init);
+  };
+}
+
+test('運営が停止していたら割り引かない', { skip: !IN_WINDOW }, async () => {
+  record = FREE_MEMBER;
+  redisReply = (args) => (args[0] === 'GET' ? '1' : null);   // 停止中
+  stubWithRedis();
+  await apply({ productName: 'Premium Annual (¥49,800)', transferAmount: '49800' });
+  assert.equal(requested()['RequestedAmount'], 49800, '停止中なのに割り引いている');
+});
+
+test('個別に対象外にした会員は割り引かない', { skip: !IN_WINDOW }, async () => {
+  record = FREE_MEMBER;
+  redisReply = (args) => (args[0] === 'HGET' ? '{"actor":"MK"}' : null);   // 除外済み
+  stubWithRedis();
+  await apply({ productName: 'Premium Annual (¥49,800)', transferAmount: '49800' });
+  assert.equal(requested()['RequestedAmount'], 49800, '対象外なのに割り引いている');
+});
+
+test('停止スイッチを読めないときは割り引かない（fail closed）', { skip: !IN_WINDOW }, async () => {
+  record = FREE_MEMBER;
+  const base = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    if (String(url).includes('redis.example.invalid')) return new Response('err', { status: 500 });
+    return base(url, init);
+  };
+  await apply({ productName: 'Premium Annual (¥49,800)', transferAmount: '49800' });
+  assert.equal(requested()['RequestedAmount'], 49800, '確認できないのに割り引いている');
+});
+
+test('停止していなければ従来どおり割り引く（塞ぎすぎない）', { skip: !IN_WINDOW }, async () => {
+  record = FREE_MEMBER;
+  redisReply = () => null;
+  stubWithRedis();
+  await apply({ productName: 'Premium Annual (¥49,800)', transferAmount: '49800' });
+  assert.equal(requested()['RequestedAmount'], 44800);
 });

@@ -9,7 +9,9 @@ import { buildApplicationFields } from '../../src/lib/payments/bankPaymentFlow.j
 // 申込価格の正本（クーポン適用込み）。**クライアントの言い値を使わない**
 import { resolveOrderPricing } from '../../src/lib/premiumPlus/premiumPlusCouponApply.js';
 // 全会員向けキャンペーン割引。**価格はサーバーが決める**（クライアントの申告は読まない）
-import { resolveCampaignPricing } from '../../src/lib/promotions/campaignOffers.js';
+import { resolveCampaignPricing, isCampaignActive } from '../../src/lib/promotions/campaignOffers.js';
+import { campaignControlStore } from '../../src/lib/promotions/campaignControlStore.js';
+import { resolveCampaignAllowed } from '../../src/lib/promotions/campaignControl.js';
 import { fromAirtableFields, resolveEntitlements } from '../../src/lib/entitlements/resolveEntitlements.js';
 // クーポンの「利用予約」。**振込完了報告が正常受理された時点でだけ**作る
 import {
@@ -857,8 +859,22 @@ exports.handler = async (event, context) => {
             ? resolveEntitlements(fromAirtableFields(currentFields), Date.now())
             // レコードが無い＝新規＝無料の方と同じ扱い
             : {};
+          // ⚠️ 運営が止めていないか・この会員が対象外でないかを**申込のたびに**見る。
+          //    案内を見てから申し込むまでに止めたなら、割引は乗らないのが正しい。
+          //    読めないときは割り引かない（fail closed）。
+          const controlRecordId = existingRecords.length > 0 ? existingRecords[0].id : null;
+          const store = campaignControlStore(process.env);
+          const [ctrl, isExcluded] = await Promise.all([
+            store.readControl(),
+            controlRecordId ? store.isExcluded(controlRecordId) : Promise.resolve(false),
+          ]);
           const c = resolveCampaignPricing({
             planName, planType, entitlements: ent, nowMs: Date.now(),
+            allowed: resolveCampaignAllowed({
+              withinWindow: isCampaignActive(Date.now()),
+              control: ctrl,
+              excluded: isExcluded,
+            }),
           });
           if (c.applied && Number.isFinite(c.finalPrice)) {
             campaignApplied = c;

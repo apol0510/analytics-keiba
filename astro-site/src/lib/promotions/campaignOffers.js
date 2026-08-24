@@ -126,8 +126,14 @@ export function describeCampaignDeadline() {
  *             offerId?: string, name?: string,
  *             regularPrice?: number, finalPrice?: number, discount?: number }}
  */
-export function resolveCampaignPricing({ planName, planType, entitlements, nowMs = Date.now() } = {}) {
+export function resolveCampaignPricing({
+  planName, planType, entitlements, nowMs = Date.now(),
+  /** 運営の停止スイッチ・個別除外（`campaignControl.js` の判定結果）*/
+  allowed,
+} = {}) {
   const no = (reason) => ({ applied: false, reason });
+  // ⚠️ 運営が止めている / 対象外 / 確認できない → **1 円も割り引かない**
+  if (allowed && allowed.allowed !== true) return no(allowed.reason || 'blocked');
   if (!isCampaignActive(nowMs)) return no('outside_window');
 
   const name = String(planName || '').trim();
@@ -135,14 +141,14 @@ export function resolveCampaignPricing({ planName, planType, entitlements, nowMs
   if (!name) return no('no_plan');
 
   // この会員に案内してよい割引だけを候補にする（持っているものは勧めない）
-  const allowed = new Set(resolveCampaignOfferIdsFor(entitlements));
-  if (!allowed.size) return no('not_eligible');
+  const eligibleIds = new Set(resolveCampaignOfferIdsFor(entitlements));
+  if (!eligibleIds.size) return no('not_eligible');
 
   // ⚠️ 突き合わせは**申込 Function の語彙**（`RequestedPlan` / `RequestedPlanType`）で行う。
   //    あちらは productName を 'Premium' + 'Annual' のように 2 つへ分解するため、
   //    表示用の 'Premium Annual' と比べると**永久に一致しない**（実際に一致しなかった）。
   const hit = describeCampaignOffersFor(entitlements).find((o) => {
-    if (!allowed.has(o.offerId)) return false;
+    if (!eligibleIds.has(o.offerId)) return false;
     if (String(o.applyPlanName || '') !== name) return false;
     // PlanType も一致させる（年額の割引で買い切りを買わせない）
     return !type || String(o.applyPlanType || '') === type;
@@ -180,8 +186,10 @@ const yen = (n) => `¥${Number(n).toLocaleString('ja-JP')}`;
  * @returns {{ active: boolean, deadlineText: string, signature: string,
  *             offers: Array<{offerId,name,regularPriceText,offerPriceText,discountText,applyHref}> }}
  */
-export function describeCampaignForMember({ entitlements, nowMs = Date.now() } = {}) {
-  const active = isCampaignActive(nowMs);
+export function describeCampaignForMember({ entitlements, nowMs = Date.now(), allowed } = {}) {
+  // ⚠️ 案内と適用は**同じ条件**で決める。案内だけ出て割引が乗らないと行き違いになる。
+  const blocked = !!allowed && allowed.allowed !== true;
+  const active = !blocked && isCampaignActive(nowMs);
   const offers = active
     ? describeCampaignOffersFor(entitlements).map((o) => ({
       offerId: o.offerId,
