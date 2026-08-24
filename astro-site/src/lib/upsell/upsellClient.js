@@ -94,12 +94,20 @@ export async function canShowPlusUpsell() {
 // 既読は**その端末の localStorage** に持つ（本番 schema を増やさない）。
 // 読めない環境（プライベートウィンドウ等）では「未読」に倒す＝見落としを作らない。
 
-import { describeCouponNotice, isCouponNoticeUnseen } from '../premiumPlus/couponNotice.js';
+import { describeAllNotices } from '../premiumPlus/couponNotice.js';
 
 const SEEN_KEY = 'ak:coupon-notice-seen';
 
+/** 種類ごとの既読 signature（`{ usable: '...', campaign: '...' }`）*/
 function readSeen() {
-  try { return localStorage.getItem(SEEN_KEY) || ''; } catch { return ''; }
+  try {
+    const raw = localStorage.getItem(SEEN_KEY) || '';
+    if (!raw) return {};
+    // 旧形式（signature の文字列だけ）も読めるようにする
+    if (raw[0] !== '{') return { usable: raw, claimable: raw };
+    const o = JSON.parse(raw);
+    return o && typeof o === 'object' ? o : {};
+  } catch { return {}; }
 }
 
 /**
@@ -108,9 +116,21 @@ function readSeen() {
  */
 export async function getCouponNotice() {
   const d = await getUpsellDecision();
-  const notice = describeCouponNotice(d && d.coupon);
-  const unseen = isCouponNoticeUnseen(notice, readSeen());
-  return { ...notice, unseen, count: unseen ? notice.count : 0 };
+  const all = describeAllNotices({
+    coupon: d && d.coupon, campaign: d && d.campaign, seen: readSeen(),
+  });
+  const first = all.items[0] || null;
+  return {
+    show: all.count > 0,
+    unseen: all.count > 0,
+    count: all.count,
+    /** 1 件目の内容（1 行だけ出す画面用）*/
+    kind: first ? first.kind : '',
+    label: first ? first.label : '',
+    signature: first ? first.signature : '',
+    /** すべての未読（お知らせ一覧用）*/
+    items: all.items,
+  };
 }
 
 /**
@@ -121,4 +141,21 @@ export function markCouponNoticeSeen(signature) {
   const sig = String(signature || '').trim();
   if (!sig) return false;
   try { localStorage.setItem(SEEN_KEY, sig); return true; } catch { return false; }
+}
+
+/**
+ * 表示したお知らせをまとめて既読にする。
+ * ⚠️ 種類ごとに覚える。1 つ見ただけで**もう一方まで既読にしない**。
+ */
+export function markNoticesSeen(items) {
+  const list = Array.isArray(items) ? items : [];
+  if (!list.length) return false;
+  try {
+    const seen = readSeen();
+    for (const it of list) {
+      if (it && it.kind && it.signature) seen[it.kind] = it.signature;
+    }
+    localStorage.setItem(SEEN_KEY, JSON.stringify(seen));
+    return true;
+  } catch { return false; }
 }

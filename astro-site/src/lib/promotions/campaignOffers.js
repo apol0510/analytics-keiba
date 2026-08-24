@@ -160,3 +160,48 @@ export function resolveCampaignPricing({ planName, planType, entitlements, nowMs
     discount: hit.regularPrice - hit.offerPrice,
   };
 }
+
+// ── 画面に出す形 ────────────────────────────────────────────
+//
+// ⚠️ 申込先は**商品ごとに違う**。Light / Premium は /pricing/、三連複は専用ページ。
+//    ここで 1 か所に持ち、画面側でパスを組み立てない。
+const APPLY_HREF = Object.freeze({
+  [CAMPAIGN_OFFER_IDS.LIGHT_MONTHLY]: '/pricing/',
+  [CAMPAIGN_OFFER_IDS.PREMIUM_ANNUAL]: '/pricing/',
+  [CAMPAIGN_OFFER_IDS.PREMIUM_LIFETIME]: '/pricing/',
+  [CAMPAIGN_OFFER_IDS.SANRENPUKU_MONTHLY]: '/premium-sanrenpuku/',
+});
+
+const yen = (n) => `¥${Number(n).toLocaleString('ja-JP')}`;
+
+/**
+ * マイページ・お知らせに出す形まで解いて返す（**文言と金額はここが作る**）。
+ *
+ * @returns {{ active: boolean, deadlineText: string, signature: string,
+ *             offers: Array<{offerId,name,regularPriceText,offerPriceText,discountText,applyHref}> }}
+ */
+export function describeCampaignForMember({ entitlements, nowMs = Date.now() } = {}) {
+  const active = isCampaignActive(nowMs);
+  const offers = active
+    ? describeCampaignOffersFor(entitlements).map((o) => ({
+      offerId: o.offerId,
+      name: o.name,
+      regularPriceText: yen(o.regularPrice),
+      offerPriceText: yen(o.offerPrice),
+      discountText: `${Number(o.discountValue).toLocaleString('ja-JP')}円OFF`,
+      applyHref: APPLY_HREF[o.offerId] || '/pricing/',
+    }))
+    : [];
+  return {
+    active,
+    deadlineText: describeCampaignDeadline(),
+    /**
+     * お知らせの「新しさ」。開催期間と対象の組み合わせから決まるので、
+     * **同じキャンペーンでは一度見たら出続けない**。
+     */
+    signature: offers.length
+      ? `campaign:${CAMPAIGN_WINDOW.startsAtIso}:${offers.map((o) => o.offerId).join(',')}`
+      : '',
+    offers,
+  };
+}
