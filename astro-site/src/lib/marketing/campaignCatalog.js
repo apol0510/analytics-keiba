@@ -59,6 +59,11 @@ import { REGULAR_PRICE, resolveOffer } from '../promotions/promotionOfferCatalog
 import { LIGHT_TRIAL_EXTRA_STEPS, LIGHT_TRIAL_ANGLES } from './lightTrialSteps.js';
 import { POST_EXPIRY_STEPS, POST_EXPIRY_ANGLES } from './postExpirySteps.js';
 import {
+  DISCOUNT_FREE_STEPS, DISCOUNT_LIGHT_STEPS, DISCOUNT_PREMIUM_STEPS,
+  discountBenefitDescription, DISCOUNT_CTA, DISCOUNT_DEADLINE,
+} from './campaignDiscountSteps.js';
+import { isCampaignActive } from '../promotions/campaignOffers.js';
+import {
   isSequenceCampaign, resolveSequenceStep, describeSequence, validateAllSequences,
 } from './campaignSequence.js';
 
@@ -114,6 +119,8 @@ export const CAMPAIGN_DISABLED_REASON = Object.freeze({
   TEMPLATE_PLACEHOLDER: '本文が初期テンプレートのままのため利用不可（件名・本文・CTA を設定してください）',
   /** 文面は完成しているが、前提となる運用がまだ整っていない下書き */
   DRAFT: '下書き（前提となる運用が未成立のため利用不可）',
+  /** 期間限定の案内で、その期間が来ていない / 終わっている */
+  WINDOW_CLOSED: 'キャンペーン期間外のため利用不可（期間外は割引が適用されません）',
 });
 
 /**
@@ -740,6 +747,86 @@ export const CAMPAIGNS = Object.freeze([
     // 実際の対象判定は「有効な割引オファーを持っているか」で行う（上の requiresOfferUrl）。
     audienceRule: { contracts: [], plans: [], enforce: false },
     enabled: true,
+  },
+  // ── 全会員向けキャンペーン割引（2026-08-24 MK / `docs/decisions.md`）─────────
+  //
+  // サイト側（マイページのお知らせ・申込モーダル）で動いている割引を**メールでも案内する**。
+  // 文面・金額・期限は `campaignDiscountSteps.js`（正本は offer カタログ）。
+  //
+  // ⚠️ **宛先区分を 3 つに分ける理由**: 案内する割引は契約によって違う
+  //    （持っているものは勧めない）。1 通に混ぜると Light の方へ Light の割引を
+  //    送ることになり、`campaignOffers.resolveCampaignOfferIdsFor` の出し分けと食い違う。
+  // ⚠️ **三連複をお持ちの方への区分は作らない**（最上位で売るものが無い）。
+  //    `audienceRule.plans` に `PREMIUM_SANRENPUKU` を入れないことで構造的に外す。
+  // ⚠️ **期間外は自動的に使用停止**（`enabled` は毎回評価する）。
+  //    期間外に送ると「案内は届くが 1 円も割り引かれない」になる（サーバーは fail closed）。
+  {
+    campaignId: 'campaign-discount-free',
+    benefitType: 'discount',
+    get benefitDescription() { return discountBenefitDescription('free'); },
+    version: 1,
+    name: 'キャンペーン割引（無料・期限切れの方 / 連続配信 3 通）',
+    description: '有料の閲覧権が無い方（無料・期限切れ）へ、Light 月額 / Premium 年額 / Premium 買い切りの割引を 3 通で案内する。金額・期限は offer カタログ由来。',
+    subject: DISCOUNT_FREE_STEPS[0].subject,
+    body: DISCOUNT_FREE_STEPS[0].body,
+    ctaLabel: DISCOUNT_CTA.label,
+    ctaUrl: DISCOUNT_CTA.url,
+    sequence: { maxSends: DISCOUNT_FREE_STEPS.length, steps: DISCOUNT_FREE_STEPS },
+    recommendedSegments: ['contract:none', 'contract:expired'],
+    // 有料の閲覧権が無い方だけ。三連複保有者（買い切り）は plans に入れないので当たらない。
+    audienceRule: {
+      contracts: [MK_CONTRACT.NONE, MK_CONTRACT.EXPIRED],
+      plans: [MK_PLAN.FREE, MK_PLAN.LIGHT, MK_PLAN.PREMIUM],
+      enforce: true,
+    },
+    get enabled() { return isCampaignActive(); },
+    disabledReason: CAMPAIGN_DISABLED_REASON.WINDOW_CLOSED,
+    disabledDetail: `お申し込み対象は${DISCOUNT_DEADLINE}。期間外は申込時に割引が適用されない`,
+  },
+  {
+    campaignId: 'campaign-discount-light',
+    benefitType: 'discount',
+    get benefitDescription() { return discountBenefitDescription('light'); },
+    version: 1,
+    name: 'キャンペーン割引（Light ご利用中の方 / 連続配信 2 通）',
+    description: 'Light が有効な方へ Premium 年額 / 買い切りの割引を 2 通で案内する。Light の割引は出さない（すでにお持ちのため）。',
+    subject: DISCOUNT_LIGHT_STEPS[0].subject,
+    body: DISCOUNT_LIGHT_STEPS[0].body,
+    ctaLabel: DISCOUNT_CTA.label,
+    ctaUrl: DISCOUNT_CTA.url,
+    sequence: { maxSends: DISCOUNT_LIGHT_STEPS.length, steps: DISCOUNT_LIGHT_STEPS },
+    recommendedSegments: ['plan:light', 'contract:active'],
+    audienceRule: {
+      contracts: [MK_CONTRACT.ACTIVE, MK_CONTRACT.EXPIRING_SOON],
+      plans: [MK_PLAN.LIGHT],
+      enforce: true,
+    },
+    get enabled() { return isCampaignActive(); },
+    disabledReason: CAMPAIGN_DISABLED_REASON.WINDOW_CLOSED,
+    disabledDetail: `お申し込み対象は${DISCOUNT_DEADLINE}。期間外は申込時に割引が適用されない`,
+  },
+  {
+    campaignId: 'campaign-discount-premium',
+    benefitType: 'discount',
+    get benefitDescription() { return discountBenefitDescription('premium'); },
+    version: 1,
+    name: 'キャンペーン割引（Premium ご利用中の方 / 連続配信 2 通）',
+    description: 'Premium が有効で三連複をお持ちでない方へ、三連複 買い切りの割引を 2 通で案内する。購入導線はマイページのモーダルのみ。',
+    subject: DISCOUNT_PREMIUM_STEPS[0].subject,
+    body: DISCOUNT_PREMIUM_STEPS[0].body,
+    ctaLabel: DISCOUNT_CTA.label,
+    ctaUrl: DISCOUNT_CTA.url,
+    sequence: { maxSends: DISCOUNT_PREMIUM_STEPS.length, steps: DISCOUNT_PREMIUM_STEPS },
+    recommendedSegments: ['plan:premium', 'contract:active'],
+    // 三連複の買い切りを持つ方は `MK_PLAN.PREMIUM_SANRENPUKU` に分類されるので当たらない。
+    audienceRule: {
+      contracts: [MK_CONTRACT.ACTIVE, MK_CONTRACT.EXPIRING_SOON],
+      plans: [MK_PLAN.PREMIUM],
+      enforce: true,
+    },
+    get enabled() { return isCampaignActive(); },
+    disabledReason: CAMPAIGN_DISABLED_REASON.WINDOW_CLOSED,
+    disabledDetail: `お申し込み対象は${DISCOUNT_DEADLINE}。期間外は申込時に割引が適用されない`,
   },
   {
     campaignId: 'general-announcement',
