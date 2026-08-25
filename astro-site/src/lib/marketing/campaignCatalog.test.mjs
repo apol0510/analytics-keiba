@@ -213,8 +213,8 @@ test('【version ロック】本文を変えたら version を上げる', () => 
       version: 1,
       delivered: [],
       steps: {
-        1: '8068fbcfcb4eda58',
-        2: 'f9a0184d1709701f',
+        1: '63b9519417736b5f',
+        2: 'ab33001bb70404ca',
         3: 'b082a5addddc9734',
       },
     },
@@ -222,7 +222,7 @@ test('【version ロック】本文を変えたら version を上げる', () => 
       version: 1,
       delivered: [],
       steps: {
-        1: 'a71ecda1e6974f0d',
+        1: '14720dcd214dbfd0',
         2: 'bcb26e969d67d4f6',
       },
     },
@@ -230,7 +230,7 @@ test('【version ロック】本文を変えたら version を上げる', () => 
       version: 1,
       delivered: [],
       steps: {
-        1: '28347ae960f72790',
+        1: '88f0ad30b0e61d08',
         2: 'e904aaac96f43828',
       },
     },
