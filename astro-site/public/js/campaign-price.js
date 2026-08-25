@@ -82,7 +82,18 @@
     var infoEl = document.getElementById('modalPlanInfo');
     var inputEl = document.getElementById('transferAmount');
 
-    if (amountEl) amountEl.textContent = yen(pricing.finalPrice);
+    // ⚠️ **元の金額も見せる**（2026-08-25 MK 指摘）。
+    //    割引後だけだと、いくら得なのかがその場で分からない。
+    if (amountEl) {
+      amountEl.textContent = '';
+      if (pricing.regularPrice) {
+        var before = document.createElement('span');
+        before.textContent = yen(pricing.regularPrice);
+        before.style.cssText = 'margin-right:.5em;font-size:.8em;color:#94a3b8;text-decoration:line-through;';
+        amountEl.appendChild(before);
+      }
+      amountEl.appendChild(document.createTextNode(yen(pricing.finalPrice)));
+    }
     // 「プラン: X (¥49,800/年)」の金額部分だけを置き換える
     if (infoEl && pricing.regularPrice) {
       infoEl.textContent = infoEl.textContent.replace(yen(pricing.regularPrice), yen(pricing.finalPrice));
@@ -91,9 +102,8 @@
     if (inputEl) inputEl.value = String(pricing.finalPrice);
 
     // 何が起きたのかを 1 行で伝える（文言はサーバー由来）
-    if (pricing.note) {
-      setNote(pricing.note + '（通常 ' + yen(pricing.regularPrice) + '）', '#34d399');
-    }
+    // ⚠️ 元の金額は上の取り消し線で見えているので、ここでは繰り返さない
+    if (pricing.note) setNote(pricing.note, '#34d399');
   }
 
   function fetchAndPaint(productName) {
@@ -107,6 +117,46 @@
       .catch(function () {});
   }
 
+  /**
+   * ページ内の「その商品の価格」を出している場所を、割引後の値へ揃える。
+   *
+   * ⚠️ 申込モーダルの手前に**もう 1 枚**説明の画面があると、そこだけ元の値段が残る
+   *    （2026-08-25: 三連複の説明モーダルが ¥78,000 のままだった）。
+   *    ページごとに書かず、印を付けた要素をここでまとめて差し替える。
+   *
+   *    使い方（ページ側は**金額を書き換えるコードを持たない**）:
+   *      <span data-ak-price="Premium Sanrenpuku Lifetime">¥78,000</span>
+   *      <span data-ak-price-strike="Premium Sanrenpuku Lifetime">¥108,000</span>
+   *
+   *    `data-ak-price`       … 割引後の金額に差し替える
+   *    `data-ak-price-strike`… 取り消し線側。**割引前（＝いまの販売価格）**に差し替える
+   */
+  function paintMarkedPrices() {
+    var nodes = document.querySelectorAll('[data-ak-price],[data-ak-price-strike]');
+    if (!nodes.length) return;
+    var byProduct = {};
+    Array.prototype.forEach.call(nodes, function (el) {
+      var name = el.getAttribute('data-ak-price') || el.getAttribute('data-ak-price-strike');
+      if (!name) return;
+      (byProduct[name] = byProduct[name] || []).push(el);
+    });
+    Object.keys(byProduct).forEach(function (name) {
+      fetch(API + '?plan=' + encodeURIComponent(declaredPlan()) + '&product=' + encodeURIComponent(name),
+        { credentials: 'same-origin' })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (j) {
+          var p = j && j.pricing;
+          // ⚠️ 割引が乗らないときは**元の表示のまま**（勝手に書き換えない）
+          if (!p || p.applied !== true || !p.finalPrice) return;
+          byProduct[name].forEach(function (el) {
+            if (el.hasAttribute('data-ak-price-strike')) el.textContent = yen(p.regularPrice);
+            else el.textContent = yen(p.finalPrice);
+          });
+        })
+        .catch(function () {});
+    });
+  }
+
   /** 既存の openBankModal を包む（ページ側のコードは 1 行も触らない） */
   function wrap() {
     if (typeof window.openBankModal !== 'function' || window.__akCampaignPriceWrapped) return false;
@@ -118,6 +168,13 @@
     };
     window.__akCampaignPriceWrapped = true;
     return true;
+  }
+
+  // 印を付けた価格は、モーダルを開く前に揃えておく
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', paintMarkedPrices);
+  } else {
+    paintMarkedPrices();
   }
 
   // ページ側の定義より後に読み込まれるとは限らないので、少しの間だけ待つ

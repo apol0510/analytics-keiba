@@ -2040,21 +2040,25 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
         align-items: center;
         justify-content: center;
         gap: .4em;
-        /* 指で押せる大きさ（スマホの最小タップ領域）*/
+        /* ⚠️ このサイトには border-box の共通指定が無い。
+           指定しないと min-height に padding が**足し算**され、
+           狙った 44px が 66px になる（2026-08-25「ボタンが大きすぎる」の原因）。 */
+        box-sizing: border-box;
+        /* 指で押せる大きさ（スマホの最小タップ領域）。**下げない** */
         min-height: 44px;
-        padding: .7rem 1.35rem;
+        padding: .5rem 1.1rem;
         border: 0;
         border-radius: 999px;
         background: linear-gradient(135deg, #10b981, #059669);
         color: #fff !important;
         font-family: inherit;
-        font-weight: 800;
-        font-size: .92rem;
+        font-weight: 700;
+        font-size: .87rem;
         line-height: 1;
         text-decoration: none !important;
         white-space: nowrap;
         cursor: pointer;
-        box-shadow: 0 6px 16px rgba(16, 185, 129, .32);
+        box-shadow: 0 4px 12px rgba(16, 185, 129, .22);
         transition: transform .12s ease, box-shadow .12s ease, filter .12s ease;
       }
       /* 押せることを形でも伝える */
@@ -2063,7 +2067,7 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
         color: #fff !important;
         filter: brightness(1.08);
         transform: translateY(-1px);
-        box-shadow: 0 8px 20px rgba(16, 185, 129, .42);
+        box-shadow: 0 6px 16px rgba(16, 185, 129, .32);
       }
       #campaign-section .campaign-apply:active {
         transform: translateY(0);
@@ -2083,9 +2087,20 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
       }
       #campaign-section .campaign-apply[disabled]::after { content: ''; }
       @media (max-width: 640px) {
-        #campaign-section .campaign-list li { gap: .6rem; }
+        /* ⚠️ 画面幅いっぱいのボタンは**大きすぎて釣り合わない**（2026-08-25 MK 指摘）。
+           文字幅に収め、金額の下へ右寄せで置く。 */
+        #campaign-section .campaign-list li {
+          gap: .35rem;
+          flex-direction: column;
+          align-items: stretch;
+        }
         #campaign-section .campaign-apply {
-          margin-left: 0; width: 100%;
+          margin-left: auto;
+          width: auto;
+          align-self: flex-end;
+          padding: .45rem 1rem;
+          min-height: 40px;
+          font-size: .82rem;
         }
         #campaign-section .campaign-deadline { margin-left: 0; width: 100%; }
       }
@@ -4626,24 +4641,23 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
         .dark-horse-link-btn {
             display: flex;
             align-items: center;
-            gap: 15px;
-            background: linear-gradient(135deg, #f59e0b, #ea580c);
-            border: 1px solid rgba(245, 158, 11, 0.3);
-            border-radius: 16px;
-            padding: 20px 24px;
+            gap: 12px;
+            background: rgba(245, 158, 11, .08);
+            border: 1px solid rgba(245, 158, 11, .28);
+            border-radius: 12px;
+            padding: 14px 18px;
             text-decoration: none;
-            transition: all 0.3s ease;
+            transition: background .2s ease, border-color .2s ease;
             cursor: pointer;
         }
 
         .dark-horse-link-btn:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 12px 30px rgba(245, 158, 11, 0.4);
-            border-color: rgba(245, 158, 11, 0.5);
+            background: rgba(245, 158, 11, .14);
+            border-color: rgba(245, 158, 11, .45);
         }
 
         .dark-horse-icon {
-            font-size: 2rem;
+            font-size: 1.35rem;
             flex-shrink: 0;
         }
 
@@ -4655,38 +4669,38 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
         }
 
         .dark-horse-title {
-            color: #fff;
-            font-size: 1.1rem;
-            font-weight: 700;
+            color: #fbbf24;
+            font-size: .95rem;
+            font-weight: 600;
         }
 
         .dark-horse-subtitle {
-            color: rgba(255, 255, 255, 0.9);
-            font-size: 0.9rem;
+            color: rgba(226, 232, 240, .65);
+            font-size: .8rem;
         }
 
         .dark-horse-arrow {
-            color: #fff;
-            font-size: 1.5rem;
-            font-weight: bold;
+            color: rgba(251, 191, 36, .85);
+            font-size: 1.05rem;
+            font-weight: 600;
             flex-shrink: 0;
         }
 
         @media (max-width: 768px) {
             .dark-horse-link-btn {
-                padding: 16px 18px;
+                padding: 12px 14px;
             }
 
             .dark-horse-icon {
-                font-size: 1.5rem;
+                font-size: 1.15rem;
             }
 
             .dark-horse-title {
-                font-size: 1rem;
+                font-size: .9rem;
             }
 
             .dark-horse-subtitle {
-                font-size: 0.85rem;
+                font-size: .78rem;
             }
         }
 
@@ -4955,7 +4969,7 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
 
             <h2 class="modal-title">🔄 三連複予想の買い切り購入</h2>
             <p class="modal-subtitle">
-                🔥 今だけ特別価格：¥108,000 → <strong>¥78,000</strong>（永久アクセス）
+                🔥 今だけ特別価格：<span data-ak-price-strike="Premium Sanrenpuku Lifetime">¥108,000</span> → <strong data-ak-price="Premium Sanrenpuku Lifetime">¥78,000</strong>（永久アクセス）
             </p>
 
             <!-- 安心メッセージ -->
@@ -4975,8 +4989,8 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                     <div class="recommended-badge">馬単予想 + 三連複予想の両方を利用する</div>
                     <h3 class="plan-option-name">Sanrenpuku Lifetime</h3>
                     <div class="plan-option-subtitle">高性能AI三連複自動絞り込み（Premium期限内閲覧可能）</div>
-                    <div class="plan-option-price-strike">¥108,000</div>
-                    <div class="plan-option-price">¥78,000</div>
+                    <div class="plan-option-price-strike" data-ak-price-strike="Premium Sanrenpuku Lifetime">¥108,000</div>
+                    <div class="plan-option-price" data-ak-price="Premium Sanrenpuku Lifetime">¥78,000</div>
                     <div class="plan-option-discount">永久アクセス（追加料金なし）</div>
                     <ul class="plan-option-features">
                         <li>✅ <strong>高性能AI三連複絞り込み機能</strong>を利用できます</li>
@@ -4988,7 +5002,7 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                     <button class="btn-plan combo" onclick="openBankModal('Premium Sanrenpuku Lifetime', 78000, 'lifetime')">
                         🏦 銀行振込で申し込む
                     </button>
-                    <p class="plan-note">🔥 今だけ特別価格：¥108,000 → ¥78,000</p>
+                    <p class="plan-note">🔥 今だけ特別価格：<span data-ak-price-strike="Premium Sanrenpuku Lifetime">¥108,000</span> → <span data-ak-price="Premium Sanrenpuku Lifetime">¥78,000</span></p>
                 </div>
 
             </div>
@@ -5021,8 +5035,8 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                     <div class="recommended-badge">おすすめ</div>
                     <h3 class="plan-option-name">Premium 買い切り</h3>
                     <div class="plan-option-subtitle">一度きりの支払いで永久アクセス</div>
-                    <div class="plan-option-price-strike">¥108,000</div>
-                    <div class="plan-option-price">¥78,000</div>
+                    <div class="plan-option-price-strike" data-ak-price-strike="Premium Sanrenpuku Lifetime">¥108,000</div>
+                    <div class="plan-option-price" data-ak-price="Premium Sanrenpuku Lifetime">¥78,000</div>
                     <div class="plan-option-discount">永久アクセス（追加料金なし）</div>
                     <ul class="plan-option-features">
                         <li>✅ <strong>全12レース</strong>の馬単予想</li>

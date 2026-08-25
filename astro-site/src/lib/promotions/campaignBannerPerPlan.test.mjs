@@ -128,12 +128,14 @@ test('登録ページでは登録ボタンを出さない（同じページ）',
   assert.equal(v.cta.reason, 'same_page');
 });
 
-test('登録済みの方にはボタンを出さない（申込時に自動適用）', async () => {
-  for (const plan of ['free', 'light', 'premium']) {
+test('そのページで買える方にはボタンを出さない（申込時に自動適用）', async () => {
+  // ⚠️ Premium の方は三連複だけで、/pricing/ では買えない。
+  //    その場合は「マイページでお申し込み」を出すのが正しい（下の専用テスト）。
+  for (const plan of ['free', 'light']) {
     const banner = await bannerFor(plan);
     const v = resolveBannerView({ banner, currentPath: '/pricing/' });
     assert.equal(v.show, true, `${plan}: ご案内が出ない`);
-    assert.equal(v.cta.show, false, `${plan}: 行き先の無いボタンが出ている`);
+    assert.equal(v.cta.show, false, `${plan}: 不要なボタンが出ている`);
     assert.equal(v.cta.reason, 'no_href');
   }
 });
@@ -157,4 +159,44 @@ test('判定は純粋関数に置く（画面の中だけに条件を書かな�
   assert.match(c, /resolveBannerView/, '画面が自前で判定している');
   // 画面側に条件を再実装していない
   assert.doesNotMatch(c, /ctaHref && b\.ctaLabel/, '画面に条件が残っている');
+});
+
+// ── 買えない場所で行き止まりにしない（2026-08-25 MK 指摘）──────────
+//
+// ⚠️ 三連複は `/pricing/` で売っていない。そこに「三連複 10,000円OFF」とだけ出すと、
+//    どこで買えるのか分からず行き止まりになる。
+
+test('マイページでしか買えない商品しか無いときは、マイページへ送る', async () => {
+  const banner = await bannerFor('premium');   // Premium の方は三連複だけ
+  const v = resolveBannerView({ banner, currentPath: '/pricing/' });
+  assert.equal(v.show, true);
+  assert.equal(v.cta.show, true, '買える場所への導線が無い（行き止まり）');
+  assert.equal(v.cta.href, '/dashboard/');
+  assert.ok(v.cta.label, 'ボタンの文字が無い');
+});
+
+test('そのマイページ自身では出さない（同じページ）', async () => {
+  const v = resolveBannerView({ banner: await bannerFor('premium'), currentPath: '/dashboard/' });
+  assert.equal(v.cta.show, false);
+  assert.equal(v.cta.reason, 'same_page');
+});
+
+test('そのページで買える商品があるときはボタンを出さない（自動適用）', async () => {
+  // 無料の方の割引は /pricing/ でそのまま買える
+  const v = resolveBannerView({ banner: await bannerFor('free'), currentPath: '/pricing/' });
+  assert.equal(v.cta.show, false, '不要なボタンを出している');
+});
+
+test('説明画面の金額も割引後に揃える（印を付けた場所を差し替える）', () => {
+  // ⚠️ 申込モーダルの手前にもう 1 枚あると、そこだけ元の値段が残る（本番で発生）。
+  const script = read('../../../public/js/campaign-price.js');
+  assert.match(script, /data-ak-price/, '印を付けた金額を差し替えていない');
+  assert.match(script, /data-ak-price-strike/, '取り消し線側を扱っていない');
+  assert.match(script, /applied !== true[\s\S]{0,80}return/, '割引が無いときに書き換えている');
+
+  const page = read('../../pages/dashboard.astro');
+  const marks = page.match(/data-ak-price(-strike)?="Premium Sanrenpuku Lifetime"/g) || [];
+  assert.ok(marks.length >= 4, `三連複の金額に印が足りない: ${marks.length}`);
+  // ページ側は金額を書き換えるコードを持たない
+  assert.doesNotMatch(page, /plan-option-price[^]{0,80}textContent\s*=/, 'ページで金額を書き換えている');
 });
