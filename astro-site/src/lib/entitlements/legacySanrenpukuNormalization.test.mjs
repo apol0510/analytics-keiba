@@ -112,11 +112,26 @@ test('【要件】正規化後、退会関連の判定・表示が 1 つも残�
     resolveEntitlements(fromAirtableFields(after), NOW).reasons.includes('WITHDRAWAL_REQUESTED'),
     false, '退会を理由に権利を絞っている',
   );
-  // 表示（カルテ・タイムライン）に退会が出ない
+  // 表示（タイムライン）に退会が出ない。
+  // ⚠️ `record: { fields }` の形で渡す（`fields` 直渡しだと何も出ず、検査が素通りする）
   const { buildCustomerTimeline } = await import('../marketing/customerTimeline.js');
-  const timeline = buildCustomerTimeline({ fields: after, nowMs: NOW });
-  const events = JSON.stringify(timeline);
-  assert.equal(events.includes('退会'), false, 'タイムラインに退会が残っている');
+  const timelineOf = (f) => JSON.stringify(
+    buildCustomerTimeline({ record: { id: 'recW', fields: f }, nowMs: NOW }),
+  );
+  assert.ok(timelineOf(WITHDRAWN_LEGACY).includes('退会'), '前提: 変更前は退会が出ている');
+  assert.equal(timelineOf(after).includes('退会'), false, 'タイムラインに退会が残っている');
+
+  // カルテにも退会が残らない（`contract.withdrawn` / `contract.withdrawalDate`）
+  const { buildCustomerDossier } = await import('../marketing/customerDossier.js');
+  const dossierOf = (f) => buildCustomerDossier({ record: { id: 'recW', fields: f }, nowMs: NOW });
+  const dBefore = dossierOf(WITHDRAWN_LEGACY);
+  assert.equal(dBefore.contract.withdrawn, true, '前提: 変更前はカルテが退会を出している');
+  assert.ok(dBefore.contract.withdrawalDate, '前提: 変更前は退会日が出ている');
+
+  const dAfter = dossierOf(after);
+  assert.equal(dAfter.contract.withdrawn, false, 'カルテが退会扱いのまま');
+  assert.ok(!dAfter.contract.withdrawalDate, 'カルテに退会日が残っている');
+  assert.equal(JSON.stringify(dAfter.contract).includes('退会'), false, 'カルテに退会の記述が残っている');
   // 値そのものが空
   for (const f of ['WithdrawalDate', 'WithdrawalReason', 'CancelledAt']) {
     assert.ok(after[f] === null || after[f] === undefined || after[f] === '', `${f} が残っている`);
