@@ -40,22 +40,32 @@ const plan = (over = {}) => ({
   label: '銀行振込お申し込み: Premium 年額 (¥44,800)', details: {}, ...over,
 });
 
-test('Premium Plus は「会員ステータスに反映される」と言わない', () => {
-  const t = SR.describeFollowUp(plus());
-  assert.ok(t, '案内が空');
-  assert.ok(!/上の会員ステータスに反映/.test(t), '単品なのにプランと同じ案内を出している');
-  assert.match(t, /メールでご案内/, '実際の届け方（メール）を書いていない');
-  assert.match(t, /反映されません/, '会員ステータスが変わらないことを伝えていない');
+test('Premium Plus の行には何も書かない', () => {
+  // ⚠️ 2026-08-26 MK 判断。この記録は書き換わらないので、
+  //    「これからメールでご案内します」と書くと**配信が済んだあとも未完了に読める**
+  //    （「確認待ち」と同じ誤り）。プランの行に案内を出せるのは、約束ではなく
+  //    **変わらない事実の在り処**（会員ステータス）を指しているから。
+  //    Plus にはその置き場が無いので、書かないのが正しい。
+  assert.equal(SR.describeFollowUp(plus()), '', '約束や状態を書いている');
 });
 
-test('プランのお申し込みは会員ステータスに反映されると案内する', () => {
+test('プランのお申し込みだけ、確かめられる場所を案内する', () => {
+  // ⚠️ これは約束ではなく**在り処**。あとから読んでも古くならない
   assert.match(SR.describeFollowUp(plan()), /上の会員ステータスに反映されます/);
+});
+
+test('記録に約束を書かない（あとから読んでも古くならない言葉だけ）', () => {
+  for (const entry of [plus(), plan(), { type: 'contact', status: 'sent' }]) {
+    const t = SR.describeFollowUp(entry);
+    assert.ok(!/ご案内します|お届けします|お送りします/.test(t),
+      `これからする約束を書いている: ${t}`);
+  }
 });
 
 test('商品名が無くてもラベルから Premium Plus を見分ける（古い記録の救済）', () => {
   const old = { type: 'bank-transfer', status: 'pending', label: '銀行振込お申し込み: Premium Plus 8月23日分' };
   assert.equal(SR.isPremiumPlusOrder(old), true);
-  assert.match(SR.describeFollowUp(old), /反映されません/);
+  assert.equal(SR.describeFollowUp(old), '', 'Plus と見分けられていない');
 });
 
 test('Premium / Premium Sanrenpuku を Plus と取り違えない', () => {
