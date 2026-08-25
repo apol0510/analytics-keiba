@@ -572,37 +572,60 @@ export function isCurrentCycleReservation(record, cycleStartIso) {
  */
 export function describeCouponUsageForMember({
   lifecycle, ledgerAvailable, claimed,
+  /**
+   * 有効期限を過ぎているか（`resolveCouponAccess().canUse !== true` かつ理由が期限切れ）。
+   *
+   * ⚠️ 2026-08-25 MK 指摘。期限切れのクーポンは
+   *    **「取得済み」のまま**表示され、期限を過ぎたことが画面のどこにも出ていなかった。
+   *    しかも販売再開後は**押せる申込ボタンが出てしまう**（申込は 409 で弾かれる）。
+   *    使えないものを使えるように見せない。
+   */
+  expired,
 } = {}) {
   const state = String(lifecycle || '');
   // 台帳を読めていない：断定しない。申込も止める（誤った金額で受け付けない）
   if (ledgerAvailable !== true || state === 'unknown') {
     return {
-      known: false, used: false, reserved: false,
+      known: false, used: false, reserved: false, expired: false,
       badge: '取得済み',
+      title: '取得済みクーポン',
       note: 'ご利用状況を確認できませんでした。時間をおいてもう一度ご確認ください。',
       blocksOrder: true,
     };
   }
   if (state === 'redeemed') {
     return {
-      known: true, used: true, reserved: false,
+      known: true, used: true, reserved: false, expired: false,
       badge: 'ご利用済み',
+      title: 'ご利用済みクーポン',
       note: 'このクーポンはお申し込みにご利用済みです。',
       blocksOrder: true,
     };
   }
   if (state === 'reserved' || state === 'needs_repair') {
     return {
-      known: true, used: false, reserved: true,
+      known: true, used: false, reserved: true, expired: false,
       badge: 'お申し込みに適用済み',
+      title: 'お申し込みに適用済みのクーポン',
       note: 'お申し込みにこのクーポンを適用しています。入金の確認をお待ちください。',
+      blocksOrder: true,
+    };
+  }
+  // ⚠️ 使っていないが期限が過ぎている。**保有の事実は消さず**、使えないことだけを伝える
+  if (expired === true && claimed === true) {
+    return {
+      known: true, used: false, reserved: false, expired: true,
+      badge: 'ご利用期限切れ',
+      title: '期限切れのクーポン',
+      note: '有効期限を過ぎたため、このクーポンはご利用いただけません。',
       blocksOrder: true,
     };
   }
   // held / revoked / none … まだ使っていない（revoked は取消済みなので使い直せる）
   return {
-    known: true, used: false, reserved: false,
+    known: true, used: false, reserved: false, expired: false,
     badge: claimed === true ? '取得済み' : '未取得',
+    title: '取得済みクーポン',
     note: '',
     blocksOrder: false,
   };
