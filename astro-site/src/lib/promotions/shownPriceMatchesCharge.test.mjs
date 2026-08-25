@@ -24,6 +24,7 @@ import { fileURLToPath } from 'node:url';
 
 import { derivePlanFromProductName, hasOwnSpecialPrice } from '../payments/productName.js';
 import { resolveCampaignPricing, isCampaignActive } from './campaignOffers.js';
+import * as catalog from './campaignOffers.js';
 
 const PAGES_DIR = fileURLToPath(new URL('../../pages/', import.meta.url));
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
@@ -148,6 +149,26 @@ test('未登録の方には「無料登録で◯◯円OFF」を出す（割引�
   assert.match(api, /describeRegisterPrompt/, '文言をサーバーが持っていない');
   // 対象外の商品には案内を出さない（登録しても安くならないのに期待させない）
   assert.match(api, /yen > 0 \? describeRegisterPrompt/, '対象外の商品にも案内を出している');
+});
+
+test('登録のご案内には**行き方**を必ず添える（言うだけにしない）', () => {
+  // ⚠️ 2026-08-25 MK 指摘「無料登録してからだと 500円off ならリンクしないと親切じゃない」。
+  const api = read('../../pages/api/campaign.json.js');
+  assert.match(api, /registerHref: CAMPAIGN_REGISTER_HREF/, 'API が行き先を返していない');
+  assert.match(api, /registerLabel/, 'ボタンの文言を返していない');
+
+  const script = read('../../../public/js/campaign-price.js');
+  assert.match(script, /pricing\.registerHref/, '画面がリンクを出していない');
+  // 行き先を画面で組み立てない
+  assert.doesNotMatch(script, /\/free-signup\//, '行き先を画面に直書きしている');
+
+  // 行き先が実在し、会員資格を要求しないこと（未登録の方が開けなければ意味が無い）
+  const { CAMPAIGN_REGISTER_HREF } = catalog;
+  const file = CAMPAIGN_REGISTER_HREF.replace(/^\/|\/$/g, '');
+  let page = '';
+  try { page = read(`../../pages/${file}.astro`); } catch { page = ''; }
+  assert.ok(page, `登録ページが存在しない: ${CAMPAIGN_REGISTER_HREF}`);
+  assert.doesNotMatch(page, /requiredPlan/, '登録ページが会員専用になっている');
 });
 
 test('すでに特別価格の商品には重ねない（画面の額を変えない）', () => {
