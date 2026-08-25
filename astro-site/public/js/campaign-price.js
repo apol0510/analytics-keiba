@@ -36,8 +36,12 @@
 
   function yen(n) { return '¥' + Number(n).toLocaleString('ja-JP'); }
 
-  /** 金額の下に出す 1 行（文言はサーバー由来）*/
-  function setNote(text, color) {
+  /**
+   * 金額の下に出す 1 行（文言・行き先はサーバー由来）。
+   * ⚠️ 登録のご案内には**必ずリンクを添える**。「◯◯円OFFになります」と
+   *    言うだけで行き方が無いのは不親切（2026-08-25 MK 指摘）。
+   */
+  function setNote(text, color, link) {
     var amountEl = document.getElementById('modalAmount');
     if (!amountEl) return;
     var id = 'campaignPriceNote';
@@ -49,7 +53,16 @@
       amountEl.parentNode.appendChild(note);
     }
     note.style.cssText = 'margin-top:.35rem;font-size:.82rem;font-weight:700;color:' + color + ';';
-    note.textContent = text;
+    note.textContent = '';
+    note.appendChild(document.createTextNode(text));
+    if (link && link.href && link.label) {
+      var a = document.createElement('a');
+      a.href = link.href;
+      a.textContent = link.label;
+      a.style.cssText = 'display:inline-block;margin-left:.5em;padding:.3em .9em;border-radius:999px;'
+        + 'background:#f59e0b;color:#111827;font-weight:800;text-decoration:none;white-space:nowrap;';
+      note.appendChild(a);
+    }
   }
 
   /** モーダルの金額表示を差し替える。要素が無いページでは何もしない */
@@ -58,7 +71,9 @@
     // ⚠️ **無料登録特典**。未登録の方には割り引かず、登録のご案内だけ出す。
     //    金額は元のまま（勝手に安く見せない）。
     if (pricing.applied !== true) {
-      setNote(pricing.registerPrompt || '', '#fbbf24');
+      setNote(pricing.registerPrompt || '', '#fbbf24', {
+        href: pricing.registerHref, label: pricing.registerLabel,
+      });
       return;
     }
     if (!pricing.finalPrice) return;

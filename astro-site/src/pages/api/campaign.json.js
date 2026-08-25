@@ -27,7 +27,7 @@ export const prerender = false;
 import {
   describeCampaignForMember, isCampaignActive, describeCampaignDeadline,
   resolveCampaignPricing, describeRegisterPrompt, CAMPAIGN_NOT_REGISTERED,
-  describeCampaignOffersFor,
+  describeCampaignOffersFor, CAMPAIGN_REGISTER_HREF, CAMPAIGN_REGISTER_LABEL,
 } from '../../lib/promotions/campaignOffers.js';
 import { derivePlanFromProductName, hasOwnSpecialPrice } from '../../lib/payments/productName.js';
 import { campaignControlStore } from '../../lib/promotions/campaignControlStore.js';
@@ -132,6 +132,9 @@ export async function GET({ url }) {
         const yen = discountIfRegistered(d, allowed, now);
         return yen > 0 ? describeRegisterPrompt(yen) : '';
       })(),
+      /** ⚠️ 案内を出すときは**必ず行き方も渡す**（言うだけにしない） */
+      registerHref: CAMPAIGN_REGISTER_HREF,
+      registerLabel: CAMPAIGN_REGISTER_LABEL,
     };
   }
 
