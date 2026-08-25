@@ -453,7 +453,7 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                          いつまでも処理されていないように見える。
                          → 記録として正しい「送信しました」だけを出し、**本当の状況の在り処**を示す。
                     -->
-                    <p class="submission-history-hint">お申し込みの状況（入金の確認・反映）は、上の<strong>会員ステータス</strong>でご確認いただけます。</p>
+                    <p class="submission-history-hint">この記録に処理の状況は反映されません。お申し込み後の流れは各行に記載しています。</p>
                 </div>
                 <div id="submission-history-list" class="submission-history-list">
                     <!-- JS で描画 -->
@@ -1976,6 +1976,7 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
       #submission-history-section .submission-history-main { display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; }
       #submission-history-section .submission-history-label { color: #e2e8f0; font-weight: 600; font-size: 0.95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       #submission-history-section .submission-history-meta { color: #94a3b8; font-size: 0.8rem; }
+      #submission-history-section .submission-history-next { color: #94a3b8; font-size: 0.8rem; line-height: 1.5; margin-top: 0.15rem; }
       #submission-history-section .submission-history-status { font-size: 0.8rem; font-weight: 600; padding: 0.2rem 0.55rem; border-radius: 6px; white-space: nowrap; }
       #submission-history-section .submission-history-status.status-pending { background: rgba(148, 163, 184, 0.18); color: #cbd5e1; }
       #submission-history-section .submission-history-status.status-sent { background: rgba(59, 130, 246, 0.18); color: #93c5fd; }
@@ -4826,17 +4827,11 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                 'withdrawal': '退会申請',
                 'submission': '送信'
             };
-            // ⚠️ ここに出せるのは**送信という出来事**だけ。
-            //    この履歴は端末の localStorage にあり、サーバーの処理状況は入ってこない。
-            //    「確認待ち」は送った瞬間だけ正しく、あとは**永久に古いまま**になる
-            //    （2026-08-25 MK 指摘: 入金済みでも「確認待ち」のままで印象が悪い）。
-            //    そこで、あとから見ても嘘にならない言葉だけを使う。
-            var STATUS_LABELS = {
-                'pending': '送信しました',
-                'sent': '送信しました',
-                'completed': '完了',
-                'failed': '送信できませんでした'
-            };
+            // ⚠️ 状態名と「このあとどうなるか」は**単一源**（/js/submission-result.js）。
+            //    ここで組み立てると送信完了画面と食い違う。
+            //    ・状態名 … あとから見ても嘘にならない言葉だけ（更新されない記録なので）
+            //    ・このあと … **商品ごとに違う**。Premium Plus は単品購入で
+            //      会員ステータスに反映されない（2026-08-26 MK 指摘）
 
             function escapeHtml(str) {
                 return String(str == null ? '' : str).replace(/[&<>"']/g, function (c) {
@@ -4870,7 +4865,11 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
 
                 listEl.innerHTML = history.map(function (item) {
                     var typeLabel = TYPE_LABELS[item.type] || item.type || '送信';
-                    var statusLabel = STATUS_LABELS[item.status] || item.status || '';
+                    // ⚠️ /js/submission-result.js はハッシュ無しの URL なので、
+                    //    古い版がブラウザに残っていることがある。関数が無くても壊さない。
+                    var st = SR.describeStatus ? SR.describeStatus(item)
+                        : { label: item.status || '', className: 'status-' + (item.status || 'pending') };
+                    var followUp = SR.describeFollowUp ? SR.describeFollowUp(item) : '';
                     var timestamp = formatTimestamp(item.timestamp);
                     return (
                         '<div class="submission-history-item">' +
@@ -4878,8 +4877,9 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                             '<div class="submission-history-main">' +
                                 '<div class="submission-history-label">' + escapeHtml(item.label || '送信') + '</div>' +
                                 '<div class="submission-history-meta">' + escapeHtml(timestamp) + '</div>' +
+                                (followUp ? '<div class="submission-history-next">' + escapeHtml(followUp) + '</div>' : '') +
                             '</div>' +
-                            '<span class="submission-history-status status-' + escapeHtml(item.status || 'pending') + '">' + escapeHtml(statusLabel) + '</span>' +
+                            '<span class="submission-history-status ' + escapeHtml(st.className) + '">' + escapeHtml(st.label) + '</span>' +
                         '</div>'
                     );
                 }).join('');

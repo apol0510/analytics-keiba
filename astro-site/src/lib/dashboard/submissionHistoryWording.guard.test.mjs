@@ -33,27 +33,40 @@ const page = readFileSync(new URL('../../pages/dashboard.astro', import.meta.url
 const code = page.replace(/<!--[\s\S]*?-->/g, '').replace(/\/\*[\s\S]*?\*\//g, '')
   .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
 
-/** 履歴の描画スクリプトだけを切り出す */
-const renderer = (() => {
-  const i = code.indexOf('var STATUS_LABELS');
+/**
+ * 状態名の文言は**共有ファイル**にある（送信完了画面と食い違わせないため。2026-08-26）。
+ * ここはその文言表を見る。
+ */
+const shared = readFileSync(new URL('../../../public/js/submission-result.js', import.meta.url).pathname, 'utf8');
+const wording = (() => {
+  const i = shared.indexOf('var STATUS_TEXT');
   assert.ok(i > 0, '履歴の文言表が見つからない（検査が素通りしている）');
-  return code.slice(i, i + 700);
+  return shared.slice(i, i + 400);
+})();
+
+/** 履歴の描画スクリプト（マイページ側） */
+const renderer = (() => {
+  const i = code.indexOf('listEl.innerHTML = history.map');
+  assert.ok(i > 0, '履歴の描画が見つからない（検査が素通りしている）');
+  return code.slice(i, i + 1400);
 })();
 
 test('更新されない状態名を出さない（「確認待ち」を残さない）', () => {
   // ⚠️ この履歴は端末に閉じていて、あとから書き換わらない
-  assert.ok(!renderer.includes('確認待ち'), '止まっているように読める文言が残っている');
-  assert.ok(!renderer.includes('処理中'), '進行中に読める文言が残っている');
-  assert.match(renderer, /'pending':\s*'送信しました'/, '送信の事実を出していない');
+  assert.ok(!wording.includes('確認待ち'), '止まっているように読める文言が残っている');
+  assert.ok(!wording.includes('処理中'), '進行中に読める文言が残っている');
+  assert.match(wording, /pending:\s*'送信しました'/, '送信の事実を出していない');
 });
 
 test('送信できなかったことは正直に出す', () => {
-  assert.match(renderer, /'failed':\s*'[^']*送信できません[^']*'/, '失敗を隠している');
+  assert.match(wording, /failed:\s*'[^']*送信できません[^']*'/, '失敗を隠している');
 });
 
-test('本当の状況の在り処を示す（この記録だけで判断させない）', () => {
+test('この記録だけで判断させない（処理状況は入らないと明示する）', () => {
   assert.match(code, /submission-history-hint/, '案内の行が無い');
-  assert.match(code, /会員ステータス/, 'どこを見ればよいか書いていない');
+  assert.match(code, /処理の状況は反映されません/, '記録の性質を書いていない');
+  // ⚠️ 商品ごとの案内は行に出す（Premium Plus は会員ステータスに反映されない）
+  assert.match(renderer, /describeFollowUp/, '商品ごとの案内を出していない');
 });
 
 test('未処理に見える色を使わない', () => {
