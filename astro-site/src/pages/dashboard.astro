@@ -1963,7 +1963,20 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
         display: flex; align-items: center; gap: .5rem; margin-bottom: .55rem;
       }
       #notifications .notice-icon { font-size: 1.15rem; }
-      #notifications .notice-title { font-weight: 800; font-size: 1rem; color: #f8fafc; }
+      /* ⚠️ 見出しの**文字だけ**をバッジ状に囲む（2026-08-25 MK 指示）。
+         カード本体の枠線・角丸・背景・余白には触らない。アイコンは囲みの外。 */
+      #notifications .notice-title {
+        display: inline-block;
+        padding: .28rem .8rem;
+        border-radius: 999px;
+        background: rgba(245, 158, 11, .16);
+        border: 1px solid rgba(245, 158, 11, .55);
+        color: #fbbf24;
+        font-weight: 800;
+        font-size: .92rem;
+        line-height: 1.25;
+        white-space: nowrap;
+      }
       #notifications .notice-count {
         margin-left: auto; padding: .2rem .6rem; border-radius: 999px;
         background: #dc2626; color: #fff; font-size: .75rem; font-weight: 800;
@@ -1986,7 +1999,19 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
         display: flex; align-items: center; gap: .5rem; margin-bottom: .75rem; flex-wrap: wrap;
       }
       #campaign-section .campaign-icon { font-size: 1.15rem; }
-      #campaign-section .campaign-title { font-weight: 800; font-size: 1rem; color: #f8fafc; }
+      /* ⚠️ 見出しの**文字だけ**をバッジ状に囲む（2026-08-25 MK 指示）。 */
+      #campaign-section .campaign-title {
+        display: inline-block;
+        padding: .28rem .8rem;
+        border-radius: 999px;
+        background: rgba(16, 185, 129, .16);
+        border: 1px solid rgba(16, 185, 129, .55);
+        color: #34d399;
+        font-weight: 800;
+        font-size: .92rem;
+        line-height: 1.25;
+        white-space: nowrap;
+      }
       #campaign-section .campaign-deadline {
         margin-left: auto; font-size: .8rem; font-weight: 700; color: #fbbf24;
       }
