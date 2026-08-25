@@ -123,9 +123,13 @@ export async function getCouponNotice() {
   });
   const first = all.items[0] || null;
   return {
-    show: all.count > 0,
+    // ⚠️ `show` は**既読を含めて 1 件でもあるか**（ナビに出し続けるための条件）
+    show: all.total > 0,
     unseen: all.count > 0,
     count: all.count,
+    /** 既読を含む全件（ナビ・お知らせ一覧はこちらを見る）*/
+    total: all.total,
+    all: all.all,
     /** 1 件目の内容（1 行だけ出す画面用）*/
     kind: first ? first.kind : '',
     label: first ? first.label : '',

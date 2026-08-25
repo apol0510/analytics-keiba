@@ -123,19 +123,29 @@ export function describeCampaignNotice(campaign) {
 }
 
 /**
- * いま出すべきお知らせをすべて返す（未読だけ）。
+ * いま出すべきお知らせを返す。
+ *
+ * ⚠️ **読んだあとも消さない**（2026-08-25 MK 指示「ナビのお知らせは常に残したい」）。
+ *    以前は未読だけを返していたため、一度開くとナビから「お知らせ」ごと消え、
+ *    あとから内容を見返す手段が無かった。
+ *
+ *    - `all` / `total` … いま有効なお知らせ**すべて**（既読を含む）＝ナビに出す条件
+ *    - `items` / `count` … そのうち**未読だけ**＝赤い点に出す件数
  *
  * @param {{ coupon?: object, campaign?: object, seen?: Record<string,string> }} input
  *   `seen` は種類ごとの既読 signature
- * @returns {{ count: number, items: Array<{kind,label,signature}> }}
+ * @returns {{ count: number, items: Array<{kind,label,signature}>,
+ *             total: number, all: Array<{kind,label,signature,unseen:boolean}> }}
  */
 export function describeAllNotices({ coupon, campaign, seen } = {}) {
   const read = seen || {};
+  const all = [];
   const items = [];
   for (const n of [describeCouponNotice(coupon), describeCampaignNotice(campaign)]) {
-    if (isCouponNoticeUnseen(n, read[n.kind])) {
-      items.push({ kind: n.kind, label: n.label, signature: n.signature });
-    }
+    if (n.show !== true || !n.signature) continue;
+    const unseen = isCouponNoticeUnseen(n, read[n.kind]);
+    all.push({ kind: n.kind, label: n.label, signature: n.signature, unseen });
+    if (unseen) items.push({ kind: n.kind, label: n.label, signature: n.signature });
   }
-  return { count: items.length, items };
+  return { count: items.length, items, total: all.length, all };
 }
