@@ -193,9 +193,20 @@ test('JS で作る要素にスタイルが当たる（scoped では効かない�
 
   // 申込ボタンは**リンクに見せない**（押せると分かる見た目にする）
   const btn = globalCss.slice(globalCss.indexOf('.campaign-apply {'));
-  assert.match(btn.slice(0, 400), /background: #2563eb/, 'ボタンの地色が無い');
-  assert.match(btn.slice(0, 400), /text-decoration: none !important/, '下線が残る');
-  assert.match(btn.slice(0, 400), /color: #fff !important/, '共通のリンク色に負ける');
+  const rule = btn.slice(0, btn.indexOf('\n      }'));
+  assert.match(rule, /background: linear-gradient/, 'ボタンの地色が無い');
+  assert.match(rule, /text-decoration: none !important/, '下線が残る');
+  assert.match(rule, /color: #fff !important/, '共通のリンク色に負ける');
+  // ⚠️ `<a>` と `<button>` の両方で使うので、見た目が揃うよう明示しておく
+  assert.match(rule, /font-family: inherit/, 'button だけ別のフォントになる');
+  assert.match(rule, /border: 0/, 'button に既定の枠が出る');
+  assert.match(rule, /cursor: pointer/, '押せると分からない');
+  // 指で押せる大きさ
+  const min = /min-height: (\d+)px/.exec(rule);
+  assert.ok(min && Number(min[1]) >= 44, `タップ領域が小さい: ${rule}`);
+  // 押せないときは押せなく見せる
+  assert.match(globalCss, /\.campaign-apply\[disabled\]/, '無効時の見た目が無い');
+  assert.match(globalCss, /cursor: not-allowed/, '無効なのに押せそうに見える');
 });
 
 test('API がキャンペーンを返す（お知らせと同じ 1 回の通信に相乗り）', () => {

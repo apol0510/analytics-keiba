@@ -2029,17 +2029,63 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
         color: #34d399; font-size: 1.12rem; font-weight: 800; margin-left: .1em;
       }
       /* ⚠️ 申込ボタン。**リンクに見せない**（素のリンク色だと押せると分からない） */
+      /* 申込ボタン。
+         ⚠️ **リンクに見せない**（共通のリンク色に負けないよう色と下線を固定）。
+         ⚠️ `<a>` と `<button>` の両方で使う（行き先が無い商品は button）。
+            見た目が揃うよう border / font / cursor まで明示する。
+         ⚠️ 割引後の価格と同じ緑にして「お得・進む」を色でも伝える。 */
       #campaign-section .campaign-apply {
-        margin-left: auto; padding: .62rem 1.15rem; border-radius: 999px;
-        background: #2563eb; color: #fff !important; font-weight: 800; font-size: .88rem;
-        text-decoration: none !important; white-space: nowrap;
-        box-shadow: 0 4px 12px rgba(37, 99, 235, .35);
+        margin-left: auto;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: .4em;
+        /* 指で押せる大きさ（スマホの最小タップ領域）*/
+        min-height: 44px;
+        padding: .7rem 1.35rem;
+        border: 0;
+        border-radius: 999px;
+        background: linear-gradient(135deg, #10b981, #059669);
+        color: #fff !important;
+        font-family: inherit;
+        font-weight: 800;
+        font-size: .92rem;
+        line-height: 1;
+        text-decoration: none !important;
+        white-space: nowrap;
+        cursor: pointer;
+        box-shadow: 0 6px 16px rgba(16, 185, 129, .32);
+        transition: transform .12s ease, box-shadow .12s ease, filter .12s ease;
       }
-      #campaign-section .campaign-apply:hover { background: #1d4ed8; color: #fff !important; }
+      /* 押せることを形でも伝える */
+      #campaign-section .campaign-apply::after { content: '→'; font-weight: 700; }
+      #campaign-section .campaign-apply:hover {
+        color: #fff !important;
+        filter: brightness(1.08);
+        transform: translateY(-1px);
+        box-shadow: 0 8px 20px rgba(16, 185, 129, .42);
+      }
+      #campaign-section .campaign-apply:active {
+        transform: translateY(0);
+        box-shadow: 0 3px 10px rgba(16, 185, 129, .3);
+      }
+      #campaign-section .campaign-apply:focus-visible {
+        outline: 2px solid #6ee7b7;
+        outline-offset: 2px;
+      }
+      /* 押せないときは押せなく見せる（窓口を案内できなかった場合）*/
+      #campaign-section .campaign-apply[disabled] {
+        background: #334155;
+        color: #94a3b8 !important;
+        box-shadow: none;
+        cursor: not-allowed;
+        transform: none;
+      }
+      #campaign-section .campaign-apply[disabled]::after { content: ''; }
       @media (max-width: 640px) {
         #campaign-section .campaign-list li { gap: .6rem; }
         #campaign-section .campaign-apply {
-          margin-left: 0; width: 100%; text-align: center;
+          margin-left: 0; width: 100%;
         }
         #campaign-section .campaign-deadline { margin-left: 0; width: 100%; }
       }
