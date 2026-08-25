@@ -145,7 +145,13 @@ test('listCampaigns は停止中も理由付きで返す（画面で理由を出
   const all = listCampaigns({ includeDisabled: true });
   assert.equal(all.length, CAMPAIGNS.length);
   const off = all.filter((c) => !c.usable);
-  assert.equal(off.length, 2, '停止中の本数が想定と違う');
+  // ⚠️ 本数は固定しない。**期間限定キャンペーンは期間外になると自動的に停止する**
+  //    （`campaign-discount-*` の `enabled` は毎回評価される）ので、
+  //    件数を固定すると期間が終わった日に CI が落ちる。
+  //    ここで守りたいのは「停止中が一覧から消えないこと」と「理由が必ず付くこと」。
+  for (const id of ['sanrenpuku-offer', 'general-announcement']) {
+    assert.ok(off.some((c) => c.campaignId === id), `${id} が停止中一覧から消えている`);
+  }
   for (const c of off) assert.ok(c.disabledReason, `${c.campaignId} に停止理由が無い`);
   for (const c of all.filter((x) => x.usable)) assert.equal(c.disabledReason, null);
 });
@@ -202,6 +208,36 @@ test('【version ロック】本文を変えたら version を上げる', () => 
     //       version を上げれば全員へ再送されるので、実質やり直しになる。
     //       送信済み Step は `DELIVERED_STEPS` に登録し、下の専用テストで
     //       **1 文字も変わっていない**ことを固定する。
+    /**
+     * 全会員向けキャンペーン割引（2026-08-24〜09-06）。文面の金額・期限は
+     * offer カタログから生成されるため、**価格を直せばハッシュが変わる**。
+     * 価格を変えたら version を上げて下表を更新すること（＝別の案内として配り直す）。
+     */
+    'campaign-discount-free': {
+      version: 1,
+      delivered: [],
+      steps: {
+        1: '63b9519417736b5f',
+        2: 'ab33001bb70404ca',
+        3: 'b082a5addddc9734',
+      },
+    },
+    'campaign-discount-light': {
+      version: 1,
+      delivered: [],
+      steps: {
+        1: '14720dcd214dbfd0',
+        2: 'bcb26e969d67d4f6',
+      },
+    },
+    'campaign-discount-premium': {
+      version: 1,
+      delivered: [],
+      steps: {
+        1: '88f0ad30b0e61d08',
+        2: 'e904aaac96f43828',
+      },
+    },
     'light-trial-to-premium-sequence': {
       version: 1,
       /** 本番で**実際に配信済み**の Step（変更禁止 / 下の専用テストが逐語で守る） */
