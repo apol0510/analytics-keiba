@@ -176,3 +176,77 @@ test('購入直後の状態から、そのまま期限切れになっても三�
   const g = await gate(request, 'Premium Sanrenpuku', fields);
   assert.equal(g.ok, true, `${g.reason}`);
 });
+
+// ── 5. 旧三連複会員への「付与」方式（2026-08-25 MK 確定）──────────────
+//
+// 確定仕様: 旧プラン名で期限切れの会員には、購入履歴の追加調査を条件にせず
+// `LifetimeSanrenpuku` を**付与**して恒久閲覧権を渡す。
+// **判定式は緩めない**（旧プラン名だけで自動的に買い切り扱いにしない）。
+// 正本: docs/spec.md §三連複 買い切りの閲覧権は恒久 / docs/decisions.md 2026-08-25
+
+/** 付与の対象になる会員の形（旧プラン名・フラグ無し・期限切れ）*/
+const LEGACY_EXPIRED = {
+  'プラン': 'Premium Sanrenpuku',
+  PlanType: '',
+  '有効期限': '2026-01-18',
+  Status: '',
+};
+
+test('【判定式を緩めない】旧プラン名だけ + 期限切れ は三連複を開かない', async () => {
+  for (const plan of ['Premium Sanrenpuku', 'Premium Combo']) {
+    const fields = { ...LEGACY_EXPIRED, 'プラン': plan };
+    const e = resolveEntitlements(fromAirtableFields(fields), NOW);
+    assert.equal(e.canViewSanrenpuku, false,
+      `${plan}: プラン名だけで恒久権を配っている（期間契約が終わった会員にも配ってしまう）`);
+    const { membership } = await loginAs(fields);
+    assert.notEqual(membership.memberType, MEMBER_TYPE.PAID, `${plan}: 有料セッションが出ている`);
+  }
+});
+
+test('【付与方式】LifetimeSanrenpuku を立てるだけで三連複が開く（それ以外は何も変えない）', async () => {
+  // 付与前
+  const before = resolveEntitlements(fromAirtableFields(LEGACY_EXPIRED), NOW);
+  assert.equal(before.canViewSanrenpuku, false);
+
+  // 付与（**この 1 フィールドだけ**を変える）
+  const granted = { ...LEGACY_EXPIRED, LifetimeSanrenpuku: true };
+  assert.deepEqual(
+    Object.keys(granted).filter((k) => granted[k] !== LEGACY_EXPIRED[k]),
+    ['LifetimeSanrenpuku'],
+    '付与で他のフィールドまで変えている',
+  );
+
+  const after = resolveEntitlements(fromAirtableFields(granted), NOW);
+  assert.equal(after.canViewSanrenpuku, true, '付与しても三連複が開かない');
+
+  // 馬単・Light・購入資格は**復活させない**
+  assert.equal(after.canViewPremium, false, '馬単まで復活している');
+  assert.equal(after.canViewLight, false, 'Light まで復活している');
+  assert.equal(after.paidPremiumActive, false, '有料 Premium 扱いになっている');
+  assert.equal(after.canPurchaseSanrenpuku, false);
+  assert.equal(after.premiumExpired, true, '期限切れである事実が消えている');
+
+  // ページの入口でも同じ（三連複だけ開く）
+  const { request } = await loginAs(granted);
+  assert.ok(request, '付与後もログインできない');
+  assert.equal((await gate(request, 'Premium Sanrenpuku', granted)).ok, true);
+  assert.equal((await gate(request, 'premium', granted)).ok, false);
+  assert.equal((await gate(request, 'standard', granted)).ok, false);
+});
+
+test('【付与の取り消し】フラグを外せば元の状態へ戻る（rollback が 1 フィールドで済む）', () => {
+  const granted = { ...LEGACY_EXPIRED, LifetimeSanrenpuku: true };
+  const rolledBack = { ...granted, LifetimeSanrenpuku: false };
+  assert.equal(resolveEntitlements(fromAirtableFields(rolledBack), NOW).canViewSanrenpuku, false);
+  assert.equal(resolveEntitlements(fromAirtableFields(LEGACY_EXPIRED), NOW).canViewSanrenpuku, false);
+});
+
+test('【副作用の確認】付与しても Premium Plus は開かない（販売資格は別フィールド）', async () => {
+  const { resolvePlusMemberFromFields } = await import('../premiumPlus/premiumPlusMember.js');
+  const granted = { ...LEGACY_EXPIRED, LifetimeSanrenpuku: true };
+  const m = resolvePlusMemberFromFields(granted, { nowMs: NOW });
+  assert.equal(m.hasSanrenpuku, true, '前提: 三連複は保有している');
+  assert.equal(m.premiumActive, false, '有料 Premium 扱いになっている');
+  // 販売資格は Airtable の明示フィールド。未設定は review = 販売不可（fail closed）
+  assert.equal(m.eligibility, 'review', '付与だけで Premium Plus の販売資格が付いている');
+});
