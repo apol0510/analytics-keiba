@@ -138,8 +138,48 @@ export async function GET({ url }) {
     };
   }
 
+  // ── ページ上部のご案内（`/pricing/` `/free-signup/` などが出す）────────
+  //
+  // ⚠️ 文言はここで作る。**ページごとに書くと必ずズレる**（金額・期限・条件が
+  //    3 か所で食い違った事故を 2026-08-24〜25 に繰り返した）。
+  const banner = (() => {
+    if (!view.active) return { show: false };
+    const yen = (n) => `¥${Number(n).toLocaleString('ja-JP')}`;
+
+    if (!registered) {
+      // 未登録の方には「登録すると何が得か」を出す。金額は**実際の最大割引**から作る
+      const best = describeCampaignOffersFor({})
+        .reduce((max, o) => Math.max(max, Number(o.discountValue) || 0), 0);
+      if (!best) return { show: false };
+      return {
+        show: true,
+        headline: `無料登録で最大 ${Number(best).toLocaleString('ja-JP')}円OFF`,
+        sub: `${describeCampaignDeadline()}の期間限定です。ご登録後、お申し込み時に自動で適用されます。`,
+        ctaHref: CAMPAIGN_REGISTER_HREF,
+        ctaLabel: CAMPAIGN_REGISTER_LABEL,
+        offers: view.offers,
+      };
+    }
+    // 登録済みの方には、その方が実際に使える割引を出す
+    if (!view.offers.length) return { show: false };
+    const lines = view.offers.map((o) => `${o.name}（${o.regularPriceText} → ${o.offerPriceText}）`);
+    return {
+      show: true,
+      headline: view.offers.length === 1
+        ? view.offers[0].name
+        : `期間限定のご優待が ${view.offers.length} 件`,
+      sub: `${describeCampaignDeadline()}。お申し込み時に自動で適用されます。`,
+      ctaHref: null,
+      ctaLabel: '',
+      lines,
+      offers: view.offers,
+    };
+  })();
+
   return new Response(JSON.stringify({
     active: view.active,
+    /** ページ上部に出すご案内（文言はサーバーが持つ）*/
+    banner,
     deadlineText: describeCampaignDeadline(),
     signature: view.signature,
     offers: view.offers,

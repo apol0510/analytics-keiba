@@ -1,0 +1,87 @@
+---
+/**
+ * CampaignBanner.astro — 期間限定のご優待をページ上部で知らせる枠
+ *
+ * ⚠️ **文言・金額・期限・行き先をこのファイルに書かない。**
+ *    すべて `/api/campaign.json` が返した値をそのまま出す。
+ *    ページごとに書くと必ずズレる（金額・期限が 3 か所で食い違った事故を
+ *    2026-08-24〜25 に繰り返した）。
+ *
+ * ⚠️ 出すかどうかもサーバーが決める（期間外・停止中・対象外なら `show:false`）。
+ *    取得できなければ**何も出さない**（fail closed）。
+ *
+ * 置き場所を増やすときは、このコンポーネントを 1 行足すだけにすること。
+ */
+---
+<div class="ak-campaign-banner" id="akCampaignBanner" hidden>
+  <div class="ak-cb-main">
+    <span class="ak-cb-icon">🎫</span>
+    <div class="ak-cb-text">
+      <span class="ak-cb-headline" id="akCbHeadline"></span>
+      <span class="ak-cb-sub" id="akCbSub"></span>
+    </div>
+  </div>
+  <a class="ak-cb-cta" id="akCbCta" hidden></a>
+</div>
+
+<style is:global>
+  /* ⚠️ 中身は JS で入れるので `is:global`（scoped は生成要素に効かない） */
+  .ak-campaign-banner {
+    display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
+    max-width: 1100px; margin: 1.2rem auto; padding: 1rem 1.2rem;
+    background: #101a2f; border: 1px solid rgba(16, 185, 129, .45);
+    border-radius: 14px; color: #e2e8f0;
+  }
+  .ak-campaign-banner[hidden] { display: none !important; }
+  .ak-cb-main { display: flex; align-items: center; gap: .7rem; flex: 1 1 auto; min-width: 0; }
+  .ak-cb-icon { font-size: 1.3rem; }
+  .ak-cb-text { display: flex; flex-direction: column; gap: .15rem; min-width: 0; }
+  .ak-cb-headline { font-weight: 800; font-size: 1rem; color: #34d399; }
+  .ak-cb-sub { font-size: .82rem; color: #94a3b8; }
+  .ak-cb-cta {
+    display: inline-flex; align-items: center; justify-content: center; gap: .4em;
+    min-height: 44px; padding: .7rem 1.35rem; border-radius: 999px;
+    background: linear-gradient(135deg, #f59e0b, #d97706);
+    color: #111827 !important; font-weight: 800; font-size: .9rem;
+    text-decoration: none !important; white-space: nowrap;
+  }
+  .ak-cb-cta::after { content: '→'; }
+  .ak-cb-cta:hover { filter: brightness(1.06); color: #111827 !important; }
+  @media (max-width: 640px) {
+    .ak-campaign-banner { margin: 1rem; }
+    .ak-cb-cta { width: 100%; }
+  }
+</style>
+
+<script is:inline>
+  (function () {
+    var box = document.getElementById('akCampaignBanner');
+    if (!box) return;
+
+    function declaredPlan() {
+      try {
+        var raw = localStorage.getItem('user-plan');
+        if (!raw) return '';
+        var o = JSON.parse(raw);
+        return String((o && o.plan) || '');
+      } catch (e) { return ''; }
+    }
+
+    fetch('/api/campaign.json?plan=' + encodeURIComponent(declaredPlan()), { credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) {
+        var b = j && j.banner;
+        if (!b || b.show !== true) return;   // 出すかどうかはサーバーが決める
+        document.getElementById('akCbHeadline').textContent = b.headline || '';
+        document.getElementById('akCbSub').textContent = b.sub || '';
+        var cta = document.getElementById('akCbCta');
+        if (b.ctaHref && b.ctaLabel) {
+          cta.href = b.ctaHref;
+          cta.textContent = b.ctaLabel;
+          cta.hidden = false;
+        }
+        box.hidden = false;
+      })
+      .catch(function () {});   // 取れなければ何も出さない
+  })();
+</script>

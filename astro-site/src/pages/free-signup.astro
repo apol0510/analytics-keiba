@@ -1,9 +1,12 @@
 ---
 export const prerender = true;
 import BaseLayout from '../layouts/BaseLayout.astro';
+import CampaignBanner from '../components/CampaignBanner.astro';
 ---
 
 <BaseLayout title="無料会員登録">
+    <!-- 期間限定のご優待。「登録すると何が得か」をここで伝える -->
+    <CampaignBanner />
     <div class="signup-container">
         <!-- ヘッダー -->
         <div class="signup-header">

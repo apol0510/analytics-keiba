@@ -1,6 +1,7 @@
 ---
 export const prerender = true;
 import BaseLayout from '../layouts/BaseLayout.astro';
+import CampaignBanner from '../components/CampaignBanner.astro';
 import { buildPlanTierByToken } from '../lib/pricing/planTiers.js';
 
 // 正規化済みプラン名 → tier。インライン script へ焼き込む（別名表の単一源は planNormalization.js）
@@ -8,6 +9,8 @@ const planTierByToken = buildPlanTierByToken();
 ---
 
 <BaseLayout title="料金プラン" heroPreload={{ pc: "/images/ak-pricing-pc.webp", mobile: "/images/ak-pricing-mobile.webp" }}>
+    <!-- 期間限定のご優待。文言・金額・期限・行き先はサーバーが返す（ここには書かない）-->
+    <CampaignBanner />
     <!-- プラン出し分け: カードが描画される前に <html> へ現在プランの tier を付ける。
          判定は CSS 側（下位カードの display:none）で行うため、ちらつきなく確定する。
          define:vars は is:inline を含意するので、この script はパース時に同期実行される。
