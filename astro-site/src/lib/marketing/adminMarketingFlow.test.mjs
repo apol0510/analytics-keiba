@@ -566,8 +566,8 @@ test('使用停止中のキャンペーンは理由付きで拒否される（dr
 
 test('キャンペーン一覧は停止中も理由付きで返す', async () => {
   const { body } = parse(await call({ action: 'campaigns' }));
-  // 12 本目 = 体験終了後フェーズ（light-trial-post-expiry-sequence）。増えたら数を更新する
-  assert.equal(body.campaigns.length, 12, '停止中が一覧から消えている');
+  // 13 本目 = Light 永久無料 再スタート案内（light-lifetime-restart）。増えたら数を更新する
+  assert.equal(body.campaigns.length, 13, '停止中が一覧から消えている');
   const off = body.campaigns.filter((c) => !c.usable);
   assert.equal(off.length, 2, '停止中が 2 本でない');
   for (const c of off) assert.ok(c.disabledReason, `${c.campaignId} に理由が無い`);

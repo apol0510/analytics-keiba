@@ -42,6 +42,16 @@ export const LEGACY_SANRENPUKU_PLANS = Object.freeze(['Premium Sanrenpuku', 'Pre
 /** 正規化後の会員ランク。**Light 永久無料は「無料権利」なので `プラン` は Free** */
 export const NORMALIZED_PLAN = 'Free';
 
+/**
+ * この正規化で付ける施策名（`ComebackGrantSource` に入る）。
+ *
+ * ⚠️ **案内メールの対象判定がこの値を見る**（`marketing/campaignAudienceRules.js`）。
+ *    正規化に成功したレコードにしか入らないので、
+ *    「Light 永久無料化が成功した人にだけ送る」が**構造的に**保証される。
+ *    値を変えるときは両方を同時に直すこと（テストが一致を固定している）。
+ */
+export const RESTART_GRANT_SOURCE = 'legacy-sanrenpuku-to-light-lifetime';
+
 /** 契約側で書いてよい列（これ以外は 1 つも書かない） */
 export const CONTRACT_WRITABLE_FIELDS = Object.freeze(['プラン', 'PlanType']);
 
@@ -146,7 +156,9 @@ function assertAllowed(out, grantKeys) {
  * @returns {{ fields: object, changes: Array<{field:string,before:unknown,after:unknown}> }
  *           | { skipped: string } | null}
  */
-export function buildLegacySanrenpukuNormalization({ fields, now, operationId, actor, source }) {
+export function buildLegacySanrenpukuNormalization({
+  fields, now, operationId, actor, source = RESTART_GRANT_SOURCE,
+}) {
   const f = fields && typeof fields === 'object' ? fields : null;
   if (!f) return null;
   const nowMs = now instanceof Date ? now.getTime() : Number(now);

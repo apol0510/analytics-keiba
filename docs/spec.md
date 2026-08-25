@@ -1741,6 +1741,35 @@ sha256）でしか結ばない。受信者ごとの「最新 open 時刻」か�
 買い切り保有（`LifetimeSanrenpuku=true`）/ `PlanType=Lifetime` / まだ有効 / 期限が無い /
 停止アカウント（`Status` が suspended 系）/ そもそも旧プラン名でない。
 
+### 対象者本人への案内メール（完成条件に含む・2026-08-25 確定）
+
+正規化しただけでは**本人は気づかない**（ログインしていないから正規化が必要になった）。
+**「今後は Light 会員として期限なく無料でログイン・利用できる」ことを本人へメールで知らせる**
+までが本件の完成条件。
+
+| 項目 | 確定内容 |
+|---|---|
+| 対象 | **今回正規化する 18 名だけ** |
+| 送る条件 | **Light 永久無料化が本番で成功した会員だけ**。失敗者には絶対に送らない |
+| 伝えること | 期間限定ではなく、**今後も期限なく Light を無料で利用できる**こと |
+| 導線 | ログイン（`/dashboard/` → ログイン画面）。本人が迷わず再開できる形にする |
+| 書かないこと | 三連複・馬単 Premium が復活したと読める表現 |
+| 分けること | Premium Plus 等の**販売案内は混ぜない**。目的は利用再開の案内 |
+| 冪等性 | 既存の `DeliveryKey`（campaign × version × 受信者・**日付非依存**）をそのまま使う |
+| 確認 | 配信結果は既存の配信台帳（`CampaignDeliveries`）と管理画面で後から確認できる |
+
+**誰に送れるかはレコード自身が決める。** 名簿を別に持たない（名簿とレコードがズレると誤送信になる）。
+対象条件 `extraAudience: light_lifetime_restart`（`marketing/campaignAudienceRules.js`）は
+
+- `ComebackGrantSource` が正規化の施策名と一致する
+- Light の無料権利が **lifetime かつ有効**（取り消されていない）
+- 三連複を見られない / 有料 Premium が有効でない
+
+をすべて満たすときだけ通す。**正規化が途中で失敗した会員は構造的に対象外**になる。
+
+文面の単一源: `marketing/campaignCatalog.js` の `light-lifetime-restart`。
+検証: `marketing/lightLifetimeRestartNotice.test.mjs`。
+
 ### Premium Plus は**別概念**
 
 **三連複の保有と Premium Plus の販売資格は別概念**である。会員ランク（Free / Light /
