@@ -1,0 +1,101 @@
+/**
+ * campaign-price.js — 申込モーダルの金額を**サーバーが請求する額**に揃える
+ *
+ * ## なぜ要るか（2026-08-25 の不具合）
+ *
+ * キャンペーン割引はサーバーが `RequestedAmount` に確定値を書くが、
+ * **画面のモーダルは元の金額のまま**だった。三連複なら
+ *   案内「¥78,000 → ¥68,000」／ モーダル「¥78,000」／ 実際の請求 ¥68,000
+ * となり、お客様は割引を確認できない。
+ *
+ * ## なぜページごとに直さないのか
+ *
+ * `openBankModal` は **16 ページにコピペで散在**している（過去に
+ * 「15 ページだけ直し漏れて全部 400 で失敗」という事故が起きている）。
+ * ここで **1 か所だけ**、既存の `openBankModal` を包んで金額を差し替える。
+ *
+ * ## 金額はサーバーが決める
+ *
+ * 表示する額は `/api/campaign.json?product=…` が返した値をそのまま出す。
+ * **この画面では 1 円も計算しない。** 申込 Function と同じ関数・同じ商品名の
+ * 読み替えを使うので、「見せた額」と「請求する額」は構造的に一致する。
+ *
+ * ⚠️ 取得に失敗したときは**元の金額のまま**にする（勝手に安く見せない）。
+ */
+(function () {
+  var API = '/api/campaign.json';
+
+  function declaredPlan() {
+    try {
+      var raw = localStorage.getItem('user-plan');
+      if (!raw) return '';
+      var o = JSON.parse(raw);
+      return String((o && o.plan) || '');
+    } catch (e) { return ''; }
+  }
+
+  function yen(n) { return '¥' + Number(n).toLocaleString('ja-JP'); }
+
+  /** モーダルの金額表示を差し替える。要素が無いページでは何もしない */
+  function paint(pricing) {
+    if (!pricing || pricing.applied !== true || !pricing.finalPrice) return;
+
+    var amountEl = document.getElementById('modalAmount');
+    var infoEl = document.getElementById('modalPlanInfo');
+    var inputEl = document.getElementById('transferAmount');
+
+    if (amountEl) amountEl.textContent = yen(pricing.finalPrice);
+    // 「プラン: X (¥49,800/年)」の金額部分だけを置き換える
+    if (infoEl && pricing.regularPrice) {
+      infoEl.textContent = infoEl.textContent.replace(yen(pricing.regularPrice), yen(pricing.finalPrice));
+    }
+    // ⚠️ 送信値も揃える。サーバーは自分で決め直すが、画面と送信値がズレたままにしない
+    if (inputEl) inputEl.value = String(pricing.finalPrice);
+
+    // 何が起きたのかを 1 行で伝える（文言はサーバー由来）
+    if (amountEl && pricing.note) {
+      var id = 'campaignPriceNote';
+      var note = document.getElementById(id);
+      if (!note) {
+        note = document.createElement('div');
+        note.id = id;
+        note.style.cssText = 'margin-top:.35rem;font-size:.82rem;font-weight:700;color:#34d399;';
+        amountEl.parentNode.appendChild(note);
+      }
+      note.textContent = pricing.note + '（通常 ' + yen(pricing.regularPrice) + '）';
+    }
+  }
+
+  function fetchAndPaint(productName) {
+    var url = API
+      + '?plan=' + encodeURIComponent(declaredPlan())
+      + '&product=' + encodeURIComponent(productName);
+    fetch(url, { credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) { paint(j && j.pricing); })
+      // ⚠️ 失敗したら**元の金額のまま**。勝手に安く見せない
+      .catch(function () {});
+  }
+
+  /** 既存の openBankModal を包む（ページ側のコードは 1 行も触らない） */
+  function wrap() {
+    if (typeof window.openBankModal !== 'function' || window.__akCampaignPriceWrapped) return false;
+    var original = window.openBankModal;
+    window.openBankModal = function (planName) {
+      var out = original.apply(this, arguments);
+      try { fetchAndPaint(planName); } catch (e) {}
+      return out;
+    };
+    window.__akCampaignPriceWrapped = true;
+    return true;
+  }
+
+  // ページ側の定義より後に読み込まれるとは限らないので、少しの間だけ待つ
+  if (!wrap()) {
+    var tries = 0;
+    var timer = setInterval(function () {
+      if (wrap() || ++tries > 40) clearInterval(timer);
+    }, 100);
+    document.addEventListener('DOMContentLoaded', wrap);
+  }
+})();

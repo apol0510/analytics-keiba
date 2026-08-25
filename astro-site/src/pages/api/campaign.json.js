@@ -26,7 +26,9 @@ export const prerender = false;
 
 import {
   describeCampaignForMember, isCampaignActive, describeCampaignDeadline,
+  resolveCampaignPricing,
 } from '../../lib/promotions/campaignOffers.js';
+import { derivePlanFromProductName, hasOwnSpecialPrice } from '../../lib/payments/productName.js';
 import { campaignControlStore } from '../../lib/promotions/campaignControlStore.js';
 import { resolveCampaignAllowed } from '../../lib/promotions/campaignControl.js';
 
@@ -62,11 +64,49 @@ export async function GET({ url }) {
     allowed,
   });
 
+  // ── `?product=` … その商品を**いくらで請求するか**を返す ────────────
+  //
+  // ⚠️ 申込画面が表示する金額はここから取る。
+  //    画面が自分で計算すると「見せた額と請求額が違う」事故になる
+  //    （2026-08-25: 三連複の申込モーダルが ¥78,000 のままだった）。
+  //    申込 Function と**同じ関数・同じ商品名の読み替え**を使うこと。
+  const product = url.searchParams.get('product');
+  let pricing = null;
+  if (product) {
+    const d = derivePlanFromProductName(product);
+    // すでに特別価格が付いた商品には重ねない（申込 Function と同じ扱い）
+    const p = hasOwnSpecialPrice(d.fullPlanName)
+      ? { applied: false, reason: 'has_own_special_price' }
+      : resolveCampaignPricing({
+        planName: d.planName,
+        planType: d.planType,
+        entitlements: entitlementsFromDeclaredPlan(url.searchParams.get('plan')),
+        nowMs: now,
+        allowed,
+      });
+    pricing = {
+      applied: p.applied === true,
+      reason: p.reason || '',
+      planName: d.planName,
+      planType: d.planType,
+      // 割引が乗らないときは null（画面は元の金額のまま出す）
+      finalPrice: p.applied === true ? p.finalPrice : null,
+      regularPrice: p.applied === true ? p.regularPrice : null,
+      discount: p.applied === true ? p.discount : null,
+      /** 画面に添える 1 行（文言はサーバーが持つ）*/
+      note: p.applied === true
+        ? `キャンペーン適用：${Number(p.discount).toLocaleString('ja-JP')}円OFF`
+        : '',
+    };
+  }
+
   return new Response(JSON.stringify({
     active: view.active,
     deadlineText: describeCampaignDeadline(),
     signature: view.signature,
     offers: view.offers,
+    /** `?product=` を渡したときだけ入る。**請求される金額**（画面はこれを出す）*/
+    pricing,
     /** ⚠️ 実際に割り引くかは申込時にサーバーが決める（ここは案内） */
     appliesAtCheckout: true,
   }), {
