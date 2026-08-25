@@ -928,13 +928,13 @@ const fullTitle = pageTitle
                                 <li><a href="/pricing/">プランと料金を見る</a></li>
                             </ul>
                         </li>
-                        <li class="has-submenu">
-                            <a href="/about/"><span class="nav-icon">ℹ️</span> <span class="nav-text">サイト紹介</span><span class="nav-caret">▾</span></a>
-                            <ul class="submenu">
-                                <li><a href="/about/"><span class="submenu-emoji">👨‍💻</span>開発者</a></li>
-                                <li><a href="/technology/"><span class="submenu-emoji">🤖</span>AI技術</a></li>
-                            </ul>
-                        </li>
+                        {/* 2026-08-25: 「サイト紹介」は**フッターへ移動**。
+                             ログイン後は 🔔 お知らせ が加わって上部が 7 項目になり、
+                             ロゴ 205px ＋ メニュー 807px = 1012px が
+                             ヘッダの 955px に収まらなくなっていた（実測）。
+                             毎回使うもの（予想・実績・お問い合わせ・マイページ）を残し、
+                             一度読めば足りる紹介ページはフッターの「ℹ️ サイト紹介」へ。
+                             ⚠️ スマホのハンバーガーには**残す**（フッターが遠いため）。 */}
                         <li class="has-submenu">
                             <a href="/archive/"><span class="nav-icon">🏆</span> <span class="nav-text">実績</span><span class="nav-caret">▾</span></a>
                             <ul class="submenu submenu-grouped">
@@ -1033,7 +1033,6 @@ const fullTitle = pageTitle
                     </h3>
                     <ul class="footer-links">
                         <li><a href="/blog/">ブログ</a></li>
-                        <li><a href="/about/">私たちについて</a></li>
                         <li><a href="/beginner/">南関競馬入門</a></li>
                         <li><a href="/beginner/lesson-01/">Lesson 1: 基本を学ぶ</a></li>
                         <li><a href="/beginner/lesson-02/">Lesson 2: 馬券の種類</a></li>
@@ -1044,10 +1043,9 @@ const fullTitle = pageTitle
                 <div class="footer-section">
                     <h3 class="footer-title">
                         <span class="footer-icon">🤖</span>
-                        AI技術
+                        AI予想
                     </h3>
                     <ul class="footer-links">
-                        <li><a href="/technology/">技術解説</a></li>
                         {/* 2026-08-21: nav を「無料予想 / 有料版」に整理したのに、
                             ここだけ「AI予想プレビュー」という旧名称が残っていた。
                             並び順も nav と揃える（無料 → 有料）。 */}
@@ -1060,12 +1058,16 @@ const fullTitle = pageTitle
 
                 <div class="footer-section">
                     <h3 class="footer-title">
-                        <span class="footer-icon">📊</span>
-                        サポート
+                        <span class="footer-icon">ℹ️</span>
+                        サイト紹介
                     </h3>
+                    {/* 2026-08-25: 上部ナビの「サイト紹介」をここへ移動。
+                        ナビと同じ言葉（開発者 / AI技術）にして探せるようにする。 */}
                     <ul class="footer-links">
-                        <li><a href="/dashboard/">ダッシュボード</a></li>
+                        <li><a href="/about/">開発者</a></li>
+                        <li><a href="/technology/">AI技術</a></li>
                         <li><a href="/contact/">お問い合わせ</a></li>
+                        <li><a href="/dashboard/">マイページ</a></li>
                     </ul>
                 </div>
             </div>
