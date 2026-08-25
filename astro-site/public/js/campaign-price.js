@@ -34,6 +34,26 @@
     } catch (e) { return ''; }
   }
 
+  /**
+   * 三連複の買い切り権を持っているか（**事実だけを送る**。意味づけはサーバー）。
+   * ⚠️ 三連複はプラン名に現れない（Airtable の別フィールド）。これを送らないと、
+   *    買ったばかりの方に「三連複 10,000円OFF」を出し続ける（2026-08-25 実発生）。
+   */
+  function declaredSanrenpuku() {
+    try {
+      var raw = localStorage.getItem('user-plan');
+      if (!raw) return '';
+      var o = JSON.parse(raw);
+      return (o && o.lifetimeSanrenpuku === true) ? '1' : '';
+    } catch (e) { return ''; }
+  }
+
+  /** API へ渡す申告（2 か所で同じ文字列を作るための単一源）*/
+  function declaredQuery() {
+    return 'plan=' + encodeURIComponent(declaredPlan())
+      + '&sanrenpuku=' + encodeURIComponent(declaredSanrenpuku());
+  }
+
   function yen(n) { return '¥' + Number(n).toLocaleString('ja-JP'); }
 
   /**
@@ -108,7 +128,7 @@
 
   function fetchAndPaint(productName) {
     var url = API
-      + '?plan=' + encodeURIComponent(declaredPlan())
+      + '?' + declaredQuery()
       + '&product=' + encodeURIComponent(productName);
     fetch(url, { credentials: 'same-origin' })
       .then(function (r) { return r.ok ? r.json() : null; })
@@ -141,7 +161,7 @@
       (byProduct[name] = byProduct[name] || []).push(el);
     });
     Object.keys(byProduct).forEach(function (name) {
-      fetch(API + '?plan=' + encodeURIComponent(declaredPlan()) + '&product=' + encodeURIComponent(name),
+      fetch(API + '?' + declaredQuery() + '&product=' + encodeURIComponent(name),
         { credentials: 'same-origin' })
         .then(function (r) { return r.ok ? r.json() : null; })
         .then(function (j) {

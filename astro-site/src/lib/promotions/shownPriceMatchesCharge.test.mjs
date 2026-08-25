@@ -214,9 +214,12 @@ test('ご案内はサーバーの文言だけを出す（ページで作らな�
     assert.ok(c.includes(k), `${k} を使っていない`);
   }
   // 金額・期限・行き先を直書きしない
-  assert.doesNotMatch(c, /\b(4980|4480|49800|44800|78000|68000|10,000|500円)\b/, '金額を直書きしている');
-  assert.doesNotMatch(c, /\d+年\d+月\d+日/, '期限を直書きしている');
-  assert.doesNotMatch(c, /\/free-signup\//, '行き先を直書きしている');
+  // ⚠️ **コメントは見ない**。何が起きたかを説明するのに金額や日付が出るのは正しい
+  //    （見るべきは画面に出す文字列だけ。2026-08-25）。
+  const code = c.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+  assert.doesNotMatch(code, /\b(4980|4480|49800|44800|78000|68000|10,000|500円)\b/, '金額を直書きしている');
+  assert.doesNotMatch(code, /\d+年\d+月\d+日/, '期限を直書きしている');
+  assert.doesNotMatch(code, /\/free-signup\//, '行き先を直書きしている');
   // 出すかどうかもサーバーが決める / 取れなければ出さない
   assert.match(c, /if \(!view\.show\) return;/, '出す条件を画面で決めている');
   assert.match(c, /catch\(\(\) => \{\}\)/, '取得に失敗しても出してしまう');
