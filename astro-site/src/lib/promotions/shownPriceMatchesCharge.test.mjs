@@ -58,11 +58,12 @@ const AUDIENCES = [
 ];
 
 /** サーバーが請求する額（`/api/campaign.json?product=` と同じ計算）*/
-function chargedFor(productName, shown, entitlements) {
+function chargedFor(productName, shown, entitlements, registered = true) {
   const d = derivePlanFromProductName(productName);
   if (hasOwnSpecialPrice(d.fullPlanName)) return shown;
   const p = resolveCampaignPricing({
-    planName: d.planName, planType: d.planType, entitlements, nowMs: NOW, allowed: ALLOWED,
+    planName: d.planName, planType: d.planType, entitlements, nowMs: NOW,
+    allowed: ALLOWED, registered,
   });
   return p.applied === true ? p.finalPrice : shown;
 }
@@ -125,6 +126,28 @@ test('割引が乗る組み合わせが実在する（検査が素通りして�
   // 三連複（買い切り）が Premium の方に乗ること（今回の報告そのもの）
   assert.ok(discounted.some((d) => d.startsWith('Premium Sanrenpuku Lifetime/Premium')),
     `三連複の割引が乗っていない: ${discounted.join(' / ')}`);
+});
+
+test('無料登録がまだの方には割り引かない（画面も通常価格のまま）', () => {
+  // ⚠️ 無料登録特典（2026-08-25 MK 確定）。未登録の方には 1 円も引かない。
+  for (const b of BUTTONS) {
+    for (const [label, ent] of AUDIENCES) {
+      assert.equal(chargedFor(b.productName, b.shown, ent, false), b.shown,
+        `${b.file} / ${label}: 未登録の方に割り引いている`);
+    }
+  }
+});
+
+test('未登録の方には「無料登録で◯◯円OFF」を出す（割引額は出さない）', () => {
+  const script = read('../../../public/js/campaign-price.js');
+  assert.match(script, /registerPrompt/, '登録のご案内を出していない');
+  // 未適用のときは金額を書き換えない
+  const fn = script.slice(script.indexOf('function paint('));
+  assert.match(fn.slice(0, 600), /applied !== true[\s\S]*?return/, '未適用でも金額を書き換えている');
+  const api = read('../../pages/api/campaign.json.js');
+  assert.match(api, /describeRegisterPrompt/, '文言をサーバーが持っていない');
+  // 対象外の商品には案内を出さない（登録しても安くならないのに期待させない）
+  assert.match(api, /yen > 0 \? describeRegisterPrompt/, '対象外の商品にも案内を出している');
 });
 
 test('すでに特別価格の商品には重ねない（画面の額を変えない）', () => {

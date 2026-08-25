@@ -126,8 +126,17 @@ test('Premium の方が Premium を買うときは割引しない（持ってい
   assert.equal(requested()['RequestedAmount'], 49800);
 });
 
-test('レコードが無い新規の方も無料の方と同じ割引になる', { skip: !IN_WINDOW }, async () => {
-  record = null;
+test('**無料登録がまだの方には割り引かない**（無料登録特典）', { skip: !IN_WINDOW }, async () => {
+  // ⚠️ 2026-08-25 MK 確定: これは無料登録特典。
+  //    登録を挟まずに割引だけ持っていかれるのを防ぐ。
+  record = null;   // Customers にレコードが無い＝未登録
+  const res = await apply({ productName: 'Premium Annual (¥49,800)', transferAmount: '49800' });
+  assert.equal(res.status, 200, '申込自体は受理する');
+  assert.equal(requested()['RequestedAmount'], 49800, '未登録の方に割り引いている');
+});
+
+test('登録済みの方には従来どおり割り引く（塞ぎすぎない）', { skip: !IN_WINDOW }, async () => {
+  record = FREE_MEMBER;
   const res = await apply({ productName: 'Premium Annual (¥49,800)', transferAmount: '49800' });
   assert.equal(res.status, 200);
   assert.equal(requested()['RequestedAmount'], 44800);

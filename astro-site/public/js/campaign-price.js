@@ -36,9 +36,32 @@
 
   function yen(n) { return '¥' + Number(n).toLocaleString('ja-JP'); }
 
+  /** 金額の下に出す 1 行（文言はサーバー由来）*/
+  function setNote(text, color) {
+    var amountEl = document.getElementById('modalAmount');
+    if (!amountEl) return;
+    var id = 'campaignPriceNote';
+    var note = document.getElementById(id);
+    if (!text) { if (note) note.remove(); return; }
+    if (!note) {
+      note = document.createElement('div');
+      note.id = id;
+      amountEl.parentNode.appendChild(note);
+    }
+    note.style.cssText = 'margin-top:.35rem;font-size:.82rem;font-weight:700;color:' + color + ';';
+    note.textContent = text;
+  }
+
   /** モーダルの金額表示を差し替える。要素が無いページでは何もしない */
   function paint(pricing) {
-    if (!pricing || pricing.applied !== true || !pricing.finalPrice) return;
+    if (!pricing) return;
+    // ⚠️ **無料登録特典**。未登録の方には割り引かず、登録のご案内だけ出す。
+    //    金額は元のまま（勝手に安く見せない）。
+    if (pricing.applied !== true) {
+      setNote(pricing.registerPrompt || '', '#fbbf24');
+      return;
+    }
+    if (!pricing.finalPrice) return;
 
     var amountEl = document.getElementById('modalAmount');
     var infoEl = document.getElementById('modalPlanInfo');
@@ -53,16 +76,8 @@
     if (inputEl) inputEl.value = String(pricing.finalPrice);
 
     // 何が起きたのかを 1 行で伝える（文言はサーバー由来）
-    if (amountEl && pricing.note) {
-      var id = 'campaignPriceNote';
-      var note = document.getElementById(id);
-      if (!note) {
-        note = document.createElement('div');
-        note.id = id;
-        note.style.cssText = 'margin-top:.35rem;font-size:.82rem;font-weight:700;color:#34d399;';
-        amountEl.parentNode.appendChild(note);
-      }
-      note.textContent = pricing.note + '（通常 ' + yen(pricing.regularPrice) + '）';
+    if (pricing.note) {
+      setNote(pricing.note + '（通常 ' + yen(pricing.regularPrice) + '）', '#34d399');
     }
   }
 
