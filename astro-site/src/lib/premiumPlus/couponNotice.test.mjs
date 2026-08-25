@@ -133,7 +133,13 @@ test('マイページのお知らせは最上部・読める配色にする', ()
   //    暗いカード + 左の色帯 + 明るい文字にする。
   //    ⚠️ JS で作る要素に効かせるため **is:global 側**に置くこと。
   const css = page.slice(page.indexOf('<style is:global>'), page.indexOf('</style>'));
-  assert.doesNotMatch(css, /background:\s*rgba\(239, 68, 68/, '暗い赤のままで読みにくい');
+  // ⚠️ 見るのは**お知らせ／ご優待のカードの指定だけ**。
+  //    同じ is:global には申請・送信履歴（赤＝退会申請・送信失敗）も入っており、
+  //    ブロック全体から赤を探すと無関係な指定で落ちる（2026-08-25）。
+  const cardCss = css.split('\n')
+    .filter((l) => /#notifications|#campaign-section|\.notice-|\.campaign-/.test(l))
+    .join('\n');
+  assert.doesNotMatch(cardCss, /background:\s*rgba\(239, 68, 68/, '暗い赤のままで読みにくい');
   assert.doesNotMatch(css, /linear-gradient\(135deg, #fde68a/, '明るい黄色の地のままで浮いている');
   // ⚠️ 2026-08-25 MK 指示で**左の色帯を削除**。戻さないこと。
   //    カード本体の枠線・角丸・背景・余白・文字は変更していない。
