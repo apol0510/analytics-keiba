@@ -1696,9 +1696,10 @@ sha256）でしか結ばない。受信者ごとの「最新 open 時刻」か�
 | 抹消するもの | 過去の三連複閲覧権（`プラン` を `Free` にし、旧三連複ティアを消す）|
 | 与えないもの | **`LifetimeSanrenpuku` は付与しない**。対象者が持っていれば**解除する** |
 | 復活させないもの | **馬単 Premium / その他 Premium 権限**（`有効期限` は書き換えない）|
-| 退会済みの会員 | **通常の会員として戻す**。`WithdrawalRequested` を false にする |
-| 消さないもの | `WithdrawalDate` / `WithdrawalReason` / `有効期限` / `PaidAt` / ポイント /
-決済・入金・監査の履歴は**そのまま残す** |
+| 退会済みの会員 | **Customers 上に退会履歴を残さない**（`WithdrawalRequested` / `WithdrawalDate` /
+`WithdrawalReason` / `CancelledAt` をすべて空にする）|
+| 消さないもの | `有効期限` / `PaidAt` / ポイント / `Memo` / `Source` /
+決済・入金・監査・メールイベントの**履歴データそのもの**（別テーブル）|
 | 判定式 | **緩めない**。旧プラン名だけで自動的に権利を配る実装にはしない |
 
 単一源: `src/lib/entitlements/legacySanrenpukuNormalization.js`（純粋・I/O なし）。
@@ -1715,6 +1716,25 @@ sha256）でしか結ばない。受信者ごとの「最新 open 時刻」か�
 
 書いてよい列は allow-list で固定し、それ以外が混ざったら組み立て自体を捨てる（fail closed）。
 **変わる列しか書かない**（同じ値の書き戻しで監査を汚さない）。
+
+### 退会痕跡を Customers に残さない理由（2026-08-25 確定）
+
+対象者は**再スタート**なので、日常運用データに退会日・退会理由を残すと
+**以後の作業のたびに「過去に退会した会員」として問題視される**。
+実際に読んでいるのは次の 2 か所で、どちらも画面へ出す:
+
+- `marketing/customerDossier.js` … カルテの `withdrawalDate`
+- `marketing/customerTimeline.js` … タイムラインに「退会申請（理由: …）」を表示
+
+**監査に必要な履歴は別データとして残る**。ここで空にするのは Customers の運用列だけで、
+決済・入金・メールイベント・操作履歴のテーブル（`EmailEvents` / `CampaignDeliveries` /
+`PromotionalOffers` / `CouponOperationHistory` 等）には一切触れない。
+
+⚠️ **前例と同じ扱い**。既存の入金確認フローも、再開時に同じ 3 列を空にしている
+（`payments/bankPaymentFlow.js` / `send-payment-confirmation-auto.js`）。新しい概念ではない。
+
+⚠️ `CancelledAt` は Customers に存在するが**コードからは 1 か所も読まれていない**。
+対象 18 名は全員空（本番 read-only 実測）。値があるときだけ空にする。
 
 ### 対象にしない会員（fail closed）
 

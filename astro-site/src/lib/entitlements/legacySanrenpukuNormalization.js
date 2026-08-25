@@ -12,9 +12,10 @@
  * | 与えるもの | **Light 永久無料**（`LightGrantLifetime`。無料権利であって課金契約ではない）|
  * | 抹消するもの | 旧三連複ティア（`プラン` を `Free` へ）|
  * | 与えないもの | **`LifetimeSanrenpuku` は付与しない**。馬単 Premium も復活させない |
- * | 退会状態 | **通常運用上の退会フラグだけ**正規化する（`WithdrawalRequested=false`）|
- * | 消さないもの | `WithdrawalDate` / `WithdrawalReason` / `有効期限` / `PaidAt` / ポイント /
- *                  決済・入金・監査の履歴は**そのまま残す** |
+ * | 退会状態 | **Customers 上に退会履歴を残さない**（`WithdrawalRequested` / `WithdrawalDate` /
+ *              `WithdrawalReason` / `CancelledAt` をすべて空にする）|
+ * | 消さないもの | `有効期限` / `PaidAt` / ポイント / 決済・入金・監査・メールイベントの
+ *                  **履歴データそのもの**は別テーブルに残る（触らない）|
  *
  * ⚠️ **判定式は緩めない。** 旧プラン名だけで自動的に権利を配る実装にはしない
  *    （`resolveEntitlements` の `legacySanrenpukuTierGrantsView` は不変）。
@@ -42,7 +43,25 @@ export const LEGACY_SANRENPUKU_PLANS = Object.freeze(['Premium Sanrenpuku', 'Pre
 export const NORMALIZED_PLAN = 'Free';
 
 /** 契約側で書いてよい列（これ以外は 1 つも書かない） */
-export const CONTRACT_WRITABLE_FIELDS = Object.freeze(['プラン', 'PlanType', 'WithdrawalRequested']);
+export const CONTRACT_WRITABLE_FIELDS = Object.freeze(['プラン', 'PlanType']);
+
+/**
+ * **退会状態の列**（2026-08-25 MK 確定）。対象者は「再スタート」なので、
+ * Customers の日常運用データに退会日・退会理由を残さない。
+ * 残すと、以後の作業のたびに「過去に退会した会員」として問題視される
+ * （カルテ `customerDossier.js` と タイムライン `customerTimeline.js` が実際に表示する）。
+ *
+ * ⚠️ **監査に必要な履歴は別データとして残る**。ここで消すのは Customers の
+ *    運用フィールドだけで、決済・入金・メールイベント・操作履歴のテーブルには触れない。
+ * ⚠️ 既存の入金確認フローも再開時に同じ 3 列を空にしている
+ *    （`payments/bankPaymentFlow.js` / `send-payment-confirmation-auto.js`）。
+ *    本正規化はその前例と同じ扱いで、新しい概念を持ち込まない。
+ * ⚠️ `CancelledAt` は Customers に存在するがコードからは 1 か所も読まれておらず、
+ *    対象 18 名は全員空（本番 read-only 実測）。値があるときだけ空にする。
+ */
+export const WITHDRAWAL_STATE_FIELDS = Object.freeze([
+  'WithdrawalRequested', 'WithdrawalDate', 'WithdrawalReason', 'CancelledAt',
+]);
 
 /**
  * **絶対に書かない列**。履歴・課金・三連複買い切り・Premium Plus 販売資格。
@@ -51,7 +70,6 @@ export const CONTRACT_WRITABLE_FIELDS = Object.freeze(['プラン', 'PlanType', 
 export const NEVER_WRITE_FIELDS = Object.freeze([
   '有効期限', 'ValidUntil', 'ExpiryDate', 'ExpirationDate',
   'LifetimeSanrenpuku', '三連複Lifetime', 'SanrenpukuPaidAt',
-  'WithdrawalDate', 'WithdrawalReason',
   'PaidAt', 'PaymentConfirmed', 'PaymentMethod', 'RequestedPlan', 'RequestedPlanType', 'RequestedAmount',
   'PremiumPlusEligibility', 'PremiumPlusEligibleAt', 'PremiumPlusReleaseOverride', 'PremiumPlusSalePaused',
   'PremiumGrantLifetime', 'PremiumGrantUntil',
@@ -112,7 +130,7 @@ export function isNormalizationTarget(fields, nowMs = Date.now()) {
 
 /** 書いてよい列だけか（1 つでも外れたら組み立てを捨てる） */
 function assertAllowed(out, grantKeys) {
-  const allowed = new Set([...CONTRACT_WRITABLE_FIELDS, ...grantKeys]);
+  const allowed = new Set([...CONTRACT_WRITABLE_FIELDS, ...WITHDRAWAL_STATE_FIELDS, ...grantKeys]);
   for (const k of Object.keys(out)) {
     if (!allowed.has(k)) return false;
     if (NEVER_WRITE_FIELDS.includes(k)) return false;
@@ -151,7 +169,7 @@ export function buildLegacySanrenpukuNormalization({ fields, now, operationId, a
 
   const setIfChanged = (field, after) => {
     const before = f[field] ?? null;
-    const same = field === 'WithdrawalRequested'
+    const same = typeof after === 'boolean'
       ? (before === true) === (after === true)
       : str(before) === str(after);
     if (same) return;
@@ -160,8 +178,15 @@ export function buildLegacySanrenpukuNormalization({ fields, now, operationId, a
   };
   setIfChanged('プラン', NORMALIZED_PLAN);
   setIfChanged('PlanType', '');
-  // 退会は「通常運用上のフラグ」だけ戻す。日付・理由の履歴は残す。
+
+  // ③ 退会状態を残さない（値が入っている列だけ空にする）
   if (f.WithdrawalRequested === true) setIfChanged('WithdrawalRequested', false);
+  for (const field of ['WithdrawalDate', 'WithdrawalReason', 'CancelledAt']) {
+    const before = f[field];
+    if (before === undefined || before === null || before === '') continue;
+    out[field] = null;
+    changes.push({ field, before, after: null });
+  }
 
   if (!assertAllowed(out, Object.keys(grant.fields))) return null;
   return { fields: out, changes };

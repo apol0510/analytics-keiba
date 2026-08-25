@@ -7,7 +7,8 @@
  *
  * 守る条件:
  *   1. 正規化後は **Light だけ**見られる（馬単 Premium / 三連複は復活させない）
- *   2. 退会済みの会員も**通常の会員として戻る**（履歴は消さない）
+ *   2. 退会済みの会員は **Customers に退会履歴が残らない**状態へ正規化される
+ *      （監査に必要な履歴は別テーブルにあり、そちらには触れない）
  *   3. `LifetimeSanrenpuku` は**付与しない**
  *   4. Premium Plus は**別概念**。管理者が明示指定すれば販売対象にできる
  *   5. **他会員には一切影響しない**
@@ -17,7 +18,7 @@ import assert from 'node:assert/strict';
 
 import {
   buildLegacySanrenpukuNormalization, isNormalizationTarget,
-  NORMALIZE_SKIP, NEVER_WRITE_FIELDS, CONTRACT_WRITABLE_FIELDS,
+  NORMALIZE_SKIP, NEVER_WRITE_FIELDS, CONTRACT_WRITABLE_FIELDS, WITHDRAWAL_STATE_FIELDS,
 } from './legacySanrenpukuNormalization.js';
 import { resolveEntitlements, fromAirtableFields } from './resolveEntitlements.js';
 import { resolveMembership, MEMBER_TYPE } from '../auth/memberResolution.js';
@@ -86,7 +87,7 @@ test('【要件】正規化後はログインすると Light の会員として�
 });
 
 // ── 2. 退会済み 8 名の復帰 ──────────────────────────────────────────
-test('【要件】退会済みの会員も通常の会員として戻る（退会扱いされない）', () => {
+test('【要件】退会済みの会員が管理画面で退会扱いされなくなる', () => {
   const before = resolveCustomerMarketing({ fields: WITHDRAWN_LEGACY, nowMs: NOW });
   assert.equal(before.withdrawn, true, '前提: 退会扱い');
 
@@ -95,11 +96,83 @@ test('【要件】退会済みの会員も通常の会員として戻る（退�
   assert.equal(resolveEntitlements(fromAirtableFields(applied(WITHDRAWN_LEGACY)), NOW).canLogin, true);
 });
 
-test('【要件】退会の履歴（日付・理由）は消さない', () => {
+test('【要件】Customers に退会履歴を残さない（フラグ・日付・理由をすべて空にする）', () => {
   const out = normalize(WITHDRAWN_LEGACY).fields;
-  assert.equal('WithdrawalDate' in out, false, '退会日を書き換えている');
-  assert.equal('WithdrawalReason' in out, false, '退会理由を書き換えている');
-  assert.equal(out.WithdrawalRequested, false, '退会フラグを戻していない');
+  assert.equal(out.WithdrawalRequested, false, '退会フラグが残っている');
+  assert.equal(out.WithdrawalDate, null, '退会日が残っている');
+  assert.equal(out.WithdrawalReason, null, '退会理由が残っている');
+});
+
+test('【要件】正規化後、退会関連の判定・表示が 1 つも残らない', async () => {
+  const after = applied(WITHDRAWN_LEGACY);
+  // 判定
+  assert.equal(resolveCustomerMarketing({ fields: after, nowMs: NOW }).withdrawn, false);
+  assert.equal(resolveEntitlements(fromAirtableFields(after), NOW).canLogin, true);
+  assert.equal(
+    resolveEntitlements(fromAirtableFields(after), NOW).reasons.includes('WITHDRAWAL_REQUESTED'),
+    false, '退会を理由に権利を絞っている',
+  );
+  // 表示（カルテ・タイムライン）に退会が出ない
+  const { buildCustomerTimeline } = await import('../marketing/customerTimeline.js');
+  const timeline = buildCustomerTimeline({ fields: after, nowMs: NOW });
+  const events = JSON.stringify(timeline);
+  assert.equal(events.includes('退会'), false, 'タイムラインに退会が残っている');
+  // 値そのものが空
+  for (const f of ['WithdrawalDate', 'WithdrawalReason', 'CancelledAt']) {
+    assert.ok(after[f] === null || after[f] === undefined || after[f] === '', `${f} が残っている`);
+  }
+  assert.notEqual(after.WithdrawalRequested, true);
+});
+
+test('退会していない会員には退会列を 1 つも書かない', () => {
+  const out = normalize(ACTIVE_LEGACY).fields;
+  for (const f of WITHDRAWAL_STATE_FIELDS) {
+    assert.equal(f in out, false, `${f} を無駄に書いている`);
+  }
+});
+
+test('CancelledAt は値があるときだけ空にする', () => {
+  assert.equal('CancelledAt' in normalize(WITHDRAWN_LEGACY).fields, false, '空の列を書いている');
+  const withCancel = { ...WITHDRAWN_LEGACY, CancelledAt: '2026-01-04T00:00:00.000Z' };
+  assert.equal(normalize(withCancel).fields.CancelledAt, null, '退会日時が残っている');
+});
+
+test('【要件】決済・入金・監査の履歴には触れない', () => {
+  const rich = {
+    ...WITHDRAWN_LEGACY,
+    PaidAt: '2025-06-01T00:00:00.000Z', PaymentConfirmed: true, PaymentMethod: 'Bank Transfer',
+    PaymentEmailSent: true, PaymentEmailStatus: 'delivered', SanrenpukuPaidAt: '2025-06-01T00:00:00.000Z',
+    Memo: '運用メモ', Source: 'customer-import:imp-001', 'ポイント': 635, '登録日': '2025-01-01',
+  };
+  const out = normalize(rich).fields;
+  for (const f of ['PaidAt', 'PaymentConfirmed', 'PaymentMethod', 'PaymentEmailSent', 'PaymentEmailStatus',
+    'SanrenpukuPaidAt', 'Memo', 'Source', 'ポイント', '登録日', '有効期限']) {
+    assert.equal(f in out, false, `${f} を書き換えている`);
+  }
+});
+
+test('【要件】rollback で変更前の退会状態を復元できる', () => {
+  const built = normalize(WITHDRAWN_LEGACY);
+  // changes には「変更前の値」が全列ぶん入っている
+  const restore = Object.fromEntries(built.changes.map((c) => [c.field, c.before]));
+  const after = { ...WITHDRAWN_LEGACY, ...built.fields };
+  const rolledBack = { ...after, ...restore };
+
+  for (const f of ['WithdrawalRequested', 'WithdrawalDate', 'WithdrawalReason']) {
+    assert.deepEqual(rolledBack[f], WITHDRAWN_LEGACY[f], `${f} が戻っていない`);
+  }
+  assert.equal(rolledBack['プラン'], WITHDRAWN_LEGACY['プラン'], '会員ランクが戻っていない');
+  assert.equal(rolledBack.LightGrantLifetime, null, '永久無料が残っている');
+  assert.equal(rolledBack.LightGrantUntil, WITHDRAWN_LEGACY.LightGrantUntil, '元の 30 日無料が戻っていない');
+  // 判定も**変更前とまったく同じ**に戻る（値を並べ直すのではなく判定で確かめる）
+  const before = resolveEntitlements(fromAirtableFields(WITHDRAWN_LEGACY), NOW);
+  const back = resolveEntitlements(fromAirtableFields(rolledBack), NOW);
+  for (const k of ['canLogin', 'canViewFree', 'canViewLight', 'canViewPremium',
+    'canViewSanrenpuku', 'canPurchaseSanrenpuku', 'effectiveTier']) {
+    assert.deepEqual(back[k], before[k], `${k} が変更前に戻っていない`);
+  }
+  assert.equal(resolveCustomerMarketing({ fields: rolledBack, nowMs: NOW }).withdrawn, true,
+    '退会扱いに戻っていない');
 });
 
 // ── 3. 書き込む列を固定する ────────────────────────────────────────
@@ -111,7 +184,7 @@ test('【要件】LifetimeSanrenpuku は付与しない', () => {
   }
 });
 
-test('契約・課金・履歴の列を 1 つも書かない', () => {
+test('契約・課金・履歴の列を 1 つも書かない（退会列は正規化対象なので除く）', () => {
   for (const base of [ACTIVE_LEGACY, WITHDRAWN_LEGACY]) {
     const out = normalize(base).fields;
     for (const f of NEVER_WRITE_FIELDS) {
@@ -122,8 +195,9 @@ test('契約・課金・履歴の列を 1 つも書かない', () => {
 
 test('書き込む列は「無料権利 + 契約の正規化」だけ / 変わる列しか書かない', () => {
   const out = normalize(WITHDRAWN_LEGACY).fields;
+  const allowed = new Set([...CONTRACT_WRITABLE_FIELDS, ...WITHDRAWAL_STATE_FIELDS]);
   for (const k of Object.keys(out).filter((x) => !x.startsWith('LightGrant') && x !== 'ComebackGrantSource')) {
-    assert.ok(CONTRACT_WRITABLE_FIELDS.includes(k), `${k} は書いてよい列ではない`);
+    assert.ok(allowed.has(k), `${k} は書いてよい列ではない`);
   }
   assert.equal(out['プラン'], 'Free', '会員ランクを Free にしていない（旧三連複ティアが残る）');
   assert.equal(out.WithdrawalRequested, false);
@@ -136,7 +210,7 @@ test('書き込む列は「無料権利 + 契約の正規化」だけ / 変わ�
   const monthly = normalize({ ...ACTIVE_LEGACY, PlanType: 'Monthly' }).fields;
   assert.equal(monthly.PlanType, '', 'Free になったのに課金サイクルが残っている');
 
-  // 退会していない会員には退会フラグを書かない
+  // 退会していない会員には退会列を書かない
   assert.equal('WithdrawalRequested' in normalize(ACTIVE_LEGACY).fields, false);
 });
 
