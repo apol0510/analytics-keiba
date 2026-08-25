@@ -42,11 +42,15 @@
   .ak-cb-text { display: flex; flex-direction: column; gap: .15rem; min-width: 0; }
   .ak-cb-headline { font-weight: 800; font-size: 1rem; color: #34d399; }
   .ak-cb-sub { font-size: .82rem; color: #94a3b8; }
+  /* ⚠️ `box-sizing` を指定しないと min-height に padding が**足し算**され、
+     狙いより 1.5 倍大きいボタンになる（2026-08-25 本番）。
+     大きさはマイページの申込ボタンと**同じ値**に揃える。 */
   .ak-cb-cta {
     display: inline-flex; align-items: center; justify-content: center; gap: .4em;
-    min-height: 44px; padding: .7rem 1.35rem; border-radius: 999px;
+    box-sizing: border-box;
+    min-height: 44px; padding: .5rem 1.1rem; border-radius: 999px;
     background: linear-gradient(135deg, #f59e0b, #d97706);
-    color: #111827 !important; font-weight: 800; font-size: .9rem;
+    color: #111827 !important; font-weight: 700; font-size: .87rem; line-height: 1;
     text-decoration: none !important; white-space: nowrap;
   }
   .ak-cb-cta::after { content: '→'; }
