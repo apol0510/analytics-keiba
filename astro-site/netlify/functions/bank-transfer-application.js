@@ -10,6 +10,7 @@ import { buildApplicationFields } from '../../src/lib/payments/bankPaymentFlow.j
 import { resolveOrderPricing } from '../../src/lib/premiumPlus/premiumPlusCouponApply.js';
 // 全会員向けキャンペーン割引。**価格はサーバーが決める**（クライアントの申告は読まない）
 import { resolveCampaignPricing, isCampaignActive } from '../../src/lib/promotions/campaignOffers.js';
+import { derivePlanFromProductName, hasOwnSpecialPrice } from '../../src/lib/payments/productName.js';
 import { campaignControlStore } from '../../src/lib/promotions/campaignControlStore.js';
 import { resolveCampaignAllowed } from '../../src/lib/promotions/campaignControl.js';
 import { fromAirtableFields, resolveEntitlements } from '../../src/lib/entitlements/resolveEntitlements.js';
@@ -717,46 +718,13 @@ exports.handler = async (event, context) => {
      */
     let campaignApplied = null;
     if (!isPremiumPlusProductName(productName)) {
-      // プラン名から料金部分を削除（Airtable Single select用）
-      // 例: "Premium Lifetime (¥78,000（永久アクセス）)" → "Premium Lifetime"
-      // 例: "Premium Annual (¥68,000/年)" → "Premium Annual"
-      // 例: "Premium Monthly (¥18,000/月)" → "Premium Monthly"
-      const fullPlanName = productName
-        .replace(/\s*\(.*\)$/, '')  // 最後の(...)を完全削除
-        .trim();
-
-      // PlanTypeを判定（Lifetime, Annual, Monthly）
-      let planType = 'Monthly';  // デフォルト
-      if (fullPlanName.includes('Lifetime') || fullPlanName.includes('買い切り')) {
-        planType = 'Lifetime';
-      } else if (fullPlanName.includes('Annual') || fullPlanName.includes('年払い')) {
-        planType = 'Annual';
-      } else if (fullPlanName.includes('Monthly') || fullPlanName.includes('30日')) {
-        planType = 'Monthly';
-      }
-
-      // プラン名を正規化（Airtable Single select用）
-      // "Premium Lifetime" → "Premium"
-      // "Premium 買い切り" → "Premium"
-      // "Premium 年払い (Standard Upgrade)" → "Premium"
-      // "Premium 30日 (Standard Upgrade)" → "Premium"
-      // "Premium Sanrenpuku Lifetime" → "Premium Sanrenpuku"
-      // "Light - Campaign" → "Light"
-      // 後方互換（旧キャッシュ）:
-      //   "ライト" / "ライト - Campaign" → "Light"
-      //   "Standard" / "Standard (ライト)" / "Standard (ライト) - Campaign" → "Light"
-      let planName = fullPlanName
-        .replace(/\s*\(Standard Upgrade\)/, '')  // (Standard Upgrade)を削除
-        .replace(/\s*-\s*Campaign/, '')  // - Campaignを削除
-        .replace(/\s*\(ライト\)/, '')  // (ライト)を削除（旧フォーマット対策）
-        .replace(/\s+(Lifetime|Annual|Monthly|買い切り|年払い|30日)$/, '')  // 末尾のプラン種別を削除
-        .trim();
-
-      // 旧プラン名は Airtable Single select から削除済み。すべて "Light" に揃える。
-      if (planName === 'Standard' || planName === 'standard' ||
-          planName === 'ライト' || planName === 'light') {
-        planName = 'Light';
-      }
+      // ⚠️ 商品名の読み替えは**共有の単一源**を使う（`payments/productName.js`）。
+      //    ここに自前で書くと、画面（/api/campaign.json）と食い違い、
+      //    「見せた金額と請求する金額が違う」事故になる（2026-08-25 に発生）。
+      const derived = derivePlanFromProductName(productName);
+      const fullPlanName = derived.fullPlanName;
+      const planType = derived.planType;
+      let planName = derived.planName;
 
       // ─────────────────────────────────────────────
       // 🛡️ 2026-07-10: 申込時点では有効期限を計算しない・書かない
@@ -860,7 +828,7 @@ exports.handler = async (event, context) => {
           //    上書きすると、画面に出ていた金額と請求額が食い違う。
           //    （2026-08-24 の点検で発見。片方が安ければ得だが、逆なら
           //      「見た額より高い請求」という最悪の事故になる）
-          if (/campaign/i.test(fullPlanName)) {
+          if (hasOwnSpecialPrice(fullPlanName)) {
             throw { skipCampaign: true };
           }
           const currentFields = existingRecords.length > 0 ? (existingRecords[0].fields || {}) : null;

@@ -886,6 +886,10 @@ const fullTitle = pageTitle
     {import.meta.env.DEV && <script src="/test-auth.js" is:inline></script>}
     <!-- 送信完了画面・申請履歴の共通ユーティリティ -->
     <script src="/js/submission-result.js" is:inline></script>
+    <!-- ⚠️ 申込モーダルの金額を**サーバーが請求する額**へ揃える。
+         `openBankModal` は 16 ページにコピペで散在しているため、
+         ページごとに直さず**ここ 1 か所**で包む（過去に直し漏れ事故あり）。 -->
+    <script src="/js/campaign-price.js" is:inline></script>
 </head>
 <body>
     <!-- Header -->

@@ -1,0 +1,139 @@
+/**
+ * shownPriceMatchesCharge.test.mjs — **見せた金額 = 請求する金額**を全経路で固定する
+ *
+ * ## 繰り返した失敗（2026-08-24 / 08-25）
+ *
+ * これまでのテストは `RequestedAmount`（サーバーが記録する額）しか見ていなかった。
+ * その結果、**お客様の画面が元の金額のまま**でも全部 pass していた:
+ *
+ *   案内「¥78,000 → ¥68,000」／ 申込モーダル「¥78,000」／ 実際の請求 ¥68,000
+ *
+ * 「サーバーが正しい」と「お客様に正しく見えている」は**別の事実**。
+ * ここは後者を検査する。
+ *
+ * ## どうやって食い違いを防ぐか
+ *
+ * 1. 商品名の読み替えを**共有の単一源**にする（`payments/productName.js`）
+ * 2. 画面が出す金額は**サーバーが返した値だけ**（`/api/campaign.json?product=`）
+ * 3. サイト中の購入ボタンを全部集め、1 つ残らず突き合わせる（このテスト）
+ */
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync, readdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+import { derivePlanFromProductName, hasOwnSpecialPrice } from '../payments/productName.js';
+import { resolveCampaignPricing, isCampaignActive } from './campaignOffers.js';
+
+const PAGES_DIR = fileURLToPath(new URL('../../pages/', import.meta.url));
+const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
+const NOW = Date.parse('2026-08-25T03:00:00Z');
+const ALLOWED = { allowed: true };
+
+/** サイト中の購入ボタン（`openBankModal('商品名', 金額, '期間')`）を全部集める */
+function collectButtons() {
+  const out = [];
+  const walk = (dir) => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const full = `${dir}${e.name}`;
+      if (e.isDirectory()) { walk(`${full}/`); continue; }
+      if (!e.name.endsWith('.astro')) continue;
+      const src = readFileSync(full, 'utf8');
+      const re = /openBankModal\(\s*'([^']+)'\s*,\s*(\d+)\s*,\s*'([^']+)'/g;
+      let m;
+      while ((m = re.exec(src))) out.push({ productName: m[1], shown: Number(m[2]), file: e.name });
+    }
+  };
+  walk(PAGES_DIR);
+  return out;
+}
+
+const BUTTONS = collectButtons();
+/** 契約ごとの権利（誰がその画面を見るか分からないので全パターン試す）*/
+const AUDIENCES = [
+  ['無料', {}],
+  ['Light', { canViewLight: true }],
+  ['Premium', { canViewPremium: true }],
+  ['三連複', { canViewPremium: true, canViewSanrenpuku: true }],
+];
+
+/** サーバーが請求する額（`/api/campaign.json?product=` と同じ計算）*/
+function chargedFor(productName, shown, entitlements) {
+  const d = derivePlanFromProductName(productName);
+  if (hasOwnSpecialPrice(d.fullPlanName)) return shown;
+  const p = resolveCampaignPricing({
+    planName: d.planName, planType: d.planType, entitlements, nowMs: NOW, allowed: ALLOWED,
+  });
+  return p.applied === true ? p.finalPrice : shown;
+}
+
+test('前提: 購入ボタンとキャンペーン期間を取得できる', () => {
+  assert.ok(BUTTONS.length >= 4, `購入ボタンが ${BUTTONS.length} 件しか無い`);
+  assert.equal(isCampaignActive(NOW), true, '検査時点がキャンペーン期間外');
+});
+
+test('割引が乗る商品では、画面の金額をサーバーの額へ差し替える経路がある', () => {
+  // ⚠️ ここが無いと「見せた額 ≠ 請求額」に戻る
+  const script = read('../../../public/js/campaign-price.js');
+  assert.match(script, /\/api\/campaign\.json/, 'サーバーへ聞いていない');
+  assert.match(script, /getElementById\('modalAmount'\)/, 'モーダルの金額を書き換えていない');
+  assert.match(script, /getElementById\('transferAmount'\)/, '送信値を揃えていない');
+  assert.match(script, /getElementById\('modalPlanInfo'\)/, 'プラン欄の金額が古いまま残る');
+  // 画面で計算しない
+  assert.doesNotMatch(script, /pricing\.regularPrice\s*-\s*/, '画面で割引を計算している');
+  assert.doesNotMatch(script, /\b(4980|49800|78000|68000|44800|4480)\b/, '金額を直書きしている');
+  // 取れなければ元の金額のまま（勝手に安く見せない）
+  assert.match(script, /applied !== true.*return/s, '取得失敗時に元の金額へ戻していない');
+});
+
+test('その差し替えが**全ページ**に効く（16 ページを個別に直さない）', () => {
+  const layout = read('../../layouts/BaseLayout.astro');
+  assert.match(layout, /\/js\/campaign-price\.js/, '共通レイアウトで読み込んでいない');
+  const script = read('../../../public/js/campaign-price.js');
+  assert.match(script, /window\.openBankModal/, '既存のモーダルを包んでいない');
+});
+
+test('商品名の読み替えは 1 か所だけ（画面とサーバーで食い違わせない）', () => {
+  const fn = read('../../../netlify/functions/bank-transfer-application.js');
+  assert.match(fn, /derivePlanFromProductName/, '申込 Function が共有の単一源を使っていない');
+  // 自前の正規化を持ち込んでいない
+  assert.doesNotMatch(fn, /replace\(\/\\s\*-\\s\*Campaign\//, '申込 Function が自前で正規化している');
+  const api = read('../../pages/api/campaign.json.js');
+  assert.match(api, /derivePlanFromProductName/, 'API が共有の単一源を使っていない');
+});
+
+test('サイト中のどの購入ボタンでも、請求額が画面の額を上回らない', () => {
+  for (const b of BUTTONS) {
+    for (const [label, ent] of AUDIENCES) {
+      const charged = chargedFor(b.productName, b.shown, ent);
+      assert.ok(charged <= b.shown,
+        `${b.file} / ${label}: 画面 ¥${b.shown} より高い ¥${charged} を請求しようとしている`);
+      assert.ok(charged > 0, `${b.file}: 請求額が 0 円以下`);
+    }
+  }
+});
+
+test('割引が乗る組み合わせが実在する（検査が素通りしていない）', () => {
+  const discounted = [];
+  for (const b of BUTTONS) {
+    for (const [label, ent] of AUDIENCES) {
+      const charged = chargedFor(b.productName, b.shown, ent);
+      if (charged < b.shown) discounted.push(`${b.productName}/${label}: ${b.shown}→${charged}`);
+    }
+  }
+  assert.ok(discounted.length > 0, '1 つも割引が乗らない＝検査が意味を持っていない');
+  // 三連複（買い切り）が Premium の方に乗ること（今回の報告そのもの）
+  assert.ok(discounted.some((d) => d.startsWith('Premium Sanrenpuku Lifetime/Premium')),
+    `三連複の割引が乗っていない: ${discounted.join(' / ')}`);
+});
+
+test('すでに特別価格の商品には重ねない（画面の額を変えない）', () => {
+  const special = BUTTONS.filter((b) => hasOwnSpecialPrice(b.productName));
+  assert.ok(special.length > 0, '特別価格の商品が見つからない（前提が変わった）');
+  for (const b of special) {
+    for (const [, ent] of AUDIENCES) {
+      assert.equal(chargedFor(b.productName, b.shown, ent), b.shown,
+        `${b.productName}: 特別価格を上書きしている`);
+    }
+  }
+});
