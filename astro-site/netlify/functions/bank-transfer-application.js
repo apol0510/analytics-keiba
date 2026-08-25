@@ -847,6 +847,9 @@ exports.handler = async (event, context) => {
           ]);
           const c = resolveCampaignPricing({
             planName, planType, entitlements: ent, nowMs: Date.now(),
+            // ⚠️ **無料登録特典**。Customers にレコードがある方だけに割り引く
+            //    （2026-08-25 MK 確定）。新規の方はまず無料登録していただく。
+            registered: existingRecords.length > 0,
             allowed: resolveCampaignAllowed({
               withinWindow: isCampaignActive(Date.now()),
               control: ctrl,

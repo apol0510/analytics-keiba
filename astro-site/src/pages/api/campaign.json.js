@@ -26,7 +26,8 @@ export const prerender = false;
 
 import {
   describeCampaignForMember, isCampaignActive, describeCampaignDeadline,
-  resolveCampaignPricing,
+  resolveCampaignPricing, describeRegisterPrompt, CAMPAIGN_NOT_REGISTERED,
+  describeCampaignOffersFor,
 } from '../../lib/promotions/campaignOffers.js';
 import { derivePlanFromProductName, hasOwnSpecialPrice } from '../../lib/payments/productName.js';
 import { campaignControlStore } from '../../lib/promotions/campaignControlStore.js';
@@ -43,6 +44,20 @@ function entitlementsFromDeclaredPlan(raw) {
   }
   if (p === 'light' || p === 'standard') return { canViewLight: true };
   return {};
+}
+
+/** 登録済みだったらいくら安くなるか（案内文に使う） */
+function discountIfRegistered(derived, allowed, now) {
+  const p = resolveCampaignPricing({
+    planName: derived.planName,
+    planType: derived.planType,
+    // 未登録の方は「無料の方」として案内する
+    entitlements: {},
+    nowMs: now,
+    allowed,
+    registered: true,
+  });
+  return p.applied === true ? p.discount : 0;
 }
 
 export async function GET({ url }) {
@@ -71,6 +86,13 @@ export async function GET({ url }) {
   //    （2026-08-25: 三連複の申込モーダルが ¥78,000 のままだった）。
   //    申込 Function と**同じ関数・同じ商品名の読み替え**を使うこと。
   const product = url.searchParams.get('product');
+  // ⚠️ **無料登録特典**（2026-08-25 MK 確定）。
+  //    画面が知っているのは localStorage の契約だけ。値があれば「ログイン＝登録済み」。
+  //    無ければ未登録として扱い、割引を出さずに登録をご案内する。
+  //    ⚠️ 登録済みでログインしていない方は通常価格が見えるが、申込では割り引かれる
+  //       （＝見せた額より安い側なので安全）。
+  const declared = url.searchParams.get('plan');
+  const registered = String(declared || '').trim() !== '';
   let pricing = null;
   if (product) {
     const d = derivePlanFromProductName(product);
@@ -80,9 +102,10 @@ export async function GET({ url }) {
       : resolveCampaignPricing({
         planName: d.planName,
         planType: d.planType,
-        entitlements: entitlementsFromDeclaredPlan(url.searchParams.get('plan')),
+        entitlements: entitlementsFromDeclaredPlan(declared),
         nowMs: now,
         allowed,
+        registered,
       });
     pricing = {
       applied: p.applied === true,
@@ -97,6 +120,18 @@ export async function GET({ url }) {
       note: p.applied === true
         ? `キャンペーン適用：${Number(p.discount).toLocaleString('ja-JP')}円OFF`
         : '',
+      /**
+       * 未登録のため割り引かなかったときのご案内。
+       * ⚠️ いくら安くなるかは**登録済みとして計算し直した結果**を出す
+       *    （「◯◯円OFF」を画面で作らないため）。
+       */
+      // ⚠️ 割引の対象でない商品（Premium 月額など）には**案内を出さない**。
+      //    「無料登録でお得に」とだけ出すと、登録しても安くならないのに期待させる。
+      registerPrompt: (() => {
+        if (p.applied || p.reason !== CAMPAIGN_NOT_REGISTERED) return '';
+        const yen = discountIfRegistered(d, allowed, now);
+        return yen > 0 ? describeRegisterPrompt(yen) : '';
+      })(),
     };
   }
 

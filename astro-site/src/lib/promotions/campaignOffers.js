@@ -27,6 +27,19 @@ export const CAMPAIGN_OFFER_IDS = Object.freeze({
   SANRENPUKU_LIFETIME: 'campaign-sanrenpuku-lifetime-10000off',
 });
 
+/**
+ * 未登録のため割り引かなかった、という理由。
+ * 画面はこれを見て「無料登録で◯◯円OFF」を出す。
+ */
+export const CAMPAIGN_NOT_REGISTERED = 'not_registered';
+
+/** 未登録の方へ出すご案内（文言の単一源。画面で作らない） */
+export function describeRegisterPrompt(discountYen) {
+  const n = Number(discountYen);
+  if (!Number.isFinite(n) || n <= 0) return '無料登録でお得にお申し込みいただけます。';
+  return `無料登録で ${n.toLocaleString('ja-JP')}円OFF になります。`;
+}
+
 /** キャンペーン割引の利用期限（日）。再募集クーポンと同じ 14 日（MK 確定） */
 export const CAMPAIGN_OFFER_DAYS = 14;
 
@@ -130,8 +143,17 @@ export function resolveCampaignPricing({
   planName, planType, entitlements, nowMs = Date.now(),
   /** 運営の停止スイッチ・個別除外（`campaignControl.js` の判定結果）*/
   allowed,
+  /**
+   * **無料登録が済んでいるか**（Customers にレコードがあるか）。
+   *
+   * ⚠️ 2026-08-25 MK 確定: これは**無料登録特典**。未登録の方には割り引かない。
+   *    登録を挟まずに割引だけ持っていかれるのを防ぎ、連絡先を残していただく。
+   * ⚠️ 判定できないときも割り引かない（fail closed）。
+   */
+  registered,
 } = {}) {
   const no = (reason) => ({ applied: false, reason });
+  if (registered !== true) return no(CAMPAIGN_NOT_REGISTERED);
   // ⚠️ 運営が止めている / 対象外 / 確認できない → **1 円も割り引かない**
   if (allowed && allowed.allowed !== true) return no(allowed.reason || 'blocked');
   if (!isCampaignActive(nowMs)) return no('outside_window');

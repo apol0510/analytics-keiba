@@ -60,6 +60,7 @@ test('止めたら案内も申込の割引も出ない（片方だけ残らな�
   // 申込
   assert.equal(resolveCampaignPricing({
     planName: 'Premium', planType: 'Annual', entitlements: {}, nowMs: IN, allowed: blocked,
+    registered: true,
   }).applied, false);
 });
 
@@ -68,6 +69,7 @@ test('止めていなければ両方出る（塞ぎすぎない）', () => {
   assert.ok(describeCampaignForMember({ entitlements: {}, nowMs: IN, allowed: ok }).offers.length > 0);
   assert.equal(resolveCampaignPricing({
     planName: 'Premium', planType: 'Annual', entitlements: {}, nowMs: IN, allowed: ok,
+    registered: true,
   }).applied, true);
 });
 
