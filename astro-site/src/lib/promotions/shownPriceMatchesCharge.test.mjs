@@ -190,7 +190,9 @@ test('すでに特別価格の商品には重ねない（画面の額を変え�
 
 test('ご案内はサーバーの文言だけを出す（ページで作らない）', () => {
   const c = read('../../components/CampaignBanner.astro');
-  for (const k of ['b.headline', 'b.sub', 'b.ctaHref', 'b.ctaLabel']) {
+  // ⚠️ 2026-08-25: 出し方の判定は純粋関数（campaignBannerView.js）へ移した。
+  //    画面はその戻り値をそのまま出すだけ。
+  for (const k of ['view.headline', 'view.sub', 'view.cta.href', 'view.cta.label']) {
     assert.ok(c.includes(k), `${k} を使っていない`);
   }
   // 金額・期限・行き先を直書きしない
@@ -198,8 +200,8 @@ test('ご案内はサーバーの文言だけを出す（ページで作らな�
   assert.doesNotMatch(c, /\d+年\d+月\d+日/, '期限を直書きしている');
   assert.doesNotMatch(c, /\/free-signup\//, '行き先を直書きしている');
   // 出すかどうかもサーバーが決める / 取れなければ出さない
-  assert.match(c, /b\.show !== true/, '出す条件を画面で決めている');
-  assert.match(c, /catch\(function \(\) \{\}\)/, '取得に失敗しても出してしまう');
+  assert.match(c, /if \(!view\.show\) return;/, '出す条件を画面で決めている');
+  assert.match(c, /catch\(\(\) => \{\}\)/, '取得に失敗しても出してしまう');
 });
 
 test('必要なページに置かれている（増やすときは 1 行）', () => {
