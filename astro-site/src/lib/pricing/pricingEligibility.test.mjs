@@ -159,8 +159,11 @@ test('guard: 会員限定価格はサーバー側で課金契約を再判定す�
   assert.equal(/memberPricingWarning[\s\S]{0,200}statusCode:\s*4\d\d/.test(bankFn), false,
     '会員限定価格の判定で申込を拒否している');
   // 課金・権限フィールドを書かない
+  // ⚠️ **コメントは見ない**。「なぜ書かないか」の説明にフィールド名が出るのは正しい実装で、
+  //    語そのものを禁止すると説明を書けなくなる（2026-08-25）。
+  const bankCode = bankFn.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
   for (const f of ['PaymentConfirmed: true', 'PaidAt', 'LifetimeSanrenpuku', "'プラン'"]) {
-    assert.equal(bankFn.includes(f), false, `${f} を書いている`);
+    assert.equal(bankCode.includes(f), false, `${f} を書いている`);
   }
 });
 

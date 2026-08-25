@@ -71,16 +71,26 @@
     const box = document.getElementById('akCampaignBanner');
     if (!box) return;
 
-    function declaredPlan() {
+    /**
+     * いまの契約の申告（**事実だけ**。意味づけはサーバーの `/api/campaign.json`）。
+     * ⚠️ 三連複の買い切り権は**プラン名に現れない**（Airtable の別フィールド）。
+     *    送らないと、買ったばかりの方に「三連複 10,000円OFF」を出し続ける
+     *    （2026-08-25 実発生）。
+     */
+    function declaredQuery() {
+      let plan = '', sanrenpuku = '';
       try {
         const raw = localStorage.getItem('user-plan');
-        if (!raw) return '';
-        const o = JSON.parse(raw);
-        return String((o && o.plan) || '');
-      } catch (e) { return ''; }
+        if (raw) {
+          const o = JSON.parse(raw);
+          plan = String((o && o.plan) || '');
+          sanrenpuku = (o && o.lifetimeSanrenpuku === true) ? '1' : '';
+        }
+      } catch (e) { /* 読めないときは未申告として扱う */ }
+      return 'plan=' + encodeURIComponent(plan) + '&sanrenpuku=' + encodeURIComponent(sanrenpuku);
     }
 
-    fetch('/api/campaign.json?plan=' + encodeURIComponent(declaredPlan()), { credentials: 'same-origin' })
+    fetch('/api/campaign.json?' + declaredQuery(), { credentials: 'same-origin' })
       .then((r) => (r.ok ? r.json() : null))
       .then((j) => {
         const view = resolveBannerView({

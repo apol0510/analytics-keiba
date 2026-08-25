@@ -33,10 +33,21 @@ import { derivePlanFromProductName, hasOwnSpecialPrice } from '../../lib/payment
 import { campaignControlStore } from '../../lib/promotions/campaignControlStore.js';
 import { resolveCampaignAllowed } from '../../lib/promotions/campaignControl.js';
 
-/** `?plan=` を、出し分けに使う権利の形へ読み替える（**表示のためだけ**） */
-function entitlementsFromDeclaredPlan(raw) {
+/**
+ * `?plan=` と `?sanrenpuku=` を、出し分けに使う権利の形へ読み替える（**表示のためだけ**）。
+ *
+ * ⚠️ **三連複の権利はプラン名に現れない。**
+ *    三連複は買い切りの追加権で、Airtable では別フィールド `LifetimeSanrenpuku` が持つ。
+ *    契約が「Premium ＋ 三連複買い切り」の方は `プラン` が `'Premium'` のままなので、
+ *    プラン名だけで判定すると**買ったばかりの方に「三連複 10,000円OFF」を出し続ける**
+ *    （2026-08-25 に実在の会員で発生）。
+ *    そこで画面は保存済みの `lifetimeSanrenpuku` を**事実として**送り、
+ *    それが何を意味するかの判断は（他の判定と同じく）ここサーバーが持つ。
+ */
+function entitlementsFromDeclaredPlan(raw, sanrenpukuRaw) {
   const p = String(raw || '').trim().toLowerCase();
-  if (p.includes('sanrenpuku') || p.includes('combo')) {
+  const lifetime = ['1', 'true', 'yes'].includes(String(sanrenpukuRaw || '').trim().toLowerCase());
+  if (lifetime || p.includes('sanrenpuku') || p.includes('combo')) {
     return { canViewSanrenpuku: true, canViewPremium: true, canViewLight: true };
   }
   if (p.startsWith('premium') || p === 'pro' || p === 'pro-plus') {
@@ -74,7 +85,9 @@ export async function GET({ url }) {
   });
 
   const view = describeCampaignForMember({
-    entitlements: entitlementsFromDeclaredPlan(url.searchParams.get('plan')),
+    entitlements: entitlementsFromDeclaredPlan(
+      url.searchParams.get('plan'), url.searchParams.get('sanrenpuku'),
+    ),
     nowMs: now,
     allowed,
   });
@@ -102,7 +115,7 @@ export async function GET({ url }) {
       : resolveCampaignPricing({
         planName: d.planName,
         planType: d.planType,
-        entitlements: entitlementsFromDeclaredPlan(declared),
+        entitlements: entitlementsFromDeclaredPlan(declared, url.searchParams.get('sanrenpuku')),
         nowMs: now,
         allowed,
         registered,
