@@ -28,7 +28,20 @@ export function buildV2ConfirmationFields({ requestedPlan, requestedPlanType, co
   const base = buildConfirmationFields({ requestedPlan, requestedPlanType, confirmedAt });
   if (!base) return null; // fail closed: 推測で昇格しない
 
-  const paidAtIso = base.fields.PaidAt; // = confirmedAt.toISOString()
+  /**
+   * 冪等キーの基準時刻。
+   *
+   * ⚠️ **三連複（買い切り）の確認は `PaidAt` を書かない**（`有効期限` も触らない）。
+   *    `base.fields.PaidAt` をそのまま使うと `undefined` になり、
+   *    `buildPendingEmailFields` が throw して**昇格ごと失敗する**。
+   *    2026-08-25 に本番で発生: 三連複の入金確認が毎回失敗し、
+   *    LifetimeSanrenpuku も付かず Requested* も消えず、確認メールも出なかった。
+   *
+   * 三連複でも「この入金確認」を一意に表せる時刻は `confirmedAt` なのでそれを使う。
+   * 二重送信は上流が防ぐ（承認成功で `Requested*` が空になり、再実行は
+   * `RequestedPlan が空` でスキップされる）。
+   */
+  const paidAtIso = base.fields.PaidAt || confirmedAt.toISOString();
   const fields = { ...base.fields };
   delete fields.PaymentEmailSent; // v2 では立てない
 

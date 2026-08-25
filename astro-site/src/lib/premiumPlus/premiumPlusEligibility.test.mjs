@@ -61,13 +61,19 @@ test('本番フィールド作成前は書き込みが無効（fail closed）', 
 });
 
 // ── 三連複購入確定時の初期化 ─────────────────────────────────────
-test('初回: SanrenpukuPaidAt を記録し eligibility は review（自動 eligible にしない）', () => {
+// ⚠️ **2026-08-25 MK 仕様変更**: 初期値を review → eligible にした。
+//    以前は購入のたびに管理者が手で eligible にする必要があり運用が回らなかった
+//    （実際に 1 名が review のまま放置された）。
+//    eligible = 即販売ではない。段階公開（PHASE 1→4）は従来どおり効く。
+//    売りたくない会員は管理者が blocked にする（blocked は何より強い）。
+test('初回: SanrenpukuPaidAt を記録し eligibility を eligible にする（手作業を挟まない）', () => {
   const r = buildSanrenpukuPlusInitFields({ fields: {}, confirmedAt: CONFIRMED });
   assert.equal(r.fields[SANRENPUKU_PAID_AT_FIELD], CONFIRMED.toISOString());
-  assert.equal(r.fields[PP_ELIGIBILITY_FIELDS.STATUS], PP_ELIGIBILITY.REVIEW);
+  assert.equal(r.fields[PP_ELIGIBILITY_FIELDS.STATUS], PP_ELIGIBILITY.ELIGIBLE);
+  assert.equal(r.fields[PP_ELIGIBILITY_FIELDS.ELIGIBLE_AT], CONFIRMED.toISOString(),
+    '段階公開の起点が無いと phase を計算できない');
   assert.equal(r.fields[PP_ELIGIBILITY_FIELDS.UPDATED_AT], CONFIRMED.toISOString());
   assert.equal(assertOnlyPlusFields(r.fields), true);
-  assert.notEqual(r.fields[PP_ELIGIBILITY_FIELDS.STATUS], PP_ELIGIBILITY.ELIGIBLE);
 });
 
 test('冪等性: SanrenpukuPaidAt が既にあれば書き換えない（初回購入日時を保持）', () => {
@@ -185,9 +191,13 @@ test('anchor: eligible → blocked → eligible は最後の解除日時にな�
   assert.equal(again.fields[EAT], LATER.toISOString(), '再解除日時へ更新されていない');
 });
 
-test('anchor: 初期化（review）では EligibleAt を書かない', () => {
+test('anchor: 初期化で EligibleAt を作る（eligible への実遷移だから）', () => {
   const r = buildSanrenpukuPlusInitFields({ fields: {}, confirmedAt: CONFIRMED });
-  assert.equal(has(r.fields, EAT), false, '初期 review で anchor を作ってはいけない');
+  assert.equal(r.fields[EAT], CONFIRMED.toISOString(), '段階公開の起点が無い');
+  const again = buildSanrenpukuPlusInitFields({
+    fields: { [EAT]: '2026-07-10T00:00:00.000Z' }, confirmedAt: CONFIRMED,
+  });
+  assert.equal(has(again.fields, EAT), false, '既存の起点を上書きしている');
 });
 
 test('anchor: confirm 再実行で EligibleAt が変わらない（そもそも書かない）', () => {

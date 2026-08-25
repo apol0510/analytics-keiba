@@ -350,9 +350,11 @@ test('EligibleAt は eligible への実遷移でだけ書く（再保存・メ�
   const code = stripComments(read('./premiumPlusEligibility.js'));
   assert.match(code, /nextStatus === PP_ELIGIBILITY\.ELIGIBLE\s*&&\s*currentStatus !== PP_ELIGIBILITY\.ELIGIBLE/);
   assert.match(code, /if \(isTransitionToEligible\)/);
-  // 初期化（review）で anchor を作らない
+  // 初期化は eligible への実遷移なので anchor を作る。
+  // ただし**既存値があるときは書かない**（phase を巻き戻さない）。2026-08-25 仕様変更。
   const init = code.slice(code.indexOf('buildSanrenpukuPlusInitFields'), code.indexOf('buildEligibilityUpdateFields'));
-  assert.doesNotMatch(init, /ELIGIBLE_AT/);
+  assert.match(init, /ELIGIBLE_AT/);
+  assert.match(init, /if \(!hasValue\(f\[PP_ELIGIBILITY_FIELDS\.ELIGIBLE_AT\]\)\)/);
 });
 
 test('管理 Function: 資格変更でメール・LINE・通知を送らない', () => {
