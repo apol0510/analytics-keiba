@@ -1981,6 +1981,16 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
         margin-left: auto; padding: .2rem .6rem; border-radius: 999px;
         background: #dc2626; color: #fff; font-size: .75rem; font-weight: 800;
       }
+      /* 未読が無いときは赤くしない（お知らせ自体は残す）*/
+      #notifications .notice-count.is-read {
+        background: rgba(148, 163, 184, .18); color: #94a3b8; font-weight: 700;
+      }
+      /* どれが新しいのかを行ごとに示す（既読の行と並ぶため）*/
+      #notifications .notice-new {
+        margin-left: .5rem; padding: .1rem .4rem; border-radius: 999px;
+        background: #dc2626; color: #fff; font-size: .68rem; font-weight: 800;
+        vertical-align: middle;
+      }
       #notifications .notice-list { list-style: none; margin: 0; padding: 0; }
       #notifications .notice-list li {
         padding: .5rem 0; border-top: 1px solid rgba(148, 163, 184, .16);
@@ -5854,21 +5864,26 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
        * 🔔 お知らせの一覧。ナビのベルから来た人がここで内容を読む。
        *
        * ⚠️ 文言はサーバー由来（`couponNotice.js`）。ここで組み立てない。
-       * ⚠️ 未読が無ければセクションごと出さない（空の「お知らせ」を見せない）。
+       * ⚠️ **読んだあとも消さない**（2026-08-25 MK 指示）。ナビの「お知らせ」を
+       *    常設する以上、押した先が空では行き止まりになる。
+       *    出さないのは「お知らせが 1 件も無いとき」だけ。
        */
       function renderNotifications(notice) {
         const sec = document.getElementById('notifications');
         const list = document.getElementById('notice-list');
         const count = document.getElementById('notice-count');
         if (!sec || !list || !count) return;
-        if (!notice || notice.unseen !== true || !notice.count) { sec.style.display = 'none'; return; }
+        // ⚠️ 既読を含む全件（`all`）で判断する。未読が 0 でも消さない
+        const items = Array.isArray(notice && notice.all) && notice.all.length
+          ? notice.all
+          : (Array.isArray(notice && notice.items) ? notice.items : []);
+        if (!items.length) { sec.style.display = 'none'; return; }
 
-        count.textContent = `${notice.count} 件`;
+        const unread = Number(notice && notice.count) || 0;
+        count.textContent = unread ? `新着 ${unread} 件` : `${items.length} 件`;
+        count.classList.toggle('is-read', unread === 0);
         list.innerHTML = '';
         // ⚠️ お知らせは 1 種類ではない（クーポン / 期間限定のご優待）。全部出す。
-        const items = Array.isArray(notice.items) && notice.items.length
-          ? notice.items
-          : [{ kind: notice.kind, label: notice.label, signature: notice.signature }];
         for (const it of items) {
           const li = document.createElement('li');
           const a = document.createElement('a');
@@ -5884,6 +5899,13 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
             if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
           });
           li.appendChild(a);
+          // どれが新しいのかを行ごとに示す（既読の行と並ぶため）
+          if (it.unseen === true) {
+            const badge = document.createElement('span');
+            badge.className = 'notice-new';
+            badge.textContent = 'NEW';
+            li.appendChild(badge);
+          }
           list.appendChild(li);
         }
         sec.style.display = '';
@@ -5901,6 +5923,8 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
        *    「届いたのに気づけない」状態になっていた（2026-08-23 の報告）。
        *    消えるのは**ベルから来た**か、**お知らせを押した**ときだけ。
        * ⚠️ カードの NEW はこの訪問のあいだ残す（消えるところを見せないと伝わらない）。
+       * ⚠️ 消すのは**赤い点だけ**。「お知らせ」ナビ自体は残す（2026-08-25 MK 指示）。
+       *    以前はナビごと消していたため、一度読むと見返す入口が無くなっていた。
        */
       function markNoticeRead(notice) {
         if (!notice || notice.unseen !== true) return;
@@ -5908,9 +5932,11 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
         if (Array.isArray(notice.items) && notice.items.length) markNoticesSeen(notice.items);
         else if (notice.signature) markCouponNoticeSeen(notice.signature);
         for (const dot of document.querySelectorAll('[data-notice-dot]')) dot.hidden = true;
-        for (const id of ['nav-notice', 'mobile-nav-notice']) {
-          const li = document.getElementById(id);
-          if (li) li.style.display = 'none';
+        const count = document.getElementById('notice-count');
+        if (count) {
+          const total = Array.isArray(notice.all) ? notice.all.length : notice.count;
+          count.textContent = `${total} 件`;
+          count.classList.add('is-read');
         }
       }
 

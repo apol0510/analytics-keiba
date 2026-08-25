@@ -1109,18 +1109,20 @@ const fullTitle = pageTitle
                 const dots = document.querySelectorAll('[data-notice-dot]');
                 if (!dots.length) return;
                 const n = await getCouponNotice();
-                if (!n || n.unseen !== true || !n.count) return;
+                // ⚠️ **既読でもナビからは消さない**（2026-08-25 MK 指示）。
+                //    以前は未読が無くなった瞬間に「お知らせ」ごとナビから消えたため、
+                //    一度開くと二度と見返せなかった。
+                //    出す条件 = お知らせが 1 件でもある（既読を含む）。
+                //    赤い点だけが「未読の件数」を表す。
+                if (!n || !n.total) return;
                 for (const dot of dots) {
+                    if (!n.count) { dot.hidden = true; continue; }
                     dot.textContent = String(n.count);
                     // 読み上げは件数だけ（中身を言わない）
                     dot.setAttribute('aria-hidden', 'false');
                     dot.setAttribute('aria-label', `新しいお知らせ ${n.count} 件`);
                     dot.hidden = false;
                 }
-                // ⚠️ 「お知らせ」ナビは**件数があるときだけ**出す。
-                //    0 件のベルを常設すると、赤い点が付いても目立たなくなる。
-                //    お知らせが返るのは**本人のセッションがあるときだけ**（未ログインは 404）
-                //    なので、ここで出す＝ログイン済みであることも同時に満たす。
                 for (const id of ['nav-notice', 'mobile-nav-notice']) {
                     const li = document.getElementById(id);
                     if (li) li.style.display = 'block';
