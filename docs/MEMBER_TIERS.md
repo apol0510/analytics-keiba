@@ -24,15 +24,32 @@ Premium Plus（単品商品）
 - ✅ Premium Plusは最上位の単品商品
 - ✅ **Premium Sanrenpuku会員とPremium Combo会員のみが購入できる**
 
-### 2. 三連複買い切りは買い切りだがPremium有効期間内のみ利用可能 🚨
+### 2. 三連複買い切りは Premium の期限に依存しない（恒久的に保持する）🚨
 
 - ✅ **Premium Sanrenpuku Lifetime（¥78,000買い切り）**
 - ✅ **Premium Combo Lifetime（¥78,000買い切り）**
-- ✅ 買い切り = 追加料金なし・永久所有権
-- 🚨 **ただしPremium会員の有効期間内のみ閲覧可能**
-- **理由**: Premium会員資格が失効すると、買い切りでもアクセス不可
-- **例**: Premium会員（月払い¥18,000/月）を解約 → 三連複買い切りも閲覧不可に
-- **正しい運用**: Premium会員資格を維持している間は永久に利用可能
+- ✅ 買い切り = 追加料金なし・**恒久的な閲覧権**
+- ✅ **Premium（馬単）の期限が切れても三連複は閲覧できる**。
+  期限切れ後は**三連複ページだけ**が開き、馬単・Light は閲覧できない
+- **買い切りの目印は `LifetimeSanrenpuku`（Customers のチェックボックス）**。
+  三連複の入金確認で `buildConfirmationFields` が立て、`有効期限` は触らない
+  （`src/lib/payments/bankPaymentFlow.js`）
+- 判定の正本: `src/lib/entitlements/resolveEntitlements.js`
+  （`canViewSanrenpuku = アカウント有効 AND LifetimeSanrenpuku`。tier も Premium 期限も見ない）／
+  ログイン可否は `src/lib/auth/memberResolution.js`（期限切れでも `premium-sanrenpuku` の
+  有料セッションを発行する。ここが free に落ちるとセッションが出ず、ページも開かない）
+- 回帰テスト: `src/lib/auth/sanrenpukuLifetimeAccess.test.mjs`（`npm run test:auth-session`）
+
+> ⚠️ **2026-08-25 訂正**: 本節はもともと「Premium 会員の有効期間内のみ閲覧可能」と
+> 書かれていたが、**コードの実装と逆**だった（2026-07-18 に「買い切りは馬単の期限に
+> 非依存」へ確定し、`99c6946` で AccessControl のバグも修正済み）。
+> 誤った記述に合わせてコードを直すと、買い切り購入者を締め出す。
+
+> ⚠️ **フラグの無い旧レコード（旧 Premium Sanrenpuku / Premium Combo で期限切れ）は別扱い**。
+> 買い切りだったのか期間契約だったのかを**データから判別できない**ため、判定式は緩めない。
+> 該当 18 名は **Light 永久無料会員として再スタート**させる方針が確定している
+> （2026-08-25 MK。`docs/spec.md` §旧三連複会員は Light 永久無料として再スタートする）。
+> **`LifetimeSanrenpuku` は付与しない。**
 
 ### 3. 表示ルール
 
