@@ -147,6 +147,16 @@ test('マイページのお知らせは最上部・読める配色にする', ()
   assert.match(css, /border: 1px solid rgba\(148, 163, 184, \.22\)/, 'カードの枠線が消えている');
   assert.match(css, /background: #101a2f/, 'カードの背景が消えている');
   assert.match(css, /padding: 1\.15rem 1\.25rem/, 'カードの余白が変わっている');
+
+  // ⚠️ 見出しの**文字だけ**をバッジ状に囲む（2026-08-25 MK 指示）。
+  //    カード全体を囲み直したり、左の色帯へ戻したりしないこと。
+  for (const [label, sel] of [['お知らせ', '.notice-title'], ['ご優待', '.campaign-title']]) {
+    const rule = css.slice(css.indexOf(`${sel} {`));
+    const body = rule.slice(0, rule.indexOf('}'));
+    assert.match(body, /border-radius: 999px/, `${label}: 見出しが囲まれていない`);
+    assert.match(body, /border: 1px solid/, `${label}: 見出しの枠が無い`);
+    assert.match(body, /display: inline-block/, `${label}: 文字幅に収まっていない`);
+  }
   assert.match(css, /color: #fbbf24/, 'リンクが暗い地に沈む色のまま');
 });
 
