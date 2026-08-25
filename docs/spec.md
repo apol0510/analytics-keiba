@@ -1682,6 +1682,64 @@ sha256）でしか結ばない。受信者ごとの「最新 open 時刻」か�
 
 ---
 
+## 旧三連複会員は **Light 永久無料** として再スタートする（2026-08-25 確定）
+
+### 確定した仕様
+
+旧 `Premium Sanrenpuku` / `Premium Combo` で**期限切れ**になっている会員（本番実測 18 名）を、
+**Light 永久無料会員として再スタート**させる。**購入履歴の追加調査は復旧の条件にしない**
+（顧客維持・既存顧客優遇の方針）。
+
+| 項目 | 確定内容 |
+|---|---|
+| 与えるもの | **Light 永久無料**（`LightGrantLifetime`。無料権利であって課金契約ではない）|
+| 抹消するもの | 過去の三連複閲覧権（`プラン` を `Free` にし、旧三連複ティアを消す）|
+| 与えないもの | **`LifetimeSanrenpuku` は付与しない**。対象者が持っていれば**解除する** |
+| 復活させないもの | **馬単 Premium / その他 Premium 権限**（`有効期限` は書き換えない）|
+| 退会済みの会員 | **通常の会員として戻す**。`WithdrawalRequested` を false にする |
+| 消さないもの | `WithdrawalDate` / `WithdrawalReason` / `有効期限` / `PaidAt` / ポイント /
+決済・入金・監査の履歴は**そのまま残す** |
+| 判定式 | **緩めない**。旧プラン名だけで自動的に権利を配る実装にはしない |
+
+単一源: `src/lib/entitlements/legacySanrenpukuNormalization.js`（純粋・I/O なし）。
+検証: `legacySanrenpukuNormalization.test.mjs`。
+
+### 書き込みが 2 種類に分かれる理由
+
+無料権利の付与経路（`promotionalGrants.js`）は `プラン` / `Status` / `有効期限` /
+`WithdrawalRequested` を **構造的に書けない**（`PROMO_FORBIDDEN_FIELDS`）。
+課金契約と無料特典を混ぜないための設計なので、その境界は壊さない。
+
+1. **無料権利の付与** … `buildGrantFields`（Light / lifetime）が組み立てた列
+2. **契約側の正規化** … `プラン` / `PlanType` / `WithdrawalRequested`
+
+書いてよい列は allow-list で固定し、それ以外が混ざったら組み立て自体を捨てる（fail closed）。
+**変わる列しか書かない**（同じ値の書き戻しで監査を汚さない）。
+
+### 対象にしない会員（fail closed）
+
+買い切り保有（`LifetimeSanrenpuku=true`）/ `PlanType=Lifetime` / まだ有効 / 期限が無い /
+停止アカウント（`Status` が suspended 系）/ そもそも旧プラン名でない。
+
+### Premium Plus は**別概念**
+
+**三連複の保有と Premium Plus の販売資格は別概念**である。会員ランク（Free / Light /
+期限切れ Premium）を理由に Plus を塞がない。Light 永久無料へ正規化した会員も、
+**管理者が 1 人ずつ明示指定すれば**（`UpsellTarget=plus`）販売対象にできる。
+
+- ⚠️ **2026-08-25 の仕様変更**。変更前は「plus 指定でも契約が無効なら出さない」だった
+  （`upsellTarget.test.mjs` の 10 / 11 / 19 / 25 がそれを固定していた）
+- 開くのは**明示指定のときだけ**。指定が無い会員（`auto`）は従来どおり出ない
+- `PremiumPlusEligibility=blocked` / 会員単位の販売停止 / 受付時間は**従来どおり優先**
+- ROUTE C-2（`resolvePlusRoute`）が単一源
+
+### ⚠️ 「三連複を見られる人＝最上位で売るものがない」は誤り
+
+`campaignOffers.resolveCampaignOfferIdsFor` は `canViewSanrenpuku` だけで「最上位」と判断し、
+割引を 1 件も返さない。**馬単が期限切れの三連複保有者は最上位ではない**ので、この判定は誤り。
+Premium Plus の販売可能性とも無関係である（上のとおり別判定）。
+本正規化では対象者が三連複保有者でなくなるため実害は無いが、**判定そのものは誤りとして残っている**。
+
 ## 5. External Dependencies
 
 | 依存 | 用途 | 備考 |

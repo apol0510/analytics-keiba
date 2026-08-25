@@ -1637,6 +1637,75 @@ MK 要望の 5 項目のうち、**確実に出せる 3 つ**を入れた。
 
 ---
 
+## 2026-08-25 — 【仕様確定】旧三連複会員 18 名を Light 永久無料へ正規化する（付与案は撤回）
+
+### 確定（MK・同日 2 回目の方針変更）
+
+同日午前に決めた「`LifetimeSanrenpuku` を付与する」案は**撤回**。
+18 名全員を **Light 永久無料会員として再スタート**させ、**過去の三連複閲覧権は抹消**する。
+
+正本: `docs/spec.md` §旧三連複会員は Light 永久無料として再スタートする ／
+`docs/decisions.md` §2026-08-25（旧三連複会員を Light 永久無料へ正規化する）。
+
+### 本番データの実測（read-only・書き込み 0）
+
+対象 18 名（旧プラン名・買い切りフラグ無し・期限切れ）:
+
+| 項目 | 実測 |
+|---|---|
+| プラン | `Premium Sanrenpuku` 15 / `Premium Combo` 3 |
+| PlanType | 空 17 / `Monthly` 1 |
+| 有効期限 | 2025-12-20 〜 2026-06-30（**散らばっており期間契約の終了に見える**）|
+| Status | 空 15 / `active` 3（**停止系の値は 0 件**）|
+| WithdrawalRequested | **true 8 件** / 空 10 件 |
+| WithdrawalDate / Reason | 8 件に記録あり（理由未記入 6 / 具体的な理由 2）|
+| **既存の Light 30 日無料** | **退会済み 8 名に付与済み**（`LightGrantUntil=2026-09-03`・
+2026-08-04 のカムバック施策 `cb-light-30d-free-...`）|
+| LifetimeSanrenpuku / ForceLogout / PremiumPlus 系 / PaidAt / 配信停止 | **全件空** |
+| ポイント | 全員保有（10〜1,653）|
+
+対象外 2 名: `PlanType=Lifetime` 1 件 / 有効期限 2098 年 1 件（どちらも現在も閲覧可）。
+
+### 変更前 → 変更後（1 レコードあたり）
+
+| 列 | 変更前 | 変更後 | 備考 |
+|---|---|---|---|
+| `プラン` | Premium Sanrenpuku / Premium Combo | **Free** | 旧三連複ティアを抹消 |
+| `PlanType` | 空(17) / Monthly(1) | **空** | 変わる 1 件だけ書く |
+| `WithdrawalRequested` | true(8) | **false** | 8 件だけ書く |
+| `LightGrantLifetime` | 空 | **true** | Light 永久無料 |
+| `LightGrantUntil` | 8 件に 2026-09-03 | **null** | 無期限に終了日は持たない |
+| `LightGrantedAt` / `LightGrantedBy` / `LightGrantOp` | 8 件に旧値 | **新しい付与記録** | 冪等キー |
+| `LightGrantRevokedAt` / `LightGrantRevokeReason` | 空 | **null / 空** | 古い取消記録を残さない |
+| `ComebackGrantSource` | 空 | **施策名** | 監査 |
+| `有効期限` / `WithdrawalDate` / `WithdrawalReason` / `PaidAt` / ポイント / `Status` | — | **変更しない** | 履歴は残す |
+| `LifetimeSanrenpuku` | 空 | **変更しない**（付与しない）| 新仕様 |
+
+### 実装
+
+- `src/lib/entitlements/legacySanrenpukuNormalization.js`（新規・純粋）…
+  対象判定と書き込み値の組み立て。書いてよい列を allow-list で固定し、
+  課金・履歴・三連複・Premium Plus の列が混ざったら組み立てを捨てる
+- `src/lib/premiumPlus/premiumPlusRelease.js` … **ROUTE C-2** を追加。
+  管理者が明示指定した会員は会員ランクを条件にせず Plus の route を開く
+- `src/lib/upsell/upsellTarget.test.mjs` … 上の仕様変更に合わせて 4 件を更新
+  （「指定が無ければ出ない」「blocked は優先」は固定したまま）
+
+### 検証（テスト）
+
+正規化後に Light だけ開く / 馬単・三連複は復活しない / 永久無料が失効しない /
+Light の会員としてログインできる / 退会済みが通常会員へ戻る / 履歴を書き換えない /
+`LifetimeSanrenpuku` を付与しない / 変わる列しか書かない / 30 日無料が永久へ強化される /
+冪等 / 対象外の会員を弾く / Plus は明示指定で販売可・指定が無ければ不可・blocked 優先 /
+**他会員の判定が 1 つも変わらない**。
+
+### 本番レコードの変更は未実行（高リスク境界）
+
+18 名への書き込みは**実行していない**。対象・件数・変更フィールド・変更前後・影響・
+rollback・テスト結果を提示して停止する。
+
+---
+
 ## 2026-08-22 — 【訂正】クーポンを配る相手を「いま買えない人」へ戻す
 
 ### 何を間違えたか

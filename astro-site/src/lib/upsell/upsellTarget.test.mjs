@@ -230,14 +230,25 @@ test('18. plus 指定 + eligibility=blocked → Plus CTA=false（明示指定で
   assert.equal(withOverride.channel, UPSELL_CHANNEL.NONE);
 });
 
-test('19. plus 指定でも契約が無効なら出さない（Light / Free / 期限切れ Premium）', () => {
+// ⚠️ **2026-08-25 MK 仕様変更**: 三連複の保有と Premium Plus の販売資格は**別概念**。
+//    会員ランク（Free / Light / 期限切れ Premium）を理由に Plus を塞がない。
+//    旧三連複会員を Light 永久無料へ正規化した会員も、管理者が明示指定すれば販売できる。
+//    変更前は「plus 指定でも契約が無効なら出さない」だった（下のテストがそれを固定していた）。
+//    ⚠️ 開くのは **`UpsellTarget=plus`（1 人ずつの明示指定）だけ**。
+//       指定が無い会員（auto）は従来どおり出ない。blocked / 販売停止も従来どおり優先。
+test('19. 会員ランクを理由に Plus を塞がない（明示指定のときだけ開く）', () => {
   for (const [label, fields] of [
     ['Light', LIGHT], ['Free', FREE],
     ['期限切れ Premium', { ...PREMIUM, '有効期限': '2026-01-01' }],
   ]) {
+    // 明示指定 → 販売対象にできる
     const v = view(fields, { target: 'plus', dayNo: 9 });
-    assert.equal(v.channel, UPSELL_CHANNEL.NONE, `${label} に Plus を売っている`);
-    assert.equal(v.plus.showPurchaseCta, false);
+    assert.equal(v.channel, UPSELL_CHANNEL.PLUS, `${label} に Plus を売れない`);
+    assert.equal(v.plus.showPurchaseCta, true, `${label}: 購入 CTA が出ていない`);
+    // 指定が無ければ従来どおり出さない（自動的に配らない）
+    const auto = view(fields, { target: 'auto', dayNo: 9 });
+    assert.equal(auto.channel, UPSELL_CHANNEL.NONE, `${label}: 指定が無いのに Plus が出ている`);
+    assert.equal(auto.plus.showPurchaseCta, false);
   }
   // 三連複の永久権を持つ特殊 tier は現行 entitlement に従う（保有していれば出せる）
   const srp = view({ ...SRP_HOLDER }, { target: 'plus', dayNo: 9 });
@@ -296,17 +307,16 @@ test('9. Premium Combo + plus 指定 → Plus CTA=true（eligibility 設定な�
   assert.equal(v.plus.showPurchaseCta, true);
 });
 
-test('10. Light + plus 指定 → Plus CTA=false', () => {
+test('10. Light + plus 明示指定 → Plus を販売対象にできる（2026-08-25 仕様変更）', () => {
   const v = view({ ...LIGHT, ...IMMEDIATE }, { target: 'plus', dayNo: 9 });
-  assert.equal(v.channel, UPSELL_CHANNEL.NONE);
-  assert.equal(v.reason, UPSELL_REASON.PLUS_NOT_ELIGIBLE);
-  assert.equal(v.plus.showPurchaseCta, false, 'Light に Plus を売っている');
+  assert.equal(v.channel, UPSELL_CHANNEL.PLUS, 'Light に Plus を売れない');
+  assert.equal(v.plus.showPurchaseCta, true);
 });
 
-test('11. Free + plus 指定 → Plus CTA=false', () => {
+test('11. Free + plus 明示指定 → Plus を販売対象にできる（2026-08-25 仕様変更）', () => {
   const v = view({ ...FREE, ...IMMEDIATE }, { target: 'plus', dayNo: 9 });
-  assert.equal(v.channel, UPSELL_CHANNEL.NONE);
-  assert.equal(v.plus.showPurchaseCta, false, 'Free に Plus を売っている');
+  assert.equal(v.channel, UPSELL_CHANNEL.PLUS, 'Free に Plus を売れない');
+  assert.equal(v.plus.showPurchaseCta, true);
 });
 
 test('12. blocked + plus 指定 → Plus CTA=false（明示指定より販売禁止が強い）', () => {
@@ -462,12 +472,15 @@ test('24. preview: plus + blocked → Plus 表示不可', () => {
   assert.equal(p.preview.productPageStatus, 404);
 });
 
-test('25. preview: Free / Light / 期限切れ Premium + plus → Plus 表示不可', () => {
+test('25. preview: Free / Light / 期限切れ Premium + plus → 販売対象として表示できる', () => {
   for (const [label, base] of [['Light', LIGHT], ['Free', FREE],
     ['期限切れ Premium', { ...PREMIUM, '有効期限': '2026-01-01' }]]) {
     const p = buildPreviewSnapshot({ fields: { ...base, UpsellTarget: 'plus' }, nowMs: NOW });
-    assert.equal(p.preview.upsellChannel, UPSELL_CHANNEL.NONE, `${label}: Plus を出している`);
-    assert.equal(p.preview.showPurchaseCta, false, `${label}: 購入 CTA が出ている`);
+    assert.equal(p.preview.upsellChannel, UPSELL_CHANNEL.PLUS, `${label}: Plus を出せない`);
+    assert.equal(p.preview.showPurchaseCta, true, `${label}: 購入 CTA が出ていない`);
+    // 指定が無ければ従来どおり出さない
+    const auto = buildPreviewSnapshot({ fields: { ...base }, nowMs: NOW });
+    assert.equal(auto.preview.upsellChannel, UPSELL_CHANNEL.NONE, `${label}: 指定無しで Plus が出ている`);
   }
 });
 
