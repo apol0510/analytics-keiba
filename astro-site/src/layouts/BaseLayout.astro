@@ -362,34 +362,6 @@ const fullTitle = pageTitle
             display: none;
         }
         
-        .logout-link {
-            background: rgba(239, 68, 68, 0.1) !important;
-            color: #ef4444 !important;
-            border: 1px solid rgba(239, 68, 68, 0.3) !important;
-            padding: 8px 10px !important;
-            border-radius: 6px !important;
-            display: flex !important;
-            align-items: center !important;
-            gap: 5px !important;
-            white-space: nowrap !important;
-            font-weight: 500 !important;
-            font-size: 0.9rem !important;
-            text-decoration: none !important;
-            transition: all 0.3s ease !important;
-        }
-        
-        .logout-link:hover {
-            background: rgba(239, 68, 68, 0.2) !important;
-            border-color: rgba(239, 68, 68, 0.5) !important;
-            transform: translateY(-2px) !important;
-            box-shadow: 0 4px 8px rgba(239, 68, 68, 0.2) !important;
-        }
-        
-        .logout-link .nav-icon {
-            font-size: 1rem !important;
-            filter: drop-shadow(0 1px 2px rgba(239, 68, 68, 0.2)) !important;
-            flex-shrink: 0 !important;
-        }
 
         /* Mobile Menu */
 
@@ -599,17 +571,6 @@ const fullTitle = pageTitle
             background: linear-gradient(135deg, #4f94ff 0%, #9d6cff 100%);
         }
         
-        /* モバイルログアウトボタンのスタイル */
-        .mobile-nav-menu #mobile-nav-logout a {
-            background: rgba(239, 68, 68, 0.1) !important;
-            color: #ef4444 !important;
-        }
-        
-        .mobile-nav-menu #mobile-nav-logout a:hover {
-            background: rgba(239, 68, 68, 0.2) !important;
-            color: #ef4444 !important;
-        }
-
         .mobile-nav-separator {
             height: 1px;
             background: linear-gradient(90deg, transparent, var(--border-color), transparent);
@@ -1105,6 +1066,7 @@ const fullTitle = pageTitle
         //    何のお知らせかはマイページを開いて初めて分かる＝存在秘匿を壊さない。
         //    詳細と判定は `couponNotice.js`（サーバー応答から導出）にある。
         import { getCouponNotice } from '../lib/upsell/upsellClient.js';
+        import { readNavAuthState } from '../lib/navigation/navAuthState.js';
 
         (async () => {
             try {
@@ -1164,32 +1126,12 @@ const fullTitle = pageTitle
 
             // 統合認証システム：ナビゲーションの表示状態を更新
             const updateAuthNavigation = () => {
-                // 新しい決済システム（user-plan）と古いシステム（isLoggedIn）の両方をチェック
-                const userPlanData = localStorage.getItem('user-plan');
-                const isLoggedInOld = localStorage.getItem('isLoggedIn') === 'true';
-                const userPlanOld = localStorage.getItem('userPlan');
-                
-                let isLoggedIn = false;
-                let planType = null;
-                
-                // 新しいシステム（決済後のuser-plan）をチェック
-                if (userPlanData) {
-                    try {
-                        const userData = JSON.parse(userPlanData);
-                        if (userData && (userData.plan === 'standard' || userData.plan === 'premium')) {
-                            isLoggedIn = true;
-                            planType = userData.plan;
-                        }
-                    } catch (e) {
-                        console.warn('user-plan解析エラー:', e);
-                    }
-                }
-                
-                // 古いシステム（マジックリンクログイン）をチェック
-                if (!isLoggedIn && (isLoggedInOld || userPlanOld)) {
-                    isLoggedIn = true;
-                    planType = userPlanOld || 'free';
-                }
+                // ⚠️ 判定は単一源 `navAuthState.js`（純粋・テスト済み）に置く。
+                //    ここに条件を書くと、プラン名の綴りを 1 つ取りこぼしただけで
+                //    有料会員が「未ログイン」扱いになる（2026-08-25 に発生）。
+                const _auth = readNavAuthState();
+                const isLoggedIn = _auth.loggedIn;
+                const planType = (_auth.plan || '').toLowerCase();
                 
                 // ナビゲーション要素を取得
                 const navSignup = document.getElementById('nav-signup');
@@ -1201,107 +1143,13 @@ const fullTitle = pageTitle
                 const mobileNavDashboard = document.getElementById('mobile-nav-dashboard');
                 const mobileNavSeparator = document.getElementById('mobile-nav-separator');
                 
-                // ログアウトボタンを追加
-                if (!document.getElementById('nav-logout') && isLoggedIn) {
-                    const navMenu = document.getElementById('nav-menu');
-                    if (navMenu) {
-                        const logoutLi = document.createElement('li');
-                        logoutLi.id = 'nav-logout';
-                        logoutLi.className = 'nav-auth-item';
-                        
-                        const logoutLink = document.createElement('a');
-                        logoutLink.href = '#';
-                        logoutLink.onclick = (e) => { e.preventDefault(); logout(); return false; };
-                        logoutLink.className = 'logout-link';
-                        
-                        // スタイルを直接適用（確実に表示されるように）
-                        logoutLink.style.cssText = `
-                            background: rgba(239, 68, 68, 0.1) !important;
-                            color: #ef4444 !important;
-                            border: 1px solid rgba(239, 68, 68, 0.3) !important;
-                            padding: 8px 10px !important;
-                            border-radius: 6px !important;
-                            display: flex !important;
-                            align-items: center !important;
-                            gap: 5px !important;
-                            white-space: nowrap !important;
-                            font-weight: 500 !important;
-                            font-size: 0.9rem !important;
-                            text-decoration: none !important;
-                            transition: all 0.3s ease !important;
-                            position: relative !important;
-                        `;
-                        
-                        // ホバーイベントを追加
-                        logoutLink.addEventListener('mouseenter', function() {
-                            this.style.background = 'rgba(239, 68, 68, 0.2)';
-                            this.style.borderColor = 'rgba(239, 68, 68, 0.5)';
-                            this.style.transform = 'translateY(-2px)';
-                            this.style.boxShadow = '0 4px 8px rgba(239, 68, 68, 0.2)';
-                        });
-                        
-                        logoutLink.addEventListener('mouseleave', function() {
-                            this.style.background = 'rgba(239, 68, 68, 0.1)';
-                            this.style.borderColor = 'rgba(239, 68, 68, 0.3)';
-                            this.style.transform = 'translateY(0)';
-                            this.style.boxShadow = 'none';
-                        });
-                        
-                        logoutLink.innerHTML = `<span class="nav-icon">🚪</span> <span class="nav-text">ログアウト</span>`;
-                        
-                        logoutLi.appendChild(logoutLink);
-                        navMenu.appendChild(logoutLi);
-                    }
-                    
-                    // モバイルメニューにもログアウトボタンを追加
-                    const mobileNavMenu = document.querySelector('#mobile-nav-menu ul');
-                    if (mobileNavMenu && !document.getElementById('mobile-nav-logout')) {
-                        const mobileLogoutLi = document.createElement('li');
-                        mobileLogoutLi.id = 'mobile-nav-logout';
-                        mobileLogoutLi.className = 'nav-auth-item';
-                        
-                        const mobileLogoutLink = document.createElement('a');
-                        mobileLogoutLink.href = '#';
-                        mobileLogoutLink.onclick = (e) => {
-                            e.preventDefault();
-                            document.getElementById('mobile-nav-menu').classList.remove('active');
-                            logout();
-                            return false;
-                        };
-                        
-                        // モバイルログアウトボタンのスタイルを直接適用
-                        mobileLogoutLink.style.cssText = `
-                            display: flex !important;
-                            align-items: center !important;
-                            gap: 12px !important;
-                            padding: 15px 20px !important;
-                            color: #ef4444 !important;
-                            text-decoration: none !important;
-                            font-weight: 500 !important;
-                            transition: all 0.3s ease !important;
-                            position: relative !important;
-                            overflow: hidden !important;
-                            background: rgba(239, 68, 68, 0.1) !important;
-                        `;
-                        
-                        // モバイルホバーイベント
-                        mobileLogoutLink.addEventListener('mouseenter', function() {
-                            this.style.backgroundColor = 'rgba(239, 68, 68, 0.2)';
-                            this.style.paddingLeft = '30px';
-                        });
-                        
-                        mobileLogoutLink.addEventListener('mouseleave', function() {
-                            this.style.backgroundColor = 'rgba(239, 68, 68, 0.1)';
-                            this.style.paddingLeft = '20px';
-                        });
-                        
-                        mobileLogoutLink.innerHTML = `<span class="mobile-nav-icon" style="font-size: 1.2rem; filter: drop-shadow(0 2px 4px rgba(239, 68, 68, 0.2)); transition: transform 0.3s ease;">🚪</span> ログアウト`;
-                        
-                        mobileLogoutLi.appendChild(mobileLogoutLink);
-                        mobileNavMenu.appendChild(mobileLogoutLi);
-                    }
-                }
-                
+                // ⚠️ ログアウトは**ナビに置かない**（2026-08-25）。
+                //    ここにあったボタンは localStorage を 5 個消すだけで、
+                //    サーバーのセッション（HttpOnly Cookie `ak_session`）を消さなかった。
+                //    見た目はログアウトしたのに、サーバー側は有効なまま＝共有端末で危険。
+                //    正しい手順（サーバーで Cookie 削除 → 成功したときだけ端末側を消す・
+                //    消すキーも 14 個）はマイページのボタンだけが持っている。
+                //    ナビからは「マイページ」1 タップで届く。
                 if (isLoggedIn) {
                     // ログイン済み：マイページとログアウトを表示、ログイン/登録を非表示
                     if (navSignup) navSignup.style.display = 'none';
@@ -1332,12 +1180,6 @@ const fullTitle = pageTitle
                     if (mobileNavDashboard) mobileNavDashboard.style.display = 'none';
                     if (mobileNavSeparator) mobileNavSeparator.style.display = 'block';
                     
-                    // ログアウトボタンを削除
-                    const logoutBtn = document.getElementById('nav-logout');
-                    if (logoutBtn) logoutBtn.remove();
-                    
-                    const mobileLogoutBtn = document.getElementById('mobile-nav-logout');
-                    if (mobileLogoutBtn) mobileLogoutBtn.remove();
                 }
             };
             
@@ -1542,22 +1384,10 @@ const fullTitle = pageTitle
         }
 
         // グローバルログアウト関数
-        window.logout = function() {
-            // 全てのログイン情報をクリア
-            localStorage.removeItem('user-plan');
-            localStorage.removeItem('isLoggedIn');
-            localStorage.removeItem('userPlan');
-            localStorage.removeItem('userData');
-            localStorage.removeItem('userEmail');
-            
-            // ナビゲーション更新イベントを発火
-            window.dispatchEvent(new CustomEvent('userLoggedOut'));
-            
-            // ホームページにリダイレクト
-            setTimeout(() => {
-                window.location.href = '/';
-            }, 500);
-        };
+        // ⚠️ ここにあった `window.logout` は**削除した**（2026-08-25）。
+        //    localStorage を 5 個消すだけでサーバーの `ak_session` を消さず、
+        //    残る 9 個のキー（有効期限・三連複永久権など）も残していた。
+        //    ログアウトの実装は**マイページの 1 つだけ**にする。
         
         // スムーススクロール
         document.querySelectorAll('a[href^="#"]').forEach(anchor => {
