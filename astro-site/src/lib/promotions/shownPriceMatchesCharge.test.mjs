@@ -151,6 +151,24 @@ test('未登録の方には「無料登録で◯◯円OFF」を出す（割引�
   assert.match(api, /yen > 0 \? describeRegisterPrompt/, '対象外の商品にも案内を出している');
 });
 
+test('割引後だけでなく**元の金額**も見せる（いくら得か分かるように）', () => {
+  // ⚠️ 2026-08-25 MK 指摘「5000円オフの前の金額も表示してください」。
+  const script = read('../../../public/js/campaign-price.js');
+  assert.match(script, /pricing\.regularPrice/, '元の金額を使っていない');
+  assert.match(script, /text-decoration:line-through/, '元の金額に取り消し線が無い');
+  // 元の金額はサーバーの値。画面で作らない
+  assert.doesNotMatch(script, /\b(49800|78000|4980)\b/, '金額を直書きしている');
+});
+
+test('ご案内の見出しは「何件」ではなく**いくら安くなるか**を出す', () => {
+  // ⚠️ 2026-08-25 MK 指摘「期間限定のご優待が 3 件…とい表示されているが意味不明」。
+  const api = read('../../pages/api/campaign.json.js');
+  assert.doesNotMatch(api, /ご優待が \$\{view\.offers\.length\} 件/, '件数だけの見出しに戻っている');
+  assert.match(api, /最大 \$\{best\.toLocaleString/, 'いくら安くなるかを出していない');
+  // 副文で中身（どの割引か）を並べる
+  assert.match(api, /view\.offers\.map\(\(o\) => o\.name\)\.join/, '何が安くなるのか出していない');
+});
+
 test('登録のご案内には**行き方**を必ず添える（言うだけにしない）', () => {
   // ⚠️ 2026-08-25 MK 指摘「無料登録してからだと 500円off ならリンクしないと親切じゃない」。
   const api = read('../../pages/api/campaign.json.js');

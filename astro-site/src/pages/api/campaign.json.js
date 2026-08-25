@@ -163,12 +163,22 @@ export async function GET({ url }) {
     // 登録済みの方には、その方が実際に使える割引を出す
     if (!view.offers.length) return { show: false };
     const lines = view.offers.map((o) => `${o.name}（${o.regularPriceText} → ${o.offerPriceText}）`);
+    // ⚠️ 「ご優待が 3 件」だけでは**何が安くなるのか分からない**（2026-08-25 MK 指摘）。
+    //    見出しにいくら安くなるかを出し、副文に中身を並べる。
+    const best = view.offers.reduce((max, o) => {
+      const n = Number(String(o.discountText).replace(/[^0-9]/g, '')) || 0;
+      return Math.max(max, n);
+    }, 0);
     return {
       show: true,
       headline: view.offers.length === 1
         ? view.offers[0].name
-        : `期間限定のご優待が ${view.offers.length} 件`,
-      sub: `${describeCampaignDeadline()}。お申し込み時に自動で適用されます。`,
+        : `期間限定のご優待 最大 ${best.toLocaleString('ja-JP')}円OFF`,
+      sub: view.offers.length === 1
+        ? `${view.offers[0].regularPriceText} → ${view.offers[0].offerPriceText}`
+          + `／${describeCampaignDeadline()}・お申し込み時に自動で適用されます。`
+        : `${view.offers.map((o) => o.name).join('・')}`
+          + `／${describeCampaignDeadline()}・お申し込み時に自動で適用されます。`,
       ctaHref: null,
       ctaLabel: '',
       lines,
