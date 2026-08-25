@@ -179,8 +179,12 @@ export async function GET({ url }) {
           + `／${describeCampaignDeadline()}・お申し込み時に自動で適用されます。`
         : `${view.offers.map((o) => o.name).join('・')}`
           + `／${describeCampaignDeadline()}・お申し込み時に自動で適用されます。`,
-      ctaHref: null,
-      ctaLabel: '',
+      // ⚠️ **買えない場所で案内しない**（2026-08-25 MK 指摘）。
+      //    三連複は `/pricing/` で売っていないため、そこに出しても行き止まりになる。
+      //    購入導線がマイページにしか無い商品しか無いときは、マイページへ送る。
+      //    （見ているページがマイページなら、同じページ判定でボタンは出ない）
+      ctaHref: view.offers.every((o) => !o.applyHref) ? '/dashboard/' : null,
+      ctaLabel: view.offers.every((o) => !o.applyHref) ? 'マイページでお申し込み' : '',
       lines,
       offers: view.offers,
     };
