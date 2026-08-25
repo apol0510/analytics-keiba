@@ -42,7 +42,7 @@ import { fromAirtableFields, resolveEntitlements } from '../../lib/entitlements/
 import { loadReopenStart } from '../../lib/premiumPlus/premiumPlusReopenStartStore.js';
 import { withReopenStart } from '../../lib/premiumPlus/premiumPlusReopenStart.js';
 // 「取得できるか」の単一源（**販売停止フラグでは決めない**）
-import { resolveCouponAccess } from '../../lib/premiumPlus/premiumPlusCouponAccess.js';
+import { resolveCouponAccess, COUPON_ACCESS_REJECT } from '../../lib/premiumPlus/premiumPlusCouponAccess.js';
 import { isReopenCouponEnabled } from '../../lib/premiumPlus/premiumPlusReopenCoupon.js';
 
 const PRODUCT_HREF = '/premium-plus-v2/';
@@ -121,6 +121,9 @@ export async function GET({ request }) {
     }).state,
     ledgerAvailable: usageLedger.available,
     claimed: held.claimed === true,
+    // ⚠️ 期限切れは**保有では分からない**（Customers の 3 列は期限を持たない）。
+    //    使えるかどうかの単一源が出した結論をそのまま渡す（画面で日付を比べない）。
+    expired: couponAccess.reason === COUPON_ACCESS_REJECT.EXPIRED,
   });
 
   // 取得済み、または**いま取得できる**ならマイページにカードを出す。

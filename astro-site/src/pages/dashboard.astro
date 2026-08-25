@@ -2695,6 +2695,21 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
          * カード内の要素は hidden なら必ず消す。
          */
         .coupon-card [hidden] { display: none !important; }
+        /*
+         * 使えないクーポン（ご利用済み / お申し込みに適用済み / 期限切れ / 確認できない）。
+         * ⚠️ **消さない**。渡した記録・使った記録はお客様が確認できるべきもの
+         *    （消えると「取り上げられた」と読まれ、割引が効いたかも確かめられない）。
+         *    ただし使えるクーポンと同じ見た目で並べない。色を落とし、金額を主役から外す。
+         */
+        .coupon-section.is-inactive .coupon-card {
+            background: rgba(148, 163, 184, .06);
+            border-color: rgba(148, 163, 184, .22);
+        }
+        .coupon-section.is-inactive .coupon-badge {
+            background: rgba(148, 163, 184, .16); color: #94a3b8; border-color: rgba(148, 163, 184, .35);
+        }
+        .coupon-section.is-inactive .coupon-benefit { color: #94a3b8; }
+        .coupon-section.is-inactive .coupon-title { color: #cbd5e1; }
         /* 新しく届いたクーポン。既読にしてもこの訪問のあいだは消さない */
         .coupon-new {
             padding: .18rem .5rem;
@@ -5757,10 +5772,14 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
         // ⚠️ 使ったかどうかは**サーバー（予約台帳）**が返す。画面で推測しない。
         //    保有は使い終わっても消えないので、保有だけを見ると「ご利用いただけます」のまま。
         const usage = c.usage || {};
+        // ⚠️ 見出しもサーバー由来（ご利用済み / 適用済み / 期限切れ / 取得済み）。
+        //    画面で状態を数え上げると、状態が増えたときに必ず取りこぼす。
         if (titleEl) {
-            titleEl.textContent = canClaim ? '受け取れるクーポン'
-                : (usage.used === true ? 'ご利用済みクーポン' : '取得済みクーポン');
+            titleEl.textContent = canClaim ? '受け取れるクーポン' : (usage.title || '取得済みクーポン');
         }
+        // 使えないクーポンは**控えめに**（使えるものと同じ見た目で並べない）。
+        // 消しはしない ── 渡した記録・使った記録はお客様が確認できるべきもの。
+        sec.classList.toggle('is-inactive', !canClaim && usage.blocksOrder === true);
         // バッジ文言もサーバー由来（ご利用済み / お申し込みに適用済み / 取得済み）
         if (badgeEl) badgeEl.textContent = canClaim ? '未取得' : (usage.badge || '取得済み');
         if (claimedDt) claimedDt.textContent = canClaim ? '取得' : '取得日時';
