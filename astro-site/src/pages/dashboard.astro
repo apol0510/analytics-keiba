@@ -1948,7 +1948,7 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
          JS で生成した要素には**一切適用されない**（premium-plus-eligibility で本番事故あり）。
          そのため `is:global` で書く。クラス名は他と衝突しない専用のものだけ。 -->
     <style is:global>
-      /* 共通の地。サイトの暗いカードに合わせ、左の色帯だけで種類を分ける */
+      /* 共通の地。サイトの暗いカードに合わせる（左の色帯は 2026-08-25 に削除）*/
       #notifications .notice-card,
       #campaign-section .campaign-card {
         background: #101a2f;
@@ -1957,9 +1957,8 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
         padding: 1.15rem 1.25rem;
       }
 
-      /* 🔔 お知らせ … 琥珀 */
+      /* 🔔 お知らせ … 琥珀（⚠️ 左の色帯は 2026-08-25 に削除。枠線・角丸・背景・余白は変更しない）*/
       #notifications { margin-bottom: 1.25rem; }
-      #notifications .notice-card { border-left: 4px solid #f59e0b; }
       #notifications .notice-head {
         display: flex; align-items: center; gap: .5rem; margin-bottom: .55rem;
       }
@@ -1981,9 +1980,8 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
       }
       #notifications .notice-list a:hover { color: #fcd34d; text-decoration: underline; }
 
-      /* 🎫 期間限定のご優待 … 緑（お得・進む色） */
+      /* 🎫 期間限定のご優待 … 緑（⚠️ 左の色帯は 2026-08-25 に削除。枠線・角丸・背景・余白は変更しない）*/
       #campaign-section { margin-bottom: 1.25rem; }
-      #campaign-section .campaign-card { border-left: 4px solid #10b981; }
       #campaign-section .campaign-head {
         display: flex; align-items: center; gap: .5rem; margin-bottom: .75rem; flex-wrap: wrap;
       }
