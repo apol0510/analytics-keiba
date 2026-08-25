@@ -189,7 +189,11 @@ export function buildLegacySanrenpukuNormalization({
     changes.push({ field, before, after });
   };
   setIfChanged('プラン', NORMALIZED_PLAN);
-  setIfChanged('PlanType', '');
+  // ⚠️ `PlanType` は **singleSelect**。空文字を送ると Airtable が空の選択肢を
+  //    作ろうとして 422 INVALID_MULTIPLE_CHOICE_OPTIONS になる
+  //    （2026-08-26 の本番実行が 1 件目で停止した。書き込みは 0 件）。
+  //    選択式の列を空にするときは **null** を送る。
+  setIfChanged('PlanType', null);
 
   // ③ 退会状態を残さない（値が入っている列だけ空にする）
   if (f.WithdrawalRequested === true) setIfChanged('WithdrawalRequested', false);

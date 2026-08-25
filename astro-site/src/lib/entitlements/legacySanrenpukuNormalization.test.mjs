@@ -191,6 +191,17 @@ test('【要件】rollback で変更前の退会状態を復元できる', () =>
 });
 
 // ── 3. 書き込む列を固定する ────────────────────────────────────────
+test('【回帰】選択式の列は null で空にする（空文字だと Airtable が 422 で落ちる）', () => {
+  // 2026-08-26 の本番実行が 1 件目で停止した原因。
+  //   422 INVALID_MULTIPLE_CHOICE_OPTIONS / create new select option
+  // `PlanType` は singleSelect なので、空文字を送ると空の選択肢を作ろうとして失敗する。
+  // **選択式を空にするときは null**。
+  const out = normalize({ ...ACTIVE_LEGACY, PlanType: 'Monthly' }).fields;
+  assert.equal(out.PlanType, null);
+  assert.notEqual(out.PlanType, '', '空文字を送ると本番で 422 になる');
+  assert.equal(out['プラン'], 'Free', '選択式には実在する選択肢だけを書く');
+});
+
 test('【要件】LifetimeSanrenpuku は付与しない', () => {
   for (const base of [ACTIVE_LEGACY, WITHDRAWN_LEGACY]) {
     const out = normalize(base).fields;
@@ -223,7 +234,7 @@ test('書き込む列は「無料権利 + 契約の正規化」だけ / 変わ�
 
   // 値が違うときだけ書く
   const monthly = normalize({ ...ACTIVE_LEGACY, PlanType: 'Monthly' }).fields;
-  assert.equal(monthly.PlanType, '', 'Free になったのに課金サイクルが残っている');
+  assert.equal(monthly.PlanType, null, 'Free になったのに課金サイクルが残っている');
 
   // 退会していない会員には退会列を書かない
   assert.equal('WithdrawalRequested' in normalize(ACTIVE_LEGACY).fields, false);
