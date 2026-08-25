@@ -181,3 +181,47 @@ test('すでに特別価格の商品には重ねない（画面の額を変え�
     }
   }
 });
+
+// ── ページ上部のご案内（2026-08-25 MK「/free-signup/ や /pricing/ にも記載すべき」）──
+//
+// ⚠️ 文言・金額・期限・行き先を**ページごとに書かない**。
+//    3 か所で食い違った事故を 8/24〜25 に繰り返しているため、
+//    共通部品 + サーバーの文言に限定する。
+
+test('ご案内はサーバーの文言だけを出す（ページで作らない）', () => {
+  const c = read('../../components/CampaignBanner.astro');
+  for (const k of ['b.headline', 'b.sub', 'b.ctaHref', 'b.ctaLabel']) {
+    assert.ok(c.includes(k), `${k} を使っていない`);
+  }
+  // 金額・期限・行き先を直書きしない
+  assert.doesNotMatch(c, /\b(4980|4480|49800|44800|78000|68000|10,000|500円)\b/, '金額を直書きしている');
+  assert.doesNotMatch(c, /\d+年\d+月\d+日/, '期限を直書きしている');
+  assert.doesNotMatch(c, /\/free-signup\//, '行き先を直書きしている');
+  // 出すかどうかもサーバーが決める / 取れなければ出さない
+  assert.match(c, /b\.show !== true/, '出す条件を画面で決めている');
+  assert.match(c, /catch\(function \(\) \{\}\)/, '取得に失敗しても出してしまう');
+});
+
+test('必要なページに置かれている（増やすときは 1 行）', () => {
+  for (const [label, rel] of [
+    ['料金プラン', '../../pages/pricing.astro'],
+    ['無料登録', '../../pages/free-signup.astro'],
+  ]) {
+    const page = read(rel);
+    assert.match(page, /<CampaignBanner \/>/, `${label}: ご案内が置かれていない`);
+    assert.match(page, /import CampaignBanner/, `${label}: import が無い`);
+    // ページ側に文言・金額を書いていない
+    const own = page.slice(0, page.indexOf('<CampaignBanner />'));
+    assert.doesNotMatch(own, /円OFF/, `${label}: ページに割引の文言を書いている`);
+  }
+});
+
+test('ご案内の文言はサーバーが組み立てる', () => {
+  const api = read('../../pages/api/campaign.json.js');
+  assert.match(api, /const banner = \(\(\) => \{/, 'サーバーが文言を持っていない');
+  // 未登録には「登録すると何が得か」、登録済みには「その方が使える割引」
+  assert.match(api, /無料登録で最大/, '未登録の方への案内が無い');
+  assert.match(api, /describeCampaignDeadline\(\)/, '期限を単一源から出していない');
+  // 期間外・対象なしなら出さない
+  assert.match(api, /if \(!view\.active\) return \{ show: false \}/, '期間外でも出してしまう');
+});
