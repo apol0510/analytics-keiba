@@ -82,7 +82,18 @@
     var infoEl = document.getElementById('modalPlanInfo');
     var inputEl = document.getElementById('transferAmount');
 
-    if (amountEl) amountEl.textContent = yen(pricing.finalPrice);
+    // ⚠️ **元の金額も見せる**（2026-08-25 MK 指摘）。
+    //    割引後だけだと、いくら得なのかがその場で分からない。
+    if (amountEl) {
+      amountEl.textContent = '';
+      if (pricing.regularPrice) {
+        var before = document.createElement('span');
+        before.textContent = yen(pricing.regularPrice);
+        before.style.cssText = 'margin-right:.5em;font-size:.8em;color:#94a3b8;text-decoration:line-through;';
+        amountEl.appendChild(before);
+      }
+      amountEl.appendChild(document.createTextNode(yen(pricing.finalPrice)));
+    }
     // 「プラン: X (¥49,800/年)」の金額部分だけを置き換える
     if (infoEl && pricing.regularPrice) {
       infoEl.textContent = infoEl.textContent.replace(yen(pricing.regularPrice), yen(pricing.finalPrice));
@@ -91,9 +102,8 @@
     if (inputEl) inputEl.value = String(pricing.finalPrice);
 
     // 何が起きたのかを 1 行で伝える（文言はサーバー由来）
-    if (pricing.note) {
-      setNote(pricing.note + '（通常 ' + yen(pricing.regularPrice) + '）', '#34d399');
-    }
+    // ⚠️ 元の金額は上の取り消し線で見えているので、ここでは繰り返さない
+    if (pricing.note) setNote(pricing.note, '#34d399');
   }
 
   function fetchAndPaint(productName) {

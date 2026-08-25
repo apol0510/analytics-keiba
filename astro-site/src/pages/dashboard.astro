@@ -2083,9 +2083,20 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
       }
       #campaign-section .campaign-apply[disabled]::after { content: ''; }
       @media (max-width: 640px) {
-        #campaign-section .campaign-list li { gap: .6rem; }
+        /* ⚠️ 画面幅いっぱいのボタンは**大きすぎて釣り合わない**（2026-08-25 MK 指摘）。
+           文字幅に収め、金額の下へ右寄せで置く。 */
+        #campaign-section .campaign-list li {
+          gap: .35rem;
+          flex-direction: column;
+          align-items: stretch;
+        }
         #campaign-section .campaign-apply {
-          margin-left: 0; width: 100%;
+          margin-left: auto;
+          width: auto;
+          align-self: flex-end;
+          padding: .55rem 1.1rem;
+          min-height: 40px;
+          font-size: .86rem;
         }
         #campaign-section .campaign-deadline { margin-left: 0; width: 100%; }
       }
