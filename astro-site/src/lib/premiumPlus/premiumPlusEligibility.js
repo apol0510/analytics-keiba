@@ -175,8 +175,22 @@ export function buildSanrenpukuPlusInitFields({ fields, confirmedAt }) {
 
   const eligibilityRaw = f[PP_ELIGIBILITY_FIELDS.STATUS];
   if (!hasValue(eligibilityRaw)) {
-    // 新規候補の初期値は review。自動で eligible にしない。
-    out[PP_ELIGIBILITY_FIELDS.STATUS] = PP_ELIGIBILITY.REVIEW;
+    /**
+     * 三連複を買った会員は **Premium Plus の販売対象**（ROUTE A）。
+     *
+     * ⚠️ **2026-08-25 MK 確定**: 既定を `review` → `eligible` へ変更。
+     *    以前は購入のたびに管理者が手で `eligible` にする必要があり、運用が回らなかった
+     *    （実際に 1 名が review のまま放置された）。
+     * ⚠️ **eligible = 即販売ではない**。段階公開（PHASE 1→4）は従来どおり効き、
+     *    anchor（`PremiumPlusEligibleAt` / `SanrenpukuPaidAt`）から日数で進む。
+     *    売りたくない会員は管理者が `blocked` にする（blocked は何より強い）。
+     * ⚠️ **既に値がある会員は触らない**（`blocked` を勝手に戻さない）。
+     */
+    out[PP_ELIGIBILITY_FIELDS.STATUS] = PP_ELIGIBILITY.ELIGIBLE;
+    // 段階公開 anchor。**eligible への実遷移のときだけ**書く（既存値は上書きしない）
+    if (!hasValue(f[PP_ELIGIBILITY_FIELDS.ELIGIBLE_AT])) {
+      out[PP_ELIGIBILITY_FIELDS.ELIGIBLE_AT] = iso;
+    }
     out[PP_ELIGIBILITY_FIELDS.UPDATED_AT] = iso;
     out[PP_ELIGIBILITY_FIELDS.UPDATED_BY] = 'system:sanrenpuku-confirm';
   }

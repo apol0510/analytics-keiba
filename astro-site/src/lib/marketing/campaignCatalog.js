@@ -46,6 +46,7 @@
  */
 
 import { MK_CONTRACT, MK_PLAN } from './customerMarketingAudience.js';
+import { EXTRA_AUDIENCE } from './campaignAudienceRules.js';
 import {
   buildComebackEmailContent,
   DEFAULT_COMEBACK_COMBO,
@@ -827,6 +828,65 @@ export const CAMPAIGNS = Object.freeze([
     get enabled() { return isCampaignActive(); },
     disabledReason: CAMPAIGN_DISABLED_REASON.WINDOW_CLOSED,
     disabledDetail: `お申し込み対象は${DISCOUNT_DEADLINE}。期間外は申込時に割引が適用されない`,
+  },
+  // ── Light 永久無料への再スタート案内（2026-08-25 MK 確定）────────────────
+  //
+  // 旧三連複会員 18 名を Light 永久無料へ正規化したあと、**本人へ知らせる**ためのメール。
+  // 正規化しただけでは本人は気づかない（ログインしていないから正規化が必要になった）。
+  //
+  // ⚠️ **正規化に成功した会員にしか送れない**。対象判定 `extraAudience` は
+  //    そのレコード自身に書かれた正規化の痕跡（`ComebackGrantSource` + lifetime の
+  //    無料権利）だけを見るので、失敗・未実施の会員には構造的に届かない。
+  // ⚠️ **「期間限定」と読める表現を入れない**。今回は期限が無いのが要点で、
+  //    `showGrantExpiry` も付けない（終了日を差し込む印を持たせない）。
+  // ⚠️ **三連複・馬単 Premium が戻ったと読める表現を入れない**。復活しない。
+  // ⚠️ **Premium Plus など他商品の販売案内を混ぜない**。目的は利用再開の案内。
+  {
+    campaignId: 'light-lifetime-restart',
+    benefitType: 'free_access',
+    benefitDescription: 'Lightプランを期限なく無料でご利用いただけます（お手続き不要・追加のお支払いなし）',
+    version: 1,
+    name: 'Light 永久無料 再スタート案内',
+    description: '旧三連複会員のうち Light 永久無料へ正規化した会員へ、期限なく無料で使えることと再開方法を案内する。販売はしない。',
+    subject: '【KEIBA Analytics】Lightプランを期限なく無料でご利用いただけます',
+    preheader: 'お手続きもお支払いも不要です。いつものメールアドレスでログインするだけでご利用いただけます。',
+    badge: '期限なし・無料',
+    headline: 'Lightプランを期限なく無料でご利用いただけます',
+    body: [
+      '以前、KEIBA Analyticsをご利用いただき、ありがとうございました。',
+      '',
+      'これまでご利用いただいた方への特典として、',
+      'Lightプランを**期限なく無料**でご利用いただけるようにいたしました。',
+      '',
+      '一時的なお試しではありません。終了日はございません。',
+      'お申し込みやお支払いのお手続きも必要ありません。',
+      '',
+      'ご登録のメールアドレスでログインしていただくと、そのままご利用いただけます。',
+      '',
+      'その後のKEIBA Analyticsは、予想の組み立て方や買い目の出し方、',
+      '結果の見せ方を見直してきました。前日のメインレース買い目とその結果は、',
+      '的中・不的中を正確なデータとしてそのまま公開しています。',
+      '',
+      'またご覧いただけましたら幸いです。',
+    ].join('\n').split('**').join(''),
+    benefitTitle: 'Lightプラン（期限なし・無料）',
+    benefitItems: [
+      '各開催のメインレース買い目を閲覧できます',
+      '終了日はありません。追加のお支払いも発生しません',
+      'お手続き不要。ご登録のメールアドレスでログインするだけです',
+    ],
+    ctaLabel: 'KEIBA Analyticsにログイン',
+    ctaUrl: `${SITE}/dashboard/`,
+    ctaNote: 'ボタンからログイン画面が開きます。ご登録のメールアドレスを入力してください。',
+    footerNote: 'このメールは、Lightプランを期限なく無料でご利用いただけるようになったお客様へお送りしています。',
+    templateVariant: 'grant-notice',
+    // ⚠️ 期限が無いので終了日は出さない（`showGrantExpiry` を付けない）
+    recommendedSegments: [],
+    // 契約状態では絞らない。**対象は下の extraAudience が構造的に決める**
+    audienceRule: { contracts: [], plans: [], enforce: false },
+    /** 正規化に成功した会員だけ（`campaignAudienceRules.js`）*/
+    extraAudience: EXTRA_AUDIENCE.LIGHT_LIFETIME_RESTART,
+    enabled: true,
   },
   {
     campaignId: 'general-announcement',

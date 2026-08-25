@@ -1,0 +1,116 @@
+---
+/**
+ * CampaignBanner.astro — 期間限定のご優待をページ上部で知らせる枠
+ *
+ * ⚠️ **文言・金額・期限・行き先をこのファイルに書かない。**
+ *    すべて `/api/campaign.json` が返した値をそのまま出す。
+ *    ページごとに書くと必ずズレる（金額・期限が 3 か所で食い違った事故を
+ *    2026-08-24〜25 に繰り返した）。
+ *
+ * ⚠️ 出すかどうかもサーバーが決める（期間外・停止中・対象外なら `show:false`）。
+ *    取得できなければ**何も出さない**（fail closed）。
+ *
+ * 置き場所を増やすときは、このコンポーネントを 1 行足すだけにすること。
+ */
+---
+<div class="ak-campaign-banner" id="akCampaignBanner" hidden>
+  <div class="ak-cb-main">
+    <span class="ak-cb-icon">🎫</span>
+    <div class="ak-cb-text">
+      <span class="ak-cb-headline" id="akCbHeadline"></span>
+      <span class="ak-cb-sub" id="akCbSub"></span>
+    </div>
+  </div>
+  <a class="ak-cb-cta" id="akCbCta" hidden></a>
+</div>
+
+<style is:global>
+  /* ⚠️ 中身は JS で入れるので `is:global`（scoped は生成要素に効かない） */
+  .ak-campaign-banner {
+    display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
+    max-width: 1100px; margin: 1.2rem auto; padding: 1rem 1.2rem;
+    background: #101a2f; border: 1px solid rgba(16, 185, 129, .45);
+    border-radius: 14px; color: #e2e8f0;
+  }
+  .ak-campaign-banner[hidden] { display: none !important; }
+  /* ⚠️ `.ak-cb-cta` は `display: inline-flex` を持つ**作者スタイル**なので、
+     ブラウザ既定の `[hidden]` に勝ってしまう。**文字の無いボタンが出た**
+     （2026-08-25 本番）。同じ罠をこのセッションで既に 1 度踏んでいる。 */
+  .ak-cb-cta[hidden] { display: none !important; }
+  .ak-cb-main { display: flex; align-items: center; gap: .7rem; flex: 1 1 auto; min-width: 0; }
+  .ak-cb-icon { font-size: 1.3rem; }
+  .ak-cb-text { display: flex; flex-direction: column; gap: .15rem; min-width: 0; }
+  .ak-cb-headline { font-weight: 800; font-size: 1rem; color: #34d399; }
+  .ak-cb-sub { font-size: .82rem; color: #94a3b8; }
+  /* ⚠️ `box-sizing` を指定しないと min-height に padding が**足し算**され、
+     狙いより 1.5 倍大きいボタンになる（2026-08-25 本番）。
+     大きさはマイページの申込ボタンと**同じ値**に揃える。 */
+  .ak-cb-cta {
+    display: inline-flex; align-items: center; justify-content: center; gap: .4em;
+    box-sizing: border-box;
+    min-height: 44px; padding: .5rem 1.1rem; border-radius: 999px;
+    background: linear-gradient(135deg, #f59e0b, #d97706);
+    color: #111827 !important; font-weight: 700; font-size: .87rem; line-height: 1;
+    text-decoration: none !important; white-space: nowrap;
+  }
+  .ak-cb-cta::after { content: '→'; }
+  .ak-cb-cta:hover { filter: brightness(1.06); color: #111827 !important; }
+  @media (max-width: 640px) {
+    .ak-campaign-banner { margin: 1rem; }
+    .ak-cb-cta { width: 100%; }
+  }
+</style>
+
+<script>
+  // ⚠️ 出す / 出さないの判定は**純粋関数**（`campaignBannerView.js`）に置く。
+  //    画面のスクリプトの中だけに条件を書くとテストで触れず、
+  //    「同じページへのリンク」「文字の無いボタン」が本番へ出た（2026-08-25）。
+  import { resolveBannerView } from '../lib/promotions/campaignBannerView.js';
+
+  (function () {
+    const box = document.getElementById('akCampaignBanner');
+    if (!box) return;
+
+    /**
+     * いまの契約の申告（**事実だけ**。意味づけはサーバーの `/api/campaign.json`）。
+     * ⚠️ 三連複の買い切り権は**プラン名に現れない**（Airtable の別フィールド）。
+     *    送らないと、買ったばかりの方に「三連複 10,000円OFF」を出し続ける
+     *    （2026-08-25 実発生）。
+     */
+    function declaredQuery() {
+      let plan = '', sanrenpuku = '';
+      try {
+        const raw = localStorage.getItem('user-plan');
+        if (raw) {
+          const o = JSON.parse(raw);
+          plan = String((o && o.plan) || '');
+          sanrenpuku = (o && o.lifetimeSanrenpuku === true) ? '1' : '';
+        }
+      } catch (e) { /* 読めないときは未申告として扱う */ }
+      return 'plan=' + encodeURIComponent(plan) + '&sanrenpuku=' + encodeURIComponent(sanrenpuku);
+    }
+
+    fetch('/api/campaign.json?' + declaredQuery(), { credentials: 'same-origin' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        const view = resolveBannerView({
+          banner: j && j.banner,
+          currentPath: location.pathname,
+        });
+        if (!view.show) return;
+        document.getElementById('akCbHeadline').textContent = view.headline;
+        document.getElementById('akCbSub').textContent = view.sub;
+        const cta = document.getElementById('akCbCta');
+        if (view.cta.show) {
+          cta.href = view.cta.href;
+          cta.textContent = view.cta.label;
+          cta.hidden = false;
+        } else {
+          // ⚠️ 行き先が無い / 同じページ → **ボタンごと出さない**
+          cta.hidden = true;
+        }
+        box.hidden = false;
+      })
+      .catch(() => {});   // 取れなければ何も出さない
+  })();
+</script>

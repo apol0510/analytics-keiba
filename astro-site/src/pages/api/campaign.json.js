@@ -27,16 +27,27 @@ export const prerender = false;
 import {
   describeCampaignForMember, isCampaignActive, describeCampaignDeadline,
   resolveCampaignPricing, describeRegisterPrompt, CAMPAIGN_NOT_REGISTERED,
-  describeCampaignOffersFor,
+  describeCampaignOffersFor, CAMPAIGN_REGISTER_HREF, CAMPAIGN_REGISTER_LABEL,
 } from '../../lib/promotions/campaignOffers.js';
 import { derivePlanFromProductName, hasOwnSpecialPrice } from '../../lib/payments/productName.js';
 import { campaignControlStore } from '../../lib/promotions/campaignControlStore.js';
 import { resolveCampaignAllowed } from '../../lib/promotions/campaignControl.js';
 
-/** `?plan=` を、出し分けに使う権利の形へ読み替える（**表示のためだけ**） */
-function entitlementsFromDeclaredPlan(raw) {
+/**
+ * `?plan=` と `?sanrenpuku=` を、出し分けに使う権利の形へ読み替える（**表示のためだけ**）。
+ *
+ * ⚠️ **三連複の権利はプラン名に現れない。**
+ *    三連複は買い切りの追加権で、Airtable では別フィールド `LifetimeSanrenpuku` が持つ。
+ *    契約が「Premium ＋ 三連複買い切り」の方は `プラン` が `'Premium'` のままなので、
+ *    プラン名だけで判定すると**買ったばかりの方に「三連複 10,000円OFF」を出し続ける**
+ *    （2026-08-25 に実在の会員で発生）。
+ *    そこで画面は保存済みの `lifetimeSanrenpuku` を**事実として**送り、
+ *    それが何を意味するかの判断は（他の判定と同じく）ここサーバーが持つ。
+ */
+function entitlementsFromDeclaredPlan(raw, sanrenpukuRaw) {
   const p = String(raw || '').trim().toLowerCase();
-  if (p.includes('sanrenpuku') || p.includes('combo')) {
+  const lifetime = ['1', 'true', 'yes'].includes(String(sanrenpukuRaw || '').trim().toLowerCase());
+  if (lifetime || p.includes('sanrenpuku') || p.includes('combo')) {
     return { canViewSanrenpuku: true, canViewPremium: true, canViewLight: true };
   }
   if (p.startsWith('premium') || p === 'pro' || p === 'pro-plus') {
@@ -74,7 +85,9 @@ export async function GET({ url }) {
   });
 
   const view = describeCampaignForMember({
-    entitlements: entitlementsFromDeclaredPlan(url.searchParams.get('plan')),
+    entitlements: entitlementsFromDeclaredPlan(
+      url.searchParams.get('plan'), url.searchParams.get('sanrenpuku'),
+    ),
     nowMs: now,
     allowed,
   });
@@ -102,7 +115,7 @@ export async function GET({ url }) {
       : resolveCampaignPricing({
         planName: d.planName,
         planType: d.planType,
-        entitlements: entitlementsFromDeclaredPlan(declared),
+        entitlements: entitlementsFromDeclaredPlan(declared, url.searchParams.get('sanrenpuku')),
         nowMs: now,
         allowed,
         registered,
@@ -132,11 +145,68 @@ export async function GET({ url }) {
         const yen = discountIfRegistered(d, allowed, now);
         return yen > 0 ? describeRegisterPrompt(yen) : '';
       })(),
+      /** ⚠️ 案内を出すときは**必ず行き方も渡す**（言うだけにしない） */
+      registerHref: CAMPAIGN_REGISTER_HREF,
+      registerLabel: CAMPAIGN_REGISTER_LABEL,
     };
   }
 
+  // ── ページ上部のご案内（`/pricing/` `/free-signup/` などが出す）────────
+  //
+  // ⚠️ 文言はここで作る。**ページごとに書くと必ずズレる**（金額・期限・条件が
+  //    3 か所で食い違った事故を 2026-08-24〜25 に繰り返した）。
+  const banner = (() => {
+    if (!view.active) return { show: false };
+    const yen = (n) => `¥${Number(n).toLocaleString('ja-JP')}`;
+
+    if (!registered) {
+      // 未登録の方には「登録すると何が得か」を出す。金額は**実際の最大割引**から作る
+      const best = describeCampaignOffersFor({})
+        .reduce((max, o) => Math.max(max, Number(o.discountValue) || 0), 0);
+      if (!best) return { show: false };
+      return {
+        show: true,
+        headline: `無料登録で最大 ${Number(best).toLocaleString('ja-JP')}円OFF`,
+        sub: `${describeCampaignDeadline()}の期間限定です。ご登録後、お申し込み時に自動で適用されます。`,
+        ctaHref: CAMPAIGN_REGISTER_HREF,
+        ctaLabel: CAMPAIGN_REGISTER_LABEL,
+        offers: view.offers,
+      };
+    }
+    // 登録済みの方には、その方が実際に使える割引を出す
+    if (!view.offers.length) return { show: false };
+    const lines = view.offers.map((o) => `${o.name}（${o.regularPriceText} → ${o.offerPriceText}）`);
+    // ⚠️ 「ご優待が 3 件」だけでは**何が安くなるのか分からない**（2026-08-25 MK 指摘）。
+    //    見出しにいくら安くなるかを出し、副文に中身を並べる。
+    const best = view.offers.reduce((max, o) => {
+      const n = Number(String(o.discountText).replace(/[^0-9]/g, '')) || 0;
+      return Math.max(max, n);
+    }, 0);
+    return {
+      show: true,
+      headline: view.offers.length === 1
+        ? view.offers[0].name
+        : `期間限定のご優待 最大 ${best.toLocaleString('ja-JP')}円OFF`,
+      sub: view.offers.length === 1
+        ? `${view.offers[0].regularPriceText} → ${view.offers[0].offerPriceText}`
+          + `／${describeCampaignDeadline()}・お申し込み時に自動で適用されます。`
+        : `${view.offers.map((o) => o.name).join('・')}`
+          + `／${describeCampaignDeadline()}・お申し込み時に自動で適用されます。`,
+      // ⚠️ **買えない場所で案内しない**（2026-08-25 MK 指摘）。
+      //    三連複は `/pricing/` で売っていないため、そこに出しても行き止まりになる。
+      //    購入導線がマイページにしか無い商品しか無いときは、マイページへ送る。
+      //    （見ているページがマイページなら、同じページ判定でボタンは出ない）
+      ctaHref: view.offers.every((o) => !o.applyHref) ? '/dashboard/' : null,
+      ctaLabel: view.offers.every((o) => !o.applyHref) ? 'マイページでお申し込み' : '',
+      lines,
+      offers: view.offers,
+    };
+  })();
+
   return new Response(JSON.stringify({
     active: view.active,
+    /** ページ上部に出すご案内（文言はサーバーが持つ）*/
+    banner,
     deadlineText: describeCampaignDeadline(),
     signature: view.signature,
     offers: view.offers,

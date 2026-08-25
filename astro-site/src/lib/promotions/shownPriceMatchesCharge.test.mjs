@@ -24,6 +24,7 @@ import { fileURLToPath } from 'node:url';
 
 import { derivePlanFromProductName, hasOwnSpecialPrice } from '../payments/productName.js';
 import { resolveCampaignPricing, isCampaignActive } from './campaignOffers.js';
+import * as catalog from './campaignOffers.js';
 
 const PAGES_DIR = fileURLToPath(new URL('../../pages/', import.meta.url));
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
@@ -150,6 +151,44 @@ test('未登録の方には「無料登録で◯◯円OFF」を出す（割引�
   assert.match(api, /yen > 0 \? describeRegisterPrompt/, '対象外の商品にも案内を出している');
 });
 
+test('割引後だけでなく**元の金額**も見せる（いくら得か分かるように）', () => {
+  // ⚠️ 2026-08-25 MK 指摘「5000円オフの前の金額も表示してください」。
+  const script = read('../../../public/js/campaign-price.js');
+  assert.match(script, /pricing\.regularPrice/, '元の金額を使っていない');
+  assert.match(script, /text-decoration:line-through/, '元の金額に取り消し線が無い');
+  // 元の金額はサーバーの値。画面で作らない
+  assert.doesNotMatch(script, /\b(49800|78000|4980)\b/, '金額を直書きしている');
+});
+
+test('ご案内の見出しは「何件」ではなく**いくら安くなるか**を出す', () => {
+  // ⚠️ 2026-08-25 MK 指摘「期間限定のご優待が 3 件…とい表示されているが意味不明」。
+  const api = read('../../pages/api/campaign.json.js');
+  assert.doesNotMatch(api, /ご優待が \$\{view\.offers\.length\} 件/, '件数だけの見出しに戻っている');
+  assert.match(api, /最大 \$\{best\.toLocaleString/, 'いくら安くなるかを出していない');
+  // 副文で中身（どの割引か）を並べる
+  assert.match(api, /view\.offers\.map\(\(o\) => o\.name\)\.join/, '何が安くなるのか出していない');
+});
+
+test('登録のご案内には**行き方**を必ず添える（言うだけにしない）', () => {
+  // ⚠️ 2026-08-25 MK 指摘「無料登録してからだと 500円off ならリンクしないと親切じゃない」。
+  const api = read('../../pages/api/campaign.json.js');
+  assert.match(api, /registerHref: CAMPAIGN_REGISTER_HREF/, 'API が行き先を返していない');
+  assert.match(api, /registerLabel/, 'ボタンの文言を返していない');
+
+  const script = read('../../../public/js/campaign-price.js');
+  assert.match(script, /pricing\.registerHref/, '画面がリンクを出していない');
+  // 行き先を画面で組み立てない
+  assert.doesNotMatch(script, /\/free-signup\//, '行き先を画面に直書きしている');
+
+  // 行き先が実在し、会員資格を要求しないこと（未登録の方が開けなければ意味が無い）
+  const { CAMPAIGN_REGISTER_HREF } = catalog;
+  const file = CAMPAIGN_REGISTER_HREF.replace(/^\/|\/$/g, '');
+  let page = '';
+  try { page = read(`../../pages/${file}.astro`); } catch { page = ''; }
+  assert.ok(page, `登録ページが存在しない: ${CAMPAIGN_REGISTER_HREF}`);
+  assert.doesNotMatch(page, /requiredPlan/, '登録ページが会員専用になっている');
+});
+
 test('すでに特別価格の商品には重ねない（画面の額を変えない）', () => {
   const special = BUTTONS.filter((b) => hasOwnSpecialPrice(b.productName));
   assert.ok(special.length > 0, '特別価格の商品が見つからない（前提が変わった）');
@@ -159,4 +198,53 @@ test('すでに特別価格の商品には重ねない（画面の額を変え�
         `${b.productName}: 特別価格を上書きしている`);
     }
   }
+});
+
+// ── ページ上部のご案内（2026-08-25 MK「/free-signup/ や /pricing/ にも記載すべき」）──
+//
+// ⚠️ 文言・金額・期限・行き先を**ページごとに書かない**。
+//    3 か所で食い違った事故を 8/24〜25 に繰り返しているため、
+//    共通部品 + サーバーの文言に限定する。
+
+test('ご案内はサーバーの文言だけを出す（ページで作らない）', () => {
+  const c = read('../../components/CampaignBanner.astro');
+  // ⚠️ 2026-08-25: 出し方の判定は純粋関数（campaignBannerView.js）へ移した。
+  //    画面はその戻り値をそのまま出すだけ。
+  for (const k of ['view.headline', 'view.sub', 'view.cta.href', 'view.cta.label']) {
+    assert.ok(c.includes(k), `${k} を使っていない`);
+  }
+  // 金額・期限・行き先を直書きしない
+  // ⚠️ **コメントは見ない**。何が起きたかを説明するのに金額や日付が出るのは正しい
+  //    （見るべきは画面に出す文字列だけ。2026-08-25）。
+  const code = c.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+  assert.doesNotMatch(code, /\b(4980|4480|49800|44800|78000|68000|10,000|500円)\b/, '金額を直書きしている');
+  assert.doesNotMatch(code, /\d+年\d+月\d+日/, '期限を直書きしている');
+  assert.doesNotMatch(code, /\/free-signup\//, '行き先を直書きしている');
+  // 出すかどうかもサーバーが決める / 取れなければ出さない
+  assert.match(c, /if \(!view\.show\) return;/, '出す条件を画面で決めている');
+  assert.match(c, /catch\(\(\) => \{\}\)/, '取得に失敗しても出してしまう');
+});
+
+test('必要なページに置かれている（増やすときは 1 行）', () => {
+  for (const [label, rel] of [
+    ['料金プラン', '../../pages/pricing.astro'],
+    ['無料登録', '../../pages/free-signup.astro'],
+  ]) {
+    const page = read(rel);
+    assert.match(page, /<CampaignBanner \/>/, `${label}: ご案内が置かれていない`);
+    assert.match(page, /import CampaignBanner/, `${label}: import が無い`);
+    // ページ側に文言・金額を書いていない
+    const own = page.slice(0, page.indexOf('<CampaignBanner />'));
+    assert.doesNotMatch(own, /円OFF/, `${label}: ページに割引の文言を書いている`);
+  }
+});
+
+test('ご案内の文言はサーバーが組み立てる', () => {
+  const api = read('../../pages/api/campaign.json.js');
+  assert.match(api, /const banner = \(\(\) => \{/, 'サーバーが文言を持っていない');
+  // 未登録には「登録すると何が得か」、登録済みには「その方が使える割引」
+  assert.match(api, /無料登録で最大/, '未登録の方への案内が無い');
+  assert.match(api, /describeCampaignDeadline\(\)/, '期限を単一源から出していない');
+  // 期間外・対象なしなら出さない
+  assert.match(api, /if \(!view\.active\) return \{ show: false \}/, '期間外でも出してしまう');
 });

@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { describeCouponNotice, isCouponNoticeUnseen, COUPON_NOTICE_KIND } from './couponNotice.js';
+import { describeCouponNotice, describeAllNotices, isCouponNoticeUnseen, COUPON_NOTICE_KIND } from './couponNotice.js';
 
 const known = (over = {}) => ({ used: false, reserved: false, known: true, ...over });
 
@@ -133,7 +133,13 @@ test('マイページのお知らせは最上部・読める配色にする', ()
   //    暗いカード + 左の色帯 + 明るい文字にする。
   //    ⚠️ JS で作る要素に効かせるため **is:global 側**に置くこと。
   const css = page.slice(page.indexOf('<style is:global>'), page.indexOf('</style>'));
-  assert.doesNotMatch(css, /background:\s*rgba\(239, 68, 68/, '暗い赤のままで読みにくい');
+  // ⚠️ 見るのは**お知らせ／ご優待のカードの指定だけ**。
+  //    同じ is:global には申請・送信履歴（赤＝退会申請・送信失敗）も入っており、
+  //    ブロック全体から赤を探すと無関係な指定で落ちる（2026-08-25）。
+  const cardCss = css.split('\n')
+    .filter((l) => /#notifications|#campaign-section|\.notice-|\.campaign-/.test(l))
+    .join('\n');
+  assert.doesNotMatch(cardCss, /background:\s*rgba\(239, 68, 68/, '暗い赤のままで読みにくい');
   assert.doesNotMatch(css, /linear-gradient\(135deg, #fde68a/, '明るい黄色の地のままで浮いている');
   // ⚠️ 2026-08-25 MK 指示で**左の色帯を削除**。戻さないこと。
   //    カード本体の枠線・角丸・背景・余白・文字は変更していない。
@@ -166,8 +172,12 @@ test('ベルの行き先にお知らせの中身がある（飛んだ先が空�
   assert.match(page, /function renderNotifications/, 'お知らせを描画していない');
   const fn = page.slice(page.indexOf('function renderNotifications'));
   const body = fn.slice(0, fn.indexOf('\n      }\n'));
-  // 未読が無ければ出さない（空の「お知らせ」を見せない）
-  assert.match(body, /notice\.unseen !== true/);
+  // ⚠️ **既読でも消さない**（2026-08-25 MK 指示。ナビのお知らせを常設するため）。
+  //    出さないのは「お知らせが 1 件も無いとき」だけ。
+  assert.match(body, /notice\.all/, '既読を含む全件を見ていない');
+  assert.match(body, /if \(!items\.length\)[^\n]*display = 'none'/, '0 件のときに隠していない');
+  assert.doesNotMatch(body, /notice\.unseen !== true[^\n]*display = 'none'/,
+    '未読が無いだけでお知らせを隠している');
   // 文言はサーバー由来（画面で作らない）
   assert.match(body, /it\.label|notice\.label/);
   // ⚠️ コメントは除いて検査する（説明のための語まで禁止すると、
@@ -247,4 +257,56 @@ test('既読は端末の保存だけ（本番 schema を増やさない）', () 
   assert.match(client, /localStorage\.setItem\(SEEN_KEY, JSON\.stringify\(seen\)\)/);
   // 保存できない環境でも落ちない
   assert.match(client, /catch \{ return \{\}; \}/);
+});
+
+// ── 読んだあともナビに残す（2026-08-25 MK 指示）──────────────
+//
+// > ナビのお知らせボタンは常にナビに固定したい。既読しても。残したい
+//
+// 以前は未読が 0 になった瞬間にナビから「お知らせ」ごと消えていた。
+// 一度開くと二度と見返せない＝渡したものを確認する入口が無い状態だった。
+
+test('既読にしても件数は残る（未読だけが 0 になる）', () => {
+  const coupon = { claimed: true, claimedAt: '2026-08-18T22:07:54.000Z', usage: { known: true } };
+  const unread = describeAllNotices({ coupon, seen: {} });
+  assert.equal(unread.count, 1, '未読として数えていない');
+  assert.equal(unread.total, 1);
+  assert.equal(unread.all[0].unseen, true);
+
+  // 読んだあと
+  const seen = { [unread.all[0].kind]: unread.all[0].signature };
+  const after = describeAllNotices({ coupon, seen });
+  assert.equal(after.count, 0, '赤い点は消えるべき');
+  assert.equal(after.total, 1, '**お知らせ自体が消えている**（ナビから無くなる）');
+  assert.equal(after.all[0].unseen, false);
+  assert.equal(after.all[0].label, unread.all[0].label, '文言まで失われている');
+});
+
+test('お知らせが 1 件も無いときだけ 0 件（存在しないものは出さない）', () => {
+  const empty = describeAllNotices({ coupon: { claimed: false, canClaim: false } });
+  assert.equal(empty.total, 0);
+  assert.equal(empty.count, 0);
+  assert.deepEqual(empty.all, []);
+});
+
+test('ナビは「既読を含む全件」で出す（未読の件数では出さない）', () => {
+  const layout = read('../../layouts/BaseLayout.astro');
+  const i = layout.indexOf('const n = await getCouponNotice()');
+  assert.ok(i > 0, 'ナビのお知らせ処理が無い');
+  const block = layout.slice(i, layout.indexOf('認証機能は一時的に無効化'));
+  // 出す / 出さないの分かれ目は total（既読を含む）
+  assert.match(block, /if \(!n \|\| !n\.total\) return/, '未読が無いとナビごと消える書き方になっている');
+  assert.doesNotMatch(block, /n\.unseen !== true/, '未読でナビの表示を決めている');
+  // 赤い点だけは未読の件数
+  assert.match(block, /if \(!n\.count\)[^\n]*dot\.hidden = true/, '既読でも赤い点が残る');
+});
+
+test('お知らせを読んでもナビから消さない（消すのは赤い点だけ）', () => {
+  const page = read('../../pages/dashboard.astro');
+  const fn = page.slice(page.indexOf('function markNoticeRead'));
+  const body = fn.slice(0, fn.indexOf('\n      }\n'));
+  assert.match(body, /dot\.hidden = true/, '赤い点を消していない');
+  assert.doesNotMatch(body, /nav-notice[^\n]*\n?[^\n]*display = 'none'/,
+    'ナビの「お知らせ」ごと消している');
+  assert.ok(!body.includes("'mobile-nav-notice'"), 'ナビの「お知らせ」ごと消している');
 });

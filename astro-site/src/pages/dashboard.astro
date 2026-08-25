@@ -445,6 +445,15 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                 <div class="submission-history-header">
                     <h2>📜 申請・送信履歴</h2>
                     <p class="submission-history-subtitle">このブラウザから送信した申請・お問い合わせの記録です（最大50件・端末ごとに保存されます）</p>
+                    <!--
+                      ⚠️ 2026-08-25 MK 指摘「確認待ちのままは印象が悪い」。
+                         この履歴は**この端末に保存された送信の記録**で、サーバーの処理状況は
+                         入ってこない（入金確認は Airtable での手作業なので、1 件ごとの
+                         状態を持つ台帳が無い）。更新されない「確認待ち」を出し続けると、
+                         いつまでも処理されていないように見える。
+                         → 記録として正しい「送信しました」だけを出し、**本当の状況の在り処**を示す。
+                    -->
+                    <p class="submission-history-hint">この記録に処理の状況は反映されません。お申し込み後の流れは各行に記載しています。</p>
                 </div>
                 <div id="submission-history-list" class="submission-history-list">
                     <!-- JS で描画 -->
@@ -1948,6 +1957,37 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
          JS で生成した要素には**一切適用されない**（premium-plus-eligibility で本番事故あり）。
          そのため `is:global` で書く。クラス名は他と衝突しない専用のものだけ。 -->
     <style is:global>
+      /*
+       * 📜 申請・送信履歴。
+       * ⚠️ **中身は JS が作る**（`listEl.innerHTML = ...`）。Astro の scoped スタイルは
+       *    生成された要素に付かないため、ここが scoped にあると**一切効かない**。
+       *    実際、バッジも枠も効いておらず、素のテキストが縦に並んでいた
+       *    （2026-08-25 の報告画面がまさにその状態）。同じ罠をこのリポジトリで何度も踏んでいる。
+       */
+      #submission-history-section .submission-history-list { display: flex; flex-direction: column; gap: 0.6rem; max-height: 480px; overflow-y: auto; }
+      #submission-history-section .submission-history-item { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 0.8rem; padding: 0.8rem 1rem; background: rgba(30, 41, 59, 0.6); border: 1px solid rgba(148, 163, 184, 0.15); border-radius: 10px; }
+      #submission-history-section .submission-history-badge { font-size: 0.75rem; font-weight: 700; padding: 0.25rem 0.6rem; border-radius: 999px; white-space: nowrap; }
+      #submission-history-section .submission-history-badge.type-bank-transfer { background: rgba(59, 130, 246, 0.2); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.4); }
+      #submission-history-section .submission-history-badge.type-contact { background: rgba(139, 92, 246, 0.2); color: #c4b5fd; border: 1px solid rgba(139, 92, 246, 0.4); }
+      #submission-history-section .submission-history-badge.type-premium-plus-contact { background: rgba(139, 92, 246, 0.2); color: #c4b5fd; border: 1px solid rgba(139, 92, 246, 0.4); }
+      #submission-history-section .submission-history-badge.type-magic-link { background: rgba(16, 185, 129, 0.2); color: #6ee7b7; border: 1px solid rgba(16, 185, 129, 0.4); }
+      #submission-history-section .submission-history-badge.type-withdrawal { background: rgba(239, 68, 68, 0.2); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.4); }
+      #submission-history-section .submission-history-badge.type-submission { background: rgba(148, 163, 184, 0.2); color: #cbd5e1; border: 1px solid rgba(148, 163, 184, 0.4); }
+      #submission-history-section .submission-history-main { display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; }
+      #submission-history-section .submission-history-label { color: #e2e8f0; font-weight: 600; font-size: 0.95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      #submission-history-section .submission-history-meta { color: #94a3b8; font-size: 0.8rem; }
+      #submission-history-section .submission-history-next { color: #94a3b8; font-size: 0.8rem; line-height: 1.5; margin-top: 0.15rem; }
+      #submission-history-section .submission-history-status { font-size: 0.8rem; font-weight: 600; padding: 0.2rem 0.55rem; border-radius: 6px; white-space: nowrap; }
+      #submission-history-section .submission-history-status.status-pending { background: rgba(148, 163, 184, 0.18); color: #cbd5e1; }
+      #submission-history-section .submission-history-status.status-sent { background: rgba(59, 130, 246, 0.18); color: #93c5fd; }
+      #submission-history-section .submission-history-status.status-completed { background: rgba(16, 185, 129, 0.18); color: #6ee7b7; }
+      #submission-history-section .submission-history-status.status-failed { background: rgba(239, 68, 68, 0.18); color: #fca5a5; }
+      @media (max-width: 600px) {
+        #submission-history-section .submission-history-item { grid-template-columns: 1fr; gap: 0.5rem; }
+        #submission-history-section .submission-history-status { justify-self: start; }
+      }
+      #submission-history-section .submission-history-empty { text-align: center; color: #94a3b8; padding: 1.2rem; font-size: 0.9rem; }
+
       /* 共通の地。サイトの暗いカードに合わせる（左の色帯は 2026-08-25 に削除）*/
       #notifications .notice-card,
       #campaign-section .campaign-card {
@@ -1980,6 +2020,16 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
       #notifications .notice-count {
         margin-left: auto; padding: .2rem .6rem; border-radius: 999px;
         background: #dc2626; color: #fff; font-size: .75rem; font-weight: 800;
+      }
+      /* 未読が無いときは赤くしない（お知らせ自体は残す）*/
+      #notifications .notice-count.is-read {
+        background: rgba(148, 163, 184, .18); color: #94a3b8; font-weight: 700;
+      }
+      /* どれが新しいのかを行ごとに示す（既読の行と並ぶため）*/
+      #notifications .notice-new {
+        margin-left: .5rem; padding: .1rem .4rem; border-radius: 999px;
+        background: #dc2626; color: #fff; font-size: .68rem; font-weight: 800;
+        vertical-align: middle;
       }
       #notifications .notice-list { list-style: none; margin: 0; padding: 0; }
       #notifications .notice-list li {
@@ -2040,21 +2090,25 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
         align-items: center;
         justify-content: center;
         gap: .4em;
-        /* 指で押せる大きさ（スマホの最小タップ領域）*/
+        /* ⚠️ このサイトには border-box の共通指定が無い。
+           指定しないと min-height に padding が**足し算**され、
+           狙った 44px が 66px になる（2026-08-25「ボタンが大きすぎる」の原因）。 */
+        box-sizing: border-box;
+        /* 指で押せる大きさ（スマホの最小タップ領域）。**下げない** */
         min-height: 44px;
-        padding: .7rem 1.35rem;
+        padding: .5rem 1.1rem;
         border: 0;
         border-radius: 999px;
         background: linear-gradient(135deg, #10b981, #059669);
         color: #fff !important;
         font-family: inherit;
-        font-weight: 800;
-        font-size: .92rem;
+        font-weight: 700;
+        font-size: .87rem;
         line-height: 1;
         text-decoration: none !important;
         white-space: nowrap;
         cursor: pointer;
-        box-shadow: 0 6px 16px rgba(16, 185, 129, .32);
+        box-shadow: 0 4px 12px rgba(16, 185, 129, .22);
         transition: transform .12s ease, box-shadow .12s ease, filter .12s ease;
       }
       /* 押せることを形でも伝える */
@@ -2063,7 +2117,7 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
         color: #fff !important;
         filter: brightness(1.08);
         transform: translateY(-1px);
-        box-shadow: 0 8px 20px rgba(16, 185, 129, .42);
+        box-shadow: 0 6px 16px rgba(16, 185, 129, .32);
       }
       #campaign-section .campaign-apply:active {
         transform: translateY(0);
@@ -2083,9 +2137,20 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
       }
       #campaign-section .campaign-apply[disabled]::after { content: ''; }
       @media (max-width: 640px) {
-        #campaign-section .campaign-list li { gap: .6rem; }
+        /* ⚠️ 画面幅いっぱいのボタンは**大きすぎて釣り合わない**（2026-08-25 MK 指摘）。
+           文字幅に収め、金額の下へ右寄せで置く。 */
+        #campaign-section .campaign-list li {
+          gap: .35rem;
+          flex-direction: column;
+          align-items: stretch;
+        }
         #campaign-section .campaign-apply {
-          margin-left: 0; width: 100%;
+          margin-left: auto;
+          width: auto;
+          align-self: flex-end;
+          padding: .45rem 1rem;
+          min-height: 40px;
+          font-size: .82rem;
         }
         #campaign-section .campaign-deadline { margin-left: 0; width: 100%; }
       }
@@ -2670,6 +2735,21 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
          * カード内の要素は hidden なら必ず消す。
          */
         .coupon-card [hidden] { display: none !important; }
+        /*
+         * 使えないクーポン（ご利用済み / お申し込みに適用済み / 期限切れ / 確認できない）。
+         * ⚠️ **消さない**。渡した記録・使った記録はお客様が確認できるべきもの
+         *    （消えると「取り上げられた」と読まれ、割引が効いたかも確かめられない）。
+         *    ただし使えるクーポンと同じ見た目で並べない。色を落とし、金額を主役から外す。
+         */
+        .coupon-section.is-inactive .coupon-card {
+            background: rgba(148, 163, 184, .06);
+            border-color: rgba(148, 163, 184, .22);
+        }
+        .coupon-section.is-inactive .coupon-badge {
+            background: rgba(148, 163, 184, .16); color: #94a3b8; border-color: rgba(148, 163, 184, .35);
+        }
+        .coupon-section.is-inactive .coupon-benefit { color: #94a3b8; }
+        .coupon-section.is-inactive .coupon-title { color: #cbd5e1; }
         /* 新しく届いたクーポン。既読にしてもこの訪問のあいだは消さない */
         .coupon-new {
             padding: .18rem .5rem;
@@ -4626,24 +4706,23 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
         .dark-horse-link-btn {
             display: flex;
             align-items: center;
-            gap: 15px;
-            background: linear-gradient(135deg, #f59e0b, #ea580c);
-            border: 1px solid rgba(245, 158, 11, 0.3);
-            border-radius: 16px;
-            padding: 20px 24px;
+            gap: 12px;
+            background: rgba(245, 158, 11, .08);
+            border: 1px solid rgba(245, 158, 11, .28);
+            border-radius: 12px;
+            padding: 14px 18px;
             text-decoration: none;
-            transition: all 0.3s ease;
+            transition: background .2s ease, border-color .2s ease;
             cursor: pointer;
         }
 
         .dark-horse-link-btn:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 12px 30px rgba(245, 158, 11, 0.4);
-            border-color: rgba(245, 158, 11, 0.5);
+            background: rgba(245, 158, 11, .14);
+            border-color: rgba(245, 158, 11, .45);
         }
 
         .dark-horse-icon {
-            font-size: 2rem;
+            font-size: 1.35rem;
             flex-shrink: 0;
         }
 
@@ -4655,38 +4734,38 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
         }
 
         .dark-horse-title {
-            color: #fff;
-            font-size: 1.1rem;
-            font-weight: 700;
+            color: #fbbf24;
+            font-size: .95rem;
+            font-weight: 600;
         }
 
         .dark-horse-subtitle {
-            color: rgba(255, 255, 255, 0.9);
-            font-size: 0.9rem;
+            color: rgba(226, 232, 240, .65);
+            font-size: .8rem;
         }
 
         .dark-horse-arrow {
-            color: #fff;
-            font-size: 1.5rem;
-            font-weight: bold;
+            color: rgba(251, 191, 36, .85);
+            font-size: 1.05rem;
+            font-weight: 600;
             flex-shrink: 0;
         }
 
         @media (max-width: 768px) {
             .dark-horse-link-btn {
-                padding: 16px 18px;
+                padding: 12px 14px;
             }
 
             .dark-horse-icon {
-                font-size: 1.5rem;
+                font-size: 1.15rem;
             }
 
             .dark-horse-title {
-                font-size: 1rem;
+                font-size: .9rem;
             }
 
             .dark-horse-subtitle {
-                font-size: 0.85rem;
+                font-size: .78rem;
             }
         }
 
@@ -4710,71 +4789,14 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
             color: #94a3b8;
             font-size: 0.85rem;
         }
-        .submission-history-list {
-            display: flex;
-            flex-direction: column;
-            gap: 0.6rem;
-            max-height: 480px;
-            overflow-y: auto;
-        }
-        .submission-history-item {
-            display: grid;
-            grid-template-columns: auto 1fr auto;
-            align-items: center;
-            gap: 0.8rem;
-            padding: 0.8rem 1rem;
-            background: rgba(30, 41, 59, 0.6);
-            border: 1px solid rgba(148, 163, 184, 0.15);
-            border-radius: 10px;
-        }
-        .submission-history-badge {
-            font-size: 0.75rem;
-            font-weight: 700;
-            padding: 0.25rem 0.6rem;
-            border-radius: 999px;
-            white-space: nowrap;
-        }
-        .submission-history-badge.type-bank-transfer { background: rgba(59, 130, 246, 0.2); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.4); }
-        .submission-history-badge.type-contact { background: rgba(139, 92, 246, 0.2); color: #c4b5fd; border: 1px solid rgba(139, 92, 246, 0.4); }
-        .submission-history-badge.type-premium-plus-contact { background: rgba(139, 92, 246, 0.2); color: #c4b5fd; border: 1px solid rgba(139, 92, 246, 0.4); }
-        .submission-history-badge.type-magic-link { background: rgba(16, 185, 129, 0.2); color: #6ee7b7; border: 1px solid rgba(16, 185, 129, 0.4); }
-        .submission-history-badge.type-withdrawal { background: rgba(239, 68, 68, 0.2); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.4); }
-        .submission-history-badge.type-submission { background: rgba(148, 163, 184, 0.2); color: #cbd5e1; border: 1px solid rgba(148, 163, 184, 0.4); }
-        .submission-history-main {
-            display: flex;
-            flex-direction: column;
-            gap: 0.2rem;
-            min-width: 0;
-        }
-        .submission-history-label {
-            color: #e2e8f0;
-            font-weight: 600;
-            font-size: 0.95rem;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-        .submission-history-meta {
+        .submission-history-hint {
+            margin: .35rem 0 0;
+            font-size: 0.85rem;
             color: #94a3b8;
-            font-size: 0.8rem;
+            line-height: 1.6;
         }
-        .submission-history-status {
-            font-size: 0.8rem;
-            font-weight: 600;
-            padding: 0.2rem 0.55rem;
-            border-radius: 6px;
-            white-space: nowrap;
-        }
-        .submission-history-status.status-pending { background: rgba(245, 158, 11, 0.18); color: #fbbf24; }
-        .submission-history-status.status-sent { background: rgba(59, 130, 246, 0.18); color: #93c5fd; }
-        .submission-history-status.status-completed { background: rgba(16, 185, 129, 0.18); color: #6ee7b7; }
-        .submission-history-status.status-failed { background: rgba(239, 68, 68, 0.18); color: #fca5a5; }
-        .submission-history-empty {
-            text-align: center;
-            color: #94a3b8;
-            padding: 1.2rem;
-            font-size: 0.9rem;
-        }
+        .submission-history-hint strong { color: #cbd5e1; font-weight: 700; }
+        /* ⚠️ 橙は「処理が止まっている」ように読める。送信できた記録なので中立の色にする */
         .submission-history-actions {
             display: flex;
             justify-content: flex-end;
@@ -4790,13 +4812,6 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
             font-size: 0.85rem;
         }
         .submission-history-clear:hover { background: rgba(148, 163, 184, 0.1); }
-        @media (max-width: 600px) {
-            .submission-history-item {
-                grid-template-columns: 1fr;
-                gap: 0.5rem;
-            }
-            .submission-history-status { justify-self: start; }
-        }
     </style>
 
     
@@ -4812,12 +4827,11 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                 'withdrawal': '退会申請',
                 'submission': '送信'
             };
-            var STATUS_LABELS = {
-                'pending': '確認待ち',
-                'sent': '送信済み',
-                'completed': '完了',
-                'failed': '失敗'
-            };
+            // ⚠️ 状態名と「このあとどうなるか」は**単一源**（/js/submission-result.js）。
+            //    ここで組み立てると送信完了画面と食い違う。
+            //    ・状態名 … あとから見ても嘘にならない言葉だけ（更新されない記録なので）
+            //    ・このあと … **商品ごとに違う**。Premium Plus は単品購入で
+            //      会員ステータスに反映されない（2026-08-26 MK 指摘）
 
             function escapeHtml(str) {
                 return String(str == null ? '' : str).replace(/[&<>"']/g, function (c) {
@@ -4851,7 +4865,11 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
 
                 listEl.innerHTML = history.map(function (item) {
                     var typeLabel = TYPE_LABELS[item.type] || item.type || '送信';
-                    var statusLabel = STATUS_LABELS[item.status] || item.status || '';
+                    // ⚠️ /js/submission-result.js はハッシュ無しの URL なので、
+                    //    古い版がブラウザに残っていることがある。関数が無くても壊さない。
+                    var st = SR.describeStatus ? SR.describeStatus(item)
+                        : { label: item.status || '', className: 'status-' + (item.status || 'pending') };
+                    var followUp = SR.describeFollowUp ? SR.describeFollowUp(item) : '';
                     var timestamp = formatTimestamp(item.timestamp);
                     return (
                         '<div class="submission-history-item">' +
@@ -4859,8 +4877,9 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                             '<div class="submission-history-main">' +
                                 '<div class="submission-history-label">' + escapeHtml(item.label || '送信') + '</div>' +
                                 '<div class="submission-history-meta">' + escapeHtml(timestamp) + '</div>' +
+                                (followUp ? '<div class="submission-history-next">' + escapeHtml(followUp) + '</div>' : '') +
                             '</div>' +
-                            '<span class="submission-history-status status-' + escapeHtml(item.status || 'pending') + '">' + escapeHtml(statusLabel) + '</span>' +
+                            '<span class="submission-history-status ' + escapeHtml(st.className) + '">' + escapeHtml(st.label) + '</span>' +
                         '</div>'
                     );
                 }).join('');
@@ -4955,7 +4974,7 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
 
             <h2 class="modal-title">🔄 三連複予想の買い切り購入</h2>
             <p class="modal-subtitle">
-                🔥 今だけ特別価格：¥108,000 → <strong>¥78,000</strong>（永久アクセス）
+                🔥 今だけ特別価格：<span data-ak-price-strike="Premium Sanrenpuku Lifetime">¥108,000</span> → <strong data-ak-price="Premium Sanrenpuku Lifetime">¥78,000</strong>（永久アクセス）
             </p>
 
             <!-- 安心メッセージ -->
@@ -4975,8 +4994,8 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                     <div class="recommended-badge">馬単予想 + 三連複予想の両方を利用する</div>
                     <h3 class="plan-option-name">Sanrenpuku Lifetime</h3>
                     <div class="plan-option-subtitle">高性能AI三連複自動絞り込み（Premium期限内閲覧可能）</div>
-                    <div class="plan-option-price-strike">¥108,000</div>
-                    <div class="plan-option-price">¥78,000</div>
+                    <div class="plan-option-price-strike" data-ak-price-strike="Premium Sanrenpuku Lifetime">¥108,000</div>
+                    <div class="plan-option-price" data-ak-price="Premium Sanrenpuku Lifetime">¥78,000</div>
                     <div class="plan-option-discount">永久アクセス（追加料金なし）</div>
                     <ul class="plan-option-features">
                         <li>✅ <strong>高性能AI三連複絞り込み機能</strong>を利用できます</li>
@@ -4988,7 +5007,7 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                     <button class="btn-plan combo" onclick="openBankModal('Premium Sanrenpuku Lifetime', 78000, 'lifetime')">
                         🏦 銀行振込で申し込む
                     </button>
-                    <p class="plan-note">🔥 今だけ特別価格：¥108,000 → ¥78,000</p>
+                    <p class="plan-note">🔥 今だけ特別価格：<span data-ak-price-strike="Premium Sanrenpuku Lifetime">¥108,000</span> → <span data-ak-price="Premium Sanrenpuku Lifetime">¥78,000</span></p>
                 </div>
 
             </div>
@@ -5021,8 +5040,8 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                     <div class="recommended-badge">おすすめ</div>
                     <h3 class="plan-option-name">Premium 買い切り</h3>
                     <div class="plan-option-subtitle">一度きりの支払いで永久アクセス</div>
-                    <div class="plan-option-price-strike">¥108,000</div>
-                    <div class="plan-option-price">¥78,000</div>
+                    <div class="plan-option-price-strike" data-ak-price-strike="Premium Sanrenpuku Lifetime">¥108,000</div>
+                    <div class="plan-option-price" data-ak-price="Premium Sanrenpuku Lifetime">¥78,000</div>
                     <div class="plan-option-discount">永久アクセス（追加料金なし）</div>
                     <ul class="plan-option-features">
                         <li>✅ <strong>全12レース</strong>の馬単予想</li>
@@ -5733,10 +5752,14 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
         // ⚠️ 使ったかどうかは**サーバー（予約台帳）**が返す。画面で推測しない。
         //    保有は使い終わっても消えないので、保有だけを見ると「ご利用いただけます」のまま。
         const usage = c.usage || {};
+        // ⚠️ 見出しもサーバー由来（ご利用済み / 適用済み / 期限切れ / 取得済み）。
+        //    画面で状態を数え上げると、状態が増えたときに必ず取りこぼす。
         if (titleEl) {
-            titleEl.textContent = canClaim ? '受け取れるクーポン'
-                : (usage.used === true ? 'ご利用済みクーポン' : '取得済みクーポン');
+            titleEl.textContent = canClaim ? '受け取れるクーポン' : (usage.title || '取得済みクーポン');
         }
+        // 使えないクーポンは**控えめに**（使えるものと同じ見た目で並べない）。
+        // 消しはしない ── 渡した記録・使った記録はお客様が確認できるべきもの。
+        sec.classList.toggle('is-inactive', !canClaim && usage.blocksOrder === true);
         // バッジ文言もサーバー由来（ご利用済み / お申し込みに適用済み / 取得済み）
         if (badgeEl) badgeEl.textContent = canClaim ? '未取得' : (usage.badge || '取得済み');
         if (claimedDt) claimedDt.textContent = canClaim ? '取得' : '取得日時';
@@ -5840,21 +5863,26 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
        * 🔔 お知らせの一覧。ナビのベルから来た人がここで内容を読む。
        *
        * ⚠️ 文言はサーバー由来（`couponNotice.js`）。ここで組み立てない。
-       * ⚠️ 未読が無ければセクションごと出さない（空の「お知らせ」を見せない）。
+       * ⚠️ **読んだあとも消さない**（2026-08-25 MK 指示）。ナビの「お知らせ」を
+       *    常設する以上、押した先が空では行き止まりになる。
+       *    出さないのは「お知らせが 1 件も無いとき」だけ。
        */
       function renderNotifications(notice) {
         const sec = document.getElementById('notifications');
         const list = document.getElementById('notice-list');
         const count = document.getElementById('notice-count');
         if (!sec || !list || !count) return;
-        if (!notice || notice.unseen !== true || !notice.count) { sec.style.display = 'none'; return; }
+        // ⚠️ 既読を含む全件（`all`）で判断する。未読が 0 でも消さない
+        const items = Array.isArray(notice && notice.all) && notice.all.length
+          ? notice.all
+          : (Array.isArray(notice && notice.items) ? notice.items : []);
+        if (!items.length) { sec.style.display = 'none'; return; }
 
-        count.textContent = `${notice.count} 件`;
+        const unread = Number(notice && notice.count) || 0;
+        count.textContent = unread ? `新着 ${unread} 件` : `${items.length} 件`;
+        count.classList.toggle('is-read', unread === 0);
         list.innerHTML = '';
         // ⚠️ お知らせは 1 種類ではない（クーポン / 期間限定のご優待）。全部出す。
-        const items = Array.isArray(notice.items) && notice.items.length
-          ? notice.items
-          : [{ kind: notice.kind, label: notice.label, signature: notice.signature }];
         for (const it of items) {
           const li = document.createElement('li');
           const a = document.createElement('a');
@@ -5870,6 +5898,13 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
             if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
           });
           li.appendChild(a);
+          // どれが新しいのかを行ごとに示す（既読の行と並ぶため）
+          if (it.unseen === true) {
+            const badge = document.createElement('span');
+            badge.className = 'notice-new';
+            badge.textContent = 'NEW';
+            li.appendChild(badge);
+          }
           list.appendChild(li);
         }
         sec.style.display = '';
@@ -5887,6 +5922,8 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
        *    「届いたのに気づけない」状態になっていた（2026-08-23 の報告）。
        *    消えるのは**ベルから来た**か、**お知らせを押した**ときだけ。
        * ⚠️ カードの NEW はこの訪問のあいだ残す（消えるところを見せないと伝わらない）。
+       * ⚠️ 消すのは**赤い点だけ**。「お知らせ」ナビ自体は残す（2026-08-25 MK 指示）。
+       *    以前はナビごと消していたため、一度読むと見返す入口が無くなっていた。
        */
       function markNoticeRead(notice) {
         if (!notice || notice.unseen !== true) return;
@@ -5894,9 +5931,11 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
         if (Array.isArray(notice.items) && notice.items.length) markNoticesSeen(notice.items);
         else if (notice.signature) markCouponNoticeSeen(notice.signature);
         for (const dot of document.querySelectorAll('[data-notice-dot]')) dot.hidden = true;
-        for (const id of ['nav-notice', 'mobile-nav-notice']) {
-          const li = document.getElementById(id);
-          if (li) li.style.display = 'none';
+        const count = document.getElementById('notice-count');
+        if (count) {
+          const total = Array.isArray(notice.all) ? notice.all.length : notice.count;
+          count.textContent = `${total} 件`;
+          count.classList.add('is-read');
         }
       }
 

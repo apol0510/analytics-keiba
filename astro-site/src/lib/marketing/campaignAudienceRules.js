@@ -20,6 +20,9 @@
 
 import { resolvePlusMemberFromFields } from '../premiumPlus/premiumPlusMember.js';
 import { resolvePremiumPlusRelease } from '../premiumPlus/premiumPlusRelease.js';
+import { resolvePromotionalGrants } from '../entitlements/promotionalGrants.js';
+import { resolveEntitlements, fromAirtableFields } from '../entitlements/resolveEntitlements.js';
+import { RESTART_GRANT_SOURCE } from '../entitlements/legacySanrenpukuNormalization.js';
 
 /** 追加条件の識別子（campaignCatalog の `extraAudience` に書く値） */
 export const EXTRA_AUDIENCE = Object.freeze({
@@ -30,6 +33,17 @@ export const EXTRA_AUDIENCE = Object.freeze({
    * 一般顧客には**構造的に**送れない（管理者が一覧で誰を選んでも通らない）。
    */
   MARKETING_CANARY_RECIPIENT: 'marketing_canary_recipient',
+  /**
+   * 旧三連複会員の **Light 永久無料化に本番で成功した会員だけ**（2026-08-25）。
+   *
+   * 判定材料は**そのレコード自身に書かれた正規化の痕跡**だけ:
+   *   - `ComebackGrantSource` が正規化の施策名と一致
+   *   - Light の無料権利が **lifetime かつ有効**（取り消されていない）
+   *
+   * よって **正規化に失敗した会員・未実施の会員には構造的に送れない**。
+   * 名簿を別に持たないので、名簿とレコードがズレて誤送信することも起きない。
+   */
+  LIGHT_LIFETIME_RESTART: 'light_lifetime_restart',
 });
 
 /** 追加条件で外れたときの除外理由 */
@@ -60,6 +74,9 @@ export function evaluateExtraAudience({ campaign, fields, nowMs, context } = {})
   if (key === EXTRA_AUDIENCE.MARKETING_CANARY_RECIPIENT) {
     return evaluateCanaryRecipient({ fields, context });
   }
+  if (key === EXTRA_AUDIENCE.LIGHT_LIFETIME_RESTART) {
+    return evaluateLightLifetimeRestart({ fields, nowMs });
+  }
 
   // 未知の追加条件は通さない（定義ミスで全員へ送るのを防ぐ）
   return { ok: false, reason: CAMPAIGN_MISMATCH, detail: `unknown_extra_audience:${key}` };
@@ -88,6 +105,40 @@ function evaluateCanaryRecipient({ fields, context }) {
   const email = f ? String(f.Email ?? f.email ?? '').trim().toLowerCase() : '';
   if (!email) return { ok: false, reason: CAMPAIGN_MISMATCH, detail: 'no_email' };
   if (!allow.has(email)) return { ok: false, reason: CAMPAIGN_MISMATCH, detail: 'not_test_recipient' };
+  return { ok: true, reason: null, detail: null };
+}
+
+/**
+ * Light 永久無料への再スタートを**本番で完了した**会員か。
+ *
+ * fail closed の徹底:
+ *   - fields を読めない → 除外
+ *   - `ComebackGrantSource` が正規化の施策名でない → 除外（別施策の無料付与に当たらない）
+ *   - Light の無料権利が lifetime でない / 期限付き / 取り消し済み → 除外
+ *     （＝正規化が途中で失敗した会員には送れない）
+ *   - 三連複を見られる / 有料 Premium が有効 → 除外
+ *     （「Light を無料にしました」が事実と食い違う相手へ送らない）
+ */
+function evaluateLightLifetimeRestart({ fields, nowMs }) {
+  const f = fields && typeof fields === 'object' ? fields : null;
+  if (!f) return { ok: false, reason: CAMPAIGN_MISMATCH, detail: 'customer_fields_unavailable' };
+  const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+
+  const source = String(f.ComebackGrantSource ?? '').trim();
+  if (source !== RESTART_GRANT_SOURCE) {
+    return { ok: false, reason: CAMPAIGN_MISMATCH, detail: 'not_restart_cohort' };
+  }
+  const light = resolvePromotionalGrants(f, now).light;
+  if (light.lifetime !== true) return { ok: false, reason: CAMPAIGN_MISMATCH, detail: 'not_lifetime_grant' };
+  if (light.active !== true) return { ok: false, reason: CAMPAIGN_MISMATCH, detail: 'grant_not_active' };
+
+  const ent = resolveEntitlements(fromAirtableFields(f), now);
+  if (ent.canViewSanrenpuku === true) {
+    return { ok: false, reason: CAMPAIGN_MISMATCH, detail: 'has_sanrenpuku' };
+  }
+  if (ent.paidPremiumActive === true) {
+    return { ok: false, reason: CAMPAIGN_MISMATCH, detail: 'paid_premium_active' };
+  }
   return { ok: true, reason: null, detail: null };
 }
 

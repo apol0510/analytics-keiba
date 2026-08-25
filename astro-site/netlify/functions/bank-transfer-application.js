@@ -14,6 +14,7 @@ import { derivePlanFromProductName, hasOwnSpecialPrice } from '../../src/lib/pay
 import { campaignControlStore } from '../../src/lib/promotions/campaignControlStore.js';
 import { resolveCampaignAllowed } from '../../src/lib/promotions/campaignControl.js';
 import { fromAirtableFields, resolveEntitlements } from '../../src/lib/entitlements/resolveEntitlements.js';
+import { resolveDuplicatePurchase } from '../../src/lib/payments/duplicatePurchase.js';
 // クーポンの「利用予約」。**振込完了報告が正常受理された時点でだけ**作る
 import {
   resolveReservationDecision, buildReservationFields, RESERVATION_REJECT,
@@ -814,6 +815,32 @@ exports.handler = async (event, context) => {
         console.log(`🔍 [bank-transfer] Email 検索結果: ${existingRecords.length}件 ヒット（email=${email}）`);
         if (existingRecords.length > 1) {
           console.warn(`⚠️ [bank-transfer] 同一 Email で複数レコード検出: ${email} / recordIds=${existingRecords.map(r => r.id).join(',')}`);
+        }
+
+        // ── すでにお持ちの商品は受け付けない（2026-08-25）──────────────
+        //
+        // ⚠️ 三連複は買い切りの**追加権**で、`プラン` ではなく `LifetimeSanrenpuku`
+        //    が持つ。購入後も `プラン` は 'Premium' のままなので、
+        //    プラン名だけを見る画面は案内を出し続ける（実在の会員で発生）。
+        //    案内は直したが、古い端末情報・古いタブから申込が飛ぶ経路は残る。
+        //    **お金が動く側で止める**のが最後の砦。
+        // ⚠️ 権利を確認できないときは止めない（fail open）。買えない方が気づけない。
+        {
+          const ownedFields = existingRecords.length > 0 ? (existingRecords[0].fields || {}) : null;
+          const ownedEnt = ownedFields
+            ? resolveEntitlements(fromAirtableFields(ownedFields), Date.now())
+            : {};
+          const dup = resolveDuplicatePurchase({ planName, planType, entitlements: ownedEnt });
+          if (dup.blocked) {
+            console.warn('🚫 [bank-transfer] すでにお持ちの商品のため申込を停止:', {
+              recordId: existingRecords[0] ? existingRecords[0].id : null, reason: dup.reason,
+            });
+            return {
+              statusCode: 409,
+              headers,
+              body: JSON.stringify({ error: dup.message, code: dup.reason, sideEffects: 'none' }),
+            };
+          }
         }
 
         // ── キャンペーン割引をサーバーが決める（2026-08-24）──────────────

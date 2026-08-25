@@ -43,6 +43,53 @@
     }
   }
 
+  // ── 記録の読み方（文言の単一源）────────────────────────────
+  //
+  // ⚠️ この履歴は**この端末に残る「送信の記録」**で、サーバーの処理状況は入ってこない。
+  //    入金確認は Airtable での手作業で、1 件ごとの状態を持つ台帳が無い。
+  //    だから状態名は「送信しました」で固定し、**そのあとどうなるか**を商品ごとに言う。
+  //
+  // ⚠️ Premium Plus は**単品購入**で、会員ステータスには**反映されない**
+  //    （買い目は入金確認後に個別にお届けする運用。docs/PREMIUM_PLUS.md）。
+  //    プランの申込と同じ案内を出すと嘘になる（2026-08-26 MK 指摘）。
+
+  var STATUS_TEXT = {
+    pending: '送信しました',
+    sent: '送信しました',
+    completed: '完了',
+    failed: '送信できませんでした'
+  };
+
+  /** その申込が Premium Plus（単品）か */
+  function isPremiumPlusOrder(entry) {
+    var e = entry || {};
+    var name = (e.details && e.details.productName) || '';
+    var text = String(name || e.label || '');
+    return /Premium\s*Plus/i.test(text);
+  }
+
+  /** 状態の見え方（あとから見ても嘘にならない言葉だけ） */
+  function describeStatus(entry) {
+    var e = entry || {};
+    var key = String(e.status || 'pending');
+    return {
+      label: STATUS_TEXT[key] || key,
+      className: 'status-' + key
+    };
+  }
+
+  /** このあとどうなるか（商品ごとに違う。空文字なら出さない） */
+  function describeFollowUp(entry) {
+    var e = entry || {};
+    if (String(e.status || '') === 'failed') return '';
+    if (String(e.type || '') !== 'bank-transfer') return '';
+    if (isPremiumPlusOrder(e)) {
+      // 単品購入。会員ステータスは変わらない
+      return '入金の確認後、買い目の配信についてメールでご案内します（会員ステータスには反映されません）。';
+    }
+    return '入金の確認後、上の会員ステータスに反映されます。';
+  }
+
   function clearSubmissionHistory() {
     try { localStorage.removeItem(HISTORY_KEY); } catch (e) {}
   }
@@ -147,6 +194,9 @@
   }
 
   global.SubmissionResult = {
+    isPremiumPlusOrder: isPremiumPlusOrder,
+    describeStatus: describeStatus,
+    describeFollowUp: describeFollowUp,
     recordSubmission: recordSubmission,
     getSubmissionHistory: getSubmissionHistory,
     clearSubmissionHistory: clearSubmissionHistory,

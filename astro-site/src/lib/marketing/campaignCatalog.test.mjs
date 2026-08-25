@@ -177,6 +177,10 @@ test('【version ロック】本文を変えたら version を上げる', () => 
     'premium-plus-offer': { version: 2, hash: '24d5b10d69335767' },
     'dormant-reactivation': { version: 2, hash: '8bc34393b414464b' },
     'general-announcement': { version: 1, hash: '7e6dc6ed7461489d' },
+    // Light 永久無料 再スタート案内（2026-08-25 新規）。旧三連複会員 18 名の正規化に
+    // 成功した相手だけへ送る。**期限が無いことが要点**なので、文面を変えるときは
+    // 「期間限定」と読める表現が入っていないか lightLifetimeRestartNotice.test.mjs も見る。
+    'light-lifetime-restart': { version: 1, hash: '763f385268479701' },
     // カムバック割引案内。本文は offer カタログから自動生成する（comebackEmailTemplate.js）。
     // CTA は受信者ごとの申込 URL なので、ここでは差し込み印がハッシュに入る。
     'comeback-offer': { version: 2, hash: '86774177e753b2d4' },

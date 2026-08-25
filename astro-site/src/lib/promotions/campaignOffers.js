@@ -33,6 +33,14 @@ export const CAMPAIGN_OFFER_IDS = Object.freeze({
  */
 export const CAMPAIGN_NOT_REGISTERED = 'not_registered';
 
+/**
+ * 無料登録ページ。
+ * ⚠️ 「無料登録で◯◯円OFF」と言うだけで**行き方が無いのは不親切**（2026-08-25 MK 指摘）。
+ *    案内には必ずこのリンクを添える。行き先は 1 か所に持ち、画面で組み立てない。
+ */
+export const CAMPAIGN_REGISTER_HREF = '/free-signup/';
+export const CAMPAIGN_REGISTER_LABEL = '無料登録する';
+
 /** 未登録の方へ出すご案内（文言の単一源。画面で作らない） */
 export function describeRegisterPrompt(discountYen) {
   const n = Number(discountYen);

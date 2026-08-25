@@ -1682,6 +1682,113 @@ sha256）でしか結ばない。受信者ごとの「最新 open 時刻」か�
 
 ---
 
+## 旧三連複会員は **Light 永久無料** として再スタートする（2026-08-25 確定）
+
+### 確定した仕様
+
+旧 `Premium Sanrenpuku` / `Premium Combo` で**期限切れ**になっている会員（本番実測 18 名）を、
+**Light 永久無料会員として再スタート**させる。**購入履歴の追加調査は復旧の条件にしない**
+（顧客維持・既存顧客優遇の方針）。
+
+| 項目 | 確定内容 |
+|---|---|
+| 与えるもの | **Light 永久無料**（`LightGrantLifetime`。無料権利であって課金契約ではない）|
+| 抹消するもの | 過去の三連複閲覧権（`プラン` を `Free` にし、旧三連複ティアを消す）|
+| 与えないもの | **`LifetimeSanrenpuku` は付与しない**。対象者が持っていれば**解除する** |
+| 復活させないもの | **馬単 Premium / その他 Premium 権限**（`有効期限` は書き換えない）|
+| 退会済みの会員 | **Customers 上に退会履歴を残さない**（`WithdrawalRequested` / `WithdrawalDate` /
+`WithdrawalReason` / `CancelledAt` をすべて空にする）|
+| 消さないもの | `有効期限` / `PaidAt` / ポイント / `Memo` / `Source` /
+決済・入金・監査・メールイベントの**履歴データそのもの**（別テーブル）|
+| 判定式 | **緩めない**。旧プラン名だけで自動的に権利を配る実装にはしない |
+
+単一源: `src/lib/entitlements/legacySanrenpukuNormalization.js`（純粋・I/O なし）。
+検証: `legacySanrenpukuNormalization.test.mjs`。
+
+### 書き込みが 2 種類に分かれる理由
+
+無料権利の付与経路（`promotionalGrants.js`）は `プラン` / `Status` / `有効期限` /
+`WithdrawalRequested` を **構造的に書けない**（`PROMO_FORBIDDEN_FIELDS`）。
+課金契約と無料特典を混ぜないための設計なので、その境界は壊さない。
+
+1. **無料権利の付与** … `buildGrantFields`（Light / lifetime）が組み立てた列
+2. **契約側の正規化** … `プラン` / `PlanType` / `WithdrawalRequested`
+
+書いてよい列は allow-list で固定し、それ以外が混ざったら組み立て自体を捨てる（fail closed）。
+**変わる列しか書かない**（同じ値の書き戻しで監査を汚さない）。
+
+### 退会痕跡を Customers に残さない理由（2026-08-25 確定）
+
+対象者は**再スタート**なので、日常運用データに退会日・退会理由を残すと
+**以後の作業のたびに「過去に退会した会員」として問題視される**。
+実際に読んでいるのは次の 2 か所で、どちらも画面へ出す:
+
+- `marketing/customerDossier.js` … カルテの `withdrawalDate`
+- `marketing/customerTimeline.js` … タイムラインに「退会申請（理由: …）」を表示
+
+**監査に必要な履歴は別データとして残る**。ここで空にするのは Customers の運用列だけで、
+決済・入金・メールイベント・操作履歴のテーブル（`EmailEvents` / `CampaignDeliveries` /
+`PromotionalOffers` / `CouponOperationHistory` 等）には一切触れない。
+
+⚠️ **前例と同じ扱い**。既存の入金確認フローも、再開時に同じ 3 列を空にしている
+（`payments/bankPaymentFlow.js` / `send-payment-confirmation-auto.js`）。新しい概念ではない。
+
+⚠️ `CancelledAt` は Customers に存在するが**コードからは 1 か所も読まれていない**。
+対象 18 名は全員空（本番 read-only 実測）。値があるときだけ空にする。
+
+### 対象にしない会員（fail closed）
+
+買い切り保有（`LifetimeSanrenpuku=true`）/ `PlanType=Lifetime` / まだ有効 / 期限が無い /
+停止アカウント（`Status` が suspended 系）/ そもそも旧プラン名でない。
+
+### 対象者本人への案内メール（完成条件に含む・2026-08-25 確定）
+
+正規化しただけでは**本人は気づかない**（ログインしていないから正規化が必要になった）。
+**「今後は Light 会員として期限なく無料でログイン・利用できる」ことを本人へメールで知らせる**
+までが本件の完成条件。
+
+| 項目 | 確定内容 |
+|---|---|
+| 対象 | **今回正規化する 18 名だけ** |
+| 送る条件 | **Light 永久無料化が本番で成功した会員だけ**。失敗者には絶対に送らない |
+| 伝えること | 期間限定ではなく、**今後も期限なく Light を無料で利用できる**こと |
+| 導線 | ログイン（`/dashboard/` → ログイン画面）。本人が迷わず再開できる形にする |
+| 書かないこと | 三連複・馬単 Premium が復活したと読める表現 |
+| 分けること | Premium Plus 等の**販売案内は混ぜない**。目的は利用再開の案内 |
+| 冪等性 | 既存の `DeliveryKey`（campaign × version × 受信者・**日付非依存**）をそのまま使う |
+| 確認 | 配信結果は既存の配信台帳（`CampaignDeliveries`）と管理画面で後から確認できる |
+
+**誰に送れるかはレコード自身が決める。** 名簿を別に持たない（名簿とレコードがズレると誤送信になる）。
+対象条件 `extraAudience: light_lifetime_restart`（`marketing/campaignAudienceRules.js`）は
+
+- `ComebackGrantSource` が正規化の施策名と一致する
+- Light の無料権利が **lifetime かつ有効**（取り消されていない）
+- 三連複を見られない / 有料 Premium が有効でない
+
+をすべて満たすときだけ通す。**正規化が途中で失敗した会員は構造的に対象外**になる。
+
+文面の単一源: `marketing/campaignCatalog.js` の `light-lifetime-restart`。
+検証: `marketing/lightLifetimeRestartNotice.test.mjs`。
+
+### Premium Plus は**別概念**
+
+**三連複の保有と Premium Plus の販売資格は別概念**である。会員ランク（Free / Light /
+期限切れ Premium）を理由に Plus を塞がない。Light 永久無料へ正規化した会員も、
+**管理者が 1 人ずつ明示指定すれば**（`UpsellTarget=plus`）販売対象にできる。
+
+- ⚠️ **2026-08-25 の仕様変更**。変更前は「plus 指定でも契約が無効なら出さない」だった
+  （`upsellTarget.test.mjs` の 10 / 11 / 19 / 25 がそれを固定していた）
+- 開くのは**明示指定のときだけ**。指定が無い会員（`auto`）は従来どおり出ない
+- `PremiumPlusEligibility=blocked` / 会員単位の販売停止 / 受付時間は**従来どおり優先**
+- ROUTE C-2（`resolvePlusRoute`）が単一源
+
+### ⚠️ 「三連複を見られる人＝最上位で売るものがない」は誤り
+
+`campaignOffers.resolveCampaignOfferIdsFor` は `canViewSanrenpuku` だけで「最上位」と判断し、
+割引を 1 件も返さない。**馬単が期限切れの三連複保有者は最上位ではない**ので、この判定は誤り。
+Premium Plus の販売可能性とも無関係である（上のとおり別判定）。
+本正規化では対象者が三連複保有者でなくなるため実害は無いが、**判定そのものは誤りとして残っている**。
+
 ## 5. External Dependencies
 
 | 依存 | 用途 | 備考 |

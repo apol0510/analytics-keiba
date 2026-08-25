@@ -79,11 +79,18 @@ export const PP_ROUTE = Object.freeze({
   /** ROUTE B: 通常 Premium 会員で、加入から一定期間 Sanrenpuku 未購入 */
   PREMIUM_30D: 'premium_30d',
   /**
-   * ROUTE C: 管理者が販売導線として **Plus を明示指定**した有効 Premium 会員。
+   * ROUTE C: 管理者が販売導線として **Plus を明示指定**した会員。
    * ROUTE B の「加入 30 日以上」を満たさない（PaidAt が空な旧会員を含む）相手でも、
    * 管理者が個別に選んだときだけ販売対象にする。
+   *
+   * ⚠️ **会員ランクを条件にしない**（2026-08-25 MK 確定）。
+   *    三連複の保有と Premium Plus の販売資格は**別概念**であり、
+   *    「三連複を持っていない」「有料 Premium ではない」ことを理由に塞がない。
+   *    旧三連複会員を Light 永久無料へ正規化した会員も、管理者が明示指定すれば販売できる。
+   * ⚠️ 開くのは**管理者が 1 人ずつ明示指定したときだけ**（`UpsellTarget=plus`）。
+   *    指定が無い会員は従来どおり ROUTE A / B の条件でしか開かない。
    * ⚠️ 資格（PremiumPlusEligibility）と phase の判定は ROUTE B と同一。ここが飛ばすのは
-   *    「加入からの経過日数」条件だけで、blocked / review は従来どおり打ち切られる。
+   *    「加入からの経過日数」条件だけで、blocked / 会員単位の販売停止は従来どおり打ち切られる。
    */
   PREMIUM_ADMIN: 'premium_admin',
   /** 対象外 */
@@ -480,14 +487,31 @@ export function normalizeEligibility(raw) {
  * @param {{ hasSanrenpuku:boolean, premiumActive:boolean, premiumPaidAtMs:number|null, nowMs:number }} input
  * @returns {{ route:string, daysSincePremium:number|null }}
  */
-export function resolvePlusRoute({ hasSanrenpuku, premiumActive, premiumPaidAtMs, nowMs, adminPlusTarget }) {
+export function resolvePlusRoute({ hasSanrenpuku, premiumActive, premiumPaidAtMs, nowMs, adminPlusTarget, adminPlusAuthorized }) {
   if (hasSanrenpuku === true) return { route: PP_ROUTE.SANRENPUKU, daysSincePremium: null };
 
   const days = isFiniteNumber(premiumPaidAtMs) ? jstDayDiff(premiumPaidAtMs, nowMs) : null;
-  // ROUTE C: 管理者が Plus を明示指定した有効 Premium 会員。
+  // ROUTE C-1: 管理者が Plus を明示指定した**有効 Premium 会員**。
   // 「PaidAt が無い / 30 日未満」だけを理由に塞がない（PaidAt は 2026-07-10 の
   // 入金確認フロー刷新以降しか書かれておらず、旧会員は構造的に空のため）。
   if (premiumActive === true && adminPlusTarget === true) {
+    return { route: PP_ROUTE.PREMIUM_ADMIN, daysSincePremium: days };
+  }
+
+  // ROUTE C-2: 管理者が **1 人ずつ明示指定**した会員（会員ランクを条件にしない）。
+  //
+  // ⚠️ **2026-08-25 MK 確定の仕様変更**。三連複の保有と Premium Plus の販売資格は
+  //    **別概念**であり、「三連複を持っていない」「有料 Premium ではない」ことを
+  //    理由に塞がない。旧三連複会員を Light 永久無料へ正規化した会員も、
+  //    管理者が明示指定すれば販売対象にできる。
+  //
+  //    変更前は Free / Light / 期限切れ Premium は明示指定しても route が開かなかった。
+  //
+  // ⚠️ 開くのは `UpsellTarget=plus`（管理者が 1 人ずつ選ぶ）**だけ**。
+  //    `PremiumPlusReleaseOverride=phase4` だけでは開かない（adminPlusTarget は
+  //    override でも立つため、ここでは使わない）。指定が無い会員の扱いは従来どおり。
+  // ⚠️ blocked / 会員単位の販売停止 / 受付時間は従来どおり後段で効く。
+  if (adminPlusAuthorized === true) {
     return { route: PP_ROUTE.PREMIUM_ADMIN, daysSincePremium: days };
   }
   if (premiumActive === true && days !== null && days >= PREMIUM_30D_DAYS) {
@@ -658,6 +682,8 @@ export function resolvePremiumPlusRelease(input) {
     premiumPaidAtMs,
     nowMs,
     adminPlusTarget: adminPlusTarget === true,
+    // 会員ランクを条件にしない ROUTE C-2 は**明示指定のときだけ**（2026-08-25）
+    adminPlusAuthorized: adminPlusAuthorized === true,
   });
   if (route === PP_ROUTE.NONE) return denied({ daysSincePremium });
 

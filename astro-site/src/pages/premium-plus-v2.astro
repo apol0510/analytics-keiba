@@ -1743,9 +1743,10 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
           options: {
             title: 'お振込みのご報告ありがとうございます',
             message: `${formData.productName} のお申し込みを受け付けました。`,
+            // ⚠️ Premium Plus は**単品購入**。会員ステータスは変わらないので、
+            //    「マイページで状況を確認できる」とは言わない（2026-08-26 MK 指摘）。
             subMessage: '確認メールをお送りしました。入金の確認が取れ次第、'
-              + '買い目の配信についてメールでご案内します。'
-              + 'お申し込みの状況はマイページからご確認いただけます。',
+              + '買い目の配信についてメールでご案内します。',
           },
           history: {
             type: 'bank-transfer',
