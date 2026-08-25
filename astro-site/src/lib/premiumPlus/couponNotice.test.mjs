@@ -135,7 +135,18 @@ test('マイページのお知らせは最上部・読める配色にする', ()
   const css = page.slice(page.indexOf('<style is:global>'), page.indexOf('</style>'));
   assert.doesNotMatch(css, /background:\s*rgba\(239, 68, 68/, '暗い赤のままで読みにくい');
   assert.doesNotMatch(css, /linear-gradient\(135deg, #fde68a/, '明るい黄色の地のままで浮いている');
-  assert.match(css, /border-left: 4px solid #f59e0b/, 'お知らせの色帯が無い');
+  // ⚠️ 2026-08-25 MK 指示で**左の色帯を削除**。戻さないこと。
+  //    カード本体の枠線・角丸・背景・余白・文字は変更していない。
+  assert.doesNotMatch(css, /\.notice-card \{ border-left/, 'お知らせの左の色帯が戻っている');
+  assert.doesNotMatch(css, /\.campaign-card \{ border-left/, 'ご優待の左の色帯が戻っている');
+  // 左側の疑似要素で同じ見た目を作らない
+  assert.doesNotMatch(css, /\.notice-card::(before|after)/, '疑似要素で色帯を作っている');
+  assert.doesNotMatch(css, /\.campaign-card::(before|after)/, '疑似要素で色帯を作っている');
+  // カード本体の見た目は維持する
+  assert.match(css, /border-radius: 14px/, 'カードの角丸が消えている');
+  assert.match(css, /border: 1px solid rgba\(148, 163, 184, \.22\)/, 'カードの枠線が消えている');
+  assert.match(css, /background: #101a2f/, 'カードの背景が消えている');
+  assert.match(css, /padding: 1\.15rem 1\.25rem/, 'カードの余白が変わっている');
   assert.match(css, /color: #fbbf24/, 'リンクが暗い地に沈む色のまま');
 });
 
