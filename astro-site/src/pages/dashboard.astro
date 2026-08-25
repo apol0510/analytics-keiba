@@ -445,6 +445,15 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                 <div class="submission-history-header">
                     <h2>📜 申請・送信履歴</h2>
                     <p class="submission-history-subtitle">このブラウザから送信した申請・お問い合わせの記録です（最大50件・端末ごとに保存されます）</p>
+                    <!--
+                      ⚠️ 2026-08-25 MK 指摘「確認待ちのままは印象が悪い」。
+                         この履歴は**この端末に保存された送信の記録**で、サーバーの処理状況は
+                         入ってこない（入金確認は Airtable での手作業なので、1 件ごとの
+                         状態を持つ台帳が無い）。更新されない「確認待ち」を出し続けると、
+                         いつまでも処理されていないように見える。
+                         → 記録として正しい「送信しました」だけを出し、**本当の状況の在り処**を示す。
+                    -->
+                    <p class="submission-history-hint">お申し込みの状況（入金の確認・反映）は、上の<strong>会員ステータス</strong>でご確認いただけます。</p>
                 </div>
                 <div id="submission-history-list" class="submission-history-list">
                     <!-- JS で描画 -->
@@ -1948,6 +1957,36 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
          JS で生成した要素には**一切適用されない**（premium-plus-eligibility で本番事故あり）。
          そのため `is:global` で書く。クラス名は他と衝突しない専用のものだけ。 -->
     <style is:global>
+      /*
+       * 📜 申請・送信履歴。
+       * ⚠️ **中身は JS が作る**（`listEl.innerHTML = ...`）。Astro の scoped スタイルは
+       *    生成された要素に付かないため、ここが scoped にあると**一切効かない**。
+       *    実際、バッジも枠も効いておらず、素のテキストが縦に並んでいた
+       *    （2026-08-25 の報告画面がまさにその状態）。同じ罠をこのリポジトリで何度も踏んでいる。
+       */
+      #submission-history-section .submission-history-list { display: flex; flex-direction: column; gap: 0.6rem; max-height: 480px; overflow-y: auto; }
+      #submission-history-section .submission-history-item { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 0.8rem; padding: 0.8rem 1rem; background: rgba(30, 41, 59, 0.6); border: 1px solid rgba(148, 163, 184, 0.15); border-radius: 10px; }
+      #submission-history-section .submission-history-badge { font-size: 0.75rem; font-weight: 700; padding: 0.25rem 0.6rem; border-radius: 999px; white-space: nowrap; }
+      #submission-history-section .submission-history-badge.type-bank-transfer { background: rgba(59, 130, 246, 0.2); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.4); }
+      #submission-history-section .submission-history-badge.type-contact { background: rgba(139, 92, 246, 0.2); color: #c4b5fd; border: 1px solid rgba(139, 92, 246, 0.4); }
+      #submission-history-section .submission-history-badge.type-premium-plus-contact { background: rgba(139, 92, 246, 0.2); color: #c4b5fd; border: 1px solid rgba(139, 92, 246, 0.4); }
+      #submission-history-section .submission-history-badge.type-magic-link { background: rgba(16, 185, 129, 0.2); color: #6ee7b7; border: 1px solid rgba(16, 185, 129, 0.4); }
+      #submission-history-section .submission-history-badge.type-withdrawal { background: rgba(239, 68, 68, 0.2); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.4); }
+      #submission-history-section .submission-history-badge.type-submission { background: rgba(148, 163, 184, 0.2); color: #cbd5e1; border: 1px solid rgba(148, 163, 184, 0.4); }
+      #submission-history-section .submission-history-main { display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; }
+      #submission-history-section .submission-history-label { color: #e2e8f0; font-weight: 600; font-size: 0.95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      #submission-history-section .submission-history-meta { color: #94a3b8; font-size: 0.8rem; }
+      #submission-history-section .submission-history-status { font-size: 0.8rem; font-weight: 600; padding: 0.2rem 0.55rem; border-radius: 6px; white-space: nowrap; }
+      #submission-history-section .submission-history-status.status-pending { background: rgba(148, 163, 184, 0.18); color: #cbd5e1; }
+      #submission-history-section .submission-history-status.status-sent { background: rgba(59, 130, 246, 0.18); color: #93c5fd; }
+      #submission-history-section .submission-history-status.status-completed { background: rgba(16, 185, 129, 0.18); color: #6ee7b7; }
+      #submission-history-section .submission-history-status.status-failed { background: rgba(239, 68, 68, 0.18); color: #fca5a5; }
+      @media (max-width: 600px) {
+        #submission-history-section .submission-history-item { grid-template-columns: 1fr; gap: 0.5rem; }
+        #submission-history-section .submission-history-status { justify-self: start; }
+      }
+      #submission-history-section .submission-history-empty { text-align: center; color: #94a3b8; padding: 1.2rem; font-size: 0.9rem; }
+
       /* 共通の地。サイトの暗いカードに合わせる（左の色帯は 2026-08-25 に削除）*/
       #notifications .notice-card,
       #campaign-section .campaign-card {
@@ -4749,71 +4788,14 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
             color: #94a3b8;
             font-size: 0.85rem;
         }
-        .submission-history-list {
-            display: flex;
-            flex-direction: column;
-            gap: 0.6rem;
-            max-height: 480px;
-            overflow-y: auto;
-        }
-        .submission-history-item {
-            display: grid;
-            grid-template-columns: auto 1fr auto;
-            align-items: center;
-            gap: 0.8rem;
-            padding: 0.8rem 1rem;
-            background: rgba(30, 41, 59, 0.6);
-            border: 1px solid rgba(148, 163, 184, 0.15);
-            border-radius: 10px;
-        }
-        .submission-history-badge {
-            font-size: 0.75rem;
-            font-weight: 700;
-            padding: 0.25rem 0.6rem;
-            border-radius: 999px;
-            white-space: nowrap;
-        }
-        .submission-history-badge.type-bank-transfer { background: rgba(59, 130, 246, 0.2); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.4); }
-        .submission-history-badge.type-contact { background: rgba(139, 92, 246, 0.2); color: #c4b5fd; border: 1px solid rgba(139, 92, 246, 0.4); }
-        .submission-history-badge.type-premium-plus-contact { background: rgba(139, 92, 246, 0.2); color: #c4b5fd; border: 1px solid rgba(139, 92, 246, 0.4); }
-        .submission-history-badge.type-magic-link { background: rgba(16, 185, 129, 0.2); color: #6ee7b7; border: 1px solid rgba(16, 185, 129, 0.4); }
-        .submission-history-badge.type-withdrawal { background: rgba(239, 68, 68, 0.2); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.4); }
-        .submission-history-badge.type-submission { background: rgba(148, 163, 184, 0.2); color: #cbd5e1; border: 1px solid rgba(148, 163, 184, 0.4); }
-        .submission-history-main {
-            display: flex;
-            flex-direction: column;
-            gap: 0.2rem;
-            min-width: 0;
-        }
-        .submission-history-label {
-            color: #e2e8f0;
-            font-weight: 600;
-            font-size: 0.95rem;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-        .submission-history-meta {
+        .submission-history-hint {
+            margin: .35rem 0 0;
+            font-size: 0.85rem;
             color: #94a3b8;
-            font-size: 0.8rem;
+            line-height: 1.6;
         }
-        .submission-history-status {
-            font-size: 0.8rem;
-            font-weight: 600;
-            padding: 0.2rem 0.55rem;
-            border-radius: 6px;
-            white-space: nowrap;
-        }
-        .submission-history-status.status-pending { background: rgba(245, 158, 11, 0.18); color: #fbbf24; }
-        .submission-history-status.status-sent { background: rgba(59, 130, 246, 0.18); color: #93c5fd; }
-        .submission-history-status.status-completed { background: rgba(16, 185, 129, 0.18); color: #6ee7b7; }
-        .submission-history-status.status-failed { background: rgba(239, 68, 68, 0.18); color: #fca5a5; }
-        .submission-history-empty {
-            text-align: center;
-            color: #94a3b8;
-            padding: 1.2rem;
-            font-size: 0.9rem;
-        }
+        .submission-history-hint strong { color: #cbd5e1; font-weight: 700; }
+        /* ⚠️ 橙は「処理が止まっている」ように読める。送信できた記録なので中立の色にする */
         .submission-history-actions {
             display: flex;
             justify-content: flex-end;
@@ -4829,13 +4811,6 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
             font-size: 0.85rem;
         }
         .submission-history-clear:hover { background: rgba(148, 163, 184, 0.1); }
-        @media (max-width: 600px) {
-            .submission-history-item {
-                grid-template-columns: 1fr;
-                gap: 0.5rem;
-            }
-            .submission-history-status { justify-self: start; }
-        }
     </style>
 
     
@@ -4851,11 +4826,16 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                 'withdrawal': '退会申請',
                 'submission': '送信'
             };
+            // ⚠️ ここに出せるのは**送信という出来事**だけ。
+            //    この履歴は端末の localStorage にあり、サーバーの処理状況は入ってこない。
+            //    「確認待ち」は送った瞬間だけ正しく、あとは**永久に古いまま**になる
+            //    （2026-08-25 MK 指摘: 入金済みでも「確認待ち」のままで印象が悪い）。
+            //    そこで、あとから見ても嘘にならない言葉だけを使う。
             var STATUS_LABELS = {
-                'pending': '確認待ち',
-                'sent': '送信済み',
+                'pending': '送信しました',
+                'sent': '送信しました',
                 'completed': '完了',
-                'failed': '失敗'
+                'failed': '送信できませんでした'
             };
 
             function escapeHtml(str) {
