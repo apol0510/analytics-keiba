@@ -33,6 +33,10 @@
     border-radius: 14px; color: #e2e8f0;
   }
   .ak-campaign-banner[hidden] { display: none !important; }
+  /* ⚠️ `.ak-cb-cta` は `display: inline-flex` を持つ**作者スタイル**なので、
+     ブラウザ既定の `[hidden]` に勝ってしまう。**文字の無いボタンが出た**
+     （2026-08-25 本番）。同じ罠をこのセッションで既に 1 度踏んでいる。 */
+  .ak-cb-cta[hidden] { display: none !important; }
   .ak-cb-main { display: flex; align-items: center; gap: .7rem; flex: 1 1 auto; min-width: 0; }
   .ak-cb-icon { font-size: 1.3rem; }
   .ak-cb-text { display: flex; flex-direction: column; gap: .15rem; min-width: 0; }
@@ -53,35 +57,46 @@
   }
 </style>
 
-<script is:inline>
+<script>
+  // ⚠️ 出す / 出さないの判定は**純粋関数**（`campaignBannerView.js`）に置く。
+  //    画面のスクリプトの中だけに条件を書くとテストで触れず、
+  //    「同じページへのリンク」「文字の無いボタン」が本番へ出た（2026-08-25）。
+  import { resolveBannerView } from '../lib/promotions/campaignBannerView.js';
+
   (function () {
-    var box = document.getElementById('akCampaignBanner');
+    const box = document.getElementById('akCampaignBanner');
     if (!box) return;
 
     function declaredPlan() {
       try {
-        var raw = localStorage.getItem('user-plan');
+        const raw = localStorage.getItem('user-plan');
         if (!raw) return '';
-        var o = JSON.parse(raw);
+        const o = JSON.parse(raw);
         return String((o && o.plan) || '');
       } catch (e) { return ''; }
     }
 
     fetch('/api/campaign.json?plan=' + encodeURIComponent(declaredPlan()), { credentials: 'same-origin' })
-      .then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (j) {
-        var b = j && j.banner;
-        if (!b || b.show !== true) return;   // 出すかどうかはサーバーが決める
-        document.getElementById('akCbHeadline').textContent = b.headline || '';
-        document.getElementById('akCbSub').textContent = b.sub || '';
-        var cta = document.getElementById('akCbCta');
-        if (b.ctaHref && b.ctaLabel) {
-          cta.href = b.ctaHref;
-          cta.textContent = b.ctaLabel;
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        const view = resolveBannerView({
+          banner: j && j.banner,
+          currentPath: location.pathname,
+        });
+        if (!view.show) return;
+        document.getElementById('akCbHeadline').textContent = view.headline;
+        document.getElementById('akCbSub').textContent = view.sub;
+        const cta = document.getElementById('akCbCta');
+        if (view.cta.show) {
+          cta.href = view.cta.href;
+          cta.textContent = view.cta.label;
           cta.hidden = false;
+        } else {
+          // ⚠️ 行き先が無い / 同じページ → **ボタンごと出さない**
+          cta.hidden = true;
         }
         box.hidden = false;
       })
-      .catch(function () {});   // 取れなければ何も出さない
+      .catch(() => {});   // 取れなければ何も出さない
   })();
 </script>
