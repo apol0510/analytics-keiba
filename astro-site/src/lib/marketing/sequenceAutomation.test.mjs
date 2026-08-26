@@ -64,9 +64,21 @@ const progressOf = (selected, deliveries) => buildSequenceProgress({
 });
 
 // ── ゲート ──────────────────────────────────────────────────
-test('4 つ揃って初めて開く', () => {
+// ⚠️ **2026-08-26 MK 仕様変更**: 日付 ARM は必須ではなくなった（完全自動運用）。
+//    人が毎日 env を書き換えないと動かない運用は続かないため。
+//    止める手段（scheduler / dispatch を外す・期間外）は減らしていない。
+test('【要件】日付 ARM が無くても自動で動く（毎日の手動更新が要らない）', () => {
+  const env = { ...OPEN_ENV };
+  delete env[SEQUENCE_ENV.ARMED];
+  const g = readSequenceGates(env, NOW);
+  assert.equal(g.allOpen, true, '日付 ARM の手動更新をまだ要求している');
+  assert.equal(g.armMode, 'always');
+  assert.deepEqual(g.missing, []);
+});
+
+test('scheduler / enqueue / dispatch が欠ければ開かない（止める手段は残す）', () => {
   assert.equal(readSequenceGates(OPEN_ENV, NOW).allOpen, true);
-  for (const key of Object.values(SEQUENCE_ENV)) {
+  for (const key of [SEQUENCE_ENV.SCHEDULER, SEQUENCE_ENV.ENQUEUE, SEQUENCE_ENV.DISPATCH]) {
     const env = { ...OPEN_ENV };
     delete env[key];
     const g = readSequenceGates(env, NOW);
@@ -75,9 +87,13 @@ test('4 つ揃って初めて開く', () => {
   }
 });
 
-test('武装は当日の JST 日付のみ有効（置きっぱなしは翌日閉じる）', () => {
+test('日付を入れれば従来どおり その日だけ動く（一日限定運用も残す）', () => {
+  const today = { ...OPEN_ENV, [SEQUENCE_ENV.ARMED]: jstDateString(NOW) };
+  assert.equal(readSequenceGates(today, NOW).allOpen, true);
+  assert.equal(readSequenceGates(today, NOW).armMode, 'dated');
   const stale = { ...OPEN_ENV, [SEQUENCE_ENV.ARMED]: jstDateString(NOW - DAY) };
-  assert.equal(readSequenceGates(stale, NOW).allOpen, false);
+  assert.equal(readSequenceGates(stale, NOW).allOpen, false, '前日の指定で動いてしまう');
+  assert.ok(readSequenceGates(stale, NOW).missing.includes(SEQUENCE_ENV.ARMED));
 });
 
 test('表示用の状態に env の値を出さない', () => {
@@ -88,7 +104,10 @@ test('表示用の状態に env の値を出さない', () => {
   assert.ok(!json.includes(FROM));
   const closed = readSequenceAutoState({}, NOW);
   assert.equal(closed.enabled, false);
-  assert.ok(closed.missing.length === 4, '不足している env 名だけを返す');
+  // ARM は未設定なら不足に数えない（完全自動運用が既定）
+  assert.deepEqual(closed.missing.sort(), [
+    SEQUENCE_ENV.DISPATCH, SEQUENCE_ENV.ENQUEUE, SEQUENCE_ENV.SCHEDULER,
+  ].sort(), '不足している env 名だけを返す');
 });
 
 // ── 計画 ────────────────────────────────────────────────────
@@ -134,7 +153,7 @@ test('【要件】上限を超えたら上限まで送り、残りは次の tick
   assert.equal(plan.recordIds.length, 2);
   assert.equal(plan.carriedOver, 1, '残り人数を返していない（黙って切り捨てている）');
   assert.equal(plan.dueTotal, 3, '送るべき総数を返していない');
-  assert.equal(MAX_RECIPIENTS_PER_TICK, 200);
+  assert.equal(MAX_RECIPIENTS_PER_TICK, 500, '1 tick の上限が想定と違う');
 });
 
 test('【要件】15,000 名規模でも tick を重ねれば完走する（1 人も取り残さない）', () => {

@@ -24,6 +24,12 @@ import {
   createEngagementBlocklistStore, emptyBlocklist, BLOCKLIST_SKIP, DEFAULT_MAX_AGE_MS,
 } from './engagementBlocklistStore.js';
 import { classifyEngagement, isBlockedByEngagement, DEFAULT_THRESHOLDS, ENGAGEMENT } from './engagementPolicy.js';
+import { buildEngagementView } from './engagementGuard.js';
+import { hashEmailForSignal } from './engagementSignalStore.js';
+import {
+  readSequenceGates, readSequenceAutoState, resolveMaxRecipientsPerTick,
+  MAX_RECIPIENTS_PER_TICK, SEQUENCE_ENV,
+} from './sequenceAutomation.js';
 
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
 const DISPATCH = read('../../../netlify/functions/marketing-campaign-dispatch.js');
@@ -160,4 +166,120 @@ test('【要件】取引メールの経路はこの一覧を参照しない', ()
     assert.equal(src.includes('engagementBlocklistStore'), false, `${fn} が配信除外を参照している`);
     assert.equal(src.includes('engagementGuard'), false, `${fn} が反応なし判定を参照している`);
   }
+});
+
+
+// ── 6. 自動除外は取り込みコホートだけ（2026-08-26 MK 確定）──────────
+const NOW6 = Date.parse('2026-08-26T00:00:00Z');
+const DAY6 = 24 * 60 * 60 * 1000;
+
+/** 開封の記録がある状態（guard が適用できる材料が揃っている） */
+function signalsFixture() {
+  return {
+    available: true,
+    // 「開封が 1 件も無い」だと guard は適用されない（記録が届いている証拠が無いため）
+    openByHash: new Map([[hashEmailForSignal('opener@example.invalid'), NOW6 - DAY6]]),
+    clickByHash: new Map(),
+    meta: { startedAtMs: NOW6 - 90 * DAY6, firstOpenAtMs: NOW6 - 89 * DAY6, lastEventAtMs: NOW6 - 3600000 },
+  };
+}
+
+function viewFor(list) {
+  // 10 通 delivered / 開封 0 を作る
+  const deliveries = [];
+  for (const c of list) {
+    for (let i = 0; i < 10; i += 1) {
+      deliveries.push({ fields: {
+        EmailType: 'campaign', RecipientEmail: c.fields.Email, Status: 'sent',
+        SentAt: new Date(NOW6 - (i + 1) * DAY6).toISOString(),
+      } });
+    }
+  }
+  return buildEngagementView({
+    list, deliveries, nowMs: NOW6, env: {},
+    signals: signalsFixture(),
+    measurement: { open: 'enabled' },
+  });
+}
+
+test('【要件】自動除外は CSV 取り込み由来だけに効く（既存顧客には効かない）', () => {
+  const imported = { recordId: 'r1', fields: { Email: 'imp@x.com', Source: 'customer-import:imp-1' } };
+  const existing = { recordId: 'r2', fields: { Email: 'old@x.com', Source: 'admin' } };
+  const unknown = { recordId: 'r3', fields: { Email: 'unk@x.com' } };
+
+  const view = viewFor([imported, existing, unknown]);
+  assert.equal(view.applied, true, '前提: 判定が適用できている');
+  assert.equal(view.blockedEmails.has('imp@x.com'), true, '取り込み由来が除外されない');
+  assert.equal(view.blockedEmails.has('old@x.com'), false, '既存顧客まで除外している');
+  assert.equal(view.blockedEmails.has('unk@x.com'), false, '判断材料が無い会員まで除外している');
+  assert.deepEqual(view.suppressionCohorts, [COHORT.IMPORTED]);
+});
+
+test('既存顧客まで広げたいときは明示的に渡さないと広がらない', () => {
+  const list = [
+    { recordId: 'r1', fields: { Email: 'imp@x.com', Source: 'customer-import:imp-1' } },
+    { recordId: 'r2', fields: { Email: 'old@x.com', Source: 'admin' } },
+  ];
+  const deliveries = [];
+  for (const c of list) {
+    for (let i = 0; i < 10; i += 1) {
+      deliveries.push({ fields: {
+        EmailType: 'campaign', RecipientEmail: c.fields.Email, Status: 'sent',
+        SentAt: new Date(NOW6 - (i + 1) * DAY6).toISOString(),
+      } });
+    }
+  }
+  const both = buildEngagementView({
+    list, deliveries, nowMs: NOW6, env: {},
+    signals: signalsFixture(),
+    measurement: { open: 'enabled' },
+    suppressionCohorts: [COHORT.IMPORTED, COHORT.EXISTING],
+  });
+  assert.equal(both.blockedEmails.has('old@x.com'), true);
+});
+
+// ── 7. 完全自動運用（MK の毎日の操作を要求しない）────────────────
+const OPEN_ENV_7 = {
+  [SEQUENCE_ENV.SCHEDULER]: 'true',
+  [SEQUENCE_ENV.ENQUEUE]: 'true',
+  [SEQUENCE_ENV.DISPATCH]: 'true',
+};
+
+test('【要件】日付 ARM を毎日書き換えなくても自動で動く', () => {
+  const g = readSequenceGates(OPEN_ENV_7, NOW6);
+  assert.equal(g.allOpen, true, 'まだ日付 ARM を要求している');
+  assert.equal(g.armMode, 'always');
+  assert.deepEqual(g.missing, []);
+  assert.equal(readSequenceAutoState(OPEN_ENV_7, NOW6).enabled, true);
+});
+
+test('【要件】止める手段は残っている（kill switch）', () => {
+  for (const key of [SEQUENCE_ENV.SCHEDULER, SEQUENCE_ENV.DISPATCH, SEQUENCE_ENV.ENQUEUE]) {
+    const env = { ...OPEN_ENV_7 };
+    delete env[key];
+    assert.equal(readSequenceGates(env, NOW6).allOpen, false, `${key} を外しても止まらない`);
+  }
+});
+
+test('【要件】1 tick の上限が 15,000 名を同じ日に配り切れる大きさ', () => {
+  assert.equal(MAX_RECIPIENTS_PER_TICK, 500);
+  // 10 分間隔 = 1 日 144 tick。500 × 144 = 72,000 通/日 ＞ 15,000
+  const perDay = MAX_RECIPIENTS_PER_TICK * 144;
+  assert.ok(perDay >= 15000, `1 日 ${perDay} 通では 15,000 名を配り切れない`);
+  // 15,000 名なら 30 tick = 5 時間で完走する
+  assert.ok(Math.ceil(15000 / MAX_RECIPIENTS_PER_TICK) * 10 <= 24 * 60, '同じ日に終わらない');
+});
+
+test('1 tick の上限は env で下げられる（壊れた値は既定へ）', () => {
+  assert.equal(resolveMaxRecipientsPerTick({ MARKETING_SEQUENCE_MAX_PER_TICK: '100' }), 100);
+  for (const bad of ['0', '-1', 'abc', '', undefined, '99999']) {
+    assert.equal(resolveMaxRecipientsPerTick({ MARKETING_SEQUENCE_MAX_PER_TICK: bad }),
+      MAX_RECIPIENTS_PER_TICK, String(bad));
+  }
+});
+
+test('【配線】cron が 10 分間隔で動く（1 日 1 回では配り切れない）', () => {
+  const cron = read('../../../netlify/functions/cron-campaign-sequence.js');
+  assert.match(cron, /schedule: '\*\/10 \* \* \* \*'/, 'cron が 10 分間隔になっていない');
+  assert.match(cron, /resolveMaxRecipientsPerTick/, '1 tick の上限を env から読んでいない');
 });

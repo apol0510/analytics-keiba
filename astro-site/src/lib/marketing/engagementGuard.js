@@ -30,6 +30,7 @@ import {
 } from './engagementPolicy.js';
 import { buildEngagementStats } from './engagementStats.js';
 import { hashEmailForSignal } from './engagementSignalStore.js';
+import { resolveCohort, COHORT } from './importCohort.js';
 
 /** 除外を適用しない理由（コード）。画面・ログはこの文字列を使う */
 export const GUARD_SKIP = Object.freeze({
@@ -173,6 +174,11 @@ function emailsOf(list) {
  */
 export function buildEngagementView({
   list, deliveries, signals, measurement, nowMs, env = process.env,
+  /**
+   * 自動除外を適用するコホート。既定は **取り込み由来だけ**（2026-08-26 MK 確定）。
+   * 既存顧客まで広げるときは明示的に渡す（既定では広がらない）。
+   */
+  suppressionCohorts = [COHORT.IMPORTED],
 } = {}) {
   const thresholds = resolveThresholds(env);
   const coverage = resolveEngagementCoverage({ signals, measurement, nowMs, env });
@@ -187,9 +193,29 @@ export function buildEngagementView({
   });
 
   const counts = summarizeEngagement([...statsByEmail.values()], { thresholds });
+
+  // ── 除外を適用するコホート（2026-08-26 MK 確定）────────────────────
+  //
+  // **自動除外は CSV 取り込み由来（`Source` = `customer-import:`）だけに適用する。**
+  // もとからの Airtable 顧客には適用しない。取り込み分は購入も接点も無いところから
+  // 始まるため「開封 0」がそのまま無反応を意味するが、既存顧客は購入・問い合わせなど
+  // メール外の接点を持つので、**同じ数字でも意味が違う**。
+  //
+  // ⚠️ 既存顧客を自動で切らない。切る必要が出たら**そのとき明示的に決める**。
+  // ⚠️ 判断材料が無い会員は `existing` 扱い（`importCohort.js`）＝除外しない側へ倒す。
+  const cohorts = new Set(Array.isArray(suppressionCohorts) && suppressionCohorts.length
+    ? suppressionCohorts : [COHORT.IMPORTED]);
+  const cohortByEmail = new Map();
+  for (const c of Array.isArray(list) ? list : []) {
+    const f = (c && c.fields) || {};
+    const email = String(f.Email ?? '').trim().toLowerCase();
+    if (email) cohortByEmail.set(email, resolveCohort(f));
+  }
+
   const blockedEmails = new Set();
   if (coverage.usable) {
     for (const [email, stats] of statsByEmail) {
+      if (!cohorts.has(cohortByEmail.get(email) || COHORT.EXISTING)) continue;
       const { state } = classifyEngagement(stats, { thresholds });
       if (isBlockedByEngagement(state)) blockedEmails.add(email);
     }
@@ -208,6 +234,8 @@ export function buildEngagementView({
       openRecorded: coverage.openRecorded,
     },
     counts,
+    /** 自動除外を適用したコホート（画面・ログ用） */
+    suppressionCohorts: [...cohorts],
     blockedEmails,
     /** そのまま `buildCampaignPlan` へ渡す（適用不可なら null＝素通り） */
     engagementByEmail: coverage.usable ? statsByEmail : null,

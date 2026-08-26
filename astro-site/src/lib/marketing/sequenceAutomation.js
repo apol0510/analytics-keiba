@@ -29,7 +29,22 @@ import { jstDateString } from './campaignSend.js';
 import { selectNextDueStep, SEQ_STATUS } from './sequenceProgress.js';
 
 /** 1 回の実行で進める最大人数（暴走防止。超えたら**切り捨てずに中止**） */
-export const MAX_RECIPIENTS_PER_TICK = 200;
+/**
+ * 1 tick で扱う上限。
+ *
+ * ⚠️ **200 → 500 へ引き上げ（2026-08-26 MK 確定）。**
+ *    cron を 10 分間隔にしたので 500 × 6 回/時 = **3,000 通/時**。
+ *    15,000 名でも同じ日のうちに配り切れる（従来は 1 日 1 回 200 通で 75 日かかった）。
+ * ⚠️ 1 回の実行で書き切れる量に収める必要がある（Function の実行時間）。
+ *    増やしすぎると途中で落ちるので、**env で下げられる**ようにしてある。
+ */
+export const MAX_RECIPIENTS_PER_TICK = 500;
+
+/** env から 1 tick の上限を読む（壊れた値は既定へ。0 や負数で止めない） */
+export function resolveMaxRecipientsPerTick(env = process.env) {
+  const n = Number(env?.MARKETING_SEQUENCE_MAX_PER_TICK);
+  return Number.isInteger(n) && n > 0 && n <= 5000 ? n : MAX_RECIPIENTS_PER_TICK;
+}
 
 export const SEQUENCE_ENV = Object.freeze({
   SCHEDULER: 'MARKETING_SEQUENCE_SCHEDULER_ENABLED',
@@ -50,13 +65,30 @@ export const TICK_ABORT = Object.freeze({
  * ゲートの状態。**値は返さない**（env の中身をログにも応答にも出さない）。
  * @returns {{scheduler, armed, enqueue, dispatch, allOpen, today, missing: string[]}}
  */
+/**
+ * ゲートを読む。
+ *
+ * ── 日付 ARM は必須ではない（2026-08-26 MK 確定）────────────────────
+ * 以前は `MARKETING_SEQUENCE_ARMED=<今日の JST 日付>` を**毎日書き換えないと**
+ * 自動配信が動かなかった。人が毎日 env を触る運用は続かないので必須から外す。
+ *
+ *   - 未設定 … 武装済みとして扱う（**完全自動運用**）
+ *   - 日付が入っている … その日だけ動く（**従来どおりの一日限定運用**も残す）
+ *   - 壊れた値 … 動かさない（推測で動かさない）
+ *
+ * ⚠️ **止める手段は減らしていない**。`MARKETING_SEQUENCE_SCHEDULER_ENABLED` を
+ *    外せば即停止し、`MARKETING_CAMPAIGN_DISPATCH_ENABLED` を外せば実送信が止まる。
+ *    キャンペーン期間外は `getCampaign()` が null を返して送れない（fail closed）。
+ */
 export function readSequenceGates(env, nowMs) {
   const e = env || {};
   const scheduler = e[SEQUENCE_ENV.SCHEDULER] === 'true';
   const enqueue = e[SEQUENCE_ENV.ENQUEUE] === 'true';
   const dispatch = e[SEQUENCE_ENV.DISPATCH] === 'true';
   const today = jstDateString(Number.isFinite(nowMs) ? nowMs : 0);
-  const armed = String(e[SEQUENCE_ENV.ARMED] || '').trim() === today;
+  const armRaw = String(e[SEQUENCE_ENV.ARMED] ?? '').trim();
+  // 未設定 = 常時武装（完全自動）。値があるときだけ「その日か」を見る。
+  const armed = armRaw === '' ? true : armRaw === today;
   const missing = [
     !scheduler ? SEQUENCE_ENV.SCHEDULER : null,
     !armed ? SEQUENCE_ENV.ARMED : null,
@@ -65,6 +97,8 @@ export function readSequenceGates(env, nowMs) {
   ].filter(Boolean);
   return {
     scheduler, armed, enqueue, dispatch, today,
+    /** 日付指定で運用しているか（未設定なら常時自動） */
+    armMode: armRaw === '' ? 'always' : 'dated',
     allOpen: scheduler && armed && enqueue && dispatch,
     missing,
   };

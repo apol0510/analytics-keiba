@@ -38,7 +38,7 @@ import {
 import { buildSequenceProgress } from '../../src/lib/marketing/sequenceProgress.js';
 import {
   readSequenceGates, planSequenceTick, summarizeSequenceTick,
-  MAX_RECIPIENTS_PER_TICK, TICK_ABORT,
+  MAX_RECIPIENTS_PER_TICK, resolveMaxRecipientsPerTick, TICK_ABORT,
 } from '../../src/lib/marketing/sequenceAutomation.js';
 import { checkBenefitForSend } from '../../src/lib/marketing/campaignBenefit.js';
 import { resolveCustomerMarketing } from '../../src/lib/marketing/customerMarketingAudience.js';
@@ -197,7 +197,7 @@ export async function runSequenceTick({ env = process.env, now = Date.now(), cam
     providerSuppressed: provider.emails,
     softBounced: new Set(),
   });
-  const plan = planSequenceTick({ progress, gates, maxRecipients: MAX_RECIPIENTS_PER_TICK });
+  const plan = planSequenceTick({ progress, gates, maxRecipients: resolveMaxRecipientsPerTick(process.env) });
   if (!plan.ok) {
     const body = { ok: false, ...plan, sideEffects: 'none' };
     log(summarizeSequenceTick({ campaignId: base.campaignId, plan }));
@@ -304,7 +304,14 @@ export default async function handler() {
   }
 }
 
-/** JST 11:00 に 1 回。ゲートが閉じていれば即終了（副作用ゼロ） */
+/**
+ * **10 分ごと**。ゲートが閉じていれば即終了（副作用ゼロ）。
+ *
+ * ⚠️ **2026-08-26 MK 確定で 1 日 1 回から変更**。
+ *    1 日 1 回・200 通では 15,000 名に 75 日かかり、実質動かなかった。
+ *    10 分間隔 × 1 tick 500 通 = **3,000 通/時**で、同じ日のうちに配り切れる。
+ * ⚠️ 送る相手が居なければ 1 件も書かずに終わる（`no_due`）。空振りは無害。
+ */
 export const config = {
-  schedule: '0 2 * * *',
+  schedule: '*/10 * * * *',
 };

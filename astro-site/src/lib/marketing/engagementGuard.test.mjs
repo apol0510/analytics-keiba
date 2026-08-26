@@ -40,7 +40,17 @@ function signals(over = {}) {
   };
 }
 
-const customer = (email, fields = {}) => ({ recordId: `rec${email}`, fields: { Email: email, ...fields } });
+// ⚠️ **2026-08-26 MK 仕様変更**: 自動除外は **CSV 取り込み由来だけ**に適用する。
+//    既定の fixture を取り込み由来にして、従来の境界テストの意図（閾値の検証）を保つ。
+//    既存顧客が除外されないことは専用テストで固定する。
+const customer = (email, fields = {}) => ({
+  recordId: `rec${email}`,
+  fields: { Email: email, Source: 'customer-import:imp-test', ...fields },
+});
+/** もとからの Airtable 顧客（取り込み由来ではない） */
+const existingCustomer = (email, fields = {}) => ({
+  recordId: `rec${email}`, fields: { Email: email, ...fields },
+});
 
 /** CampaignDeliveries の 1 行（既定は記録開始後） */
 const delivery = (email, atMs = NOW - DAY, status = 'sent') => ({
