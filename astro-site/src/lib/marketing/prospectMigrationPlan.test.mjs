@@ -7,13 +7,19 @@
  *   2. 顧客になった人・反応した人・配信を止めた人は**移さない**
  *   3. 母数 = 判定の合計（取りこぼしを検知する）
  *   4. 移す行は**巻き戻せる**（Customers へ戻すのに要る項目がそろっている）
+ *   5. **運営側が付けた販売資格・無料付与を「本人の反応」と同一視しない**（2026-08-27 MK 確定）
+ *   6. 配信停止・バウンス・退会も**恒久保持を前提にしない**（抑止台帳へ hash で引き継ぐ）
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 
 import {
-  decideForRecord, buildMigrationPlan, hasCustomerEvidence, isSuppressed,
+  decideForRecord, buildMigrationPlan, isSuppressed,
+  hasSelfConversion, hasOperatorAssignment, hasAmbiguousSignal, isKeepDecision,
   assertRollbackComplete, MIGRATION_DECISION, ROLLBACK_REQUIRED_FIELDS,
+  buildSuppressionHandoff, assertHandoffComplete, canPurgeRawEmails,
+  resolveSuppressionReason, HANDOFF_REASON,
 } from './prospectMigrationPlan.js';
 
 const imported = (over = {}) => ({
@@ -34,7 +40,7 @@ test('【要件】取り込み由来でない顧客は移さない', () => {
   }
 });
 
-test('【要件】顧客になった証拠があれば移さない', () => {
+test('【要件】本人が動いた証拠があれば「顧客になった」として残す', () => {
   const cases = [
     ['有料プラン', { 'プラン': 'Premium' }],
     ['Light', { 'プラン': 'Light' }],
@@ -43,23 +49,66 @@ test('【要件】顧客になった証拠があれば移さない', () => {
     ['申込中', { RequestedPlan: 'Premium' }],
     ['申込金額あり', { RequestedAmount: 49800 }],
     ['三連複 買い切り', { LifetimeSanrenpuku: true }],
-    ['Light 永久無料', { LightGrantLifetime: true }],
-    ['Light 期間無料', { LightGrantUntil: '2026-09-03T00:00:00.000Z' }],
-    ['Premium 無料', { PremiumGrantLifetime: true }],
-    ['Plus 販売資格', { PremiumPlusEligibility: 'review' }],
-    ['ポイント残高', { 'ポイント': 160 }],
     ['ログイン実績', { '最終ログイン': '2026-08-25T00:00:00.000Z' }],
   ];
   for (const [label, over] of cases) {
-    assert.equal(hasCustomerEvidence({ 'プラン': 'Free', ...over }), true, label);
+    assert.equal(hasSelfConversion({ 'プラン': 'Free', ...over }), true, label);
     assert.equal(decideForRecord({ fields: imported(over).fields }).decision,
       MIGRATION_DECISION.KEEP_CONVERTED, label);
   }
 });
 
-test('ポイント 0 とログイン無しは「顧客になった証拠」にしない', () => {
-  assert.equal(hasCustomerEvidence({ 'プラン': 'Free', 'ポイント': 0 }), false);
-  assert.equal(hasCustomerEvidence({ 'プラン': 'Free' }), false);
+test('⚠️【要件】運営側が付けた販売資格・無料付与を「本人の反応」と同一視しない', () => {
+  const cases = [
+    ['Light 永久無料（運営付与）', { LightGrantLifetime: true }],
+    ['Light 期間無料（運営付与）', { LightGrantUntil: '2026-09-03T00:00:00.000Z' }],
+    ['Premium 無料（運営付与）', { PremiumGrantLifetime: true }],
+    ['Premium 期間無料（運営付与）', { PremiumGrantUntil: '2026-09-03T00:00:00.000Z' }],
+    ['Plus 販売資格（運営・自動処理）', { PremiumPlusEligibility: 'review' }],
+    ['Plus 販売資格 eligible', { PremiumPlusEligibility: 'eligible' }],
+  ];
+  for (const [label, over] of cases) {
+    assert.equal(hasSelfConversion({ 'プラン': 'Free', ...over }), false, `${label}: 本人の反応ではない`);
+    assert.equal(hasOperatorAssignment({ 'プラン': 'Free', ...over }), true, label);
+    const d = decideForRecord({ fields: imported(over).fields });
+    assert.equal(d.decision, MIGRATION_DECISION.REVIEW_OPERATOR_GRANT, label);
+    assert.equal(d.reason, 'operator_grant_only');
+    // ⚠️ 保留であって削除ではない
+    assert.equal(isKeepDecision(d.decision), true, `${label}: 保留は消さない`);
+  }
+});
+
+test('⚠️【要件】由来の分からない値（ポイント残高）は顧客化と数えず保留にする', () => {
+  const d = decideForRecord({ fields: imported({ 'ポイント': 160 }).fields });
+  assert.equal(d.decision, MIGRATION_DECISION.REVIEW_AMBIGUOUS);
+  assert.equal(isKeepDecision(d.decision), true);
+  // 取り込みは ポイント 0 で作るので、0 は保留にしない
+  assert.equal(decideForRecord({ fields: imported({ 'ポイント': 0 }).fields }).decision,
+    MIGRATION_DECISION.MIGRATE);
+});
+
+test('⚠️ 運営付与だけの人を keep_converted に数え直さない（1,615 件の内訳が変わる）', () => {
+  const records = [
+    { id: 'r1', fields: imported({ 'プラン': 'Premium' }).fields },          // 本人
+    { id: 'r2', fields: imported({ PremiumPlusEligibility: 'review' }).fields }, // 運営
+    { id: 'r3', fields: imported({ LightGrantLifetime: true }).fields },     // 運営
+    { id: 'r4', fields: imported({}).fields },                                // 移行対象
+  ];
+  const plan = buildMigrationPlan({ records });
+  assert.equal(plan.counts.keep_converted, 1, '本人が動いた 1 件だけ');
+  assert.equal(plan.counts.review_operator_grant, 2);
+  assert.equal(plan.counts.migrate, 1);
+  assert.equal(plan.balanced, true);
+  // 保留は migrate に入らない（＝消さない）
+  assert.equal(plan.migrateIds.length, 1);
+  assert.equal(plan.migrateIds[0], 'r4');
+});
+
+test('ポイント 0 とログイン無しは「本人が動いた証拠」にしない', () => {
+  assert.equal(hasSelfConversion({ 'プラン': 'Free', 'ポイント': 0 }), false);
+  assert.equal(hasSelfConversion({ 'プラン': 'Free' }), false);
+  assert.equal(hasOperatorAssignment({ 'プラン': 'Free' }), false);
+  assert.equal(hasAmbiguousSignal({ 'プラン': 'Free', 'ポイント': 0 }), false);
 });
 
 test('【要件】反応があった人は移さない（本来の方針でも昇格対象）', () => {
@@ -137,4 +186,58 @@ test('【安全】戻せない行があれば検知する（欠けたまま移�
 test('移さない行は巻き戻しの検査対象にしない', () => {
   const keep = { id: 'recKeep', fields: { Source: 'admin' } };
   assert.equal(assertRollbackComplete({ records: [keep], migrateIds: [] }).ok, true);
+});
+
+
+/* ── 配信停止・バウンス・退会を抑止台帳へ引き継ぐ ────────────────── */
+
+/** テスト用の hash。**アドレスを復元できない形**にする（本番は sha256） */
+const hashFn = (e) => createHash('sha256').update(String(e), 'utf8').digest('hex');
+
+test('停止理由は 1 つに決まる（強い順・奪い合いをさせない）', () => {
+  assert.equal(resolveSuppressionReason({ UnsubscribedAnalyticsKeiba: true, WithdrawalRequested: true }),
+    HANDOFF_REASON.UNSUBSCRIBED);
+  assert.equal(resolveSuppressionReason({ WithdrawalRequested: true }), HANDOFF_REASON.WITHDRAWN);
+  assert.equal(resolveSuppressionReason({ ForceLogout: true }), HANDOFF_REASON.FORCE_LOGOUT);
+  assert.equal(resolveSuppressionReason({ Status: '停止' }), HANDOFF_REASON.ACCOUNT_STOPPED);
+  assert.equal(resolveSuppressionReason({}), null);
+});
+
+test('keep_suppressed の行だけが台帳へ引き継がれ、アドレスは持ち回らない', () => {
+  const records = [
+    { id: 's1', fields: imported({ UnsubscribedAnalyticsKeiba: true }).fields },
+    { id: 's2', fields: imported({ WithdrawalRequested: true }).fields },
+    { id: 'm1', fields: imported({}).fields },                       // 移行対象（引き継がない）
+    { id: 'c1', fields: imported({ 'プラン': 'Premium' }).fields },   // 顧客（引き継がない）
+  ];
+  const ho = buildSuppressionHandoff({ records, hashFn, nowIso: '2026-08-27T00:00:00.000Z' });
+  assert.equal(ho.counts['対象'], 2);
+  assert.equal(ho.counts['引き継ぎ'], 2);
+  for (const e of ho.entries) {
+    assert.match(e.hash, /^[a-f0-9]{64}$/);
+    assert.equal(JSON.stringify(e).includes('@'), false, '台帳の計画にアドレスが入っている');
+  }
+});
+
+test('⚠️ hash 化できないなら計画を作らない（生アドレスを持ち回らない）', () => {
+  const ho = buildSuppressionHandoff({ records: [{ id: 's1', fields: imported({ WithdrawalRequested: true }).fields }] });
+  assert.equal(ho.entries.length, 0);
+  assert.equal(ho.skipped.no_hash_fn, 1);
+});
+
+test('⚠️ 台帳へ載る前に生アドレスを消せない（順序を逆にすると復活する）', () => {
+  const records = [{ id: 's1', fields: imported({ WithdrawalRequested: true }).fields }];
+  const ho = buildSuppressionHandoff({ records, hashFn, nowIso: 'now' });
+  // 台帳が空 → 消せない
+  assert.equal(canPurgeRawEmails({ handoff: ho, blockedHashes: new Set() }).purgeAllowed, false);
+  // 台帳を読めない → 消せない（fail closed）
+  assert.equal(canPurgeRawEmails({ handoff: ho }).purgeAllowed, false);
+  assert.equal(canPurgeRawEmails({ handoff: ho }).reason, 'ledger_unreadable');
+  // 台帳に載って初めて消せる
+  const led = new Set(ho.entries.map((e) => e.hash));
+  assert.equal(canPurgeRawEmails({ handoff: ho, blockedHashes: led }).purgeAllowed, true);
+});
+
+test('⚠️ 引き継ぎが 0 件のときを「完了」にしない', () => {
+  assert.equal(assertHandoffComplete({ entries: [], blockedHashes: new Set() }).ok, false);
 });

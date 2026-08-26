@@ -35,8 +35,9 @@
 import { createHash } from 'node:crypto';
 import {
   PROSPECT_STATE, normalizeEmail, buildProspect,
-  applySend, applyEngagement, applySuppression, applyPromotion,
+  applySend, applyDelivered, applyEngagement, applySuppression, applyPromotion,
 } from './prospectPolicy.js';
+import { PROSPECT_CUTOFF_REASON } from './prospectEngagement.js';
 
 export const PROSPECT_ROOT = 'ak:prospect:';
 export const ACTIVE_INDEX = `${PROSPECT_ROOT}index:active`;
@@ -59,12 +60,17 @@ export const promoLockKey = (hash) => `${PROSPECT_ROOT}promo-lock:${hash}`;
 export const PROMO_LOCK_TTL_SEC = 300;
 export const BLOCKED_INDEX = `${PROSPECT_ROOT}index:blocked`;
 
-/** 抑止台帳に保存してよい項目。**アドレスを含めない** */
-export const BLOCKED_FIELDS = Object.freeze(['hash', 'kind', 'reason', 'at', 'sends', 'source']);
+/**
+ * 抑止台帳に保存してよい項目。**アドレスを含めない**。
+ * `delivered` を持つのは、打ち切りの根拠が**送信回数ではなく配信成功数**だから
+ * （後から「何通届いて切ったのか」を説明できるようにする）。
+ */
+export const BLOCKED_FIELDS = Object.freeze(['hash', 'kind', 'reason', 'at', 'sends', 'delivered', 'source']);
 
 /** 保存してよい項目（**これ以外は 1 つも書かない**） */
 export const PROSPECT_FIELDS = Object.freeze([
-  'email', 'state', 'sends', 'lastSentAt', 'lastRunId',
+  'email', 'state', 'sends', 'delivered', 'opens', 'clicks',
+  'lastSentAt', 'lastDeliveredAt', 'lastRunId',
   'engagedAt', 'engagedKind', 'promotedAt', 'promotedRecordId', 'suppressedAt', 'suppressedReason',
   'addedAt', 'batchId', 'source',
 ]);
@@ -153,8 +159,8 @@ export function createProspectStore({ cmd } = {}) {
   };
 
   /** 抑止台帳へ載せる（**TTL なし・アドレスなし**・冪等） */
-  const block = async (hash, { kind, reason, at, sends }) => {
-    const entry = pick({ hash, kind, reason, at, sends, source: 'prospect' }, BLOCKED_FIELDS);
+  const block = async (hash, { kind, reason, at, sends, delivered }) => {
+    const entry = pick({ hash, kind, reason, at, sends, delivered, source: 'prospect' }, BLOCKED_FIELDS);
     await call(['SET', blockedKey(hash), JSON.stringify(entry)]);
     await call(['SADD', BLOCKED_INDEX, hash]);
     return entry;
@@ -170,9 +176,11 @@ export function createProspectStore({ cmd } = {}) {
     if (kind) {
       await block(hash, {
         kind,
-        reason: d.suppressedReason || (kind === BLOCK_KIND.EXHAUSTED ? 'no_engagement' : 'unknown'),
-        at: d.suppressedAt || d.lastSentAt || new Date().toISOString(),
+        // 打ち切りの理由は **delivered 基準**であることが分かる値を残す
+        reason: d.suppressedReason || (kind === BLOCK_KIND.EXHAUSTED ? PROSPECT_CUTOFF_REASON : 'unknown'),
+        at: d.suppressedAt || d.lastDeliveredAt || d.lastSentAt || new Date().toISOString(),
         sends: d.sends,
+        delivered: d.delivered,
       });
     }
     return d;
@@ -237,12 +245,29 @@ export function createProspectStore({ cmd } = {}) {
       return { purged: true };
     },
 
-    async recordSend({ email, nowMs, runId, maxSends }) {
+    /**
+     * 送信を**試みた**ことを記録する。
+     * ⚠️ ここでは打ち切らない（届いた保証が無い）。打ち切りは `recordDelivered`。
+     */
+    async recordSend({ email, nowMs, runId }) {
       const hash = emailHash(email);
       const cur = await this.loadByHash(hash);
       if (!cur) return { ok: false, reason: 'not_found' };
-      const next = applySend({ prospect: cur, nowMs, runId, maxSends });
+      const next = applySend({ prospect: cur, nowMs, runId });
       return { ok: true, prospect: await write(hash, next) };
+    },
+
+    /**
+     * **配信成功（delivered）**を記録する。打ち切り（EXHAUSTED）が起きるのはここだけで、
+     * 打ち切ると `write()` が抑止台帳へ載せる（再取り込みでも復活しない）。
+     */
+    async recordDelivered({ email, nowMs, env }) {
+      const hash = emailHash(email);
+      const cur = await this.loadByHash(hash);
+      if (!cur) return { ok: false, reason: 'not_found' };
+      const r = applyDelivered({ prospect: cur, nowMs, env });
+      if (!r.changed) return { ok: true, changed: false, prospect: cur };
+      return { ok: true, changed: true, prospect: await write(hash, r.prospect) };
     },
 
     async recordEngagement({ email, nowMs, kind }) {

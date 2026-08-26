@@ -1921,7 +1921,7 @@ Premium Plus の販売可能性とも無関係である（上のとおり別判�
 `marketing/sequenceAutomation.js`。
 検証: `marketing/engagementSuppressionCohort.test.mjs` / `sequenceAutomation.test.mjs`。
 
-## 外部 CSV は prospect プールで扱う（正本の再確認 / 2026-08-27）
+## 外部 CSV は prospect プールで扱う（正本 / 2026-08-27 MK 確定）
 
 **外部 CSV は Airtable Customers へ常駐させない。** prospect プール（`ak:prospect:`）で
 配信し、**反応した人だけ** Customers へ昇格する（`prospectPolicy.js`）。
@@ -1929,12 +1929,45 @@ Premium Plus の販売可能性とも無関係である（上のとおり別判�
 ```
 NEW ──送信──▶ SENDING ──反応──▶ ENGAGED ──登録──▶ PROMOTED
                 │
-                ├─ 無反応が上限回数 ──▶ EXHAUSTED（登録しない）
-                └─ bounce / 苦情 / 配信停止 ──▶ SUPPRESSED（即時）
+                ├─ **delivered ≥ 10 かつ 開封 0** ──▶ EXHAUSTED（登録しない）
+                └─ bounce / 苦情 / 配信停止 ──────▶ SUPPRESSED（即時）
 ```
 
 `ak:prospect:` は **AK で唯一アドレスの保存を許した名前空間**。キーは `sha256(email)`、
 一覧・ログ・集計にアドレスを出さない、`purge()` で生アドレスごと消せる。
+
+### 打ち切りは **delivered** で数える（送信回数では数えない）
+
+**確定仕様**: CSV 取り込み由来だけ、
+
+> **累計 delivered ≥ 10** かつ **open = 0** かつ **購入・ログイン等の本人の反応が無い**
+> → 以後の通常マーケティング配信から自動除外する
+
+| 数えるもの | 数えないもの |
+|---|---|
+| 配信成功（`delivered`）| enqueue（キュー登録）|
+| | send attempt（送信試行）|
+| | バウンス・停止リストで落ちた回 |
+
+⚠️ **enqueue / 送信試行を分母にしない。** 積んだだけ・弾かれただけの回を数えると、
+**1 通も届いていない相手が「10 通送っても無反応」に化ける**。
+`sends`（試行）と `delivered`（到達）は prospect レコードで別々に持つ。
+
+⚠️ **旧仕様の「送信 3 回で打ち切り」（`MAX_SENDS_WITHOUT_ENGAGEMENT = 3`）は
+この経路から外し、定数ごと削除した。** 3 と 10 の二重基準が残ると、
+どちらで切れたのかが説明できなくなる。復活させないこと。
+
+| 何 | どこ |
+|---|---|
+| 判定の単一源 | `src/lib/marketing/prospectEngagement.js` |
+| 数字の正本（10 / 20）| `src/lib/marketing/engagementPolicy.js`（`inactiveDelivered` / `hardInactiveDelivered`）|
+| 打ち切りが起きる唯一の場所 | `applyDelivered()` / `prospectStore.recordDelivered()` |
+| 対象コホート | `importCohort.js`（`Source='customer-import:'` のみ）|
+
+適用対象は **CSV 取り込み由来だけ**。もとからの Airtable 顧客には適用しない。
+取引メール（決済確認・認証・サポート・期限通知）には**一切適用しない**。
+
+検証: `npm run test:marketing`（`src/lib/marketing/prospectCutoffSpec.test.mjs`）
 
 ### 実際は Customers へ直接入れていた（差分）
 
@@ -1944,26 +1977,109 @@ Customers 15,976 件のうち `Source='customer-import:…'` が **14,489 件**�
 
 ### 移行の判定（`prospectMigrationPlan.js` が単一源）
 
-| 判定 | 対象 |
-|---|---|
-| `migrate` | 反応が無いまま残っている取り込み分 |
-| `keep_not_imported` | 取り込み由来でない |
-| `keep_converted` | 有料・入金・申込・買い切り・無料権利・ポイント・ログイン実績のいずれかがある |
-| `keep_engaged` | 開封・クリックがある（本来の方針でも昇格対象）|
-| `keep_suppressed` | 配信停止・バウンス・退会 |
+| 判定 | 対象 | 本番実測 2026-08-27 |
+|---|---|---:|
+| `migrate` | 反応が無いまま残っている取り込み分 | **12,872** |
+| `keep_not_imported` | 取り込み由来でない | 1,487 |
+| `keep_converted` | **本人が動いた**（有料プラン / 入金 / 申込 / 買い切り / ログイン実績）| **49** |
+| `keep_engaged` | 開封・クリックがある | 0（一覧未適用）|
+| `keep_suppressed` | 配信停止・バウンス・退会 | 2 |
+| `review_operator_grant` | **運営側が付けた**販売資格・無料付与だけ（保留・消さない）| **1,566** |
+| `review_ambiguous` | 由来不明（`ポイント` が 0 でない等。保留・消さない）| 0 |
+
+#### 運営側の付与を「本人の反応」と同一視しない
+
+`PremiumPlusEligibility` / `LightGrant*` / `PremiumGrant*` は**運営側の一括処理や
+自動処理が付けた値**であって、本人が何かをした証拠ではない。同一視すると
+「反応した人だけ Customers に残す」という方針そのものが崩れる。
+
+⚠️ 旧版はこれらを `keep_converted` に数えており、**1,615 件**としていた。
+分離して数え直すと **本人が動いたのは 49 件**で、残る **1,566 件は運営側の付与だけ**だった。
+**1,615 は確定値ではない**（この行は記録として残す）。
+
+⚠️ `review_*` は **prospect へ移さない（消さない）**が、`keep_converted` にも数えない。
+理由別に分けて出すので、あとから人が判断できる。
 
 ⚠️ **迷ったら残す。** 判断材料が欠けていたら移さない（fail closed）。
 ⚠️ **反応（開封）の一覧を当てていない計画で実行しない**（`engagementApplied:false` は実行不可）。
 ⚠️ 母数 = 判定の合計が一致しない計画は使わない（取りこぼしの検知）。
 
-### まだ決まっていない（実行前に必要）
+### 配信停止・バウンス・退会も Airtable 永久保持を前提にしない
 
-1. **無反応で打ち切る回数**が `prospectPolicy.js` の **3（送信回数）** と
-   MK 指示の **10（delivered 数）** で食い違っている
-2. **移行時期**。配信中のキャンペーンは Customers を引いて送るため、
-   先に消すと 2 通目・3 通目が止まる（**9/6 の完走後が推奨**）
+`keep_suppressed` は「**いま消さない**」であって恒久保持の宣言ではない。
+これらの行が担うのは「二度と送らない」「再取り込みで復活させない」の 2 点だけで、
+どちらも**アドレスを持たなくても**実現できる。
+
+| 役割 | 置き場所 | 生アドレス |
+|---|---|---|
+| 「もう送らない」の正本 | `EmailBlacklist`（Airtable・件数が小さい）| 持つ |
+| 「再取り込みで復活させない」| `ak:prospect:blocked:<sha256>`（Redis・TTL なし）| **持たない** |
+
+**順序を逆にすると復活する**:
+
+1. 抑止台帳へ hash を書く（**先**）
+2. 台帳に載ったことを**読み直して**確認する（`assertHandoffComplete`）
+3. そのうえで生アドレスを消す（**後**・別承認）
+
+`canPurgeRawEmails()` が 2 を確かめるまで 3 へ進めない。台帳を読めない・1 件でも
+載っていないなら **1 件も消さない**（fail closed）。
+
+### 移行しても配信が変わらないことを先に証明する（parity）
+
+**9/6 の完走を待たない。** 代わりに、移行前に Customers 経路と prospect 経路が
+**同じ答えを出す**ことを構造的に確かめる。
+
+| 何 | どこ |
+|---|---|
+| prospect → 取り込みと同じ `fields` へ復元 | `prospectSequenceAdapter.js` |
+| Redis 台帳・反応・除外を配信入力へ復元 | `prospectSequenceHydration.js` |
+| 2 経路の突合 | `sequenceParity.js` |
+
+比較するのは 4 点で、**1 つでも差があれば移行しない**（`assertParityBeforeMigration`）:
+
+1. いま送れる相手（due）の集合
+2. 相手ごとの次の step
+3. 相手ごとの **`DeliveryKey`**（変わると二重送信）
+4. 止めた相手の停止理由
+
+⚠️ **鍵を突き合わせていない parity は合格にしない**（`keysChecked:false` で必ず不合格）。
+⚠️ 判定を新しく作らない。prospect を**取り込みが Customers へ書いたのと同じ `fields`** に
+   直し、既存の `resolveCustomerMarketing()` → `buildSequenceProgress()` を通す。
+   だから parity は「合わせ込み」ではなく**構造的に**成立する。
+⚠️ 台帳（Redis 集合）を**読めなかった**ときは中止する。未送信と見なすと全員へ再送する。
+
+検証: `npm run test:marketing`（`src/lib/marketing/prospectSequenceParity.test.mjs`）
+
+### Airtable の上限は Customers を減らしても解決しない
+
+本番実測 2026-08-27（全 13 table）:
+
+| table | 件数 |
+|---|---:|
+| **CampaignDeliveries** | **33,112** |
+| Customers | 15,976 |
+| その他 11 table 合計 | 1,701 |
+| **合計** | **50,789 / 上限 50,000（Team）＝ 超過中** |
+
+増加の主因は **Customers ではなく配信台帳**。CSV 由来へ 1 step 配るだけで
+受信者数ぶんの行が増える（12,872 名 × 2 step = **25,744 行**）。
+
+**決めたこと**: **prospect（CSV 取り込み由来）の配信台帳は Airtable へ書かない。**
+env のモードに関わらず構造的にそうする。
+
+| | 書き | 読み |
+|---|---|---|
+| customer 由来 | 従来どおり `MARKETING_DELIVERY_STORE` に従う | 従来どおり |
+| **prospect 由来** | **Redis のみ**（Airtable へは 1 行も書かない）| 和集合（移行途中の既送信を見落とさない）|
+
+単一源は `deliveryKeySource.js` の `resolveRecipientLedgerPolicy()` /
+`partitionRecipientsForLedger()` / `projectAirtableLedgerGrowth()`。
+`DeliveryKey` の作り方は**変えない**（変えると既送分と鍵が変わり二重送信になる）。
+
+⚠️ 出所が書かれていない受信者は **customer 扱い**（prospect へ勝手に倒すと台帳が消える）。
 
 手順・停止条件・巻き戻しは `docs/PROSPECT_MIGRATION_PLAN.md`。
+容量の全体設計は `docs/AIRTABLE_CAPACITY.md`。
 
 ## 5. External Dependencies
 

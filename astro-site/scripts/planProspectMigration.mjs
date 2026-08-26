@@ -10,7 +10,11 @@
  * **アドレスも氏名も出力しない**（recordId と件数だけ）。
  */
 import { writeFileSync } from 'node:fs';
-import { buildMigrationPlan, assertRollbackComplete, DECISION_LABEL } from '../src/lib/marketing/prospectMigrationPlan.js';
+import {
+  buildMigrationPlan, assertRollbackComplete, DECISION_LABEL, MIGRATION_DECISION,
+  buildSuppressionHandoff,
+} from '../src/lib/marketing/prospectMigrationPlan.js';
+import { emailHash } from '../src/lib/marketing/prospectStore.js';
 
 const KEY = process.env.AIRTABLE_API_KEY;
 const BASE = process.env.AIRTABLE_BASE_ID;
@@ -62,11 +66,27 @@ const rollback = assertRollbackComplete({ records, migrateIds: plan.migrateIds }
 console.log(`Customers 総数: ${plan.total}`);
 console.log(`母数と判定の合計が一致: ${plan.balanced ? 'はい' : '⚠️ いいえ（計画を使わないこと）'}`);
 console.log('\n判定ごとの件数');
-for (const [k, v] of Object.entries(plan.counts)) console.log(`  ${String(DECISION_LABEL[k]).padEnd(28)} ${v}`);
+for (const [k, v] of Object.entries(plan.counts)) console.log(`  ${String(DECISION_LABEL[k]).padEnd(36)} ${v}`);
+console.log('  ⚠️ review_* は「消さないが顧客化とも数えない」保留（運営側の付与・由来不明）');
 console.log('\n取り込みバッチ別');
 for (const [b, c] of Object.entries(plan.byBatch)) {
-  console.log(`  ${b}: 移す ${c.migrate} / 残す ${c.keep_converted + c.keep_engaged + c.keep_suppressed}`);
+  const keep = Object.entries(c)
+    .filter(([k]) => k !== MIGRATION_DECISION.MIGRATE)
+    .reduce((a, [, v]) => a + v, 0);
+  console.log(`  ${b}: 移す ${c.migrate} / 残す ${keep}`
+    + ` （うち保留 ${c.review_operator_grant + c.review_ambiguous}）`);
 }
+
+// ── 配信停止・バウンス・退会の引き継ぎ計画（**書き込みはしない**）─────────
+// `keep_suppressed` を Airtable に永久保持しないための下見。
+// hash は sha256（`prospectStore.emailHash`）。**アドレスは出力しない**。
+const handoff = buildSuppressionHandoff({
+  records, hashFn: emailHash, nowIso: new Date().toISOString(), engagedEmails,
+});
+console.log('\n配信停止・バウンス・退会の抑止台帳への引き継ぎ（計画のみ）');
+console.log(`  対象 ${handoff.counts['対象']} / 引き継げる ${handoff.counts['引き継ぎ']}`
+  + ` / 理由が決まらず保留 ${handoff.counts['保留']}`);
+console.log('  ⚠️ 台帳へ hash を書くのが先、生アドレスを消すのは後（逆順だと再取り込みで復活する）');
 console.log(`\n巻き戻しに必要な項目: ${rollback.ok ? `そろっている（${rollback.checked} 件）` : `⚠️ 欠けている ${rollback.missing.length} 件`}`);
 
 if (!engagedEmails) {

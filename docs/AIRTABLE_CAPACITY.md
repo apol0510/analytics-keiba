@@ -7,6 +7,62 @@
 
 ---
 
+## 0. 再測定（2026-08-27 実測 / 全 13 table）— **まだ超過している**
+
+| table | 件数 | 2026-08-09 比 |
+|---|---:|---|
+| **CampaignDeliveries** | **33,112** | +18,696 |
+| Customers | 15,976 | +6 |
+| AuthTokens | 460 | +136 |
+| EmailBlacklist | 394 | +48 |
+| ScheduledEmails | 386 | +212 |
+| StepEnrollments | 359 | +17 |
+| PromotionalOffers | 75 | +1 |
+| CouponOperationHistory | 10 | 新規 |
+| PointExchangeRequests | 7 | ±0 |
+| CampaignDeliveries_M5A3LiveTest | 6 | ±0 |
+| CampaignDeliveries_MarketingAutomation | 4 | ±0 |
+| **EmailEvents** | **0** | **-18,793**（退避済み）|
+| ProcessedWebhookEvents | 0 | ±0 |
+| **合計** | **50,789** | 上限 50,000 に対し **+789** |
+
+**`EmailEvents` の退避（§5 の手順 5〜6）は効いた**が、`CampaignDeliveries` が
+14,416 → **33,112** へ増え、超過が続いている。
+
+### なぜ増え続けているか
+
+`MARKETING_DELIVERY_STORE` は本番で **`dual`**（Airtable と Redis の両方へ書く）。
+§6 の手順 1〜4（二重書き込み）は入ったが、**Airtable 側の書き込みを止める段
+（`redis` への切り替え）へ進んでいない**。したがって配信 1 回ごとに受信者数ぶん増える。
+
+### 2026-08-27 に決めたこと
+
+**prospect（CSV 取り込み由来）の配信台帳は Airtable へ書かない。**
+env のモードに関わらず構造的にそうする。単一源は
+`deliveryKeySource.js` の `resolveRecipientLedgerPolicy()` /
+`partitionRecipientsForLedger()` / `projectAirtableLedgerGrowth()`。
+
+| 配り方（12,872 名 × 2 step）| Airtable の増加 |
+|---|---:|
+| Customers 経路 | **+25,744 行** |
+| **prospect 経路** | **0 行** |
+
+⚠️ 出所が書かれていない受信者は **customer 扱い**（prospect へ勝手に倒すと台帳が消える）。
+⚠️ 読みは従来どおり和集合（移行途中の既送信を見落とすと二重送信になる）。
+⚠️ **`Customers` を減らすだけでは解決しない。** 上限を食っている主因は配信台帳の側。
+
+詳細は `docs/PROSPECT_MIGRATION_PLAN.md` §8。
+
+### 残っている選択肢（どれも production env 変更 = 停止境界）
+
+| 手 | 効果 | 影響 |
+|---|---|---|
+| `MARKETING_DELIVERY_STORE` を `dual` → `redis` | **Customers 経路の増加も止まる** | 判定が Redis 単独になる（落ちたら fail closed で送らない）|
+| 既存 `CampaignDeliveries` 33,112 行の削除 | **-33,112 件**（常駐 17,677 件へ）| **戻せない。** エクスポート後に別承認（§6 手順 7）|
+| prospect 移行 | Customers -12,872 件 | 別承認（`PROSPECT_MIGRATION_PLAN.md`）|
+
+---
+
 ## 1. 現在の内訳（2026-08-09 実測 / 全 12 table）
 
 | table | 件数 | 比率 | 性質 |
