@@ -1921,6 +1921,50 @@ Premium Plus の販売可能性とも無関係である（上のとおり別判�
 `marketing/sequenceAutomation.js`。
 検証: `marketing/engagementSuppressionCohort.test.mjs` / `sequenceAutomation.test.mjs`。
 
+## 外部 CSV は prospect プールで扱う（正本の再確認 / 2026-08-27）
+
+**外部 CSV は Airtable Customers へ常駐させない。** prospect プール（`ak:prospect:`）で
+配信し、**反応した人だけ** Customers へ昇格する（`prospectPolicy.js`）。
+
+```
+NEW ──送信──▶ SENDING ──反応──▶ ENGAGED ──登録──▶ PROMOTED
+                │
+                ├─ 無反応が上限回数 ──▶ EXHAUSTED（登録しない）
+                └─ bounce / 苦情 / 配信停止 ──▶ SUPPRESSED（即時）
+```
+
+`ak:prospect:` は **AK で唯一アドレスの保存を許した名前空間**。キーは `sha256(email)`、
+一覧・ログ・集計にアドレスを出さない、`purge()` で生アドレスごと消せる。
+
+### 実際は Customers へ直接入れていた（差分）
+
+`admin-customer-import` 経由で **Customers へ直接 CREATE** しており、
+**prospect プールは一度も使われていない**（本番実測 2026-08-27: 0 件 / `writeEnabled:false`）。
+Customers 15,976 件のうち `Source='customer-import:…'` が **14,489 件**。
+
+### 移行の判定（`prospectMigrationPlan.js` が単一源）
+
+| 判定 | 対象 |
+|---|---|
+| `migrate` | 反応が無いまま残っている取り込み分 |
+| `keep_not_imported` | 取り込み由来でない |
+| `keep_converted` | 有料・入金・申込・買い切り・無料権利・ポイント・ログイン実績のいずれかがある |
+| `keep_engaged` | 開封・クリックがある（本来の方針でも昇格対象）|
+| `keep_suppressed` | 配信停止・バウンス・退会 |
+
+⚠️ **迷ったら残す。** 判断材料が欠けていたら移さない（fail closed）。
+⚠️ **反応（開封）の一覧を当てていない計画で実行しない**（`engagementApplied:false` は実行不可）。
+⚠️ 母数 = 判定の合計が一致しない計画は使わない（取りこぼしの検知）。
+
+### まだ決まっていない（実行前に必要）
+
+1. **無反応で打ち切る回数**が `prospectPolicy.js` の **3（送信回数）** と
+   MK 指示の **10（delivered 数）** で食い違っている
+2. **移行時期**。配信中のキャンペーンは Customers を引いて送るため、
+   先に消すと 2 通目・3 通目が止まる（**9/6 の完走後が推奨**）
+
+手順・停止条件・巻き戻しは `docs/PROSPECT_MIGRATION_PLAN.md`。
+
 ## 5. External Dependencies
 
 | 依存 | 用途 | 備考 |
