@@ -33,6 +33,10 @@ import {
 } from '../../src/lib/marketing/campaignSend.js';
 import { getCampaign, renderCampaign, listCampaigns } from '../../src/lib/marketing/campaignCatalog.js';
 import {
+  createSequenceScanStore, nextScanCursor, resolvePagesPerTick,
+} from '../../src/lib/marketing/sequenceLedgerScan.js';
+import { makeRedisCmd } from '../../src/lib/marketing/deliveryKeyStore.js';
+import {
   isSequenceCampaign, resolveSequenceStep,
 } from '../../src/lib/marketing/campaignSequence.js';
 import { buildSequenceProgress } from '../../src/lib/marketing/sequenceProgress.js';
@@ -64,6 +68,11 @@ function log(payload) {
   try { console.log(`${SEQ_LOG_TAG} ${JSON.stringify(payload)}`); } catch { /* 観測失敗で止めない */ }
 }
 
+/** Redis が無い環境でも落ちない（カーソルが保存できないだけ） */
+function safeRedisCmd() {
+  try { return makeRedisCmd(process.env); } catch { return null; }
+}
+
 function json(status, body) {
   return new Response(JSON.stringify(body), {
     status,
@@ -74,9 +83,19 @@ function json(status, body) {
 const auth = (key) => ({ Authorization: `Bearer ${key}` });
 
 /** そのキャンペーンの配信履歴だけを引く（**全件走査しない**・打ち切りは例外） */
-async function fetchCampaignDeliveries({ KEY, BASE, campaignType }) {
+async function fetchCampaignDeliveries({ KEY, BASE, campaignType, startOffset = null }) {
   const out = [];
-  let offset;
+  let offset = startOffset || undefined;
+  // ── tick をまたいで続きから読む（2026-08-26）────────────────────
+  //
+  // 1 通目を 15,491 通送ったことで台帳が 4,000 行の上限を超え、以前はここで
+  // 例外になり **2 通目が 1 通も送れなかった**。
+  //
+  // ⚠️ 毎回「先頭 N ページ」だけ読むのは**ダメ**。ページ順は安定しているので
+  //    いつも同じ人しか見えず、後ろの人が永久に進まない。
+  //    前回の続き（`offset`）を保存して、そこから読む。
+  // ⚠️ 読み残しは `partial` で返し、次の tick へ渡す（黙って打ち切らない）。
+  const maxPages = resolvePagesPerTick(process.env);
   let pages = 0;
   do {
     const body = {
@@ -93,12 +112,8 @@ async function fetchCampaignDeliveries({ KEY, BASE, campaignType }) {
     out.push(...(data.records || []));
     offset = data.offset;
     pages += 1;
-    // 黙って短い結果を返さない（不完全な履歴で進めると二重送信になる）
-    if (offset && pages >= MAX_PAGES) {
-      assertFetchComplete({ table: DELIVERIES_TABLE, offset, pages, maxPages: MAX_PAGES });
-    }
-  } while (offset);
-  return out;
+  } while (offset && pages < maxPages);
+  return { records: out, offset: offset || null, partial: Boolean(offset), pages };
 }
 
 /** 宛先ぶんだけ Customers を引く（名指し取得） */
@@ -159,7 +174,13 @@ export async function runSequenceTick({ env = process.env, now = Date.now(), cam
   const campaignType = `${base.campaignId}:v${base.version}`;
 
   // 1) このキャンペーンの配信履歴（= すでにシーケンスに入っている人）
-  const deliveries = await fetchCampaignDeliveries({ KEY, BASE, campaignType });
+  //    台帳が大きいので **前回の続きから**決まったページ数だけ読む。
+  //    読み残しは次の tick が続きを読む（周回すれば全員が対象になる）。
+  const scanStore = createSequenceScanStore({ redisCmd: safeRedisCmd() });
+  const cursor = await scanStore.read(campaignType);
+  const scan = await fetchCampaignDeliveries({ KEY, BASE, campaignType, startOffset: cursor.offset });
+  const deliveries = scan.records;
+  await scanStore.write(campaignType, nextScanCursor({ offset: scan.offset, pass: cursor.pass }));
   const emails = [...new Set(
     deliveries.map((r) => String((r.fields || {}).RecipientEmail || '').trim().toLowerCase()).filter(Boolean),
   )];
