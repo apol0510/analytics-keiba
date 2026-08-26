@@ -238,6 +238,11 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
             <span class="note" id="mkSeqState" aria-live="polite"></span>
           </div>
           <div class="dry-panel" id="mkSeqResult" hidden></div>
+          <!--
+            実績（配信台帳の実データ）。**queue済みを送信済みとして出さない**。
+            自動配信が台帳を走査するときに作った集計を読むだけで、ここでは何も送らない。
+          -->
+          <div class="dry-panel" id="mkSeqMetrics" hidden></div>
         </div>
         <!--
           反応（engagement）の状況。**送信前にここで「何人が反応なしで除外されるか」を見る**。
@@ -6566,8 +6571,82 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         mkSeqLast = out;
         mkSeqRender(out);
         state.textContent = '';
+        await mkSeqMetrics(id);
       } finally {
         btn.dataset.busy = ''; btn.disabled = false;
+      }
+    }
+
+    /**
+     * 各ステップの実績を出す（配信台帳の実データ由来）。
+     *
+     * ⚠️ **queue済みを「実送信数」に混ぜない。** キュー登録はまだ届いていない。
+     *    未送信残（queued のまま送られていない数）も併記する。
+     * ⚠️ 顧客は 1 件も DOM へ出さない（件数と時刻だけ）。
+     */
+    async function mkSeqMetrics(id) {
+      const box = $('mkSeqMetrics');
+      if (!box || !id) return;
+      const out = await mkCall({ action: 'sequenceMetrics', campaignId: id });
+      box.innerHTML = '';
+      box.hidden = false;
+      const h = document.createElement('h3');
+      h.textContent = '各ステップの実績（配信台帳より）';
+      box.appendChild(h);
+
+      if (!out || out.available === false) {
+        const p = document.createElement('p');
+        p.className = 'imp-meta';
+        p.textContent = (out && out.note) || '実績をまだ集計していません。';
+        box.appendChild(p);
+        return;
+      }
+      const m = out.metrics || {};
+      const meta = document.createElement('p');
+      meta.className = 'imp-meta';
+      meta.textContent = (m.complete ? '確定（台帳を 1 周読み切った集計）' : '途中経過（台帳を読み進め中）')
+        + (m.computedAt ? ' / 集計時刻: ' + new Date(m.computedAt).toLocaleString('ja-JP') : '')
+        + ' / ' + (m.queuedNote || '').replace(/\*\*/g, '');
+      box.appendChild(meta);
+
+      const table = document.createElement('table');
+      table.className = 'metrics-table';
+      const head = document.createElement('tr');
+      for (const label of ['ステップ', '対象数', 'queue済み', '実送信数', '除外数', '失敗数', '未送信残', '二重送信', '最終実行']) {
+        const th = document.createElement('th'); th.textContent = label; head.appendChild(th);
+      }
+      table.appendChild(head);
+
+      for (const st of m.steps || []) {
+        const tr = document.createElement('tr');
+        const cells = [
+          'Step ' + st.step,
+          String(st.target),
+          String(st.queued),
+          String(st.sent),
+          String(st.excluded),
+          String(st.failed),
+          String(st.pending),
+          String(st.duplicates),
+          st.lastActivityAt ? new Date(st.lastActivityAt).toLocaleString('ja-JP') : '—',
+        ];
+        cells.forEach((v, i) => {
+          const td = document.createElement('td');
+          td.textContent = v;
+          // 0 が正常な項目は、0 でなければ目立たせる
+          if ((i === 5 || i === 6 || i === 7) && v !== '0') td.className = 'is-warn';
+          table.appendChild(td);
+          tr.appendChild(td);
+        });
+        table.appendChild(tr);
+      }
+      box.appendChild(table);
+
+      if (!(m.steps || []).length) {
+        const p = document.createElement('p');
+        p.className = 'imp-meta';
+        p.textContent = 'この版ではまだ 1 通も登録されていません。';
+        box.appendChild(p);
       }
     }
 

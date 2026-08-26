@@ -142,6 +142,9 @@ import {
 } from '../../src/lib/marketing/engagementSignalStore.js';
 // 送信直前の再判定で使う一覧。判定は engagementGuard が単一源で、ここは結果の受け渡しだけ。
 import { createEngagementBlocklistStore } from '../../src/lib/marketing/engagementBlocklistStore.js';
+import {
+  createSequenceMetricsStore, describeMetrics, emptyMetrics,
+} from '../../src/lib/marketing/sequenceMetrics.js';
 import { summarizeCohortExclusion } from '../../src/lib/marketing/importCohort.js';
 import {
   isSequenceCampaign, resolveSequenceStep, describeSequence, resolveMaxSends, getSequenceSteps,} from '../../src/lib/marketing/campaignSequence.js';
@@ -838,6 +841,7 @@ export const handler = async (event) => {
     if (action === 'segmentCatalog') return handleSegmentCatalog();
     if (action === 'segments') return await handleSegments({ KEY, BASE, now, req });
     if (action === 'sequence') return await handleSequence({ KEY, BASE, now, req });
+    if (action === 'sequenceMetrics') return await handleSeqMetrics({ req });
     if (action === 'trialGrant') return await handleTrialGrantPreview({ now, req });
     if (action === 'duplicateCheck') return await handleDuplicateCheck({ KEY, BASE, req });
     if (action === 'rollout') return await handleRollout({ KEY, BASE, now, req });
@@ -2617,6 +2621,56 @@ async function handleTrialGrantPreview({ now, req }) {
  * **実送信と同じ判定**（`sequenceProgress.js`）で数える。
  * 画面はこの数字だけを出す（独自に数え直さない）。
  */
+/**
+ * 連続配信の実績（**配信台帳の実データ**由来）。
+ *
+ * 集計は cron が台帳を走査するときに作られる（追加の読み取りをしない）。
+ * ここは**読むだけ**。アドレスも recordId も返さない。
+ *
+ * ⚠️ **queued を「送信済み」として返さない。** 別の項目として出し、
+ *    未送信残（queued のまま sent になっていない数）も併記する。
+ */
+async function handleSeqMetrics({ req }) {
+  const base = getCampaign(req.campaignId, { includeDisabled: true });
+  if (!base) return json(400, { error: '未知のキャンペーンです', sideEffects: 'none' });
+  if (!isSequenceCampaign(base)) {
+    return json(400, { error: 'このキャンペーンは連続配信ではありません', sideEffects: 'none' });
+  }
+  const campaignType = `${base.campaignId}:v${base.version}`;
+
+  let stored = null;
+  try {
+    stored = await createSequenceMetricsStore({ redisCmd: makeRedisCmd(process.env) }).read(campaignType);
+  } catch { stored = null; }
+
+  if (!stored) {
+    return json(200, {
+      mode: 'read-only', sideEffects: 'none',
+      campaignId: base.campaignId, version: base.version,
+      metrics: describeMetrics(emptyMetrics(), { complete: false, computedAtMs: null }),
+      available: false,
+      note: 'まだ集計がありません（自動配信が台帳を 1 周読むと出ます）。',
+    });
+  }
+
+  // 確定版（1 周読み切ったもの）があればそれを出す。無ければ途中経過。
+  const useFinal = Boolean(stored.final);
+  const metrics = useFinal ? stored.final : (stored.running || emptyMetrics());
+  return json(200, {
+    mode: 'read-only', sideEffects: 'none',
+    campaignId: base.campaignId, version: base.version,
+    available: true,
+    metrics: describeMetrics(metrics, {
+      complete: useFinal,
+      computedAtMs: useFinal ? stored.finalAtMs : stored.updatedAtMs,
+    }),
+    /** 台帳の走査が何周目か（進捗の目安） */
+    pass: Number.isInteger(stored.pass) ? stored.pass : 0,
+    updatedAt: Number.isFinite(Number(stored.updatedAtMs))
+      ? new Date(Number(stored.updatedAtMs)).toISOString() : null,
+  });
+}
+
 async function handleSequence({ KEY, BASE, now, req }) {
   const base = getCampaign(req.campaignId, { includeDisabled: true });
   if (!base) return json(400, { error: '未知のキャンペーンです', sideEffects: 'none' });
