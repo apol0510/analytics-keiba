@@ -121,15 +121,53 @@ test('送る相手がいなければ何もしない', () => {
   assert.equal(plan.abort, TICK_ABORT.NO_DUE);
 });
 
-test('上限超過は切り捨てずに中止する', () => {
+// ⚠️ **2026-08-26 MK 仕様変更**: 上限超過は「中止」から「上限まで送って残りを次回へ」へ。
+//    以前は 15,000 名規模だと毎回 over_max_recipients で中止し、**1 人も送れなかった**。
+test('【要件】上限を超えたら上限まで送り、残りは次の tick へ持ち越す', () => {
   const many = Array.from({ length: 3 }, (_, i) => customer(`u${i}@example.com`));
   const d = many.map((c) => delivered(c.fields.Email, 1));
   const plan = planSequenceTick({
     progress: progressOf(many, d), gates: readSequenceGates(OPEN_ENV, NOW), maxRecipients: 2,
   });
+  assert.equal(plan.ok, true, '上限超過で 1 人も送れない状態に戻っている');
+  assert.equal(plan.recipients, 2, '上限まで送っていない');
+  assert.equal(plan.recordIds.length, 2);
+  assert.equal(plan.carriedOver, 1, '残り人数を返していない（黙って切り捨てている）');
+  assert.equal(plan.dueTotal, 3, '送るべき総数を返していない');
+  assert.equal(MAX_RECIPIENTS_PER_TICK, 200);
+});
+
+test('【要件】15,000 名規模でも tick を重ねれば完走する（1 人も取り残さない）', () => {
+  const many = Array.from({ length: 500 }, (_, i) => customer(`u${i}@example.com`));
+  const sent = [];
+  let remaining = many;
+  let ticks = 0;
+  while (remaining.length && ticks < 20) {
+    const d = remaining.map((c) => delivered(c.fields.Email, 1));
+    const plan = planSequenceTick({
+      progress: progressOf(remaining, d), gates: readSequenceGates(OPEN_ENV, NOW), maxRecipients: 200,
+    });
+    assert.equal(plan.ok, true, `tick${ticks + 1} で止まった`);
+    sent.push(...plan.recordIds);
+    // 送信済みは次回 due から外れる（実運用では配信台帳が持つ事実）
+    remaining = remaining.filter((c) => !plan.recordIds.includes(c.recordId));
+    ticks += 1;
+  }
+  assert.equal(remaining.length, 0, '完走していない');
+  assert.equal(sent.length, 500, '取りこぼしがある');
+  assert.equal(new Set(sent).size, 500, '同じ相手を二度送っている');
+  assert.equal(ticks, 3, 'tick 数が想定と違う（200 + 200 + 100）');
+});
+
+test('従来どおり中止させることもできる（allowPartial:false）', () => {
+  const many = Array.from({ length: 3 }, (_, i) => customer(`u${i}@example.com`));
+  const d = many.map((c) => delivered(c.fields.Email, 1));
+  const plan = planSequenceTick({
+    progress: progressOf(many, d), gates: readSequenceGates(OPEN_ENV, NOW),
+    maxRecipients: 2, allowPartial: false,
+  });
   assert.equal(plan.ok, false);
   assert.equal(plan.abort, TICK_ABORT.OVER_MAX);
-  assert.equal(MAX_RECIPIENTS_PER_TICK, 200);
 });
 
 test('要約にアドレスも recordId も含めない', () => {

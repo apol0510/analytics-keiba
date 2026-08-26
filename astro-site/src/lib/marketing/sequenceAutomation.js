@@ -93,6 +93,11 @@ export function readSequenceAutoState(env, nowMs) {
  */
 export function planSequenceTick({
   progress, gates, allowFirstStep = false, maxRecipients = MAX_RECIPIENTS_PER_TICK,
+  /**
+   * 上限を超えたときに**上限まで送って残りを次回へ回す**か（既定 true）。
+   * false にすると従来どおり中止する（`over_max_recipients`）。
+   */
+  allowPartial = true,
 } = {}) {
   if (!gates || gates.allOpen !== true) {
     return { ok: false, abort: TICK_ABORT.GATES_CLOSED, missing: (gates && gates.missing) || [] };
@@ -107,18 +112,37 @@ export function planSequenceTick({
   if (next.step === 1 && allowFirstStep !== true) {
     return { ok: false, abort: TICK_ABORT.FIRST_STEP_MANUAL, step: 1, counts: progress.summary.dueByStep };
   }
-  // 上限超過は**切り捨てずに中止**（部分送信の曖昧さを作らない）
-  if (next.recordIds.length > maxRecipients) {
+  // ── 上限を超えたときの扱い ────────────────────────────────────
+  //
+  // ⚠️ **2026-08-26 MK 確定で変更**。以前は「切り捨てずに中止」だったため、
+  //    15,000 名規模のコホートでは **1 通目以降が永久に進まなかった**
+  //    （毎回 over_max_recipients で中止し、1 人も送らない）。
+  //
+  // いまは **上限まで送って、残りは次の tick へ持ち越す**。
+  //   - 誰に送ったかは配信台帳（DeliveryKey）が持つので、持ち越しても取りこぼさない
+  //   - 同じ相手へ二度送らない（送信済みは次回 due から自動的に外れる）
+  //   - `carriedOver` を返すので、残り人数を画面とログで追える
+  //
+  // ⚠️ **切り捨て（送らないまま黙って捨てる）にはしない**。
+  //    残り人数を必ず返し、次の tick で続きから進む。
+  if (allowPartial !== true && next.recordIds.length > maxRecipients) {
     return {
       ok: false, abort: TICK_ABORT.OVER_MAX, step: next.step,
       recipients: next.recordIds.length, max: maxRecipients,
     };
   }
+  // 上限まで送り、残りは次の tick へ持ち越す
+  const take = next.recordIds.slice(0, maxRecipients);
+  const carriedOver = next.recordIds.length - take.length;
   return {
     ok: true,
     step: next.step,
-    recordIds: next.recordIds,
-    recipients: next.recordIds.length,
+    recordIds: take,
+    recipients: take.length,
+    /** 今回送らずに次回へ回した人数（0 なら完走） */
+    carriedOver,
+    /** その step で送るべき総数（進捗の分母） */
+    dueTotal: next.recordIds.length,
     counts: progress.summary.dueByStep,
   };
 }
