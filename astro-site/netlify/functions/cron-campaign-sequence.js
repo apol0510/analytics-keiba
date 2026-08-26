@@ -35,6 +35,9 @@ import { getCampaign, renderCampaign, listCampaigns } from '../../src/lib/market
 import {
   createSequenceScanStore, nextScanCursor, resolvePagesPerTick,
 } from '../../src/lib/marketing/sequenceLedgerScan.js';
+import {
+  createSequenceMetricsStore, emptyMetrics, accumulateMetrics,
+} from '../../src/lib/marketing/sequenceMetrics.js';
 import { makeRedisCmd } from '../../src/lib/marketing/deliveryKeyStore.js';
 import {
   isSequenceCampaign, resolveSequenceStep,
@@ -176,11 +179,35 @@ export async function runSequenceTick({ env = process.env, now = Date.now(), cam
   // 1) このキャンペーンの配信履歴（= すでにシーケンスに入っている人）
   //    台帳が大きいので **前回の続きから**決まったページ数だけ読む。
   //    読み残しは次の tick が続きを読む（周回すれば全員が対象になる）。
-  const scanStore = createSequenceScanStore({ redisCmd: safeRedisCmd() });
+  const redisCmd = safeRedisCmd();
+  const scanStore = createSequenceScanStore({ redisCmd });
   const cursor = await scanStore.read(campaignType);
   const scan = await fetchCampaignDeliveries({ KEY, BASE, campaignType, startOffset: cursor.offset });
   const deliveries = scan.records;
-  await scanStore.write(campaignType, nextScanCursor({ offset: scan.offset, pass: cursor.pass }));
+  const next = nextScanCursor({ offset: scan.offset, pass: cursor.pass });
+  await scanStore.write(campaignType, next);
+
+  // ── 実績の集計（**追加の読み取りはしない**）────────────────────────
+  //
+  // すでに読んだ窓をそのまま数えるだけ。1 周読み切ったところで「確定」にする。
+  // 管理画面はこの集計を見る（queued を送信済みとして混ぜない）。
+  // 失敗しても配信は止めない（数字が出ないだけ）。
+  try {
+    const metricsStore = createSequenceMetricsStore({ redisCmd });
+    const prev = (!cursor.offset ? null : await metricsStore.read(campaignType)) || null;
+    const running = prev && prev.running ? prev.running : emptyMetrics();
+    const state = { seenKeys: new Set(prev && Array.isArray(prev.seenKeys) ? prev.seenKeys : []) };
+    accumulateMetrics(running, deliveries, state);
+    await metricsStore.write(campaignType, {
+      running,
+      // 1 周読み切ったら確定版として置き換える
+      final: next.completedPass ? running : (prev && prev.final) || null,
+      finalAtMs: next.completedPass ? Date.now() : (prev && prev.finalAtMs) || null,
+      seenKeys: [...state.seenKeys].slice(0, 40000),
+      updatedAtMs: Date.now(),
+      pass: next.pass,
+    });
+  } catch { /* 集計に失敗しても配信は続ける */ }
   const emails = [...new Set(
     deliveries.map((r) => String((r.fields || {}).RecipientEmail || '').trim().toLowerCase()).filter(Boolean),
   )];
