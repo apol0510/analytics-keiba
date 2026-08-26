@@ -8,6 +8,40 @@
 
 ---
 
+## 2026-08-27 — CSV 取り込み分を prospect プールへ戻す（計画のみ・未実行）
+
+### Status
+
+**調査完了・計画作成済み。実行は未承認。**
+
+### 分かったこと
+
+正本の方針（`prospectPolicy.js`）は「外部 CSV を Customers へ常駐させず、
+prospect プールで配信し、**反応した人だけ**を Customers へ昇格する」。
+実際は `admin-customer-import` 経由で **Customers へ直接 CREATE** しており、
+**prospect プールは一度も使われていない**（本番実測: 0 件 / `writeEnabled:false`）。
+
+### 本番実測（read-only・2026-08-27）
+
+Customers 15,976 件 / prospect へ戻す **12,872** / 取り込み由来でない 1,487 /
+顧客になった 1,615 / 配信停止等 2。母数と判定の合計は一致。巻き戻し項目も全件そろっている。
+
+### 実行前に決めること
+
+1. **無反応で打ち切る回数が 3（コード）と 10（MK 指示）で食い違っている。**
+   prospect の 3 は「送信回数」、engagement の 10 は「delivered 数」で意味が違う
+2. **移行の時期**。配信中のキャンペーン（2 通目 8/31 / 3 通目 9/6）が
+   Customers を引いて送るため、**先に消すと送信が止まる**。9/6 の完走後が推奨
+
+### 決めたこと
+
+- 判定は `marketing/prospectMigrationPlan.js` を単一源にし、**迷ったら残す**
+- **反応（開封）の一覧を当てていない計画で実行しない**（`engagementApplied:false` は実行不可）
+- prospect 投入（Redis）と Customers 削除（Airtable）は**別承認**
+- 詳細は `docs/PROSPECT_MIGRATION_PLAN.md`
+
+---
+
 ## 2026-08-26 — 反応なし除外を取り込みコホートで運用し、送信直前にも再判定する
 
 ### Status
