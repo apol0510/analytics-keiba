@@ -31,14 +31,14 @@ import {
   computeCampaignContentHash, assertOnlyDeliveryFields,
   MAX_RECIPIENTS_PER_SEND,
 } from '../../src/lib/marketing/campaignSend.js';
-import { getCampaign, renderCampaign } from '../../src/lib/marketing/campaignCatalog.js';
+import { getCampaign, renderCampaign, listCampaigns } from '../../src/lib/marketing/campaignCatalog.js';
 import {
   isSequenceCampaign, resolveSequenceStep,
 } from '../../src/lib/marketing/campaignSequence.js';
 import { buildSequenceProgress } from '../../src/lib/marketing/sequenceProgress.js';
 import {
   readSequenceGates, planSequenceTick, summarizeSequenceTick,
-  MAX_RECIPIENTS_PER_TICK, TICK_ABORT,
+  MAX_RECIPIENTS_PER_TICK, resolveMaxRecipientsPerTick, TICK_ABORT,
 } from '../../src/lib/marketing/sequenceAutomation.js';
 import { checkBenefitForSend } from '../../src/lib/marketing/campaignBenefit.js';
 import { resolveCustomerMarketing } from '../../src/lib/marketing/customerMarketingAudience.js';
@@ -197,7 +197,7 @@ export async function runSequenceTick({ env = process.env, now = Date.now(), cam
     providerSuppressed: provider.emails,
     softBounced: new Set(),
   });
-  const plan = planSequenceTick({ progress, gates, maxRecipients: MAX_RECIPIENTS_PER_TICK });
+  const plan = planSequenceTick({ progress, gates, maxRecipients: resolveMaxRecipientsPerTick(process.env) });
   if (!plan.ok) {
     const body = { ok: false, ...plan, sideEffects: 'none' };
     log(summarizeSequenceTick({ campaignId: base.campaignId, plan }));
@@ -292,19 +292,57 @@ export async function runSequenceTick({ env = process.env, now = Date.now(), cam
   };
 }
 
-/** Netlify Functions **v2** のエントリ（`export const config` が効くのはこの形式だけ） */
-export default async function handler() {
-  try {
-    const out = await runSequenceTick({ env: process.env, now: Date.now() });
-    return json(200, out);
-  } catch (e) {
-    // 値・アドレスはログに出さない（理由コードだけ）
-    log({ ok: false, error: String(e && e.message ? e.message : 'unknown') });
-    return json(200, { ok: false, error: 'tick_failed', sideEffects: 'unknown' });
-  }
+/**
+ * この tick で進めるキャンペーン。
+ *
+ * ⚠️ **2026-08-26 MK 確定で「env で指定した 1 本だけ」から変更**。
+ *    以前は `MARKETING_SEQUENCE_CAMPAIGN_ID` に入れた 1 本しか進まず、
+ *    キャンペーンが増えるたびに人が env を書き換える必要があった。
+ *    3 区分（無料 / Light / Premium）を自動で回すには足りない。
+ *
+ * いまは **有効な連続配信キャンペーンを全部**、1 tick で順に 1 ステップずつ進める。
+ *   - env で指定があればそれだけ（従来運用・障害時の絞り込みに使える）
+ *   - 指定が無ければ カタログの有効な連続配信すべて
+ *   - 1 本が失敗しても**他は続ける**（1 本の不調で全部止めない）
+ */
+export function resolveTickCampaignIds(env = process.env) {
+  const raw = String(env?.MARKETING_SEQUENCE_CAMPAIGN_ID ?? '').trim();
+  if (raw) return raw.split(',').map((x) => x.trim()).filter(Boolean);
+  return listCampaigns({ includeDisabled: false })
+    .filter((c) => c.usable !== false && c.sequence)
+    .map((c) => c.campaignId);
 }
 
-/** JST 11:00 に 1 回。ゲートが閉じていれば即終了（副作用ゼロ） */
+/** Netlify Functions **v2** のエントリ（`export const config` が効くのはこの形式だけ） */
+export default async function handler() {
+  const ids = resolveTickCampaignIds(process.env);
+  const results = [];
+  for (const campaignId of ids) {
+    try {
+      results.push(await runSequenceTick({ env: process.env, now: Date.now(), campaignId }));
+    } catch (e) {
+      // 値・アドレスはログに出さない（理由コードだけ）。1 本落ちても他は続ける
+      log({ ok: false, campaignId, error: String(e && e.message ? e.message : 'unknown') });
+      results.push({ ok: false, campaignId, error: 'tick_failed', sideEffects: 'unknown' });
+    }
+  }
+  const enqueued = results.reduce((n, r) => n + (Number(r && r.enqueued) || 0), 0);
+  return json(200, {
+    ok: results.some((r) => r && r.ok === true),
+    campaigns: ids.length,
+    enqueued,
+    results,
+  });
+}
+
+/**
+ * **10 分ごと**。ゲートが閉じていれば即終了（副作用ゼロ）。
+ *
+ * ⚠️ **2026-08-26 MK 確定で 1 日 1 回から変更**。
+ *    1 日 1 回・200 通では 15,000 名に 75 日かかり、実質動かなかった。
+ *    10 分間隔 × 1 tick 500 通 = **3,000 通/時**で、同じ日のうちに配り切れる。
+ * ⚠️ 送る相手が居なければ 1 件も書かずに終わる（`no_due`）。空振りは無害。
+ */
 export const config = {
-  schedule: '0 2 * * *',
+  schedule: '*/10 * * * *',
 };

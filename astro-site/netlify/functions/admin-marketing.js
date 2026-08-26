@@ -140,6 +140,9 @@ import {
 import {
   createEngagementSignalStore, emptySignals,
 } from '../../src/lib/marketing/engagementSignalStore.js';
+// 送信直前の再判定で使う一覧。判定は engagementGuard が単一源で、ここは結果の受け渡しだけ。
+import { createEngagementBlocklistStore } from '../../src/lib/marketing/engagementBlocklistStore.js';
+import { summarizeCohortExclusion } from '../../src/lib/marketing/importCohort.js';
 import {
   isSequenceCampaign, resolveSequenceStep, describeSequence, resolveMaxSends, getSequenceSteps,} from '../../src/lib/marketing/campaignSequence.js';
 import {
@@ -718,11 +721,29 @@ async function resolveEngagementView({ list, deliveries, now }) {
   const view = buildEngagementView({
     list, deliveries, signals, measurement, nowMs: now, env: process.env,
   });
+  // ── 送信直前の再判定のために結果を残す（2026-08-26 MK 確定）──────────
+  //
+  // 「累計 10 通 delivered で開封 0」の判定には配信台帳の全履歴が要る。
+  // それは実送信の Function では読み切れないので、**計算できたここで書き**、
+  // dispatcher が読む（`engagementBlocklistStore.js`）。
+  //
+  // ⚠️ **`applied:false`（材料が欠けている）のときは書かない**。
+  //    観測できていない状態の結果を保存すると、あとで誰かを誤って切る。
+  // ⚠️ 書き込みに失敗しても下見・送信は止めない（除外が効かないだけで、送る側は安全側）。
+  if (view.applied === true) {
+    try {
+      await createEngagementBlocklistStore({ redisCmd: makeRedisCmd(process.env) })
+        .write({ emails: view.blockedEmails, computedAtMs: now });
+    } catch { /* 一覧を残せなくても判定と送信は続ける */ }
+  }
   return { view, measurement, signals };
 }
 
 /** 画面へ返す形（アドレスも recordId も出さない。件数と状態だけ） */
-function engagementResponse(view) {
+function engagementResponse(view, list) {
+  // 取り込み由来と既存顧客は**分けて数える**（2026-08-26 MK 確定）。
+  // 同じ「開封 0」でも意味が違うので、1 つの数字にまとめない。
+  const cohort = summarizeCohortExclusion({ list, blockedEmails: view.blockedEmails });
   return {
     applied: view.applied,
     reason: view.reason,
@@ -731,6 +752,12 @@ function engagementResponse(view) {
     coverage: view.coverage,
     counts: engagementCountsView(view.counts),
     blocked: view.blockedEmails.size,
+    /** 対象母集団と除外人数のコホート別内訳（管理画面の表示用） */
+    cohort: {
+      audience: cohort.audience,
+      blocked: cohort.blocked,
+      note: '取り込み（外部リスト）と既存顧客（Airtable）を分けて数えています。',
+    },
     note: view.applied
       ? '反応が無いまま閾値を超えた相手を除外します（購入・ログイン・開封があれば次回は対象へ戻ります）。'
       : '除外は適用していません。全員が engagement 以外の条件だけで判定されています。',
@@ -2695,7 +2722,7 @@ async function handleSequence({ KEY, BASE, now, req }) {
     nextScheduledAt: nextDueAt ? new Date(nextDueAt).toISOString() : null,
     summary: progress.summary,
     stopLabels: SEQ_STOP_LABEL,
-    engagement: engagementResponse(engagementView),
+    engagement: engagementResponse(engagementView, list),
     providerSuppression: describeProviderSuppression(provider),
     notice: 'これは状況の確認です。**まだ何も送っていません**（キュー登録もしていません）。',
   });
@@ -3068,7 +3095,7 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
     detailComplete,
     // 反応なし除外の状態（適用中か・閾値・期間・今回何人落ちたか）
     engagement: {
-      ...engagementResponse(engagementView),
+      ...engagementResponse(engagementView, targeted.list),
       blockedThisPlan: plan.counts.byReason[MK_EXCLUSION.ENGAGEMENT_BLOCKED] || 0,
     },
     planFingerprint: plan.planFingerprint,
@@ -3988,7 +4015,7 @@ async function handleSegments({ KEY, BASE, now, req }) {
   const results = [evaluateSegment({ ...shared, segmentId: wanted })];
 
   const engagement = {
-    ...engagementResponse(engagementView),
+    ...engagementResponse(engagementView, list),
     // click は tracking が無効だと常に 0。画面で「反応が無い」と読み違えないよう明示する
     clickTracking: isMarketingClickTrackingEnabled(process.env) ? 'enabled' : 'disabled',
     /** セグメント別に「今回 engagement 理由で除外される人数」（母数は選んだセグメント） */

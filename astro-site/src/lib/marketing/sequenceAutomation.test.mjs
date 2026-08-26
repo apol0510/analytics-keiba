@@ -64,9 +64,21 @@ const progressOf = (selected, deliveries) => buildSequenceProgress({
 });
 
 // ── ゲート ──────────────────────────────────────────────────
-test('4 つ揃って初めて開く', () => {
+// ⚠️ **2026-08-26 MK 仕様変更**: 日付 ARM は必須ではなくなった（完全自動運用）。
+//    人が毎日 env を書き換えないと動かない運用は続かないため。
+//    止める手段（scheduler / dispatch を外す・期間外）は減らしていない。
+test('【要件】日付 ARM が無くても自動で動く（毎日の手動更新が要らない）', () => {
+  const env = { ...OPEN_ENV };
+  delete env[SEQUENCE_ENV.ARMED];
+  const g = readSequenceGates(env, NOW);
+  assert.equal(g.allOpen, true, '日付 ARM の手動更新をまだ要求している');
+  assert.equal(g.armMode, 'always');
+  assert.deepEqual(g.missing, []);
+});
+
+test('scheduler / enqueue / dispatch が欠ければ開かない（止める手段は残す）', () => {
   assert.equal(readSequenceGates(OPEN_ENV, NOW).allOpen, true);
-  for (const key of Object.values(SEQUENCE_ENV)) {
+  for (const key of [SEQUENCE_ENV.SCHEDULER, SEQUENCE_ENV.ENQUEUE, SEQUENCE_ENV.DISPATCH]) {
     const env = { ...OPEN_ENV };
     delete env[key];
     const g = readSequenceGates(env, NOW);
@@ -75,9 +87,13 @@ test('4 つ揃って初めて開く', () => {
   }
 });
 
-test('武装は当日の JST 日付のみ有効（置きっぱなしは翌日閉じる）', () => {
+test('日付を入れれば従来どおり その日だけ動く（一日限定運用も残す）', () => {
+  const today = { ...OPEN_ENV, [SEQUENCE_ENV.ARMED]: jstDateString(NOW) };
+  assert.equal(readSequenceGates(today, NOW).allOpen, true);
+  assert.equal(readSequenceGates(today, NOW).armMode, 'dated');
   const stale = { ...OPEN_ENV, [SEQUENCE_ENV.ARMED]: jstDateString(NOW - DAY) };
-  assert.equal(readSequenceGates(stale, NOW).allOpen, false);
+  assert.equal(readSequenceGates(stale, NOW).allOpen, false, '前日の指定で動いてしまう');
+  assert.ok(readSequenceGates(stale, NOW).missing.includes(SEQUENCE_ENV.ARMED));
 });
 
 test('表示用の状態に env の値を出さない', () => {
@@ -88,7 +104,10 @@ test('表示用の状態に env の値を出さない', () => {
   assert.ok(!json.includes(FROM));
   const closed = readSequenceAutoState({}, NOW);
   assert.equal(closed.enabled, false);
-  assert.ok(closed.missing.length === 4, '不足している env 名だけを返す');
+  // ARM は未設定なら不足に数えない（完全自動運用が既定）
+  assert.deepEqual(closed.missing.sort(), [
+    SEQUENCE_ENV.DISPATCH, SEQUENCE_ENV.ENQUEUE, SEQUENCE_ENV.SCHEDULER,
+  ].sort(), '不足している env 名だけを返す');
 });
 
 // ── 計画 ────────────────────────────────────────────────────
@@ -121,15 +140,53 @@ test('送る相手がいなければ何もしない', () => {
   assert.equal(plan.abort, TICK_ABORT.NO_DUE);
 });
 
-test('上限超過は切り捨てずに中止する', () => {
+// ⚠️ **2026-08-26 MK 仕様変更**: 上限超過は「中止」から「上限まで送って残りを次回へ」へ。
+//    以前は 15,000 名規模だと毎回 over_max_recipients で中止し、**1 人も送れなかった**。
+test('【要件】上限を超えたら上限まで送り、残りは次の tick へ持ち越す', () => {
   const many = Array.from({ length: 3 }, (_, i) => customer(`u${i}@example.com`));
   const d = many.map((c) => delivered(c.fields.Email, 1));
   const plan = planSequenceTick({
     progress: progressOf(many, d), gates: readSequenceGates(OPEN_ENV, NOW), maxRecipients: 2,
   });
+  assert.equal(plan.ok, true, '上限超過で 1 人も送れない状態に戻っている');
+  assert.equal(plan.recipients, 2, '上限まで送っていない');
+  assert.equal(plan.recordIds.length, 2);
+  assert.equal(plan.carriedOver, 1, '残り人数を返していない（黙って切り捨てている）');
+  assert.equal(plan.dueTotal, 3, '送るべき総数を返していない');
+  assert.equal(MAX_RECIPIENTS_PER_TICK, 500, '1 tick の上限が想定と違う');
+});
+
+test('【要件】15,000 名規模でも tick を重ねれば完走する（1 人も取り残さない）', () => {
+  const many = Array.from({ length: 500 }, (_, i) => customer(`u${i}@example.com`));
+  const sent = [];
+  let remaining = many;
+  let ticks = 0;
+  while (remaining.length && ticks < 20) {
+    const d = remaining.map((c) => delivered(c.fields.Email, 1));
+    const plan = planSequenceTick({
+      progress: progressOf(remaining, d), gates: readSequenceGates(OPEN_ENV, NOW), maxRecipients: 200,
+    });
+    assert.equal(plan.ok, true, `tick${ticks + 1} で止まった`);
+    sent.push(...plan.recordIds);
+    // 送信済みは次回 due から外れる（実運用では配信台帳が持つ事実）
+    remaining = remaining.filter((c) => !plan.recordIds.includes(c.recordId));
+    ticks += 1;
+  }
+  assert.equal(remaining.length, 0, '完走していない');
+  assert.equal(sent.length, 500, '取りこぼしがある');
+  assert.equal(new Set(sent).size, 500, '同じ相手を二度送っている');
+  assert.equal(ticks, 3, 'tick 数が想定と違う（200 + 200 + 100）');
+});
+
+test('従来どおり中止させることもできる（allowPartial:false）', () => {
+  const many = Array.from({ length: 3 }, (_, i) => customer(`u${i}@example.com`));
+  const d = many.map((c) => delivered(c.fields.Email, 1));
+  const plan = planSequenceTick({
+    progress: progressOf(many, d), gates: readSequenceGates(OPEN_ENV, NOW),
+    maxRecipients: 2, allowPartial: false,
+  });
   assert.equal(plan.ok, false);
   assert.equal(plan.abort, TICK_ABORT.OVER_MAX);
-  assert.equal(MAX_RECIPIENTS_PER_TICK, 200);
 });
 
 test('要約にアドレスも recordId も含めない', () => {

@@ -50,7 +50,11 @@ import {
   MARKETING_EMAIL_SHELL_VERSION, readShellVersionFromNote,
 } from '../../src/lib/marketing/marketingEmailShell.js';
 import { evaluateExtraAudience } from '../../src/lib/marketing/campaignAudienceRules.js';
+// 送信直前の「反応なし除外」再判定（2026-08-26 MK 確定）。判定は engagementGuard が単一源。
 import {
+  createEngagementBlocklistStore, emptyBlocklist, BLOCKLIST_SKIP,
+} from '../../src/lib/marketing/engagementBlocklistStore.js';
+import { resolveCohort, COHORT } from '../../src/lib/marketing/importCohort.js';import {
   chunkList, assertFetchComplete, TARGETED_CHUNK, TARGETED_MAX_PAGES,
 } from '../../src/lib/marketing/marketingTargetedLoad.js';
 import {
@@ -457,6 +461,18 @@ export async function runDispatch({
   // env 由来の値（テスト受信者ホワイトリスト）。判定モジュールは純粋なのでここで読む。
   const audienceContext = { testRecipients: new Set(parseTestRecipientsEnv(process.env.NEWSLETTER_TEST_RECIPIENTS).recipients) };
 
+  // ── 反応なし除外の一覧を読む（送信直前の再判定・2026-08-26）──────────
+  //
+  // 読めない / 空 / 古い ときは **1 人も除外しない**（fail closed の向きは「切らない」側）。
+  // 「反応が無い」と「観測できていない」を取り違えて、開封している人を切らないため。
+  let blocklist;
+  try {
+    blocklist = await createEngagementBlocklistStore({ redisCmd: makeRedisCmd(process.env) }).read({ nowMs: now });
+  } catch {
+    blocklist = emptyBlocklist(BLOCKLIST_SKIP.NOT_CONFIGURED);
+  }
+  const engagementBlocked = blocklist.usable ? blocklist.emails : null;
+
   // 割引オファー案内のジョブが 1 つでもあれば台帳を読む（read-only・1 回だけ）。
   // 生トークンは保存されていないが `signOfferToken` は決定的なので、鍵があれば再生成できる。
   const anyOfferJob = jobs.some((j) => {
@@ -599,6 +615,23 @@ export async function runDispatch({
           toSkip.push({ email, status: 'skipped-duplicate', reason: 'campaign_mismatch' });
           summary.skipped += 1;
           summary.skippedByReason.campaign_mismatch = (summary.skippedByReason.campaign_mismatch || 0) + 1;
+          summary.verified += 1;
+          continue;
+        }
+        // ── 反応なしの相手を送信直前にもう一度外す（2026-08-26 MK 確定）──────
+        //
+        // キュー登録から実送信までの間に delivered が閾値へ達することがある。
+        // 「累計 10 通 delivered で開封 0」は、**送る瞬間の事実**で判定する。
+        //
+        // ⚠️ 判定は `engagementGuard` が単一源。ここで閾値を持たない。
+        // ⚠️ 材料が欠けていれば guard 自身が **1 人も除外しない**（fail closed）。
+        //    「反応が無い」と「観測できていない」を取り違えない。
+        if (engagementBlocked && engagementBlocked.has(email)) {
+          const cohort = resolveCohort(fieldsByEmail.get(email) || null);
+          const reason = cohort === COHORT.IMPORTED ? 'engagement_blocked_imported' : 'engagement_blocked_existing';
+          toSkip.push({ email, status: 'skipped-duplicate', reason });
+          summary.skipped += 1;
+          summary.skippedByReason[reason] = (summary.skippedByReason[reason] || 0) + 1;
           summary.verified += 1;
           continue;
         }

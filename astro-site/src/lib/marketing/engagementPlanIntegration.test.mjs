@@ -40,8 +40,14 @@ const signals = (openers = ['opener@example.com']) => ({
   meta: { startedAtMs: START, firstOpenAtMs: START + DAY, lastEventAtMs: NOW - 3600000 },
 });
 
+// ⚠️ **2026-08-26 MK 仕様変更**: 自動除外は **CSV 取り込み由来だけ**に適用する。
+//    閾値そのものの検証を続けるため、既定の fixture を取り込み由来にする。
+//    既存顧客が除外されないことは engagementSuppressionCohort.test.mjs で固定。
 function customer(email, over = {}) {
-  const fields = { Email: email, Status: 'active', 'プラン': 'Premium', '有効期限': '2020-01-01', ...over };
+  const fields = {
+    Email: email, Status: 'active', 'プラン': 'Premium', '有効期限': '2020-01-01',
+    Source: 'customer-import:imp-test', ...over,
+  };
   return { recordId: `rec-${email}`, fields, marketing: resolveCustomerMarketing({ fields, nowMs: NOW }) };
 }
 
