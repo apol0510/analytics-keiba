@@ -31,7 +31,7 @@ import {
   computeCampaignContentHash, assertOnlyDeliveryFields,
   MAX_RECIPIENTS_PER_SEND,
 } from '../../src/lib/marketing/campaignSend.js';
-import { getCampaign, renderCampaign } from '../../src/lib/marketing/campaignCatalog.js';
+import { getCampaign, renderCampaign, listCampaigns } from '../../src/lib/marketing/campaignCatalog.js';
 import {
   isSequenceCampaign, resolveSequenceStep,
 } from '../../src/lib/marketing/campaignSequence.js';
@@ -292,16 +292,47 @@ export async function runSequenceTick({ env = process.env, now = Date.now(), cam
   };
 }
 
+/**
+ * この tick で進めるキャンペーン。
+ *
+ * ⚠️ **2026-08-26 MK 確定で「env で指定した 1 本だけ」から変更**。
+ *    以前は `MARKETING_SEQUENCE_CAMPAIGN_ID` に入れた 1 本しか進まず、
+ *    キャンペーンが増えるたびに人が env を書き換える必要があった。
+ *    3 区分（無料 / Light / Premium）を自動で回すには足りない。
+ *
+ * いまは **有効な連続配信キャンペーンを全部**、1 tick で順に 1 ステップずつ進める。
+ *   - env で指定があればそれだけ（従来運用・障害時の絞り込みに使える）
+ *   - 指定が無ければ カタログの有効な連続配信すべて
+ *   - 1 本が失敗しても**他は続ける**（1 本の不調で全部止めない）
+ */
+export function resolveTickCampaignIds(env = process.env) {
+  const raw = String(env?.MARKETING_SEQUENCE_CAMPAIGN_ID ?? '').trim();
+  if (raw) return raw.split(',').map((x) => x.trim()).filter(Boolean);
+  return listCampaigns({ includeDisabled: false })
+    .filter((c) => c.usable !== false && c.sequence)
+    .map((c) => c.campaignId);
+}
+
 /** Netlify Functions **v2** のエントリ（`export const config` が効くのはこの形式だけ） */
 export default async function handler() {
-  try {
-    const out = await runSequenceTick({ env: process.env, now: Date.now() });
-    return json(200, out);
-  } catch (e) {
-    // 値・アドレスはログに出さない（理由コードだけ）
-    log({ ok: false, error: String(e && e.message ? e.message : 'unknown') });
-    return json(200, { ok: false, error: 'tick_failed', sideEffects: 'unknown' });
+  const ids = resolveTickCampaignIds(process.env);
+  const results = [];
+  for (const campaignId of ids) {
+    try {
+      results.push(await runSequenceTick({ env: process.env, now: Date.now(), campaignId }));
+    } catch (e) {
+      // 値・アドレスはログに出さない（理由コードだけ）。1 本落ちても他は続ける
+      log({ ok: false, campaignId, error: String(e && e.message ? e.message : 'unknown') });
+      results.push({ ok: false, campaignId, error: 'tick_failed', sideEffects: 'unknown' });
+    }
   }
+  const enqueued = results.reduce((n, r) => n + (Number(r && r.enqueued) || 0), 0);
+  return json(200, {
+    ok: results.some((r) => r && r.ok === true),
+    campaigns: ids.length,
+    enqueued,
+    results,
+  });
 }
 
 /**

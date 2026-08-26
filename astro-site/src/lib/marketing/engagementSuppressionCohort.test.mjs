@@ -283,3 +283,29 @@ test('【配線】cron が 10 分間隔で動く（1 日 1 回では配り切れ
   assert.match(cron, /schedule: '\*\/10 \* \* \* \*'/, 'cron が 10 分間隔になっていない');
   assert.match(cron, /resolveMaxRecipientsPerTick/, '1 tick の上限を env から読んでいない');
 });
+
+// ── 8. 3 区分とも自動で回る（1 本だけ進める実装では足りない）──────────
+test('【要件】env 指定が無ければ有効な連続配信をすべて自動で進める', async () => {
+  const { resolveTickCampaignIds } = await import('../../../netlify/functions/cron-campaign-sequence.js');
+  const ids = resolveTickCampaignIds({});
+  for (const id of ['campaign-discount-free', 'campaign-discount-light', 'campaign-discount-premium']) {
+    assert.ok(ids.includes(id), `${id} が自動対象に入っていない（手動送信が必要なままになる）`);
+  }
+});
+
+test('env で対象を絞れる（障害時・段階運用のため）', async () => {
+  const { resolveTickCampaignIds } = await import('../../../netlify/functions/cron-campaign-sequence.js');
+  assert.deepEqual(
+    resolveTickCampaignIds({ MARKETING_SEQUENCE_CAMPAIGN_ID: 'campaign-discount-free, campaign-discount-light' }),
+    ['campaign-discount-free', 'campaign-discount-light'],
+  );
+  assert.deepEqual(resolveTickCampaignIds({ MARKETING_SEQUENCE_CAMPAIGN_ID: 'campaign-discount-free' }),
+    ['campaign-discount-free']);
+});
+
+test('停止中のキャンペーンは自動対象に入らない（期間外は送らない）', async () => {
+  const { resolveTickCampaignIds } = await import('../../../netlify/functions/cron-campaign-sequence.js');
+  const ids = resolveTickCampaignIds({});
+  assert.equal(ids.includes('general-announcement'), false, '停止中まで自動で進めている');
+  assert.equal(ids.includes('sanrenpuku-offer'), false);
+});
