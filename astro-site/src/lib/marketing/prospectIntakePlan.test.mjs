@@ -249,7 +249,9 @@ test('まとめ書き: 新規だけ追加し、読み戻して確かめる', asy
   const r = fakeRedis();
   const store = createProspectStore({ cmd: r.cmd, pipeline: r.pipeline });
   const res = await store.addManyIfAbsent([mk('a@x.com'), mk('b@x.com')]);
-  assert.deepEqual(res, { added: 2, existed: 0, blocked: 0, failed: 0, unverified: 0 });
+  assert.deepEqual(res, {
+    added: 2, existed: 0, blocked: 0, failed: 0, unverified: 0, reindexed: 0,
+  });
   assert.equal((await store.load('a@x.com')).email, 'a@x.com');
   assert.deepEqual((await store.activeHashes()).sort(), [emailHash('a@x.com'), emailHash('b@x.com')].sort());
 });
@@ -260,7 +262,10 @@ test('⚠️ まとめ書き: 既にあるレコードは上書きしない（�
   const p = mk('a@x.com'); p.sends = 3; p.delivered = 2; p.state = PS.SENDING;
   await store.addManyIfAbsent([p]);
   const again = await store.addManyIfAbsent([mk('a@x.com')]);   // sends 0 の新品
-  assert.deepEqual(again, { added: 0, existed: 1, blocked: 0, failed: 0, unverified: 0 });
+  // ⚠️ 既存は上書きしないが、索引だけは state に合わせて張り直す（既に揃っていれば 0）
+  assert.deepEqual(again, {
+    added: 0, existed: 1, blocked: 0, failed: 0, unverified: 0, reindexed: 0,
+  });
   const cur = await store.load('a@x.com');
   assert.equal(cur.sends, 3, '上書きされている');
   assert.equal(cur.delivered, 2);

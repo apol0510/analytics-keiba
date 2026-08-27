@@ -97,6 +97,13 @@ const pick = (obj, allow) => {
 };
 
 /**
+ * その状態なら**送信候補**か。索引（`ACTIVE_INDEX`）に居るべきかどうかの単一源。
+ * ⚠️ ここと `syncIndexes` の判定がズレると、状態と索引が食い違う。
+ */
+export const isSendableState = (state) => state === PROSPECT_STATE.NEW
+  || state === PROSPECT_STATE.SENDING;
+
+/**
  * ⚠️ **prospect レコードに TTL は付けない。**
  * 以前は EXHAUSTED / SUPPRESSED を TTL で消していたが、消えると
  * **CSV 再取り込みで配信対象として復活する**。抑止は台帳（TTL なし）が担い、
@@ -149,14 +156,20 @@ export function createProspectStore({ cmd, pipeline } = {}) {
     catch { throw new ProspectStoreError(STORE_FAIL.DATA_CORRUPT, 'prospect'); }
   };
 
-  /** 索引の張り替え。**状態と索引を必ず揃える**（片方だけ残さない） */
+  /**
+   * 索引の張り替え。**状態と索引を必ず揃える**（片方だけ残さない）。
+   * @returns {Promise<number>} 実際に変わった件数（0 なら既に揃っていた）
+   */
   const syncIndexes = async (hash, next) => {
-    const sendable = next.state === PROSPECT_STATE.NEW || next.state === PROSPECT_STATE.SENDING;
+    const sendable = isSendableState(next.state);
     const engaged = next.state === PROSPECT_STATE.ENGAGED;
-    if (sendable) await call(['SADD', ACTIVE_INDEX, hash]);
-    else await call(['SREM', ACTIVE_INDEX, hash]);
-    if (engaged) await call(['SADD', ENGAGED_INDEX, hash]);
-    else await call(['SREM', ENGAGED_INDEX, hash]);
+    const n = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+    let changed = 0;
+    if (sendable) changed += n(await call(['SADD', ACTIVE_INDEX, hash]));
+    else changed += n(await call(['SREM', ACTIVE_INDEX, hash]));
+    if (engaged) changed += n(await call(['SADD', ENGAGED_INDEX, hash]));
+    else changed += n(await call(['SREM', ENGAGED_INDEX, hash]));
+    return changed;
   };
 
   /** 抑止台帳へ載せる（**TTL なし・アドレスなし**・冪等） */
@@ -165,6 +178,39 @@ export function createProspectStore({ cmd, pipeline } = {}) {
     await call(['SET', blockedKey(hash), JSON.stringify(entry)]);
     await call(['SADD', BLOCKED_INDEX, hash]);
     return entry;
+  };
+
+  /**
+   * 既存レコードの**索引だけ**を state に合わせて張り直す（レコードは触らない）。
+   *
+   * ⚠️ 1 件ずつ `syncIndexes` を呼ぶと 1 件 4 往復になり、
+   *    まさに 504 を起こした往復数へ逆戻りする。**集合ごとにまとめて 1 コマンド**にする
+   *    （最大 4 コマンド）。
+   *
+   * @returns {Promise<number>} 実際に変わった件数（0 なら既に揃っていた）
+   */
+  const reindexExisting = async (entries) => {
+    const list = (entries || []).filter((e) => e && e.hash && e.data);
+    if (list.length === 0) return 0;
+    const addActive = []; const remActive = [];
+    const addEngaged = []; const remEngaged = [];
+    for (const { hash, data } of list) {
+      (isSendableState(data.state) ? addActive : remActive).push(hash);
+      (data.state === PROSPECT_STATE.ENGAGED ? addEngaged : remEngaged).push(hash);
+    }
+    const n = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+    let changed = 0;
+    const ops = [
+      addActive.length ? ['SADD', ACTIVE_INDEX, ...addActive] : null,
+      remActive.length ? ['SREM', ACTIVE_INDEX, ...remActive] : null,
+      addEngaged.length ? ['SADD', ENGAGED_INDEX, ...addEngaged] : null,
+      remEngaged.length ? ['SREM', ENGAGED_INDEX, ...remEngaged] : null,
+    ].filter(Boolean);
+    for (const op of ops) {
+      // eslint-disable-next-line no-await-in-loop -- 最大 4 コマンド
+      changed += n(await call(op));
+    }
+    return changed;
   };
 
   const write = async (hash, next) => {
@@ -231,7 +277,9 @@ export function createProspectStore({ cmd, pipeline } = {}) {
      */
     async addManyIfAbsent(prospects) {
       const list = (Array.isArray(prospects) ? prospects : []).filter((p) => p && p.email);
-      const out = { added: 0, existed: 0, blocked: 0, failed: 0, unverified: 0 };
+      const out = {
+        added: 0, existed: 0, blocked: 0, failed: 0, unverified: 0, reindexed: 0,
+      };
       if (list.length === 0) return out;
 
       // ⚠️ 状態を確かめる（この経路は配信候補の投入だけを扱う）
@@ -254,11 +302,25 @@ export function createProspectStore({ cmd, pipeline } = {}) {
       }
 
       const fresh = [];
+      // ⚠️ 既存レコードは**上書きしない**が、索引は state に合わせて張り直す（自己修復）
+      const existing = [];
       list.forEach((p, i) => {
         if (blockedRaw[i] !== null && blockedRaw[i] !== undefined) { out.blocked += 1; return; }
-        if (curRaw[i] !== null && curRaw[i] !== undefined) { out.existed += 1; return; }
+        if (curRaw[i] !== null && curRaw[i] !== undefined) {
+          out.existed += 1;
+          existing.push({ hash: hashes[i], data: parse(curRaw[i]) });
+          return;
+        }
         fresh.push({ hash: hashes[i], data: pick(p, PROSPECT_FIELDS) });
       });
+
+      // ⚠️ ここが 2026-08-27 の事故の恒久対策。
+      //    `SET` と `SADD` は別往復なので、途中で落ちると
+      //    **レコードはあるのに索引に居ない**人が残る。次の実行では `existed` 扱いになり、
+      //    以前は**索引を張り直さずに素通り**していたため、永久に送信候補へ戻らなかった。
+      //    再実行するだけで直るように、`existed` でも索引を突き合わせる。
+      out.reindexed = await reindexExisting(existing);
+
       if (fresh.length === 0) return out;
 
       // 3) まとめ書き。**pipeline が無ければ 1 件ずつ**（遅いが正しい）
@@ -299,9 +361,16 @@ export function createProspectStore({ cmd, pipeline } = {}) {
       const hash = emailHash(prospect.email);
       if (await this.isBlocked(hash)) return { added: false, blocked: true, prospect: null };
       const cur = await this.loadByHash(hash);
-      if (cur) return { added: false, prospect: cur };
+      if (cur) {
+        // ⚠️ **レコードは上書きしない**が、索引だけは状態に合わせて張り直す。
+        //    `SET` と `SADD` は別往復なので、途中で落ちると
+        //    「レコードはあるのに索引に居ない」人が残る（2026-08-27 の事故）。
+        //    再実行で自己修復できるように、既存でも必ず突き合わせる。
+        const reindexed = await syncIndexes(hash, cur);
+        return { added: false, prospect: cur, reindexed };
+      }
       const saved = await write(hash, prospect);
-      return { added: true, prospect: saved };
+      return { added: true, prospect: saved, reindexed: 0 };
     },
 
     /** 抑止台帳に載っているか（hash で照合。アドレスは要らない） */
