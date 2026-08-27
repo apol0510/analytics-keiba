@@ -22,6 +22,17 @@
  * ── 使い分け ────────────────────────────────────────────────
  * 本モジュールは **判定と記録だけ**を担う。どちらを正本にするか（Airtable /
  * Redis / 両方）は `deliveryKeySource.js` の解決に従い、呼び出し側が決める。
+ *
+ * ── 「予約」と「delivered 実績」は別物（2026-08-27）────────────────
+ * この集合が表すのは **「この DeliveryKey はもう積んだ／送った」＝冪等性**であって、
+ * **配信成功の回数ではない**。打ち切り（delivered 10 通・開封 0）の分母になる
+ * `delivered` カウンタは prospect レコード側にあり、
+ * **`prospectStore.recordDelivered()`（確定経路）だけ**が増やす。
+ * キュー登録や予約でこのカウンタを動かしてはいけない。
+ *
+ * ⚠️ **予約は queue の前に取る。** 後から記録すると
+ *    「queue 成功 → 記録失敗 → 次の tick で未送信扱い → 二重 queue」が起きる。
+ *    `claimDelivered()` が `SADD` の戻り値（0/1）で**鍵ごとに 1 回だけ**所有権を渡す。
  */
 
 /** AK 専用の名前空間。KMA(`CampaignDeliveries_MarketingAutomation`) とは混ぜない。 */
@@ -82,7 +93,7 @@ export function chunk(list, size = CHUNK) {
  *   `redisCmd` は Upstash REST へ 1 コマンド投げて `result` を返す関数
  *   （既存 Function 群と同じ形）。注入にしてあるのはテストで差し替えるため。
  */
-export function createDeliveryKeyStore({ redisCmd } = {}) {
+export function createDeliveryKeyStore({ redisCmd, redisPipeline } = {}) {
   if (typeof redisCmd !== 'function') throw new DeliveryKeyStoreError('redis_not_configured');
 
   const call = async (args) => {
@@ -92,6 +103,32 @@ export function createDeliveryKeyStore({ redisCmd } = {}) {
       // ⚠️ ここで false / [] を返してはいけない（未送信と誤判定して二重送信になる）
       throw new DeliveryKeyStoreError('redis_unavailable');
     }
+  };
+
+  /**
+   * 鍵ごとに `SADD` を 1 回ずつ実行し、**鍵ごとの 0/1** を返す。
+   *
+   * まとめて `SADD set k1 k2 k3` にすると「合計何件増えたか」しか分からず、
+   * **どの鍵を自分が取ったのかが決まらない**（＝所有権を渡せない）。
+   * pipeline があれば 1 リクエストにまとめ、無ければ 1 件ずつ投げる。
+   */
+  const addEachAtomically = async (setKey, group) => {
+    if (typeof redisPipeline === 'function') {
+      let res;
+      try {
+        res = await redisPipeline(group.map((k) => ['SADD', setKey, k]));
+      } catch {
+        throw new DeliveryKeyStoreError('redis_unavailable');
+      }
+      if (!Array.isArray(res)) throw new DeliveryKeyStoreError('unexpected_response');
+      return res;
+    }
+    const out = [];
+    for (const k of group) {
+      // eslint-disable-next-line no-await-in-loop -- pipeline が無いときの退避経路
+      out.push(await call(['SADD', setKey, k]));
+    }
+    return out;
   };
 
   return {
@@ -112,6 +149,65 @@ export function createDeliveryKeyStore({ redisCmd } = {}) {
         group.forEach((k, i) => { if (Number(res[i]) === 1) found.push(k); });
       }
       return found;
+    },
+
+    /**
+     * **queue の前に**鍵を予約する。`SADD` は atomic なので、
+     * 同じ鍵を同時に 2 本の実行が要求しても **1 本だけが 1 を受け取る**。
+     *
+     * ⚠️ 戻り値の `claimed` に入った鍵だけを queue すること。
+     *    `already` は「他が持っている or 既に送った」なので**送らない**。
+     * ⚠️ 応答の形が少しでも想定と違えば **throw**（fail closed）。
+     *    「分からない」を「未送信」と扱うと二重送信になる。
+     * ⚠️ queue に失敗した鍵は `releaseClaims()` で**必ず戻す**
+     *    （戻さないとその人は二度と送られない＝送信漏れ）。
+     *
+     * @returns {Promise<{claimed:string[], already:string[]}>}
+     */
+    async claimDelivered({ brand, campaignId, version, keys }) {
+      const setKey = buildDeliveredSetKey({ brand, campaignId, version });
+      assertDeliveryKeys(keys);
+      const unique = [...new Set(keys)];
+      if (unique.length === 0) return { claimed: [], already: [] };
+      const claimed = []; const already = [];
+      for (const group of chunk(unique)) {
+        // eslint-disable-next-line no-await-in-loop -- 1 リクエストにまとめて投げている
+        const results = await addEachAtomically(setKey, group);
+        if (!Array.isArray(results) || results.length !== group.length) {
+          throw new DeliveryKeyStoreError('unexpected_response');
+        }
+        group.forEach((k, i) => {
+          const n = Number(results[i]);
+          // 0 / 1 以外は**解釈しない**（想定外を「未送信」に倒さない）
+          if (n === 1) claimed.push(k);
+          else if (n === 0) already.push(k);
+          else throw new DeliveryKeyStoreError('unexpected_response');
+        });
+      }
+      return { claimed, already };
+    },
+
+    /**
+     * 予約を戻す（**queue できなかった鍵だけ**）。
+     *
+     * ⚠️ これは集合から鍵を消す唯一の操作。**送ったものを消してはいけない**
+     *    （消すとその人へもう一度送る）。呼び出し側は
+     *    「自分が `claimDelivered` で受け取り、かつ queue できなかった鍵」
+     *    以外を渡さないこと。
+     * ⚠️ 失敗は throw。戻せなかったことを黙って捨てない。
+     */
+    async releaseClaims({ brand, campaignId, version, keys }) {
+      const setKey = buildDeliveredSetKey({ brand, campaignId, version });
+      assertDeliveryKeys(keys);
+      const unique = [...new Set(keys)];
+      if (unique.length === 0) return { released: 0 };
+      let released = 0;
+      for (const group of chunk(unique)) {
+        // eslint-disable-next-line no-await-in-loop
+        const res = await call(['SREM', setKey, ...group]);
+        released += Number(res) || 0;
+      }
+      return { released };
     },
 
     /** 送信済みとして記録する。**冪等**（同じ鍵を何度足しても集合は変わらない）。 */
@@ -173,5 +269,35 @@ export function makeRedisCmd(env = process.env) {
     if (!res.ok) throw new Error(`upstash ${res.status}`); // 値は載せない
     const j = await res.json();
     return j.result;
+  };
+}
+
+
+/**
+ * Upstash の pipeline 呼び出し。**1 リクエストで複数コマンド**を投げ、
+ * コマンドごとの結果を配列で返す（`claimDelivered` の鍵ごと `SADD` に使う）。
+ *
+ * ⚠️ URL / token は例外にもログにも出さない。
+ * ⚠️ 応答の形が想定と違えば throw（**fail closed**）。
+ *    予約が取れたのか分からないまま送ってはいけない。
+ */
+export function makeRedisPipeline(env = process.env) {
+  const url = env && env.UPSTASH_REDIS_REST_URL;
+  const token = env && env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) throw new DeliveryKeyStoreError('redis_not_configured');
+  const endpoint = `${String(url).replace(/\/+$/, '')}/pipeline`;
+  return async (commands) => {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(commands),
+    });
+    if (!res.ok) throw new Error(`upstash ${res.status}`); // 値は載せない
+    const j = await res.json();
+    if (!Array.isArray(j)) throw new DeliveryKeyStoreError('unexpected_response');
+    return j.map((entry) => {
+      if (entry && entry.error) throw new DeliveryKeyStoreError('unexpected_response');
+      return entry ? entry.result : undefined;
+    });
   };
 }

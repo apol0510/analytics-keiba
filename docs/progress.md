@@ -1637,6 +1637,291 @@ MK 要望の 5 項目のうち、**確実に出せる 3 つ**を入れた。
 
 ---
 
+## 2026-08-27（追記2）— 【恒久修正】prospect の予約を queue の前へ（fail-closed 違反）
+
+### 指摘された不具合
+
+prospect を **queue したあと**に Redis の集合へ記録し、記録・読み戻しに失敗しても
+「送信は既に queue 済みなので止められない」と**ログだけ出して `ok:true`** で終了していた。
+
+prospect は `CampaignDeliveries` に行を作らないので Redis の集合だけが冪等性の根拠。
+記録が落ちた瞬間に「未送信」へ戻り、**次の tick で二重 queue** になる。
+
+### 直した
+
+`SADD` の戻り値（0/1）で**鍵ごとに 1 回だけ**所有権を渡し、**取れた鍵だけを queue** する。
+`SADD` は atomic なので並行 tick が同じ鍵を取ることは構造的に起きない。
+
+| 条件 | ふるまい |
+|---|---|
+| Redis 不可 / 予約が確定できない | **prospect を 1 人も queue しない**（Customers は従来どおり）|
+| 応答が 0/1 以外・件数不一致 | **throw**（「分からない」を「未送信」に倒さない）|
+| 予約したが queue できなかった | `releaseClaims()` で戻す |
+| admin 経路で 1 件でも予約不可 | **1 行も書かずに中止**（all-or-nothing）|
+| 巻き戻し時 | prospect の予約も戻す |
+
+`SADD` は鍵ごとに投げる必要がある（まとめると「どの鍵を取ったか」が決まらない）ため、
+Upstash の `/pipeline` で 1 リクエストにまとめる。pipeline が無ければ 1 件ずつ投げる。
+
+### 予約と delivered 実績を分離
+
+`ak:mkt:delivered` = **予約・冪等性**。
+打ち切り（delivered 10 通・開封 0）の分母 = prospect レコードの `delivered` カウンタで、
+**`recordDelivered()`（確定経路）だけ**が増やす。
+
+### テストで固定した（`prospectQueueIdempotency.test.mjs` 19 件）
+
+| 要件 | 固定 |
+|---|---|
+| Redis unavailable → prospect enqueue 0 | ✅ |
+| 記録・確認失敗 → 二重送信不能（throw）| ✅ |
+| 同一 DeliveryKey の並行 tick → enqueue 最大 1 | ✅ |
+| queue だけでは delivered が増えない | ✅（30 回 queue しても 0）|
+| prospect Airtable CampaignDeliveries 増加 0 | ✅（6,308 名で 0 行）|
+| Customers 経路の回帰なし | ✅（prospect 0 人なら従来と同一）|
+
+### 再測定（本番 read-only・修正後）
+
+全 12,872 名の parity **差分 0**（DeliveryKey / delivered を含む）。
+8/31 09:00 JST の 2 通目も **Customers 6,308 = prospect 6,308 / 片側だけ 0**。
+
+⚠️ `CampaignDeliveries` はこの 1 時間で **33,796 → 34,162 行**（cron が書き続けている）。
+
+### secret の扱い
+
+端末出力に secret の先頭断片を出していた。**今後は prefix も長さも一切出さない。**
+repo / git 履歴 / commit / PR 本文・コメントを走査し、**断片の混入は 0 件**を確認。
+完全値の漏洩は確認されていないため、**secret のローテーションは行わない**。
+
+---
+
+## 2026-08-27（追記）— 【緊急】8/31 より前に移せる状態まで完成
+
+### なぜ急ぐか
+
+Airtable は **50,789 / 50,000 で超過中**。現行経路のまま 8/31 の 2 通目を送ると
+`CampaignDeliveries` が **+6,308 行**増える（本番実測）。移行後は **0 行**。
+
+### 本番実測（read-only・書き込み 0 / 2026-08-27）
+
+**全 12,872 名の parity は差分 0。**
+
+| 比べたもの | 差分 |
+|---|---:|
+| 対象のみ片側 / due のみ片側 | 0 / 0 |
+| 次 step / 状態 / 停止理由 | 0 / 0 / 0 |
+| **DeliveryKey** | **0** |
+| **delivered 回数** | **0** |
+
+**8/31 09:00 JST の 2 通目も完全一致**: due 6,308（step2 5,980）／片側だけ 0。
+
+打ち切り（delivered 10）は**いま誰にも当たらない**（全 Customers の delivered は最大 5 通・
+10 通以上は 0 名）。したがって開封の集計が無くても parity は影響を受けない。
+
+### できたこと
+
+| | |
+|---|---|
+| prospect プールから受信対象を作る | `prospectAudienceSource.js` ＋ cron へ配線 |
+| prospect の配信台帳を Airtable へ書かない | cron と admin の両方へ配線＋読み戻し確認 |
+| 投入（Redis write）の安全条件 | `prospectIntakePlan.js` ＋ `action: 'prospectIntake'`（既定は下見）|
+| 反応の読み出し経路 | `action: 'engagementDigest'`（**hash だけ**返す・read-only）|
+| 全件 parity の実測 | `scripts/prospectMigrationReport.mjs`（read-only）|
+
+### 🔴 残っている唯一の障害: 開封の集計が本番からしか読めない
+
+`UPSTASH_REDIS_REST_URL` / `..._TOKEN` は **production コンテキストのみ**。
+ローカルでは masked（`****`）、**Deploy Preview にも無い**（preview で実測 →
+`redis_not_configured`）。
+
+| 選択肢 | 影響 |
+|---|---|
+| **A. この PR を merge して production へ出し、digest を読む** | production deploy が要る |
+| B. Redis env を deploy-preview へ足す | **production env 変更＋認証情報の露出**。推奨しない |
+| C. 開封を当てずに移す | **開封した人まで prospect へ落とす**。投入側が fail closed で拒否する |
+
+⚠️ C は選べない（`planProspectIntakeFromCustomers()` は集計が無いと 1 件も作らない）。
+
+### ▶ 次作業
+
+1. **A を選ぶなら**: PR を merge → production deploy → `engagementDigest` を読む
+2. 開封を当てた最終下見（`engagementApplied: true`）
+3. `PROSPECT_MIGRATION_ENABLED=true` を production へ（**env 変更＝承認が要る**）
+4. `prospectIntake` を 300 件ずつ実行（**Redis write ＝ここで停止して承認を取る**）
+5. 投入後に**再 parity** → 抑止台帳へ hash 引き継ぎ → スナップショット
+6. **Customers 削除は別承認**
+
+### 停止境界（現在の状態）
+
+| 境界 | 状態 |
+|---|---|
+| 本番 Redis への大量書き込み（prospect 投入）| **未実行** |
+| **Customers の削除** | **未実行** |
+| production env の変更 | **未実行** |
+| 実送信 / queue 登録 | **未実行** |
+| production への deploy（merge）| **未実行**（開封の読み出しに必要）|
+
+---
+
+## 2026-08-27 — 【仕様確定＋実装】CSV prospect の打ち切り・早期移行・台帳の置き場所
+
+### 現在地
+
+| | 状態 |
+|---|---|
+| 割引メール 1 通目 | ✅ 3 区分 **15,509 通送信 / 失敗 0 / 二重送信 0** |
+| 2 通目以降 | ✅ **完全自動運用**（10 分ごと・日付 ARM 不要・15,945 名でも同日完走）|
+| 打ち切り仕様（delivered 10 / 開封 0）| ✅ **実装・テスト固定済み**（旧「送信 3 回」は定数ごと削除）|
+| 早期移行の parity（Customers 経路 vs prospect 経路）| ✅ **実装・テスト固定済み**（差分 0 でなければ移行不可）|
+| 移行判定の是正（運営付与 ≠ 本人の反応）| ✅ **実装・テスト固定済み**。本番で数え直し済み |
+| 配信台帳を Airtable へ増やさない設計 | ✅ **設計・テスト固定済み**。**本番配線は未了** |
+| prospect 移行そのもの | 🔵 **未実行**（Redis write / Customers 削除ともに 0 件）|
+
+### 本番実測（read-only・書き込み 0 / 2026-08-27）
+
+Customers **15,976 件**。母数と判定の合計は一致。
+
+| 判定 | 件数 |
+|---|---:|
+| prospect へ戻す | **12,872** |
+| 取り込み由来でない（残す）| 1,487 |
+| **本人が動いた**（購入・申込・入金・ログイン。残す）| **49** |
+| **運営側の付与だけ**（保留・消さない）| **1,566** |
+| 由来不明の値あり（保留・消さない）| 0 |
+| 配信停止・退会（いまは残す）| 2 |
+
+⚠️ 旧版は運営側の付与を「顧客になった」に数えて **1,615 件**としていた。
+分離して数え直すと **本人が動いたのは 49 件**、残る **1,566 件は運営側の付与だけ**だった。
+**1,615 は確定値ではない。**
+
+prospect プールは **0 件 / `writeEnabled:false`**（一度も使われていない）。
+巻き戻しに必要な項目は 12,872 件すべてそろっている。
+
+### 🔴 Airtable は上限超過中（Customers 削減だけでは解決しない）
+
+全 13 table 実測 **50,789 件 / 上限 50,000（Team）**。
+
+| table | 件数 |
+|---|---:|
+| **CampaignDeliveries** | **33,112** |
+| Customers | 15,976 |
+| その他 11 table | 1,701 |
+
+増加の主因は Customers ではなく**配信台帳**。本番の `MARKETING_DELIVERY_STORE` は
+いま **`dual`**＝Airtable にも書き続けており、
+**8/31 の 2 通目でさらに 1 万数千行増える**。
+
+| 配り方 | Airtable の増加 |
+|---|---:|
+| 12,872 名 × 2 step を Customers 経路 | **+25,744 行** |
+| 同じ人数を prospect 経路 | **0 行** |
+
+### 【緊急調査】新規会員登録 0 件 — **障害ではない**
+
+| 確認 | 結果 |
+|---|---|
+| Customers の最新 createdTime | **2026-08-23T06:24:34Z**（以後 0 件）|
+| AuthTokens / EmailBlacklist / ScheduledEmails の最新 | **いずれも 8/26**（＝同じ Base で CREATE が成功している）|
+| `auth-user` 本番応答（未登録アドレス・**書き込み無し**）| **401 正常**（Airtable へ到達）|
+| `/free-signup/` とクライアント JS | **200**。参照している DOM id は全て存在 |
+
+**「Airtable record limit で CREATE 失敗」ではない。**
+Airtable の上限は Base 単位で全 CREATE を止めるが、他テーブルは 8/26 に書けている。
+登録経路も本番で生きている。したがって残るのは**登録リクエスト自体がほぼ 0**。
+8/13〜8/23 も 1 日 0〜4 件で 0 の日が 3 日ある（8/18・8/20・8/21）ため、
+4 日連続 0 は珍しいが異常とは言い切れない。
+8/25〜8/26 の 15,509 通は**全員すでに Customers にいる人**なので、
+新規登録が増えないのは設計どおり。
+
+⚠️ **未確認**: Netlify の Function ログは**ライブ tail のみ**で履歴を取れないため、
+「リクエストが 0 だった」ことの直接証拠は取れていない（状況証拠による切り分け）。
+
+→ **最優先障害としては扱わない。** 上限超過の解消（prospect 移行）の優先度は下げない。
+
+### 未完了（この 4 つ）
+
+1. **反応（開封）の一覧を計画へ当てる** — 開封記録は Redis にあり手元から読めない。
+   当てずに実行すると**開封した人まで prospect へ落とす**（`engagementApplied:false` は実行不可）
+2. **prospect 側 enqueue の本番配線** — parity と hydration はそろっているが、
+   実際に enqueue する経路（`partitionRecipientsForLedger()` を使う側）が未配線
+3. **全件 parity の実データ実行** — 単体テストでは差分 0 を固定済み。本番データでは未実行
+4. **移行の実行** — prospect 投入（Redis）→ 再 parity → 抑止台帳の引き継ぎ →
+   スナップショット → Customers 削除（Airtable）
+
+### ▶ 次作業
+
+1. 管理 API 側で開封を突合し、下見を `engagementApplied: true` でやり直す
+2. prospect 側 enqueue を配線する（台帳は **Redis 限定**）
+3. 本番データで全件 parity を取る（差分 0 を確認）
+4. **prospect 投入（Redis 大量 write）の直前で停止し、承認を取る**
+5. 投入後に再 parity → 抑止台帳へ hash 引き継ぎ → スナップショット
+6. **Customers 削除の直前で停止し、改めて承認を取る**
+
+### 完成条件（これを満たすまでクローズしない）
+
+1. 打ち切りが **delivered 10 / 開封 0** で動き、送信試行では切れない ✅（テスト固定済み）
+2. 反応の一覧を当てた計画で `engagementApplied: true` / 母数 = 判定の合計
+3. 本番データで **全件 parity が差分 0**（対象・次 step・DeliveryKey・停止理由）
+4. prospect プールへ投入され、件数・状態・delivered の引き継ぎが検証されている
+5. Customers から対象が削除され、**残件数が想定と一致**している
+6. 削除後も**配信が止まっていない**（2 通目・3 通目が届く / 実績が出る）
+7. **CSV prospect への配信で `CampaignDeliveries` の行が 1 行も増えない**ことが本番で確認できている
+8. 配信停止・バウンス・退会が**抑止台帳へ hash で引き継がれ**、再取り込みで復活しない
+9. 巻き戻し手順が実データで確認されている
+
+⚠️ 「計画がある」「テストが通る」は完成条件ではない。
+
+### 8/31 配信の継続条件（**壊さないために守ること**）
+
+| # | 条件 |
+|---|---|
+| 1 | **8/31 までに Customers を削除しない。** 削除すると 2 通目が送れない |
+| 2 | `DeliveryKey` の作り方を変えない（変えると既送分と鍵が変わり**全員へ再送**）|
+| 3 | `MARKETING_SEQUENCE_SCHEDULER_ENABLED` / `MARKETING_CAMPAIGN_ENABLED` / `MARKETING_CAMPAIGN_DISPATCH_ENABLED` を落とさない（現在すべて `true`）|
+| 4 | campaign の `version` / 本文を変えない（content hash が変わると鍵も変わる）|
+| 5 | 移行するなら **8/31 の配信が終わってから**、または **parity 差分 0 を本番データで確認してから** |
+| 6 | 8/31 の 2 通目で `CampaignDeliveries` が**さらに 1 万数千行増える**ことを織り込む（上限超過中）|
+
+### 停止境界（越えるたびに明示承認を取る）
+
+#### Redis write 前
+
+| 確認 | 満たすまで進まない |
+|---|---|
+| 本番データの全件 parity が**差分 0** | 未実施 |
+| `engagementApplied: true` の計画 | 未実施 |
+| 母数 = 判定の合計 | ✅ 一致（15,976）|
+| 投入件数の上限と分割の確認 | 未実施 |
+| 巻き戻し（`purge()` で Customers 無傷）| ✅ 手順あり |
+
+#### Customers 削除前
+
+| 確認 | 満たすまで進まない |
+|---|---|
+| prospect 投入後の**再 parity が差分 0** | 未実施 |
+| 抑止台帳へ hash が載ったことを**読み直して確認** | 未実施 |
+| 削除前の**全フィールドスナップショット** | 未実施 |
+| 2 通目・3 通目が prospect 経路で送れることの確認 | 未実施 |
+| 削除は**別承認**（Redis 投入の承認を流用しない）| — |
+
+#### 現在の状態
+
+| 境界 | 状態 |
+|---|---|
+| 本番 Redis への大量書き込み（prospect 投入）| **未実行** |
+| **Customers の削除** | **未実行** |
+| production env の変更（`MARKETING_DELIVERY_STORE` 等）| **未実行** |
+| 実送信 / queue 登録 | **未実行**（2 通目は自動配信が 8/31 に行う）|
+
+### ⚠️ 先に消すと配信が止まる
+
+連続配信は「配信台帳 → その人の Customers レコード」を引いて送る。
+12,872 名は**配信の途中**（1 通目済み / 2 通目 8/31 / 3 通目 9/6）。
+**9/6 を待たずに移行できる状態**は作った（parity）が、
+**parity を本番データで確認するまで削除しない**。
+
+---
+
 ## 2026-08-26 — 【仕様確定＋実装】反応なし除外をコホート運用にし、送信直前にも再判定する
 
 ### 確定（MK）

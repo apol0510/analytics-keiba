@@ -16,8 +16,9 @@
 
 import {
   evaluateProspectForSend, evaluateForPromotion, normalizeEmail,
-  SKIP_REASON, PROSPECT_STATE, MAX_SENDS_WITHOUT_ENGAGEMENT,
+  SKIP_REASON, PROSPECT_STATE,
 } from './prospectPolicy.js';
+import { describeProspectCutoff, resolveProspectCutoff } from './prospectEngagement.js';
 import { buildCreateFields, assertOnlyCreateFields } from '../crm/importWritePlan.js';
 
 const str = (v) => String(v ?? '').trim();
@@ -29,13 +30,16 @@ export const PROSPECT_SOURCE_PREFIX = 'prospect';
 /**
  * 今日の prospect 配信対象を決める。
  *
+ * ⚠️ 打ち切り（もう送らない）の判定は `prospectEngagement.js` の **delivered 基準**だけ。
+ *    送信回数の上限（旧 `maxSends`）は**受け取らない**（渡されても無視される形にした）。
+ *
  * @param {{prospects, customerEmails, blacklistEmails, nowMs, runId,
- *          buildKey, maxRecipients, maxSends, minDaysBetweenSends}} args
+ *          buildKey, maxRecipients, minDaysBetweenSends, env}} args
  * @returns {{recipients, skipped, counts}}
  */
 export function buildProspectAudience({
   prospects, customerEmails, blacklistEmails, nowMs, runId,
-  buildKey, maxRecipients, maxSends, minDaysBetweenSends,
+  buildKey, maxRecipients, minDaysBetweenSends, env = process.env,
 } = {}) {
   const customers = customerEmails instanceof Set ? customerEmails : new Set();
   const blacklist = blacklistEmails instanceof Set ? blacklistEmails : new Set();
@@ -57,7 +61,7 @@ export function buildProspectAudience({
     const v = evaluateProspectForSend({
       prospect: p, nowMs, isCustomer: customers.has(email),
       sentKeysThisRun: seenKeys, deliveryKey: key,
-      maxSends, minDaysBetweenSends,
+      minDaysBetweenSends, env,
     });
     if (!v.send) { bump(v.reason); continue; }
 
@@ -65,7 +69,10 @@ export function buildProspectAudience({
     if (cap > 0 && recipients.length >= cap) { capped += 1; continue; }
 
     seenKeys.add(key);
-    recipients.push({ email, deliveryKey: key, hash: p.hash || null, sends: int(p.sends) });
+    recipients.push({
+      email, deliveryKey: key, hash: p.hash || null,
+      sends: int(p.sends), delivered: int(p.delivered),
+    });
   }
 
   if (capped > 0) skipped.over_max_recipients = capped;
@@ -177,11 +184,12 @@ export function planProspectEventUpdates({ events, classify } = {}) {
 }
 
 /** 表示用（**アドレスを含めない**） */
-export function summarizePipeline({ audience, promotions }) {
+export function summarizePipeline({ audience, promotions, env = process.env }) {
   return {
     配信: audience ? audience.counts : null,
     昇格: promotions ? promotions.counts : null,
-    上限: { 送信回数: MAX_SENDS_WITHOUT_ENGAGEMENT },
+    // ⚠️ 打ち切りは**送信回数ではなく delivered**（旧 3 回仕様はこの経路に無い）
+    打ち切り: { ...describeProspectCutoff(env), 閾値: resolveProspectCutoff(env) },
     状態: Object.values(PROSPECT_STATE),
   };
 }

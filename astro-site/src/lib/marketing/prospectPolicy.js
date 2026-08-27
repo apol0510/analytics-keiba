@@ -13,8 +13,13 @@
  * ── 状態機械 ──────────────────────────────────────────────────
  *   NEW ──送信──▶ SENDING ──反応──▶ ENGAGED ──登録──▶ PROMOTED
  *                   │
- *                   ├─ MAX_SENDS_WITHOUT_ENGAGEMENT 回 無反応 ──▶ EXHAUSTED（登録しない）
+ *                   ├─ **delivered が閾値以上で開封 0** ────────▶ EXHAUSTED（登録しない）
  *                   └─ bounce / 苦情 / 配信停止 ────────────────▶ SUPPRESSED（即時）
+ *
+ * ⚠️ **打ち切りは「送信回数」ではなく「配信成功（delivered）」で数える**
+ *    （2026-08-27 MK 確定）。判定は `prospectEngagement.js` が単一源で、
+ *    数字の正本は `engagementPolicy.js`（delivered 10 / 20）。
+ *    旧仕様の `MAX_SENDS_WITHOUT_ENGAGEMENT = 3`（送信回数）は**削除した**。
  *
  * **SUPPRESSED と EXHAUSTED からは戻らない。** PROMOTED になったら
  * 以後の判断は Airtable Customers 側（既存 `resolveCustomerMarketing`）へ移る。
@@ -23,10 +28,14 @@
  *    `prospectStore.js` の責務（そちらに名前空間と PII の扱いを書いてある）。
  */
 
-/** 何回送って無反応なら諦めるか。**増やすと迷惑メール判定のリスクが上がる** */
-export const MAX_SENDS_WITHOUT_ENGAGEMENT = 3;
+import { isProspectCutOff, PROSPECT_CUTOFF_REASON } from './prospectEngagement.js';
 
-/** 同じ相手へ続けて送らない最小間隔（JST 暦日） */
+/**
+ * 同じ相手へ続けて送らない最小間隔（JST 暦日）。
+ *
+ * ⚠️ これは**ペース配分**であって打ち切りではない。打ち切り（もう送らない）の判定は
+ *    `prospectEngagement.js` の delivered 基準だけが決める。
+ */
 export const MIN_DAYS_BETWEEN_SENDS = 3;
 
 export const PROSPECT_STATE = Object.freeze({
@@ -102,8 +111,15 @@ export function buildProspect({ email, nowMs, batchId, source }) {
   return {
     email: e,
     state: PROSPECT_STATE.NEW,
+    /** 送信「試行」回数。**打ち切りには使わない**（届いた保証が無い） */
     sends: 0,
+    /** 配信成功の累計。**打ち切りはこの値だけで決める** */
+    delivered: 0,
+    /** 開封・クリックの累計（0 のままなら無反応） */
+    opens: 0,
+    clicks: 0,
     lastSentAt: null,
+    lastDeliveredAt: null,
     lastRunId: null,
     engagedAt: null,
     engagedKind: null,
@@ -124,10 +140,9 @@ export function buildProspect({ email, nowMs, batchId, source }) {
  */
 export function evaluateProspectForSend({
   prospect, nowMs, isCustomer, sentKeysThisRun, deliveryKey,
-  maxSends, minDaysBetweenSends,
+  minDaysBetweenSends, env = process.env,
 } = {}) {
   const p = prospect || {};
-  const cap = int(maxSends) || MAX_SENDS_WITHOUT_ENGAGEMENT;
   const gap = Number.isFinite(Number(minDaysBetweenSends))
     ? int(minDaysBetweenSends) : MIN_DAYS_BETWEEN_SENDS;
 
@@ -141,7 +156,9 @@ export function evaluateProspectForSend({
   // （昇格して Customers 側の配信に乗せる。二重送信を作らない）
   if (p.state === PROSPECT_STATE.ENGAGED) return { send: false, reason: SKIP_REASON.PROMOTED };
 
-  if (int(p.sends) >= cap) return { send: false, reason: SKIP_REASON.EXHAUSTED };
+  // ⚠️ **打ち切りは delivered だけで判定する**（`prospectEngagement.js` が単一源）。
+  //    `sends`（試行）が何回あっても、届いていなければ打ち切らない。
+  if (isProspectCutOff(p, { env })) return { send: false, reason: SKIP_REASON.EXHAUSTED };
 
   if (p.lastSentAt && gap > 0) {
     const last = Date.parse(p.lastSentAt);
@@ -156,16 +173,45 @@ export function evaluateProspectForSend({
   return { send: true, reason: null };
 }
 
-/** 送信を記録した後の状態 */
-export function applySend({ prospect, nowMs, runId, maxSends }) {
+/**
+ * 送信を「試みた」ことを記録する。
+ *
+ * ⚠️ **ここで打ち切らない。** 試行はまだ届いた証拠ではないので、
+ *    何回積んでも EXHAUSTED にはしない（旧仕様はここで 3 回打ち切っていた）。
+ *    打ち切りが起きるのは `applyDelivered()`（配信成功の記録）だけ。
+ */
+export function applySend({ prospect, nowMs, runId }) {
   const p = { ...(prospect || {}) };
-  const cap = int(maxSends) || MAX_SENDS_WITHOUT_ENGAGEMENT;
   p.sends = int(p.sends) + 1;
   p.lastSentAt = new Date(Number(nowMs) || 0).toISOString();
   p.lastRunId = str(runId) || null;
-  // 上限に達したら**その場で EXHAUSTED**（次回の判定を待たない）
-  p.state = p.sends >= cap ? PROSPECT_STATE.EXHAUSTED : PROSPECT_STATE.SENDING;
+  if (p.state === PROSPECT_STATE.NEW) p.state = PROSPECT_STATE.SENDING;
   return p;
+}
+
+/**
+ * **配信成功（delivered）**を記録する。打ち切りが起きるのはここだけ。
+ *
+ * `delivered` が閾値に達し、開封もクリックも 0 なら **その場で EXHAUSTED**
+ * （次回の判定を待たない）。反応済み（ENGAGED）・除外済み（SUPPRESSED）・
+ * 昇格済み（PROMOTED）は**触らない**（状態を巻き戻さない）。
+ */
+export function applyDelivered({ prospect, nowMs, env = process.env }) {
+  const p = { ...(prospect || {}) };
+  if (p.state === PROSPECT_STATE.SUPPRESSED
+    || p.state === PROSPECT_STATE.PROMOTED
+    || p.state === PROSPECT_STATE.ENGAGED) {
+    return { changed: false, prospect: p };
+  }
+  p.delivered = int(p.delivered) + 1;
+  p.lastDeliveredAt = new Date(Number(nowMs) || 0).toISOString();
+  if (isProspectCutOff(p, { env })) {
+    p.state = PROSPECT_STATE.EXHAUSTED;
+    p.suppressedReason = PROSPECT_CUTOFF_REASON;
+  } else if (p.state === PROSPECT_STATE.NEW) {
+    p.state = PROSPECT_STATE.SENDING;
+  }
+  return { changed: true, prospect: p };
 }
 
 /**
@@ -178,7 +224,11 @@ export function applyEngagement({ prospect, nowMs, kind }) {
   if (p.state === PROSPECT_STATE.ENGAGED) return { changed: false, prospect: p };
   p.state = PROSPECT_STATE.ENGAGED;
   p.engagedAt = new Date(Number(nowMs) || 0).toISOString();
-  p.engagedKind = str(kind) || ENGAGEMENT_KIND.OPEN;
+  const k = str(kind) || ENGAGEMENT_KIND.OPEN;
+  p.engagedKind = k;
+  // 反応の回数も残す（打ち切り判定が「開封 0」を見るため）
+  if (k === ENGAGEMENT_KIND.CLICK) p.clicks = int(p.clicks) + 1;
+  else p.opens = int(p.opens) + 1;
   return { changed: true, prospect: p };
 }
 

@@ -11,11 +11,16 @@ import { fileURLToPath } from 'node:url';
 
 import {
   PROSPECT_STATE, SUPPRESS_REASON, SKIP_REASON, ENGAGEMENT_KIND,
-  MAX_SENDS_WITHOUT_ENGAGEMENT, MIN_DAYS_BETWEEN_SENDS,
-  buildProspect, classifyEvent, evaluateProspectForSend, applySend,
+  MIN_DAYS_BETWEEN_SENDS,
+  buildProspect, classifyEvent, evaluateProspectForSend, applySend, applyDelivered,
   applyEngagement, applySuppression, applyPromotion, evaluateForPromotion,
   planProspectIntake, summarizeProspects,
 } from './prospectPolicy.js';
+// ⚠️ 打ち切りは **delivered 基準**（2026-08-27 MK 確定）。送信回数では切らない。
+import { resolveProspectCutoff, PROSPECT_CUTOFF_REASON } from './prospectEngagement.js';
+
+/** 打ち切りに必要な配信成功数（`engagementPolicy` の inactiveDelivered = 10） */
+const DELIVERED_CUTOFF = resolveProspectCutoff({}).delivered;
 import {
   createProspectStore, emailHash, prospectKey, blockedKey, PROSPECT_ROOT,
   ACTIVE_INDEX, ENGAGED_INDEX, BLOCKED_INDEX, PROSPECT_FIELDS, BLOCKED_FIELDS,
@@ -65,21 +70,33 @@ function fakeRedis(seed = {}) {
 
 // ── 状態機械 ──────────────────────────────────────────────────
 
-test('反応が無いまま上限回数を送ったら EXHAUSTED になり、以後送らない', () => {
+test('無反応のまま delivered が閾値に達したら EXHAUSTED になり、以後送らない', () => {
   let p = buildProspect({ email: 'a@example.invalid', nowMs: NOW });
   assert.equal(p.state, PROSPECT_STATE.NEW);
 
-  for (let i = 1; i <= MAX_SENDS_WITHOUT_ENGAGEMENT; i += 1) {
+  for (let i = 1; i <= DELIVERED_CUTOFF; i += 1) {
     const v = evaluateProspectForSend({ prospect: p, nowMs: day(i * MIN_DAYS_BETWEEN_SENDS), isCustomer: false });
     assert.equal(v.send, true, `${i} 回目が送れない`);
     p = applySend({ prospect: p, nowMs: day(i * MIN_DAYS_BETWEEN_SENDS), runId: `r${i}` });
+    p = applyDelivered({ prospect: p, nowMs: day(i * MIN_DAYS_BETWEEN_SENDS) }).prospect;
   }
-  assert.equal(p.sends, MAX_SENDS_WITHOUT_ENGAGEMENT);
+  assert.equal(p.delivered, DELIVERED_CUTOFF);
   assert.equal(p.state, PROSPECT_STATE.EXHAUSTED);
+  assert.equal(p.suppressedReason, PROSPECT_CUTOFF_REASON);
 
   const after = evaluateProspectForSend({ prospect: p, nowMs: day(99), isCustomer: false });
   assert.equal(after.send, false);
   assert.equal(after.reason, SKIP_REASON.EXHAUSTED);
+});
+
+test('⚠️ 送信試行だけでは打ち切らない（旧「送信 3 回」仕様の再混入防止）', () => {
+  let p = buildProspect({ email: 'a@example.invalid', nowMs: NOW });
+  for (let i = 1; i <= DELIVERED_CUTOFF + 5; i += 1) {
+    p = applySend({ prospect: p, nowMs: day(i * MIN_DAYS_BETWEEN_SENDS), runId: `r${i}` });
+  }
+  assert.equal(p.delivered, 0, '前提: 1 通も届いていない');
+  assert.notEqual(p.state, PROSPECT_STATE.EXHAUSTED);
+  assert.equal(evaluateProspectForSend({ prospect: p, nowMs: day(99), isCustomer: false }).send, true);
 });
 
 test('1 回でも反応したら ENGAGED になり、昇格対象になる', () => {
@@ -535,17 +552,22 @@ test('除外・打ち切りは TTL で消えず、台帳へ hash と理由・日
   assert.equal(setCall.includes('EX'), false, '台帳に TTL を付けている');
 });
 
-test('無反応 3 回の打ち切りも台帳へ載る', async () => {
+test('無反応の打ち切り（delivered 基準）も台帳へ載る', async () => {
   const r = fakeRedis();
   const s = createProspectStore({ cmd: r.cmd });
   const email = 'a@example.invalid';
   await s.addIfAbsent(buildProspect({ email, nowMs: NOW }));
-  for (let i = 1; i <= MAX_SENDS_WITHOUT_ENGAGEMENT; i += 1) {
-    await s.recordSend({ email, nowMs: day(i * 3), runId: `r${i}` });
+  // 送信試行だけでは台帳に載らない（届いていないので）
+  await s.recordSend({ email, nowMs: day(1), runId: 'r0' });
+  assert.equal(await s.isBlocked(emailHash(email)), false, '試行だけで打ち切っている');
+
+  for (let i = 1; i <= DELIVERED_CUTOFF; i += 1) {
+    await s.recordDelivered({ email, nowMs: day(i * 3) });
   }
   const entry = await s.loadBlocked(emailHash(email));
   assert.equal(entry.kind, BLOCK_KIND.EXHAUSTED);
-  assert.equal(entry.sends, MAX_SENDS_WITHOUT_ENGAGEMENT);
+  assert.equal(entry.delivered, DELIVERED_CUTOFF, '台帳に打ち切りの根拠（配信成功数）が残る');
+  assert.equal(entry.reason, PROSPECT_CUTOFF_REASON);
   assert.equal(await s.isBlocked(emailHash(email)), true);
 });
 
@@ -739,13 +761,14 @@ test('E2E: CSV 取込 → 3 回無反応 → 永久除外され、再取込で�
   assert.equal(intake['件数']['実際に追加'], 1);
   assert.equal(intake['除外理由'][SKIP_REASON.ALREADY_CUSTOMER], 1);
 
-  // 2) 3 回送る（毎回 3 日空け、写しも同じ時刻で作り直す）
-  for (let i = 1; i <= MAX_SENDS_WITHOUT_ENGAGEMENT; i += 1) {
+  // 2) 閾値ぶん送って**届ける**（毎回 3 日空け、写しも同じ時刻で作り直す）
+  for (let i = 1; i <= DELIVERED_CUTOFF; i += 1) {
     const t = day((i - 1) * MIN_DAYS_BETWEEN_SENDS);
     await seedSnapshot(r, ['existing@example.invalid'], t);
     const pv = await apiAt(r, createSnapshotStore({ cmd: r.cmd }), t).preview({ runId: `run${i}` });
     assert.equal(pv['件数']['対象'], 1, `${i} 回目の対象`);
     await store.recordSend({ email: 'quiet@example.invalid', nowMs: t, runId: `run${i}` });
+    await store.recordDelivered({ email: 'quiet@example.invalid', nowMs: t });
   }
 
   // 3) 打ち切られ、配信対象から消え、台帳に載る
@@ -754,7 +777,7 @@ test('E2E: CSV 取込 → 3 回無反応 → 永久除外され、再取込で�
   assert.deepEqual(await store.activeHashes(), []);
   const led = await store.loadBlocked(emailHash('quiet@example.invalid'));
   assert.equal(led.kind, BLOCK_KIND.EXHAUSTED);
-  const late = day(MAX_SENDS_WITHOUT_ENGAGEMENT * MIN_DAYS_BETWEEN_SENDS);
+  const late = day(DELIVERED_CUTOFF * MIN_DAYS_BETWEEN_SENDS);
   await seedSnapshot(r, ['existing@example.invalid'], late);
   const apiLate = apiAt(r, createSnapshotStore({ cmd: r.cmd }), late);
   assert.equal((await apiLate.preview({ runId: 'run9' }))['件数']['対象'], 0);

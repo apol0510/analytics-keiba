@@ -134,3 +134,120 @@ export async function recordDelivered({
 
   return out;
 }
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 受信者の「出所」ごとの台帳の置き場所（2026-08-27 MK 確定）
+ *
+ * ## なぜ env だけでは足りないか
+ *
+ * `MARKETING_DELIVERY_STORE` は**サイト全体の 1 つのつまみ**で、本番はいま `dual`
+ * （Airtable と Redis の両方へ書く）。この状態で CSV 由来の 1 万数千名へ 1 通送ると
+ * **受信者 × step のぶんだけ `CampaignDeliveries` の行が増える**。
+ *
+ * 実測（2026-08-27・本番）:
+ *
+ *   Airtable 全 13 table 合計 **50,789 件 / 上限 50,000 件（Team）** ＝ **超過中**
+ *   うち `CampaignDeliveries` が **33,112 件**（`Customers` 15,976 件の 2 倍以上）
+ *
+ * つまり **Customers を減らすだけでは上限問題は解決しない**。むしろ増加の主因は
+ * 配信台帳の側で、CSV 由来へ step2 / step3 を配ると 1 回ごとに 1 万数千行増える。
+ *
+ * ## 決めたこと
+ *
+ * **prospect（CSV 取り込み由来）の配信台帳は Airtable へ書かない。**
+ * env のモードに関わらず構造的にそうする。冪等性は Redis の集合が担う
+ * （`deliveryKeyStore.js`。`DeliveryKey` の作り方は変えないので鍵は同じ）。
+ *
+ *   - **読み**は従来どおりモードに従う（移行途中は Airtable にも古い行があるので
+ *     和集合で読まないと既送信を見落として二重送信になる）
+ *   - **書き**だけを Redis 限定にする（行を増やさない）
+ *
+ * ⚠️ Customers 由来の受信者は**従来どおり**（モードに従う）。ここは変えない。
+ * ⚠️ `redis` モードで Redis が落ちていれば従来どおり致命（`recordDelivered`）。
+ *    prospect も同じで、記録できないなら送らない（fail closed）。
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** 受信者の出所。`prospectPipeline.mergeAudiences()` が付ける値と同じ */
+export const RECIPIENT_SOURCE = Object.freeze({
+  CUSTOMER: 'customer',
+  PROSPECT: 'prospect',
+});
+
+/**
+ * この受信者ぶんの台帳をどこへ書き、どこから読むか。
+ *
+ * @param {{mode:string, source:string}} input
+ * @returns {{writeAirtable:boolean, writeRedis:boolean,
+ *            readAirtable:boolean, readRedis:boolean, forcedBySource:boolean}}
+ */
+export function resolveRecipientLedgerPolicy({ mode, source } = {}) {
+  const m = VALID.has(mode) ? mode : DELIVERY_STORE.AIRTABLE;
+  const isProspect = String(source ?? '').trim().toLowerCase() === RECIPIENT_SOURCE.PROSPECT;
+  return {
+    // ⚠️ prospect は **Airtable へ書かない**（レコード上限を食い潰さない）
+    writeAirtable: isProspect ? false : writesAirtable(m),
+    // prospect は必ず Redis へ記録する（記録が無ければ次回二重送信になる）
+    writeRedis: isProspect ? true : writesRedis(m),
+    // 読みはモードに従う。移行途中の既送信（Airtable のみ）を見落とさないため
+    readAirtable: readsAirtable(m),
+    readRedis: isProspect ? true : readsRedis(m),
+    forcedBySource: isProspect,
+  };
+}
+
+/**
+ * 「この配信で Airtable の行が何件増えるか」を先に出す。
+ *
+ * 上限が近いので、**送る前に増加量が分かる**ようにしておく。
+ * `airtableRows` が 0 でないなら、その数だけ上限へ近づく。
+ *
+ * @param {{mode:string, recipients:Array<{出所?:string, source?:string}>, steps?:number}} input
+ */
+export function projectAirtableLedgerGrowth({ mode, recipients, steps = 1 } = {}) {
+  const list = Array.isArray(recipients) ? recipients : [];
+  const n = Number.isInteger(steps) && steps > 0 ? steps : 1;
+  let airtableRows = 0; let redisMembers = 0;
+  let customer = 0; let prospect = 0;
+  for (const r of list) {
+    const src = String((r && (r['出所'] ?? r.source)) ?? RECIPIENT_SOURCE.CUSTOMER).trim().toLowerCase();
+    const policy = resolveRecipientLedgerPolicy({ mode, source: src });
+    if (src === RECIPIENT_SOURCE.PROSPECT) prospect += 1; else customer += 1;
+    if (policy.writeAirtable) airtableRows += n;
+    if (policy.writeRedis) redisMembers += n;
+  }
+  return {
+    steps: n,
+    recipients: { customer, prospect, total: list.length },
+    /** Airtable のレコード上限を消費する行数（**0 が目標**） */
+    airtableRows,
+    /** Redis の集合メンバー数（上限を消費しない） */
+    redisMembers,
+  };
+}
+
+/**
+ * 受信者を**台帳の書き先ごとに分ける**（enqueue の配線用）。
+ *
+ * `recordDelivered()` は「1 つのモード × 鍵の配列」しか受け取らないので、
+ * customer と prospect が混ざった配信では **2 回に分けて呼ぶ**必要がある。
+ * その分け方をここに固定しておく（呼び出し側で毎回書き分けない）。
+ *
+ * ⚠️ **`airtableKeys` に prospect の鍵が 1 つでも混ざってはいけない。**
+ *    混ざるとその人数ぶん Airtable の行が増える（上限を超過中）。
+ *
+ * @param {{mode:string, recipients:Array<{deliveryKey?:string, 出所?:string, source?:string}>}} input
+ * @returns {{airtableKeys:string[], redisKeys:string[], dropped:number}}
+ */
+export function partitionRecipientsForLedger({ mode, recipients } = {}) {
+  const airtableKeys = []; const redisKeys = [];
+  let dropped = 0;
+  for (const r of Array.isArray(recipients) ? recipients : []) {
+    const key = String((r && r.deliveryKey) || '').trim();
+    if (!key) { dropped += 1; continue; }
+    const src = String((r && (r['出所'] ?? r.source)) ?? RECIPIENT_SOURCE.CUSTOMER).trim().toLowerCase();
+    const policy = resolveRecipientLedgerPolicy({ mode, source: src });
+    if (policy.writeAirtable) airtableKeys.push(key);
+    if (policy.writeRedis) redisKeys.push(key);
+  }
+  return { airtableKeys, redisKeys, dropped };
+}

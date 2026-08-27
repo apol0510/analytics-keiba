@@ -17,8 +17,9 @@
 
 import {
   planProspectIntake, summarizeProspects, PROSPECT_STATE, SUPPRESS_REASON,
-  normalizeEmail, MAX_SENDS_WITHOUT_ENGAGEMENT, MIN_DAYS_BETWEEN_SENDS,
+  normalizeEmail, MIN_DAYS_BETWEEN_SENDS,
 } from './prospectPolicy.js';
+import { describeProspectCutoff } from './prospectEngagement.js';
 import { buildProspectAudience, planPromotions } from './prospectPipeline.js';
 import { ProspectStoreError, emailHash } from './prospectStore.js';
 
@@ -85,7 +86,8 @@ export function createProspectAdminApi(deps = {}) {
         ok: true, mode: 'prospect-status', sideEffects: 'none',
         件数: counts,
         設定: {
-          '無反応で諦める送信回数': MAX_SENDS_WITHOUT_ENGAGEMENT,
+          // ⚠️ 打ち切りは **delivered** で数える（送信試行では数えない）
+          '打ち切り基準': describeProspectCutoff(),
           '同一相手への最小間隔（日）': MIN_DAYS_BETWEEN_SENDS,
           '1 回の取り込み上限': INTAKE_MAX_ROWS,
           '1 回の昇格上限': PROMOTE_MAX_PER_RUN,
