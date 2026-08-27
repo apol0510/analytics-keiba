@@ -190,10 +190,23 @@ test('⚠️【要件】guard: 既存の予約を release せず、足りない�
   // claim は「足りない鍵」だけ
   assert.match(src, /keys: plan\.missing\.map\(\(m\) => m\.key\)/,
     '⚠️ 全鍵を claim しようとしている');
-  // release は「自分が取った鍵で書き込みに失敗したとき」だけ
-  const releases = [...src.matchAll(/releaseClaims\(\{[^}]*keys: ([a-zA-Z.]+)/g)].map((m) => m[1]);
-  assert.deepEqual(releases, ['rel.release'],
-    `⚠️ release の対象が想定と違う（行が無いと確かめられた鍵だけのはず）: ${JSON.stringify(releases)}`);
+  /*
+   * release の対象は **書き込みを試みたかどうか**で変わる。
+   *   - 書き込み **前**（顧客を引けない / 組み立て不足）… まだ 1 行も書いていないので
+   *     `claimedKeys` を全部戻してよい
+   *   - 書き込み **後**（upsert が throw）… 前半 batch は書けている可能性があるので
+   *     **`rel.release`（行が無いと確かめられた鍵）だけ**
+   */
+  const upsertAt = src.indexOf('await upsertDeliveries(');
+  assert.ok(upsertAt > 0, 'upsertDeliveries の呼び出しが見つからない');
+  const before = src.slice(0, upsertAt);
+  const after = src.slice(upsertAt);
+  const target = (t) => [...t.matchAll(/releaseClaims\(\{[^}]*keys: ([a-zA-Z.]+)/g)].map((m) => m[1]);
+  for (const t of target(before)) {
+    assert.equal(t, 'claimedKeys', `⚠️ 書き込み前の release 対象が想定と違う: ${t}`);
+  }
+  assert.deepEqual(target(after), ['rel.release'],
+    `⚠️ 書き込み後の release が「行が無いと確かめられた鍵」だけになっていない: ${JSON.stringify(target(after))}`);
 });
 
 test('⚠️【要件】guard: 既存の配信行を消さない・書き換えない', () => {
@@ -298,7 +311,37 @@ test('⚠️ guard: handler は「行が無いと確かめられた鍵」だけ 
   assert.match(src, /planClaimRelease\(\{ claimedKeys, rowsAfter: rowsAfterFail \}\)/,
     '⚠️ 書き込み失敗時に read-back していない');
   assert.match(src, /keys: rel\.release/, '⚠️ release の対象が claimedKeys のままになっている');
-  assert.equal(/releaseClaims\(\{ \.\.\.scope, keys: claimedKeys \}\)/.test(src), false,
-    '⚠️ claimedKeys をまとめて release している');
+  // ⚠️ **書き込みを試みたあと**に claimedKeys をまとめて戻していないこと
+  const afterUpsert = src.slice(src.indexOf('await upsertDeliveries('));
+  assert.equal(/releaseClaims\(\{ \.\.\.scope, keys: claimedKeys \}\)/.test(afterUpsert), false,
+    '⚠️ 書き込み後に claimedKeys をまとめて release している');
   assert.match(src, /queue:unverified` は付いたまま/, '⚠️ fail closed の明示が無い');
+});
+
+/* ── 8. 配信行の組み立て（本番で 422 になった実バグ）────────────────
+ *
+ * ⚠️ `buildDeliveryRecords` が要るのは **`{ email, deliveryKey, recordId }`** と
+ *    **`email → { jobId, recordId }`** の Map。`deliveryKey` を渡し忘れると
+ *    `DeliveryKey: undefined` の行を作ろうとして **Airtable が 422** を返す
+ *    （`performUpsert` のマージキーが空になるため）。2026-08-27 の本番 apply で発生。
+ */
+
+test('⚠️【要件】guard: 配信行に deliveryKey と job オブジェクトを渡している', () => {
+  assert.match(src, /deliveryKey: m\.key/,
+    '⚠️ deliveryKey を渡していない（DeliveryKey が undefined になり 422）');
+  assert.match(src, /\{ jobId, recordId: gate\.recordId \}/,
+    '⚠️ jobIdByEmail に文字列を渡している（buildDeliveryRecords は job.jobId を読む）');
+  assert.match(src, /recordId: customerIdByEmail\.get\(m\.email\)/,
+    '⚠️ CustomerRecordId を埋めていない');
+});
+
+test('⚠️【要件】guard: 組み立てた件数が合わなければ書かずに予約を戻す', () => {
+  assert.match(src, /records\.length !== toCreate\.length/,
+    '⚠️ 一部だけ組み立てられても書きに行く（黙って欠ける）');
+  assert.match(src, /delivery_record_build_incomplete/);
+});
+
+test('⚠️ guard: 顧客を引けなければ書かずに予約を戻す', () => {
+  assert.match(src, /customers_unavailable/);
+  assert.match(src, /if \(customerIdByEmail === null\)/);
 });
