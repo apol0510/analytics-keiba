@@ -1685,7 +1685,54 @@ nextOffset = from + inputs.prospects.length   // ← 読めた「レコード」
 **退行を入れると 4 件が落ちる**ことを確認済み（`scanned: out.length` ＋
 `nextOffset: from + inputs.prospects.length` ＝ #467 の状態に戻すと fail）。
 
-- test:marketing **2,381 pass / 0 fail** ／ check:safety exit 0 ／ build exit 0
+- test:marketing **2,400 pass / 0 fail** ／ check:safety exit 0 ／ build exit 0
+
+### 最終検証は `missing` 合計 = 0 のときだけ PASS（2026-08-27 追加指示）
+
+**走査と最終判定を分ける。**
+
+| | `missing > 0` のとき |
+|---|---|
+| **窓の走査** | **続行してよい**。窓は `scanned` で進むので位置はずれない。途中で打ち切ると**全体で何件欠けているのかが分からなくなる** |
+| **最終判定** | **fail closed**。`missing` 合計が 1 件でもあれば **Customers 削除可能判定を絶対に出さない** |
+
+理由: `missing` ＝ 索引にはあるが値を読めなかった人。その人が**何通目まで送ったか**を
+確かめられていない。送信履歴の唯一の根拠は prospect レコードなので、
+確かめないまま Customers 行を消すと**進行の復元手段が消え、全員未送信＝再送**になる。
+
+#### 判定の単一源（新規）
+
+`src/lib/marketing/prospectVerification.js`（純粋・I/O なし）。
+`buildProspectVerificationVerdict({ windows })` が窓の走査結果を合算して返す:
+
+- `walk.ok` … 走査そのものが筋の通ったものだったか（**`missing` があっても true になりうる**）
+- `customersDeletionAllowed` … **`walk.ok` かつ `missing === 0` のときだけ true**
+
+不許可の理由は `reasons` に出す（`value_missing` / `coverage_incomplete` /
+`window_not_contiguous` / `digest_mismatch` / `index_size_mismatch` /
+`window_failed` / `count_inconsistent` / `no_windows`）。
+**引数が壊れていても例外にせず必ず不許可**（「わからない」を「消してよい」に倒さない）。
+
+#### 走査スクリプトをリポジトリへ移した
+
+`astro-site/scripts/verify-prospect-migration.mjs`（read-only）。
+判定を単一源へ通し、**不許可なら非ゼロ終了**する。
+`~/.analytics-keiba-ops/prospect-migration/verify.mjs` はこれを呼ぶだけの薄い委譲に置換
+（旧版は `verify.mjs.pre-469.bak`）。**ops 側に判定を再実装しない。**
+
+> ⚠️ 応答の `missing` は**本 PR の production deploy 後にしか返らない**。
+> deploy 前に走らせると「欠けが無い」ではなく**判定不能**として落ちる（正しい挙動）。
+
+#### テスト（19 件・退行で落ちることを確認済み）
+
+- 欠けなく読み切ったときだけ PASS（11,976 件）
+- **`missing` が 1 件でもあれば不許可**／1〜500 を総当たりしても許可は出ない
+- **走査自体は `missing > 0` でも最後まで成立する**（止めない）
+- 3,000 通りの無作為な走査で **`missing > 0` かつ許可 は 0 件**
+- 走査していない／途中で止めた／窓が飛んだ・重なった／指紋が違う／件数が合わない → すべて不許可
+- guard: 走査スクリプトが判定を通し、不許可で `exit 1` する／`missing` で走査を打ち切っていない
+
+退行検証: 最終判定から `missing` を外すと **4 件**、走査スクリプトから判定を外すと **1 件**が落ちる。
 
 ### 現在の停止境界（変更なし）
 

@@ -485,6 +485,11 @@ test('全部読めるときは 消費 = 読めた件数（欠けが無い場合�
   assert.equal(out.prospects.length, 50);
 });
 
+test('⚠️ guard: admin は 消費件数 と 値なし件数 を応答に出している（最終判定の材料）', () => {
+  assert.match(adminSrc, /scanned: inputs\.scanned/, '合算できないと最終判定が出せない');
+  assert.match(adminSrc, /missing: inputs\.missing/);
+});
+
 test('⚠️ guard: admin は 索引の消費件数 で次の窓へ進めている', () => {
   assert.match(adminSrc, /nextOffset: from \+ inputs\.scanned/,
     '⚠️ 読めた件数で窓を進めている（値の欠けた hash の分だけ巻き戻って二重に読む）');

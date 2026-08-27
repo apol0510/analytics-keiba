@@ -2997,7 +2997,14 @@ async function handleProspectSequenceCheck({ now, req }) {
       limit,
       indexSize: inputs.indexSize,
       returned: inputs.prospects.length,
-      /** 索引にはあるが値を読めなかった件数（窓は消費済みとして進める）*/
+      /** この窓で**索引を消費した件数**（最終判定の合算に使う）*/
+      scanned: inputs.scanned,
+      /**
+       * 索引にはあるが値を読めなかった件数（窓は消費済みとして進める）。
+       * ⚠️ **走査は止めないが、最終判定は合計が 0 のときしか通さない**
+       *    （`prospectVerification.js`）。何通目まで送ったか確かめられていない相手の
+       *    Customers 行を消すと、進行の復元手段が消える。
+       */
       missing: inputs.missing ?? 0,
       /** ⚠️ 次の窓では**この digest を必ず渡す**（変わっていたらやり直し） */
       digest: inputs.digest,
