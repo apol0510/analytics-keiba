@@ -489,6 +489,10 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
             'user-plan', 'user_plan', 'isLoggedIn', 'userPlan', 'userData', 'userEmail',
             'hasClaimedReward', 'validUntil', 'isExpired', 'isWithdrawalRequested',
             'originalPlan', 'expiryDate', 'loginInfo',
+            // ⚠️ 申請・送信履歴（商品名・金額が入る）。2026-08-27 MK 報告:
+            //    有料会員がログアウトしたあと、別の方が無料でログインしても
+            //    **前の方の申込履歴が見えていた**。端末を共有していれば他人に見える。
+            'submission-history',
         ];
         function clearAuthLocalStorage() {
             AUTH_LOCALSTORAGE_KEYS.forEach((k) => localStorage.removeItem(k));
@@ -4856,7 +4860,11 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                 var listEl = document.getElementById('submission-history-list');
                 if (!listEl) return;
                 var SR = window.SubmissionResult;
-                var history = SR ? SR.getSubmissionHistory() : [];
+                // ⚠️ **本人の記録だけ**を出す。端末に前の方の記録が残っていても混ぜない。
+                //    （古い /js/submission-result.js がキャッシュに残っていても壊さない）
+                var history = !SR ? []
+                    : (SR.getVisibleSubmissionHistory ? SR.getVisibleSubmissionHistory()
+                        : SR.getSubmissionHistory());
 
                 if (!history.length) {
                     listEl.innerHTML = '<div class="submission-history-empty">まだ申請・送信はありません。フォームから送信すると、ここに履歴が表示されます。</div>';

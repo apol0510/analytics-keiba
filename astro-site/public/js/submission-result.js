@@ -23,6 +23,57 @@
     }
   }
 
+  // ── 誰の記録か（端末を共有しても混ざらないように）──────────────
+  //
+  // ⚠️ 2026-08-27 MK 報告: 有料会員がログアウトし、別の方が無料で
+  //    ログインしても**前の方の申込履歴（商品名・金額）が見えていた**。
+  //    記録は localStorage にあり、これまで**誰のものか**を見ていなかった。
+  //
+  // 2 段で塞ぐ:
+  //   1. ログアウトで消す（`AUTH_LOCALSTORAGE_KEYS` に追加）
+  //   2. 表示時にも本人のものだけに絞る（既に端末へ残っている記録の救済、
+  //      ログアウトを挟まずに別アカウントでログインした場合の担保）
+
+  function normalizeEmail(v) {
+    return String(v == null ? '' : v).trim().toLowerCase();
+  }
+
+  /** いま見ている人のメールアドレス（分からなければ空文字） */
+  function currentViewerEmail() {
+    try {
+      var raw = localStorage.getItem('user-plan');
+      if (raw) {
+        var o = JSON.parse(raw);
+        if (o && o.email) return normalizeEmail(o.email);
+      }
+    } catch (e) { /* 読めないときは未ログイン扱い */ }
+    try { return normalizeEmail(localStorage.getItem('userEmail')); } catch (e) { return ''; }
+  }
+
+  /**
+   * この記録を、いま見ている人に見せてよいか。
+   *
+   * ⚠️ **別のアドレスの記録は見せない**（端末の共有・アカウント切替）。
+   * ⚠️ 送り主が分からない記録は見せる（ログイン前の送信を消さないため）。
+   * ⚠️ 見ている人が分からない（未ログイン）ときは従来どおり見せる。
+   *    ログアウト時には記録ごと消えるので、ここで隠す必要が無い。
+   */
+  function belongsToViewer(entry, viewerEmail) {
+    var owner = normalizeEmail(entry && entry.details && entry.details.email);
+    var viewer = normalizeEmail(viewerEmail);
+    if (!owner) return true;
+    if (!viewer) return true;
+    return owner === viewer;
+  }
+
+  /** いま見ている人に見せてよい記録だけ */
+  function getVisibleSubmissionHistory(viewerEmail) {
+    var viewer = viewerEmail === undefined ? currentViewerEmail() : viewerEmail;
+    return getSubmissionHistory().filter(function (item) {
+      return belongsToViewer(item, viewer);
+    });
+  }
+
   function recordSubmission(entry) {
     try {
       var list = getSubmissionHistory();
@@ -196,6 +247,9 @@
   }
 
   global.SubmissionResult = {
+    currentViewerEmail: currentViewerEmail,
+    belongsToViewer: belongsToViewer,
+    getVisibleSubmissionHistory: getVisibleSubmissionHistory,
     isPremiumPlusOrder: isPremiumPlusOrder,
     describeStatus: describeStatus,
     describeFollowUp: describeFollowUp,
