@@ -77,6 +77,10 @@ import {
   createDispatchLock, TICK_LOCK_ROOT, LOCK_FAIL, isSafeJobId,
 } from '../../src/lib/marketing/dispatchLock.js';
 import { describeQueueBatch, needsMorePhases } from '../../src/lib/marketing/tickWorkload.js';
+import {
+  planTickReads, needsGrantPlan, needsSequenceRead, resolveSequenceDefer,
+  clearSequenceDefer, countPendingHandoffs, describeCheapBlock, TICK_READ,
+} from '../../src/lib/marketing/rolloutReadPlan.js';
 
 /**
  * この展開が対象とする道のり。**2 キャンペーンで 1 本**（合計 24 接点）。
@@ -140,10 +144,19 @@ export function deriveFacts({
   const count = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
   const outstanding = barrier ? count(barrier.outstanding) : null;
   const jobs = count(pendingJobs);
-  if (outstanding === null || jobs === null) {
+  /**
+   * ⚠️ **送信待ちの数だけは、他が読めなくても持ち帰る。**
+   *    ①送信起動の判断はこれ 1 つで決まるので、付与計画（関所）を
+   *    **読む必要が無かった** tick でも「送信待ちが 3 件ある」は事実として正しい。
+   *    2026-08-27 まではここで全部 null に潰していたため、関所を読まない
+   *    tick が必ず `facts_unreadable` になり、**積んだメールが出なくなる**。
+   * ⚠️ 関所が読めていない（= null）ときに ②③④ へ進ませないのは
+   *    `tickRollout` 側の仕事（そこで改めて null を弾く）。ここで 0 に化けさせない。
+   */
+  if (jobs === null || outstanding === null) {
     return {
       remainingCandidates: null, remainingIsLowerBound: false,
-      grantedPendingQueue: null, pendingJobs: null, outstandingStep1: null,
+      grantedPendingQueue: null, pendingJobs: jobs, outstandingStep1: null,
       followUpStep: null, followUpDue: null,
     };
   }
@@ -195,8 +208,18 @@ async function callAdminMarketing(body) {
  * この campaign のジョブを 1 回だけ読む。**fail closed**（読めなければ null）。
  * 送信待ちの数と、状態を追いかけているジョブの結果をここから作る。
  */
-async function loadJobs() {
-  const res = await callAdminMarketing({ action: 'jobs' });
+async function loadJobs({ watchJobIds = [] } = {}) {
+  /**
+   * ⚠️ 使うのは `action=jobsBrief`（**軽い版**）。
+   *    画面用の `action=jobs` は直近 30 件ぶんの配信行まで引くので、
+   *    1 tick で 30〜40 リクエストを `CampaignDeliveries` へ投げていた。
+   *    ここが要るのは `Status` / `SentCount` / `FailedCount` の 3 列だけで、
+   *    どれも `ScheduledEmails` にある（`collectFinishedJobs` /
+   *    `checkDispatchProgress` がそれしか見ていないことが根拠）。
+   * ⚠️ 見張り中のジョブは**名指し**で渡す。PENDING を抜けた（＝終わった）ジョブは
+   *    PENDING の検索には出てこないので、渡さないと永久に「まだ走っている」に見える。
+   */
+  const res = await callAdminMarketing({ action: 'jobsBrief', jobIds: watchJobIds });
   if (res.statusCode !== 200 || !res.body || !Array.isArray(res.body.jobs)) return null;
   // **両フェーズ**のジョブを拾う（キャンペーンが分かれても送信の面倒は 1 か所で見る）
   const ours = new Set(JOURNEY_PHASES.map((p) => p.campaignId));
@@ -615,7 +638,38 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
   //    2026-08-18: ここで早期に抜けていたため、自動停止したときに
   //    **queue 済み 197 通が送信されないまま滞留**した。
 
-  // ── 事実を数える ──────────────────────────────────────────
+  /**
+   * ── 読む前に、読む価値があるかを確かめる ──────────────────────
+   *
+   * ⚠️ 2026-08-27 まで、ここから下の事実収集（付与計画・ジョブ照会・進行読み）は
+   *    **結論が SKIP になる tick でも無条件に**走っていた。2 分間隔 = 月 21,600 tick で
+   *    1 tick あたり数百リクエストなので、空振りだけで Airtable の月間上限
+   *    （100,000 回）を 80 倍超過した（実測 8,372,540 回）。
+   *
+   * ⚠️ ここで**ゲートを緩めない**。決めるのは「読まない」だけで、
+   *    実行してよいかの判定は従来どおり `tickRollout` と各 Function が持つ。
+   * ⚠️ 読まなかった事実は **null のまま**運ぶ（0 として渡さない）。
+   *    `tickRollout` は数えられない事実で付与も送信もしない。
+   */
+  const readPlan = planTickReads({ state, env, nowMs: now });
+  /** この tick で実際に起こした Airtable 読み取り（ログで効き目を見る） */
+  const reads = [];
+  if (readPlan.skip) {
+    const body = {
+      ok: true,
+      action: TICK_ACTION.SKIP,
+      reason: readPlan.skip.reason,
+      campaignId: ROLLOUT_CAMPAIGN_ID,
+      airtableReads: [],
+      blocked: describeBlocked(env),
+      sideEffects: 'none',
+      notice: '工程が開いていないため、Airtable を 1 回も読まずに終了しました。',
+    };
+    log(body);
+    return body;
+  }
+
+  // ── 事実を数える（**必要になった順に**読む）─────────────────
   const grantGates = readAutoGrantGates(armEnvForTick(env, state, now), now);
   /**
    * ⚠️ **観測窓は展開状態（`batchSize` / 今日の残り枠）に必ず合わせる。**
@@ -638,18 +692,67 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
   const observationWindow = resolveObservationWindow(state, now, {
     perCallMax: GRANT_OPERATION_MAX,
   });
-  const planLoad = await loadAndPlanLightTrial({
-    env,
+
+  /**
+   * ① 送信待ちジョブ（**軽い照会**）。①送信起動の判断はこれだけで決まる。
+   *    見張り中のジョブは名指しで渡す（PENDING を抜けたものを拾うため）。
+   */
+  const jobs = await loadJobs({ watchJobIds: state.pendingJobIds }).catch(() => null);
+  reads.push(TICK_READ.JOBS);
+
+  /** まだ queue していない付与の数（**運転手のローカル状態**が正。Airtable を読まない） */
+  const pendingHandoffs = countPendingHandoffs(state);
+
+  /**
+   * ② 付与計画（候補走査・関所走査・配信台帳・blacklist）。**重い。**
+   *    送信待ちが居る tick / 引き継ぎが残っている tick では、これを読んでも
+   *    `tickRollout` の結論は変わらない（①②で先に返る）ので**読まない**。
+   */
+  const wantGrantPlan = needsGrantPlan({
+    pendingJobs: jobs ? jobs.count : null,
+    pendingHandoffs,
+    gates: readPlan.gates,
+    state,
     nowMs: now,
-    gates: grantGates,
-    batchSizeOverride: observationWindow > 0 ? observationWindow : null,
-  }).catch(() => null);
-  const jobs = await loadJobs().catch(() => null);
-  // Step2〜24 の期日は**既存の単一源**（`action=sequence`）に聞く
-  const due = await readNextDueStep().catch(() => null);
-  /** まだ queue していない付与の数（**運転手のローカル状態**が正） */
-  const pendingHandoffs = (Array.isArray(state.pendingHandoffOps) ? state.pendingHandoffOps.length : 0)
-    + (state.pendingHandoffOp ? 1 : 0);
+  });
+  const planLoad = wantGrantPlan
+    ? await loadAndPlanLightTrial({
+      env,
+      nowMs: now,
+      gates: grantGates,
+      batchSizeOverride: observationWindow > 0 ? observationWindow : null,
+    }).catch(() => null)
+    : null;
+  if (wantGrantPlan) {
+    reads.push(TICK_READ.GRANT_PLAN);
+    // 「今日はもう配れない」tick で救済の読みを間引くための基準時刻
+    state.grantPlanReadAtMs = now;
+  }
+
+  /**
+   * ③ Step2〜24 の期日は**既存の単一源**（`action=sequence`）に聞く。**最重量**
+   *    （1 フェーズ 19〜21 秒 = 約 100 リクエスト・最大 2 フェーズ）。
+   *    単一源が返した `nextScheduledAt` より前は、読んでも「まだ誰も期日ではない」
+   *    としか返らないので据え置く（上限 `SEQUENCE_MAX_STALE_MS`）。
+   */
+  const wantSequence = needsSequenceRead({
+    pendingJobs: jobs ? jobs.count : null,
+    pendingHandoffs,
+    // 送信待ちが居る tick はここへ来ない（`needsSequenceRead` が先に false を返す）
+    pendingQueue: planLoad?.planned?.barrier?.outstanding ?? null,
+    gates: readPlan.gates,
+    state,
+    nowMs: now,
+  });
+  const due = wantSequence ? await readNextDueStep().catch(() => null) : null;
+  if (wantSequence) reads.push(TICK_READ.SEQUENCE);
+  /** 進行読みを次にいつ再開するか（読んだ tick でだけ更新する） */
+  const sequenceDefer = wantSequence ? resolveSequenceDefer({ due, nowMs: now }) : null;
+  if (sequenceDefer) {
+    state.nextDueAtMs = sequenceDefer.nextDueAtMs;
+    state.sequenceReadAtMs = sequenceDefer.sequenceReadAtMs;
+  }
+
   const facts = deriveFacts({
     barrier: planLoad?.planned?.barrier || null,
     moreAvailable: planLoad?.fetch ? planLoad.fetch.moreAvailable : null,
@@ -681,6 +784,10 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
   const stageGates = readStageGates(env);
   const view = {
     ...describeTick({ ...decision, gates: stageGates }), facts, campaignId: ROLLOUT_CAMPAIGN_ID,
+    /** この tick で実際に読んだもの（効き目をログで数えられるように） */
+    airtableReads: reads,
+    /** 状態だけで分かる停止理由（「なぜ静かなのか」を読めるように） */
+    cheapBlock: describeCheapBlock({ state, nowMs: now }),
     settled: { jobs: settledJobs.finished.length, sent: settledJobs.sent, failed: settledJobs.failed },
     /** 起動したのに台帳が進んでいないジョブ（送信済みとは扱わない） */
     dispatchStalled: progress.stalled.map((x) => x.jobId),
@@ -720,6 +827,14 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
       return false;
     }
   };
+  /**
+   * 行動した tick の書き戻し。**進行読みの据え置きを必ず解く。**
+   *
+   * Step1 を積めば、その人たちの Step2 の期日が新しく生まれる。送信を起動しても同じ。
+   * 据え置いたままだと「積んだのに次が来ない」時間が最大 `SEQUENCE_MAX_STALE_MS` 伸びる。
+   * 据え置きを**張る**のは、進行読みを実際にした tick だけ（`resolveSequenceDefer`）。
+   */
+  const saveStateAfterAction = (next) => saveState(clearSequenceDefer(next));
 
   // ── 進行の内訳を集計へ同期する（**画面が正本を読まなくて済むように**）──
   //    `action=sequence` は既に受信対象だけを名指しで読んでいる。
@@ -800,9 +915,16 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
   //    ここで先に return すると、送ったのに画面が 0 通のまま何日も残る。
   if (decision.action === TICK_ACTION.SKIP) {
     const touched = settledJobs.finished.length > 0 || progress.advanced.length > 0;
-    if (touched) await saveState({ ...state });
-    log({ ...view, sideEffects: touched ? 'metrics_only' : 'none' });
-    return { ok: true, ...view, sideEffects: touched ? 'metrics_only' : 'none' };
+    /**
+     * ⚠️ 読みの据え置き（`nextDueAtMs` / `grantPlanReadAtMs`）は
+     *    **書き戻さないと意味が無い**。書かずに戻ると次の tick が同じ重い読みを
+     *    やり直し、間隔ぶんだけ同じ請求を払い続けることになる。
+     */
+    const marked = Boolean(sequenceDefer) || wantGrantPlan;
+    if (touched || marked) await saveState({ ...state });
+    const sideEffects = touched ? 'metrics_only' : (marked ? 'state_only' : 'none');
+    log({ ...view, sideEffects });
+    return { ok: true, ...view, sideEffects };
   }
 
   // ⚠️ 判定に使った env と、**実際に実行する env（process.env）**が食い違わないか確かめる。
@@ -839,7 +961,7 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
       return body;
     }
     // 起動したジョブだけ「送信済み件数の起点」を控える（次 tick で進みを見る）
-    await saveState({ ...state, dispatchWatch: { ...state.dispatchWatch, ...(res.watch || {}) } });
+    await saveStateAfterAction({ ...state, dispatchWatch: { ...state.dispatchWatch, ...(res.watch || {}) } });
     // ⚠️ 送った件数は**ここでは分からない**（Background は結果を返せない）。台帳が正本。
     log({
       ...view, started: res.started, requested: res.requested,
@@ -886,7 +1008,7 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
         log({ ...view, ok: false, stage: rescue.stage, error: rescue.error, sideEffects: 'none' });
         return { ok: false, ...view, abort: 'queue_failed', detail: rescue, sideEffects: 'none' };
       }
-      await saveState({
+      await saveStateAfterAction({
         ...state,
         pendingJobIds: [...state.pendingJobIds, ...rescue.jobIds],
         jobSteps: { ...state.jobSteps, ...Object.fromEntries(rescue.jobIds.map((id) => [id, rescue.touch])) },
@@ -919,7 +1041,7 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
         // ⚠️ **queue の失敗は自動停止**（放置すると権利だけ付いて案内が届かない）。
         //    済んだぶんは状態へ残し、残りの引き継ぎは次に持ち越す。
         const rest = opIds.filter((x) => !queued.done.includes(x));
-        await saveState({
+        await saveStateAfterAction({
           ...state,
           pendingHandoffOps: rest,
           pendingHandoffOp: null,
@@ -984,7 +1106,7 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
         attempts: state.handoffEmptyAttempts,
       });
       if (verdict.action === HANDOFF_ACTION.CLEAR) {
-        await saveState({
+        await saveStateAfterAction({
           ...state, pendingHandoffOp: null, pendingHandoffOps: [], handoffEmptyAttempts: 0,
         });
         const body = {
@@ -997,7 +1119,7 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
       }
       if (verdict.action === HANDOFF_ACTION.RETRY) {
         // **引き継ぎは消さない**。次の tick でやり直す
-        await saveState({ ...state, handoffEmptyAttempts: verdict.attempts });
+        await saveStateAfterAction({ ...state, handoffEmptyAttempts: verdict.attempts });
         const body = {
           ok: true, ...view, queued: 0, handoffRetry: verdict.attempts,
           sideEffects: 'state_only',
@@ -1022,7 +1144,7 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
       return body;
     }
     const res = { ok: true, jobIds: queued.jobIds, queued: queued.count, touch: queued.touch };
-    await saveState({
+    await saveStateAfterAction({
       ...state, pendingHandoffOp: null, pendingHandoffOps: [], handoffEmptyAttempts: 0,
       pendingJobIds: [...state.pendingJobIds, ...res.jobIds],
       jobSteps: { ...state.jobSteps, ...Object.fromEntries(res.jobIds.map((id) => [id, res.touch])) },
@@ -1068,7 +1190,7 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
       log({ ...view, ok: false, stage: res.stage, step: due.step, error: res.error, sideEffects: 'none' });
       return { ok: false, ...view, abort: 'queue_failed', detail: res, sideEffects: 'none' };
     }
-    await saveState({
+    await saveStateAfterAction({
       ...state,
       pendingJobIds: [...state.pendingJobIds, ...res.jobIds],
       jobSteps: { ...state.jobSteps, ...Object.fromEntries(res.jobIds.map((id) => [id, res.touch])) },
@@ -1282,7 +1404,7 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
     const nextBaseline = decision.plan && decision.plan.startsNewBatch === true
       ? toStoredOutcome(snapshot, now)
       : (state.healthBaseline || toStoredOutcome(snapshot, now));
-    await saveState({
+    await saveStateAfterAction({
       ...next, pendingHandoffOps: handoffs, pendingHandoffOp: null,
       healthBaseline: nextBaseline,
     });
@@ -1296,7 +1418,10 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
 
 /**
  * tick の排他 TTL（秒）。**実測の tick 所要（47〜55 秒）より十分長く**取り、
- * 実行が途中で終わっても次のスロット（120 秒後）までには必ず切れる長さにする。
+ * 実行が途中で終わっても次のスロット（300 秒後）までには必ず切れる長さにする。
+ *
+ * ⚠️ 鍵は**事実を読む前**に取る（下の handler）。重なった実行は Airtable を
+ *    1 回も読まずに `tick_busy` で終わる。ここを事実収集の後ろへ動かさないこと。
  */
 const TICK_LOCK_TTL_SEC = 110;
 
@@ -1365,11 +1490,22 @@ export default async function handler(req) {
  * ⚠️ ゲートが閉じていれば接続前に終わる（副作用ゼロ）。空振りの tick は安い。
  */
 /**
- * **2 分間隔**。1 tick 1 段階なので、論理バッチ 500 名は
+ * **5 分間隔**。1 tick 1 段階なので、論理バッチ 500 名は
  * 付与 3 回（200 + 200 + 100）+ queue 1 回 + 送信起動 1 回 = **5 tick**で進む。
- * 15,000 名 = 30 バッチ = 150 tick ≈ **5 時間**（5 分間隔だと 12.5 時間で同日に届かない）。
- * ⚠️ 止まっている / 終わっている tick は台帳を読む前に抜けるので、空振りは安い。
+ * 15,000 名 = 30 バッチ = 150 tick ≈ **12.5 時間**。
+ *
+ * ── なぜ 2 分から戻したか（2026-08-27）────────────────────────
+ * 2 分間隔は月 21,600 tick。当時は 1 tick が数百リクエストを Airtable へ投げていたので、
+ * これだけで月間上限（100,000 回）を 80 倍超えた（**実測 8,372,540 回**）。
+ * 上の `planTickReads` / `needsGrantPlan` / `needsSequenceRead` で空振りの tick は
+ * ほぼ 0 回になったが、**速さの上限を決めているのは cron の間隔ではなく関所**
+ * （前のバッチの Step1 が送り終わるまで次のバッチは始まらない）なので、
+ * 間隔を縮めても実際の配り切り速度はほとんど変わらない。
+ * 一方で間隔は**払う API 回数にそのまま比例する**。安い方を選ぶ。
+ *
+ * ⚠️ 同日に配り切る必要が出たときは `batchSize` を上げる（間隔ではなく 1 回の人数で稼ぐ）。
+ * ⚠️ 止まっている / 終わっている tick は台帳を読む前に抜ける（副作用ゼロ・Airtable 0 回）。
  */
 export const config = {
-  schedule: '*/2 * * * *',
+  schedule: '*/5 * * * *',
 };

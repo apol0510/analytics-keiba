@@ -202,6 +202,16 @@ export function defaultRolloutState() {
      * **202 は送信成功ではない**ので、次の tick で台帳が進んだかを見るために控える。
      */
     dispatchWatch: {},
+    /**
+     * **次に期日が来る時刻**（連続配信の進行読みが返した `nextScheduledAt`）。
+     * ここより前の tick は `action=sequence` を**読まない**（読んでも結論が変わらない）。
+     * `null` = 分からない ＝ 読む。詳細は `rolloutReadPlan.js`。
+     */
+    nextDueAtMs: null,
+    /** 最後に進行読みをした時刻。据え置きが長くなりすぎないための上限に使う */
+    sequenceReadAtMs: null,
+    /** 最後に付与計画を読んだ時刻。「今日はもう配れない」ときの間引きに使う */
+    grantPlanReadAtMs: null,
     updatedAtMs: null,
     note: '',
   };
@@ -276,6 +286,10 @@ export function normalizeRolloutState(raw) {
       const n = num(v);
       return n !== null && n >= 0 ? Math.floor(n) : null;
     }),
+    // ⚠️ 進行読みの据え置きは**時刻そのもの**で持つ（「何 tick 前」だと間隔変更で意味が変わる）
+    nextDueAtMs: num(raw.nextDueAtMs),
+    sequenceReadAtMs: num(raw.sequenceReadAtMs),
+    grantPlanReadAtMs: num(raw.grantPlanReadAtMs),
     updatedAtMs: num(raw.updatedAtMs),
     note: str(raw.note).slice(0, 200),
   };

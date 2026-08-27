@@ -217,7 +217,7 @@ import { assertCohortObservable, COHORT_SKIP_LABEL } from '../../src/lib/crm/imp
 import {
   chunkList, buildRecordIdFormula, buildDeliveryKeyFormula, assertFetchComplete,
   summarizeTargetedFetch, TARGETED_CHUNK, TARGETED_MAX_PAGES,
-  buildJobIdFormula, MARKETING_JOB_FORMULA,
+  buildJobIdFormula, buildScheduledJobIdFormula, MARKETING_JOB_FORMULA,
 } from '../../src/lib/marketing/marketingTargetedLoad.js';
 import {
   resolveDeliveryStoreMode, resolveDeliveredKeys, recordDelivered,
@@ -881,6 +881,7 @@ export const handler = async (event) => {
     if (action === 'eventBackfillRun') return await handleEventBackfill({ KEY, BASE, req, event, live: true });
     if (action === 'history') return await handleHistory({ KEY, BASE });
     if (action === 'jobs') return await handleJobs({ KEY, BASE });
+    if (action === 'jobsBrief') return await handleJobsBrief({ KEY, BASE, req });
     if (action === 'cancelJob') return await handleCancelJob({ KEY, BASE, now, req });
     return json(400, { error: `未知の action: ${action}` });
   } catch (e) {
@@ -4190,6 +4191,109 @@ async function handleJobs({ KEY, BASE }) {
       ? '送信が有効です。PENDING のジョブは dispatcher を実行したときに送信されます（自動実行はしません）。'
       : 'キャンペーン配信は無効（MARKETING_CAMPAIGN_DISPATCH_ENABLED 未設定）。PENDING のままでは送信されません。',
     cancelNote: 'PENDING のジョブだけ取り消せます。SENT / FAILED は送信済みの事実なので取り消せません。',
+  });
+}
+
+/**
+ * ジョブ照会の**軽い版**（自動運転の tick 専用。画面は使わない）。
+ *
+ * ── なぜ別口にするか ──────────────────────────────────────────
+ * `action=jobs` は**画面のための一覧**で、直近 30 件ぶんの配信行
+ * （`CampaignDeliveries`）まで引く。1 回でおよそ 30〜40 リクエストになる。
+ * ところが自動運転（`cron-marketing-rollout`）が使うのは
+ *   - 送信待ちが何件あるか（`pendingJobs`）
+ *   - 見張っているジョブの `Status` / `SentCount` / `FailedCount`
+ * の 3 つだけで、**どれも `ScheduledEmails` の列**にある。
+ * 2 分おきの tick が毎回 30〜40 リクエストを配信台帳へ投げていたのが、
+ * 2026-08 の Airtable 月間上限超過（8,372,540 回）の一因だった。
+ *
+ * ── 読む範囲 ──────────────────────────────────────────────
+ *   ① PENDING のマーケティングジョブ（普段は 0〜1 ページ）
+ *   ② `jobIds` で**名指し**されたジョブ（見張り中のぶんだけ。既定 0 件）
+ * `CampaignDeliveries` は **1 行も読まない**。
+ *
+ * ⚠️ 件数は `ScheduledEmails` の `SentCount` / `FailedCount` をそのまま返す。
+ *    配信行から数え直す `action=jobs` と**値の出所が違う**ので、
+ *    画面表示にはこちらを使わないこと（`buildJobRow` が単一源のまま）。
+ * ⚠️ 取り切れなければ **例外 → 500**（短い結果を全体として返さない）。
+ */
+const JOB_BRIEF_FIELDS = [
+  'JobId', 'Status', 'TargetPlan', 'Notes', 'ScheduledFor',
+  'RecipientCount', 'SentCount', 'FailedCount', 'CompletedAt',
+];
+
+/** 名指しできる見張りジョブの上限（展開状態の `pendingJobIds` と同じ 50） */
+const JOB_BRIEF_WATCH_LIMIT = 50;
+
+async function handleJobsBrief({ KEY, BASE, req }) {
+  const watch = (Array.isArray(req && req.jobIds) ? req.jobIds : [])
+    .map((v) => str(v))
+    .filter((v) => v && isSafeJobId(v))
+    .slice(0, JOB_BRIEF_WATCH_LIMIT);
+
+  let records;
+  try {
+    // ① 送信待ち（この数が `pendingJobs`）
+    const pending = await fetchAllStrict({
+      KEY, BASE, table: SCHEDULED_TABLE,
+      filterByFormula: `AND({Status}='PENDING',${MARKETING_JOB_FORMULA})`,
+      fields: JOB_BRIEF_FIELDS,
+    });
+    // ② 見張り中のジョブ（PENDING を抜けた = 終わったものを拾うため名指しで引く）
+    const named = [];
+    for (const group of chunkList(watch, JOB_ID_CHUNK)) {
+      const formula = buildScheduledJobIdFormula(group);
+      if (!formula) continue;
+      // eslint-disable-next-line no-await-in-loop -- チャンクごとに順に読む
+      const rows = await fetchAllStrict({
+        KEY, BASE, table: SCHEDULED_TABLE, filterByFormula: formula,
+        maxPages: JOB_ID_MAX_PAGES, fields: JOB_BRIEF_FIELDS,
+      });
+      named.push(...rows);
+    }
+    // 同じジョブが両方に出るので recordId で重複を落とす
+    const byRecord = new Map();
+    for (const r of [...pending, ...named]) {
+      if (r && r.id && !byRecord.has(r.id)) byRecord.set(r.id, r);
+    }
+    records = [...byRecord.values()];
+  } catch (e) {
+    return json(500, {
+      error: 'ジョブの状況を取り切れなかったため、一覧を返しません（数えられない数は出しません）。',
+      code: 'jobs_fetch_incomplete',
+      detail: String((e && e.message) || 'unknown'),
+      sideEffects: 'none',
+    });
+  }
+
+  const jobs = [];
+  for (const rec of records) {
+    const f = (rec && rec.fields) || {};
+    if (!isMarketingJob(f)) continue;
+    const { campaignId, version } = parseJobCampaign(f);
+    jobs.push({
+      jobId: str(f.JobId),
+      recordId: str(rec.id),
+      campaignId,
+      version,
+      status: str(f.Status) || 'PENDING',
+      scheduledFor: str(f.ScheduledFor) || null,
+      completedAt: str(f.CompletedAt) || null,
+      recipientCount: Number(f.RecipientCount) || 0,
+      sentCount: Number(f.SentCount) || 0,
+      failedCount: Number(f.FailedCount) || 0,
+    });
+  }
+
+  return json(200, {
+    mode: 'jobs-brief',
+    sideEffects: 'none',
+    jobs,
+    /** 名指しを頼まれたのに見つからなかったジョブ（判断材料が欠けたことを隠さない） */
+    watchMissing: watch.filter((id) => !jobs.some((j) => j.jobId === id)),
+    sendEnabled: isMarketingSendEnabled(process.env),
+    dispatchEnabled: isDispatchEnabled(process.env),
+    notice: '自動運転が使う軽い照会です。配信台帳（CampaignDeliveries）は読んでいません。',
   });
 }
 

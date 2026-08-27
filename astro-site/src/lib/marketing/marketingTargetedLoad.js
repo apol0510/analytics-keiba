@@ -74,6 +74,19 @@ export function buildDeliveryKeyFormula({ campaignType, keys }) {
   return `AND({CampaignType}='${ct}',${or})`;
 }
 
+/**
+ * `OR({JobId}='mkt-..',...)` — **ScheduledEmails のジョブ行**を名指しで引く。
+ *
+ * ⚠️ `buildJobIdFormula` は **CampaignDeliveries** 用（列名が
+ *    `ScheduledEmailJobId`）。取り違えると 0 件が返り、
+ *    「送ったのに進んでいない」と誤読する。
+ */
+export function buildScheduledJobIdFormula(jobIds) {
+  const safe = (Array.isArray(jobIds) ? jobIds : []).filter(isSafeIdentifier);
+  if (safe.length === 0) return null;
+  return `OR(${safe.map((id) => `{JobId}='${id}'`).join(',')})`;
+}
+
 /** `OR({ScheduledEmailJobId}='mkt-..',...)` — ジョブに紐づく配信行だけを引く */
 export function buildJobIdFormula(jobIds) {
   const safe = (Array.isArray(jobIds) ? jobIds : []).filter(isSafeIdentifier);
