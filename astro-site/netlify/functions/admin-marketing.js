@@ -148,6 +148,10 @@ import {
 import {
   classifyFields, buildRestoreFields, validateRestorePayload,
 } from '../../src/lib/marketing/airtableWritableFields.js';
+import {
+  buildRewireMapping, planDeliveryRewire, canRewireDeliveries, verifyRewire,
+  REWIRE_CONFIRM, REWIRE_MAX_ENTRIES,
+} from '../../src/lib/marketing/deliveryRewirePlan.js';
 import { compareSequenceParity } from '../../src/lib/marketing/sequenceParity.js';
 import { makeRedisPipeline } from '../../src/lib/marketing/deliveryKeyStore.js';
 import { IMPORT_SOURCE_PREFIX } from '../../src/lib/marketing/importCohort.js';
@@ -874,6 +878,7 @@ export const handler = async (event) => {
     if (action === 'customerDeletionPlan') return await handleCustomerDeletionPlan({ KEY, BASE, req });
     if (action === 'customerDeletionApply') return await handleCustomerDeletionApply({ KEY, BASE, req });
     if (action === 'customerDeletionRestore') return await handleCustomerDeletionRestore({ KEY, BASE, req });
+    if (action === 'campaignDeliveryRewire') return await handleCampaignDeliveryRewire({ KEY, BASE, req });
     if (action === 'trialGrant') return await handleTrialGrantPreview({ now, req });
     if (action === 'duplicateCheck') return await handleDuplicateCheck({ KEY, BASE, req });
     if (action === 'rollout') return await handleRollout({ KEY, BASE, now, req });
@@ -2960,6 +2965,140 @@ const INDEX_REPAIR_MAX = 10;
  *
  * ⚠️ 既定は**下見**。`apply: true` ＋ 確認文字列が揃ったときだけ書く。
  */
+/**
+ * `CampaignDeliveries.CustomerRecordId` を **旧 → 新 recordId** へ張り替える。
+ *
+ * ⚠️ **既定は下見**。`apply: true` ＋ 確認文字列が揃ったときだけ書く。
+ * ⚠️ 対応表に載っている `oldId` の行だけを対象にし、**`RecipientEmail` でも一致を確かめる**。
+ *    他の会員の行は 1 文字も触らない。
+ * ⚠️ 前後の参照件数を返す。**古い参照が 0 / 新しい参照が期待どおり**で初めて終わり。
+ * ⚠️ 1 回 100 件（対応表）まで。分割して呼び、途中から再開できる。
+ */
+async function handleCampaignDeliveryRewire({ KEY, BASE, req }) {
+  const entries = Array.isArray(req.entries) ? req.entries : [];
+  const confirmed = String(req.confirm || '') === REWIRE_CONFIRM;
+  const gate = canRewireDeliveries({ confirmed, entries });
+  const apply = req.apply === true && gate.allowed;
+  const dryRun = !apply;
+
+  if (entries.length === 0) {
+    return json(400, { error: 'entries（oldId / newId / email）を渡してください', sideEffects: 'none' });
+  }
+  if (entries.length > REWIRE_MAX_ENTRIES) {
+    return json(400, {
+      error: `一度に扱えるのは ${REWIRE_MAX_ENTRIES} 件までです`, sideEffects: 'none',
+    });
+  }
+  const mapping = buildRewireMapping(entries);
+  if (mapping.size === 0) {
+    return json(400, { error: '有効な対応表がありません', sideEffects: 'none' });
+  }
+
+  const oldIds = [...mapping.keys()];
+  const newIds = [...mapping.values()].map((v) => v.newId);
+
+  let rows;
+  try {
+    rows = await fetchDeliveriesByCustomerIds({ KEY, BASE, ids: [...oldIds, ...newIds] });
+  } catch (e) {
+    return json(500, {
+      error: '配信台帳を読めませんでした', detail: String((e && e.message) || '').slice(0, 120),
+      sideEffects: 'none',
+    });
+  }
+
+  const before = {
+    oldRefs: rows.filter((r) => oldIds.includes(String((r.fields || {}).CustomerRecordId || ''))).length,
+    newRefs: rows.filter((r) => newIds.includes(String((r.fields || {}).CustomerRecordId || ''))).length,
+  };
+  const plan = planDeliveryRewire({ rows, mapping });
+
+  const view = {
+    mode: dryRun ? 'campaign-delivery-rewire-dry-run' : 'campaign-delivery-rewire',
+    entries: mapping.size,
+    before,
+    counts: plan.counts,
+    refusedSample: plan.refused.slice(0, 20),
+    gate: { allowed: gate.allowed, reasons: gate.reasons },
+  };
+
+  if (dryRun) {
+    return json(200, {
+      ...view, updated: 0, sideEffects: 'none',
+      notice: 'これは下見です。**1 行も書き換えていません**（apply と確認文字列が要ります）。',
+    });
+  }
+
+  let updated = 0; const failed = [];
+  for (let i = 0; i < plan.updates.length; i += 10) {
+    const chunk = plan.updates.slice(i, i + 10);
+    try {
+      const url = `https://api.airtable.com/v0/${BASE}/${encodeURIComponent(DELIVERIES_TABLE)}`;
+      // eslint-disable-next-line no-await-in-loop -- 10 件ずつ（Airtable の上限）
+      const res = await fetch(url, {
+        method: 'PATCH',
+        headers: { ...authHeaders(KEY), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ records: chunk }),
+      });
+      if (!res.ok) throw new Error(`rewire_${res.status}`);
+      // eslint-disable-next-line no-await-in-loop
+      const j = await res.json();
+      updated += (j.records || []).length;
+    } catch (e) {
+      failed.push(String((e && e.message) || '').slice(0, 80));
+    }
+  }
+
+  // ⚠️ 書いたあと**読み戻して**確かめる（「更新できた」では終わりにしない）
+  let after = null; let verdict = null;
+  try {
+    const rows2 = await fetchDeliveriesByCustomerIds({ KEY, BASE, ids: [...oldIds, ...newIds] });
+    after = {
+      oldRefs: rows2.filter((r) => oldIds.includes(String((r.fields || {}).CustomerRecordId || ''))).length,
+      newRefs: rows2.filter((r) => newIds.includes(String((r.fields || {}).CustomerRecordId || ''))).length,
+    };
+    verdict = verifyRewire({
+      oldRefsAfter: after.oldRefs, newRefsAfter: after.newRefs,
+      expectedRefs: before.oldRefs + before.newRefs,
+    });
+  } catch {
+    verdict = { ok: false, reasons: ['verify_unavailable'] };
+  }
+
+  return json(200, {
+    ...view, updated, failed: failed.length, after, verdict,
+    sideEffects: updated > 0 ? 'deliveries_rewired' : 'none',
+    notice: '配信台帳の CustomerRecordId だけを書き換えました（Customers / Redis は触っていません）。',
+  });
+}
+
+/** `CustomerRecordId` で配信台帳を名指しで引く（全件走査しない）*/
+async function fetchDeliveriesByCustomerIds({ KEY, BASE, ids }) {
+  const list = [...new Set((ids || []).map(String))].filter(Boolean);
+  const out = [];
+  for (let i = 0; i < list.length; i += 40) {
+    const chunk = list.slice(i, i + 40);
+    const formula = `OR(${chunk.map((id) => `{CustomerRecordId}='${id}'`).join(',')})`;
+    let offset = null;
+    do {
+      const url = new URL(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(DELIVERIES_TABLE)}`);
+      url.searchParams.set('pageSize', '100');
+      url.searchParams.set('filterByFormula', formula);
+      url.searchParams.append('fields[]', 'CustomerRecordId');
+      url.searchParams.append('fields[]', 'RecipientEmail');
+      if (offset) url.searchParams.set('offset', offset);
+      // eslint-disable-next-line no-await-in-loop -- ページは前の応答に依存する
+      const res = await fetch(url, { headers: authHeaders(KEY) });
+      if (!res.ok) throw new Error(`deliveries_${res.status}`);
+      // eslint-disable-next-line no-await-in-loop
+      const j = await res.json();
+      for (const r of j.records || []) out.push({ id: r.id, fields: r.fields || {} });
+      offset = j.offset || null;
+    } while (offset);
+  }
+  return out;
+}
+
 /** 復元を許す確認文字列 */
 const RESTORE_CONFIRM = 'RESTORE CUSTOMERS FROM EXPORT';
 

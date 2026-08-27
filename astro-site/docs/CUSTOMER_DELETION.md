@@ -106,8 +106,46 @@ ADMIN_SECRET=... node scripts/restore-customers-from-export.mjs --apply <export.
 | 配信履歴の監査（どの会員へ何通送ったか）| **要る**。recordId で辿る経路は切れる |
 
 → **復元したときは `CampaignDeliveries` の再配線が必要**。
-`customerDeletionRestore` は **旧 recordId → 新 recordId の対応表（`mapping`）** を返すので、
-それで `CustomerRecordId` を更新する。再配線しない限り rollback は**完了扱いにしない**。
+`customerDeletionRestore` は **旧 recordId → 新 recordId の対応表（`mapping`）** を返す。
+
+#### 再配線の手順
+
+```bash
+# 下見（1 行も書き換えない）
+ADMIN_SECRET=... node scripts/rewire-campaign-deliveries.mjs <mapping.json> <export.json>
+# 実行
+ADMIN_SECRET=... node scripts/rewire-campaign-deliveries.mjs --apply <mapping.json> <export.json>
+```
+
+| | |
+|---|---|
+| 対象 | 対応表に載っている `oldId` の行**だけ** |
+| 二重確認 | `CustomerRecordId` の一致に加えて **`RecipientEmail` も一致**すること |
+| 他の会員 | **1 文字も触らない**（`not_in_mapping` として拒否）|
+| 冪等性 | 既に新 id を指す行は `alreadyRewired`。**2 回実行しても壊れない** |
+| 分割・再開 | 100 件ずつ。進捗を `<mapping.json>.progress.json` に書き、**同じコマンドで続きから** |
+| 上限 | 1 回 100 件（対応表）|
+| 確認文字列 | `REWIRE CAMPAIGN DELIVERIES` |
+| 既定 | **下見** |
+| 書き換える field | **`CustomerRecordId` だけ**（アドレスも他の列も触らない）|
+
+**完了判定は「更新できた件数」ではない。** 書いたあとに読み戻し、
+**古い参照が 0 件／新しい参照が期待件数**であることを確かめる（`verifyRewire()`）。
+どちらか外れたら **rollback は完了扱いにしない**。
+
+## ⚠️ rollback の完成条件（これを全部満たすまで「戻せた」と言わない）
+
+| # | 条件 | 確かめ方 |
+|---|---|---|
+| 1 | 控えが読み戻せる | 件数一致・全件 Email あり |
+| 2 | 復元 payload が本番 schema に対して有効 | `validateRestorePayload()`（計算 field 混入 0）|
+| 3 | Customers が期待件数まで戻る | 復元後の件数 |
+| 4 | **`CampaignDeliveries` の再配線が済んでいる** | **古い参照 0 / 新しい参照が期待件数** |
+| 5 | prospect プールと 8/31 の配信結果が動いていない | `verify-after-customer-deletion.mjs --compare` |
+| 6 | 索引に orphan がいない | `audit-prospect-index.mjs`（`hasRecord:true` が 0）|
+
+⚠️ **「prospect は hash だから配信は続く」は 5 の一部でしかない。**
+1〜6 のどれか 1 つでも未達なら rollback は未完了。
 
 ## 二重実行しても安全
 

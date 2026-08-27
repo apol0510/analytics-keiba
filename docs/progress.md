@@ -1,3 +1,28 @@
+# 🚧 Customers 削除の rollback 完成条件（**未達のまま削除しない**・常設）
+
+> **この節は削除が完了し rollback を検証し終えるまで消さない。**
+> 「戻せるはず」ではなく、**下の 6 つを実際に確かめられる状態**になっていることが削除の前提。
+
+| # | 条件 | 確かめ方 | 現状 |
+|---|---|---|---|
+| 1 | 控え（export）が読み戻せる | 件数一致・全件 Email あり | ✅ 11,961 件・`0600`・repo 外 |
+| 2 | 復元 payload が本番 schema に対して有効 | `validateRestorePayload()` ＝ 計算 field 混入 0 | ✅ contract test（本番 schema 95 field）|
+| 3 | Customers が期待件数まで戻る | 復元後の件数 | 実行時に確認 |
+| 4 | **`CampaignDeliveries` の再配線** | **古い参照 0 / 新しい参照が期待件数** | ✅ 経路実装済み（**本番未実行**）|
+| 5 | prospect プールと 8/31 の配信結果が動いていない | `verify-after-customer-deletion.mjs --compare` | ✅ 経路実装済み |
+| 6 | 索引に orphan がいない | `audit-prospect-index.mjs`（`hasRecord:true` が 0）| ✅ 現在 0 |
+
+⚠️ **「prospect は hash だから配信は続く」は 5 の一部でしかない。**
+これだけで rollback 完了と書かない（2026-08-27 に指摘を受けた事故の芽）。
+
+### 削除対象と参照（2026-08-27 本番実測）
+
+- 削除対象 **11,961 件**（取り込み由来 14,489 のうち migrate 判定）／削除後 Customers **4,016**
+- 参照は **`CampaignDeliveries` だけ 23,452 行**。他 4 テーブルは 0
+  （`CustomerRecordId` は全部 `singleLineText` ＝ リンクではないので**自動では直らない**）
+
+---
+
 # 🚧 Premium Plus 再募集クーポン — 運用完成まで**未完了**（クローズ禁止）
 
 > **新しいセッションはここから読むこと。** この節が残っている間、再募集クーポンは
