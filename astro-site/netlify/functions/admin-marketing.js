@@ -220,6 +220,10 @@ import {
   classifyQueueOutcome, collectDeliveryKeys, summarizeRollback, QUEUE_FAIL,
 } from '../../src/lib/marketing/queueDeliveryOutcome.js';
 import {
+  canRepairJob, planJobDeliveryRepair, verifyRepairComplete, REPAIR_CONFIRM,
+  ACTIVE_DELIVERY_STATUS,
+} from '../../src/lib/marketing/jobDeliveryRepair.js';
+import {
   markUnverified, clearUnverified, hasUnverifiedMark,
   decideJobRowAction, JOB_ROW_ACTION,
 } from '../../src/lib/marketing/queueJobPreparation.js';
@@ -879,6 +883,7 @@ export const handler = async (event) => {
     if (action === 'customerDeletionApply') return await handleCustomerDeletionApply({ KEY, BASE, req });
     if (action === 'customerDeletionRestore') return await handleCustomerDeletionRestore({ KEY, BASE, req });
     if (action === 'campaignDeliveryRewire') return await handleCampaignDeliveryRewire({ KEY, BASE, req });
+    if (action === 'campaignJobRepair') return await handleCampaignJobRepair({ KEY, BASE, now, req });
     if (action === 'trialGrant') return await handleTrialGrantPreview({ now, req });
     if (action === 'duplicateCheck') return await handleDuplicateCheck({ KEY, BASE, req });
     if (action === 'rollout') return await handleRollout({ KEY, BASE, now, req });
@@ -2975,6 +2980,188 @@ const INDEX_REPAIR_MAX = 10;
  * ⚠️ 前後の参照件数を返す。**古い参照が 0 / 新しい参照が期待どおり**で初めて終わり。
  * ⚠️ 1 回 100 件（対応表）まで。分割して呼び、途中から再開できる。
  */
+/**
+ * 積みかけのジョブ（PENDING ＋ `queue:unverified`）を**壊さずに仕上げる**。
+ *
+ * ⚠️ **既定は下見。** `apply:true` ＋ 確認文字列が揃ったときだけ書く。
+ * ⚠️ **jobId 必須**。指定した 1 ジョブ以外には一切触れない。
+ * ⚠️ 元ジョブの `Recipients` が正本。**計画を作り直さない**（母集団が変わると別ジョブになる）。
+ * ⚠️ 既存の配信行は**変更も削除もしない**。既に予約済みの鍵も**release しない**。
+ *    足りない鍵だけを claim し、**claim できた分だけ**行を足す。
+ * ⚠️ 全員ぶん読み戻せたときだけ `queue:unverified` を外す（`verifyRepairComplete`）。
+ */
+async function handleCampaignJobRepair({ KEY, BASE, now, req }) {
+  const jobId = String(req.jobId || '').trim();
+  if (!jobId) return json(400, { error: 'jobId を指定してください', sideEffects: 'none' });
+  const confirmed = String(req.confirm || '') === REPAIR_CONFIRM;
+  const apply = req.apply === true && confirmed;
+  const dryRun = !apply;
+
+  // ① ジョブ行（**この jobId だけ**）
+  let jobRows = null;
+  try {
+    jobRows = await fetchAllStrict({
+      KEY, BASE, table: SCHEDULED_TABLE, filterByFormula: `{JobId}='${jobId}'`,
+      maxPages: TARGETED_MAX_PAGES,
+      fields: ['JobId', 'Status', 'Recipients', 'TargetPlan', 'Notes', 'SentCount'],
+    });
+  } catch { jobRows = null; }
+
+  const gate = canRepairJob({
+    rows: jobRows,
+    isMarketing: Array.isArray(jobRows) && jobRows[0] ? isMarketingJob(jobRows[0].fields || {}) : false,
+    hasUnverified: Array.isArray(jobRows) && jobRows[0]
+      ? hasUnverifiedMark(String((jobRows[0].fields || {}).Notes || '')) : false,
+  });
+  if (!gate.ok) {
+    return json(409, {
+      mode: 'campaign-job-repair', jobId, sideEffects: 'none',
+      error: 'このジョブは仕上げの対象ではありません', reason: gate.reason,
+    });
+  }
+  const f = gate.fields;
+
+  // ② step を内容 hash で決める（`parseJobCampaign` は step を返さない）
+  const parsed = parseJobCampaign(f);
+  const baseCampaign = getCampaign(parsed.campaignId, { includeDisabled: true });
+  if (!baseCampaign) {
+    return json(409, { mode: 'campaign-job-repair', jobId, sideEffects: 'none', reason: 'campaign_unknown' });
+  }
+  let campaign = null;
+  const maxStep = isSequenceCampaign(baseCampaign) ? resolveMaxSends(baseCampaign) : 1;
+  for (let step = 1; step <= maxStep; step += 1) {
+    const c = isSequenceCampaign(baseCampaign)
+      ? resolveStepCampaign({ campaign: baseCampaign, step }) : baseCampaign;
+    if (!c) continue;
+    if (String(computeCampaignContentHash(c)).startsWith(String(parsed.contentHash))) { campaign = c; break; }
+  }
+  if (!campaign) {
+    return json(409, {
+      mode: 'campaign-job-repair', jobId, sideEffects: 'none', reason: 'step_unresolved',
+      note: 'ジョブの content hash に一致する step がありません（内容が変わった可能性）',
+    });
+  }
+
+  // ③ 宛先（正本）→ 鍵
+  const fromEmail = getBrandConfig(BRAND).defaultFromEmail;
+  const recipients = splitRecipients(f.Recipients);
+  const keyByEmail = new Map();
+  for (const email of recipients) {
+    const k = computeCampaignDeliveryKey({ campaign, recipientEmail: email, brand: BRAND, fromEmail });
+    if (k) keyByEmail.set(email, k);
+  }
+
+  // ④ この鍵の配信行だけを名指しで引く
+  const campaignType = `${campaign.campaignId}:v${campaign.version}`;
+  let rows = null;
+  try {
+    rows = await fetchDeliveryRowsByKeys({ KEY, BASE, campaignType, keys: [...keyByEmail.values()] });
+  } catch { rows = null; }
+
+  const plan = planJobDeliveryRepair({ recipients, keyByEmail, existingRows: rows });
+  if (!plan.ok) {
+    return json(409, {
+      mode: 'campaign-job-repair', jobId, sideEffects: 'none',
+      error: '仕上げられません', reason: plan.reason, foreignRows: plan.foreignRows || undefined,
+    });
+  }
+
+  const view = {
+    mode: dryRun ? 'campaign-job-repair-dry-run' : 'campaign-job-repair',
+    jobId, campaignId: campaign.campaignId, version: campaign.version, step: campaign.step ?? null,
+    counts: plan.counts, confirmed,
+  };
+  if (dryRun) {
+    return json(200, {
+      ...view, claimed: 0, created: 0, verified: null, unverifiedCleared: false, sideEffects: 'none',
+      notice: 'これは下見です。**1 件も書いていません**（apply と確認文字列が要ります）。',
+    });
+  }
+
+  // ⑤ 足りない鍵**だけ**を claim（既存の予約は触らない）
+  const scope = { brand: BRAND, campaignId: campaign.campaignId, version: campaign.version };
+  let claimedKeys = [];
+  if (plan.missing.length > 0) {
+    try {
+      const store = createDeliveryKeyStore({
+        redisCmd: makeRedisCmd(process.env), redisPipeline: makeRedisPipeline(process.env),
+      });
+      const claim = await store.claimDelivered({ ...scope, keys: plan.missing.map((m) => m.key) });
+      claimedKeys = claim.claimed || [];
+    } catch {
+      // ⚠️ 予約を確定できない = 足さない（二重送信を避ける）
+      return json(503, {
+        ...view, claimed: 0, created: 0, sideEffects: 'none',
+        error: '配信台帳を予約できないため中止しました', reason: 'ledger_unavailable',
+      });
+    }
+  }
+
+  // ⑥ claim できた分だけ行を足す（既存行は触らない）
+  const claimedSet = new Set(claimedKeys);
+  const toCreate = plan.missing.filter((m) => claimedSet.has(m.key));
+  let created = 0;
+  if (toCreate.length > 0) {
+    const records = buildDeliveryRecords({
+      campaign,
+      recipients: toCreate.map((m) => ({ email: m.email })),
+      jobIdByEmail: new Map(toCreate.map((m) => [m.email, jobId])),
+      nowMs: now,
+    });
+    try {
+      await upsertDeliveries({ KEY, BASE, records });
+      created = records.length;
+    } catch {
+      // ⚠️ **自分が取った鍵で queue に失敗した**ぶんだけ戻す（設計どおりの release）
+      try {
+        const store = createDeliveryKeyStore({
+          redisCmd: makeRedisCmd(process.env), redisPipeline: makeRedisPipeline(process.env),
+        });
+        await store.releaseClaims({ ...scope, keys: claimedKeys });
+      } catch { /* 記録のみ */ }
+      return json(500, {
+        ...view, claimed: claimedKeys.length, created: 0, sideEffects: 'partial_unconfirmed',
+        error: '配信行を書けませんでした（取った予約は戻しました）', reason: 'delivery_write_failed',
+      });
+    }
+  }
+
+  // ⑦ 全員ぶん読み戻す
+  let after = null;
+  try {
+    after = await fetchDeliveryRowsByKeys({ KEY, BASE, campaignType, keys: plan.expectedKeys });
+  } catch { after = null; }
+  const verifiedKeys = after === null ? null : new Set(
+    after.filter((r) => ACTIVE_DELIVERY_STATUS.has(String(((r.fields || {}).Status || '')).toLowerCase()))
+      .map((r) => String((r.fields || {}).DeliveryKey || '')).filter(Boolean),
+  );
+  const verified = verifyRepairComplete({ expectedKeys: plan.expectedKeys, verifiedKeys });
+
+  // ⑧ 揃ったときだけ印を外す
+  let cleared = false;
+  if (verified.ok) {
+    // ⚠️ 変数名を enqueue 経路と分けている（`queueJobPreparation.test.mjs` の
+    //    「確認 → 印外し」の順序 guard は**キュー登録側の呼び出し位置**を見ているため）
+    const promotedAfterRepair = await promoteVerifiedJobs({
+      KEY, BASE, jobs: [{ recordId: gate.recordId, jobId }],
+    });
+    cleared = promotedAfterRepair.ok === true;
+  }
+
+  return json(200, {
+    ...view,
+    claimed: claimedKeys.length,
+    claimedByOther: plan.missing.length - claimedKeys.length,
+    created,
+    verified: { ok: verified.ok, missing: verified.missing, expected: verified.expected },
+    unverifiedCleared: cleared,
+    sideEffects: created > 0 || cleared ? 'job_repaired' : 'none',
+    notice: verified.ok
+      ? '配信行が揃ったので、このジョブは dispatcher の確認対象になります（まだ送っていません）。'
+      : '揃わなかったので **印は外していません**（dispatcher は引き続き送りません）。',
+  });
+}
+
 async function handleCampaignDeliveryRewire({ KEY, BASE, req }) {
   const entries = Array.isArray(req.entries) ? req.entries : [];
   const confirmed = String(req.confirm || '') === REWIRE_CONFIRM;
