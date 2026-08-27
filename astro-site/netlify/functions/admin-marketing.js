@@ -863,6 +863,7 @@ export const handler = async (event) => {
     if (action === 'prospectIntake') return await handleProspectIntake({ KEY, BASE, now, req });
     if (action === 'prospectSequenceCheck') return await handleProspectSequenceCheck({ now, req });
     if (action === 'prospectIndexAudit') return await handleProspectIndexAudit({ req });
+    if (action === 'prospectIndexRepair') return await handleProspectIndexRepair({ req });
     if (action === 'trialGrant') return await handleTrialGrantPreview({ now, req });
     if (action === 'duplicateCheck') return await handleDuplicateCheck({ KEY, BASE, req });
     if (action === 'rollout') return await handleRollout({ KEY, BASE, now, req });
@@ -2930,6 +2931,80 @@ function computePageParity({ campaign, records, deliveries, plan, brand, fromEma
  * ⚠️ 入出力は **hash だけ**。生アドレスは受け取らないし返さない。
  * ⚠️ 書き込みは一切しない（読むのは SMEMBERS ×3 と GET のみ）。
  */
+/** 索引の修復を許す確認文字列（画面から流し込めない値にしておく） */
+const INDEX_REPAIR_CONFIRM = 'REPAIR PROSPECT INDEX';
+/** 1 回で直せる上限（**取り違えの被害を構造的に小さくする**）*/
+const INDEX_REPAIR_MAX = 10;
+
+/**
+ * 名指しした hash の**索引だけ**を、保存済みレコードの state に合わせて直す。
+ *
+ * ## できることが構造的に限られている
+ *
+ *   - 触るのは `ACTIVE_INDEX` / `ENGAGED_INDEX` の**所属だけ**。レコードは書かない
+ *   - **保存済みレコードが無い hash には何もしない**（居ない人を作れない）
+ *   - **抑止台帳に載っている相手には何もしない**（復活させられない）
+ *   - あるべき所属と違うときだけ 1 コマンド出す（既に正しければ**0 コマンド**）
+ *   - 1 回 10 件まで（`INDEX_REPAIR_MAX`）
+ *   - 送信も queue も Airtable も**一切触らない**
+ *
+ * ⚠️ 既定は**下見**。`apply: true` ＋ 確認文字列が揃ったときだけ書く。
+ */
+async function handleProspectIndexRepair({ req }) {
+  const hashes = normalizeHashes(req.hashes);
+  if (hashes.length === 0) {
+    return json(400, { error: 'hashes（64 桁 hex）を渡してください', sideEffects: 'none' });
+  }
+  if (hashes.length > INDEX_REPAIR_MAX) {
+    return json(400, {
+      error: `一度に直せるのは ${INDEX_REPAIR_MAX} 件までです`, sideEffects: 'none',
+    });
+  }
+  const confirmed = String(req.confirm || '') === INDEX_REPAIR_CONFIRM;
+  const apply = req.apply === true && confirmed;
+  const dryRun = !apply;
+
+  let store;
+  try {
+    store = createProspectStore({
+      cmd: makeRedisCmd(process.env), pipeline: makeRedisPipeline(process.env),
+    });
+  } catch {
+    return json(503, { error: 'Redis へ接続できません', sideEffects: 'none' });
+  }
+
+  let res;
+  try {
+    res = await store.reindexByHash(hashes, { apply });
+  } catch (e) {
+    return json(500, {
+      error: '索引を直せませんでした',
+      detail: String((e && e.message) || '').slice(0, 120),
+      sideEffects: apply ? 'partial_unconfirmed' : 'none',
+    });
+  }
+
+  // 直したあと（または下見）の所在を返す。アドレスは含めない
+  const details = res.planned.map((p) => ({
+    hash: p.hash, state: p.state, wasActive: p.isActive, changes: p.changes,
+  }));
+
+  return json(200, {
+    mode: dryRun ? 'prospect-index-repair-dry-run' : 'prospect-index-repair',
+    sideEffects: apply ? 'redis_written' : 'none',
+    confirmed,
+    checked: res.checked,
+    planned: details,
+    /** 実際に変わった件数（下見なら常に 0）*/
+    applied: res.applied,
+    skipped: res.skipped,
+    customersDeleted: 0,
+    notice: dryRun
+      ? 'これは下見です。**1 バイトも書いていません**（apply と確認文字列が要ります）。'
+      : '索引の所属だけを直しました。**レコード・Customers・送信は一切触っていません**。',
+  });
+}
+
 async function handleProspectIndexAudit({ req }) {
   const expected = normalizeHashes(req.hashes);
   if (expected.length === 0) {
