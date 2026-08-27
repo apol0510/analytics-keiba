@@ -146,12 +146,38 @@ test('【重要】同じ JobId の行を二重に作らない（既存があれ�
 test('【重要】dispatcher は未検証のジョブを送らない', () => {
   const src = readRel(DISPATCH);
   assert.ok(/import \{ isQueueVerified \}/.test(src), '判定を import していない');
-  assert.ok(/if \(!isQueueVerified\(f\.Notes\)\) \{/.test(src), '未検証ジョブを弾いていない');
-  const block = src.slice(src.indexOf('if (!isQueueVerified(f.Notes))'), src.indexOf('const jobShellVersion ='));
-  assert.ok(/blocked: 'queue_unverified'/.test(block), '理由を返していない');
-  assert.ok(/willSend: 0/.test(block) && /continue;/.test(block), '送信をやめていない');
+  assert.ok(/const queueUnverified = !isQueueVerified\(f\.Notes\);/.test(src), '未検証を判定していない');
   // 送信の前に判定していること
-  assert.ok(src.indexOf('if (!isQueueVerified(f.Notes))') < src.indexOf('summary.jobs += 1'));
+  assert.ok(src.indexOf('const queueUnverified =') < src.indexOf('summary.jobs += 1'));
+
+  /*
+   * ⚠️ 未検証ジョブの出口は **2 つ**（live / dryRun の preview）。
+   *    **どちらも `willSend: 0` ＋ `blocked` ＋ `continue`** で、実送信区間へ進まないこと。
+   *    preview（2026-08-27 追加）は「印を外したら何人か」を見せるだけで、
+   *    `willSend` を動かさない（cron の判断を変えない）。
+   */
+  const exits = [...src.matchAll(/blocked: 'queue_unverified'/g)].map((m) => m.index);
+  assert.equal(exits.length, 2, `未検証ジョブの出口が ${exits.length} 個（live と preview の 2 つのはず）`);
+  for (const at of exits) {
+    const around = src.slice(Math.max(0, at - 700), at + 1400);
+    assert.ok(/willSend: 0/.test(around), '未検証なのに willSend が 0 でない');
+    assert.ok(/continue;/.test(around), '未検証なのに送信区間へ進んでいる');
+  }
+  // live 側は preview を作らずに即抜ける
+  assert.ok(/if \(queueUnverified && !dryRun\) \{/.test(src), 'live の即抜けが無い');
+  // preview は dryRun 限定（live 応答に preview を足していない）
+  const liveBlock = src.slice(src.indexOf('if (queueUnverified && !dryRun) {'), src.indexOf('const jobShellVersion ='));
+  assert.equal(/preview:/.test(liveBlock), false, '⚠️ live 応答に preview を足している');
+});
+
+test('【重要】preview は willSend を動かさない（cron の判断を変えない）', () => {
+  const src = readRel(DISPATCH);
+  const at = src.indexOf('if (queueUnverified) {');
+  assert.ok(at > 0, 'preview 経路が無い');
+  const block = src.slice(at, src.indexOf('jobResults.push({\n      jobId,\n      campaignId', at) + 200);
+  assert.ok(/willSend: 0/.test(block), '⚠️ preview 経路で willSend を 0 以外にしている');
+  assert.ok(/wouldSend/.test(block) && /previewFingerprint/.test(block), 'preview の中身が無い');
+  assert.ok(/continue;/.test(block), '⚠️ preview 経路が実送信区間へ落ちている');
 });
 
 test('【重要】キュー登録は排他を取ってから書く（二重 queue 防止）', () => {

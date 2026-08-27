@@ -66,6 +66,7 @@ import { OFFERS_TABLE, getOfferSecret } from '../../src/lib/promotions/promotion
 import { getBrandConfig, validateBrandFromEmail } from '../../src/lib/newsletter/brand-config.js';
 import { makeRedisCmd } from '../../src/lib/marketing/deliveryKeyStore.js';
 import { isQueueVerified } from '../../src/lib/marketing/queueJobPreparation.js';
+import { buildPreviewFingerprint } from '../../src/lib/marketing/campaignPreviewFingerprint.js';
 import {
   createDispatchLock, DISPATCH_LOCK_TTL_SEC, LOCK_FAIL, DispatchLockError,
 } from '../../src/lib/marketing/dispatchLock.js';
@@ -512,7 +513,19 @@ export async function runDispatch({
      *    揃っている保証が無いので、ここで弾く（2026-08-18 / 08-20 の orphan 事故）。
      *    印が無いジョブ（この仕組みより前に積まれたもの）は従来どおり送る。
      */
-    if (!isQueueVerified(f.Notes)) {
+    /**
+     * ⚠️ 印が付いているジョブは**絶対に送らない**（契約は変えない）。
+     *
+     * ただし `dryRun` のときだけは、**印を付けたまま**再検証を最後まで走らせて
+     * 「もし印が無ければ何人に送るか」を `preview` として返す。
+     * 印を外す前に exact な人数と相手を確認できるようにするため
+     * （2026-08-27: 印を外した直後に cron が 100 通送った事故の恒久対策）。
+     *
+     * ⚠️ **`willSend` は 0 のまま**。cron（`readWillSend`）はここを読むので、
+     *    preview を足しても**自動送信の判断は 1 ミリも変わらない**。
+     */
+    const queueUnverified = !isQueueVerified(f.Notes);
+    if (queueUnverified && !dryRun) {
       jobResults.push({
         jobId, total: recipients.length, willSend: 0, willSkip: recipients.length,
         blocked: 'queue_unverified',
@@ -689,6 +702,45 @@ export async function runDispatch({
       const r = String(e.reason || 'unknown');
       skipByReason[r] = (skipByReason[r] || 0) + 1;
     }
+    /**
+     * ⚠️ 印が付いていたら **`willSend` は 0** のまま返す（cron の判断を変えない）。
+     *    実際の再検証結果は `preview` に入れる。**`dryRun` のときだけ**付ける。
+     */
+    if (queueUnverified) {
+      const keyOf = (email) => {
+        const d = deliveryByEmail.get(email);
+        return String((d && (d.deliveryKey || d.DeliveryKey)) || '');
+      };
+      const fp = buildPreviewFingerprint({
+        jobId,
+        send: toSend.map(keyOf),
+        skip: toSkip.map((e) => ({ deliveryKey: keyOf(e.email), reason: e.reason })),
+      });
+      jobResults.push({
+        jobId,
+        campaignId: campaignId || '',
+        version: jobCampaign ? String(jobCampaign.version) : '',
+        status: String(f.Status || ''),
+        total: recipients.length,
+        // ⚠️ ここは 0 のまま。preview を足しても自動送信の判断は変わらない
+        willSend: 0,
+        willSkip: recipients.length,
+        blocked: 'queue_unverified',
+        note: 'このジョブは配信行の確認が終わっていません。**送っていません**。'
+          + 'preview は「印を外したら何人に送るか」の下見です。',
+        preview: {
+          wouldSend: fp.ok ? fp.wouldSend : null,
+          wouldSkip: fp.ok ? fp.wouldSkip : null,
+          skipByReason: fp.ok ? fp.skipByReason : null,
+          previewFingerprint: fp.ok ? fp.fingerprint : null,
+          fingerprintOk: fp.ok === true,
+          fingerprintReason: fp.ok ? null : fp.reason,
+        },
+      });
+      summary.blockedJobs = (summary.blockedJobs || 0) + 1;
+      continue;                      // ⚠️ 印つきは実送信区間へ**絶対に進まない**
+    }
+
     jobResults.push({
       jobId,
       campaignId: campaignId || '',

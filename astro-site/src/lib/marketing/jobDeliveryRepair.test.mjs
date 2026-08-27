@@ -217,10 +217,17 @@ test('⚠️【要件】guard: 既存の配信行を消さない・書き換え�
   assert.match(src, /plan\.missing\.filter\(\(m\) => claimedSet\.has\(m\.key\)\)/);
 });
 
-test('⚠️【要件】guard: 揃ったときだけ印を外す', () => {
-  assert.match(src, /if \(verified\.ok\) \{[\s\S]*promotedAfterRepair = await promoteVerifiedJobs/,
-    '⚠️ 揃う前に印を外している');
-  assert.match(src, /verifyRepairComplete\(/);
+test('⚠️【要件】guard: repair は queue:unverified を **絶対に外さない**', () => {
+  /*
+   * 2026-08-27: repair が印まで外した直後、cron-marketing-rollout（5 分ごと）が
+   * background dispatcher を起動して **100 通が自動送信**された。
+   * 「行を揃える」と「送ってよい状態にする」は別の意思決定なので、repair からは外す手段を消す。
+   */
+  assert.equal(/promoteVerifiedJobs/.test(src), false,
+    '⚠️ repair から印を外せる（promote は campaignJobPromote だけの仕事）');
+  assert.equal(/clearUnverified/.test(src), false, '⚠️ repair が印を消している');
+  assert.match(src, /unverifiedCleared: false/, '⚠️ repair が印を外したと報告し得る');
+  assert.match(src, /verifyRepairComplete\(/, '揃ったかの確認自体は残す');
 });
 
 test('⚠️ guard: 指定した jobId だけを見る（他ジョブに触れない）', () => {
