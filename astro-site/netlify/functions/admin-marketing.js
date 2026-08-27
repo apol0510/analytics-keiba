@@ -145,6 +145,9 @@ import {
   planCustomerDeletion, canDeleteCustomers, reconcileDeletionTargets,
   DELETE_CONFIRM, DELETE_MAX_PER_CALL,
 } from '../../src/lib/marketing/customerDeletionPlan.js';
+import {
+  classifyFields, buildRestoreFields, validateRestorePayload,
+} from '../../src/lib/marketing/airtableWritableFields.js';
 import { compareSequenceParity } from '../../src/lib/marketing/sequenceParity.js';
 import { makeRedisPipeline } from '../../src/lib/marketing/deliveryKeyStore.js';
 import { IMPORT_SOURCE_PREFIX } from '../../src/lib/marketing/importCohort.js';
@@ -2968,9 +2971,41 @@ const RESTORE_CONFIRM = 'RESTORE CUSTOMERS FROM EXPORT';
  *    prospect 側は hash（アドレス由来）で紐づくので、配信の継続性には影響しない。
  */
 async function handleCustomerDeletionRestore({ KEY, BASE, req }) {
-  const rows = (Array.isArray(req.records) ? req.records : [])
+  const rawRows = (Array.isArray(req.records) ? req.records : [])
     .map((r) => ({ fields: (r && r.fields) || {} }))
     .filter((r) => String(r.fields.Email || '').trim());
+
+  // ⚠️ **本番 schema から「作成時に書ける field」を取り直す。**
+  //    控えは監査用に全フィールドを持っているので、そのまま POST すると
+  //    `登録日`（createdTime）などで**復元そのものが失敗する**。
+  let schema;
+  try {
+    schema = classifyFields(await fetchCustomersFieldSchema({ KEY, BASE }));
+  } catch (e) {
+    return json(503, {
+      error: 'Customers の schema を取れませんでした（**作らずに中止**）',
+      detail: String((e && e.message) || '').slice(0, 120), sideEffects: 'none',
+    });
+  }
+  if (schema.writable.size === 0) {
+    return json(503, { error: 'schema が空（**作らずに中止**）', sideEffects: 'none' });
+  }
+
+  const droppedByField = {};
+  const rows = rawRows.map((r) => {
+    const { fields, dropped } = buildRestoreFields(r.fields, schema.writable);
+    for (const d of dropped) droppedByField[d] = (droppedByField[d] || 0) + 1;
+    return { fields };
+  });
+
+  // 送る直前の検算（計算 field・知らない field が 1 つでも混ざっていたら送らない）
+  const valid = validateRestorePayload({ records: rows, ...schema });
+  if (!valid.ok) {
+    return json(400, {
+      error: '復元 payload が schema に合いません（**作らずに中止**）',
+      reasons: valid.reasons.slice(0, 20), sideEffects: 'none',
+    });
+  }
   if (rows.length === 0) {
     return json(400, { error: 'records（fields.Email 必須）を渡してください', sideEffects: 'none' });
   }
@@ -3000,6 +3035,13 @@ async function handleCustomerDeletionRestore({ KEY, BASE, req }) {
     mode: apply ? 'customer-restore' : 'customer-restore-dry-run',
     requested: rows.length, alreadyPresent: rows.length - toCreate.length,
     toCreate: toCreate.length, confirmed,
+    /** 書けないので落とした field（監査用の控えには残っている）*/
+    droppedFields: droppedByField,
+    schema: {
+      writable: schema.writable.size, computed: schema.computed.size,
+      links: schema.links.size, unknown: [...schema.unknown],
+    },
+    payloadValid: valid.ok,
   };
   if (!apply) {
     return json(200, {
@@ -3032,6 +3074,21 @@ async function handleCustomerDeletionRestore({ KEY, BASE, req }) {
     sideEffects: created > 0 ? 'customers_created' : 'none',
     notice: 'recordId は新しく振られます（prospect は hash で紐づくため配信に影響しません）。',
   });
+}
+
+/**
+ * 本番 Customers の field schema を取る（**読み取りのみ**）。
+ *
+ * ⚠️ 型を推測しない。**Meta API の実際の型**で書ける / 書けないを決める。
+ */
+async function fetchCustomersFieldSchema({ KEY, BASE }) {
+  const url = `https://api.airtable.com/v0/meta/bases/${BASE}/tables`;
+  const res = await fetch(url, { headers: authHeaders(KEY) });
+  if (!res.ok) throw new Error(`schema_${res.status}`);
+  const j = await res.json();
+  const t = (j.tables || []).find((x) => x.name === CUSTOMERS_TABLE);
+  if (!t) throw new Error('customers_table_not_found');
+  return t.fields || [];
 }
 
 /** アドレスで既存 Customers を引く（復元の二重作成防止）*/

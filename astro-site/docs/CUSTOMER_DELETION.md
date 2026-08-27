@@ -54,8 +54,33 @@ ADMIN_SECRET=... node scripts/restore-customers-from-export.mjs --apply <export.
 ```
 
 ⚠️ 控えファイルには**アドレスが入る**。リポジトリへ置かない・ログへ貼らない。
-⚠️ 復元すると **recordId は新しく振られる**。prospect は hash（アドレス由来）で紐づくので
-配信の継続性には影響しない。
+
+### ⚠️ 控えをそのまま POST してはいけない（2026-08-27 修正）
+
+控えは**監査用に全フィールド**を持つが、Airtable には**書き込めない field** がある。
+本番 Customers の **`登録日` は `createdTime`**（自動値）。そのまま POST すると
+**復元そのものが失敗する** ＝ rollback が効かない ＝ 削除が取り返しのつかない操作になる。
+
+復元は **本番 schema（Meta API）を取り直し、「作成時に書ける型」だけを通す**。
+
+| 扱い | 型 |
+|---|---|
+| 書く（allow-list）| `singleLineText` / `multilineText` / `richText` / `email` / `url` / `phoneNumber` / `number` / `currency` / `percent` / `rating` / `duration` / `checkbox` / `singleSelect` / `multipleSelects` / `date` / `dateTime` / `barcode` |
+| **絶対に書かない** | `createdTime` / `lastModifiedTime` / `createdBy` / `lastModifiedBy` / `formula` / `rollup` / `count` / `multipleLookupValues` / `autoNumber` / `button` / `aiText` |
+| 復元では使わない | `multipleRecordLinks`（**再配線は別工程**・下記）|
+
+**知らない型は書かない**（allow-list なので、新しい型が増えても黙って POST しない）。
+送る直前に `validateRestorePayload()` で検算し、計算 field が 1 つでも混ざっていたら送らない。
+契約は `airtableWritableFields.test.mjs` が**本番 schema のスナップショット**に対して固定する。
+
+### ⚠️ recordId は変わる。参照は自動では直らない
+
+復元すると **recordId は新しく振られる**。他テーブルの `CustomerRecordId` は
+**`singleLineText`（ただの文字列コピー）**なので、Airtable は何も直してくれない。
+削除した時点で**参照は宙に浮き**、復元しても**古い recordId のまま**残る。
+
+「prospect は hash で紐づくから配信は続く」は事実だが、**それは rollback の完了条件ではない**。
+参照の再配線が要るかどうかは、下の調査結果で判断すること。
 
 ## 二重実行しても安全
 
