@@ -285,7 +285,9 @@ test('【要件】並びが毎回変わっても、全員をちょうど 1 回�
       assert.equal(seen.has(p.email), false, `${p.email} を 2 回読んでいる`);
       seen.add(p.email);
     }
-    offset += r.prospects.length;
+    // ⚠️ 本番（admin の `nextOffset`）と同じく**索引を消費した件数**で進める
+    assert.equal(r.scanned, r.prospects.length, '全部読めた窓では消費 = 読めた件数');
+    offset += r.scanned;
     if (offset >= r.indexSize) break;
   }
   assert.equal(seen.size, TOTAL, `読み落としがある（${TOTAL - seen.size} 件）`);
@@ -306,7 +308,7 @@ test('小さい窓（端数あり）でも重複・読み落としが無い', as
       assert.equal(seen.has(p.email), false, `${p.email} が重複`);
       seen.add(p.email);
     }
-    offset += r.prospects.length;
+    offset += r.scanned;
     if (offset >= r.indexSize) break;
   }
   assert.equal(seen.size, 250);
@@ -397,4 +399,100 @@ test('⚠️ guard: 検証は並べ替えてから切り、指紋を返してい
   assert.match(adminSrc, /digest: inputs\.digest/);
   assert.match(adminSrc, /const rowsOnce = buildProspectSequenceRows/,
     '時刻ごとに復元を作り直している（実行時間を使い切る）');
+});
+
+/* ── 窓は「読めた件数」ではなく「索引を消費した件数」で進める ──────────
+ *
+ * ⚠️ `prospectStore.loadMany` は **値を読めなかった hash を落とす**
+ *    （MGET が null を返す＝レコードだけ消えた / 壊れている）。
+ *    読めた件数で窓を進めると、その分だけ窓が**巻き戻って同じ人を 2 回読む**。
+ *    1 窓まるごと読めなければ `nextOffset === offset` となり**永久に進まない**。
+ */
+
+/** 値の欠けた hash が混ざる store（索引には居るが MGET が null を返す）*/
+function storeWithHoles(n, { holeEvery = 7, seed = 4242 } = {}) {
+  const store = shufflingStore(n, { seed });
+  const holes = new Set(
+    [...store.byHash.keys()].sort().filter((_, i) => i % holeEvery === 0),
+  );
+  store.holes = holes;
+  const loadMany = store.loadMany.bind(store);
+  store.loadMany = async (hashes) => (await loadMany(hashes)).filter((p) => !holes.has(p.hash));
+  return store;
+}
+
+test('⚠️【要件】値の欠けた hash があっても、窓は索引の件数だけ進む（同じ人を 2 回読まない）', async () => {
+  const TOTAL = 1000;
+  const store = storeWithHoles(TOTAL, { holeEvery: 7 });
+  const readable = TOTAL - store.holes.size;
+  const seen = new Set();
+  let offset = 0; let digest = null; let pages = 0; let missing = 0;
+
+  for (let i = 0; i < 100; i += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    const r = await loadWindow({ store, offset, maxRecipients: 150, expectDigest: digest || undefined });
+    assert.equal(r.ok, true, `page ${i} が失敗した: ${r.reason}`);
+    digest = digest || r.digest;
+    pages += 1;
+    missing += r.missing;
+    // ⚠️ ここが本体: 消費したのは**窓の幅**であって、読めた件数ではない
+    assert.equal(r.scanned, Math.min(150, TOTAL - offset), '索引の消費件数が窓の幅と違う');
+    assert.ok(r.scanned >= r.prospects.length, '読めた件数が消費件数を超えている');
+    for (const p of r.prospects) {
+      assert.equal(seen.has(p.email), false, `⚠️ ${p.email} を 2 回読んでいる（窓が巻き戻った）`);
+      seen.add(p.email);
+    }
+    offset += r.scanned;
+    if (offset >= r.indexSize) break;
+  }
+  assert.equal(pages, 7, '窓が巻き戻って余計に読んでいる');
+  assert.equal(missing, store.holes.size, '値なしの件数が合わない');
+  assert.equal(seen.size, readable, `読めるはずの ${readable} 件を読み切れていない`);
+});
+
+test('⚠️【要件】1 窓まるごと読めなくても窓は進む（nextOffset が止まる事故）', async () => {
+  const store = shufflingStore(300);
+  store.loadMany = async () => [];   // 索引にはあるが値が 1 件も読めない
+  const r = await loadWindow({ store, offset: 0, maxRecipients: 100 });
+  assert.equal(r.ok, true, '読めない値は「読めない索引」ではないので中止しない');
+  assert.equal(r.prospects.length, 0);
+  assert.equal(r.scanned, 100, '⚠️ 消費 0 だと nextOffset が動かず永久に進まない');
+  assert.equal(r.missing, 100);
+  assert.ok(0 + r.scanned < r.indexSize, '次の窓が存在する');
+});
+
+test('loadProspectSequenceInputs は 0 件の窓でも消費件数を返す', async () => {
+  const store = shufflingStore(300);
+  store.loadMany = async () => [];
+  const out = await loadProspectSequenceInputs({
+    store, deliveryKeyStore: fakeLedger([]), campaign: CAMPAIGN, brand: BRAND, fromEmail: FROM,
+    nowMs: NOW, offset: 0, maxRecipients: 100,
+  });
+  assert.equal(out.ok, true);
+  assert.equal(out.rows.length, 0);
+  assert.equal(out.scanned, 100, '⚠️ 0 だと窓が進まない');
+  assert.equal(out.missing, 100);
+});
+
+test('全部読めるときは 消費 = 読めた件数（欠けが無い場合の回帰）', async () => {
+  const out = await loadProspectSequenceInputs({
+    store: shufflingStore(120), deliveryKeyStore: fakeLedger([]), campaign: CAMPAIGN,
+    brand: BRAND, fromEmail: FROM, nowMs: NOW, offset: 0, maxRecipients: 50,
+  });
+  assert.equal(out.ok, true);
+  assert.equal(out.scanned, 50);
+  assert.equal(out.missing, 0);
+  assert.equal(out.prospects.length, 50);
+});
+
+test('⚠️ guard: admin は 消費件数 と 値なし件数 を応答に出している（最終判定の材料）', () => {
+  assert.match(adminSrc, /scanned: inputs\.scanned/, '合算できないと最終判定が出せない');
+  assert.match(adminSrc, /missing: inputs\.missing/);
+});
+
+test('⚠️ guard: admin は 索引の消費件数 で次の窓へ進めている', () => {
+  assert.match(adminSrc, /nextOffset: from \+ inputs\.scanned/,
+    '⚠️ 読めた件数で窓を進めている（値の欠けた hash の分だけ巻き戻って二重に読む）');
+  assert.equal(/from \+ inputs\.prospects\.length/.test(adminSrc), false,
+    '⚠️ prospects.length で窓を進める記述が残っている');
 });
