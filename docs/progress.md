@@ -1637,6 +1637,84 @@ MK 要望の 5 項目のうち、**確実に出せる 3 つ**を入れた。
 
 ---
 
+## 2026-08-27（追記3）— 本番反映済み。**Redis 投入の直前で停止中**
+
+### 現在地
+
+PR #461 を squash merge（`95e3c4f3`）→ **production deploy 完了**（deploy state = ready）。
+開封の集計を read-only で取得し、**最終下見と全件 parity を再確認済み**。
+**Redis 投入・Customers 削除・実送信はいずれも未実行。**
+
+### 開封を当てた最終下見（本番 read-only / 2026-08-27）
+
+`engagementDigest` は **available: true**（open hash 1,272 / click 0 /
+最終イベント 02:17Z＝取得の 9 分前・stale ではない）。
+
+| 判定 | 開封 未適用 | **開封 適用（確定）** |
+|---|---:|---:|
+| **prospect へ戻す** | 12,872 | **11,979** |
+| **反応があった（残す）** | 0 | **893** |
+| 取り込み由来でない | 1,488 | 1,488 |
+| 本人が動いた | 49 | 49 |
+| 運営側の付与だけ（保留）| 1,566 | 1,566 |
+| 配信停止・退会 | 2 | 2 |
+
+**開封を当てたことで 893 名が Customers 側へ戻った。**
+当てずに実行していれば、この 893 名を prospect へ落としていた
+（＝投入側の fail closed が実際に効いた事例）。
+
+母数と判定の合計は一致（15,977）。巻き戻し項目は 11,979 件すべてそろっている。
+
+### parity（開封適用後・全件 11,979 名）
+
+| 比べたもの | 差分 |
+|---|---:|
+| 対象のみ片側 / due のみ片側 | 0 / 0 |
+| 次 step / 状態 / 停止理由 | 0 / 0 / 0 |
+| **DeliveryKey** | **0** |
+| **delivered 回数** | **0** |
+
+**8/31 09:00 JST の 2 通目**: Customers 5,865 = prospect **5,865**（step2 5,537 一致）／片側だけ **0**。
+
+Airtable の増加: 現行 **+5,865 行** → 移行後 **0 行**。
+
+### 本番の書き込み経路を dry-run で確認（1 バイトも書いていない）
+
+`prospectIntake`（`apply` 省略）を production で実行:
+
+```
+mode=prospect-intake-dry-run  sideEffects=none
+page 100 件 → 投入 89 / 除外 11（keep_engaged 3 / review_operator_grant 8）
+engagement.applied=true   per-page parity 差分 0
+gate.allowed=false  reasons=[write_disabled, not_confirmed]
+応答にアドレス・recordId は含まれない
+```
+
+### ▶ 次作業（**承認が要る**）
+
+1. `PROSPECT_MIGRATION_ENABLED=true` を production へ（**env 変更**）
+2. `prospectIntake` を `apply:true` + `confirm` で 100 件ずつ実行（**Redis write**）
+3. 投入後に**再 parity** → 抑止台帳へ hash 引き継ぎ → スナップショット
+4. **Customers 削除は別承認**
+
+### 停止境界（現在の状態）
+
+| 境界 | 状態 |
+|---|---|
+| production への deploy | ✅ **完了**（`95e3c4f3`）|
+| production env の変更 | **未実行** |
+| 本番 Redis への投入（11,979 件）| **未実行** ← いまここで停止 |
+| **Customers の削除** | **未実行** |
+| 実送信 / queue 登録 | **未実行** |
+
+### secret の扱い
+
+端末出力に secret の先頭断片を出していた。**今後は prefix も長さも一切出さない。**
+repo 追跡ファイル・**git 全履歴**・commit・PR 本文/コメント・diff を走査し **混入 0 件**。
+完全値の漏洩は確認されていないため **ローテーションは行わない**。
+
+---
+
 ## 2026-08-27（追記2）— 【恒久修正】prospect の予約を queue の前へ（fail-closed 違反）
 
 ### 指摘された不具合
