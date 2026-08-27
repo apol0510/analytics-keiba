@@ -380,6 +380,60 @@ export function createProspectStore({ cmd, pipeline } = {}) {
     async loadBlocked(hash) {
       return parse(await call(['GET', blockedKey(hash)], STORE_FAIL.DATA_CORRUPT));
     },
+    /**
+     * 指定した hash の**索引だけ**を、保存済みレコードの state に合わせて直す（修復用）。
+     *
+     * ⚠️ **必要なときしか書かない。** 先に `SISMEMBER` で今の所属を見て、
+     *    あるべき状態と違うときだけ 1 コマンド出す（既に正しければ 0 コマンド）。
+     * ⚠️ **レコードは触らない**（`SET` を出さない）。索引の所属だけを揃える。
+     * ⚠️ 抑止台帳に載っている相手は**何もしない**（復活も削除もしない）。
+     * ⚠️ レコードが無い hash も**何もしない**（「投入していない人」を作らない）。
+     *
+     * @param {string[]} hashes
+     * @param {{apply?: boolean}} opts `apply` が true でなければ**下見**（1 バイトも書かない）
+     * @returns {Promise<{checked:number, planned:Array, applied:number, skipped:Array}>}
+     */
+    async reindexByHash(hashes, { apply = false } = {}) {
+      const list = [...new Set((hashes || []).map((h) => String(h || '').trim().toLowerCase()))]
+        .filter((h) => /^[0-9a-f]{64}$/.test(h));
+      const out = {
+        checked: list.length, planned: [], applied: 0, skipped: [],
+      };
+      if (list.length === 0) return out;
+
+      const blockedRaw = await call(['MGET', ...list.map(blockedKey)], STORE_FAIL.DATA_CORRUPT);
+      const curRaw = await call(['MGET', ...list.map(prospectKey)], STORE_FAIL.DATA_CORRUPT);
+      if (!Array.isArray(blockedRaw) || !Array.isArray(curRaw)) {
+        throw new ProspectStoreError(STORE_FAIL.DATA_CORRUPT, 'repair_mget');
+      }
+
+      for (let i = 0; i < list.length; i += 1) {
+        const hash = list[i];
+        if (blockedRaw[i] !== null && blockedRaw[i] !== undefined) {
+          out.skipped.push({ hash, reason: 'blocked' }); continue;
+        }
+        const rec = parse(curRaw[i]);
+        if (!rec) { out.skipped.push({ hash, reason: 'no_record' }); continue; }
+
+        const wantActive = isSendableState(rec.state);
+        const wantEngaged = rec.state === PROSPECT_STATE.ENGAGED;
+        /* eslint-disable no-await-in-loop -- 修復対象は上限つき（通常 1 件） */
+        const isActive = Number(await call(['SISMEMBER', ACTIVE_INDEX, hash])) === 1;
+        const isEngaged = Number(await call(['SISMEMBER', ENGAGED_INDEX, hash])) === 1;
+        const changes = [];
+        if (wantActive !== isActive) changes.push([wantActive ? 'SADD' : 'SREM', ACTIVE_INDEX, hash]);
+        if (wantEngaged !== isEngaged) changes.push([wantEngaged ? 'SADD' : 'SREM', ENGAGED_INDEX, hash]);
+        out.planned.push({
+          hash, state: rec.state, isActive, isEngaged, changes: changes.map((c) => c[0]),
+        });
+        if (apply) {
+          for (const c of changes) out.applied += Number(await call(c)) || 0;
+        }
+        /* eslint-enable no-await-in-loop */
+      }
+      return out;
+    },
+
     async blockedHashes() {
       const raw = await call(['SMEMBERS', BLOCKED_INDEX], STORE_FAIL.INDEX_UNAVAILABLE);
       if (!Array.isArray(raw)) throw new ProspectStoreError(STORE_FAIL.INDEX_UNAVAILABLE, 'not_array');
