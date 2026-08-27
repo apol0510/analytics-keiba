@@ -23,7 +23,20 @@ import { join } from 'node:path';
 
 const ENDPOINT = 'https://analytics.keiba.link/.netlify/functions/admin-marketing';
 const CONFIRM = 'DELETE MIGRATED CUSTOMERS';
-const CHUNK = 200;
+/**
+ * 1 回の呼び出しで消す件数。
+ *
+ * ⚠️ **200 件にしてはいけない。Function がタイムアウトする。**
+ *    削除は Airtable の DELETE を 1 件ずつ直列に投げるので、**本番実測で 1 件 344ms**
+ *    （25 件 = 8.6s）。200 件だと **約 69 秒**で、Netlify Functions の実行時間を超える。
+ *    途中で切られると、そのバッチは**どこまで消えたか分からないまま**中断する
+ *    （再実行すれば `already_deleted` として回復はするが、切り分けが無駄に増える）。
+ *
+ * 2026-08-27 の本番削除（11,930 件）は **25 件 / 回**で完走した（failed 0 / refused 0）。
+ * 上げるなら**先に 1 件あたりの所要を測り直す**こと。`Function 側の上限`
+ * （`DELETE_MAX_PER_CALL` = 200）とは別で、ここは**所要時間で決まる**。
+ */
+const CHUNK = 25;
 const MAX_PAGES = 400;
 
 const SECRET = process.env.ADMIN_SECRET;
