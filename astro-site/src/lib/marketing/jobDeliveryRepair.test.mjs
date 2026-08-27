@@ -16,7 +16,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import {
-  canRepairJob, planJobDeliveryRepair, verifyRepairComplete,
+  canRepairJob, planJobDeliveryRepair, verifyRepairComplete, planClaimRelease,
   REPAIR_REJECT, REPAIR_CONFIRM, ACTIVE_DELIVERY_STATUS,
 } from './jobDeliveryRepair.js';
 
@@ -62,10 +62,11 @@ test('sent の行も「在る」とみなす（queued だけではない）', ()
   assert.equal(ACTIVE_DELIVERY_STATUS.has('sent'), true);
 });
 
-test('cancelled は「在る」とみなさない（巻き戻し済み）', () => {
+test('⚠️【要件】cancelled の行が在る鍵は「不足」ではなく **衝突**（自動で直さない）', () => {
   const p = planJobDeliveryRepair(scene({ status: 'cancelled' }));
-  assert.equal(p.counts.present, 0);
-  assert.equal(p.counts.missing, 100);
+  assert.equal(p.ok, false, '⚠️ 巻き戻し済みの行を queued へ復活させようとしている');
+  assert.equal(p.reason, REPAIR_REJECT.NON_ACTIVE_ROW);
+  assert.equal(p.conflictCount, 90);
 });
 
 test('⚠️ 2 回目は対象 0 件（全部揃っていれば何もしない）', () => {
@@ -191,8 +192,8 @@ test('⚠️【要件】guard: 既存の予約を release せず、足りない�
     '⚠️ 全鍵を claim しようとしている');
   // release は「自分が取った鍵で書き込みに失敗したとき」だけ
   const releases = [...src.matchAll(/releaseClaims\(\{[^}]*keys: ([a-zA-Z.]+)/g)].map((m) => m[1]);
-  assert.deepEqual(releases, ['claimedKeys'],
-    `⚠️ release の対象が想定と違う: ${JSON.stringify(releases)}`);
+  assert.deepEqual(releases, ['rel.release'],
+    `⚠️ release の対象が想定と違う（行が無いと確かめられた鍵だけのはず）: ${JSON.stringify(releases)}`);
 });
 
 test('⚠️【要件】guard: 既存の配信行を消さない・書き換えない', () => {
@@ -219,4 +220,85 @@ test('⚠️ guard: 元ジョブの Recipients を正本にする（計画を作
   for (const banned = 'planFingerprint', x = [banned]; x.length; x.pop()) {
     assert.equal(src.includes(banned), false, '⚠️ 計画を作り直している（JobId が変わる）');
   }
+});
+
+/* ── 6. 非 active 行は「不足」ではなく衝突（performUpsert が上書きするため）── */
+
+test('⚠️【要件】failed / skipped / 空 の行が在る鍵も衝突として止める', () => {
+  for (const st of ['failed', 'skipped', 'bounced', '']) {
+    const p = planJobDeliveryRepair(scene({ total: 10, present: 3, status: st }));
+    assert.equal(p.ok, false, `${st || '(空)'} を不足として扱っている`);
+    assert.equal(p.reason, REPAIR_REJECT.NON_ACTIVE_ROW);
+    assert.equal(p.conflicts[0].status, st || '(空)');
+  }
+});
+
+test('⚠️【要件】同じ DeliveryKey の行が 2 つ以上あれば fail closed', () => {
+  const s2 = scene({ total: 10, present: 3 });
+  s2.existingRows.push({ id: 'recDup', fields: { DeliveryKey: K(0), Status: 'queued' } });
+  const p = planJobDeliveryRepair(s2);
+  assert.equal(p.ok, false);
+  assert.equal(p.reason, REPAIR_REJECT.DUPLICATE_DELIVERY_ROWS);
+  assert.deepEqual(p.conflictKeys, [K(0)]);
+});
+
+test('active な行だけなら従来どおり不足を数える（回帰）', () => {
+  const p = planJobDeliveryRepair(scene());
+  assert.equal(p.ok, true);
+  assert.equal(p.counts.missing, 10);
+});
+
+/* ── 7. 書き込み失敗時に「成功済みの鍵」を絶対に release しない ────── */
+
+test('⚠️【要件】前半 batch 成功＋後半 batch 失敗：書けた鍵は release しない', () => {
+  // 30 件 claim して、最初の 20 件（2 batch）が書けたところで失敗した状況
+  const claimedKeys = Array.from({ length: 30 }, (_, i) => K(100 + i));
+  const rowsAfter = claimedKeys.slice(0, 20).map((k, i) => ({ id: `recW${i}`, fields: { DeliveryKey: k } }));
+  const r = planClaimRelease({ claimedKeys, rowsAfter });
+  assert.equal(r.ok, true);
+  assert.equal(r.keep.length, 20, '⚠️ 書けた鍵を戻そうとしている（二重送信の芽）');
+  assert.equal(r.release.length, 10);
+  for (const k of claimedKeys.slice(0, 20)) {
+    assert.equal(r.release.includes(k), false, `⚠️ 書けた鍵 ${k} を release している`);
+  }
+  for (const k of claimedKeys.slice(20)) assert.ok(r.release.includes(k));
+});
+
+test('⚠️【要件】読み戻せなければ 1 つも release しない（状態不明）', () => {
+  const claimedKeys = [K(200), K(201)];
+  const r = planClaimRelease({ claimedKeys, rowsAfter: null });
+  assert.equal(r.ok, false);
+  assert.deepEqual(r.release, [], '⚠️ 状態が分からないのに予約を戻している');
+  assert.deepEqual(r.keep, claimedKeys);
+  assert.equal(r.reason, REPAIR_REJECT.ROWS_UNAVAILABLE);
+});
+
+test('1 件も書けていなければ全部戻す（本来の release）', () => {
+  const claimedKeys = [K(300), K(301)];
+  const r = planClaimRelease({ claimedKeys, rowsAfter: [] });
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.release, claimedKeys);
+  assert.deepEqual(r.keep, []);
+});
+
+test('全部書けていれば 1 つも戻さない', () => {
+  const claimedKeys = [K(400), K(401)];
+  const rowsAfter = claimedKeys.map((k, i) => ({ id: `recA${i}`, fields: { DeliveryKey: k } }));
+  const r = planClaimRelease({ claimedKeys, rowsAfter });
+  assert.deepEqual(r.release, []);
+  assert.equal(r.keep.length, 2);
+});
+
+test('claim が 0 件なら何もしない', () => {
+  assert.deepEqual(planClaimRelease({ claimedKeys: [], rowsAfter: null }).release, []);
+  assert.equal(planClaimRelease().ok, true);
+});
+
+test('⚠️ guard: handler は「行が無いと確かめられた鍵」だけ release する', () => {
+  assert.match(src, /planClaimRelease\(\{ claimedKeys, rowsAfter: rowsAfterFail \}\)/,
+    '⚠️ 書き込み失敗時に read-back していない');
+  assert.match(src, /keys: rel\.release/, '⚠️ release の対象が claimedKeys のままになっている');
+  assert.equal(/releaseClaims\(\{ \.\.\.scope, keys: claimedKeys \}\)/.test(src), false,
+    '⚠️ claimedKeys をまとめて release している');
+  assert.match(src, /queue:unverified` は付いたまま/, '⚠️ fail closed の明示が無い');
 });

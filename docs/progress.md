@@ -1,3 +1,61 @@
+# 🚧 滞留ジョブ② は **未修復**（クローズ禁止・常設）
+
+> **新しいセッションはここから読むこと。** この節が残っている間、②は直っていない。
+> 送信 gate は閉じており、dispatcher も block するので**放置しても送信されない**。急ぎではない。
+
+## 対象ジョブ（未修復）
+
+| | |
+|---|---|
+| ScheduledEmails | `recQFIJfJ1lekzucn` / JobId `mkt-light-trial-to-premium-sequence-v1-c52fdcec-1` |
+| 実体 | `light-trial-to-premium-sequence` v1 の **step 3**（内容 hash `490be646ddf3`）|
+| Recipients | **100**（これが正本）|
+| CampaignDeliveries | **queued 90**（残り 10 は行なし）|
+| Redis DeliveryKey | **90 件予約済み** |
+| 実送信の証拠 | **0**（`SentAt` 0 / `ProviderMessageId` 0 / `SentCount` null）|
+| Notes | **`queue:unverified`** |
+
+## 現在地
+
+- **送信され得ない**（二重に止まっている）
+  - `execute-scheduled-emails-background` は `canSharedExecutorSend()` で
+    **marketing job を env 非依存で常に skip**（`NEWSLETTER_AUTOMATION_ENABLED` は無関係）
+  - 唯一の実送信経路 `marketing-campaign-dispatch` は `queue:unverified` を見て block。
+    **本番 dry-run 実測 = `total 100 / willSend 0 / willSkip 100 / blocked: queue_unverified`**
+- **「取消して積み直す」は採れない**。同じ計画を作り直すと既存 queued 行が
+  `already_delivered` になって母集団が変わり、`planFingerprint` が変わる
+  （`c52fdcec` → `21354201`）＝ **JobId が別物**になり REUSE ではなく CREATE。
+  本番 dry-run 実測 = `selected 100 / excluded 90 / willSend 10`
+- **in-place で仕上げる経路を実装済み（PR #476・Draft・未 merge）**。
+  足りない鍵だけ claim → claim できた分だけ行を足す → **100/100 読み戻せたときだけ**印を外す
+
+## 未完了
+
+1. **PR #476 の merge / production deploy**（未実行）
+2. **queue 修復の本番実行**（dry-run すら未実行）
+3. 修復後の `marketing-campaign-dispatch` **jobId 指定 dry-run** で exact willSend / willSkip 取得
+4. その結果を見て、実送信するか失効させるかの判断
+
+## ▶ 次作業
+
+1. #476 を Ready → merge → deploy
+2. `campaignJobRepair` を **dry-run**（書き込みなし）で実行し
+   `counts: {total:100, present:90, missing:10}` を確認して**停止**
+3. 承認後に `apply`（確認文字列 `REPAIR CAMPAIGN JOB`）→
+   `claimed / claimedByOther / created / verified 100/100 / unverifiedCleared` を確認
+4. dispatcher の jobId 指定 dry-run で exact 値を取得して**停止**
+
+## ⚠️ 触ってはいけないこと
+
+- **既存 queued 90 行を変更・削除しない**（`performUpsert` は `DeliveryKey` をマージキーにするので、
+  非 active 行があると `queued` に書き換わる。だから非 active 行は**衝突として停止**する仕様）
+- **既存 90 鍵を release しない**。`releaseClaims` は「自分が取って queue に失敗し、
+  **かつ Airtable に行が無いと確かめられた**鍵」だけが対象
+- ① `campaign-discount-free` の queued 1 件（`recbJkJhUaZM2YMif`）は**現状維持**。
+  ジョブは SENT 完了済み・キャンペーン全体で sent 15,537 / queued 1 の取り残しで、送信経路は無い
+
+---
+
 # ✅ 本番 Customers 削除 完了（2026-08-27）＋ 運用の罠
 
 **deleted 11,955 / refused 0 / failed 0 / 異常 0。Customers 15,977 → 4,022。**

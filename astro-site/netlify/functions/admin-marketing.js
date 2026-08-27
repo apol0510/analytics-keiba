@@ -221,7 +221,7 @@ import {
 } from '../../src/lib/marketing/queueDeliveryOutcome.js';
 import {
   canRepairJob, planJobDeliveryRepair, verifyRepairComplete, REPAIR_CONFIRM,
-  ACTIVE_DELIVERY_STATUS,
+  ACTIVE_DELIVERY_STATUS, planClaimRelease,
 } from '../../src/lib/marketing/jobDeliveryRepair.js';
 import {
   markUnverified, clearUnverified, hasUnverifiedMark,
@@ -3112,16 +3112,40 @@ async function handleCampaignJobRepair({ KEY, BASE, now, req }) {
       await upsertDeliveries({ KEY, BASE, records });
       created = records.length;
     } catch {
-      // ⚠️ **自分が取った鍵で queue に失敗した**ぶんだけ戻す（設計どおりの release）
+      /*
+       * ⚠️ **まとめて戻さない。** `upsertDeliveries` は 10 件ずつ投げ、最初に失敗した
+       *    batch で throw する＝**前半の batch は既に書けている**。取った鍵を全部戻すと
+       *    「行が在るのに予約が無い」状態になり、次のキュー登録で**同じ人へもう 1 通**積む。
+       *
+       *    書いたあとに読み戻し、**行が無いことを確かめられた鍵だけ**戻す。
+       *    読み戻せなければ **1 つも戻さない**（予約を残したまま fail closed）。
+       */
+      let rowsAfterFail = null;
       try {
-        const store = createDeliveryKeyStore({
-          redisCmd: makeRedisCmd(process.env), redisPipeline: makeRedisPipeline(process.env),
-        });
-        await store.releaseClaims({ ...scope, keys: claimedKeys });
-      } catch { /* 記録のみ */ }
+        rowsAfterFail = await fetchDeliveryRowsByKeys({ KEY, BASE, campaignType, keys: claimedKeys });
+      } catch { rowsAfterFail = null; }
+      const rel = planClaimRelease({ claimedKeys, rowsAfter: rowsAfterFail });
+      let released = 0;
+      if (rel.release.length > 0) {
+        try {
+          const store = createDeliveryKeyStore({
+            redisCmd: makeRedisCmd(process.env), redisPipeline: makeRedisPipeline(process.env),
+          });
+          await store.releaseClaims({ ...scope, keys: rel.release });
+          released = rel.release.length;
+        } catch { released = 0; }
+      }
       return json(500, {
-        ...view, claimed: claimedKeys.length, created: 0, sideEffects: 'partial_unconfirmed',
-        error: '配信行を書けませんでした（取った予約は戻しました）', reason: 'delivery_write_failed',
+        ...view,
+        claimed: claimedKeys.length,
+        created: null,                       // どこまで書けたかは断定しない
+        releasedClaims: released,
+        keptClaims: rel.keep.length,         // 行が在る / 確かめられない鍵は戻していない
+        releasePlanOk: rel.ok,
+        sideEffects: 'partial_unconfirmed',
+        error: '配信行を書き切れませんでした（行が無いと確かめられた予約だけ戻しました）',
+        reason: 'delivery_write_failed',
+        notice: '`queue:unverified` は付いたままです（dispatcher は引き続き送りません）。',
       });
     }
   }

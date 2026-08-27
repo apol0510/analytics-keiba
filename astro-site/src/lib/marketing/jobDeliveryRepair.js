@@ -40,6 +40,15 @@ export const REPAIR_REJECT = Object.freeze({
   ROWS_UNAVAILABLE: 'delivery_rows_unavailable',
   /** ⚠️ 既存行の鍵が、いま計算した鍵と一致しない（別物を掴んでいる）*/
   KEY_MISMATCH: 'delivery_key_mismatch',
+  /**
+   * ⚠️ 同じ `DeliveryKey` に **cancelled / failed / skipped 等の行**が在る。
+   *    `performUpsert` は `DeliveryKey` をマージキーにするので、ここで足すと
+   *    **その行が `queued` に書き換わる**（＝「既存行は変更しない」に反する）。
+   *    巻き戻し済み・失敗済みを黙って復活させないため、**自動では直さない**。
+   */
+  NON_ACTIVE_ROW: 'non_active_delivery_row',
+  /** ⚠️ 同じ `DeliveryKey` の行が 2 つ以上ある（どれが正本か決められない）*/
+  DUPLICATE_DELIVERY_ROWS: 'duplicate_delivery_rows',
 });
 
 /** 配信行が「もう在る」とみなす Status（`cancelled` は巻き戻し済みなので含めない）*/
@@ -99,7 +108,8 @@ export function planJobDeliveryRepair({ recipients, keyByEmail, existingRows } =
   }
   const expected = new Set(expectedKeys);
 
-  const activeKeys = new Set();
+  // 鍵ごとに行を集める（**1 鍵 = 1 行**が前提。崩れていたら触らない）
+  const rowsByKey = new Map();
   const foreign = [];
   for (const r of Array.isArray(existingRows) ? existingRows : []) {
     const f = (r && r.fields) || {};
@@ -107,15 +117,49 @@ export function planJobDeliveryRepair({ recipients, keyByEmail, existingRows } =
     if (!k) continue;
     // ⚠️ 計算した鍵に無い行が混ざっている = 別物を掴んでいる。**触らない**
     if (!expected.has(k)) { foreign.push(str(r.id)); continue; }
-    if (ACTIVE_DELIVERY_STATUS.has(lower(f.Status))) activeKeys.add(k);
+    if (!rowsByKey.has(k)) rowsByKey.set(k, []);
+    rowsByKey.get(k).push(r);
   }
   if (foreign.length > 0) {
     return { ok: false, reason: REPAIR_REJECT.KEY_MISMATCH, foreignRows: foreign.slice(0, 20) };
   }
 
+  // ⚠️ 同じ鍵に 2 行以上 = どれが正本か決められない。**触らない**
+  const duplicated = [...rowsByKey.entries()].filter(([, rs]) => rs.length > 1);
+  if (duplicated.length > 0) {
+    return {
+      ok: false,
+      reason: REPAIR_REJECT.DUPLICATE_DELIVERY_ROWS,
+      conflictKeys: duplicated.map(([k]) => k).slice(0, 20),
+    };
+  }
+
+  /**
+   * ⚠️ **`queued` / `sent` 以外の行が在る鍵は「不足」ではなく「衝突」**。
+   *    `performUpsert` は `DeliveryKey` をマージキーにするので、ここで足すと
+   *    `cancelled` / `failed` / `skipped` の行が **`queued` に書き換わってしまう**。
+   *    巻き戻し済み・失敗済みを黙って復活させないため、**自動では直さない**。
+   */
+  const activeKeys = new Set();
+  const conflicts = [];
+  for (const [k, rs] of rowsByKey) {
+    const f = (rs[0] && rs[0].fields) || {};
+    if (ACTIVE_DELIVERY_STATUS.has(lower(f.Status))) activeKeys.add(k);
+    else conflicts.push({ key: k, status: lower(f.Status) || '(空)', rowId: str(rs[0].id) });
+  }
+  if (conflicts.length > 0) {
+    return {
+      ok: false,
+      reason: REPAIR_REJECT.NON_ACTIVE_ROW,
+      conflicts: conflicts.slice(0, 20),
+      conflictCount: conflicts.length,
+    };
+  }
+
   const missing = [];
   for (const email of list) {
     const k = keyByEmail.get(email);
+    // 行が 1 つも無い鍵**だけ**が不足（非 active は上で弾いている）
     if (!activeKeys.has(k)) missing.push({ email, key: k });
   }
   return {
@@ -147,3 +191,37 @@ export function verifyRepairComplete({ expectedKeys, verifiedKeys } = {}) {
 
 /** 仕上げを許す確認文字列 */
 export const REPAIR_CONFIRM = 'REPAIR CAMPAIGN JOB';
+
+/**
+ * 書き込みに失敗したあと、**どの鍵なら予約を戻してよいか**を決める。
+ *
+ * ⚠️ `upsertDeliveries` は 10 件ずつ投げ、**最初に失敗した batch で throw する**。
+ *    つまり **前半の batch は既に書けている**。取った鍵をまとめて戻すと、
+ *    **行が在るのに予約だけ消える**＝次のキュー登録で同じ人へもう 1 通積む。
+ *
+ * ⚠️ 戻してよいのは「**Airtable に行が無いことを確かめられた鍵**」だけ。
+ *    読み戻せない・状態が分からない鍵は**戻さない**（予約を残したまま fail closed）。
+ *
+ * @param {{claimedKeys: string[], rowsAfter: Array|null}} input
+ *   `rowsAfter` … 書き込み後に読み戻した配信行（**読めなければ null**）
+ */
+export function planClaimRelease({ claimedKeys, rowsAfter } = {}) {
+  const claimed = [...new Set((Array.isArray(claimedKeys) ? claimedKeys : []).map(str).filter(Boolean))];
+  if (claimed.length === 0) return { ok: true, release: [], keep: [], reason: null };
+  // ⚠️ 読み戻せない = どれが書けたか分からない。**1 つも戻さない**
+  if (rowsAfter === null || rowsAfter === undefined) {
+    return { ok: false, release: [], keep: claimed, reason: REPAIR_REJECT.ROWS_UNAVAILABLE };
+  }
+  const written = new Set();
+  for (const r of Array.isArray(rowsAfter) ? rowsAfter : []) {
+    const k = str(((r && r.fields) || {}).DeliveryKey);
+    if (k) written.add(k);
+  }
+  const release = []; const keep = [];
+  for (const k of claimed) {
+    // 行が在る = 書けている。**予約を戻さない**（戻すと二重送信の芽になる）
+    if (written.has(k)) keep.push(k);
+    else release.push(k);           // 行が無いことを確かめられた鍵だけ戻す
+  }
+  return { ok: true, release, keep, reason: null };
+}
