@@ -138,6 +138,9 @@ import {
   loadProspectSequenceInputs, AUDIENCE_FAIL,
 } from '../../src/lib/marketing/prospectAudienceSource.js';
 import { hydrateProspectSequenceInputs } from '../../src/lib/marketing/prospectSequenceHydration.js';
+import {
+  auditProspectIndex, normalizeHashes, safeRecordView,
+} from '../../src/lib/marketing/prospectIndexAudit.js';
 import { compareSequenceParity } from '../../src/lib/marketing/sequenceParity.js';
 import { makeRedisPipeline } from '../../src/lib/marketing/deliveryKeyStore.js';
 import { IMPORT_SOURCE_PREFIX } from '../../src/lib/marketing/importCohort.js';
@@ -859,6 +862,7 @@ export const handler = async (event) => {
     if (action === 'engagementDigest') return await handleEngagementDigest({ now });
     if (action === 'prospectIntake') return await handleProspectIntake({ KEY, BASE, now, req });
     if (action === 'prospectSequenceCheck') return await handleProspectSequenceCheck({ now, req });
+    if (action === 'prospectIndexAudit') return await handleProspectIndexAudit({ req });
     if (action === 'trialGrant') return await handleTrialGrantPreview({ now, req });
     if (action === 'duplicateCheck') return await handleDuplicateCheck({ KEY, BASE, req });
     if (action === 'rollout') return await handleRollout({ KEY, BASE, now, req });
@@ -2917,6 +2921,91 @@ function computePageParity({ campaign, records, deliveries, plan, brand, fromEma
  * ⚠️ アドレスも recordId も返さない（件数と内訳だけ）。
  * ⚠️ 索引・台帳を読めなければ `ok:false`（0 件と混同しない）。
  */
+/**
+ * 投入したはずの hash が**索引に居るか**を突き合わせる（**読み取りのみ**）。
+ *
+ * ⚠️ `prospectSequenceCheck` は索引に居る人しか見ないので、
+ *    **索引から丸ごと欠けている人を検出できない**。ここがその穴を埋める。
+ *
+ * ⚠️ 入出力は **hash だけ**。生アドレスは受け取らないし返さない。
+ * ⚠️ 書き込みは一切しない（読むのは SMEMBERS ×3 と GET のみ）。
+ */
+async function handleProspectIndexAudit({ req }) {
+  const expected = normalizeHashes(req.hashes);
+  if (expected.length === 0) {
+    return json(400, { error: 'hashes（64 桁 hex）を渡してください', sideEffects: 'none' });
+  }
+  if (expected.length > 20000) {
+    return json(400, { error: 'hashes が多すぎます（20,000 まで）', sideEffects: 'none' });
+  }
+
+  let store;
+  try {
+    store = createProspectStore({
+      cmd: makeRedisCmd(process.env), pipeline: makeRedisPipeline(process.env),
+    });
+  } catch {
+    return json(503, { error: 'Redis へ接続できません', sideEffects: 'none' });
+  }
+
+  // ⚠️ 索引を読めなければ中止する（「居ない」と混同しない）
+  let active; let engaged; let blocked;
+  try {
+    active = await store.activeHashes();
+    engaged = await store.engagedHashes();
+    blocked = await store.blockedHashes();
+  } catch {
+    return json(500, { error: '索引を読めませんでした', reason: 'index_unavailable', sideEffects: 'none' });
+  }
+
+  const audit = auditProspectIndex({ expected, active, engaged, blocked });
+
+  // 送信候補でない hash のレコードを読む（**上限つき**・アドレスは返さない）
+  const detailFor = audit.notActive.slice(0, Math.min(200, audit.notActive.length));
+  const details = [];
+  for (const hash of detailFor) {
+    let rec = null;
+    try {
+      // eslint-disable-next-line no-await-in-loop -- 件数は上限つき（通常 0〜数件）
+      rec = await store.loadByHash(hash);
+    } catch {
+      rec = null;
+    }
+    let blockedInfo = null;
+    if (audit.placeByHash.get(hash) === 'blocked') {
+      try {
+        // eslint-disable-next-line no-await-in-loop -- 同上
+        const b = await store.loadBlocked(hash);
+        blockedInfo = b ? { kind: b.kind, reason: b.reason, at: b.at } : null;
+      } catch { blockedInfo = null; }
+    }
+    details.push({
+      hash,
+      place: audit.placeByHash.get(hash),
+      hasRecord: rec !== null && rec !== undefined,
+      record: safeRecordView(rec),
+      blocked: blockedInfo,
+    });
+  }
+
+  return json(200, {
+    mode: 'prospect-index-audit',
+    sideEffects: 'none',
+    checked: audit.checked,
+    counts: audit.counts,
+    indexSizes: audit.indexSizes,
+    /** ⚠️ どの索引にも居ない = Customers を消すと復元手段が無くなる */
+    nowhereCount: audit.nowhere.length,
+    notActiveCount: audit.notActive.length,
+    /** 索引に居るが期待一覧に無い hash（逆向きのズレ）*/
+    unexpectedActiveCount: audit.unexpectedActive.length,
+    unexpectedActive: audit.unexpectedActive.slice(0, 50),
+    details,
+    truncated: audit.notActive.length > detailFor.length,
+    notice: 'これは読み取りのみです（Redis の実状態）。アドレスは含みません。',
+  });
+}
+
 async function handleProspectSequenceCheck({ now, req }) {
   const campaignId = String(req.campaignId || 'campaign-discount-free').trim();
   const campaign = getCampaign(campaignId, { includeDisabled: true });

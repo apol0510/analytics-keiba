@@ -318,6 +318,17 @@ export function createProspectStore({ cmd, pipeline } = {}) {
     },
 
     /**
+     * 反応済み索引の中身（**読み取りのみ**）。
+     * 「送信候補に居ない人がどこに居るのか」を突き合わせるために要る
+     * （`activeHashes` / `blockedHashes` と対になる 3 つ目の索引）。
+     */
+    async engagedHashes() {
+      const raw = await call(['SMEMBERS', ENGAGED_INDEX], STORE_FAIL.INDEX_UNAVAILABLE);
+      if (!Array.isArray(raw)) throw new ProspectStoreError(STORE_FAIL.INDEX_UNAVAILABLE, 'not_array');
+      return raw.map(String);
+    },
+
+    /**
      * 抑止・打ち切り済みの prospect レコードを消す（**生アドレスを消す**）。
      * 台帳は残るので、以後の取り込みでも復活しない。
      */
