@@ -134,7 +134,9 @@ import {
 import { createProspectStore, emailHash } from '../../src/lib/marketing/prospectStore.js';
 import { hashEmailForSignal } from '../../src/lib/marketing/engagementSignalStore.js';
 import { buildProspectSequenceRows } from '../../src/lib/marketing/prospectSequenceAdapter.js';
-import { loadProspectSequenceInputs } from '../../src/lib/marketing/prospectAudienceSource.js';
+import {
+  loadProspectSequenceInputs, AUDIENCE_FAIL,
+} from '../../src/lib/marketing/prospectAudienceSource.js';
 import { hydrateProspectSequenceInputs } from '../../src/lib/marketing/prospectSequenceHydration.js';
 import { compareSequenceParity } from '../../src/lib/marketing/sequenceParity.js';
 import { makeRedisPipeline } from '../../src/lib/marketing/deliveryKeyStore.js';
@@ -2935,21 +2937,37 @@ async function handleProspectSequenceCheck({ now, req }) {
     return json(503, { error: 'Redis へ接続できません', sideEffects: 'none' });
   }
 
+  // ⚠️ 1 万件超を 1 回で見ると **Function の実行時間を超える**（2026-08-27 に本番で 504。
+  //    MGET 24 回 + SMISMEMBER 180 回 + 進行の再計算で 30 秒を超えた）。
+  //    索引の窓（`offset` / `limit`）で分割して呼ぶ。応答の `nextOffset` で続きから。
+  const limit = Math.min(4000, Math.max(1, Number(req.limit) || 2000));
+  const from = Math.max(0, Number(req.offset) || 0);
+  // ⚠️ 2 窓目以降は **1 窓目の `digest` を必ず渡す**。索引が途中で変わっていたら
+  //    窓がずれて重複・読み落としが起きるので、その場合は最初からやり直す。
+  const expectDigest = String(req.digest || '').trim() || undefined;
   const inputs = await loadProspectSequenceInputs({
     store, deliveryKeyStore: ledger, campaign, brand: BRAND, fromEmail, nowMs: now,
+    maxRecipients: limit, offset: from, expectDigest,
   });
   if (!inputs.ok) {
-    return json(500, { error: 'prospect を読み切れませんでした', reason: inputs.reason, sideEffects: 'none' });
+    const changed = inputs.reason === AUDIENCE_FAIL.INDEX_CHANGED;
+    return json(changed ? 409 : 500, {
+      error: changed
+        ? '読んでいる間に prospect の集合が変わりました。**最初からやり直してください**（窓がずれて重複・読み落としになります）'
+        : 'prospect を読み切れませんでした',
+      reason: inputs.reason,
+      digest: inputs.digest || null,
+      indexSize: inputs.indexSize ?? null,
+      sideEffects: 'none',
+    });
   }
 
+  // ⚠️ 復元は **1 回だけ**。時刻ごとに作り直すと同じ入力を 2 回組み立てることになり、
+  //    そこだけで実行時間を使い切る。進行の導出だけを時刻違いで 2 回まわす。
+  const rowsOnce = buildProspectSequenceRows({ prospects: inputs.prospects, nowMs: now });
   const runAt = (nowMs) => {
-    const rows = buildProspectSequenceRows({ prospects: inputs.prospects, nowMs });
-    const h = hydrateProspectSequenceInputs({
-      prospects: inputs.prospects, campaign, brand: BRAND, fromEmail,
-      deliveredKeys: new Set(inputs.deliveries.map((d) => String((d.fields || {}).DeliveryKey || ''))),
-    });
     const progress = buildSequenceProgress({
-      campaign, selected: rows.rows, deliveries: h.ok ? h.deliveries : [],
+      campaign, selected: rowsOnce.rows, deliveries: inputs.deliveries,
       brand: BRAND, fromEmail, nowMs,
       providerSuppressed: inputs.providerSuppressed, softBounced: new Set(),
       engagementByEmail: inputs.engagementByEmail,
@@ -2973,6 +2991,17 @@ async function handleProspectSequenceCheck({ now, req }) {
     mode: 'prospect-sequence-check',
     sideEffects: 'none',
     campaignId,
+    /** 索引のどこを見たか（`nextOffset` が null なら読み切り） */
+    window: {
+      offset: from,
+      limit,
+      indexSize: inputs.indexSize,
+      returned: inputs.prospects.length,
+      /** ⚠️ 次の窓では**この digest を必ず渡す**（変わっていたらやり直し） */
+      digest: inputs.digest,
+      nextOffset: from + inputs.prospects.length < inputs.indexSize
+        ? from + inputs.prospects.length : null,
+    },
     pool: counts,
     loaded: inputs.counts,
     ledger: { restoredDeliveries: inputs.deliveries.length },
