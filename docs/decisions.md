@@ -8,6 +8,50 @@
 
 ---
 
+## 2026-08-27 — 8/31 より前に移す（parity 実測で差分 0 / 台帳は Redis 限定）
+
+### Status
+
+**Accepted**（2026-08-27 / MK・緊急度引き上げ）。実装・配線・本番 read-only 実測まで完了。
+**本番 write は 1 件も実行していない。**
+
+> 8/31まで待ってはいけません。現行経路のまま8/31の2通目を送ると
+> CSV prospect約12,872名についてCampaignDeliveriesがさらに約12,872行増える可能性がある。
+
+### 本番実測（read-only）
+
+全 12,872 名の parity は **差分 0**（対象 / 次 step / DeliveryKey / 停止理由 / delivered）。
+8/31 09:00 JST の 2 通目も完全一致（due 6,308・step2 5,980・片側だけ 0）。
+Airtable の増加は 現行 **+6,308 行** → 移行後 **0 行**。
+
+### 決めたこと
+
+- prospect プールからも受信対象を作る（`prospectAudienceSource.js`）。
+  **移した瞬間に 2 通目が 0 人になる**のを防ぐ
+- 索引・台帳を**読めなかったら tick を中止**。0 件と混同しない
+- prospect の配信台帳は cron / admin の**両方で** Airtable へ書かない。
+  書いたあと**読み戻して確かめ**、Redis へ書けない構成なら 1 行も書かずに中止
+- 投入は **4 条件**（env / confirm / 開封の集計 / **そのページの parity 差分 0**）が
+  そろって初めて書く。既定は下見
+
+### 踏んだ罠
+
+**`DeliveryKey` は送信元アドレスを材料に含む。** 最初 `SENDGRID_FROM_EMAIL`
+（`support@keiba.link`）で計算したところ鍵が全部変わり、
+既送信を 1 件も照合できず「12,872 名全員が step1 未送信」と出た。
+実送信と同じ `getBrandConfig(BRAND).defaultFromEmail`（`noreply@keiba.link`）が正しい。
+
+### 開封の集計は本番からしか読めない（残っている障害）
+
+`UPSTASH_*` は production コンテキストのみ。ローカルでは masked、
+**Deploy Preview にも無い**（preview で実測 → `redis_not_configured`）。
+読み出し用の read-only アクション（`engagementDigest`・**hash だけ**返す）は用意したが、
+**production へ deploy しないと呼べない**。
+
+開封を当てずに移すことは選べない（投入側が fail closed で 1 件も作らない）。
+
+---
+
 ## 2026-08-27 — CSV prospect の打ち切りは **delivered 10**（旧「送信 3 回」は廃止）
 
 ### Status

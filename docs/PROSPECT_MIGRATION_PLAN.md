@@ -1,7 +1,10 @@
 # CSV 取り込み分を prospect プールへ戻す 移行計画
 
-**状態: 実装とテスト固定は完了。本番の write は 1 件も実行していない。**
+**状態: 本番可能状態まで完成。本番の write は 1 件も実行していない。**
 更新 2026-08-27 ／ 数字はすべて本番の read-only 実測。
+
+> **8/31 より前に移す。** Airtable は上限超過中で、現行経路のまま 2 通目を送ると
+> `CampaignDeliveries` が **+6,308 行**増える（§8）。移行後は **0 行**。
 
 | 停止境界 | 状態 |
 |---|---|
@@ -103,26 +106,64 @@ Customers **15,976 件**。母数と判定の合計は一致（取りこぼし�
 ## 5. 移行は 9/6 を待たない（parity を先に証明する）
 
 Airtable は既に上限超過（§8）で、待つほど危険が増す。
-そこで **8/31・9/6 の配信を壊さずに早期移行できる状態**を先に作った。
+そこで **8/31・9/6 の配信を壊さずに早期移行できる状態**を作った。
 
 | 部品 | 役割 |
 |---|---|
 | `prospectSequenceAdapter.js` | prospect を**取り込みが Customers へ書いたのと同じ `fields`** へ復元 |
 | `prospectSequenceHydration.js` | Redis 台帳・反応・除外を配信の入力へ復元 |
+| `prospectAudienceSource.js` | **prospect プールから受信対象を作る**（移した瞬間に配信が止まらない）|
+| `prospectIntakePlan.js` | Customers → prospect の**引き継ぎ内容**と投入の安全条件 |
 | `sequenceParity.js` | 2 経路の突合（差分 0 でなければ移行しない）|
 
-比較する 4 点（**1 つでも差があれば移行しない**）:
+比較する 5 点（**1 つでも差があれば移行しない**）:
 
 1. いま送れる相手（due）の集合
 2. 相手ごとの次の step
 3. 相手ごとの **`DeliveryKey`**（変わると二重送信）
 4. 止めた相手の停止理由
+5. 相手ごとの **delivered 回数**（打ち切り判定の分母）
 
-⚠️ **鍵を突き合わせていない parity は合格にしない**（`keysChecked:false` は必ず不合格）。
+⚠️ **鍵と delivered を突き合わせていない parity は合格にしない**
+（`keysChecked` / `deliveredChecked` が false なら必ず不合格）。
 ⚠️ Redis 台帳を**読めなかった**ときは中止する（未送信と見なすと全員へ再送する）。
+⚠️ prospect の**索引**を読めなかったときも中止する（0 人と見なすと 2 通目が黙って止まる）。
 
 判定を新しく作らず既存の `resolveCustomerMarketing()` → `buildSequenceProgress()` を
 通すので、parity は「合わせ込み」ではなく**構造的に**成立する。
+
+### 本番実測の parity（2026-08-27 / read-only・全 12,872 名）
+
+| 比べたもの | 差分 |
+|---|---:|
+| 対象のみ片側 | **0** |
+| due のみ片側 | **0** |
+| 次 step 不一致 | **0** |
+| 状態不一致 | **0** |
+| 停止理由不一致 | **0** |
+| DeliveryKey 不一致 | **0** |
+| delivered 不一致 | **0** |
+
+**8/31 09:00 JST 時点の 2 通目**も両経路で完全一致:
+
+| | Customers 経路 | prospect 経路 |
+|---|---:|---:|
+| due 合計 | 6,308 | **6,308** |
+| うち step2 | 5,980 | **5,980** |
+| 片側だけ | 0 | **0** |
+
+⚠️ `DeliveryKey` は送信元アドレスを材料に含む。実送信と同じ
+`getBrandConfig(BRAND).defaultFromEmail`（`noreply@keiba.link`）で計算しないと
+鍵が変わり、**既送信を 1 件も照合できず「全員未送信」と誤判定する**（実際に一度そうなった）。
+`SENDGRID_FROM_EMAIL`（`support@keiba.link`）ではない。
+
+### 打ち切り（delivered 10）はいま誰にも当たらない
+
+全 Customers の delivered 回数（`Status='sent'` の行数）は **最大 5 通**。
+**10 通以上は 0 名**（5 通以上は 694 名）。したがって開封の集計が無くても
+**parity は影響を受けない**（どちらの経路でも engagement では 1 人も止まらない）。
+
+開封の集計が要るのは「開封した人を Customers へ残す」判定の側だけ。
 
 ## 6. 🔴 実行前に必ず埋める穴
 
@@ -135,11 +176,22 @@ Airtable は既に上限超過（§8）で、待つほど危険が増す。
 下見スクリプトは一覧が無いと `engagementApplied: false` を記録する。
 **`false` のまま実行しないこと。**
 
-### 6-2. prospect 側 enqueue の配線が未実装
+### 6-2. 反応の集計は**本番からしか読めない**
 
-parity と hydration はそろっているが、**prospect を実際に enqueue する経路**は
-まだ本番に配線していない（`partitionRecipientsForLedger()` を使う側）。
-これは停止境界の内側なので、承認後に着手する。
+`ak:mkt:eng:v1` は Redis にあり、`UPSTASH_REDIS_REST_URL` / `..._TOKEN` は
+**production コンテキストにしか無く、ローカルでは masked**（`****`）。
+Deploy Preview にも無いので、preview から呼んでも `redis_not_configured` になる（実測）。
+
+読むための read-only 経路は用意した（`admin-marketing?action=engagementDigest`。
+**hash だけを返しアドレスは出さない**）が、**production へ deploy しないと呼べない**。
+
+| 選択肢 | 影響 |
+|---|---|
+| A. この PR を merge して production へ出し、digest を読む | production deploy が要る |
+| B. Redis env を deploy-preview へ足す | **production env 変更＋認証情報の露出**。推奨しない |
+| C. 開封を当てずに移す | **開封した人まで prospect へ落とす**。投入側が fail closed で拒否する |
+
+⚠️ C は選べない。`planProspectIntakeFromCustomers()` は集計が無いと**1 件も作らない**。
 
 ## 7. 手順（承認後に実行する）
 
@@ -147,9 +199,9 @@ parity と hydration はそろっているが、**prospect を実際に enqueue 
 |---|---|---|---|
 | 1 | 反応の一覧を作る（管理 API 側で開封記録を突合）| なし | 一覧が空なら中止 |
 | 2 | 下見をやり直す（`engagementApplied: true`）| なし | 母数≠合計 なら中止 |
-| 3 | prospect 側 enqueue を配線（台帳は Redis 限定）| コード | — |
-| 4 | **全件 parity**（Customers 経路 vs prospect 経路・差分 0）| なし | 差分 1 件でも中止 |
-| 5 | prospect プールへ投入（`intake`）| **Redis** | ← **ここで停止し、改めて承認を取る** |
+| 3 | prospect 側 enqueue を配線（台帳は Redis 限定）| コード | ✅ 完了 |
+| 4 | **全件 parity**（Customers 経路 vs prospect 経路・差分 0）| なし | ✅ 差分 0（§5）|
+| 5 | prospect プールへ投入（`prospectIntake`）| **Redis** | ← **ここで停止し、改めて承認を取る** |
 | 6 | 投入後に**再 parity**（差分 0）| なし | 差分 1 件でも中止 |
 | 7 | 抑止台帳へ hash を引き継ぎ、載ったことを読み直す | **Redis** | 1 件でも載らなければ中止 |
 | 8 | 削除前の全フィールドスナップショット | なし（ローカル）| 取れなければ中止 |
@@ -223,3 +275,46 @@ env のモードに関わらず構造的にそうする（`resolveRecipientLedge
 2. `review_operator_grant` 1,566 件を最終的にどちらへ寄せるか（**急がない**・消さない）
 3. `MARKETING_DELIVERY_STORE` を `dual` → `redis` へ切り替えるか
    （切り替えれば Customers 経路の増加も止まる。**production env 変更＝停止境界**）
+
+
+## 13. 投入のやり方（承認後）
+
+投入は **admin Function の 1 アクション**で、**Customers を 1 件も消さない**。
+
+```
+POST /.netlify/functions/admin-marketing
+{ "action": "prospectIntake", "campaignId": "campaign-discount-free",
+  "offset": "<前回の nextOffset>", "apply": true, "confirm": "MIGRATE PROSPECTS" }
+```
+
+`apply` を省けば**下見**（1 バイトも書かない）。書き込みが起きるのは **4 つ全部**が
+そろったときだけで、1 つでも欠ければ下見の結果だけを返す:
+
+| # | 条件 | 満たさないと |
+|---|---|---|
+| 1 | `PROSPECT_MIGRATION_ENABLED=true`（env）| `write_disabled` |
+| 2 | `confirm` が一致 | `not_confirmed` |
+| 3 | 反応（開封）の集計が**読めている** | `engagement_unavailable` |
+| 4 | **そのページの parity が差分 0** | `parity_not_proven` |
+
+- 1 回 **300 件**ずつ。`nextOffset` を渡して続きから（全件走査しない）
+- 既に居るアドレスは**上書きしない**（`addIfAbsent`）。抑止台帳の相手は復活しない
+- 既送信の `DeliveryKey` はそのまま台帳へ入れ、**読み戻して確かめる**（`unverified` を返す）
+- 応答は**件数だけ**（アドレスも recordId も出さない）
+
+### 引き継ぐ内容
+
+| 引き継ぐもの | どこから |
+|---|---|
+| `sends`（試行）| その人の `CampaignDeliveries` 行数（`sent` + `queued`）|
+| **`delivered`** | **`Status='sent'` の行数だけ**（`queued` は数えない）|
+| `lastSentAt` | `SentAt` の最大値（次 step の間隔計算に使う）|
+| `opens` / `clicks` | 反応の集計に hash が載っているか |
+| 既送信の `DeliveryKey` | その人の行にある鍵を**そのまま** |
+
+### 投入後にやること（Customers 削除の前）
+
+1. **再 parity**（差分 0）
+2. 抑止台帳へ hash を引き継ぎ、**載ったことを読み直す**
+3. 削除前の**全フィールドスナップショット**
+4. → **ここで改めて承認を取る**（削除は別工程）

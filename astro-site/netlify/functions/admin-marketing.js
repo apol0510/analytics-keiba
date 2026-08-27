@@ -128,6 +128,15 @@ import {
 import { buildLastContactMap, readMeasurementSettings } from '../../src/lib/crm/segmentInputs.js';
 import { measuredCount } from '../../src/lib/crm/deliveryMeasurement.js';
 import { getBrandConfig, validateBrandFromEmail } from '../../src/lib/newsletter/brand-config.js';
+import {
+  planProspectIntakeFromCustomers, canIntake,
+} from '../../src/lib/marketing/prospectIntakePlan.js';
+import { createProspectStore, emailHash } from '../../src/lib/marketing/prospectStore.js';
+import { hashEmailForSignal } from '../../src/lib/marketing/engagementSignalStore.js';
+import { buildProspectSequenceRows } from '../../src/lib/marketing/prospectSequenceAdapter.js';
+import { hydrateProspectSequenceInputs } from '../../src/lib/marketing/prospectSequenceHydration.js';
+import { compareSequenceParity } from '../../src/lib/marketing/sequenceParity.js';
+import { IMPORT_SOURCE_PREFIX } from '../../src/lib/marketing/importCohort.js';
 import { EMAIL_EVENTS_TABLE as EMAIL_EVENTS_TABLE_NAME } from '../../src/lib/webhooks/emailEventLedger.js';
 import { validateSelection } from '../../src/lib/marketing/adminMultiFilter.js';
 import {
@@ -844,6 +853,7 @@ export const handler = async (event) => {
     if (action === 'sequence') return await handleSequence({ KEY, BASE, now, req });
     if (action === 'sequenceMetrics') return await handleSeqMetrics({ req });
     if (action === 'engagementDigest') return await handleEngagementDigest({ now });
+    if (action === 'prospectIntake') return await handleProspectIntake({ KEY, BASE, now, req });
     if (action === 'trialGrant') return await handleTrialGrantPreview({ now, req });
     if (action === 'duplicateCheck') return await handleDuplicateCheck({ KEY, BASE, req });
     if (action === 'rollout') return await handleRollout({ KEY, BASE, now, req });
@@ -2648,6 +2658,243 @@ async function handleTrialGrantPreview({ now, req }) {
  * ⚠️ 集計を読めないときは `available:false` を返す。**空配列と混同させない**
  *    （空を「開封者ゼロ」と解釈すると、開封した人まで prospect へ落とす）。
  */
+/** 投入の書き込みを開く env（**未設定なら下見しかできない**） */
+const PROSPECT_INTAKE_ENV = 'PROSPECT_MIGRATION_ENABLED';
+/** 1 回で扱う Customers の件数（名指し取得と per-page parity が収まる大きさ） */
+const INTAKE_PAGE_SIZE = 300;
+/** 書き込みを許す確認文字列（画面から流し込めない値にしておく） */
+const INTAKE_CONFIRM = 'MIGRATE PROSPECTS';
+
+/**
+ * CSV 取り込み分を **prospect プールへ移す**（1 ページずつ）。
+ *
+ * ── 何をして、何をしないか ────────────────────────────────────
+ *   する   … Customers を 1 ページ読み、移行対象だけを prospect レコードへ組み直し、
+ *            **そのページだけで両経路の一致（parity）を確かめてから** Redis へ書く
+ *   しない … **Customers を 1 件も消さない**。削除は別工程・別承認
+ *
+ * ── 書き込みが起きる条件（4 つ全部）──────────────────────────
+ *   1. `PROSPECT_MIGRATION_ENABLED=true`（env。既定は下見のみ）
+ *   2. `confirm` が一致
+ *   3. 反応（開封）の集計が**読めている**（読めないなら開封者を移してしまう）
+ *   4. **そのページの parity が差分 0**（対象 / 次 step / DeliveryKey / 停止理由 / delivered）
+ *
+ * ⚠️ 1 つでも欠ければ**下見の結果だけ**を返して 1 バイトも書かない（fail closed）。
+ * ⚠️ 既に prospect が居るアドレスは上書きしない（`addIfAbsent`）。
+ *    抑止台帳に載っている相手は復活しない（store 側で弾く）。
+ * ⚠️ 既送信の `DeliveryKey` は**そのまま**台帳へ入れる。作り方を変えない。
+ */
+async function handleProspectIntake({ KEY, BASE, now, req }) {
+  const campaignId = String(req.campaignId || 'campaign-discount-free').trim();
+  const campaign = getCampaign(campaignId, { includeDisabled: true });
+  if (!campaign || !isSequenceCampaign(campaign)) {
+    return json(400, { error: '連続配信のキャンペーンを指定してください', sideEffects: 'none' });
+  }
+  const fromEmail = getBrandConfig(BRAND).defaultFromEmail;
+  const offset = String(req.offset || '').trim() || undefined;
+  const dryRun = req.apply !== true;
+
+  // 1) Customers を 1 ページ読む（**取り込み由来だけ**を名指しで絞る）
+  let page;
+  try {
+    page = await fetchCustomersPage({
+      KEY, BASE, offset, pageSize: INTAKE_PAGE_SIZE,
+      filterByFormula: `LEFT({Source}, ${IMPORT_SOURCE_PREFIX.length}) = '${IMPORT_SOURCE_PREFIX}'`,
+    });
+  } catch (e) {
+    return json(500, { error: 'Customers を読めませんでした', detail: String((e && e.message) || ''), sideEffects: 'none' });
+  }
+
+  const records = page.records;
+  const emails = records.map((r) => String((r.fields || {}).Email || '').trim().toLowerCase()).filter(Boolean);
+
+  // 2) その人たちの配信履歴（**名指し**。台帳全体は読まない）
+  let deliveries;
+  try {
+    deliveries = await fetchDeliveriesByEmails({ KEY, BASE, emails });
+  } catch (e) {
+    return json(500, {
+      error: '配信履歴を取り切れなかったため中止します（数えられない数で移行しません）',
+      detail: String((e && e.message) || ''), sideEffects: 'none',
+    });
+  }
+
+  // 3) 反応の集計（**読めなければ 1 件も作らない**）
+  const signals = await loadEngagementSignals();
+  const engagementApplied = signals.available === true;
+  const openHashes = engagementApplied && signals.openByHash instanceof Map
+    ? new Set(signals.openByHash.keys()) : null;
+  const clickHashes = engagementApplied && signals.clickByHash instanceof Map
+    ? new Set(signals.clickByHash.keys()) : null;
+  const engagedEmails = new Set();
+  if (engagementApplied) {
+    for (const e of emails) {
+      const h = hashEmailForSignal(e);
+      if (openHashes.has(h) || clickHashes.has(h)) engagedEmails.add(e);
+    }
+  }
+
+  // 4) 投入計画（判定も引き継ぎも純粋モジュール）
+  const plan = planProspectIntakeFromCustomers({
+    records, deliveries,
+    openHashes, clickHashes, hashEmail: emailHash, signalHash: hashEmailForSignal,
+    engagedEmails: engagementApplied ? engagedEmails : undefined,
+    nowMs: now,
+  });
+
+  // 5) **このページだけの parity**（移す前に、移しても同じ答えになることを確かめる）
+  const parity = computePageParity({
+    campaign, records, deliveries, plan, brand: BRAND, fromEmail, nowMs: now,
+  });
+
+  const writeEnabled = String(process.env[PROSPECT_INTAKE_ENV] || '').trim() === 'true';
+  const gate = canIntake({
+    writeEnabled, confirmed: String(req.confirm || '') === INTAKE_CONFIRM,
+    engagementApplied, parityOk: parity.ok, plan,
+  });
+
+  const view = {
+    mode: dryRun ? 'prospect-intake-dry-run' : 'prospect-intake',
+    campaignId, page: { size: records.length, nextOffset: page.offset || null },
+    counts: plan.counts, skipped: plan.skipped,
+    engagement: {
+      applied: engagementApplied, reason: signals.reason || null,
+      matched: engagedEmails.size,
+    },
+    parity: { ok: parity.ok, diff: parity.diff, reason: parity.reason || null },
+    gate: { allowed: gate.allowed, reasons: gate.reasons, labels: gate.labels, env: PROSPECT_INTAKE_ENV },
+  };
+
+  if (dryRun || !gate.allowed) {
+    return json(200, {
+      ...view, sideEffects: 'none',
+      notice: dryRun
+        ? 'これは下見です。**1 バイトも書いていません**。'
+        : '安全条件を満たさないため**書き込みませんでした**。',
+    });
+  }
+
+  // 6) 書き込み（**Customers は 1 件も触らない**）
+  let store; let ledger;
+  try {
+    store = createProspectStore({ cmd: makeRedisCmd(process.env) });
+    ledger = createDeliveryKeyStore({ redisCmd: makeRedisCmd(process.env) });
+  } catch {
+    return json(500, { ...view, error: 'Redis へ接続できません', sideEffects: 'none' });
+  }
+
+  let added = 0; let existed = 0; let blocked = 0; let failed = 0;
+  for (const p of plan.prospects) {
+    try {
+      // eslint-disable-next-line no-await-in-loop -- 1 件ずつ（部分成功を把握するため）
+      const r = await store.addIfAbsent(p);
+      if (r.blocked) blocked += 1;
+      else if (r.added) added += 1;
+      else existed += 1;
+    } catch { failed += 1; }
+  }
+
+  // 7) 既送信の鍵を台帳へ（**読み戻して確かめる**）
+  const scope = { brand: BRAND, campaignId: campaign.campaignId, version: campaign.version };
+  let ledgerAdded = 0; let ledgerMissing = null;
+  if (plan.ledgerKeys.length > 0) {
+    try {
+      const res = await ledger.markDelivered({ ...scope, keys: plan.ledgerKeys });
+      ledgerAdded = res.added;
+      const have = new Set(await ledger.filterDelivered({ ...scope, keys: plan.ledgerKeys }));
+      ledgerMissing = plan.ledgerKeys.filter((k) => !have.has(k)).length;
+    } catch {
+      ledgerMissing = plan.ledgerKeys.length;
+    }
+  } else {
+    ledgerMissing = 0;
+  }
+
+  return json(200, {
+    ...view,
+    sideEffects: 'redis_written',
+    written: { added, existed, blocked, failed },
+    ledger: { keys: plan.ledgerKeys.length, added: ledgerAdded, unverified: ledgerMissing },
+    customersDeleted: 0,
+    notice: 'prospect プールへ投入しました。**Customers は 1 件も削除していません**（削除は別承認）。',
+  });
+}
+
+/**
+ * 1 ページぶんの parity。**移す前に、移しても同じ答えになることを確かめる**。
+ * 差分が 1 つでもあれば書かない。
+ */
+function computePageParity({ campaign, records, deliveries, plan, brand, fromEmail, nowMs }) {
+  const targets = new Set(plan.prospects.map((p) => p.email));
+  if (targets.size === 0) return { ok: false, reason: 'no_targets', diff: null };
+
+  const customerRows = records
+    .filter((r) => targets.has(String((r.fields || {}).Email || '').trim().toLowerCase()))
+    .map((r) => ({
+      recordId: r.id, fields: r.fields || {},
+      marketing: resolveCustomerMarketing({ fields: r.fields || {}, nowMs }),
+    }));
+  const pageDeliveries = deliveries.filter(
+    (d) => targets.has(String(((d && d.fields) || {}).RecipientEmail || '').trim().toLowerCase()),
+  );
+
+  const A = buildSequenceProgress({
+    campaign, selected: customerRows, deliveries: pageDeliveries,
+    brand, fromEmail, nowMs, providerSuppressed: new Set(), softBounced: new Set(),
+  });
+  const ledgerKeys = new Set(plan.ledgerKeys);
+  const h = hydrateProspectSequenceInputs({
+    prospects: plan.prospects, campaign, brand, fromEmail, deliveredKeys: ledgerKeys,
+  });
+  if (!h.ok) return { ok: false, reason: h.reason, diff: null };
+  const rows = buildProspectSequenceRows({ prospects: plan.prospects, nowMs });
+  const B = buildSequenceProgress({
+    campaign, selected: rows.rows, deliveries: h.deliveries,
+    brand, fromEmail, nowMs, providerSuppressed: h.providerSuppressed, softBounced: new Set(),
+  });
+
+  const keyOf = (progress) => {
+    const m = new Map();
+    for (const r of progress.rows) {
+      if (!r.email || !Number.isInteger(r.nextStep)) continue;
+      const eff = resolveSequenceStep(campaign, r.nextStep);
+      if (!eff) continue;
+      m.set(r.email, computeCampaignDeliveryKey({
+        campaign: eff, recipientEmail: r.email, brand, fromEmail,
+      }));
+    }
+    return m;
+  };
+  const deliveredA = new Map();
+  for (const r of customerRows) {
+    const e = String((r.fields || {}).Email || '').trim().toLowerCase();
+    deliveredA.set(e, pageDeliveries.filter((d) => {
+      const f = (d && d.fields) || {};
+      return String(f.RecipientEmail || '').trim().toLowerCase() === e
+        && String(f.Status || '').trim().toLowerCase() === 'sent';
+    }).length);
+  }
+  const deliveredB = new Map(plan.prospects.map((p) => [p.email, p.delivered]));
+
+  const result = compareSequenceParity({
+    customers: A, prospects: B, customerKeys: keyOf(A), prospectKeys: keyOf(B),
+    customerDelivered: deliveredA, prospectDelivered: deliveredB,
+  });
+  return { ok: result.ok, diff: result.diff, reason: result.unusable };
+}
+
+/** Customers を 1 ページだけ読む（**全件走査しない**。offset で続きから） */
+async function fetchCustomersPage({ KEY, BASE, offset, pageSize, filterByFormula }) {
+  const url = new URL(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(CUSTOMERS_TABLE)}`);
+  url.searchParams.set('pageSize', String(Math.min(100, pageSize || 100)));
+  if (filterByFormula) url.searchParams.set('filterByFormula', filterByFormula);
+  if (offset) url.searchParams.set('offset', offset);
+  const res = await fetch(url, { headers: authHeaders(KEY) });
+  if (!res.ok) throw new Error(`customers_page_${res.status}`);
+  const j = await res.json();
+  return { records: (j.records || []).map((r) => ({ id: r.id, fields: r.fields || {} })), offset: j.offset || null };
+}
+
 async function handleEngagementDigest({ now }) {
   const signals = await loadEngagementSignals();
   const openHashes = signals.openByHash instanceof Map ? [...signals.openByHash.keys()] : [];

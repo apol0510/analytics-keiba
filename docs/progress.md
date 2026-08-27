@@ -1637,6 +1637,74 @@ MK 要望の 5 項目のうち、**確実に出せる 3 つ**を入れた。
 
 ---
 
+## 2026-08-27（追記）— 【緊急】8/31 より前に移せる状態まで完成
+
+### なぜ急ぐか
+
+Airtable は **50,789 / 50,000 で超過中**。現行経路のまま 8/31 の 2 通目を送ると
+`CampaignDeliveries` が **+6,308 行**増える（本番実測）。移行後は **0 行**。
+
+### 本番実測（read-only・書き込み 0 / 2026-08-27）
+
+**全 12,872 名の parity は差分 0。**
+
+| 比べたもの | 差分 |
+|---|---:|
+| 対象のみ片側 / due のみ片側 | 0 / 0 |
+| 次 step / 状態 / 停止理由 | 0 / 0 / 0 |
+| **DeliveryKey** | **0** |
+| **delivered 回数** | **0** |
+
+**8/31 09:00 JST の 2 通目も完全一致**: due 6,308（step2 5,980）／片側だけ 0。
+
+打ち切り（delivered 10）は**いま誰にも当たらない**（全 Customers の delivered は最大 5 通・
+10 通以上は 0 名）。したがって開封の集計が無くても parity は影響を受けない。
+
+### できたこと
+
+| | |
+|---|---|
+| prospect プールから受信対象を作る | `prospectAudienceSource.js` ＋ cron へ配線 |
+| prospect の配信台帳を Airtable へ書かない | cron と admin の両方へ配線＋読み戻し確認 |
+| 投入（Redis write）の安全条件 | `prospectIntakePlan.js` ＋ `action: 'prospectIntake'`（既定は下見）|
+| 反応の読み出し経路 | `action: 'engagementDigest'`（**hash だけ**返す・read-only）|
+| 全件 parity の実測 | `scripts/prospectMigrationReport.mjs`（read-only）|
+
+### 🔴 残っている唯一の障害: 開封の集計が本番からしか読めない
+
+`UPSTASH_REDIS_REST_URL` / `..._TOKEN` は **production コンテキストのみ**。
+ローカルでは masked（`****`）、**Deploy Preview にも無い**（preview で実測 →
+`redis_not_configured`）。
+
+| 選択肢 | 影響 |
+|---|---|
+| **A. この PR を merge して production へ出し、digest を読む** | production deploy が要る |
+| B. Redis env を deploy-preview へ足す | **production env 変更＋認証情報の露出**。推奨しない |
+| C. 開封を当てずに移す | **開封した人まで prospect へ落とす**。投入側が fail closed で拒否する |
+
+⚠️ C は選べない（`planProspectIntakeFromCustomers()` は集計が無いと 1 件も作らない）。
+
+### ▶ 次作業
+
+1. **A を選ぶなら**: PR を merge → production deploy → `engagementDigest` を読む
+2. 開封を当てた最終下見（`engagementApplied: true`）
+3. `PROSPECT_MIGRATION_ENABLED=true` を production へ（**env 変更＝承認が要る**）
+4. `prospectIntake` を 300 件ずつ実行（**Redis write ＝ここで停止して承認を取る**）
+5. 投入後に**再 parity** → 抑止台帳へ hash 引き継ぎ → スナップショット
+6. **Customers 削除は別承認**
+
+### 停止境界（現在の状態）
+
+| 境界 | 状態 |
+|---|---|
+| 本番 Redis への大量書き込み（prospect 投入）| **未実行** |
+| **Customers の削除** | **未実行** |
+| production env の変更 | **未実行** |
+| 実送信 / queue 登録 | **未実行** |
+| production への deploy（merge）| **未実行**（開封の読み出しに必要）|
+
+---
+
 ## 2026-08-27 — 【仕様確定＋実装】CSV prospect の打ち切り・早期移行・台帳の置き場所
 
 ### 現在地

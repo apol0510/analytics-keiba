@@ -2048,7 +2048,39 @@ Customers 15,976 件のうち `Source='customer-import:…'` が **14,489 件**�
    だから parity は「合わせ込み」ではなく**構造的に**成立する。
 ⚠️ 台帳（Redis 集合）を**読めなかった**ときは中止する。未送信と見なすと全員へ再送する。
 
-検証: `npm run test:marketing`（`src/lib/marketing/prospectSequenceParity.test.mjs`）
+### prospect プールから受信対象を作る（移した瞬間に配信を止めない）
+
+連続配信の受信対象は Airtable から引いていたので、**移した瞬間に 2 通目が 0 人になる**。
+そこで `prospectAudienceSource.js` が prospect プールからも対象を作り、
+`cron-campaign-sequence` が Customers 由来と合流させる（同じアドレスは **Customers 優先**）。
+
+⚠️ 索引・台帳を**読めなかったら tick を中止する**。0 件と混同すると
+   送信漏れ（対象 0）か二重送信（全員未送信）のどちらかになる。
+⚠️ プールが空なら何も足さない＝**従来と完全に同じ挙動**。
+
+### prospect の配信台帳は Airtable へ書かない（配線済み）
+
+`cron-campaign-sequence` と `admin-marketing` の両方で、出所が prospect の受信者は
+`CampaignDeliveries` の行を作らず、Redis の集合にだけ記録する。
+書いたあと**読み戻して確かめ**、確かめられなければ成功と言わない。
+Redis へ書けない構成なら **1 行も書かずに中止**する（記録が無いと次回そのまま二重送信）。
+
+### 投入（Redis write）の安全条件
+
+`admin-marketing?action=prospectIntake`。既定は**下見**で、書き込みは **4 つ全部**が
+そろったときだけ（`prospectIntakePlan.js` の `canIntake()` が単一源）:
+
+1. `PROSPECT_MIGRATION_ENABLED=true`（env）
+2. `confirm` が一致
+3. 反応（開封）の集計が**読めている**
+4. **そのページの parity が差分 0**
+
+⚠️ **Customers は 1 件も消さない**（削除は別工程・別承認）。
+⚠️ 反応の集計は Redis にあり **production からしか読めない**
+（`UPSTASH_*` は production コンテキストのみ・ローカルでは masked・preview にも無い）。
+
+検証: `npm run test:marketing`
+（`prospectSequenceParity.test.mjs` / `prospectAudienceWiring.test.mjs` / `prospectIntakePlan.test.mjs`）
 
 ### Airtable の上限は Customers を減らしても解決しない
 

@@ -38,7 +38,14 @@ import {
 import {
   createSequenceMetricsStore, emptyMetrics, accumulateMetrics,
 } from '../../src/lib/marketing/sequenceMetrics.js';
-import { makeRedisCmd } from '../../src/lib/marketing/deliveryKeyStore.js';
+import { makeRedisCmd, createDeliveryKeyStore } from '../../src/lib/marketing/deliveryKeyStore.js';
+import { createProspectStore } from '../../src/lib/marketing/prospectStore.js';
+import {
+  loadProspectSequenceInputs, tagRecipientSources,
+} from '../../src/lib/marketing/prospectAudienceSource.js';
+import {
+  partitionRecipientsForLedger, resolveDeliveryStoreMode, RECIPIENT_SOURCE,
+} from '../../src/lib/marketing/deliveryKeySource.js';
 import {
   isSequenceCampaign, resolveSequenceStep,
 } from '../../src/lib/marketing/campaignSequence.js';
@@ -211,16 +218,52 @@ export async function runSequenceTick({ env = process.env, now = Date.now(), cam
   const emails = [...new Set(
     deliveries.map((r) => String((r.fields || {}).RecipientEmail || '').trim().toLowerCase()).filter(Boolean),
   )];
-  if (emails.length === 0) {
+  const { emails: blacklistEmails } = await loadBlacklistEmails({ brand: BRAND, baseId: BASE, apiKey: KEY });
+
+  // 2-b) prospect プールからも受信対象を作る（2026-08-27 MK 確定）
+  //
+  // ── なぜ ────────────────────────────────────────────────────
+  // CSV 取り込み分を Customers から prospect プールへ移すと、
+  // **移した瞬間にこの cron の受信対象が 0 人になり 2 通目が黙って止まる**。
+  // そこで移す前に「prospect からも対象を作れる」経路を通しておく。
+  //
+  // ⚠️ 進行の導出も停止条件も**既存の関数がそのまま**担当する
+  //    （prospect を「取り込みが Customers へ書いたのと同じ fields」へ復元して渡す）。
+  // ⚠️ プールが空なら何も足さない＝**従来と完全に同じ挙動**。
+  // ⚠️ 索引や台帳を**読めなかったら中止する**。0 件と混同すると、
+  //    送信漏れ（対象 0）か二重送信（全員未送信）のどちらかになる。
+  let prospectInputs = null;
+  const prospectStore = (() => {
+    try { return createProspectStore({ cmd: makeRedisCmd(env) }); } catch { return null; }
+  })();
+  const prospectLedger = (() => {
+    try { return createDeliveryKeyStore({ redisCmd: makeRedisCmd(env) }); } catch { return null; }
+  })();
+  if (prospectStore && prospectLedger) {
+    prospectInputs = await loadProspectSequenceInputs({
+      store: prospectStore, deliveryKeyStore: prospectLedger,
+      campaign: base, brand: BRAND, fromEmail, nowMs: now,
+      blacklistEmails,
+    });
+    if (!prospectInputs.ok) {
+      const body = { ok: false, abort: prospectInputs.reason, sideEffects: 'none' };
+      log(body);
+      return body;
+    }
+  }
+  const prospectCount = prospectInputs ? prospectInputs.rows.length : 0;
+
+  // ⚠️ **Airtable 台帳が空でも prospect が居れば続ける。**
+  //    移行後は既送信が Redis 側にしか無いので、ここで打ち切ると 2 通目が黙って止まる。
+  if (emails.length === 0 && prospectCount === 0) {
     const body = { ok: false, abort: TICK_ABORT.NO_DUE, reason: 'no_one_in_sequence', sideEffects: 'none' };
     log(body);
     return body;
   }
 
   // 2) その人たちの現在の顧客レコード（購入・退会・プラン変更を反映するため毎回引く）
-  const records = await fetchCustomersByEmails({ KEY, BASE, emails });
-  const { emails: blacklistEmails } = await loadBlacklistEmails({ brand: BRAND, baseId: BASE, apiKey: KEY });
-  const selected = records.map((rec) => {
+  const records = emails.length > 0 ? await fetchCustomersByEmails({ KEY, BASE, emails }) : [];
+  const customerRows = records.map((rec) => {
     const fields = rec.fields || {};
     return {
       recordId: rec.id,
@@ -228,6 +271,18 @@ export async function runSequenceTick({ env = process.env, now = Date.now(), cam
       marketing: resolveCustomerMarketing({ fields, nowMs: now, blacklistEmails }),
     };
   });
+
+  const prospectRows = prospectInputs ? prospectInputs.rows : [];
+  const prospectEmails = new Set(prospectRows
+    .map((r) => String((r.fields || {}).Email || '').trim().toLowerCase()).filter(Boolean));
+  // 同じアドレスが両方に居たら **Customers を優先**（二重送信の防止）
+  const selected = [
+    ...customerRows,
+    ...prospectRows.filter((r) => {
+      const e = String((r.fields || {}).Email || '').trim().toLowerCase();
+      return !customerRows.some((c) => String((c.fields || {}).Email || '').trim().toLowerCase() === e);
+    }),
+  ];
 
   // 3) 配信基盤の停止リスト（**確認できなければ何もしない**）
   const provider = await fetchProviderSuppression({ apiKey: env.SENDGRID_API_KEY, now });
@@ -240,10 +295,19 @@ export async function runSequenceTick({ env = process.env, now = Date.now(), cam
   // 4) 進行と計画（判断は pure モジュール。ここでは何も決めない）
   //    ⚠️ engagement は admin と同じ判定を使うが、cron では Redis を読まないため
   //       Map を渡さない = **engagement 理由では止めない**（fail closed 側）。
+  //    prospect の既送信は Airtable に無いので、Redis 台帳から復元した行を足す。
+  const allDeliveries = prospectInputs
+    ? [...deliveries, ...prospectInputs.deliveries] : deliveries;
+  //    prospect の停止（bounce / 苦情 / 配信停止）も provider の集合へ合流させる。
+  const suppressed = new Set(provider.emails);
+  if (prospectInputs) for (const e of prospectInputs.providerSuppressed) suppressed.add(e);
   const progress = buildSequenceProgress({
-    campaign: base, selected, deliveries, brand: BRAND, fromEmail, nowMs: now,
-    providerSuppressed: provider.emails,
+    campaign: base, selected, deliveries: allDeliveries, brand: BRAND, fromEmail, nowMs: now,
+    providerSuppressed: suppressed,
     softBounced: new Set(),
+    // prospect の反応は本人のレコードが持っている（Customers 側は従来どおり Map なし）
+    engagementByEmail: prospectInputs && prospectInputs.engagementByEmail.size > 0
+      ? prospectInputs.engagementByEmail : undefined,
   });
   const plan = planSequenceTick({ progress, gates, maxRecipients: resolveMaxRecipientsPerTick(process.env) });
   if (!plan.ok) {
@@ -258,7 +322,7 @@ export async function runSequenceTick({ env = process.env, now = Date.now(), cam
   const targets = plan.recordIds.map((rid) => byId.get(rid)).filter(Boolean);
   const built = buildCampaignPlan({
     campaign: sending, selected: targets,
-    providerSuppressed: provider.emails,
+    providerSuppressed: suppressed,
     brand: BRAND, fromEmail, nowMs: now,
   });
   if (!built.ok || built.recipients.length === 0) {
@@ -315,8 +379,18 @@ export async function runSequenceTick({ env = process.env, now = Date.now(), cam
   }
 
   // 8) 1 通ごとの正本（DeliveryKey で upsert = 何度実行しても 1 行）
+  //
+  // ── prospect は Airtable へ 1 行も書かない（2026-08-27 MK 確定）────────
+  //    Airtable はレコード上限を超過中で、CSV 由来へ 1 step 配るだけで受信者数ぶん増える。
+  //    prospect の冪等性は Redis の集合が担う（`DeliveryKey` の作り方は変えない）。
+  const tagged = tagRecipientSources({ recipients: built.recipients, prospectEmails });
+  const ledgerMode = resolveDeliveryStoreMode(env);
+  const split = partitionRecipientsForLedger({ mode: ledgerMode, recipients: tagged });
+  const airtableRecipients = tagged.filter((r) => r['出所'] !== RECIPIENT_SOURCE.PROSPECT);
+  const prospectRecipients = tagged.filter((r) => r['出所'] === RECIPIENT_SOURCE.PROSPECT);
+
   const deliveryRecords = buildDeliveryRecords({
-    campaign: sending, recipients: built.recipients, jobIdByEmail, nowMs: now,
+    campaign: sending, recipients: airtableRecipients, jobIdByEmail, nowMs: now,
   });
   for (const rec of deliveryRecords) {
     if (!assertOnlyDeliveryFields(rec.fields)) return { ok: false, abort: 'delivery_fields_rejected' };
@@ -330,7 +404,34 @@ export async function runSequenceTick({ env = process.env, now = Date.now(), cam
     });
   }
 
+  // ⚠️ Redis 台帳は **prospect を含む全員**ぶんを記録する。
+  //    prospect は Airtable に行が無いので、ここに残らないと次回そのまま二重送信になる。
+  //    記録できたことを**読み戻して**確かめ、確かめられなければ失敗として数える。
+  let ledgerUnverified = 0;
+  if (prospectLedger && split.redisKeys.length > 0) {
+    const scope = { brand: BRAND, campaignId: base.campaignId, version: base.version };
+    try {
+      await prospectLedger.markDelivered({ ...scope, keys: split.redisKeys });
+      if (prospectRecipients.length > 0) {
+        const want = prospectRecipients.map((r) => r.deliveryKey).filter(Boolean);
+        const have = new Set(await prospectLedger.filterDelivered({ ...scope, keys: want }));
+        ledgerUnverified = want.filter((k) => !have.has(k)).length;
+      }
+    } catch {
+      ledgerUnverified = prospectRecipients.length;
+    }
+  } else if (prospectRecipients.length > 0) {
+    ledgerUnverified = prospectRecipients.length;
+  }
+  if (ledgerUnverified > 0) {
+    // 送信そのものは既に queue 済みなので止められない。**黙らない**（次の tick で気づける）
+    console.error(`${SEQ_LOG_TAG} prospect 台帳を確認できません: ${ledgerUnverified} 件`);
+  }
+
   const summary = summarizeSequenceTick({ campaignId: base.campaignId, plan, enqueued, failed });
+  summary['prospect対象'] = prospectRecipients.length;
+  summary['Airtable台帳'] = deliveryRecords.length;
+  if (ledgerUnverified > 0) summary['台帳未確認'] = ledgerUnverified;
   log(summary);
   return {
     ok: true, step: plan.step, enqueued, failed,
