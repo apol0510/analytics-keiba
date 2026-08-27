@@ -80,7 +80,34 @@ ADMIN_SECRET=... node scripts/restore-customers-from-export.mjs --apply <export.
 削除した時点で**参照は宙に浮き**、復元しても**古い recordId のまま**残る。
 
 「prospect は hash で紐づくから配信は続く」は事実だが、**それは rollback の完了条件ではない**。
-参照の再配線が要るかどうかは、下の調査結果で判断すること。
+
+#### 本番実測（2026-08-27・削除対象 11,961 件への参照）
+
+| テーブル.field | 型 | 全行 | 値あり | **削除対象を参照** |
+|---|---|---:|---:|---:|
+| `StepEnrollments.CustomerRecordId` | singleLineText | 360 | 359 | **0** |
+| `StepEnrollments.Customer`（リンク）| multipleRecordLinks | 360 | **0** | **0** |
+| `CampaignDeliveries.CustomerRecordId` | singleLineText | 34,162 | 34,162 | **23,452** |
+| `EmailEvents.CustomerRecordId` | singleLineText | 0 | 0 | **0** |
+| `PromotionalOffers.CustomerRecordId` | singleLineText | 75 | 75 | **0** |
+| `CouponOperationHistory.CustomerRecordId` | singleLineText | 10 | 10 | **0** |
+
+- **影響があるのは `CampaignDeliveries` だけ**（23,452 行 ≒ 11,961 人 × 約 2 通ぶんの履歴）
+- `StepEnrollments` のリンク field は**全行が空**で、実際には使われていない
+- 削除すると 23,452 行の `CustomerRecordId` は**宙に浮く**。復元しても
+  **新しい recordId とは一致しない**（`singleLineText` なので Airtable は直さない）
+
+#### 再配線が要るか
+
+| 観点 | 判定 |
+|---|---|
+| 配信の継続（8/31 の 2 通目）| **不要**。移行後の配信対象は prospect プール（Redis）で、hash で紐づく |
+| Premium Plus の「案内済み」判定 | **不要**。`buildPlusDeliveryFormula()` は `CustomerRecordId` と `RecipientEmail` の **OR** で引くのでアドレス側で当たる（そもそも対象 0 件）|
+| 配信履歴の監査（どの会員へ何通送ったか）| **要る**。recordId で辿る経路は切れる |
+
+→ **復元したときは `CampaignDeliveries` の再配線が必要**。
+`customerDeletionRestore` は **旧 recordId → 新 recordId の対応表（`mapping`）** を返すので、
+それで `CustomerRecordId` を更新する。再配線しない限り rollback は**完了扱いにしない**。
 
 ## 二重実行しても安全
 

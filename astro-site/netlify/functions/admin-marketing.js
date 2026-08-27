@@ -2972,7 +2972,7 @@ const RESTORE_CONFIRM = 'RESTORE CUSTOMERS FROM EXPORT';
  */
 async function handleCustomerDeletionRestore({ KEY, BASE, req }) {
   const rawRows = (Array.isArray(req.records) ? req.records : [])
-    .map((r) => ({ fields: (r && r.fields) || {} }))
+    .map((r) => ({ oldId: String((r && r.id) || ''), fields: (r && r.fields) || {} }))
     .filter((r) => String(r.fields.Email || '').trim());
 
   // ⚠️ **本番 schema から「作成時に書ける field」を取り直す。**
@@ -2995,7 +2995,7 @@ async function handleCustomerDeletionRestore({ KEY, BASE, req }) {
   const rows = rawRows.map((r) => {
     const { fields, dropped } = buildRestoreFields(r.fields, schema.writable);
     for (const d of dropped) droppedByField[d] = (droppedByField[d] || 0) + 1;
-    return { fields };
+    return { oldId: r.oldId, fields };
   });
 
   // 送る直前の検算（計算 field・知らない field が 1 つでも混ざっていたら送らない）
@@ -3050,7 +3050,7 @@ async function handleCustomerDeletionRestore({ KEY, BASE, req }) {
     });
   }
 
-  let created = 0; const failed = [];
+  let created = 0; const failed = []; const mapping = [];
   for (let i = 0; i < toCreate.length; i += 10) {
     const chunk = toCreate.slice(i, i + 10);
     try {
@@ -3059,20 +3059,31 @@ async function handleCustomerDeletionRestore({ KEY, BASE, req }) {
       const res = await fetch(url, {
         method: 'POST',
         headers: { ...authHeaders(KEY), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ records: chunk, typecast: true }),
+        body: JSON.stringify({ records: chunk.map((r) => ({ fields: r.fields })), typecast: true }),
       });
       if (!res.ok) throw new Error(`restore_${res.status}`);
       // eslint-disable-next-line no-await-in-loop
       const j = await res.json();
-      created += (j.records || []).length;
+      const made = j.records || [];
+      created += made.length;
+      // ⚠️ **古い recordId → 新しい recordId** を返す。
+      //    他テーブルの `CustomerRecordId` は singleLineText（ただの文字列コピー）なので
+      //    Airtable は何も直してくれない。再配線にはこの対応表が要る。
+      made.forEach((rec, k) => {
+        const src = chunk[k];
+        if (src && src.oldId) mapping.push({ oldId: src.oldId, newId: rec.id });
+      });
     } catch (e) {
       failed.push(String((e && e.message) || '').slice(0, 80));
     }
   }
   return json(200, {
     ...view, created, failed: failed.length,
+    /** ⚠️ 参照の再配線に使う対応表（アドレスは含めない）*/
+    mapping,
     sideEffects: created > 0 ? 'customers_created' : 'none',
-    notice: 'recordId は新しく振られます（prospect は hash で紐づくため配信に影響しません）。',
+    notice: 'recordId は新しく振られます。他テーブルの CustomerRecordId は'
+      + ' **自動では直りません**（mapping で再配線してください）。',
   });
 }
 

@@ -169,6 +169,12 @@ test('⚠️ guard: 復元は本番 schema を取り直してから payload を�
   assert.equal(/records: rawRows/.test(restoreSrc), false, '⚠️ 控えを素通しで POST している');
 });
 
+test('⚠️ guard: 復元は 旧→新 recordId の対応表を返す（参照の再配線に要る）', () => {
+  assert.match(restoreSrc, /mapping/, '⚠️ 対応表を返していない（再配線できない）');
+  assert.match(restoreSrc, /oldId: src\.oldId, newId: rec\.id/);
+  assert.match(restoreSrc, /自動では直りません/, '⚠️ 自動で直ると誤解させる文言になっている');
+});
+
 test('⚠️ guard: writable / never-write の集合が重なっていない', () => {
   for (const t of WRITABLE_FIELD_TYPES) {
     assert.equal(NEVER_WRITE_FIELD_TYPES.has(t), false, `型 ${t} が両方に入っている`);
