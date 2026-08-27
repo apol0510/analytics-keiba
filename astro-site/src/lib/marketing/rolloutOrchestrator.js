@@ -97,8 +97,15 @@ export function tickRollout({ state, nowMs, envEnabled, facts, env }) {
    */
   const pendingHandoffs = num(f.pendingHandoffs) ?? 0;
 
-  // ⚠️ 事実が 1 つでも読めないなら**何もしない**（推測で付与・送信しない）
-  if (remaining === null || pendingQueue === null || pendingJobs === null || outstanding === null) {
+  /**
+   * ⚠️ 事実が読めないなら**何もしない**（推測で付与・送信しない）。
+   *
+   * ただし「読めない」と「**読む必要が無かった**」は分ける。①送信起動は
+   * `pendingJobs` だけで決まるので、そこへ進む tick では関所・候補・期日を
+   * **読まずに** null のまま渡ってくる（`rolloutReadPlan.js`）。
+   * 判定に**使う直前**で確かめれば、fail closed は 1 ミリも緩まない。
+   */
+  if (pendingJobs === null) {
     return { action: TICK_ACTION.SKIP, reason: TICK_BLOCK.FACTS_UNREADABLE };
   }
 
@@ -122,6 +129,13 @@ export function tickRollout({ state, nowMs, envEnabled, facts, env }) {
   if (pendingHandoffs > 0) {
     if (!canQueue) return { action: TICK_ACTION.SKIP, reason: TICK_BLOCK.GATE_CLOSED_QUEUE, gates };
     return { action: TICK_ACTION.QUEUE, count: pendingHandoffs };
+  }
+  /**
+   * ここから先（queue 待ち・期日・付与）は**台帳の事実**を使う。
+   * 1 つでも数えられていなければ止まる（従来と同じ fail closed）。
+   */
+  if (remaining === null || pendingQueue === null || outstanding === null) {
+    return { action: TICK_ACTION.SKIP, reason: TICK_BLOCK.FACTS_UNREADABLE };
   }
   if (pendingQueue > 0) {
     if (!canQueue) return { action: TICK_ACTION.SKIP, reason: TICK_BLOCK.GATE_CLOSED_QUEUE, gates };
