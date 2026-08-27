@@ -32,8 +32,10 @@ test('【重要】593 名の due でも 1 tick で積むのは 1 ジョブぶん
 });
 
 test('【重要】切ったぶんは数で分かる（黙って打ち切らない）', () => {
-  assert.equal(describeQueueBatch({ recordIds: ids(593), totalDue: 593 }).totalDueRemaining, 493);
-  assert.equal(describeQueueBatch({ recordIds: ids(120), totalDue: 120 }).totalDueRemaining, 20);
+  assert.equal(describeQueueBatch({ recordIds: ids(593), totalDue: 593 }).totalDueRemaining,
+    593 - RECIPIENTS_PER_JOB);
+  assert.equal(describeQueueBatch({ recordIds: ids(120), totalDue: 120 }).totalDueRemaining,
+    120 - RECIPIENTS_PER_JOB);
 });
 
 test('【重要】1 ジョブぶん以下ならそのまま全部積む（無意味に遅くしない）', () => {
@@ -46,11 +48,11 @@ test('【重要】1 ジョブぶん以下ならそのまま全部積む（無意
 
 // ── 窓の残り と 全体の残り を混同しない ─────────────────────────
 test('【重要】truncated=true のとき、窓の残りを「全体の残り」と出さない', () => {
-  // 単一源: 総 due 593 / 窓 500（cap） / 今回 100 を積む
+  // 単一源: 総 due 593 / 窓 500（cap） / 今回 RECIPIENTS_PER_JOB 件を積む
   const r = describeQueueBatch({ recordIds: ids(MAX_RECIPIENTS_PER_SEND), truncated: true, totalDue: 593 });
-  assert.equal(r.queued, 100);
-  assert.equal(r.remainingInWindow, 400, '窓の残りが違う');
-  assert.equal(r.totalDueRemaining, 493, '全体の残りが違う');
+  assert.equal(r.queued, RECIPIENTS_PER_JOB);
+  assert.equal(r.remainingInWindow, MAX_RECIPIENTS_PER_SEND - RECIPIENTS_PER_JOB, '窓の残りが違う');
+  assert.equal(r.totalDueRemaining, 593 - RECIPIENTS_PER_JOB, '全体の残りが違う');
   assert.notEqual(r.remainingInWindow, r.totalDueRemaining, '窓と全体を同じ値にしている');
   assert.equal(r.sourceTruncated, true, '窓が切られていることを出していない');
 });
@@ -59,13 +61,13 @@ test('【重要】総数が分からなければ「全体の残り」を出さ�
   const r = describeQueueBatch({ recordIds: ids(MAX_RECIPIENTS_PER_SEND), truncated: true });
   assert.equal(r.totalDueBefore, null);
   assert.equal(r.totalDueRemaining, null, '総数不明なのに残数を作っている');
-  assert.equal(r.remainingInWindow, 400);
+  assert.equal(r.remainingInWindow, MAX_RECIPIENTS_PER_SEND - RECIPIENTS_PER_JOB);
 });
 
 test('【重要】窓が切られていなければ 窓の残り = 全体の残り', () => {
   const r = describeQueueBatch({ recordIds: ids(300), truncated: false, totalDue: 300 });
-  assert.equal(r.remainingInWindow, 200);
-  assert.equal(r.totalDueRemaining, 200);
+  assert.equal(r.remainingInWindow, 300 - RECIPIENTS_PER_JOB);
+  assert.equal(r.totalDueRemaining, 300 - RECIPIENTS_PER_JOB);
   assert.equal(r.sourceTruncated, false);
 });
 
@@ -89,8 +91,8 @@ test('【重要】summary.dueByStep は窓（cap）に切られない＝全体 d
   const r = describeQueueBatch({
     recordIds: picked.recordIds, truncated: picked.truncated, totalDue: picked.counts[2],
   });
-  assert.equal(r.totalDueRemaining, 150);
-  assert.equal(r.remainingInWindow, 0, '窓 100 件をすべて積んだのに窓の残りが 0 でない');
+  assert.equal(r.totalDueRemaining, 250 - RECIPIENTS_PER_JOB);
+  assert.equal(r.remainingInWindow, 0, '窓のぶんをすべて積んだのに窓の残りが 0 でない');
 });
 
 test('【重要】新しい件数仕様を作らない（既存の分割契約と同じ）', () => {
@@ -105,17 +107,27 @@ test('【重要】単一源が返した順序を変えない（独自の並べ�
 });
 
 test('【重要】残りは次の tick で続く（取り直した集合の先頭から積む）', () => {
-  // 1 tick 目で積んだ 100 人は `queued` になり、単一源の due から外れる
-  const all = ids(250);
-  const first = describeQueueBatch({ recordIds: all }).take;
-  const remainAfterQueue = all.filter((id) => !first.includes(id));   // 単一源の再取得に相当
-  const second = describeQueueBatch({ recordIds: remainAfterQueue }).take;
-  assert.equal(second.length, RECIPIENTS_PER_JOB);
-  // ── 同一 recipient を次 tick で再 queue しない ──
-  assert.equal(second.some((id) => first.includes(id)), false, '同じ人を二度積んでいる');
-  const third = describeQueueBatch({ recordIds: remainAfterQueue.filter((id) => !second.includes(id)) }).take;
-  assert.equal(third.length, 50);
-  assert.equal(new Set([...first, ...second, ...third]).size, 250, '取りこぼし / 重複がある');
+  /*
+   * 1 tick で積むのは `RECIPIENTS_PER_JOB` 件まで。積んだぶんは `queued` になり
+   * 単一源の due から外れるので、次の tick は**残りの先頭から**続く。
+   * ⚠️ 何 tick で終わるかは `RECIPIENTS_PER_JOB` 次第なので、**尽きるまで回して**
+   *    「取りこぼし 0 / 重複 0」を確かめる（定数を変えても壊れない書き方）。
+   */
+  const TOTAL = 250;
+  let remaining = ids(TOTAL);
+  const seen = [];
+  for (let tick = 0; tick < 50 && remaining.length > 0; tick += 1) {
+    const take = describeQueueBatch({ recordIds: remaining }).take;
+    assert.ok(take.length > 0, `tick ${tick} で 1 件も積めていない（進まない）`);
+    assert.ok(take.length <= RECIPIENTS_PER_JOB, '1 tick で 1 ジョブぶんを超えて積んでいる');
+    // ── 同一 recipient を次 tick で再 queue しない ──
+    assert.equal(take.some((id) => seen.includes(id)), false, '同じ人を二度積んでいる');
+    seen.push(...take);
+    remaining = remaining.filter((id) => !take.includes(id));   // 単一源の再取得に相当
+  }
+  assert.equal(remaining.length, 0, '積み残しがある');
+  assert.equal(seen.length, TOTAL, '取りこぼし / 重複がある');
+  assert.equal(new Set(seen).size, TOTAL, '重複がある');
 });
 
 test('宛先ゼロは何も積まない', () => {

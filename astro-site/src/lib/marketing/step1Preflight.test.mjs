@@ -9,6 +9,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { RECIPIENTS_PER_JOB } from './campaignSend.js';
 
 import {
   evaluateStep1Preflight, describeStep1Writes, readStep1Gates, resolveStep1Stage,
@@ -102,9 +103,11 @@ test('押したときに増える行を件数で説明できる（Customers は 
   assert.equal(w.customers.rows, 0, '送信側が Customers を書くことになっている');
 });
 
-test('ジョブ分割は送信側の単位に従う（101 名なら 2 ジョブ）', () => {
-  assert.equal(describeStep1Writes({ recipients: 100 }).scheduledEmails.rows, 1);
-  assert.equal(describeStep1Writes({ recipients: 101 }).scheduledEmails.rows, 2);
+test('ジョブ分割は送信側の単位に従う（1 ジョブぶん + 1 名なら 2 ジョブ）', () => {
+  // ⚠️ 件数を直書きしない。`RECIPIENTS_PER_JOB` は実行時間の予算で変わる
+  assert.equal(describeStep1Writes({ recipients: RECIPIENTS_PER_JOB }).scheduledEmails.rows, 1);
+  assert.equal(describeStep1Writes({ recipients: RECIPIENTS_PER_JOB + 1 }).scheduledEmails.rows, 2);
+  assert.equal(describeStep1Writes({ recipients: RECIPIENTS_PER_JOB * 2 }).scheduledEmails.rows, 2);
   assert.equal(describeStep1Writes({ recipients: 0 }).scheduledEmails.rows, 0);
   assert.equal(describeStep1Writes({ recipients: null }).scheduledEmails.rows, null);
 });
@@ -424,7 +427,7 @@ test('【重要】同じ 10 名を無理に候補へ入れても、重複確認�
 });
 
 /** 次のコホート（100 名・まだ 1 通も出していない）。**本番同等の周辺状態**を与える */
-const freshCohort = (n = 100) => {
+const freshCohort = (n = RECIPIENTS_PER_JOB) => {
   const seq = okSequence();
   seq.next = {
     step: 1, recipients: n, truncated: false, cap: 500,
@@ -453,8 +456,8 @@ test('【重要】次の未 queue コホートは、過去ジョブ有り・窓�
   assert.equal(r.ok, true, `落ちた項目: ${JSON.stringify(failed(r))}`);
   assert.equal(r.plan.step, 1);
   assert.equal(r.plan.recipients, 100);
-  // 100 名 = 1 ジョブ（1 ジョブ最大 100 宛先）
-  assert.equal(r.plan.writes.scheduledEmails.rows, 1);
+  // ⚠️ ジョブ数は `RECIPIENTS_PER_JOB` 次第（件数を直書きしない）
+  assert.equal(r.plan.writes.scheduledEmails.rows, Math.ceil(100 / RECIPIENTS_PER_JOB));
   assert.equal(r.plan.writes.campaignDeliveries.rows, 100);
   assert.equal(r.plan.writes.customers.rows, 0);
 });
