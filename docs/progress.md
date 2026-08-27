@@ -1,3 +1,31 @@
+# 🚨 2026-08-27 — repair の印外しで 100 通が自動送信された（原因と新しい安全境界）
+
+**何が起きたか**: `campaignJobRepair` が不足行を補完したうえ **`queue:unverified` まで外した**。
+その直後の tick で `cron-marketing-rollout`（5 分ごと）が
+`marketing-campaign-dispatch-background` を起動し、**100 通が送信**された
+（`light-trial-to-premium-sequence` v1 step 3 / 13:40:27.816Z）。
+provider 実績は **100 件すべて `delivered`**（bounce・drop・deferred 0）。重複なし（各人 1 通）。
+
+**原因**: 「行を揃える」と「送ってよい状態にする」を 1 操作にまとめていた。
+`queue:unverified` は dispatcher が送信前に見る**最後の栓**で、外す＝**5 分以内に送られる**。
+加えて `rollout` の `killed` / `stage` を read-only で見る経路が無く、**事前に確認できなかった**。
+
+**恒久対策（このPR）**: ①repair（補完だけ・印は外さない）→ ②preview（印を保持したまま
+exact な `wouldSend` / `previewFingerprint` を確認）→ ③promote（件数**と**指紋が一致したときだけ解除）
+の 3 段階へ分離。詳細は `astro-site/docs/MARKETING_ROLLOUT.md` と `docs/decisions.md`。
+
+⚠️ **通常の rollout 自動配信仕様・live dispatcher の契約は変更していない。**
+`preview` は `dryRun` 限定で、`willSend` は 0 のまま（cron の判断は不変）。
+
+## 未完了
+
+1. **この PR の merge / production deploy**（未実行・Draft）
+2. 対象ジョブ②は**既に送信済み**なので repair/promote の対象ではない（PENDING 0 件）
+3. ① `campaign-discount-free` の queued 1 件は**現状維持**（送信経路なし）
+4. **EmailEvents が 0 行**の件は**別件**（このPRに混ぜない）
+
+---
+
 # 🚧 滞留ジョブ② は **未修復**（クローズ禁止・常設）
 
 > **新しいセッションはここから読むこと。** この節が残っている間、②は直っていない。

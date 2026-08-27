@@ -1,3 +1,55 @@
+# 2026-08-27 — 積みかけジョブの解除を repair から分離する
+
+## ⚠️ 積みかけジョブの 3 段階（2026-08-27 の自動送信事故の恒久対策）
+
+**事故**: `campaignJobRepair` が不足行を補完したうえ **`queue:unverified` まで外した**ところ、
+`cron-marketing-rollout`（`schedule '*/5 * * * *'`）が dry-run で `willSend > 0` を見て
+`marketing-campaign-dispatch-background` を起動し、**100 通が自動送信**された。
+provider 実績も 100 件すべて `delivered`。
+
+**原因**: 「行を揃える」と「送ってよい状態にする」を **1 操作にまとめていた**。
+`queue:unverified` は dispatcher が送信前に見る**最後の栓**で、外す＝5 分以内に送られる。
+
+### 安全境界（この順序を崩さない）
+
+| 段 | 操作 | すること | 自動 dispatch |
+|---|---|---|---|
+| ① | `campaignJobRepair` | 不足行の補完**だけ**。**印は絶対に外さない** | **不能** |
+| ② | `marketing-campaign-dispatch`（`dryRun:true`）| 印を保持したまま `preview` を返す | **不能** |
+| ③ | `campaignJobPromote` | **印を外すだけ**（＝送ってよいと決める操作）| 以降は通常どおり |
+
+- ①は `promoteVerifiedJobs` / `clearUnverified` を**呼べない**（guard テストで固定）
+- ②の `preview` は `dryRun` のときだけ。**`willSend` は 0 のまま**なので
+  cron（`readWillSend`）の判断は 1 ミリも変わらない。`wouldSend` / `wouldSkip` /
+  `skipByReason` / `previewFingerprint` を別フィールドで返す
+- ③は **jobId ＋ expectedWillSend ＋ previewFingerprint ＋ 確認文字列**を必須にし、
+  直前に同じ dispatcher で preview を取り直して**件数と指紋の両方**を突き合わせる。
+  どちらか違えば **409 で何も変更しない**
+
+### なぜ件数だけでは足りないか
+
+`expectedWillSend` の一致だけでは「**誰に**送るか」の変化を検出できない。
+100 → 100 のまま**中身が 1 人入れ替わる**（配信停止した人が抜け、別の人が入る）ケースを通す。
+`previewFingerprint` は **送信候補の `DeliveryKey` 集合 ＋ 除外理由**から作るので、
+件数が同じでも中身が違えば変わる。**材料にアドレスは使わない**。
+
+### promote の前提（1 つでも欠けたら何もしない）
+
+配信行が **100/100 揃っている** / ジョブが **PENDING** / **`queue:unverified` が付いている** /
+**1 通も送信済みでない**。
+
+### 解除後に何が起きるかを必ず見せる
+
+`campaignJobPromote` の応答には `rollout.rolloutEnabled` / `dispatchEnabled` /
+`autoSendPossible` と「**解除すると cron により自動送信され得ます**」を含める。
+`rollout`（read-only）にも **`killed` / `stage` / `alwaysArmed` / `armedFor` / `pendingJobIds`**
+と env ゲートの boolean を出す（今回、これらを事前に確認する経路が無かった）。
+
+⚠️ **通常の rollout 自動配信仕様・live dispatcher の契約は一切変えていない。**
+
+
+---
+
 # Architecture and Operational Decisions
 
 本書は `analytics-keiba` の **設計判断の正本（canonical）** である。

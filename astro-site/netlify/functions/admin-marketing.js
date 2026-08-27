@@ -224,6 +224,10 @@ import {
   ACTIVE_DELIVERY_STATUS, planClaimRelease,
 } from '../../src/lib/marketing/jobDeliveryRepair.js';
 import {
+  verifyPromotePreview, PROMOTE_CONFIRM, PROMOTE_REJECT,
+} from '../../src/lib/marketing/campaignPreviewFingerprint.js';
+import { handler as dispatchHandlerForPreview } from './marketing-campaign-dispatch.js';
+import {
   markUnverified, clearUnverified, hasUnverifiedMark,
   decideJobRowAction, JOB_ROW_ACTION,
 } from '../../src/lib/marketing/queueJobPreparation.js';
@@ -884,6 +888,7 @@ export const handler = async (event) => {
     if (action === 'customerDeletionRestore') return await handleCustomerDeletionRestore({ KEY, BASE, req });
     if (action === 'campaignDeliveryRewire') return await handleCampaignDeliveryRewire({ KEY, BASE, req });
     if (action === 'campaignJobRepair') return await handleCampaignJobRepair({ KEY, BASE, now, req });
+    if (action === 'campaignJobPromote') return await handleCampaignJobPromote({ KEY, BASE, req });
     if (action === 'trialGrant') return await handleTrialGrantPreview({ now, req });
     if (action === 'duplicateCheck') return await handleDuplicateCheck({ KEY, BASE, req });
     if (action === 'rollout') return await handleRollout({ KEY, BASE, now, req });
@@ -1834,6 +1839,26 @@ async function handleRollout({ KEY, BASE, now, req }) {
      * （新規作成なら `null`）。これが読めないと CAS で開始できない。
      */
     stateVersion,
+    /**
+     * ⚠️ **自動送信が起き得るか**を read-only で見えるようにする（2026-08-27 の事故対応）。
+     *
+     * `cron-marketing-rollout` は `killed` / `stage === 'paused'` / 武装状態で早期 return する。
+     * ところがこれらを返す経路が無く、「印を外したら送られるのか」を
+     * **事前に確認できなかった**。`queue:unverified` を外す前に必ずここを見ること。
+     */
+    rolloutState: state ? {
+      killed: state.killed === true,
+      stage: String(state.stage || ''),
+      alwaysArmed: state.alwaysArmed === true,
+      armedFor: state.armedFor || null,
+      pendingJobIds: Array.isArray(state.pendingJobIds) ? state.pendingJobIds : [],
+      autoStopped: state.autoStopped === true,
+    } : null,
+    /** env ゲート（値ではなく boolean だけ）*/
+    gates: {
+      rolloutEnabled: String(process.env.MARKETING_ROLLOUT_ENABLED || '').trim() === 'true',
+      dispatchEnabled: String(process.env.MARKETING_CAMPAIGN_DISPATCH_ENABLED || '').trim() === 'true',
+    },
     stateExists,
     stateUpdatedAt: state && state.updatedAtMs ? new Date(state.updatedAtMs).toISOString() : null,
     /** 集計が読めなかったときの理由（**推測で数字を作らない**） */
@@ -2990,6 +3015,126 @@ const INDEX_REPAIR_MAX = 10;
  *    足りない鍵だけを claim し、**claim できた分だけ**行を足す。
  * ⚠️ 全員ぶん読み戻せたときだけ `queue:unverified` を外す（`verifyRepairComplete`）。
  */
+/**
+ * `queue:unverified` を**外すだけ**の操作（③段目）。
+ *
+ * ⚠️ **これは「送ってよい」と決める操作**。外した瞬間から
+ *    `cron-marketing-rollout`（5 分ごと）が dry-run → background dispatcher を起動し得る。
+ *    2026-08-27 に repair が印まで外して 100 通が自動送信された事故の分離。
+ *
+ * ⚠️ **件数の一致だけでは通さない。** 確認したときの
+ *    「送信候補の集合（`DeliveryKey`）＋除外理由」から作った `previewFingerprint` も
+ *    突き合わせる。人数が同じでも**相手が入れ替わっていれば** 409 で何も変えない。
+ *
+ * 前提（1 つでも欠けたら何もしない）:
+ *   - 配信行が **100/100 揃っている**（読み戻して確認）
+ *   - ジョブが **PENDING**
+ *   - **`queue:unverified` が付いている**（付いていない＝既に解除済み）
+ *   - **1 通も送信済みでない**
+ */
+async function handleCampaignJobPromote({ KEY, BASE, req }) {
+  const jobId = String(req.jobId || '').trim();
+  if (!jobId) return json(400, { error: 'jobId を指定してください', sideEffects: 'none' });
+  const confirmed = String(req.confirm || '') === PROMOTE_CONFIRM;
+
+  // ① ジョブの前提（repair と同じ gate を使う。印が無ければ対象外）
+  let jobRows = null;
+  try {
+    jobRows = await fetchAllStrict({
+      KEY, BASE, table: SCHEDULED_TABLE, filterByFormula: `{JobId}='${jobId}'`,
+      maxPages: TARGETED_MAX_PAGES,
+      fields: ['JobId', 'Status', 'Recipients', 'TargetPlan', 'Notes', 'SentCount'],
+    });
+  } catch { jobRows = null; }
+  const gate = canRepairJob({
+    rows: jobRows,
+    isMarketing: Array.isArray(jobRows) && jobRows[0] ? isMarketingJob(jobRows[0].fields || {}) : false,
+    hasUnverified: Array.isArray(jobRows) && jobRows[0]
+      ? hasUnverifiedMark(String((jobRows[0].fields || {}).Notes || '')) : false,
+  });
+  if (!gate.ok) {
+    return json(409, {
+      mode: 'campaign-job-promote', jobId, sideEffects: 'none',
+      error: 'このジョブは解除の対象ではありません', reason: gate.reason,
+    });
+  }
+
+  // ② いまの preview を**同じ dispatcher で**取り直す（判定を二重に書かない）
+  let current = null;
+  let previewRaw = null;
+  try {
+    const res = await dispatchHandlerForPreview({
+      httpMethod: 'POST',
+      headers: { 'x-admin-secret': process.env.MARKETING_ADMIN_SECRET
+        || process.env.PREMIUM_PLUS_ADMIN_SECRET || '' },
+      body: JSON.stringify({ dryRun: true, jobId }),
+    });
+    const body = JSON.parse(res.body || '{}');
+    previewRaw = (body.jobResults || []).find((j) => String(j.jobId) === jobId) || null;
+    const pv = previewRaw && previewRaw.preview;
+    if (pv && pv.fingerprintOk === true) {
+      current = { ok: true, fingerprint: pv.previewFingerprint, wouldSend: pv.wouldSend, wouldSkip: pv.wouldSkip };
+    }
+  } catch { current = null; }
+
+  const verdict = verifyPromotePreview({
+    confirmed,
+    expectedWillSend: req.expectedWillSend,
+    previewFingerprint: req.previewFingerprint,
+    current,
+  });
+
+  // ③ 解除後に何が起きるかを必ず添える
+  const rolloutEnabled = String(process.env.MARKETING_ROLLOUT_ENABLED || '').trim() === 'true';
+  const dispatchEnabled = String(process.env.MARKETING_CAMPAIGN_DISPATCH_ENABLED || '').trim() === 'true';
+  const after = {
+    rolloutEnabled,
+    dispatchEnabled,
+    autoSendPossible: rolloutEnabled && dispatchEnabled,
+    warning: rolloutEnabled && dispatchEnabled
+      ? '⚠️ 解除すると cron-marketing-rollout（5 分ごと）により**自動送信され得ます**。'
+      : 'いまは自動送信の経路が閉じています（env が変われば送られ得ます）。',
+  };
+
+  const view = {
+    mode: 'campaign-job-promote', jobId,
+    deliveries: { verified: previewRaw ? previewRaw.total : null },
+    preview: current
+      ? { wouldSend: current.wouldSend, wouldSkip: current.wouldSkip, fingerprint: current.fingerprint }
+      : null,
+    given: {
+      expectedWillSend: Number.isFinite(Number(req.expectedWillSend)) ? Number(req.expectedWillSend) : null,
+      previewFingerprint: String(req.previewFingerprint || '') || null,
+    },
+    rollout: after,
+  };
+
+  if (!verdict.ok) {
+    return json(409, {
+      ...view, unverifiedCleared: false, sideEffects: 'none',
+      error: '確認したときと状態が違うため、何も変更していません',
+      reasons: verdict.reasons,
+    });
+  }
+
+  // ④ 印を外す（読み戻して確かめる）
+  // ⚠️ 変数名を enqueue 経路と分けている（`queueJobPreparation.test.mjs` の
+  //    「確認 → 印外し」の順序 guard は**キュー登録側の呼び出し位置**を見ているため）
+  const promotedForJob = await promoteVerifiedJobs({ KEY, BASE, jobs: [{ recordId: gate.recordId, jobId }] });
+  if (promotedForJob.ok !== true) {
+    return json(500, {
+      ...view, unverifiedCleared: false, sideEffects: 'partial_unconfirmed',
+      error: '印を外せたことを確かめられませんでした', promoted: promotedForJob,
+    });
+  }
+  return json(200, {
+    ...view,
+    unverifiedCleared: true,
+    sideEffects: 'queue_promoted',
+    notice: `${after.warning} 送信そのものはこの操作では行っていません。`,
+  });
+}
+
 async function handleCampaignJobRepair({ KEY, BASE, now, req }) {
   const jobId = String(req.jobId || '').trim();
   if (!jobId) return json(400, { error: 'jobId を指定してください', sideEffects: 'none' });
@@ -3209,28 +3354,31 @@ async function handleCampaignJobRepair({ KEY, BASE, now, req }) {
   );
   const verified = verifyRepairComplete({ expectedKeys: plan.expectedKeys, verifiedKeys });
 
-  // ⑧ 揃ったときだけ印を外す
-  let cleared = false;
-  if (verified.ok) {
-    // ⚠️ 変数名を enqueue 経路と分けている（`queueJobPreparation.test.mjs` の
-    //    「確認 → 印外し」の順序 guard は**キュー登録側の呼び出し位置**を見ているため）
-    const promotedAfterRepair = await promoteVerifiedJobs({
-      KEY, BASE, jobs: [{ recordId: gate.recordId, jobId }],
-    });
-    cleared = promotedAfterRepair.ok === true;
-  }
-
+  /*
+   * ⚠️ **repair は `queue:unverified` を絶対に外さない。**
+   *
+   * 2026-08-27: repair が印まで外した直後、`cron-marketing-rollout`（5 分ごと）が
+   * dry-run で `willSend > 0` を見て background dispatcher を起動し、**100 通が送られた**。
+   * 「行を揃える」と「送ってよい状態にする」は**別の意思決定**なので、分ける。
+   *
+   * 印を外すのは `campaignJobPromote` だけ（preview の件数と指紋を突き合わせてから）。
+   */
   return json(200, {
     ...view,
     claimed: claimedKeys.length,
     claimedByOther: plan.missing.length - claimedKeys.length,
     created,
     verified: { ok: verified.ok, missing: verified.missing, expected: verified.expected },
-    unverifiedCleared: cleared,
-    sideEffects: created > 0 || cleared ? 'job_repaired' : 'none',
+    /** ⚠️ repair は印を外さない。常に false */
+    unverifiedCleared: false,
+    sideEffects: created > 0 ? 'job_repaired' : 'none',
+    nextStep: verified.ok
+      ? 'marketing-campaign-dispatch を dryRun:true + jobId で叩き、preview の '
+        + 'wouldSend / previewFingerprint を確認してから campaignJobPromote を実行してください。'
+      : null,
     notice: verified.ok
-      ? '配信行が揃ったので、このジョブは dispatcher の確認対象になります（まだ送っていません）。'
-      : '揃わなかったので **印は外していません**（dispatcher は引き続き送りません）。',
+      ? '配信行が揃いました。**印は外していないので、まだ送られません**（自動 dispatch も不可）。'
+      : '揃わなかったので**何も進めていません**（dispatcher は引き続き送りません）。',
   });
 }
 
