@@ -114,16 +114,17 @@ export function blockKindForState(state) {
 /**
  * @param {{ cmd: (args: string[]) => Promise<any> }} deps Upstash REST 相当
  */
-export function createProspectStore({ cmd } = {}) {
+export function createProspectStore({ cmd, pipeline } = {}) {
   if (typeof cmd !== 'function') throw new Error('createProspectStore: cmd が必要です');
   const state = { commands: 0, keysTouched: new Set() };
 
   /** `ak:prospect:` 配下以外は拒否する */
-  const assertKey = (key) => {
+  const assertKeyName = (key) => {
     const k = String(key ?? '');
     if (!k.startsWith(PROSPECT_ROOT)) throw new ProspectStoreError(STORE_FAIL.OUT_OF_NAMESPACE, k.slice(0, 48));
     return k;
   };
+  const assertKey = assertKeyName;
 
   const OPS = ['GET', 'SET', 'DEL', 'EXISTS', 'SADD', 'SREM', 'SMEMBERS', 'SCARD', 'MGET', 'SISMEMBER'];
   const call = async (args, failCode) => {
@@ -187,7 +188,7 @@ export function createProspectStore({ cmd } = {}) {
   };
 
   return {
-    state, assertKey,
+    state, assertKey: assertKeyName,
 
     async load(email) {
       return parse(await call(['GET', prospectKey(emailHash(email))], STORE_FAIL.DATA_CORRUPT));
@@ -205,6 +206,89 @@ export function createProspectStore({ cmd } = {}) {
         const p = parse(r);
         return p ? { ...p, hash: list[i] } : null;
       }).filter(Boolean);
+    },
+
+    /**
+     * **まとめて**新規追加する（移行の投入用）。
+     *
+     * ── なぜ要るか ────────────────────────────────────────────
+     * `addIfAbsent()` は 1 件につき EXISTS → GET → SET → SADD → SREM ×2 と
+     * 往復が 6 回ある。100 件で 600 往復になり、**Function の実行時間を超える**
+     * （2026-08-27 に本番で 504。88 件書けたところで gateway が切った）。
+     *
+     * まとめ読み（MGET）とまとめ書き（pipeline）にすると **1 ページ 5 往復**で済む。
+     *
+     * ── 守っていること（`addIfAbsent` と同じ）──────────────────
+     *   - **抑止台帳に載っている相手は復活させない**
+     *   - **既にあるレコードは上書きしない**（送信回数・除外を消さない）
+     *   - 書いたあと**読み戻して**確かめる（確かめられない件数を返す）
+     *
+     * ⚠️ この経路は **NEW / SENDING のレコードだけ**を対象にする。
+     *    EXHAUSTED / SUPPRESSED は抑止台帳への追記が要るので `addIfAbsent` を使う。
+     *
+     * @returns {Promise<{added:number, existed:number, blocked:number,
+     *                    failed:number, unverified:number}>}
+     */
+    async addManyIfAbsent(prospects) {
+      const list = (Array.isArray(prospects) ? prospects : []).filter((p) => p && p.email);
+      const out = { added: 0, existed: 0, blocked: 0, failed: 0, unverified: 0 };
+      if (list.length === 0) return out;
+
+      // ⚠️ 状態を確かめる（この経路は配信候補の投入だけを扱う）
+      for (const p of list) {
+        if (p.state !== PROSPECT_STATE.NEW && p.state !== PROSPECT_STATE.SENDING) {
+          throw new ProspectStoreError(STORE_FAIL.DATA_CORRUPT, 'unsupported_state_for_bulk');
+        }
+      }
+      const hashes = list.map((p) => emailHash(p.email));
+
+      // 1) 抑止台帳（**復活させない**）。MGET は null = 載っていない
+      const blockedRaw = await call(['MGET', ...hashes.map(blockedKey)], STORE_FAIL.DATA_CORRUPT);
+      if (!Array.isArray(blockedRaw) || blockedRaw.length !== hashes.length) {
+        throw new ProspectStoreError(STORE_FAIL.DATA_CORRUPT, 'blocked_mget');
+      }
+      // 2) 既存レコード（**上書きしない**）
+      const curRaw = await call(['MGET', ...hashes.map(prospectKey)], STORE_FAIL.DATA_CORRUPT);
+      if (!Array.isArray(curRaw) || curRaw.length !== hashes.length) {
+        throw new ProspectStoreError(STORE_FAIL.DATA_CORRUPT, 'current_mget');
+      }
+
+      const fresh = [];
+      list.forEach((p, i) => {
+        if (blockedRaw[i] !== null && blockedRaw[i] !== undefined) { out.blocked += 1; return; }
+        if (curRaw[i] !== null && curRaw[i] !== undefined) { out.existed += 1; return; }
+        fresh.push({ hash: hashes[i], data: pick(p, PROSPECT_FIELDS) });
+      });
+      if (fresh.length === 0) return out;
+
+      // 3) まとめ書き。**pipeline が無ければ 1 件ずつ**（遅いが正しい）
+      const writes = fresh.map((f) => ['SET', prospectKey(f.hash), JSON.stringify(f.data)]);
+      if (typeof pipeline === 'function') {
+        for (const k of writes) assertKeyName(k[1]);
+        const res = await pipeline(writes);
+        if (!Array.isArray(res) || res.length !== writes.length) {
+          throw new ProspectStoreError(STORE_FAIL.UNKNOWN_RESULT, 'pipeline_write');
+        }
+      } else {
+        for (const w of writes) {
+          // eslint-disable-next-line no-await-in-loop -- pipeline が無いときの退避経路
+          await call(w);
+        }
+      }
+      // 索引は 1 コマンドでまとめて張る（NEW / SENDING は送信候補）
+      await call(['SADD', ACTIVE_INDEX, ...fresh.map((f) => f.hash)]);
+      await call(['SREM', ENGAGED_INDEX, ...fresh.map((f) => f.hash)]);
+
+      // 4) **読み戻して確かめる**（例外が出なかったことは書けた証拠にならない）
+      const check = await call(['MGET', ...fresh.map((f) => prospectKey(f.hash))], STORE_FAIL.DATA_CORRUPT);
+      if (!Array.isArray(check) || check.length !== fresh.length) {
+        throw new ProspectStoreError(STORE_FAIL.DATA_CORRUPT, 'verify_mget');
+      }
+      check.forEach((v) => {
+        if (v === null || v === undefined) out.unverified += 1;
+        else out.added += 1;
+      });
+      return out;
     },
 
     /**

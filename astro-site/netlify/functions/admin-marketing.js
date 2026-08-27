@@ -2778,22 +2778,31 @@ async function handleProspectIntake({ KEY, BASE, now, req }) {
   // 6) 書き込み（**Customers は 1 件も触らない**）
   let store; let ledger;
   try {
-    store = createProspectStore({ cmd: makeRedisCmd(process.env) });
-    ledger = createDeliveryKeyStore({ redisCmd: makeRedisCmd(process.env) });
+    // ⚠️ 1 件ずつ書くと 1 ページで 600 往復になり **Function の実行時間を超える**
+    //    （2026-08-27 に本番で 504）。pipeline を渡してまとめ書きにする。
+    store = createProspectStore({
+      cmd: makeRedisCmd(process.env), pipeline: makeRedisPipeline(process.env),
+    });
+    ledger = createDeliveryKeyStore({
+      redisCmd: makeRedisCmd(process.env), redisPipeline: makeRedisPipeline(process.env),
+    });
   } catch {
     return json(500, { ...view, error: 'Redis へ接続できません', sideEffects: 'none' });
   }
 
-  let added = 0; let existed = 0; let blocked = 0; let failed = 0;
-  for (const p of plan.prospects) {
-    try {
-      // eslint-disable-next-line no-await-in-loop -- 1 件ずつ（部分成功を把握するため）
-      const r = await store.addIfAbsent(p);
-      if (r.blocked) blocked += 1;
-      else if (r.added) added += 1;
-      else existed += 1;
-    } catch { failed += 1; }
+  let added = 0; let existed = 0; let blocked = 0; let failed = 0; let unverified = 0;
+  try {
+    const r = await store.addManyIfAbsent(plan.prospects);
+    added = r.added; existed = r.existed; blocked = r.blocked; unverified = r.unverified;
+  } catch (e) {
+    // ⚠️ 途中まで書けている可能性がある。**成功と言わない**（再実行は冪等）
+    return json(500, {
+      ...view, sideEffects: 'partial_unconfirmed',
+      error: 'prospect の投入を確定できませんでした（再実行してください。既存分は上書きされません）',
+      detail: String((e && e.message) || '').slice(0, 120),
+    });
   }
+  if (unverified > 0) failed = unverified;
 
   // 7) 既送信の鍵を台帳へ（**読み戻して確かめる**）
   const scope = { brand: BRAND, campaignId: campaign.campaignId, version: campaign.version };
@@ -2814,7 +2823,7 @@ async function handleProspectIntake({ KEY, BASE, now, req }) {
   return json(200, {
     ...view,
     sideEffects: 'redis_written',
-    written: { added, existed, blocked, failed },
+    written: { added, existed, blocked, failed, unverified },
     ledger: { keys: plan.ledgerKeys.length, added: ledgerAdded, unverified: ledgerMissing },
     customersDeleted: 0,
     notice: 'prospect プールへ投入しました。**Customers は 1 件も削除していません**（削除は別承認）。',
