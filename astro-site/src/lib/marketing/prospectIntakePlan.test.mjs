@@ -249,7 +249,7 @@ test('まとめ書き: 新規だけ追加し、読み戻して確かめる', asy
   const r = fakeRedis();
   const store = createProspectStore({ cmd: r.cmd, pipeline: r.pipeline });
   const res = await store.addManyIfAbsent([mk('a@x.com'), mk('b@x.com')]);
-  assert.deepEqual(res, { added: 2, existed: 0, blocked: 0, failed: 0, unverified: 0 });
+  assert.deepEqual(res, { added: 2, existed: 0, blocked: 0, failed: 0, unverified: 0, reindexed: 0 });
   assert.equal((await store.load('a@x.com')).email, 'a@x.com');
   assert.deepEqual((await store.activeHashes()).sort(), [emailHash('a@x.com'), emailHash('b@x.com')].sort());
 });
@@ -260,7 +260,7 @@ test('⚠️ まとめ書き: 既にあるレコードは上書きしない（�
   const p = mk('a@x.com'); p.sends = 3; p.delivered = 2; p.state = PS.SENDING;
   await store.addManyIfAbsent([p]);
   const again = await store.addManyIfAbsent([mk('a@x.com')]);   // sends 0 の新品
-  assert.deepEqual(again, { added: 0, existed: 1, blocked: 0, failed: 0, unverified: 0 });
+  assert.deepEqual(again, { added: 0, existed: 1, blocked: 0, failed: 0, unverified: 0, reindexed: 1 });
   const cur = await store.load('a@x.com');
   assert.equal(cur.sends, 3, '上書きされている');
   assert.equal(cur.delivered, 2);
@@ -313,4 +313,35 @@ test('guard: 投入ハンドラはまとめ書きを使っている（1 件ず�
   const i = FN.indexOf('async function handleProspectIntake');
   const body = FN.slice(i, i + 9000);
   assert.doesNotMatch(body, /for \(const p of plan\.prospects\)/, '1 件ずつ書いている');
+});
+
+test('⚠️【本番で起きた】レコードはあるが索引に無い行を、索引へ載せ直す', async () => {
+  const r = fakeRedis();
+  const store = createProspectStore({ cmd: r.cmd, pipeline: r.pipeline });
+  await store.addManyIfAbsent([mk('a@x.com'), mk('b@x.com')]);
+
+  // gateway timeout で SET は通ったが SADD が走らなかった状態を作る
+  await r.cmd(['SREM', 'ak:prospect:index:active', emailHash('a@x.com')]);
+  assert.equal((await store.activeHashes()).length, 1, '前提: 索引から 1 件消えている');
+  assert.notEqual(await store.load('a@x.com'), null, '前提: レコード自体は残っている');
+
+  const res = await store.addManyIfAbsent([mk('a@x.com'), mk('b@x.com')]);
+  assert.equal(res.added, 0);
+  assert.equal(res.existed, 2);
+  assert.equal(res.reindexed, 2, '既存ぶんを索引へ載せ直していない');
+  assert.equal((await store.activeHashes()).length, 2, '⚠️ 配信候補から永久に外れたまま');
+});
+
+test('⚠️ 索引の載せ直しは配信候補の状態にだけ効く（除外済みを復活させない）', async () => {
+  const r = fakeRedis();
+  const store = createProspectStore({ cmd: r.cmd, pipeline: r.pipeline });
+  await store.addIfAbsent(mk('s@x.com'));
+  await store.recordSuppression({ email: 's@x.com', nowMs: NOW, reason: 'bounce' });
+  assert.equal((await store.activeHashes()).length, 0, '前提: 除外済みは索引に居ない');
+
+  // 抑止台帳に載っているので blocked。索引へ戻さない
+  const res = await store.addManyIfAbsent([mk('s@x.com')]);
+  assert.equal(res.blocked, 1);
+  assert.equal(res.reindexed, 0);
+  assert.deepEqual(await store.activeHashes(), []);
 });

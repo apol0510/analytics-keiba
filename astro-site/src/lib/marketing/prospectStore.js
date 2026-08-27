@@ -227,11 +227,11 @@ export function createProspectStore({ cmd, pipeline } = {}) {
      *    EXHAUSTED / SUPPRESSED は抑止台帳への追記が要るので `addIfAbsent` を使う。
      *
      * @returns {Promise<{added:number, existed:number, blocked:number,
-     *                    failed:number, unverified:number}>}
+     *                    failed:number, unverified:number, reindexed:number}>}
      */
     async addManyIfAbsent(prospects) {
       const list = (Array.isArray(prospects) ? prospects : []).filter((p) => p && p.email);
-      const out = { added: 0, existed: 0, blocked: 0, failed: 0, unverified: 0 };
+      const out = { added: 0, existed: 0, blocked: 0, failed: 0, unverified: 0, reindexed: 0 };
       if (list.length === 0) return out;
 
       // ⚠️ 状態を確かめる（この経路は配信候補の投入だけを扱う）
@@ -254,12 +254,35 @@ export function createProspectStore({ cmd, pipeline } = {}) {
       }
 
       const fresh = [];
+      /**
+       * 既にレコードがある相手でも、**索引に載っているとは限らない**。
+       *
+       * ⚠️ 2026-08-27 の本番投入で実際に起きた: 1 件目のページが gateway timeout で
+       *    切れたとき、`SET` は通ったが索引への `SADD` が走らなかったレコードが 1 件残り、
+       *    そのまま「既にある」として索引へ載らないままになった
+       *    （＝**配信候補から永久に外れる**。送信漏れ）。
+       *    索引への追加は冪等なので、**既存ぶんも必ず載せ直す**。
+       */
+      const reindex = [];
       list.forEach((p, i) => {
         if (blockedRaw[i] !== null && blockedRaw[i] !== undefined) { out.blocked += 1; return; }
-        if (curRaw[i] !== null && curRaw[i] !== undefined) { out.existed += 1; return; }
+        if (curRaw[i] !== null && curRaw[i] !== undefined) {
+          out.existed += 1;
+          // 保存済みの状態が配信候補なら索引へ載せ直す（別状態には触らない）
+          let cur = null;
+          try { cur = typeof curRaw[i] === 'object' ? curRaw[i] : JSON.parse(curRaw[i]); } catch { cur = null; }
+          const st = cur && cur.state;
+          if (st === PROSPECT_STATE.NEW || st === PROSPECT_STATE.SENDING) reindex.push(hashes[i]);
+          return;
+        }
         fresh.push({ hash: hashes[i], data: pick(p, PROSPECT_FIELDS) });
       });
-      if (fresh.length === 0) return out;
+      if (fresh.length === 0 && reindex.length === 0) return out;
+      if (fresh.length === 0) {
+        await call(['SADD', ACTIVE_INDEX, ...reindex]);
+        out.reindexed = reindex.length;
+        return out;
+      }
 
       // 3) まとめ書き。**pipeline が無ければ 1 件ずつ**（遅いが正しい）
       const writes = fresh.map((f) => ['SET', prospectKey(f.hash), JSON.stringify(f.data)]);
@@ -275,9 +298,12 @@ export function createProspectStore({ cmd, pipeline } = {}) {
           await call(w);
         }
       }
-      // 索引は 1 コマンドでまとめて張る（NEW / SENDING は送信候補）
-      await call(['SADD', ACTIVE_INDEX, ...fresh.map((f) => f.hash)]);
+      // 索引は 1 コマンドでまとめて張る（NEW / SENDING は送信候補）。
+      // ⚠️ **既存ぶん（reindex）も一緒に載せる**（索引だけ欠けた行を取りこぼさない）
+      const toIndex = [...fresh.map((f) => f.hash), ...reindex];
+      await call(['SADD', ACTIVE_INDEX, ...toIndex]);
       await call(['SREM', ENGAGED_INDEX, ...fresh.map((f) => f.hash)]);
+      out.reindexed = reindex.length;
 
       // 4) **読み戻して確かめる**（例外が出なかったことは書けた証拠にならない）
       const check = await call(['MGET', ...fresh.map((f) => prospectKey(f.hash))], STORE_FAIL.DATA_CORRUPT);

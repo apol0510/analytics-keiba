@@ -425,11 +425,17 @@ export function buildSequenceProgress({
  * **1 回の実行で送るのは 1 ステップだけ**にする（複数ステップを混ぜると、
  * 1 人に 2 通同時に届く事故が起きうる）。いちばん小さい due ステップを返す。
  *
+ * `minStep` を渡すと、それ未満のステップは**候補から外す**。
+ * 初回接触（step1）を自動で撃たない運用のとき、step1 待ちの人が居るせいで
+ * **step2 以降が永久に止まる**のを避けるために使う。
+ *
  * @returns {{step:number|null, recordIds:string[], emails:string[], counts:object}}
  */
-export function selectNextDueStep(progress, { maxRecipients } = {}) {
+export function selectNextDueStep(progress, { maxRecipients, minStep } = {}) {
   if (!progress || progress.ok !== true) return { step: null, recordIds: [], emails: [], counts: {} };
-  const due = progress.rows.filter((r) => r.status === SEQ_STATUS.DUE && Number.isInteger(r.nextStep));
+  const floor = Number.isInteger(minStep) && minStep > 0 ? minStep : 1;
+  const due = progress.rows.filter((r) => r.status === SEQ_STATUS.DUE
+    && Number.isInteger(r.nextStep) && r.nextStep >= floor);
   if (due.length === 0) return { step: null, recordIds: [], emails: [], counts: progress.summary.dueByStep };
 
   const step = Math.min(...due.map((r) => r.nextStep));

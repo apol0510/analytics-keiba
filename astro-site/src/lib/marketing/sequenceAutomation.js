@@ -138,13 +138,32 @@ export function planSequenceTick({
   }
   if (!progress || progress.ok !== true) return { ok: false, abort: TICK_ABORT.NOT_A_SEQUENCE };
 
-  const next = selectNextDueStep(progress);
+  let next = selectNextDueStep(progress);
   if (!next.step || next.recordIds.length === 0) {
     return { ok: false, abort: TICK_ABORT.NO_DUE, counts: progress.summary.dueByStep };
   }
-  // 初回接触は自動で撃たない（母集団が最大になるため）
+  // ── 初回接触は自動で撃たない（母集団が最大になるため）────────────────
+  //
+  // ⚠️ **step1 待ちが居ても step2 以降を止めない**（2026-08-27 修正）。
+  //    以前は「いちばん小さい due が 1 なら中止」だったため、step1 未送信の人が
+  //    1 人でも対象に居ると **その campaign の配信が丸ごと止まった**。
+  //    prospect プールを対象に含めた結果、台帳に行が無い人（＝step1 待ち）が
+  //    対象へ入り、**8/31 の 2 通目が 1 通も出ない**状態になっていた（実測で確認）。
+  //
+  //    ここで守りたいのは「初回接触を自動で撃たない」ことだけなので、
+  //    **step1 を飛ばして次に小さい due ステップを選ぶ**。step1 待ちの人は
+  //    従来どおり手動でしか送られない（人数は `firstStepPending` で必ず返す）。
+  let firstStepPending = 0;
   if (next.step === 1 && allowFirstStep !== true) {
-    return { ok: false, abort: TICK_ABORT.FIRST_STEP_MANUAL, step: 1, counts: progress.summary.dueByStep };
+    firstStepPending = next.recordIds.length;
+    const later = selectNextDueStep(progress, { minStep: 2 });
+    if (!later.step || later.recordIds.length === 0) {
+      return {
+        ok: false, abort: TICK_ABORT.FIRST_STEP_MANUAL, step: 1,
+        firstStepPending, counts: progress.summary.dueByStep,
+      };
+    }
+    next = later;
   }
   // ── 上限を超えたときの扱い ────────────────────────────────────
   //
@@ -177,6 +196,8 @@ export function planSequenceTick({
     carriedOver,
     /** その step で送るべき総数（進捗の分母） */
     dueTotal: next.recordIds.length,
+    /** 手動待ちの初回接触（**自動では送らない**。0 なら該当なし） */
+    firstStepPending,
     counts: progress.summary.dueByStep,
   };
 }
@@ -190,6 +211,7 @@ export function summarizeSequenceTick({ campaignId, plan, enqueued = 0, failed =
     登録: enqueued,
     失敗: failed,
     中止: plan && plan.ok ? null : (plan && plan.abort) || 'unknown',
+    ...(plan && plan.firstStepPending ? { '初回接触待ち': plan.firstStepPending } : {}),
   };
 }
 
