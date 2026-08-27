@@ -65,6 +65,20 @@ console.log(JSON.stringify({ totals, indexSizes }, null, 1));
 const nowhere = details.filter((d) => d.place === 'nowhere');
 const other = details.filter((d) => d.place !== 'nowhere');
 
+/*
+ * ⚠️ **「索引に居ない」には 2 種類ある。混ぜて扱わない。**
+ *
+ *   - `hasRecord: false` … そもそも**投入していない**人。移行の判定で除外された
+ *     （下見→投入の間に開封した等）。**正常**。これで異常終了しない
+ *   - `hasRecord: true`  … **レコードは在るのに索引に居ない**。2026-08-27 の事故と同じ形。
+ *     送信候補から漏れており、Customers を消すと復元手段が無くなる。**これだけが異常**
+ *
+ * 以前は両方をまとめて異常終了させていたため、正当な除外 3 件でも「✖」と出て
+ * 「異常なのか正常なのか運用側で判断できない」状態だった。
+ */
+const orphans = nowhere.filter((d) => d.hasRecord === true);
+const notInserted = nowhere.filter((d) => d.hasRecord !== true);
+
 if (other.length) {
   console.log(`\n送信候補ではないが索引には居る: ${other.length} 件`);
   for (const d of other.slice(0, 20)) {
@@ -72,14 +86,21 @@ if (other.length) {
   }
 }
 
-if (nowhere.length === 0) {
-  console.log('\n✅ どの索引にも居ない hash は 0 件');
+if (notInserted.length) {
+  console.log(`\nℹ️ 投入していない hash: ${notInserted.length} 件（**正常**・移行判定で除外された人）`);
+  for (const d of notInserted.slice(0, 20)) console.log(` ・${d.hash.slice(0, 12)}… hasRecord=false`);
+}
+
+if (orphans.length === 0) {
+  console.log(`\n✅ レコードが在るのに索引に居ない hash は 0 件`
+    + `（索引 ${indexSizes.active} 件 / 投入していない ${notInserted.length} 件は正常）`);
   process.exit(0);
 }
 
-console.log(`\n⚠️ どの索引にも居ない hash: ${nowhere.length} 件`);
-for (const d of nowhere) {
-  console.log(` ・${d.hash} hasRecord=${d.hasRecord} ${JSON.stringify(d.record || {})}`);
+console.log(`\n⚠️ レコードは在るのに索引に居ない hash: ${orphans.length} 件`);
+for (const d of orphans) {
+  console.log(` ・${d.hash} hasRecord=true ${JSON.stringify(d.record || {})}`);
 }
 console.error('\n✖ 索引から欠けている hash がある。Customers は削除できない。');
+console.error('   直すには: node scripts/repair-prospect-index.mjs --apply <hash>');
 process.exit(1);

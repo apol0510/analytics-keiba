@@ -141,6 +141,10 @@ import { hydrateProspectSequenceInputs } from '../../src/lib/marketing/prospectS
 import {
   auditProspectIndex, normalizeHashes, safeRecordView,
 } from '../../src/lib/marketing/prospectIndexAudit.js';
+import {
+  planCustomerDeletion, canDeleteCustomers, reconcileDeletionTargets,
+  DELETE_CONFIRM, DELETE_MAX_PER_CALL,
+} from '../../src/lib/marketing/customerDeletionPlan.js';
 import { compareSequenceParity } from '../../src/lib/marketing/sequenceParity.js';
 import { makeRedisPipeline } from '../../src/lib/marketing/deliveryKeyStore.js';
 import { IMPORT_SOURCE_PREFIX } from '../../src/lib/marketing/importCohort.js';
@@ -864,6 +868,9 @@ export const handler = async (event) => {
     if (action === 'prospectSequenceCheck') return await handleProspectSequenceCheck({ now, req });
     if (action === 'prospectIndexAudit') return await handleProspectIndexAudit({ req });
     if (action === 'prospectIndexRepair') return await handleProspectIndexRepair({ req });
+    if (action === 'customerDeletionPlan') return await handleCustomerDeletionPlan({ KEY, BASE, req });
+    if (action === 'customerDeletionApply') return await handleCustomerDeletionApply({ KEY, BASE, req });
+    if (action === 'customerDeletionRestore') return await handleCustomerDeletionRestore({ KEY, BASE, req });
     if (action === 'trialGrant') return await handleTrialGrantPreview({ now, req });
     if (action === 'duplicateCheck') return await handleDuplicateCheck({ KEY, BASE, req });
     if (action === 'rollout') return await handleRollout({ KEY, BASE, now, req });
@@ -2950,6 +2957,302 @@ const INDEX_REPAIR_MAX = 10;
  *
  * ⚠️ 既定は**下見**。`apply: true` ＋ 確認文字列が揃ったときだけ書く。
  */
+/** 復元を許す確認文字列 */
+const RESTORE_CONFIRM = 'RESTORE CUSTOMERS FROM EXPORT';
+
+/**
+ * 控え（export）から Customers を作り直す（**rollback 専用**）。
+ *
+ * ⚠️ **同じアドレスの行が既に在れば作らない**（二重作成しない・冪等）。
+ * ⚠️ recordId は Airtable が新しく振る（元の id には戻せない）。
+ *    prospect 側は hash（アドレス由来）で紐づくので、配信の継続性には影響しない。
+ */
+async function handleCustomerDeletionRestore({ KEY, BASE, req }) {
+  const rows = (Array.isArray(req.records) ? req.records : [])
+    .map((r) => ({ fields: (r && r.fields) || {} }))
+    .filter((r) => String(r.fields.Email || '').trim());
+  if (rows.length === 0) {
+    return json(400, { error: 'records（fields.Email 必須）を渡してください', sideEffects: 'none' });
+  }
+  if (rows.length > DELETE_MAX_PER_CALL) {
+    return json(400, {
+      error: `一度に復元できるのは ${DELETE_MAX_PER_CALL} 件までです`, sideEffects: 'none',
+    });
+  }
+  const confirmed = String(req.confirm || '') === RESTORE_CONFIRM;
+  const apply = req.apply === true && confirmed;
+
+  // 既に在るアドレスは作らない
+  const emails = rows.map((r) => String(r.fields.Email).trim().toLowerCase());
+  let existing = new Set();
+  try {
+    const found = await fetchCustomersByEmails({ KEY, BASE, emails });
+    existing = new Set(found.map((e) => e.toLowerCase()));
+  } catch (e) {
+    return json(500, {
+      error: '既存 Customers を確認できませんでした（**作らずに中止**）',
+      detail: String((e && e.message) || '').slice(0, 120), sideEffects: 'none',
+    });
+  }
+  const toCreate = rows.filter((r) => !existing.has(String(r.fields.Email).trim().toLowerCase()));
+
+  const view = {
+    mode: apply ? 'customer-restore' : 'customer-restore-dry-run',
+    requested: rows.length, alreadyPresent: rows.length - toCreate.length,
+    toCreate: toCreate.length, confirmed,
+  };
+  if (!apply) {
+    return json(200, {
+      ...view, created: 0, sideEffects: 'none',
+      notice: 'これは下見です。**1 件も作っていません**（apply と確認文字列が要ります）。',
+    });
+  }
+
+  let created = 0; const failed = [];
+  for (let i = 0; i < toCreate.length; i += 10) {
+    const chunk = toCreate.slice(i, i + 10);
+    try {
+      const url = `https://api.airtable.com/v0/${BASE}/${encodeURIComponent(CUSTOMERS_TABLE)}`;
+      // eslint-disable-next-line no-await-in-loop -- 10 件ずつ（Airtable の上限）
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { ...authHeaders(KEY), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ records: chunk, typecast: true }),
+      });
+      if (!res.ok) throw new Error(`restore_${res.status}`);
+      // eslint-disable-next-line no-await-in-loop
+      const j = await res.json();
+      created += (j.records || []).length;
+    } catch (e) {
+      failed.push(String((e && e.message) || '').slice(0, 80));
+    }
+  }
+  return json(200, {
+    ...view, created, failed: failed.length,
+    sideEffects: created > 0 ? 'customers_created' : 'none',
+    notice: 'recordId は新しく振られます（prospect は hash で紐づくため配信に影響しません）。',
+  });
+}
+
+/** アドレスで既存 Customers を引く（復元の二重作成防止）*/
+async function fetchCustomersByEmails({ KEY, BASE, emails }) {
+  const list = [...new Set((emails || []).map((e) => String(e || '').trim().toLowerCase()))]
+    .filter(Boolean);
+  const out = [];
+  for (let i = 0; i < list.length; i += 50) {
+    const chunk = list.slice(i, i + 50);
+    const formula = `OR(${chunk.map((e) => `LOWER({Email})='${e.replace(/'/g, "\\'")}'`).join(',')})`;
+    const url = new URL(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(CUSTOMERS_TABLE)}`);
+    url.searchParams.set('pageSize', '100');
+    url.searchParams.set('filterByFormula', formula);
+    url.searchParams.set('fields[]', 'Email');
+    // eslint-disable-next-line no-await-in-loop -- 50 件ずつ
+    const res = await fetch(url, { headers: authHeaders(KEY) });
+    if (!res.ok) throw new Error(`customers_by_email_${res.status}`);
+    // eslint-disable-next-line no-await-in-loop
+    const j = await res.json();
+    for (const r of j.records || []) out.push(String((r.fields || {}).Email || ''));
+  }
+  return out;
+}
+
+/** 1 回で見る Customers の件数（Redis 突き合わせが 2 往復で収まる大きさ）*/
+const DELETION_PAGE_SIZE = 100;
+
+/**
+ * 削除計画の材料を 1 ページぶん集める（**読み取りのみ**）。
+ * `plan` と `apply` の両方がこれを使うので、**判定が 2 通りに割れない**。
+ */
+async function buildDeletionPageInputs({ KEY, BASE, offset, ids }) {
+  const page = ids && ids.length > 0
+    ? await fetchCustomersByIds({ KEY, BASE, ids })
+    : await fetchCustomersPage({
+      KEY, BASE, offset, pageSize: DELETION_PAGE_SIZE,
+      filterByFormula: `LEFT({Source}, ${IMPORT_SOURCE_PREFIX.length}) = '${IMPORT_SOURCE_PREFIX}'`,
+    });
+  const records = page.records;
+  const emails = records
+    .map((r) => String((r.fields || {}).Email || '').trim().toLowerCase()).filter(Boolean);
+
+  // 開封（**読めなければ後段で中止**）
+  const signals = await loadEngagementSignals();
+  const engagementApplied = signals.available === true;
+  const openHashes = engagementApplied && signals.openByHash instanceof Map
+    ? new Set(signals.openByHash.keys()) : null;
+  const clickHashes = engagementApplied && signals.clickByHash instanceof Map
+    ? new Set(signals.clickByHash.keys()) : null;
+  const engagedEmails = new Set();
+  if (engagementApplied) {
+    for (const e of emails) {
+      const h = hashEmailForSignal(e);
+      if (openHashes.has(h) || clickHashes.has(h)) engagedEmails.add(e);
+    }
+  }
+
+  // prospect プールと索引（**読めなければ null のまま渡して中止させる**）
+  let prospectByHash = null; let activeByHash = null;
+  try {
+    const store = createProspectStore({
+      cmd: makeRedisCmd(process.env), pipeline: makeRedisPipeline(process.env),
+    });
+    const hashes = emails.map((e) => emailHash(e));
+    const loaded = await store.loadMany(hashes);
+    prospectByHash = new Map(loaded.map((p) => [p.hash, p]));
+    activeByHash = await store.activeMembership(hashes);
+  } catch {
+    prospectByHash = null; activeByHash = null;
+  }
+
+  return {
+    page, records, engagementApplied, engagedEmails, prospectByHash, activeByHash,
+  };
+}
+
+/**
+ * 消してよい Customers を数える（**読み取りのみ**）。
+ *
+ * ⚠️ 応答に **`export` を含めるとアドレスが入る**（控えを取るために必要）。
+ *    端末のファイルへ保存する用途のみ。ログや画面へ出さないこと。
+ */
+async function handleCustomerDeletionPlan({ KEY, BASE, req }) {
+  const offset = String(req.offset || '').trim() || undefined;
+  const withExport = req.withExport === true;
+  let inputs;
+  try {
+    inputs = await buildDeletionPageInputs({ KEY, BASE, offset });
+  } catch (e) {
+    return json(500, {
+      error: 'Customers を読めませんでした',
+      detail: String((e && e.message) || '').slice(0, 120), sideEffects: 'none',
+    });
+  }
+  const plan = planCustomerDeletion({
+    records: inputs.records,
+    engagedEmails: inputs.engagedEmails,
+    engagementApplied: inputs.engagementApplied,
+    prospectByHash: inputs.prospectByHash,
+    activeByHash: inputs.activeByHash,
+    hashOf: emailHash,
+  });
+
+  const byId = new Map(inputs.records.map((r) => [r.id, r]));
+  return json(200, {
+    mode: 'customer-deletion-plan',
+    sideEffects: 'none',
+    page: { size: inputs.records.length, nextOffset: inputs.page.offset || null },
+    ok: plan.ok,
+    abort: plan.abort,
+    checked: plan.checked,
+    deletable: plan.deletableIds.length,
+    deletableIds: plan.deletableIds,
+    blocked: plan.blocked,
+    decisions: plan.decisions,
+    /** ⚠️ アドレスを含む。**控えの保存だけ**に使うこと */
+    export: withExport
+      ? plan.deletableIds.map((id) => ({ id, fields: (byId.get(id) || {}).fields || {} }))
+      : undefined,
+    notice: 'これは読み取りのみです。**1 件も消していません**。',
+  });
+}
+
+/**
+ * 名指しした Customers を消す。**既定は下見**。
+ *
+ * ⚠️ 渡された id を**そのまま消さない**。サーバ側で計画を作り直し、
+ *    いまも「消してよい」と判定された id だけを消す（`reconcileDeletionTargets`）。
+ * ⚠️ 既に消えている id は **already_deleted**（2 回実行しても安全）。
+ * ⚠️ 控え（export）を取ったという申告が無ければ実行しない。
+ */
+async function handleCustomerDeletionApply({ KEY, BASE, req }) {
+  const ids = [...new Set((Array.isArray(req.recordIds) ? req.recordIds : [])
+    .map((x) => String(x || '').trim()).filter(Boolean))];
+  const confirmed = String(req.confirm || '') === DELETE_CONFIRM;
+  const gate = canDeleteCustomers({
+    confirmed, ids, exportProven: req.exportSaved === true,
+  });
+  const apply = req.apply === true && gate.allowed;
+  const dryRun = !apply;
+
+  if (ids.length === 0) {
+    return json(400, { error: 'recordIds を渡してください', sideEffects: 'none' });
+  }
+  if (ids.length > DELETE_MAX_PER_CALL) {
+    return json(400, {
+      error: `一度に消せるのは ${DELETE_MAX_PER_CALL} 件までです`, sideEffects: 'none',
+    });
+  }
+
+  let inputs;
+  try {
+    inputs = await buildDeletionPageInputs({ KEY, BASE, ids });
+  } catch (e) {
+    return json(500, {
+      error: 'Customers を読めませんでした',
+      detail: String((e && e.message) || '').slice(0, 120), sideEffects: 'none',
+    });
+  }
+  const plan = planCustomerDeletion({
+    records: inputs.records,
+    engagedEmails: inputs.engagedEmails,
+    engagementApplied: inputs.engagementApplied,
+    prospectByHash: inputs.prospectByHash,
+    activeByHash: inputs.activeByHash,
+    hashOf: emailHash,
+  });
+  const targets = reconcileDeletionTargets({
+    requestedIds: ids,
+    deletableIds: plan.ok ? plan.deletableIds : [],
+    presentIds: inputs.records.map((r) => r.id),
+  });
+
+  const view = {
+    mode: dryRun ? 'customer-deletion-dry-run' : 'customer-deletion',
+    requested: ids.length,
+    planOk: plan.ok,
+    abort: plan.abort,
+    toDelete: targets.toDelete.length,
+    alreadyDeleted: targets.alreadyDeleted.length,
+    refused: targets.refused.length,
+    refusedIds: targets.refused.slice(0, 50),
+    blocked: plan.blocked,
+    decisions: plan.decisions,
+    gate: { allowed: gate.allowed, reasons: gate.reasons },
+  };
+
+  if (dryRun) {
+    return json(200, {
+      ...view, deleted: 0, sideEffects: 'none',
+      notice: 'これは下見です。**1 件も消していません**（apply / 確認文字列 / 控えの申告が要ります）。',
+    });
+  }
+  if (!plan.ok) {
+    return json(409, {
+      ...view, deleted: 0, sideEffects: 'none',
+      error: '判定の材料が読めないため中止しました', reason: plan.abort,
+    });
+  }
+
+  let deleted = 0; const failed = [];
+  for (const id of targets.toDelete) {
+    try {
+      // eslint-disable-next-line no-await-in-loop -- 件数は上限つき（最大 200）
+      await deleteCustomerRecord({ KEY, BASE, id });
+      deleted += 1;
+    } catch (e) {
+      failed.push({ id, detail: String((e && e.message) || '').slice(0, 80) });
+    }
+  }
+
+  return json(200, {
+    ...view,
+    deleted,
+    failed: failed.length,
+    failedIds: failed.slice(0, 20),
+    sideEffects: deleted > 0 ? 'customers_deleted' : 'none',
+    notice: '控えから復元できます（Redis / prospect は触っていません）。',
+  });
+}
+
 async function handleProspectIndexRepair({ req }) {
   const hashes = normalizeHashes(req.hashes);
   if (hashes.length === 0) {
@@ -3203,6 +3506,45 @@ function prospectStepKeys({ campaign, email, brand, fromEmail }) {
 }
 
 /** Customers を 1 ページだけ読む（**全件走査しない**。offset で続きから） */
+/**
+ * recordId を**名指し**で引く（削除の直前に、いまの中身を取り直すため）。
+ *
+ * ⚠️ 見つからない id は**黙って落ちる**。呼び出し側はそれを
+ *    「もう消えている」と解釈する（`reconcileDeletionTargets`）。
+ */
+async function fetchCustomersByIds({ KEY, BASE, ids }) {
+  const list = [...new Set((ids || []).map(String))].filter(Boolean);
+  const out = [];
+  for (let i = 0; i < list.length; i += 50) {
+    const chunk = list.slice(i, i + 50);
+    const formula = `OR(${chunk.map((id) => `RECORD_ID()='${id}'`).join(',')})`;
+    const url = new URL(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(CUSTOMERS_TABLE)}`);
+    url.searchParams.set('pageSize', '100');
+    url.searchParams.set('filterByFormula', formula);
+    // eslint-disable-next-line no-await-in-loop -- 50 件ずつ（最大 4 回）
+    const res = await fetch(url, { headers: authHeaders(KEY) });
+    if (!res.ok) throw new Error(`customers_by_ids_${res.status}`);
+    // eslint-disable-next-line no-await-in-loop
+    const j = await res.json();
+    for (const r of j.records || []) out.push({ id: r.id, fields: r.fields || {} });
+  }
+  return { records: out, offset: null };
+}
+
+/**
+ * Customers を 1 件消す。
+ *
+ * ⚠️ **元に戻せない。** 呼ぶ前に控え（export）を取っていること。
+ * ⚠️ 404 は「もう消えている」として成功扱いにする（2 回実行しても壊れない）。
+ */
+async function deleteCustomerRecord({ KEY, BASE, id }) {
+  const url = `https://api.airtable.com/v0/${BASE}/${encodeURIComponent(CUSTOMERS_TABLE)}/${id}`;
+  const res = await fetch(url, { method: 'DELETE', headers: authHeaders(KEY) });
+  if (res.status === 404) return { deleted: false, alreadyGone: true };
+  if (!res.ok) throw new Error(`customer_delete_${res.status}`);
+  return { deleted: true, alreadyGone: false };
+}
+
 async function fetchCustomersPage({ KEY, BASE, offset, pageSize, filterByFormula }) {
   const url = new URL(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(CUSTOMERS_TABLE)}`);
   url.searchParams.set('pageSize', String(Math.min(100, pageSize || 100)));
