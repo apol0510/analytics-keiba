@@ -1854,11 +1854,11 @@ async function handleRollout({ KEY, BASE, now, req }) {
       pendingJobIds: Array.isArray(state.pendingJobIds) ? state.pendingJobIds : [],
       autoStopped: state.autoStopped === true,
     } : null,
-    /** env ゲート（値ではなく boolean だけ）*/
-    gates: {
-      rolloutEnabled: String(process.env.MARKETING_ROLLOUT_ENABLED || '').trim() === 'true',
-      dispatchEnabled: String(process.env.MARKETING_CAMPAIGN_DISPATCH_ENABLED || '').trim() === 'true',
-    },
+    /*
+     * ⚠️ env ゲートは**下の `gates: readStageGates(process.env)` が正本**。
+     *    ここに 2 つ目の `gates` を置くと**後勝ちで黙って捨てられる**（実際に一度やった）。
+     *    `stages.rollout.effective` / `stages.dispatch.effective` を見ること。
+     */
     stateExists,
     stateUpdatedAt: state && state.updatedAtMs ? new Date(state.updatedAtMs).toISOString() : null,
     /** 集計が読めなかったときの理由（**推測で数字を作らない**） */
