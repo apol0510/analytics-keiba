@@ -62,8 +62,14 @@ export function summarizeDeliveriesForIntake(deliveries) {
 /**
  * 1 ページぶんの投入計画。
  *
+ * ⚠️ **台帳へ引き継ぐ鍵は「その campaign の鍵」だけ**にする。その人の配信行には
+ *    別キャンペーンの鍵も混ざっており、まとめて入れると別 campaign の鍵が
+ *    この campaign の集合に紛れ込む（判定に影響はしないが、突合のとき数が合わなくなる）。
+ *    `campaignKeys` を渡すと、その集合に含まれる鍵だけを引き継ぐ。
+ *
  * @param {{records: Array<{id:string, fields:object}>,
  *          deliveries: Array<object>,
+ *          campaignKeys?: Set<string>,
  *          openHashes?: Set<string>, clickHashes?: Set<string>,
  *          hashEmail: (email:string) => string,
  *          signalHash: (email:string) => string,
@@ -73,7 +79,9 @@ export function summarizeDeliveriesForIntake(deliveries) {
  */
 export function planProspectIntakeFromCustomers({
   records, deliveries, openHashes, clickHashes, hashEmail, signalHash, engagedEmails, nowMs,
+  campaignKeys,
 } = {}) {
+  const onlyThisCampaign = campaignKeys instanceof Set ? campaignKeys : null;
   const byEmail = summarizeDeliveriesForIntake(deliveries);
   const opens = openHashes instanceof Set ? openHashes : null;
   const clicks = clickHashes instanceof Set ? clickHashes : null;
@@ -111,7 +119,11 @@ export function planProspectIntakeFromCustomers({
     p.state = p.sends > 0 ? PROSPECT_STATE.SENDING : PROSPECT_STATE.NEW;
 
     prospects.push(p);
-    for (const k of seen.keys) ledgerKeys.add(k);
+    // ⚠️ その campaign の鍵だけを引き継ぐ（別 campaign の鍵を混ぜない）
+    for (const k of seen.keys) {
+      if (onlyThisCampaign && !onlyThisCampaign.has(k)) continue;
+      ledgerKeys.add(k);
+    }
   }
 
   return {
