@@ -1637,6 +1637,70 @@ MK 要望の 5 項目のうち、**確実に出せる 3 つ**を入れた。
 
 ---
 
+## 2026-08-27（追記5）— 窓は「読めた件数」ではなく「索引を消費した件数」で進める
+
+### 見つけた欠陥（#467 で残っていた）
+
+#467 で並び順は決定的になったが、**次の窓の進め方が間違っていた**。
+
+```
+nextOffset = from + inputs.prospects.length   // ← 読めた「レコード」の件数
+```
+
+`prospectStore.loadMany()` は **MGET が null を返した hash を落とす**
+（索引には居るが値が消えた / 壊れている）。つまり `prospects.length` は
+**索引を消費した件数と一致しない**。
+
+| 値が欠けたとき | 何が起きるか |
+|---|---|
+| 1 窓に 1 件欠ける | `nextOffset` が 1 つ手前に戻り、**同じ人を 2 回読む** |
+| 1 窓まるごと読めない | `nextOffset === from` となり、**永久に進まない**（同じ窓を読み続ける）|
+
+「11,976 件を重複・欠落なく 1 回ずつ読む」という要件は、
+**並び順を決めるだけでは満たせない**（進め方も決める必要がある）。
+
+### 直し方
+
+- `loadActiveProspects` が **`scanned`（この窓で索引を消費した件数 = 窓の幅）** と
+  `missing`（索引にはあるが値を読めなかった件数）を返す
+- `loadProspectSequenceInputs` がそれを素通しする。**0 件の窓でも `scanned` は窓の幅**
+- admin は `nextOffset: from + inputs.scanned` で進める
+
+> 値を読めないことは **fail closed にしない**。「索引が読めない」（＝中止）とは別で、
+> 索引は正しく読めており、その hash に値が無いという**事実**。窓は消費済みとして進め、
+> `missing` として応答に出す。中止にすると欠けが 1 件でもあると検証が一切通らなくなる。
+
+### テスト（素通りしないことを確認済み）
+
+値の欠けた hash が混ざる store（`storeWithHoles`）を追加した。
+
+- 値が欠けても窓は索引の件数だけ進む（**同じ人を 2 回読まない**・読み落とさない）
+- 1 窓まるごと読めなくても窓は進む（`nextOffset` が止まらない）
+- 0 件の窓でも `scanned` を返す
+- 欠けが無いときは 消費 = 読めた件数（回帰）
+- guard: admin が `inputs.scanned` で進めている／`prospects.length` の記述が残っていない
+
+既存の窓歩きテストも、本番と同じく **`scanned` で進める**形へ揃えた。
+
+**退行を入れると 4 件が落ちる**ことを確認済み（`scanned: out.length` ＋
+`nextOffset: from + inputs.prospects.length` ＝ #467 の状態に戻すと fail）。
+
+- test:marketing **2,381 pass / 0 fail** ／ check:safety exit 0 ／ build exit 0
+
+### 現在の停止境界（変更なし）
+
+| 境界 | 状態 |
+|---|---|
+| production env（migration gate）| ✅ **閉じた**（`PROSPECT_MIGRATION_ENABLED=false`）|
+| 本番 Redis 投入 | ✅ **完了**（11,976 件）|
+| **本 PR の merge / production deploy** | **未実行** ← いまここ（承認待ちで停止）|
+| **Customers の削除** | **未実行** |
+| 実送信 / queue 登録 | **未実行** |
+
+読み取り経路だけの修正。**書き込み経路は 1 つも増えていない。**
+
+---
+
 ## 2026-08-27（追記4）— **Redis 投入 完了 / ゲート再閉鎖済み**。Customers 削除の直前で停止
 
 ### 投入の実測（本番）

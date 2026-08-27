@@ -81,20 +81,31 @@ export function indexDigest(hashes) {
  * ⚠️ `expectDigest` を渡すと、**索引が途中で変わっていないか**を確かめる。
  *    変わっていたら `INDEX_CHANGED` を返し、呼び出し側は**最初からやり直す**。
  * ⚠️ 窓を掛けるのは**索引を読み切ったあと**。`indexSize` は常に全体を指す。
+ * ⚠️ **次の窓は `scanned` だけ進める**（`prospects.length` ではない）。
+ *    `loadMany` は**値を読めなかった hash を落とす**ので、読めた件数で進めると
+ *    その分だけ窓が巻き戻り、**同じ人を 2 回読む**。1 窓まるごと読めなければ
+ *    `nextOffset` が動かず**進まなくなる**。索引を何件消費したかで進めること。
  *
  * @param {{store: object, maxRecipients?: number, offset?: number, expectDigest?: string}} input
- * @returns {Promise<{ok, reason?, prospects, indexSize, digest}>}
+ * @returns {Promise<{ok, reason?, prospects, indexSize, digest, scanned, missing}>}
  */
 export async function loadActiveProspects({ store, maxRecipients, offset, expectDigest } = {}) {
   if (!store || typeof store.activeHashes !== 'function') {
-    return { ok: false, reason: AUDIENCE_FAIL.INDEX_UNAVAILABLE, prospects: [], indexSize: 0 };
+    return {
+      ok: false, reason: AUDIENCE_FAIL.INDEX_UNAVAILABLE, prospects: [], indexSize: 0, scanned: 0,
+    };
   }
   let raw;
   try {
     raw = await store.activeHashes();
   } catch {
     return {
-      ok: false, reason: AUDIENCE_FAIL.INDEX_UNAVAILABLE, prospects: [], indexSize: 0, digest: null,
+      ok: false,
+      reason: AUDIENCE_FAIL.INDEX_UNAVAILABLE,
+      prospects: [],
+      indexSize: 0,
+      digest: null,
+      scanned: 0,
     };
   }
   // ⚠️ **並びを決めてから切る**（`SMEMBERS` の順に依存しない）
@@ -104,7 +115,7 @@ export async function loadActiveProspects({ store, maxRecipients, offset, expect
   // ⚠️ 窓を跨いでいる間に集合が変わっていたら**やり直す**（部分結果を混ぜない）
   if (expectDigest && expectDigest !== digest) {
     return {
-      ok: false, reason: AUDIENCE_FAIL.INDEX_CHANGED, prospects: [], indexSize, digest,
+      ok: false, reason: AUDIENCE_FAIL.INDEX_CHANGED, prospects: [], indexSize, digest, scanned: 0,
     };
   }
   // ⚠️ 窓は**索引を読み切ったあと**に掛ける（読めた人数は正しく数える）
@@ -120,10 +131,21 @@ export async function loadActiveProspects({ store, maxRecipients, offset, expect
       const loaded = await store.loadMany(group);
       out.push(...loaded);
     } catch {
-      return { ok: false, reason: AUDIENCE_FAIL.LOAD_FAILED, prospects: [], indexSize, digest };
+      return {
+        ok: false, reason: AUDIENCE_FAIL.LOAD_FAILED, prospects: [], indexSize, digest, scanned: 0,
+      };
     }
   }
-  return { ok: true, prospects: out, indexSize, digest };
+  // ⚠️ **索引を何件消費したか**を返す。読めた件数（`out.length`）で窓を進めてはいけない
+  //    （`loadMany` が値を読めなかった hash を落とすため、その分だけ窓が巻き戻る）。
+  return {
+    ok: true,
+    prospects: out,
+    indexSize,
+    digest,
+    scanned: target.length,
+    missing: target.length - out.length,
+  };
 }
 
 /**
@@ -140,7 +162,7 @@ export async function loadProspectSequenceInputs({
   if (!loaded.ok) {
     return {
       ok: false, reason: loaded.reason, rows: [], deliveries: [],
-      indexSize: loaded.indexSize, digest: loaded.digest,
+      indexSize: loaded.indexSize, digest: loaded.digest, scanned: 0,
     };
   }
   const prospects = loaded.prospects;
@@ -152,7 +174,10 @@ export async function loadProspectSequenceInputs({
       providerSuppressed: new Set(), engagementByEmail: new Map(),
       indexSize: loaded.indexSize,
       digest: loaded.digest,
-      counts: { 索引: loaded.indexSize, 読み込み: 0, 変換: 0 }, skipped: {},
+      // ⚠️ 1 件も読めなくても**索引は消費している**。0 にすると窓が進まなくなる
+      scanned: loaded.scanned,
+      missing: loaded.missing,
+      counts: { 索引: loaded.indexSize, 読み込み: 0, 変換: 0, 値なし: loaded.missing }, skipped: {},
     };
   }
 
@@ -163,17 +188,23 @@ export async function loadProspectSequenceInputs({
       deliveryKeyStore, campaign, brand, fromEmail, prospects,
     });
   } catch {
-    return { ok: false, reason: AUDIENCE_FAIL.LEDGER_UNAVAILABLE, rows: [], deliveries: [] };
+    return {
+      ok: false, reason: AUDIENCE_FAIL.LEDGER_UNAVAILABLE, rows: [], deliveries: [], scanned: 0,
+    };
   }
   if (!(deliveredKeys instanceof Set)) {
-    return { ok: false, reason: AUDIENCE_FAIL.LEDGER_UNAVAILABLE, rows: [], deliveries: [] };
+    return {
+      ok: false, reason: AUDIENCE_FAIL.LEDGER_UNAVAILABLE, rows: [], deliveries: [], scanned: 0,
+    };
   }
 
   const hydrated = hydrateProspectSequenceInputs({
     prospects, campaign, brand, fromEmail, deliveredKeys,
   });
   if (!hydrated.ok) {
-    return { ok: false, reason: AUDIENCE_FAIL.HYDRATION_FAILED, rows: [], deliveries: [] };
+    return {
+      ok: false, reason: AUDIENCE_FAIL.HYDRATION_FAILED, rows: [], deliveries: [], scanned: 0,
+    };
   }
   const rows = buildProspectSequenceRows({ prospects, nowMs, blacklistEmails });
   return {
@@ -188,9 +219,14 @@ export async function loadProspectSequenceInputs({
     indexSize: loaded.indexSize,
     /** 索引の指紋。**全窓で同じであること**を呼び出し側が確かめる */
     digest: loaded.digest,
+    /** ⚠️ この窓で**索引を消費した件数**。次の窓はこれだけ進める（読めた件数ではない）*/
+    scanned: loaded.scanned,
+    /** 索引にはあるが値を読めなかった件数（窓は消費済みとして進める）*/
+    missing: loaded.missing,
     counts: {
       索引: loaded.indexSize,
       読み込み: prospects.length,
+      値なし: loaded.missing,
       変換: rows.rows.length,
       既送信復元: hydrated.counts['復元'],
     },
