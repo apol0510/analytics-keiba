@@ -1,0 +1,387 @@
+{
+ "table": "Customers",
+ "capturedAt": "2026-08-27",
+ "note": "本番 Meta API のスナップショット（型のみ・値は含まない）",
+ "fields": [
+  {
+   "name": "Email",
+   "type": "email"
+  },
+  {
+   "name": "登録日",
+   "type": "createdTime"
+  },
+  {
+   "name": "プラン",
+   "type": "singleSelect"
+  },
+  {
+   "name": "PlanType",
+   "type": "singleSelect"
+  },
+  {
+   "name": "Status",
+   "type": "singleSelect"
+  },
+  {
+   "name": "PaymentConfirmed",
+   "type": "checkbox"
+  },
+  {
+   "name": "PaymentEmailSent",
+   "type": "checkbox"
+  },
+  {
+   "name": "有効期限",
+   "type": "date"
+  },
+  {
+   "name": "氏名",
+   "type": "singleLineText"
+  },
+  {
+   "name": "ポイント",
+   "type": "number"
+  },
+  {
+   "name": "最終ポイント付与日",
+   "type": "date"
+  },
+  {
+   "name": "Memo",
+   "type": "richText"
+  },
+  {
+   "name": "ExpiryDate",
+   "type": "dateTime"
+  },
+  {
+   "name": "ExpiryNotificationSent",
+   "type": "checkbox"
+  },
+  {
+   "name": "ExpiryNotificationDate",
+   "type": "date"
+  },
+  {
+   "name": "WithdrawalRequested",
+   "type": "checkbox"
+  },
+  {
+   "name": "WithdrawalDate",
+   "type": "dateTime"
+  },
+  {
+   "name": "WithdrawalReason",
+   "type": "multilineText"
+  },
+  {
+   "name": "特典申請済み",
+   "type": "checkbox"
+  },
+  {
+   "name": "ノート",
+   "type": "multilineText"
+  },
+  {
+   "name": "Phone",
+   "type": "phoneNumber"
+  },
+  {
+   "name": "最終ログイン",
+   "type": "dateTime"
+  },
+  {
+   "name": "トークン有効期限",
+   "type": "date"
+  },
+  {
+   "name": "認証トークン",
+   "type": "singleLineText"
+  },
+  {
+   "name": "WelcomeSentAt",
+   "type": "dateTime"
+  },
+  {
+   "name": "PaidAt",
+   "type": "dateTime"
+  },
+  {
+   "name": "CancelledAt",
+   "type": "dateTime"
+  },
+  {
+   "name": "AccessEnabled",
+   "type": "checkbox"
+  },
+  {
+   "name": "PaymentMethod",
+   "type": "singleLineText"
+  },
+  {
+   "name": "ExpiryWarningNotificationSent",
+   "type": "checkbox"
+  },
+  {
+   "name": "ExpiryWarningNotificationDate",
+   "type": "dateTime"
+  },
+  {
+   "name": "Source",
+   "type": "singleLineText"
+  },
+  {
+   "name": "ForceLogout",
+   "type": "checkbox"
+  },
+  {
+   "name": "Orders",
+   "type": "singleLineText"
+  },
+  {
+   "name": "Payments",
+   "type": "singleLineText"
+  },
+  {
+   "name": "Brand",
+   "type": "multipleSelects"
+  },
+  {
+   "name": "ServiceType",
+   "type": "multipleSelects"
+  },
+  {
+   "name": "AudienceType",
+   "type": "singleSelect"
+  },
+  {
+   "name": "UnsubscribedAnalyticsKeiba",
+   "type": "checkbox"
+  },
+  {
+   "name": "UnsubscribedKeibaIntelligence",
+   "type": "checkbox"
+  },
+  {
+   "name": "UnsubscribedAtAnalyticsKeiba",
+   "type": "dateTime"
+  },
+  {
+   "name": "UnsubscribedAtKeibaIntelligence",
+   "type": "dateTime"
+  },
+  {
+   "name": "LastNewsletterSentAt",
+   "type": "dateTime"
+  },
+  {
+   "name": "LastNewsletterBrand",
+   "type": "singleSelect"
+  },
+  {
+   "name": "StepEnrollments",
+   "type": "multipleRecordLinks"
+  },
+  {
+   "name": "RequestedPlan",
+   "type": "singleLineText"
+  },
+  {
+   "name": "RequestedPlanType",
+   "type": "singleLineText"
+  },
+  {
+   "name": "RequestedAmount",
+   "type": "number"
+  },
+  {
+   "name": "PaymentEmailStatus",
+   "type": "singleSelect"
+  },
+  {
+   "name": "PaymentEmailIdempotencyKey",
+   "type": "singleLineText"
+  },
+  {
+   "name": "PaymentEmailProviderMessageId",
+   "type": "singleLineText"
+  },
+  {
+   "name": "PaymentEmailAttemptedAt",
+   "type": "dateTime"
+  },
+  {
+   "name": "PaymentEmailAcceptedAt",
+   "type": "dateTime"
+  },
+  {
+   "name": "PaymentEmailDeliveredAt",
+   "type": "dateTime"
+  },
+  {
+   "name": "PaymentEmailAttemptCount",
+   "type": "number"
+  },
+  {
+   "name": "PaymentEmailLeaseUntil",
+   "type": "dateTime"
+  },
+  {
+   "name": "PaymentEmailAttemptToken",
+   "type": "singleLineText"
+  },
+  {
+   "name": "PaymentEmailFailureStage",
+   "type": "singleLineText"
+  },
+  {
+   "name": "PaymentEmailLastError",
+   "type": "multilineText"
+  },
+  {
+   "name": "PromotedBy",
+   "type": "singleLineText"
+  },
+  {
+   "name": "PromotionReason",
+   "type": "singleLineText"
+  },
+  {
+   "name": "PromotedAt",
+   "type": "dateTime"
+  },
+  {
+   "name": "LifetimeSanrenpuku",
+   "type": "checkbox"
+  },
+  {
+   "name": "PaymentEmailTests",
+   "type": "singleLineText"
+  },
+  {
+   "name": "SanrenpukuPaidAt",
+   "type": "dateTime"
+  },
+  {
+   "name": "PremiumPlusEligibility",
+   "type": "singleSelect"
+  },
+  {
+   "name": "PremiumPlusEligibilityReason",
+   "type": "multilineText"
+  },
+  {
+   "name": "PremiumPlusEligibleAt",
+   "type": "dateTime"
+  },
+  {
+   "name": "PremiumPlusEligibilityUpdatedAt",
+   "type": "dateTime"
+  },
+  {
+   "name": "PremiumPlusEligibilityUpdatedBy",
+   "type": "singleLineText"
+  },
+  {
+   "name": "PremiumPlusReleaseOverride",
+   "type": "singleSelect"
+  },
+  {
+   "name": "LightGrantLifetime",
+   "type": "checkbox"
+  },
+  {
+   "name": "LightGrantUntil",
+   "type": "dateTime"
+  },
+  {
+   "name": "LightGrantedAt",
+   "type": "dateTime"
+  },
+  {
+   "name": "LightGrantedBy",
+   "type": "singleLineText"
+  },
+  {
+   "name": "LightGrantOp",
+   "type": "singleLineText"
+  },
+  {
+   "name": "LightGrantRevokedAt",
+   "type": "dateTime"
+  },
+  {
+   "name": "LightGrantRevokeReason",
+   "type": "multilineText"
+  },
+  {
+   "name": "PremiumGrantLifetime",
+   "type": "checkbox"
+  },
+  {
+   "name": "PremiumGrantUntil",
+   "type": "dateTime"
+  },
+  {
+   "name": "PremiumGrantedAt",
+   "type": "dateTime"
+  },
+  {
+   "name": "PremiumGrantedBy",
+   "type": "singleLineText"
+  },
+  {
+   "name": "PremiumGrantOp",
+   "type": "singleLineText"
+  },
+  {
+   "name": "PremiumGrantRevokedAt",
+   "type": "dateTime"
+  },
+  {
+   "name": "PremiumGrantRevokeReason",
+   "type": "multilineText"
+  },
+  {
+   "name": "ComebackGrantSource",
+   "type": "singleLineText"
+  },
+  {
+   "name": "UpsellTarget",
+   "type": "singleSelect"
+  },
+  {
+   "name": "SaleTargetDate",
+   "type": "singleLineText"
+  },
+  {
+   "name": "PremiumPlusSalePaused",
+   "type": "checkbox"
+  },
+  {
+   "name": "PremiumPlusSalePausedAt",
+   "type": "dateTime"
+  },
+  {
+   "name": "PremiumPlusSalePausedBy",
+   "type": "singleLineText"
+  },
+  {
+   "name": "PremiumPlusSalePauseReason",
+   "type": "singleLineText"
+  },
+  {
+   "name": "PremiumPlusReopenCouponClaimedAt",
+   "type": "dateTime"
+  },
+  {
+   "name": "PremiumPlusReopenCouponId",
+   "type": "singleLineText"
+  },
+  {
+   "name": "PremiumPlusReopenCouponSource",
+   "type": "singleLineText"
+  }
+ ]
+}

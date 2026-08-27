@@ -434,6 +434,32 @@ export function createProspectStore({ cmd, pipeline } = {}) {
       return out;
     },
 
+    /**
+     * 指定 hash が **送信候補の索引に居るか**をまとめて調べる（**読み取りのみ**）。
+     *
+     * ⚠️ `SMEMBERS` で 1 万件超を毎回引くと帯域を食うので、`SISMEMBER` を
+     *    **pipeline で 1 往復**にまとめる。pipeline が無ければ `SMEMBERS` へ退避する。
+     *
+     * @returns {Promise<Map<string, boolean>>}
+     */
+    async activeMembership(hashes) {
+      const list = [...new Set((hashes || []).map((h) => String(h || '')))].filter(Boolean);
+      const out = new Map();
+      if (list.length === 0) return out;
+      if (typeof pipeline === 'function') {
+        const cmds = list.map((h) => ['SISMEMBER', ACTIVE_INDEX, h]);
+        const res = await pipeline(cmds);
+        if (!Array.isArray(res) || res.length !== cmds.length) {
+          throw new ProspectStoreError(STORE_FAIL.UNKNOWN_RESULT, 'active_membership');
+        }
+        list.forEach((h, i) => out.set(h, Number(res[i]) === 1));
+        return out;
+      }
+      const all = new Set(await this.activeHashes());
+      for (const h of list) out.set(h, all.has(h));
+      return out;
+    },
+
     async blockedHashes() {
       const raw = await call(['SMEMBERS', BLOCKED_INDEX], STORE_FAIL.INDEX_UNAVAILABLE);
       if (!Array.isArray(raw)) throw new ProspectStoreError(STORE_FAIL.INDEX_UNAVAILABLE, 'not_array');
