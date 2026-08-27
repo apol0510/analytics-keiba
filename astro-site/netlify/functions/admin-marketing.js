@@ -205,6 +205,7 @@ import {
 } from '../../src/lib/marketing/marketingTargetedLoad.js';
 import {
   resolveDeliveryStoreMode, resolveDeliveredKeys, recordDelivered,
+  resolveRecipientLedgerPolicy, partitionRecipientsForLedger, RECIPIENT_SOURCE,
 } from '../../src/lib/marketing/deliveryKeySource.js';
 import { createDeliveryKeyStore, makeRedisCmd } from '../../src/lib/marketing/deliveryKeyStore.js';
 import {
@@ -842,6 +843,7 @@ export const handler = async (event) => {
     if (action === 'segments') return await handleSegments({ KEY, BASE, now, req });
     if (action === 'sequence') return await handleSequence({ KEY, BASE, now, req });
     if (action === 'sequenceMetrics') return await handleSeqMetrics({ req });
+    if (action === 'engagementDigest') return await handleEngagementDigest({ now });
     if (action === 'trialGrant') return await handleTrialGrantPreview({ now, req });
     if (action === 'duplicateCheck') return await handleDuplicateCheck({ KEY, BASE, req });
     if (action === 'rollout') return await handleRollout({ KEY, BASE, now, req });
@@ -2630,6 +2632,46 @@ async function handleTrialGrantPreview({ now, req }) {
  * ⚠️ **queued を「送信済み」として返さない。** 別の項目として出し、
  *    未送信残（queued のまま sent になっていない数）も併記する。
  */
+/**
+ * 反応（open / click）の集計を **hash のまま**返す（read-only・**1 バイトも書かない**）。
+ *
+ * ── なぜ要るか ──────────────────────────────────────────────
+ * prospect 移行の判定は「開封した人は Customers へ残す」なので、**開封者の集合**が要る。
+ * ところが集計は Redis にあり、本番の接続情報は masked secret なので手元からは読めない。
+ * かといって画面の集計（件数だけ）では、どのレコードが開封者なのか分からない。
+ *
+ * ── アドレスを出さない ──────────────────────────────────────
+ * 集計は元から `sha256(email).slice(0,32)` を鍵にしているので、**その鍵をそのまま返す**。
+ * 呼び出し側は手元の Customers から同じ hash を計算して突き合わせる。
+ * **アドレスも氏名も recordId もこの応答には入らない。**
+ *
+ * ⚠️ 集計を読めないときは `available:false` を返す。**空配列と混同させない**
+ *    （空を「開封者ゼロ」と解釈すると、開封した人まで prospect へ落とす）。
+ */
+async function handleEngagementDigest({ now }) {
+  const signals = await loadEngagementSignals();
+  const openHashes = signals.openByHash instanceof Map ? [...signals.openByHash.keys()] : [];
+  const clickHashes = signals.clickByHash instanceof Map ? [...signals.clickByHash.keys()] : [];
+  const meta = signals.meta || {};
+  return json(200, {
+    mode: 'engagement-digest',
+    sideEffects: 'none',
+    available: signals.available === true,
+    reason: signals.reason || null,
+    algorithm: 'sha256(lowercase(email)).hex.slice(0,32)',
+    counts: { open: openHashes.length, click: clickHashes.length },
+    meta: {
+      startedAt: meta.startedAtMs ? new Date(meta.startedAtMs).toISOString() : null,
+      firstOpenAt: meta.firstOpenAtMs ? new Date(meta.firstOpenAtMs).toISOString() : null,
+      lastEventAt: meta.lastEventAtMs ? new Date(meta.lastEventAtMs).toISOString() : null,
+      readAt: new Date(now).toISOString(),
+    },
+    openHashes,
+    clickHashes,
+    notice: 'これは読み取りのみです。アドレスは含まれません（hash だけ）。',
+  });
+}
+
 async function handleSeqMetrics({ req }) {
   const base = getCampaign(req.campaignId, { includeDisabled: true });
   if (!base) return json(400, { error: '未知のキャンペーンです', sideEffects: 'none' });
@@ -3280,7 +3322,42 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
   }
 
   // 2) CampaignDeliveries を DeliveryKey 冪等で upsert（二重送信の最終防壁）
-  const deliveryRecords = buildDeliveryRecords({ campaign, recipients: plan.recipients, jobIdByEmail, nowMs: now });
+  //
+  // ── prospect（CSV 取り込み由来）は Airtable へ 1 行も書かない（2026-08-27 MK 確定）──
+  //
+  // Airtable は本番でレコード上限を超過中（実測 50,789 / 50,000。うち
+  // `CampaignDeliveries` が 33,112 行）。CSV 由来へ 1 step 配るだけで受信者数ぶん増えるため、
+  // **出所が prospect の受信者は Airtable 台帳を作らず Redis の集合だけで冪等性を担保する**。
+  // 判断は `deliveryKeySource.js` の単一源に委ねる（ここで条件を書かない）。
+  //
+  // ⚠️ Customers 由来は**従来どおり**（`MARKETING_DELIVERY_STORE` に従う）。
+  // ⚠️ 出所が書かれていない受信者は customer 扱い（prospect へ倒すと台帳が消える）。
+  const ledgerPolicyOf = (r) => resolveRecipientLedgerPolicy({
+    mode: deliveryStoreMode, source: (r && (r['出所'] ?? r.source)) || RECIPIENT_SOURCE.CUSTOMER,
+  });
+  const airtableRecipients = plan.recipients.filter((r) => ledgerPolicyOf(r).writeAirtable);
+  const prospectRecipients = plan.recipients.filter((r) => !ledgerPolicyOf(r).writeAirtable);
+  const ledgerSplit = partitionRecipientsForLedger({ mode: deliveryStoreMode, recipients: plan.recipients });
+
+  /**
+   * ⚠️ **fail closed**: prospect が居るのに Redis へ書けない構成なら、
+   *    その人たちの「送った」がどこにも残らず**次回そのまま二重送信**になる。
+   *    1 行も書かずに中止する（ジョブだけ巻き戻す）。
+   */
+  if (prospectRecipients.length > 0 && !isRedisLedgerUsable()) {
+    const rb = await rollbackQueue({
+      KEY, BASE, campaign, now, jobs, rows: new Map(), reason: 'prospect_ledger_unavailable',
+    });
+    return json(500, {
+      error: 'prospect 宛の配信台帳を Redis へ記録できない構成です（二重送信になるため中止しました）',
+      reason: 'prospect_ledger_unavailable',
+      prospectRecipients: prospectRecipients.length,
+      rolledBack: rb.verified === true,
+      sideEffects: rb.verified === true ? 'rolled_back' : 'partial_unconfirmed',
+    });
+  }
+
+  const deliveryRecords = buildDeliveryRecords({ campaign, recipients: airtableRecipients, jobIdByEmail, nowMs: now });
   for (const rec of deliveryRecords) {
     if (!assertOnlyDeliveryFields(rec.fields)) return json(500, { error: 'field allow-list violation' });
   }
@@ -3291,7 +3368,7 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
    *    （＝例外も出ない）。ここで数を突き合わせておかないと
    *    「配信行 0 件なのにキュー成功」になる（2026-08-18 の事故）。
    */
-  if (deliveryRecords.length !== plan.recipients.length) {
+  if (deliveryRecords.length !== airtableRecipients.length) {
     // まだ 1 行も書いていないので、取り消すのはジョブだけでよい（配信行は存在しない）
     const rb = await rollbackQueue({
       KEY, BASE, campaign, now, jobs, rows: new Map(), reason: QUEUE_FAIL.RECORDS_DROPPED,
@@ -3299,7 +3376,7 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
     return json(500, {
       error: 'キュー登録を確定できませんでした（配信行を組み立てられません）',
       reason: QUEUE_FAIL.RECORDS_DROPPED,
-      expected: plan.recipients.length, built: deliveryRecords.length,
+      expected: airtableRecipients.length, built: deliveryRecords.length,
       rolledBack: rb.verified === true,
       rollback: {
         jobsTargeted: rb.jobsTargeted, jobsCancelled: rb.jobsCancelled,
@@ -3320,13 +3397,24 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
   try {
     const deliveryWrite = await recordDelivered({
       mode: deliveryStoreMode,
-      keys: plan.recipients.map((r) => r.deliveryKey).filter(Boolean),
+      // ⚠️ Redis へは **prospect も含めた全員**の鍵を記録する（記録が無いと次回二重送信）
+      keys: ledgerSplit.redisKeys,
+      // ⚠️ Airtable へは **customer 由来だけ**（prospect の行は 1 つも作らない）
       writeAirtable: () => upsertDeliveries({ KEY, BASE, records: deliveryRecords }),
       writeRedis: async (keys) => {
         const store = createDeliveryKeyStore({ redisCmd: makeRedisCmd(process.env) });
         await store.markDelivered({ ...deliveryStoreScope, keys });
       },
     });
+    // prospect は Airtable に台帳が無いので、**Redis へ載ったことを読み戻して確かめる**。
+    // 確かめられなければキュー成功と言わない（`settleQueueWrite` は Airtable しか見ない）。
+    if (prospectRecipients.length > 0) {
+      const verified = await verifyProspectLedger({
+        scope: deliveryStoreScope,
+        keys: prospectRecipients.map((r) => r.deliveryKey).filter(Boolean),
+      });
+      if (!verified.ok) writeError = `prospect_ledger_unverified:${verified.missing}`;
+    }
     if (deliveryWrite.redis === 'failed') {
       console.warn('⚠️ [admin-marketing] delivery store redis write failed（Airtable が正本のため継続）');
     }
@@ -3341,8 +3429,10 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
    *    足りなければまず**不足ぶんだけ冪等に補完**し、それでも駄目なら
    *    **既存の rollback 契約**で配信行ごと巻き戻す（ジョブだけ取り消さない）。
    */
+  // ⚠️ Airtable 台帳の突合は **Airtable へ書く対象だけ**を分母にする
+  //    （prospect を混ぜると「行が足りない」と誤判定して巻き戻す）。
   const settled = await settleQueueWrite({
-    KEY, BASE, campaign, now, jobs, recipients: plan.recipients, deliveryRecords, writeError,
+    KEY, BASE, campaign, now, jobs, recipients: airtableRecipients, deliveryRecords, writeError,
   });
   if (!settled.ok) {
     const rb = settled.rollback || {};
@@ -3727,6 +3817,40 @@ const DELIVERY_COMPLETE_MAX_RETRY = 2;
  *      （配信行を `cancelled` にすると `fetchDeliveredKeys` の既送信集合から外れ、
  *        全員をそのまま再 queue できる。**新しい Status も削除も使わない**）
  */
+/**
+ * Redis 台帳が使える構成か（**prospect の冪等性はここにしか残らない**）。
+ * 設定が無い / 例外が出るなら false（呼び出し側は 1 行も書かずに中止する）。
+ */
+function isRedisLedgerUsable() {
+  try {
+    // prospect は mode に関わらず Redis へ書く決まりなので、**繋げるか**だけを見る
+    createDeliveryKeyStore({ redisCmd: makeRedisCmd(process.env) });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * prospect ぶんの鍵が Redis の集合へ載ったことを**読み戻して**確かめる。
+ *
+ * ⚠️ 例外が出なかったことは「書けた」の証拠にならない。読めなければ ok:false。
+ *    Airtable に行が無い以上、ここを飛ばすと**次回そのまま二重送信**になる。
+ */
+async function verifyProspectLedger({ scope, keys }) {
+  const list = (Array.isArray(keys) ? keys : []).filter(Boolean);
+  if (list.length === 0) return { ok: true, missing: 0, checked: 0 };
+  try {
+    const store = createDeliveryKeyStore({ redisCmd: makeRedisCmd(process.env) });
+    const found = await store.filterDelivered({ ...scope, keys: list });
+    const have = new Set(found);
+    const missing = list.filter((k) => !have.has(k)).length;
+    return { ok: missing === 0, missing, checked: list.length };
+  } catch {
+    return { ok: false, missing: list.length, checked: list.length };
+  }
+}
+
 async function settleQueueWrite({
   KEY, BASE, campaign, now, jobs, recipients, deliveryRecords, writeError,
 }) {

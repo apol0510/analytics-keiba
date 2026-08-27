@@ -73,10 +73,16 @@ const delivered = (email, n, atMs) => ({
   },
 });
 
+/** 全員 delivered 同数の Map（差が無い前提を明示する）*/
+const sameDelivered = (n) => new Map(emails.map((e) => [e, n]));
+
 const run = (selected, deliveries, over = {}) => buildSequenceProgress({
   campaign: CAMPAIGN, selected, deliveries, brand: BRAND, fromEmail: FROM, nowMs: NOW,
   providerSuppressed: new Set(), softBounced: new Set(), ...over,
 });
+
+/** email → delivered 回数（Customers 側は台帳の行数、prospect 側はレコードの値）*/
+const deliveredMap = (obj) => new Map(Object.entries(obj));
 
 /** email → 次に送る step の DeliveryKey */
 const keyMap = (progress) => {
@@ -134,9 +140,11 @@ test('step1 送信済みの 4 名: 両経路が同じ相手へ同じ step2 を�
 
   const r = compareSequenceParity({
     customers: A, prospects: B, customerKeys: keyMap(A), prospectKeys: keyMap(B),
+    customerDelivered: sameDelivered(1), prospectDelivered: sameDelivered(1),
   });
   assert.equal(r.ok, true, JSON.stringify(r.diff));
   assert.equal(r.diff['DeliveryKey不一致'], 0);
+  assert.equal(r.diff['delivered不一致'], 0);
   assert.equal(r.counts.due.customers, r.counts.due.prospects);
   assert.equal(assertParityBeforeMigration(r).migrateAllowed, true);
 });
@@ -172,6 +180,7 @@ test('停止理由も一致する（配信停止の人は両経路とも止ま�
 
   const r = compareSequenceParity({
     customers: A2, prospects: B, customerKeys: keyMap(A2), prospectKeys: keyMap(B),
+    customerDelivered: sameDelivered(1), prospectDelivered: sameDelivered(1),
   });
   assert.equal(r.ok, true, JSON.stringify(r.diff));
   assert.equal(r.diff['停止理由不一致'], 0);
@@ -183,8 +192,33 @@ test('未送信（step1 も送っていない）の相手でも一致する', ()
   assert.equal(A.summary.dueByStep[1], 4);
   const r = compareSequenceParity({
     customers: A, prospects: B, customerKeys: keyMap(A), prospectKeys: keyMap(B),
+    customerDelivered: sameDelivered(0), prospectDelivered: sameDelivered(0),
   });
   assert.equal(r.ok, true, JSON.stringify(r.diff));
+});
+
+test('⚠️ delivered がズレたら parity は落ちる（打ち切り判定が食い違うため）', () => {
+  const A = run(emails.map((e) => customerRow(e)), []);
+  const B = run(prospectRows(), []);
+  const off = sameDelivered(1); off.set('a@example.com', 2);
+  const r = compareSequenceParity({
+    customers: A, prospects: B, customerKeys: keyMap(A), prospectKeys: keyMap(B),
+    customerDelivered: sameDelivered(1), prospectDelivered: off,
+  });
+  assert.equal(r.ok, false);
+  assert.equal(r.diff['delivered不一致'], 1);
+  assert.equal(assertParityBeforeMigration(r).migrateAllowed, false);
+});
+
+test('⚠️ delivered を突き合わせない parity は合格にしない', () => {
+  const A = run(emails.map((e) => customerRow(e)), []);
+  const B = run(prospectRows(), []);
+  const r = compareSequenceParity({
+    customers: A, prospects: B, customerKeys: keyMap(A), prospectKeys: keyMap(B),
+  });
+  assert.equal(r.deliveredChecked, false);
+  assert.equal(r.ok, false);
+  assert.equal(r.diff['delivered不一致'], null);
 });
 
 test('⚠️ ズレたら parity は落ちる（テストが素通りしていないことの確認）', () => {
@@ -253,6 +287,8 @@ test('hydration: 台帳にある DeliveryKey から step1 送信済みを復元�
   });
   assert.equal(h.ok, true);
   assert.equal(h.counts['復元'], 4);
+  // prospect が持つ delivered は、Customers 側の台帳行数と一致していること
+  for (const p of prospects) assert.equal(p.delivered, 1);
 
   const rows = buildProspectSequenceRows({ prospects, nowMs: NOW }).rows;
   const B = run(rows, h.deliveries, {
@@ -264,8 +300,11 @@ test('hydration: 台帳にある DeliveryKey から step1 送信済みを復元�
   assert.equal(A.summary.dueByStep[2], 4, '前提: step2 が due');
   const r = compareSequenceParity({
     customers: A, prospects: B, customerKeys: keyMap(A), prospectKeys: keyMap(B),
+    customerDelivered: sameDelivered(1),
+    prospectDelivered: new Map(prospects.map((p) => [p.email, p.delivered])),
   });
   assert.equal(r.ok, true, JSON.stringify(r.diff));
+  assert.equal(r.diff['delivered不一致'], 0);
 });
 
 test('⚠️ hydration: 台帳を読めなければ中止する（未送信と見なして全員へ再送しない）', () => {

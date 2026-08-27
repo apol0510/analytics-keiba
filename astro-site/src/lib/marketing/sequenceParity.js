@@ -16,6 +16,7 @@
  * | 2 | 相手ごとの次の step | 別の文面が届く・順番が飛ぶ |
  * | 3 | 相手ごとの `DeliveryKey` | **二重送信**（鍵が変わると既送信を見落とす）|
  * | 4 | 止めた相手の停止理由 | 止めるべき人へ送る / 送るべき人を止める |
+ * | 5 | 相手ごとの **delivered 回数** | 打ち切り（delivered 10）の判定がズレる |
  *
  * ⚠️ **アドレスの集合そのものを返さない。** 差分は件数と、確認用に**先頭数件の
  *    ハッシュ化していないアドレス**……ではなく **DeliveryKey の断片**だけを返す。
@@ -67,6 +68,11 @@ const setDiff = (a, b) => [...a].filter((x) => !b.has(x));
  */
 export function compareSequenceParity({
   customers, prospects, customerKeys, prospectKeys,
+  /**
+   * email → delivered 回数。渡されたときだけ突き合わせる（**渡すのが望ましい**）。
+   * ここがズレると打ち切り（delivered 10 / 開封 0）の判定が両経路で食い違う。
+   */
+  customerDelivered, prospectDelivered,
 } = {}) {
   const unusable = (reason) => ({
     ok: false, unusable: reason, diff: null,
@@ -85,7 +91,8 @@ export function compareSequenceParity({
   const onlyProspects = setDiff(eb, ea);
 
   const stepMismatch = []; const statusMismatch = [];
-  const stopReasonMismatch = []; const keyMismatch = [];
+  const stopReasonMismatch = []; const keyMismatch = []; const deliveredMismatch = [];
+  const checkedDelivered = customerDelivered instanceof Map && prospectDelivered instanceof Map;
   const dueA = new Set(); const dueB = new Set();
 
   for (const [email, ra] of a) {
@@ -101,6 +108,11 @@ export function compareSequenceParity({
       const kb = prospectKeys.get(email) || null;
       if (ka !== kb) keyMismatch.push(email);
     }
+    if (checkedDelivered) {
+      const da = Number(customerDelivered.get(email) || 0);
+      const db = Number(prospectDelivered.get(email) || 0);
+      if (da !== db) deliveredMismatch.push(email);
+    }
   }
   for (const [email, rb] of b) if (rb.status === SEQ_STATUS.DUE) dueB.add(email);
 
@@ -115,6 +127,8 @@ export function compareSequenceParity({
     '停止理由不一致': stopReasonMismatch.length,
     // Map を渡さなかったときは「見ていない」ことが分かるよう null にする
     'DeliveryKey不一致': (customerKeys instanceof Map && prospectKeys instanceof Map) ? keyMismatch.length : null,
+    // Map を渡さなかったときは「見ていない」ことが分かるよう null にする
+    'delivered不一致': checkedDelivered ? deliveredMismatch.length : null,
   };
 
   const checkedKeys = customerKeys instanceof Map && prospectKeys instanceof Map;
@@ -123,13 +137,17 @@ export function compareSequenceParity({
     && stepMismatch.length === 0 && statusMismatch.length === 0
     && stopReasonMismatch.length === 0
     // ⚠️ 鍵を突き合わせていない parity は**合格にしない**（二重送信の芽を見逃す）
-    && checkedKeys && keyMismatch.length === 0;
+    && checkedKeys && keyMismatch.length === 0
+    // ⚠️ delivered を突き合わせていない parity も合格にしない（打ち切り判定がズレる）
+    && checkedDelivered && deliveredMismatch.length === 0;
 
   return {
     ok,
     unusable: null,
     /** 鍵まで見たか。false のまま ok が true になることは無い */
     keysChecked: checkedKeys,
+    /** delivered まで見たか。false のまま ok が true になることは無い */
+    deliveredChecked: checkedDelivered,
     diff,
     counts: {
       customers: a.size, prospects: b.size,
@@ -145,7 +163,8 @@ export function compareSequenceParity({
 export function assertParityBeforeMigration(result) {
   const r = result || {};
   return {
-    migrateAllowed: r.ok === true && r.unusable === null && r.keysChecked === true,
+    migrateAllowed: r.ok === true && r.unusable === null
+      && r.keysChecked === true && r.deliveredChecked === true,
     reason: r.unusable || (r.ok === true ? null : 'parity_mismatch'),
     diff: r.diff || null,
   };
