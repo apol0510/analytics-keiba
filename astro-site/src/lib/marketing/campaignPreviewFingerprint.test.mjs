@@ -180,5 +180,9 @@ test('⚠️【要件】guard: rollout の read-only 表示に state と gate �
   for (const k of ['killed:', 'stage:', 'alwaysArmed:', 'armedFor:', 'pendingJobIds:']) {
     assert.ok(adminSrc.includes(k), `⚠️ ${k} を出していない`);
   }
-  assert.match(adminSrc, /gates: \{[\s\S]*rolloutEnabled/, '⚠️ env ゲートを出していない');
+  // ⚠️ env ゲートの正本は `readStageGates`。`gates` を二重に定義しない（後勝ちで消える）
+  assert.match(adminSrc, /gates: readStageGates\(process\.env\)/, '⚠️ env ゲートを出していない');
+  const rollout = adminSrc.slice(adminSrc.indexOf("mode: 'rollout-status'"), adminSrc.indexOf("mode: 'rollout-status'") + 3000);
+  assert.equal((rollout.match(/^\s{4}gates:/gm) || []).length, 1,
+    '⚠️ `gates` が重複している（後勝ちで片方が黙って捨てられる）');
 });
