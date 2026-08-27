@@ -1,3 +1,42 @@
+# ✅ 本番 Customers 削除 完了（2026-08-27）＋ 運用の罠
+
+**deleted 11,955 / refused 0 / failed 0 / 異常 0。Customers 15,977 → 4,022。**
+Redis は完全に不変（active 11,976 / missing 0 / orphan 0 / digest `24c340b8…` /
+8/31 due 5,864 / `customersDeletionAllowed=true`）。送信・queue の新規は 0。
+保護対象は全残存（native 1,488 / engaged 917 / operator_grant 1,564 / converted 50 / suppressed 3）。
+残った取り込み由来 2,534 件を再分類しても **deletable 0**。
+**failed=0 かつ全検証 PASS のため rollback は実行していない。**
+
+## ⚠️ 削除バッチは 25 件（200 件は Function がタイムアウトする）
+
+削除は Airtable の DELETE を **1 件ずつ直列**に投げる。**本番実測で 1 件 344ms**。
+
+| 幅 | 1 バッチの所要 | 可否 |
+|---:|---:|---|
+| **25 件** | 約 **8.6 秒** | ✅ 本番 11,930 件を完走 |
+| 200 件 | 約 **69 秒** | ✖ 実行時間超過 |
+
+`scripts/delete-migrated-customers.mjs` の `CHUNK` は **25** に固定した。
+guard テストが「1 バッチの推定所要 > 12 秒」で落ちる。上げるなら**先に測り直す**。
+Function 側の `DELETE_MAX_PER_CALL`（200）とは別物（あちらは被害範囲、こちらは所要時間）。
+
+## ⚠️ `netlify env:get` は worktree から呼ぶと空を返す
+
+secret が空のまま実行され、**全リクエストが 403**。1 回目の削除実行はこれで 0 件のまま停止した
+（実害なし）。**必ずリポジトリの `astro-site` から取得する。**
+
+## ⚠️ 削除件数は毎回 live 判定で変わる
+
+11,961 → 11,960 → 11,957 → 11,930 と実際に動いた（開封が増えて `keep_engaged` へ移るため）。
+**固定件数で追わない。** 状態が変わった人は `refused` として消さないのが正しい挙動。
+
+## CampaignDeliveries の旧 `CustomerRecordId`（23,4xx 行）
+
+削除により**宙吊りのまま**。現行方針は **rollback のときだけ再配線**（canary で実証済み）。
+いま書き換えない。
+
+---
+
 # 🚧 Customers 削除の rollback 完成条件（**未達のまま削除しない**・常設）
 
 > **この節は削除が完了し rollback を検証し終えるまで消さない。**

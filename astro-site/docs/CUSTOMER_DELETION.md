@@ -147,6 +147,26 @@ ADMIN_SECRET=... node scripts/rewire-campaign-deliveries.mjs --apply <mapping.js
 ⚠️ **「prospect は hash だから配信は続く」は 5 の一部でしかない。**
 1〜6 のどれか 1 つでも未達なら rollback は未完了。
 
+## ⚠️ バッチ幅（200 件にしない）
+
+削除は Airtable の DELETE を **1 件ずつ直列**に投げる。本番実測で **1 件 344ms**。
+
+| 幅 | 1 バッチの所要 | 可否 |
+|---:|---:|---|
+| 25 件 | 約 **8.6 秒** | ✅ 本番 11,930 件をこの幅で完走（2026-08-27）|
+| 200 件 | 約 **69 秒** | ✖ **Netlify Functions の実行時間を超える** |
+
+途中で切られると、そのバッチは**どこまで消えたか分からないまま**中断する
+（再実行すれば `already_deleted` として回復はするが、切り分けが無駄に増える）。
+
+`scripts/delete-migrated-customers.mjs` の `CHUNK` は **25**。
+`customerDeletionPlan.test.mjs` の guard が、
+**1 バッチの推定所要が 12 秒を超える幅へ戻ると落ちる**。
+上げるなら**先に 1 件あたりの所要を測り直す**こと。
+
+> Function 側の `DELETE_MAX_PER_CALL`（200）とは**別物**。あちらは「取り違えの被害を
+> 小さくする」ための上限で、こちらは**所要時間**で決まる。
+
 ## 二重実行しても安全
 
 - 実行側が渡した id を**そのまま消さない**。サーバ側で計画を作り直し、

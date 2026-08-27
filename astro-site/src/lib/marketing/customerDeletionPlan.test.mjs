@@ -282,3 +282,52 @@ test('⚠️ 控えはリポジトリの外へ保存する（PII を git に置�
   assert.match(src, /homedir\(\)/, '⚠️ 控えの保存先がリポジトリ内になっている');
   assert.match(src, /mode: 0o600/, '⚠️ 控えファイルの権限を絞っていない');
 });
+
+/* ── 9. バッチ幅が黙って大きく戻らない ─────────────────────
+ *
+ * ⚠️ 削除は Airtable の DELETE を 1 件ずつ直列に投げる。**本番実測で 1 件 344ms**。
+ *    200 件 = 約 69 秒で **Netlify Functions の実行時間を超える**（2026-08-27 に実測）。
+ *    途中で切られると、そのバッチはどこまで消えたか分からないまま中断する。
+ *    25 件（約 8.6 秒）で本番 11,930 件を完走したので、**この幅を戻させない**。
+ */
+
+/** 1 件あたりの実測（本番 2026-08-27）*/
+const MEASURED_MS_PER_RECORD = 344;
+/** これ以上かかる幅にしない（Function の実行時間に対する安全域）*/
+const MAX_BATCH_SECONDS = 12;
+
+const deleteScript = readFileSync(fileURLToPath(
+  new URL('../../../scripts/delete-migrated-customers.mjs', import.meta.url),
+), 'utf8');
+
+const declaredChunk = (() => {
+  const m = deleteScript.match(/^const CHUNK = (\d+);/m);
+  return m ? Number(m[1]) : NaN;
+})();
+
+test('⚠️【要件】削除のバッチ幅が Function のタイムアウトに当たる大きさへ戻っていない', () => {
+  assert.ok(Number.isFinite(declaredChunk), 'CHUNK を読み取れない（宣言の形が変わった？）');
+  const seconds = (declaredChunk * MEASURED_MS_PER_RECORD) / 1000;
+  assert.ok(
+    seconds <= MAX_BATCH_SECONDS,
+    `⚠️ CHUNK=${declaredChunk} は 1 バッチ約 ${seconds.toFixed(1)}s で、`
+    + `Function がタイムアウトする（上限 ${MAX_BATCH_SECONDS}s）。`
+    + '上げるなら先に 1 件あたりの所要を測り直すこと',
+  );
+});
+
+test('⚠️ 本番で完走した幅（25 件）から広げていない', () => {
+  assert.ok(declaredChunk <= 25, `⚠️ CHUNK=${declaredChunk}（本番実績は 25）`);
+  assert.ok(declaredChunk >= 1);
+});
+
+test('⚠️ タイムアウトの理由がコードに書き残されている（数字だけ直されるのを防ぐ）', () => {
+  assert.match(deleteScript, /タイムアウト/, '⚠️ なぜ小さいのかが書かれていない');
+  assert.match(deleteScript, /344ms/, '⚠️ 実測値が残っていない');
+});
+
+test('Function 側の上限とは別物（こちらは所要時間で決まる）', () => {
+  // サーバ側の上限は「取り違えの被害」を抑えるためのもので、時間とは別の理由
+  assert.equal(DELETE_MAX_PER_CALL, 200);
+  assert.ok(declaredChunk <= DELETE_MAX_PER_CALL, 'Function 側の上限を超える幅にしない');
+});
