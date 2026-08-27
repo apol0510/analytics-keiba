@@ -134,6 +134,7 @@ import {
 import { createProspectStore, emailHash } from '../../src/lib/marketing/prospectStore.js';
 import { hashEmailForSignal } from '../../src/lib/marketing/engagementSignalStore.js';
 import { buildProspectSequenceRows } from '../../src/lib/marketing/prospectSequenceAdapter.js';
+import { loadProspectSequenceInputs } from '../../src/lib/marketing/prospectAudienceSource.js';
 import { hydrateProspectSequenceInputs } from '../../src/lib/marketing/prospectSequenceHydration.js';
 import { compareSequenceParity } from '../../src/lib/marketing/sequenceParity.js';
 import { makeRedisPipeline } from '../../src/lib/marketing/deliveryKeyStore.js';
@@ -855,6 +856,7 @@ export const handler = async (event) => {
     if (action === 'sequenceMetrics') return await handleSeqMetrics({ req });
     if (action === 'engagementDigest') return await handleEngagementDigest({ now });
     if (action === 'prospectIntake') return await handleProspectIntake({ KEY, BASE, now, req });
+    if (action === 'prospectSequenceCheck') return await handleProspectSequenceCheck({ now, req });
     if (action === 'trialGrant') return await handleTrialGrantPreview({ now, req });
     if (action === 'duplicateCheck') return await handleDuplicateCheck({ KEY, BASE, req });
     if (action === 'rollout') return await handleRollout({ KEY, BASE, now, req });
@@ -2736,8 +2738,15 @@ async function handleProspectIntake({ KEY, BASE, now, req }) {
   }
 
   // 4) 投入計画（判定も引き継ぎも純粋モジュール）
+  //    ⚠️ 台帳へ引き継ぐのは **この campaign の鍵だけ**（別 campaign の鍵を混ぜない）
+  const campaignKeys = new Set();
+  for (const e of emails) {
+    for (const [, k] of prospectStepKeys({ campaign, email: e, brand: BRAND, fromEmail })) {
+      campaignKeys.add(k);
+    }
+  }
   const plan = planProspectIntakeFromCustomers({
-    records, deliveries,
+    records, deliveries, campaignKeys,
     openHashes, clickHashes, hashEmail: emailHash, signalHash: hashEmailForSignal,
     engagedEmails: engagementApplied ? engagedEmails : undefined,
     nowMs: now,
@@ -2891,6 +2900,99 @@ function computePageParity({ campaign, records, deliveries, plan, brand, fromEma
     customerDelivered: deliveredA, prospectDelivered: deliveredB,
   });
   return { ok: result.ok, diff: result.diff, reason: result.unusable };
+}
+
+/**
+ * 移行後の検証（read-only・**1 バイトも書かない**）。
+ *
+ * **実際の Redis**（prospect プール ＋ 配信台帳）だけを読み、
+ * 「移した相手が、いつ、どの step の対象になるか」を出す。
+ * 投入計画の写しではなく**入った状態そのもの**を見るので、
+ * 「入ったつもり」を検出できる。
+ *
+ * `at`（ISO 文字列）を渡すと、その時刻での対象も返す（8/31 の 2 通目の確認用）。
+ *
+ * ⚠️ アドレスも recordId も返さない（件数と内訳だけ）。
+ * ⚠️ 索引・台帳を読めなければ `ok:false`（0 件と混同しない）。
+ */
+async function handleProspectSequenceCheck({ now, req }) {
+  const campaignId = String(req.campaignId || 'campaign-discount-free').trim();
+  const campaign = getCampaign(campaignId, { includeDisabled: true });
+  if (!campaign || !isSequenceCampaign(campaign)) {
+    return json(400, { error: '連続配信のキャンペーンを指定してください', sideEffects: 'none' });
+  }
+  const fromEmail = getBrandConfig(BRAND).defaultFromEmail;
+
+  let store; let ledger;
+  try {
+    store = createProspectStore({
+      cmd: makeRedisCmd(process.env), pipeline: makeRedisPipeline(process.env),
+    });
+    ledger = createDeliveryKeyStore({
+      redisCmd: makeRedisCmd(process.env), redisPipeline: makeRedisPipeline(process.env),
+    });
+  } catch {
+    return json(503, { error: 'Redis へ接続できません', sideEffects: 'none' });
+  }
+
+  const inputs = await loadProspectSequenceInputs({
+    store, deliveryKeyStore: ledger, campaign, brand: BRAND, fromEmail, nowMs: now,
+  });
+  if (!inputs.ok) {
+    return json(500, { error: 'prospect を読み切れませんでした', reason: inputs.reason, sideEffects: 'none' });
+  }
+
+  const runAt = (nowMs) => {
+    const rows = buildProspectSequenceRows({ prospects: inputs.prospects, nowMs });
+    const h = hydrateProspectSequenceInputs({
+      prospects: inputs.prospects, campaign, brand: BRAND, fromEmail,
+      deliveredKeys: new Set(inputs.deliveries.map((d) => String((d.fields || {}).DeliveryKey || ''))),
+    });
+    const progress = buildSequenceProgress({
+      campaign, selected: rows.rows, deliveries: h.ok ? h.deliveries : [],
+      brand: BRAND, fromEmail, nowMs,
+      providerSuppressed: inputs.providerSuppressed, softBounced: new Set(),
+      engagementByEmail: inputs.engagementByEmail,
+    });
+    return progress.ok ? progress.summary : null;
+  };
+
+  const atMs = Date.parse(String(req.at || '')) || null;
+  // 引き継いだ delivered の分布（打ち切り判定の分母が正しく入っているか）
+  const deliveredHist = {};
+  let deliveredMax = 0; let opensTotal = 0;
+  for (const p of inputs.prospects) {
+    const d = Number(p.delivered) || 0;
+    deliveredHist[d] = (deliveredHist[d] || 0) + 1;
+    if (d > deliveredMax) deliveredMax = d;
+    if (Number(p.opens) > 0) opensTotal += 1;
+  }
+  const counts = await store.counts();
+
+  return json(200, {
+    mode: 'prospect-sequence-check',
+    sideEffects: 'none',
+    campaignId,
+    pool: counts,
+    loaded: inputs.counts,
+    ledger: { restoredDeliveries: inputs.deliveries.length },
+    delivered: { max: deliveredMax, histogram: deliveredHist, withOpens: opensTotal },
+    now: runAt(now),
+    at: atMs ? { at: new Date(atMs).toISOString(), summary: runAt(atMs) } : null,
+    notice: 'これは読み取りのみです（Redis の実状態）。',
+  });
+}
+
+/** その campaign の step 別 DeliveryKey（鍵の作り方は `campaignSend.js` が唯一の生成元） */
+function prospectStepKeys({ campaign, email, brand, fromEmail }) {
+  const m = new Map();
+  for (const st of getSequenceSteps(campaign)) {
+    const eff = resolveSequenceStep(campaign, st.stepNumber);
+    if (!eff) continue;
+    const k = computeCampaignDeliveryKey({ campaign: eff, recipientEmail: email, brand, fromEmail });
+    if (k) m.set(st.stepNumber, k);
+  }
+  return m;
 }
 
 /** Customers を 1 ページだけ読む（**全件走査しない**。offset で続きから） */
