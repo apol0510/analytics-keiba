@@ -211,3 +211,84 @@ test('⚠️ guard: prospect の冪等性は **queue の前の予約**で確定�
   assert.match(adminSrc, /releaseProspectClaims\(/);
   assert.match(cronSrc, /releaseClaims\(/);
 });
+
+/* ── 検証を索引の窓で分割する（移行後の read-only 確認）──────────── */
+
+import { loadActiveProspects as loadWindow } from './prospectAudienceSource.js';
+
+/** 索引の順序が安定した fake store（窓の検証用） */
+function orderedStore(n) {
+  const list = Array.from({ length: n }, (_, i) => {
+    const p = buildProspect({ email: `w${i}@example.com`, nowMs: NOW, batchId: BATCH, source: 'csv' });
+    p.hash = `h${String(i).padStart(4, '0')}`;
+    return p;
+  });
+  const byHash = new Map(list.map((p) => [p.hash, p]));
+  return {
+    list,
+    async activeHashes() { return [...byHash.keys()]; },
+    async loadMany(hashes) { return hashes.map((h) => byHash.get(h)).filter(Boolean); },
+  };
+}
+
+test('窓: offset / limit で分割しても全員をちょうど 1 回ずつ読む', async () => {
+  const store = orderedStore(250);
+  const seen = new Set();
+  let offset = 0;
+  let pages = 0;
+  for (let i = 0; i < 20; i += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    const r = await loadWindow({ store, offset, maxRecipients: 60 });
+    assert.equal(r.ok, true);
+    assert.equal(r.indexSize, 250, '索引全体の件数は窓を掛けても変わらない');
+    pages += 1;
+    for (const p of r.prospects) {
+      assert.equal(seen.has(p.email), false, `${p.email} を 2 回読んでいる`);
+      seen.add(p.email);
+    }
+    offset += r.prospects.length;
+    if (offset >= r.indexSize) break;
+  }
+  assert.equal(seen.size, 250, '読み落としがある');
+  assert.equal(pages, 5);
+});
+
+test('窓: 範囲を超えた offset は 0 件（例外にしない）', async () => {
+  const r = await loadWindow({ store: orderedStore(10), offset: 99, maxRecipients: 10 });
+  assert.equal(r.ok, true);
+  assert.equal(r.prospects.length, 0);
+  assert.equal(r.indexSize, 10, '⚠️ 索引が空になったと誤解させない');
+});
+
+test('窓: 指定なしなら従来どおり全件', async () => {
+  const r = await loadWindow({ store: orderedStore(30) });
+  assert.equal(r.prospects.length, 30);
+});
+
+test('⚠️ 窓: 索引を読めなければ窓に関係なく中止する', async () => {
+  const store = orderedStore(10);
+  store.activeHashes = async () => { throw new Error('down'); };
+  const r = await loadWindow({ store, offset: 0, maxRecipients: 5 });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, AUDIENCE_FAIL.INDEX_UNAVAILABLE);
+});
+
+test('窓: loadProspectSequenceInputs も indexSize を全体として返す', async () => {
+  const store = orderedStore(120);
+  const keys = store.list.map((p) => keyFor(p.email, 1));
+  const inputs = await loadProspectSequenceInputs({
+    store, deliveryKeyStore: fakeLedger(keys),
+    campaign: CAMPAIGN, brand: BRAND, fromEmail: FROM, nowMs: NOW,
+    offset: 100, maxRecipients: 50,
+  });
+  assert.equal(inputs.ok, true);
+  assert.equal(inputs.indexSize, 120);
+  assert.equal(inputs.rows.length, 20, '窓の残りぶんだけ返る');
+});
+
+test('⚠️ guard: 検証は窓で分割し、復元を 2 回作らない', () => {
+  assert.match(adminSrc, /prospectSequenceCheck/);
+  assert.match(adminSrc, /nextOffset/);
+  assert.match(adminSrc, /const rowsOnce = buildProspectSequenceRows/,
+    '時刻ごとに復元を作り直している（実行時間を使い切る）');
+});

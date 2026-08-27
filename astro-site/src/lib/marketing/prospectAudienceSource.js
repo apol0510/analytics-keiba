@@ -40,12 +40,18 @@ export const AUDIENCE_FAIL = Object.freeze({
 });
 
 /**
- * 送信候補の prospect をすべて読む。**途中で失敗したら部分結果を返さない**。
+ * 送信候補の prospect を読む。**途中で失敗したら部分結果を返さない**。
  *
- * @param {{store: object, maxRecipients?: number}} input
+ * `offset` / `maxRecipients` は**索引の窓**。移行後の検証で 1 万件超を
+ * 1 回の実行で見ようとすると Function の実行時間を超えるため、分割して呼べるようにする
+ * （2026-08-27 に本番で 504）。配信の順序ではなく、あくまで読み出しの窓。
+ *
+ * ⚠️ 窓を掛けるのは**索引を読み切ったあと**。読めた人数（`indexSize`）は常に全体を指す。
+ *
+ * @param {{store: object, maxRecipients?: number, offset?: number}} input
  * @returns {Promise<{ok:boolean, reason?:string, prospects:object[], indexSize:number}>}
  */
-export async function loadActiveProspects({ store, maxRecipients } = {}) {
+export async function loadActiveProspects({ store, maxRecipients, offset } = {}) {
   if (!store || typeof store.activeHashes !== 'function') {
     return { ok: false, reason: AUDIENCE_FAIL.INDEX_UNAVAILABLE, prospects: [], indexSize: 0 };
   }
@@ -56,9 +62,11 @@ export async function loadActiveProspects({ store, maxRecipients } = {}) {
     return { ok: false, reason: AUDIENCE_FAIL.INDEX_UNAVAILABLE, prospects: [], indexSize: 0 };
   }
   const indexSize = hashes.length;
-  // ⚠️ 上限は**索引を読み切ったあと**に掛ける（読めた人数は正しく数える）
+  // ⚠️ 窓は**索引を読み切ったあと**に掛ける（読めた人数は正しく数える）
+  const from = Number.isInteger(offset) && offset > 0 ? offset : 0;
+  const window = hashes.slice(from);
   const target = Number.isInteger(maxRecipients) && maxRecipients > 0
-    ? hashes.slice(0, maxRecipients) : hashes;
+    ? window.slice(0, maxRecipients) : window;
   const out = [];
   for (let i = 0; i < target.length; i += LOAD_CHUNK) {
     const group = target.slice(i, i + LOAD_CHUNK);
@@ -81,9 +89,9 @@ export async function loadActiveProspects({ store, maxRecipients } = {}) {
  */
 export async function loadProspectSequenceInputs({
   store, deliveryKeyStore, campaign, brand, fromEmail, nowMs,
-  blacklistEmails, maxRecipients,
+  blacklistEmails, maxRecipients, offset,
 } = {}) {
-  const loaded = await loadActiveProspects({ store, maxRecipients });
+  const loaded = await loadActiveProspects({ store, maxRecipients, offset });
   if (!loaded.ok) return { ok: false, reason: loaded.reason, rows: [], deliveries: [] };
   const prospects = loaded.prospects;
 
@@ -92,6 +100,7 @@ export async function loadProspectSequenceInputs({
     return {
       ok: true, rows: [], deliveries: [], prospects: [],
       providerSuppressed: new Set(), engagementByEmail: new Map(),
+      indexSize: loaded.indexSize,
       counts: { 索引: loaded.indexSize, 読み込み: 0, 変換: 0 }, skipped: {},
     };
   }
@@ -124,6 +133,8 @@ export async function loadProspectSequenceInputs({
     deliveries: hydrated.deliveries,
     providerSuppressed: hydrated.providerSuppressed,
     engagementByEmail: hydrated.engagementByEmail,
+    /** 索引全体の件数（窓を掛けても**全体**を指す） */
+    indexSize: loaded.indexSize,
     counts: {
       索引: loaded.indexSize,
       読み込み: prospects.length,
