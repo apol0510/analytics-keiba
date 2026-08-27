@@ -45,7 +45,7 @@ export const AUDIENCE_FAIL = Object.freeze({
  * @param {{store: object, maxRecipients?: number}} input
  * @returns {Promise<{ok:boolean, reason?:string, prospects:object[], indexSize:number}>}
  */
-export async function loadActiveProspects({ store, maxRecipients } = {}) {
+export async function loadActiveProspects({ store, maxRecipients, offset } = {}) {
   if (!store || typeof store.activeHashes !== 'function') {
     return { ok: false, reason: AUDIENCE_FAIL.INDEX_UNAVAILABLE, prospects: [], indexSize: 0 };
   }
@@ -56,9 +56,13 @@ export async function loadActiveProspects({ store, maxRecipients } = {}) {
     return { ok: false, reason: AUDIENCE_FAIL.INDEX_UNAVAILABLE, prospects: [], indexSize: 0 };
   }
   const indexSize = hashes.length;
-  // ⚠️ 上限は**索引を読み切ったあと**に掛ける（読めた人数は正しく数える）
+  // ⚠️ 上限・開始位置は**索引を読み切ったあと**に掛ける（読めた人数は正しく数える）。
+  //    索引の並びは `SMEMBERS` の順で、同じ集合なら同じ順序が返る。
+  //    検証を分割して呼ぶための窓であって、配信の順序ではない。
+  const from = Number.isInteger(offset) && offset > 0 ? offset : 0;
+  const window = hashes.slice(from);
   const target = Number.isInteger(maxRecipients) && maxRecipients > 0
-    ? hashes.slice(0, maxRecipients) : hashes;
+    ? window.slice(0, maxRecipients) : window;
   const out = [];
   for (let i = 0; i < target.length; i += LOAD_CHUNK) {
     const group = target.slice(i, i + LOAD_CHUNK);
@@ -81,9 +85,9 @@ export async function loadActiveProspects({ store, maxRecipients } = {}) {
  */
 export async function loadProspectSequenceInputs({
   store, deliveryKeyStore, campaign, brand, fromEmail, nowMs,
-  blacklistEmails, maxRecipients,
+  blacklistEmails, maxRecipients, offset,
 } = {}) {
-  const loaded = await loadActiveProspects({ store, maxRecipients });
+  const loaded = await loadActiveProspects({ store, maxRecipients, offset });
   if (!loaded.ok) return { ok: false, reason: loaded.reason, rows: [], deliveries: [] };
   const prospects = loaded.prospects;
 
@@ -92,7 +96,7 @@ export async function loadProspectSequenceInputs({
     return {
       ok: true, rows: [], deliveries: [], prospects: [],
       providerSuppressed: new Set(), engagementByEmail: new Map(),
-      counts: { 索引: loaded.indexSize, 読み込み: 0, 変換: 0 }, skipped: {},
+      counts: { 索引: loaded.indexSize, 読み込み: 0, 変換: 0 }, skipped: {}, indexSize: loaded.indexSize,
     };
   }
 
@@ -124,6 +128,7 @@ export async function loadProspectSequenceInputs({
     deliveries: hydrated.deliveries,
     providerSuppressed: hydrated.providerSuppressed,
     engagementByEmail: hydrated.engagementByEmail,
+    indexSize: loaded.indexSize,
     counts: {
       索引: loaded.indexSize,
       読み込み: prospects.length,
