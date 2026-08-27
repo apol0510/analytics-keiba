@@ -28,7 +28,7 @@
 
 import {
   buildCampaignPlan, buildDeliveryRecords, chunkRecipients,
-  computeCampaignContentHash, assertOnlyDeliveryFields,
+  computeCampaignContentHash, assertOnlyDeliveryFields, computeCampaignDeliveryKey,
   MAX_RECIPIENTS_PER_SEND,
 } from '../../src/lib/marketing/campaignSend.js';
 import { getCampaign, renderCampaign, listCampaigns } from '../../src/lib/marketing/campaignCatalog.js';
@@ -38,13 +38,15 @@ import {
 import {
   createSequenceMetricsStore, emptyMetrics, accumulateMetrics,
 } from '../../src/lib/marketing/sequenceMetrics.js';
-import { makeRedisCmd, createDeliveryKeyStore } from '../../src/lib/marketing/deliveryKeyStore.js';
+import {
+  makeRedisCmd, makeRedisPipeline, createDeliveryKeyStore,
+} from '../../src/lib/marketing/deliveryKeyStore.js';
 import { createProspectStore } from '../../src/lib/marketing/prospectStore.js';
 import {
   loadProspectSequenceInputs, tagRecipientSources,
 } from '../../src/lib/marketing/prospectAudienceSource.js';
 import {
-  partitionRecipientsForLedger, resolveDeliveryStoreMode, RECIPIENT_SOURCE,
+  partitionRecipientsForLedger, resolveDeliveryStoreMode, writesRedis, RECIPIENT_SOURCE,
 } from '../../src/lib/marketing/deliveryKeySource.js';
 import {
   isSequenceCampaign, resolveSequenceStep,
@@ -233,12 +235,20 @@ export async function runSequenceTick({ env = process.env, now = Date.now(), cam
   // ⚠️ 索引や台帳を**読めなかったら中止する**。0 件と混同すると、
   //    送信漏れ（対象 0）か二重送信（全員未送信）のどちらかになる。
   let prospectInputs = null;
+  /** prospect を対象に含められなかった理由（**0 人と区別する**） */
+  let prospectDegraded = null;
   const prospectStore = (() => {
     try { return createProspectStore({ cmd: makeRedisCmd(env) }); } catch { return null; }
   })();
   const prospectLedger = (() => {
-    try { return createDeliveryKeyStore({ redisCmd: makeRedisCmd(env) }); } catch { return null; }
+    try {
+      // pipeline があると鍵ごとの `SADD` を 1 リクエストにまとめられる（予約の要）
+      return createDeliveryKeyStore({
+        redisCmd: makeRedisCmd(env), redisPipeline: makeRedisPipeline(env),
+      });
+    } catch { return null; }
   })();
+  if (!prospectStore || !prospectLedger) prospectDegraded = 'redis_unavailable';
   if (prospectStore && prospectLedger) {
     prospectInputs = await loadProspectSequenceInputs({
       store: prospectStore, deliveryKeyStore: prospectLedger,
@@ -246,9 +256,12 @@ export async function runSequenceTick({ env = process.env, now = Date.now(), cam
       blacklistEmails,
     });
     if (!prospectInputs.ok) {
-      const body = { ok: false, abort: prospectInputs.reason, sideEffects: 'none' };
-      log(body);
-      return body;
+      // ⚠️ **Customers 由来の配信は止めない**（既存挙動を変えない）。
+      //    prospect だけを 1 人も対象にせず、理由を残して続ける。
+      //    0 人と混同しないよう、理由コードは必ずログと応答に出す。
+      console.error(`${SEQ_LOG_TAG} prospect を読めないため対象に含めません: ${prospectInputs.reason}`);
+      prospectDegraded = prospectInputs.reason;
+      prospectInputs = null;
     }
   }
   const prospectCount = prospectInputs ? prospectInputs.rows.length : 0;
@@ -320,30 +333,114 @@ export async function runSequenceTick({ env = process.env, now = Date.now(), cam
   const sending = resolveSequenceStep(base, plan.step);
   const byId = new Map(selected.map((c) => [c.recordId, c]));
   const targets = plan.recordIds.map((rid) => byId.get(rid)).filter(Boolean);
+
+  // ── 5-b) prospect は **queue の前に予約する**（2026-08-27 恒久修正）────────
+  //
+  // ⚠️ 以前は queue のあとに Redis へ記録していた。その順序だと
+  //      queue 成功 → Redis 記録失敗 → 次の tick で未送信扱い → **二重 queue**
+  //    が起きる（Airtable に行が無い prospect は Redis だけが冪等性の根拠なので、
+  //    記録が落ちた瞬間に「送っていない人」に戻ってしまう）。
+  //
+  // そこで `SADD` の戻り値（0/1）で **鍵ごとに 1 回だけ**所有権を渡し、
+  // 取れた人だけを queue する。`SADD` は atomic なので、
+  // **並行 tick が同じ鍵を取ることは構造的に起きない**。
+  //
+  // ⚠️ Redis が使えない / 予約が確定できないときは **prospect を 1 人も queue しない**。
+  //    Customers 由来はこれまでどおり進む（既存挙動を変えない）。
+  // ⚠️ 予約したのに queue できなかった鍵は必ず戻す（戻さないと二度と送られない）。
+  const prospectTargets = targets.filter((t) => prospectEmails.has(
+    String((t.fields || {}).Email || '').trim().toLowerCase(),
+  ));
+  const customerTargets = targets.filter((t) => !prospectEmails.has(
+    String((t.fields || {}).Email || '').trim().toLowerCase(),
+  ));
+  const scope = { brand: BRAND, campaignId: base.campaignId, version: base.version };
+  const keyOfTarget = (t) => computeCampaignDeliveryKey({
+    campaign: sending,
+    recipientEmail: String((t.fields || {}).Email || '').trim().toLowerCase(),
+    brand: BRAND, fromEmail,
+  });
+
+  let claimedKeys = new Set();
+  let prospectBlocked = 0;
+  let prospectClaimFailure = null;
+  if (prospectTargets.length > 0) {
+    if (!prospectLedger) {
+      prospectBlocked = prospectTargets.length;
+      prospectClaimFailure = 'redis_unavailable';
+    } else {
+      try {
+        const keys = prospectTargets.map(keyOfTarget).filter(Boolean);
+        if (keys.length !== prospectTargets.length) throw new Error('key_build_failed');
+        const claim = await prospectLedger.claimDelivered({ ...scope, keys });
+        claimedKeys = new Set(claim.claimed);
+        prospectBlocked = prospectTargets.length - claimedKeys.size;
+      } catch {
+        // ⚠️ **予約が確定できない = 送らない**（未送信と見なして送ると二重送信になる）
+        claimedKeys = new Set();
+        prospectBlocked = prospectTargets.length;
+        prospectClaimFailure = 'claim_failed';
+      }
+    }
+  }
+  if (prospectClaimFailure) {
+    console.error(`${SEQ_LOG_TAG} prospect の予約を取れないため送りません: ${prospectClaimFailure} / ${prospectBlocked} 件`);
+  }
+  const claimedProspectTargets = prospectTargets.filter((t) => claimedKeys.has(keyOfTarget(t)));
+
   const built = buildCampaignPlan({
-    campaign: sending, selected: targets,
+    campaign: sending, selected: [...customerTargets, ...claimedProspectTargets],
     providerSuppressed: suppressed,
     brand: BRAND, fromEmail, nowMs: now,
   });
+
+  /**
+   * 予約したのに送信計画へ載らなかった鍵を戻す（除外・上限などで落ちた分）。
+   * **戻さないとその人は二度と送られない**（集合に残ったままで既送信扱いになる）。
+   */
+  const releaseUnused = async (usedEmails) => {
+    if (claimedKeys.size === 0 || !prospectLedger) return;
+    const stale = claimedProspectTargets
+      .filter((t) => !usedEmails.has(String((t.fields || {}).Email || '').trim().toLowerCase()))
+      .map(keyOfTarget)
+      .filter(Boolean);
+    if (stale.length === 0) return;
+    try {
+      await prospectLedger.releaseClaims({ ...scope, keys: stale });
+    } catch {
+      console.error(`${SEQ_LOG_TAG} prospect の予約を戻せませんでした: ${stale.length} 件`);
+    }
+  };
   if (!built.ok || built.recipients.length === 0) {
-    const body = { ok: false, abort: built.ok ? TICK_ABORT.NO_DUE : built.error, sideEffects: 'none' };
+    await releaseUnused(new Set());
+    const body = {
+      ok: false, abort: built.ok ? TICK_ABORT.NO_DUE : built.error, sideEffects: 'none',
+      ...(prospectBlocked > 0 ? { prospectBlocked, prospectClaimFailure } : {}),
+    };
     log(body);
     return body;
   }
   if (built.recipients.length > MAX_RECIPIENTS_PER_SEND) {
+    await releaseUnused(new Set());
     return { ok: false, abort: TICK_ABORT.OVER_MAX, sideEffects: 'none' };
   }
+  // 送信計画に載らなかった予約はここで戻す（除外で落ちた分）
+  await releaseUnused(new Set(built.recipients.map((r) => String(r.email || '').toLowerCase())));
 
   // 6) 得の宣言（大量配信は宣言が無ければ送れない）
   const benefit = checkBenefitForSend({ campaign: sending, recipientCount: built.recipients.length });
   if (!benefit.ok) {
+    await releaseUnused(new Set());   // 送らないので予約を戻す
     const body = { ok: false, abort: `benefit_${benefit.reason}`, sideEffects: 'none' };
     log(body);
     return body;
   }
 
   const rendered = renderCampaign({ campaign: sending, name: null });
-  if (!rendered) return { ok: false, abort: 'render_failed', sideEffects: 'none' };
+  if (!rendered) {
+    await releaseUnused(new Set());
+    return { ok: false, abort: 'render_failed', sideEffects: 'none' };
+  }
 
   // 7) キュー登録（ScheduledEmails PENDING + CampaignDeliveries queued）
   const contentHash = computeCampaignContentHash(sending);
@@ -404,34 +501,48 @@ export async function runSequenceTick({ env = process.env, now = Date.now(), cam
     });
   }
 
-  // ⚠️ Redis 台帳は **prospect を含む全員**ぶんを記録する。
-  //    prospect は Airtable に行が無いので、ここに残らないと次回そのまま二重送信になる。
-  //    記録できたことを**読み戻して**確かめ、確かめられなければ失敗として数える。
-  let ledgerUnverified = 0;
-  if (prospectLedger && split.redisKeys.length > 0) {
-    const scope = { brand: BRAND, campaignId: base.campaignId, version: base.version };
+  // ── prospect の冪等性は **queue の前に確定済み**（5-b の予約）────────────
+  //
+  // ここで改めて記録する必要は無い。予約が集合に入った時点で、
+  // 次の tick はその鍵を「既送信」として扱う（`filterDelivered` / hydration）。
+  //
+  // やることは 1 つだけ: **queue できなかった prospect の予約を戻す**。
+  // 戻さないと、その人は集合に残ったまま既送信扱いになり **二度と送られない**。
+  const queuedEmails = new Set(jobIdByEmail.keys());
+  const notQueuedProspectKeys = prospectRecipients
+    .filter((r) => !queuedEmails.has(r.email))
+    .map((r) => r.deliveryKey)
+    .filter(Boolean);
+  let releaseFailed = 0;
+  if (notQueuedProspectKeys.length > 0 && prospectLedger) {
     try {
-      await prospectLedger.markDelivered({ ...scope, keys: split.redisKeys });
-      if (prospectRecipients.length > 0) {
-        const want = prospectRecipients.map((r) => r.deliveryKey).filter(Boolean);
-        const have = new Set(await prospectLedger.filterDelivered({ ...scope, keys: want }));
-        ledgerUnverified = want.filter((k) => !have.has(k)).length;
-      }
+      await prospectLedger.releaseClaims({ ...scope, keys: notQueuedProspectKeys });
     } catch {
-      ledgerUnverified = prospectRecipients.length;
+      releaseFailed = notQueuedProspectKeys.length;
+      console.error(`${SEQ_LOG_TAG} prospect の予約を戻せませんでした: ${releaseFailed} 件`);
     }
-  } else if (prospectRecipients.length > 0) {
-    ledgerUnverified = prospectRecipients.length;
   }
-  if (ledgerUnverified > 0) {
-    // 送信そのものは既に queue 済みなので止められない。**黙らない**（次の tick で気づける）
-    console.error(`${SEQ_LOG_TAG} prospect 台帳を確認できません: ${ledgerUnverified} 件`);
+
+  // Customers 由来の Redis 記録は**従来どおり**（`MARKETING_DELIVERY_STORE` に従う）。
+  // Airtable が正本なので、ここが落ちても致命にしない（差分は reconcile が拾う）。
+  const customerRedisKeys = split.redisKeys.filter(
+    (k) => !prospectRecipients.some((r) => r.deliveryKey === k),
+  );
+  if (prospectLedger && writesRedis(ledgerMode) && customerRedisKeys.length > 0) {
+    try {
+      await prospectLedger.markDelivered({ ...scope, keys: customerRedisKeys });
+    } catch {
+      console.warn(`${SEQ_LOG_TAG} customer 側の Redis 記録に失敗（Airtable が正本のため継続）`);
+    }
   }
 
   const summary = summarizeSequenceTick({ campaignId: base.campaignId, plan, enqueued, failed });
   summary['prospect対象'] = prospectRecipients.length;
   summary['Airtable台帳'] = deliveryRecords.length;
-  if (ledgerUnverified > 0) summary['台帳未確認'] = ledgerUnverified;
+  if (prospectDegraded) summary['prospect除外'] = prospectDegraded;
+  if (prospectBlocked > 0) summary['prospect予約不可'] = prospectBlocked;
+  if (prospectClaimFailure) summary['prospect予約失敗'] = prospectClaimFailure;
+  if (releaseFailed > 0) summary['予約戻し失敗'] = releaseFailed;
   log(summary);
   return {
     ok: true, step: plan.step, enqueued, failed,

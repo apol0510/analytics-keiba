@@ -2062,8 +2062,33 @@ Customers 15,976 件のうち `Source='customer-import:…'` が **14,489 件**�
 
 `cron-campaign-sequence` と `admin-marketing` の両方で、出所が prospect の受信者は
 `CampaignDeliveries` の行を作らず、Redis の集合にだけ記録する。
-書いたあと**読み戻して確かめ**、確かめられなければ成功と言わない。
-Redis へ書けない構成なら **1 行も書かずに中止**する（記録が無いと次回そのまま二重送信）。
+
+### ⚠️ prospect の予約は **queue の前**に取る（2026-08-27 恒久修正）
+
+**queue のあとに記録する順序は禁止。** prospect は Airtable に行が無いので
+Redis の集合だけが冪等性の根拠であり、
+
+> queue 成功 → Redis 記録失敗 → 次の tick で未送信扱い → **二重 queue**
+
+が起きる。そこで `SADD` の戻り値（0/1）で**鍵ごとに 1 回だけ**所有権を渡し、
+**取れた鍵だけを queue する**（`deliveryKeyStore.claimDelivered()`）。
+`SADD` は atomic なので、**並行 tick が同じ鍵を取ることは構造的に起きない**。
+
+| 条件 | ふるまい |
+|---|---|
+| Redis が使えない / 予約が確定できない | **prospect を 1 人も queue しない**（Customers は従来どおり進む）|
+| 応答が 0/1 以外・件数が合わない | **throw**（「分からない」を「未送信」に倒さない）|
+| 予約したが queue できなかった | `releaseClaims()` で**必ず戻す**（戻さないと二度と送られない）|
+| admin 経路で 1 件でも予約できない | ジョブも配信行も**1 つも作らずに中止**（all-or-nothing）|
+| 巻き戻し時 | prospect の予約も戻す |
+
+⚠️ **`ak:mkt:delivered` の集合は「予約・冪等性」であって「delivered 実績」ではない。**
+打ち切り（delivered 10 通・開封 0）の分母になる `delivered` カウンタは prospect レコード側にあり、
+**`prospectStore.recordDelivered()`（確定経路）だけ**が増やす。
+キュー登録・予約でこのカウンタを動かしてはいけない。
+
+⚠️ prospect を読めなかったときは **prospect だけを対象から外し、Customers の配信は止めない**
+（既存挙動を変えない）。理由コードは必ずログと応答に出す（0 人と混同しない）。
 
 ### 投入（Redis write）の安全条件
 
@@ -2080,7 +2105,8 @@ Redis へ書けない構成なら **1 行も書かずに中止**する（記録�
 （`UPSTASH_*` は production コンテキストのみ・ローカルでは masked・preview にも無い）。
 
 検証: `npm run test:marketing`
-（`prospectSequenceParity.test.mjs` / `prospectAudienceWiring.test.mjs` / `prospectIntakePlan.test.mjs`）
+（`prospectSequenceParity.test.mjs` / `prospectAudienceWiring.test.mjs` /
+`prospectIntakePlan.test.mjs` / `prospectQueueIdempotency.test.mjs`）
 
 ### Airtable の上限は Customers を減らしても解決しない
 

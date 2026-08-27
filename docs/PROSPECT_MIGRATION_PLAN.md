@@ -115,6 +115,7 @@ Airtable は既に上限超過（§8）で、待つほど危険が増す。
 | `prospectAudienceSource.js` | **prospect プールから受信対象を作る**（移した瞬間に配信が止まらない）|
 | `prospectIntakePlan.js` | Customers → prospect の**引き継ぎ内容**と投入の安全条件 |
 | `sequenceParity.js` | 2 経路の突合（差分 0 でなければ移行しない）|
+| `deliveryKeyStore.claimDelivered()` | **queue の前**に鍵ごと 1 回だけ予約（二重 queue を構造的に止める）|
 
 比較する 5 点（**1 つでも差があれば移行しない**）:
 
@@ -318,3 +319,25 @@ POST /.netlify/functions/admin-marketing
 2. 抑止台帳へ hash を引き継ぎ、**載ったことを読み直す**
 3. 削除前の**全フィールドスナップショット**
 4. → **ここで改めて承認を取る**（削除は別工程）
+
+
+## 14. prospect の冪等性（queue の前に予約する）
+
+prospect は `CampaignDeliveries` に行を作らないので、**Redis の集合だけが冪等性の根拠**。
+したがって **queue のあとに記録してはいけない**（記録が落ちた瞬間に「未送信」へ戻り、
+次の tick で二重 queue になる）。
+
+`SADD` の戻り値（0/1）で**鍵ごとに 1 回だけ**所有権を渡し、取れた鍵だけを queue する。
+
+| 条件 | ふるまい |
+|---|---|
+| Redis 不可 / 予約が確定できない | **prospect を 1 人も queue しない**（Customers は従来どおり進む）|
+| 応答が 0/1 以外・件数が合わない | **throw**（「分からない」を「未送信」に倒さない）|
+| 予約したが queue できなかった | `releaseClaims()` で**必ず戻す**（戻さないと二度と送られない）|
+| admin 経路で 1 件でも予約できない | ジョブも配信行も**1 つも作らずに中止**（all-or-nothing）|
+
+⚠️ **`ak:mkt:delivered` は「予約・冪等性」であって「delivered 実績」ではない。**
+打ち切り（delivered 10 通・開封 0）の分母は prospect レコードの `delivered` カウンタで、
+**`recordDelivered()`（確定経路）だけ**が増やす。
+
+検証: `src/lib/marketing/prospectQueueIdempotency.test.mjs`

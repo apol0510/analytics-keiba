@@ -136,6 +136,7 @@ import { hashEmailForSignal } from '../../src/lib/marketing/engagementSignalStor
 import { buildProspectSequenceRows } from '../../src/lib/marketing/prospectSequenceAdapter.js';
 import { hydrateProspectSequenceInputs } from '../../src/lib/marketing/prospectSequenceHydration.js';
 import { compareSequenceParity } from '../../src/lib/marketing/sequenceParity.js';
+import { makeRedisPipeline } from '../../src/lib/marketing/deliveryKeyStore.js';
 import { IMPORT_SOURCE_PREFIX } from '../../src/lib/marketing/importCohort.js';
 import { EMAIL_EVENTS_TABLE as EMAIL_EVENTS_TABLE_NAME } from '../../src/lib/webhooks/emailEventLedger.js';
 import { validateSelection } from '../../src/lib/marketing/adminMultiFilter.js';
@@ -3480,6 +3481,74 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
   const rendered = renderCampaign({ campaign: sending, name: null }); // 1 ジョブ 1 本文（汎用呼びかけ）
   if (!rendered) return json(500, { error: 'テンプレート描画に失敗しました' });
 
+  // ── 0) prospect は **1 行も書く前に予約する**（2026-08-27 恒久修正）────────
+  //
+  // prospect は `CampaignDeliveries` に行を作らないので、冪等性の根拠は
+  // Redis の集合だけ。**queue のあとに記録する順序だと、記録が落ちた瞬間に
+  // 「未送信」に戻り、次の実行で二重 queue になる**。
+  //
+  // ここでは **all-or-nothing**。1 件でも予約できなければ、
+  // ジョブも配信行も 1 つも作らずに中止する（この経路は運用者が押す 1 回なので、
+  // 部分的に進めるより「やり直せる状態で止める」方が安全）。
+  const prospectPlanRecipients = plan.recipients.filter(
+    (r) => !resolveRecipientLedgerPolicy({
+      mode: deliveryStoreMode, source: (r && (r['出所'] ?? r.source)) || RECIPIENT_SOURCE.CUSTOMER,
+    }).writeAirtable,
+  );
+  const prospectScope = { brand: BRAND, campaignId: campaign.campaignId, version: campaign.version };
+  let prospectClaimed = [];
+  if (prospectPlanRecipients.length > 0) {
+    const keys = prospectPlanRecipients.map((r) => r.deliveryKey).filter(Boolean);
+    if (keys.length !== prospectPlanRecipients.length) {
+      return json(500, {
+        error: 'prospect の DeliveryKey を作れませんでした（中止しました）',
+        reason: 'prospect_key_build_failed', sideEffects: 'none',
+      });
+    }
+    try {
+      const store = createDeliveryKeyStore({
+        redisCmd: makeRedisCmd(process.env), redisPipeline: makeRedisPipeline(process.env),
+      });
+      const claim = await store.claimDelivered({ ...prospectScope, keys });
+      prospectClaimed = claim.claimed;
+      if (claim.claimed.length !== keys.length) {
+        // 既に他が持っている / 既送信 → **この計画のままでは送れない**。
+        // 自分が取った分は戻してから中止する（取りっぱなしにすると二度と送られない）。
+        if (claim.claimed.length > 0) {
+          try { await store.releaseClaims({ ...prospectScope, keys: claim.claimed }); } catch { /* 記録のみ */ }
+        }
+        return json(409, {
+          error: 'prospect の一部が既に送信済み・予約済みでした。dry-run からやり直してください。',
+          reason: 'prospect_already_claimed',
+          requested: keys.length, claimed: claim.claimed.length,
+          sideEffects: 'none',
+        });
+      }
+    } catch {
+      // ⚠️ **予約が確定できない = 送らない**（未送信と見なして送ると二重送信になる）
+      return json(503, {
+        error: 'prospect の配信台帳を予約できないため中止しました（二重送信を避けるため）',
+        reason: 'prospect_ledger_unavailable',
+        prospectRecipients: prospectPlanRecipients.length,
+        sideEffects: 'none',
+      });
+    }
+  }
+
+  /** 予約したのに queue できなかった鍵を戻す（**戻さないと二度と送られない**） */
+  const releaseProspectClaims = async (keys) => {
+    const list = (keys || []).filter(Boolean);
+    if (list.length === 0) return;
+    try {
+      const store = createDeliveryKeyStore({
+        redisCmd: makeRedisCmd(process.env), redisPipeline: makeRedisPipeline(process.env),
+      });
+      await store.releaseClaims({ ...prospectScope, keys: list });
+    } catch {
+      console.error('🛑 [admin-marketing] prospect の予約を戻せませんでした');
+    }
+  };
+
   // 1) ScheduledEmails に PENDING ジョブを作る（実送信は送信基盤が担当）
   const jobIdByEmail = new Map();
   const jobs = [];
@@ -3591,18 +3660,8 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
    *    その人たちの「送った」がどこにも残らず**次回そのまま二重送信**になる。
    *    1 行も書かずに中止する（ジョブだけ巻き戻す）。
    */
-  if (prospectRecipients.length > 0 && !isRedisLedgerUsable()) {
-    const rb = await rollbackQueue({
-      KEY, BASE, campaign, now, jobs, rows: new Map(), reason: 'prospect_ledger_unavailable',
-    });
-    return json(500, {
-      error: 'prospect 宛の配信台帳を Redis へ記録できない構成です（二重送信になるため中止しました）',
-      reason: 'prospect_ledger_unavailable',
-      prospectRecipients: prospectRecipients.length,
-      rolledBack: rb.verified === true,
-      sideEffects: rb.verified === true ? 'rolled_back' : 'partial_unconfirmed',
-    });
-  }
+  // ⚠️ prospect の予約は**ジョブを作る前**に済ませてある（上の 0 段）。
+  //    ここで改めて Redis の到達性を確かめる必要は無い。
 
   const deliveryRecords = buildDeliveryRecords({ campaign, recipients: airtableRecipients, jobIdByEmail, nowMs: now });
   for (const rec of deliveryRecords) {
@@ -3644,8 +3703,9 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
   try {
     const deliveryWrite = await recordDelivered({
       mode: deliveryStoreMode,
-      // ⚠️ Redis へは **prospect も含めた全員**の鍵を記録する（記録が無いと次回二重送信）
-      keys: ledgerSplit.redisKeys,
+      // ⚠️ Redis へ改めて記録するのは **customer 分だけ**。
+      //    prospect は予約済みなので、ここで書いても書かなくても集合は変わらない。
+      keys: ledgerSplit.redisKeys.filter((k) => !prospectClaimed.includes(k)),
       // ⚠️ Airtable へは **customer 由来だけ**（prospect の行は 1 つも作らない）
       writeAirtable: () => upsertDeliveries({ KEY, BASE, records: deliveryRecords }),
       writeRedis: async (keys) => {
@@ -3653,15 +3713,8 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
         await store.markDelivered({ ...deliveryStoreScope, keys });
       },
     });
-    // prospect は Airtable に台帳が無いので、**Redis へ載ったことを読み戻して確かめる**。
-    // 確かめられなければキュー成功と言わない（`settleQueueWrite` は Airtable しか見ない）。
-    if (prospectRecipients.length > 0) {
-      const verified = await verifyProspectLedger({
-        scope: deliveryStoreScope,
-        keys: prospectRecipients.map((r) => r.deliveryKey).filter(Boolean),
-      });
-      if (!verified.ok) writeError = `prospect_ledger_unverified:${verified.missing}`;
-    }
+    // ⚠️ prospect の冪等性は **ジョブを作る前の予約**で確定済み（上の 0 段）。
+    //    ここで改めて記録・検証はしない（記録の失敗で二重 queue になる順序を作らない）。
     if (deliveryWrite.redis === 'failed') {
       console.warn('⚠️ [admin-marketing] delivery store redis write failed（Airtable が正本のため継続）');
     }
@@ -3683,6 +3736,8 @@ async function handlePlan({ KEY, BASE, now, req, live }) {
   });
   if (!settled.ok) {
     const rb = settled.rollback || {};
+    // ⚠️ 巻き戻すなら prospect の予約も**必ず戻す**（戻さないと二度と送られない）
+    await releaseProspectClaims(prospectClaimed);
     console.error('🛑 [admin-marketing] キュー登録を確定できず巻き戻し:', {
       campaignId: campaign.campaignId, reason: settled.outcome.reason,
       expected: settled.outcome.expected, verified: settled.outcome.verified,
@@ -4064,40 +4119,6 @@ const DELIVERY_COMPLETE_MAX_RETRY = 2;
  *      （配信行を `cancelled` にすると `fetchDeliveredKeys` の既送信集合から外れ、
  *        全員をそのまま再 queue できる。**新しい Status も削除も使わない**）
  */
-/**
- * Redis 台帳が使える構成か（**prospect の冪等性はここにしか残らない**）。
- * 設定が無い / 例外が出るなら false（呼び出し側は 1 行も書かずに中止する）。
- */
-function isRedisLedgerUsable() {
-  try {
-    // prospect は mode に関わらず Redis へ書く決まりなので、**繋げるか**だけを見る
-    createDeliveryKeyStore({ redisCmd: makeRedisCmd(process.env) });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * prospect ぶんの鍵が Redis の集合へ載ったことを**読み戻して**確かめる。
- *
- * ⚠️ 例外が出なかったことは「書けた」の証拠にならない。読めなければ ok:false。
- *    Airtable に行が無い以上、ここを飛ばすと**次回そのまま二重送信**になる。
- */
-async function verifyProspectLedger({ scope, keys }) {
-  const list = (Array.isArray(keys) ? keys : []).filter(Boolean);
-  if (list.length === 0) return { ok: true, missing: 0, checked: 0 };
-  try {
-    const store = createDeliveryKeyStore({ redisCmd: makeRedisCmd(process.env) });
-    const found = await store.filterDelivered({ ...scope, keys: list });
-    const have = new Set(found);
-    const missing = list.filter((k) => !have.has(k)).length;
-    return { ok: missing === 0, missing, checked: list.length };
-  } catch {
-    return { ok: false, missing: list.length, checked: list.length };
-  }
-}
-
 async function settleQueueWrite({
   KEY, BASE, campaign, now, jobs, recipients, deliveryRecords, writeError,
 }) {

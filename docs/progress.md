@@ -1637,6 +1637,64 @@ MK 要望の 5 項目のうち、**確実に出せる 3 つ**を入れた。
 
 ---
 
+## 2026-08-27（追記2）— 【恒久修正】prospect の予約を queue の前へ（fail-closed 違反）
+
+### 指摘された不具合
+
+prospect を **queue したあと**に Redis の集合へ記録し、記録・読み戻しに失敗しても
+「送信は既に queue 済みなので止められない」と**ログだけ出して `ok:true`** で終了していた。
+
+prospect は `CampaignDeliveries` に行を作らないので Redis の集合だけが冪等性の根拠。
+記録が落ちた瞬間に「未送信」へ戻り、**次の tick で二重 queue** になる。
+
+### 直した
+
+`SADD` の戻り値（0/1）で**鍵ごとに 1 回だけ**所有権を渡し、**取れた鍵だけを queue** する。
+`SADD` は atomic なので並行 tick が同じ鍵を取ることは構造的に起きない。
+
+| 条件 | ふるまい |
+|---|---|
+| Redis 不可 / 予約が確定できない | **prospect を 1 人も queue しない**（Customers は従来どおり）|
+| 応答が 0/1 以外・件数不一致 | **throw**（「分からない」を「未送信」に倒さない）|
+| 予約したが queue できなかった | `releaseClaims()` で戻す |
+| admin 経路で 1 件でも予約不可 | **1 行も書かずに中止**（all-or-nothing）|
+| 巻き戻し時 | prospect の予約も戻す |
+
+`SADD` は鍵ごとに投げる必要がある（まとめると「どの鍵を取ったか」が決まらない）ため、
+Upstash の `/pipeline` で 1 リクエストにまとめる。pipeline が無ければ 1 件ずつ投げる。
+
+### 予約と delivered 実績を分離
+
+`ak:mkt:delivered` = **予約・冪等性**。
+打ち切り（delivered 10 通・開封 0）の分母 = prospect レコードの `delivered` カウンタで、
+**`recordDelivered()`（確定経路）だけ**が増やす。
+
+### テストで固定した（`prospectQueueIdempotency.test.mjs` 19 件）
+
+| 要件 | 固定 |
+|---|---|
+| Redis unavailable → prospect enqueue 0 | ✅ |
+| 記録・確認失敗 → 二重送信不能（throw）| ✅ |
+| 同一 DeliveryKey の並行 tick → enqueue 最大 1 | ✅ |
+| queue だけでは delivered が増えない | ✅（30 回 queue しても 0）|
+| prospect Airtable CampaignDeliveries 増加 0 | ✅（6,308 名で 0 行）|
+| Customers 経路の回帰なし | ✅（prospect 0 人なら従来と同一）|
+
+### 再測定（本番 read-only・修正後）
+
+全 12,872 名の parity **差分 0**（DeliveryKey / delivered を含む）。
+8/31 09:00 JST の 2 通目も **Customers 6,308 = prospect 6,308 / 片側だけ 0**。
+
+⚠️ `CampaignDeliveries` はこの 1 時間で **33,796 → 34,162 行**（cron が書き続けている）。
+
+### secret の扱い
+
+端末出力に secret の先頭断片を出していた。**今後は prefix も長さも一切出さない。**
+repo / git 履歴 / commit / PR 本文・コメントを走査し、**断片の混入は 0 件**を確認。
+完全値の漏洩は確認されていないため、**secret のローテーションは行わない**。
+
+---
+
 ## 2026-08-27（追記）— 【緊急】8/31 より前に移せる状態まで完成
 
 ### なぜ急ぐか

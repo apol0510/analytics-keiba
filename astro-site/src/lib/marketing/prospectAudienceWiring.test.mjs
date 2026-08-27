@@ -200,10 +200,14 @@ test('⚠️ guard: cron が全受信者ぶんの配信行を Airtable へ書い
 test('⚠️ guard: admin の enqueue も prospect を Airtable へ書かない', () => {
   assert.match(adminSrc, /resolveRecipientLedgerPolicy/);
   assert.match(adminSrc, /recipients: airtableRecipients, jobIdByEmail/);
-  assert.match(adminSrc, /prospect_ledger_unavailable/, 'Redis へ書けないときに中止していない');
+  assert.match(adminSrc, /prospect_ledger_unavailable/, '予約できないときに中止していない');
 });
 
-test('⚠️ guard: prospect の台帳は書いたあと読み戻して確かめている', () => {
-  assert.match(adminSrc, /verifyProspectLedger/);
-  assert.match(cronSrc, /filterDelivered/);
+test('⚠️ guard: prospect の冪等性は **queue の前の予約**で確定している', () => {
+  // 2026-08-27 恒久修正: 「書いたあと読み戻す」ではなく「書く前に予約する」へ変えた。
+  // 後から記録する順序は、記録が落ちた瞬間に未送信へ戻り二重 queue になる。
+  assert.match(adminSrc, /claimDelivered\(/);
+  assert.match(cronSrc, /claimDelivered\(/);
+  assert.match(adminSrc, /releaseProspectClaims\(/);
+  assert.match(cronSrc, /releaseClaims\(/);
 });

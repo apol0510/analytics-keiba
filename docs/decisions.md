@@ -8,6 +8,54 @@
 
 ---
 
+## 2026-08-27 — prospect の予約は **queue の前**に取る（fail-closed 違反の恒久修正）
+
+### Status
+
+**Accepted**（2026-08-27 / MK 指摘）。修正・テスト固定まで完了。**本番 write は未実行。**
+
+### 何が壊れていたか
+
+最初の実装は prospect を **queue したあと**に Redis の集合へ記録し、
+記録・読み戻しに失敗しても「送信は既に queue 済みなので止められない」として
+**ログだけ出して `ok:true` で終了**していた。
+
+prospect は `CampaignDeliveries` に行を作らないので、Redis の集合だけが冪等性の根拠。
+記録が落ちた瞬間にその人は「未送信」へ戻り、**次の tick で二重 queue** になる。
+正本の「二重送信防止 / 冪等性 / fail-closed」に反していた。
+
+### 直し方
+
+`SADD` の戻り値（0/1）で**鍵ごとに 1 回だけ**所有権を渡し、
+**取れた鍵だけを queue する**（`claimDelivered()`）。`SADD` は atomic なので、
+並行 tick が同じ鍵を取ることは構造的に起きない。
+
+| 条件 | ふるまい |
+|---|---|
+| Redis 不可 / 予約が確定できない | **prospect を 1 人も queue しない** |
+| 応答が 0/1 以外・件数不一致 | **throw**（「分からない」を「未送信」に倒さない）|
+| 予約したが queue できなかった | `releaseClaims()` で戻す（戻さないと二度と送られない）|
+| admin 経路で 1 件でも予約不可 | **1 行も書かずに中止**（all-or-nothing）|
+
+`SADD` を鍵ごとに投げる必要があるため（まとめると「どの鍵を取ったか」が決まらない）、
+Upstash の `/pipeline` を使って 1 リクエストにまとめる（`makeRedisPipeline()`）。
+pipeline が無い環境では 1 件ずつ投げる退避経路がある。
+
+### 予約と delivered 実績を分けた
+
+`ak:mkt:delivered` の集合は **予約・冪等性**。
+打ち切り（delivered 10 通・開封 0）の分母になる `delivered` カウンタは
+prospect レコード側にあり、**`recordDelivered()`（確定経路）だけ**が増やす。
+テストで「queue を 30 回繰り返しても delivered が 0 のまま」を固定した。
+
+### Customers 経路は変えない
+
+prospect を読めない・予約できないときも **Customers の配信は止めない**
+（prospect だけを対象から外し、理由コードをログと応答に出す）。
+「prospect 0 人なら従来と完全に同じ」ことをテストで固定した。
+
+---
+
 ## 2026-08-27 — 8/31 より前に移す（parity 実測で差分 0 / 台帳は Redis 限定）
 
 ### Status
