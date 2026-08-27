@@ -124,8 +124,43 @@ export const MAX_RECIPIENTS_PER_SEND = 500;
  */
 export const MARKETING_MIN_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
-/** ScheduledEmails 1 ジョブあたりの宛先数（既存 step 送信と同じ粒度に合わせる） */
-export const RECIPIENTS_PER_JOB = 100;
+/**
+ * ScheduledEmails 1 ジョブあたりの宛先数。
+ *
+ * ⚠️ **キュー登録が 1 回の実行時間に収まる大きさにする。** 配信行は Airtable の
+ *    `performUpsert` 上限に合わせて **10 件ずつ**書き、レート制限（5rps）を守るため
+ *    1 batch ごとに `AIRTABLE_PACE_MS` 待つ。宛先が多いほど batch 数が増え、
+ *    キュー登録を行う **同期の scheduled function**（`cron-campaign-sequence`）の
+ *    実行時間を超える。
+ *
+ * ⚠️ 超えると **途中まで書けたジョブ**が残る。関数が殺されるので後始末
+ *    （`settleQueueWrite` の補完・巻き戻し）へ到達せず、
+ *    **PENDING ＋ `queue:unverified` ＋ 配信行が足りない**まま毎 tick 積み上がる。
+ *
+ * ### 本番実測（2026-08-27）
+ *
+ * `100` のとき **毎回ちょうど 90 行**（9 batch）で止まっていた。
+ * 配信行の書き込みは 13:46:19→13:46:23 の **約 5 秒**、実行開始 13:46:12 から
+ * **約 11 秒**で停止＝ **10 batch 目に入る前にタイムアウト**。
+ * 欠けるのは常に**最後の 10 件**（index 90–99）で、宛先の中身とは無関係だった。
+ *
+ * 書き込み前の処理に約 6 秒かかるため、書き込みに使えるのは数秒。
+ * **50**（5 batch ≒ 1.1 秒 + 往復）なら余裕をもって収まる。
+ *
+ * 上げるときは**先に 1 batch あたりの実測を取り直す**こと
+ * （`campaignSend.test.mjs` の guard が予算超過で落ちる）。
+ */
+export const RECIPIENTS_PER_JOB = 50;
+
+/**
+ * 配信行 1 batch の実測コスト（ms）。`AIRTABLE_PACE_MS`(220) ＋ 往復。
+ * ⚠️ 推測値ではなく**本番実測**（90 行 / 9 batch を約 5 秒 = 約 550ms/batch）。
+ */
+export const DELIVERY_BATCH_COST_MS = 550;
+/** 配信行の書き込みに使ってよい時間。実行時間 10 秒のうち、前処理ぶんを引いた残り */
+export const DELIVERY_WRITE_BUDGET_MS = 4000;
+/** 1 回の upsert で書ける行数（Airtable `performUpsert` の上限）*/
+export const DELIVERY_UPSERT_BATCH = 10;
 
 /** JST の YYYY-MM-DD（DeliveryKey の campaignDate に使う） */
 export function jstDateString(nowMs) {
