@@ -3102,12 +3102,60 @@ async function handleCampaignJobRepair({ KEY, BASE, now, req }) {
   const toCreate = plan.missing.filter((m) => claimedSet.has(m.key));
   let created = 0;
   if (toCreate.length > 0) {
+    /*
+     * ⚠️ `buildDeliveryRecords` が要るのは **`{ email, deliveryKey, recordId }`** と
+     *    **`email → { jobId, recordId }`** の Map。`deliveryKey` を渡し忘れると
+     *    `DeliveryKey: undefined` の行を作ろうとして Airtable が 422 を返す
+     *    （`performUpsert` のマージキーが空になるため）。
+     */
+    let customerIdByEmail = new Map();
+    try {
+      customerIdByEmail = await fetchCustomerIdsByEmails({
+        KEY, BASE, emails: toCreate.map((m) => m.email),
+      });
+    } catch {
+      customerIdByEmail = null;
+    }
+    // ⚠️ 顧客を引けない = 行の中身を揃えられない。**書かずに予約を戻す**
+    if (customerIdByEmail === null) {
+      try {
+        const store = createDeliveryKeyStore({
+          redisCmd: makeRedisCmd(process.env), redisPipeline: makeRedisPipeline(process.env),
+        });
+        await store.releaseClaims({ ...scope, keys: claimedKeys });
+      } catch { /* 記録のみ */ }
+      return json(503, {
+        ...view, claimed: claimedKeys.length, created: 0, sideEffects: 'none',
+        error: '対象顧客を引けなかったため書きませんでした（取った予約は戻しました）',
+        reason: 'customers_unavailable',
+      });
+    }
     const records = buildDeliveryRecords({
       campaign,
-      recipients: toCreate.map((m) => ({ email: m.email })),
-      jobIdByEmail: new Map(toCreate.map((m) => [m.email, jobId])),
+      recipients: toCreate.map((m) => ({
+        email: m.email, deliveryKey: m.key, recordId: customerIdByEmail.get(m.email) || undefined,
+      })),
+      jobIdByEmail: new Map(toCreate.map((m) => [m.email, { jobId, recordId: gate.recordId }])),
       nowMs: now,
     });
+    /*
+     * ⚠️ `buildDeliveryRecords` は許可外フィールドが混ざった行を `continue` で落とす。
+     *    落ちたまま書くと**一部だけ書けて「揃った」と誤認**する。数が合わなければ書かない。
+     */
+    if (records.length !== toCreate.length) {
+      try {
+        const store = createDeliveryKeyStore({
+          redisCmd: makeRedisCmd(process.env), redisPipeline: makeRedisPipeline(process.env),
+        });
+        await store.releaseClaims({ ...scope, keys: claimedKeys });
+      } catch { /* 記録のみ */ }
+      return json(500, {
+        ...view, claimed: claimedKeys.length, created: 0, sideEffects: 'none',
+        error: '配信行を組み立て切れませんでした（取った予約は戻しました）',
+        reason: 'delivery_record_build_incomplete',
+        built: records.length, expected: toCreate.length,
+      });
+    }
     try {
       await upsertDeliveries({ KEY, BASE, records });
       created = records.length;
@@ -3451,6 +3499,31 @@ async function fetchCustomersFieldSchema({ KEY, BASE }) {
   const t = (j.tables || []).find((x) => x.name === CUSTOMERS_TABLE);
   if (!t) throw new Error('customers_table_not_found');
   return t.fields || [];
+}
+
+/** アドレス → Customers recordId（配信行の `CustomerRecordId` を埋めるため）*/
+async function fetchCustomerIdsByEmails({ KEY, BASE, emails }) {
+  const list = [...new Set((emails || []).map((e) => String(e || '').trim().toLowerCase()))]
+    .filter(Boolean);
+  const out = new Map();
+  for (let i = 0; i < list.length; i += 40) {
+    const chunk = list.slice(i, i + 40);
+    const formula = `OR(${chunk.map((e) => `LOWER({Email})='${e.replace(/'/g, "\\'")}'`).join(',')})`;
+    const url = new URL(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(CUSTOMERS_TABLE)}`);
+    url.searchParams.set('pageSize', '100');
+    url.searchParams.set('filterByFormula', formula);
+    url.searchParams.append('fields[]', 'Email');
+    // eslint-disable-next-line no-await-in-loop -- 40 件ずつ
+    const res = await fetch(url, { headers: authHeaders(KEY) });
+    if (!res.ok) throw new Error(`customer_ids_${res.status}`);
+    // eslint-disable-next-line no-await-in-loop
+    const j = await res.json();
+    for (const r of j.records || []) {
+      const e = String((r.fields || {}).Email || '').trim().toLowerCase();
+      if (e) out.set(e, r.id);
+    }
+  }
+  return out;
 }
 
 /** アドレスで既存 Customers を引く（復元の二重作成防止）*/
