@@ -212,35 +212,74 @@ test('⚠️ guard: prospect の冪等性は **queue の前の予約**で確定�
   assert.match(cronSrc, /releaseClaims\(/);
 });
 
-/* ── 検証を索引の窓で分割する（移行後の read-only 確認）──────────── */
+/* ── 検証の窓は決定的でなければならない ─────────────────────────
+ *
+ * ⚠️ `SMEMBERS` は **順序を保証しない**。素の応答へ `offset` / `limit` を掛けると、
+ *    窓を跨いだときに並びが変わり、**同じ人を 2 回読んだり読み落としたり**する。
+ *    ここでは **呼ぶたびに並びを入れ替える** store で、全員をちょうど 1 回ずつ
+ *    読むことを固定する（挿入順に依存した素通りのテストにしない）。
+ */
 
-import { loadActiveProspects as loadWindow } from './prospectAudienceSource.js';
+import {
+  loadActiveProspects as loadWindow, stableIndexOrder, indexDigest,
+} from './prospectAudienceSource.js';
 
-/** 索引の順序が安定した fake store（窓の検証用） */
-function orderedStore(n) {
-  const list = Array.from({ length: n }, (_, i) => {
+/** 決定的な擬似乱数（テストを再現可能にする） */
+function makeRng(seed) {
+  let x = seed >>> 0;
+  return () => { x ^= x << 13; x >>>= 0; x ^= x >> 17; x ^= x << 5; x >>>= 0; return x / 4294967296; };
+}
+const shuffle = (arr, rng) => {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(rng() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+};
+
+/**
+ * 実 Redis 相当の store。**`activeHashes()` は呼ばれるたびに並びを変える**。
+ * hash は本番と同じ 64 桁 hex（辞書順の安定性を実際に確かめるため）。
+ */
+function shufflingStore(n, { seed = 12345 } = {}) {
+  const rng = makeRng(seed);
+  const byHash = new Map();
+  for (let i = 0; i < n; i += 1) {
     const p = buildProspect({ email: `w${i}@example.com`, nowMs: NOW, batchId: BATCH, source: 'csv' });
-    p.hash = `h${String(i).padStart(4, '0')}`;
-    return p;
-  });
-  const byHash = new Map(list.map((p) => [p.hash, p]));
+    p.hash = emailHash(`w${i}@example.com`);
+    byHash.set(p.hash, p);
+  }
+  let calls = 0;
   return {
-    list,
-    async activeHashes() { return [...byHash.keys()]; },
+    byHash,
+    get calls() { return calls; },
+    async activeHashes() { calls += 1; return shuffle([...byHash.keys()], rng); },
     async loadMany(hashes) { return hashes.map((h) => byHash.get(h)).filter(Boolean); },
   };
 }
 
-test('窓: offset / limit で分割しても全員をちょうど 1 回ずつ読む', async () => {
-  const store = orderedStore(250);
+test('索引の並びは呼ぶたびに変わる（テストの前提そのものの確認）', async () => {
+  const store = shufflingStore(50);
+  const a = await store.activeHashes();
+  const b = await store.activeHashes();
+  assert.notDeepEqual(a, b, '⚠️ 並びが変わらないと、この後のテストが素通りになる');
+  assert.deepEqual(stableIndexOrder(a), stableIndexOrder(b), '並べ替えれば同じ集合');
+});
+
+test('【要件】並びが毎回変わっても、全員をちょうど 1 回ずつ読む', async () => {
+  const TOTAL = 11976;                 // 本番の投入件数と同じ規模
+  const store = shufflingStore(TOTAL);
   const seen = new Set();
-  let offset = 0;
-  let pages = 0;
-  for (let i = 0; i < 20; i += 1) {
+  let offset = 0; let pages = 0; let digest = null;
+
+  for (let i = 0; i < 200; i += 1) {
     // eslint-disable-next-line no-await-in-loop
-    const r = await loadWindow({ store, offset, maxRecipients: 60 });
-    assert.equal(r.ok, true);
-    assert.equal(r.indexSize, 250, '索引全体の件数は窓を掛けても変わらない');
+    const r = await loadWindow({ store, offset, maxRecipients: 2000, expectDigest: digest || undefined });
+    assert.equal(r.ok, true, `page ${i} が失敗した: ${r.reason}`);
+    assert.equal(r.indexSize, TOTAL, '索引全体の件数は窓を掛けても変わらない');
+    if (digest === null) digest = r.digest;
+    else assert.equal(r.digest, digest, '窓ごとに指紋が変わっている');
     pages += 1;
     for (const p of r.prospects) {
       assert.equal(seen.has(p.email), false, `${p.email} を 2 回読んでいる`);
@@ -249,46 +288,113 @@ test('窓: offset / limit で分割しても全員をちょうど 1 回ずつ読
     offset += r.prospects.length;
     if (offset >= r.indexSize) break;
   }
-  assert.equal(seen.size, 250, '読み落としがある');
-  assert.equal(pages, 5);
+  assert.equal(seen.size, TOTAL, `読み落としがある（${TOTAL - seen.size} 件）`);
+  assert.equal(pages, 6);
+  assert.ok(store.calls >= 6, '毎窓で索引を読み直している');
 });
 
-test('窓: 範囲を超えた offset は 0 件（例外にしない）', async () => {
-  const r = await loadWindow({ store: orderedStore(10), offset: 99, maxRecipients: 10 });
+test('小さい窓（端数あり）でも重複・読み落としが無い', async () => {
+  const store = shufflingStore(250, { seed: 999 });
+  const seen = new Set();
+  let offset = 0; let digest = null;
+  for (let i = 0; i < 50; i += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    const r = await loadWindow({ store, offset, maxRecipients: 37, expectDigest: digest || undefined });
+    assert.equal(r.ok, true);
+    digest = digest || r.digest;
+    for (const p of r.prospects) {
+      assert.equal(seen.has(p.email), false, `${p.email} が重複`);
+      seen.add(p.email);
+    }
+    offset += r.prospects.length;
+    if (offset >= r.indexSize) break;
+  }
+  assert.equal(seen.size, 250);
+});
+
+test('指紋は並びに依存しない（同じ集合なら同じ指紋）', async () => {
+  const store = shufflingStore(100);
+  const a = indexDigest(await store.activeHashes());
+  const b = indexDigest(await store.activeHashes());
+  assert.equal(a, b);
+  assert.match(a, /^[a-f0-9]{32}$/);
+});
+
+test('⚠️【要件】読んでいる途中で集合が変わったら fail closed（やり直し）', async () => {
+  const store = shufflingStore(100);
+  const first = await loadWindow({ store, offset: 0, maxRecipients: 40 });
+  assert.equal(first.ok, true);
+
+  // 1 人増える（＝別の tick が投入した / 昇格して外れた 等）
+  const extra = buildProspect({ email: 'new@example.com', nowMs: NOW, batchId: BATCH, source: 'csv' });
+  extra.hash = emailHash('new@example.com');
+  store.byHash.set(extra.hash, extra);
+
+  const second = await loadWindow({ store, offset: 40, maxRecipients: 40, expectDigest: first.digest });
+  assert.equal(second.ok, false, '⚠️ 集合が変わったのに読み進めている（窓がずれる）');
+  assert.equal(second.reason, AUDIENCE_FAIL.INDEX_CHANGED);
+  assert.deepEqual(second.prospects, [], '部分結果を返している');
+  assert.notEqual(second.digest, first.digest);
+});
+
+test('⚠️ 減ったときも fail closed', async () => {
+  const store = shufflingStore(100);
+  const first = await loadWindow({ store, offset: 0, maxRecipients: 40 });
+  store.byHash.delete([...store.byHash.keys()][0]);
+  const second = await loadWindow({ store, offset: 40, maxRecipients: 40, expectDigest: first.digest });
+  assert.equal(second.ok, false);
+  assert.equal(second.reason, AUDIENCE_FAIL.INDEX_CHANGED);
+});
+
+test('指紋を渡さなければ従来どおり（既存呼び出しの回帰なし）', async () => {
+  const store = shufflingStore(30);
+  const r = await loadWindow({ store });
   assert.equal(r.ok, true);
-  assert.equal(r.prospects.length, 0);
-  assert.equal(r.indexSize, 10, '⚠️ 索引が空になったと誤解させない');
-});
-
-test('窓: 指定なしなら従来どおり全件', async () => {
-  const r = await loadWindow({ store: orderedStore(30) });
   assert.equal(r.prospects.length, 30);
 });
 
-test('⚠️ 窓: 索引を読めなければ窓に関係なく中止する', async () => {
-  const store = orderedStore(10);
+test('範囲を超えた offset は 0 件（例外にしない・索引が空と誤解させない）', async () => {
+  const r = await loadWindow({ store: shufflingStore(10), offset: 99, maxRecipients: 10 });
+  assert.equal(r.ok, true);
+  assert.equal(r.prospects.length, 0);
+  assert.equal(r.indexSize, 10);
+});
+
+test('⚠️ 索引を読めなければ窓に関係なく中止する', async () => {
+  const store = shufflingStore(10);
   store.activeHashes = async () => { throw new Error('down'); };
   const r = await loadWindow({ store, offset: 0, maxRecipients: 5 });
   assert.equal(r.ok, false);
   assert.equal(r.reason, AUDIENCE_FAIL.INDEX_UNAVAILABLE);
 });
 
-test('窓: loadProspectSequenceInputs も indexSize を全体として返す', async () => {
-  const store = orderedStore(120);
-  const keys = store.list.map((p) => keyFor(p.email, 1));
-  const inputs = await loadProspectSequenceInputs({
-    store, deliveryKeyStore: fakeLedger(keys),
-    campaign: CAMPAIGN, brand: BRAND, fromEmail: FROM, nowMs: NOW,
-    offset: 100, maxRecipients: 50,
+test('loadProspectSequenceInputs も指紋を返し、変化を弾く', async () => {
+  const store = shufflingStore(120);
+  const emailsAll = [...store.byHash.values()].map((p) => p.email);
+  const ledger = fakeLedger(emailsAll.map((e) => keyFor(e, 1)));
+  const first = await loadProspectSequenceInputs({
+    store, deliveryKeyStore: ledger, campaign: CAMPAIGN, brand: BRAND, fromEmail: FROM,
+    nowMs: NOW, offset: 0, maxRecipients: 100,
   });
-  assert.equal(inputs.ok, true);
-  assert.equal(inputs.indexSize, 120);
-  assert.equal(inputs.rows.length, 20, '窓の残りぶんだけ返る');
+  assert.equal(first.ok, true);
+  assert.equal(first.indexSize, 120);
+  assert.match(first.digest, /^[a-f0-9]{32}$/);
+
+  const p = buildProspect({ email: 'z@example.com', nowMs: NOW, batchId: BATCH, source: 'csv' });
+  p.hash = emailHash('z@example.com');
+  store.byHash.set(p.hash, p);
+  const second = await loadProspectSequenceInputs({
+    store, deliveryKeyStore: ledger, campaign: CAMPAIGN, brand: BRAND, fromEmail: FROM,
+    nowMs: NOW, offset: 100, maxRecipients: 100, expectDigest: first.digest,
+  });
+  assert.equal(second.ok, false);
+  assert.equal(second.reason, AUDIENCE_FAIL.INDEX_CHANGED);
 });
 
-test('⚠️ guard: 検証は窓で分割し、復元を 2 回作らない', () => {
+test('⚠️ guard: 検証は並べ替えてから切り、指紋を返している', () => {
   assert.match(adminSrc, /prospectSequenceCheck/);
-  assert.match(adminSrc, /nextOffset/);
+  assert.match(adminSrc, /expectDigest/, '指紋を渡していない（窓がずれても気づけない）');
+  assert.match(adminSrc, /digest: inputs\.digest/);
   assert.match(adminSrc, /const rowsOnce = buildProspectSequenceRows/,
     '時刻ごとに復元を作り直している（実行時間を使い切る）');
 });

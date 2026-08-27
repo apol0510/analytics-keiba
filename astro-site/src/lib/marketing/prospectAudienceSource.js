@@ -24,6 +24,7 @@
  * のどちらかになる。どちらも黙って起きてはいけない。
  */
 
+import { createHash } from 'node:crypto';
 import { buildProspectSequenceRows } from './prospectSequenceAdapter.js';
 import {
   hydrateProspectSequenceInputs, buildProspectDeliveryKeys,
@@ -37,7 +38,35 @@ export const AUDIENCE_FAIL = Object.freeze({
   LOAD_FAILED: 'prospect_load_failed',
   LEDGER_UNAVAILABLE: 'prospect_ledger_unavailable',
   HYDRATION_FAILED: 'prospect_hydration_failed',
+  /** 窓を跨いでいる間に索引が変わった（**最初からやり直す**） */
+  INDEX_CHANGED: 'prospect_index_changed',
 });
+
+/**
+ * 索引の並びを**決定的**にする。
+ *
+ * ⚠️ `SMEMBERS` は **順序を保証しない**。返ってきた配列にそのまま `offset` / `limit` を
+ *    掛けると、窓を跨いだときに並びが変わり、**同じ人を 2 回読んだり読み落としたり**する。
+ *    昇順に並べ替えてから切ること。hash は 64 桁の hex なので辞書順が安定する。
+ * ⚠️ 念のため重複も落とす（集合なので普通は起きないが、起きたら窓がずれる）。
+ */
+export function stableIndexOrder(hashes) {
+  return [...new Set((Array.isArray(hashes) ? hashes : []).map(String))].sort();
+}
+
+/**
+ * 索引の指紋。**全部の窓で同じであること**を確かめるために使う。
+ *
+ * 途中で誰かが増減すると指紋が変わる。変わったまま読み進めると窓がずれるので、
+ * 呼び出し側は `INDEX_CHANGED` を受けたら**最初からやり直す**（fail closed）。
+ */
+export function indexDigest(hashes) {
+  const ordered = stableIndexOrder(hashes);
+  const h = createHash('sha256');
+  h.update(`${ordered.length}:`, 'utf8');
+  for (const x of ordered) h.update(x, 'utf8');
+  return h.digest('hex').slice(0, 32);
+}
 
 /**
  * 送信候補の prospect を読む。**途中で失敗したら部分結果を返さない**。
@@ -46,22 +75,38 @@ export const AUDIENCE_FAIL = Object.freeze({
  * 1 回の実行で見ようとすると Function の実行時間を超えるため、分割して呼べるようにする
  * （2026-08-27 に本番で 504）。配信の順序ではなく、あくまで読み出しの窓。
  *
- * ⚠️ 窓を掛けるのは**索引を読み切ったあと**。読めた人数（`indexSize`）は常に全体を指す。
+ * ⚠️ **`SMEMBERS` の並びに依存しない。** 昇順へ並べ替えてから切る（`stableIndexOrder`）。
+ *    素の応答へ `offset` を掛けると、窓を跨いだときに並びが変わって
+ *    **同じ人を 2 回読んだり読み落としたり**する。
+ * ⚠️ `expectDigest` を渡すと、**索引が途中で変わっていないか**を確かめる。
+ *    変わっていたら `INDEX_CHANGED` を返し、呼び出し側は**最初からやり直す**。
+ * ⚠️ 窓を掛けるのは**索引を読み切ったあと**。`indexSize` は常に全体を指す。
  *
- * @param {{store: object, maxRecipients?: number, offset?: number}} input
- * @returns {Promise<{ok:boolean, reason?:string, prospects:object[], indexSize:number}>}
+ * @param {{store: object, maxRecipients?: number, offset?: number, expectDigest?: string}} input
+ * @returns {Promise<{ok, reason?, prospects, indexSize, digest}>}
  */
-export async function loadActiveProspects({ store, maxRecipients, offset } = {}) {
+export async function loadActiveProspects({ store, maxRecipients, offset, expectDigest } = {}) {
   if (!store || typeof store.activeHashes !== 'function') {
     return { ok: false, reason: AUDIENCE_FAIL.INDEX_UNAVAILABLE, prospects: [], indexSize: 0 };
   }
-  let hashes;
+  let raw;
   try {
-    hashes = await store.activeHashes();
+    raw = await store.activeHashes();
   } catch {
-    return { ok: false, reason: AUDIENCE_FAIL.INDEX_UNAVAILABLE, prospects: [], indexSize: 0 };
+    return {
+      ok: false, reason: AUDIENCE_FAIL.INDEX_UNAVAILABLE, prospects: [], indexSize: 0, digest: null,
+    };
   }
+  // ⚠️ **並びを決めてから切る**（`SMEMBERS` の順に依存しない）
+  const hashes = stableIndexOrder(raw);
   const indexSize = hashes.length;
+  const digest = indexDigest(hashes);
+  // ⚠️ 窓を跨いでいる間に集合が変わっていたら**やり直す**（部分結果を混ぜない）
+  if (expectDigest && expectDigest !== digest) {
+    return {
+      ok: false, reason: AUDIENCE_FAIL.INDEX_CHANGED, prospects: [], indexSize, digest,
+    };
+  }
   // ⚠️ 窓は**索引を読み切ったあと**に掛ける（読めた人数は正しく数える）
   const from = Number.isInteger(offset) && offset > 0 ? offset : 0;
   const window = hashes.slice(from);
@@ -75,10 +120,10 @@ export async function loadActiveProspects({ store, maxRecipients, offset } = {})
       const loaded = await store.loadMany(group);
       out.push(...loaded);
     } catch {
-      return { ok: false, reason: AUDIENCE_FAIL.LOAD_FAILED, prospects: [], indexSize };
+      return { ok: false, reason: AUDIENCE_FAIL.LOAD_FAILED, prospects: [], indexSize, digest };
     }
   }
-  return { ok: true, prospects: out, indexSize };
+  return { ok: true, prospects: out, indexSize, digest };
 }
 
 /**
@@ -89,10 +134,15 @@ export async function loadActiveProspects({ store, maxRecipients, offset } = {})
  */
 export async function loadProspectSequenceInputs({
   store, deliveryKeyStore, campaign, brand, fromEmail, nowMs,
-  blacklistEmails, maxRecipients, offset,
+  blacklistEmails, maxRecipients, offset, expectDigest,
 } = {}) {
-  const loaded = await loadActiveProspects({ store, maxRecipients, offset });
-  if (!loaded.ok) return { ok: false, reason: loaded.reason, rows: [], deliveries: [] };
+  const loaded = await loadActiveProspects({ store, maxRecipients, offset, expectDigest });
+  if (!loaded.ok) {
+    return {
+      ok: false, reason: loaded.reason, rows: [], deliveries: [],
+      indexSize: loaded.indexSize, digest: loaded.digest,
+    };
+  }
   const prospects = loaded.prospects;
 
   // 送信候補が 0 人でも**それは事実**なので中止しない（読めなかったのとは違う）
@@ -101,6 +151,7 @@ export async function loadProspectSequenceInputs({
       ok: true, rows: [], deliveries: [], prospects: [],
       providerSuppressed: new Set(), engagementByEmail: new Map(),
       indexSize: loaded.indexSize,
+      digest: loaded.digest,
       counts: { 索引: loaded.indexSize, 読み込み: 0, 変換: 0 }, skipped: {},
     };
   }
@@ -135,6 +186,8 @@ export async function loadProspectSequenceInputs({
     engagementByEmail: hydrated.engagementByEmail,
     /** 索引全体の件数（窓を掛けても**全体**を指す） */
     indexSize: loaded.indexSize,
+    /** 索引の指紋。**全窓で同じであること**を呼び出し側が確かめる */
+    digest: loaded.digest,
     counts: {
       索引: loaded.indexSize,
       読み込み: prospects.length,
