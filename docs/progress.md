@@ -1,13 +1,28 @@
-# 🚧 メール配信基盤の是正 — **完了条件（クローズ禁止・常設）**
+# ✅ メール配信基盤の是正 — **完了（2026-08-28）**
 
-> **2026-08-28 に完成条件を変更。** 下の 3 つが**すべて**満たされるまで、この任務は
-> 「完了」でも「クローズ」でもない。**キュー不具合が直っただけでは完了にしない。**
+> **2026-08-28 に完成条件を変更**（3 つすべてを満たすまでクローズしない）。
+> **2026-08-28 01:56Z に 3 つすべてを本番実測で満たしたため完了とする。**
+> 以下は経緯と証拠の記録として残す（同じ事故を繰り返さないための正本）。
 
 | # | 完了条件 | 状態 |
 |---|---|---|
-| 1 | キュー登録が 1 ジョブぶんを取りこぼさない（`50/50` で `queue:unverified` が付かない）| **未達**（実証待ち）|
-| 2 | 積みかけジョブ `64230bf3` を 3 段階（repair → preview → promote）で完了させ、送信結果を確認 | **未達** |
+| 1 | キュー登録が 1 ジョブぶんを取りこぼさない（`50/50` で `queue:unverified` が付かない）| ✅ **達成**（`39de328b` = 50/50・`blocked: null`）|
+| 2 | 積みかけジョブ `64230bf3` を 3 段階（repair → preview → promote）で完了させ、送信結果を確認 | ✅ **達成**（sent 100 / failed 0 / provider delivered 100）|
 | 3 | **`EmailEvents = 0` の原因特定 → 恒久修正 → 本番でイベントが記録されることの確認** | ✅ **達成**（2026-08-28・下記の本番実測）|
+
+## 完了時の本番実測（2026-08-28）
+
+| 段階 | 実測 |
+|---|---|
+| ① repair | `claimed 10 / claimedByOther 0 / created 10 / verified 100/100`・**印は外さない** |
+| ② preview | `willSend 0`（`blocked: queue_unverified`）／`preview.wouldSend 100 / wouldSkip 0`／`previewFingerprint v1:6db314a8…` |
+| ③ promote | fingerprint 一致 → `unverifiedCleared: true`（**送信はこの操作では行わない**）|
+| 送信（cron）| `64230bf3` → **SENT / sent 100 / failed 0 / skipped 0**・`completedAt 01:50:24Z` |
+| provider | Activity API で **delivered 100 / それ以外 0** |
+| 次ジョブ | `39de328b` = **recipients 50 / 配信行 50 / `blocked: null`**（`queue:unverified` なし）＝ `RECIPIENTS_PER_JOB=50` の実証 |
+
+**100→90 の欠落は再発していない。** 同期 scheduled function の 10 秒制限に対し、
+1 ジョブ 50 名なら upsert バッチが予算内に収まる（`campaignSend.js` の予算ガード）。
 
 ⚠️ **3 を「別件」として先送りしない。** 2026-08-28 の指示で**この任務の完了条件に含めた**。
 原因が分かっただけ・修正しただけでは足りず、**本番でイベントが記録されていることまで**確認する。
