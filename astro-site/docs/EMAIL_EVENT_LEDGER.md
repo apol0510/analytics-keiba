@@ -8,6 +8,21 @@ AK 側にイベントを保存していないため、いまは「反応が無�
 > Phase 0（署名検証つき受信）は 2026-07-22 に本番稼働済み。詳細は `SENDGRID_WEBHOOK.md`。
 > 本書は **Phase 1（恒久保存）** の設計と、本番有効化に必要な承認事項をまとめる。
 
+> ## ⚠️ 2026-08-28 追記 — **`EmailEvents` が 0 行なのは正常**
+>
+> 台帳の行は容量対策で **Netlify Blobs へ退避し、Airtable の行を削除**した
+> （`MARKETING_EVENT_SINK=blob` / `emailEventSink.js`）。以降、Airtable の
+> `EmailEvents` は **常に 0 行**であり、これは「記録されていない」ことを**意味しない**。
+>
+> - 記録が生きているかは **行数では判定しない**。`eventSinkHealth` action（read-only）の
+>   `recording` と、反応集計 `ak:mkt:eng:v1:meta` の `last_event_at` で見る
+> - **`EmailEvents` の全件走査は禁止**（`docs/AIRTABLE_CAPACITY.md`）。行の有無だけを 1 ページで覗く
+> - 顧客カルテは blob 構成では Airtable を**引かない**。`available:false` + 理由 `sink_blob` を返す
+>   （`emailEventLedgerSource.js` が単一源）。**0 行を「反応なし」として表示してはならない**
+>
+> 2026-08-28 に、この 0 行を「Webhook が壊れている」と誤読した。実測では
+> `last_event_at` が確認の 7 分前に更新されており、受信も署名検証も正常だった。
+
 ## 1. 現状（2026-08-01 実測）
 
 | 項目 | 状態 |
@@ -239,7 +254,7 @@ Phase 0 の `sendgridSignature.js` をそのまま使う（再実装しない）
 |---|---|---|
 | **1a** | 純粋モジュール・テスト・受信側の配線（**既定 OFF**）・本書（PR #199 merged `8a493ce`）| なし（write 0）|
 | **1a-2**（本 PR） | 書き込みのバッチ化・bounded retry・失敗集計（§3-2）。**既定 OFF のまま** | なし（write 0）|
-| **1b** | Airtable に `EmailEvents` を作成（**2026-08-02 完了**: `tblWkaxu7p0MRuUwL` / 21 列 / primary=`EventKey` / 0 行）→ `EMAIL_EVENT_LEDGER_ENABLED=true` + redeploy（**未実施**）| 台帳への write 開始 |
+| **1b** | Airtable に `EmailEvents` を作成（**2026-08-02 完了**: `tblWkaxu7p0MRuUwL` / 21 列 / primary=`EventKey`）→ `EMAIL_EVENT_LEDGER_ENABLED=true` + redeploy（**2026-08-28 時点で本番 `true`＝実施済み**）| 台帳への write 開始 |
 | **1c** | 送信側で `custom_args` を刻む（§3-3・**実装済み / merge 未承認**）| 送信経路の変更（送信 gate は OFF のまま）|
 | **1d** | 受信側へ配信索引を渡し `resolved` を有効化（§3-4・**実装済み / merge 未承認**）。集約列と admin 表示は未着手 | 表示の変更 |
 

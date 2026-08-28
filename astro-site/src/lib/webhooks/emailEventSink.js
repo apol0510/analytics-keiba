@@ -119,3 +119,10 @@ export async function writeEventBatch({
 
   return out;
 }
+
+/**
+ * 観測用カウンタの key。**webhook 側は同じ文字列リテラルを書いている**
+ * （`sendgrid-webhook.js` / `emailEventSink.test.mjs` の guard がそれを固定している）。
+ * 読み取り側はここを使い、リテラルを増やさない。
+ */
+export const SINK_HEALTH_KEY = 'ak:mkt:events:sink';
