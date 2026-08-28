@@ -1,3 +1,44 @@
+# 🚧 メール配信基盤の是正 — **完了条件（クローズ禁止・常設）**
+
+> **2026-08-28 に完成条件を変更。** 下の 3 つが**すべて**満たされるまで、この任務は
+> 「完了」でも「クローズ」でもない。**キュー不具合が直っただけでは完了にしない。**
+
+| # | 完了条件 | 状態 |
+|---|---|---|
+| 1 | キュー登録が 1 ジョブぶんを取りこぼさない（`50/50` で `queue:unverified` が付かない）| **未達**（実証待ち）|
+| 2 | 積みかけジョブ `64230bf3` を 3 段階（repair → preview → promote）で完了させ、送信結果を確認 | **未達** |
+| 3 | **`EmailEvents = 0` の原因特定 → 恒久修正 → 本番でイベントが記録されることの確認** | **未達** |
+
+⚠️ **3 を「別件」として先送りしない。** 2026-08-28 の指示で**この任務の完了条件に含めた**。
+原因が分かっただけ・修正しただけでは足りず、**本番で実際に行が増えることまで**確認する。
+
+## 3 の現時点の観測（read-only・2026-08-28）
+
+「未有効化」ではなく「**本来有効なのに 0 件**」＝ 異常。
+
+| 項目 | 実測 |
+|---|---|
+| `EMAIL_EVENT_LEDGER_ENABLED` | **`'true'`**（Phase 1b の gate は開いている）|
+| SendGrid Event Webhook | **`enabled: true`** / url = `…/.netlify/functions/sendgrid-webhook` |
+| 有効イベント | delivered / open / bounce / dropped / spam_report / unsubscribe = ON |
+| `SENDGRID_WEBHOOK_VERIFICATION_KEY` | **設定あり**（`sendgrid-webhook.js` が読むのはこの名前。`SENDGRID_WEBHOOK_PUBLIC_KEY` は未使用）|
+| Phase 1c / 1d の実装 | **main に存在**（`custom_args` 刻印 / `emailEventDeliveryIndex.js`）|
+| 署名なし POST | **403**（fail closed は生きている）|
+| **`EmailEvents` 行数** | **0** |
+
+最有力の仮説は**署名検証 NG で全イベントが 403**（SendGrid 側の鍵と env の値が食い違っている）。
+⚠️ `EMAIL_EVENT_LEDGER.md` の「**1b 未実施**」は**古い記述**（env は既に `true`）。正本の更新が要る。
+
+## 別件として残す（この任務の完了条件ではない）
+
+- `campaign-discount-free` の queued 1 件（`recbJkJhUaZM2YMif`）… ジョブは SENT 完了済みで
+  送信経路が無い取り残し。**現状維持**
+
+---
+
+
+---
+
 ## ⚠️ 積みかけジョブの 3 段階（2026-08-27 の自動送信事故の恒久対策）
 
 **事故**: `campaignJobRepair` が不足行を補完したうえ **`queue:unverified` まで外した**ところ、
