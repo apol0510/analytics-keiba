@@ -5814,7 +5814,11 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       const led = (data.ledgerSource || {});
       const le = d.ledgerEngagement || {};
       if (!led.available || le.available !== true) {
-        dossierRow(s62, '状態', '取得不能（反応が無かったという意味ではありません）', 'ng');
+        // 理由は API が単一源（`emailEventLedgerSource.js`）で決めた `note` を使う。
+        // `MARKETING_EVENT_SINK=blob` では台帳の行が Blob にあり Airtable では読めない。
+        // それを「取得できませんでした」と出すと**障害と読める**ので、note を優先する。
+        dossierRow(s62, '状態',
+          led.note || '取得不能（反応が無かったという意味ではありません）', 'ng');
       } else {
         // 計測状態で「0」を出してよいかを決める。**台帳に open 行が無いのは
         // 「開かれていない」ではなく「Webhook が open を送っていない」**ことがある

@@ -208,9 +208,17 @@ test('guard: 台帳は read-only（GET のみ）で、この顧客の resolved �
 });
 
 test('guard: 台帳を引けないときは 0 件ではなく「取得不能」として返す', () => {
-  assert.match(src, /ledgerSource: \{[\s\S]{0,400}available: ledger\.available/, '取得可否を画面へ返していない');
-  assert.match(src, /取得できませんでした（反応が無かったという意味ではありません）/,
+  // 2026-08-28: 判定と注記は単一源 `emailEventLedgerSource.js` へ移した
+  //（`MARKETING_EVENT_SINK=blob` では Airtable が常に 0 行なので、
+  //  「取得成功・0 件」を反応なしとして出してはいけない）。
+  assert.match(src, /ledgerSource: describeLedgerSource\(\{[\s\S]{0,400}fetchAvailable: ledger\.available/,
+    '取得可否を単一源へ渡していない');
+  const SOURCE = readFileSync(
+    new URL('../webhooks/emailEventLedgerSource.js', import.meta.url), 'utf8');
+  assert.match(SOURCE, /取得できませんでした（反応が無かったという意味ではありません）/,
     '取得不能の注記が無い（0 件と混同する）');
+  assert.match(SOURCE, /Airtable 経由では読めません（反応が無かったという意味ではありません）/,
+    'blob 構成の注記が無い（0 行を反応なしと読ませてしまう）');
   assert.match(src, /return \{ rows: \[\], available: false \}/, '失敗時に available:false を返していない');
 });
 

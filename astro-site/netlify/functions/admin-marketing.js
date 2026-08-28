@@ -156,6 +156,12 @@ import { compareSequenceParity } from '../../src/lib/marketing/sequenceParity.js
 import { makeRedisPipeline } from '../../src/lib/marketing/deliveryKeyStore.js';
 import { IMPORT_SOURCE_PREFIX } from '../../src/lib/marketing/importCohort.js';
 import { EMAIL_EVENTS_TABLE as EMAIL_EVENTS_TABLE_NAME } from '../../src/lib/webhooks/emailEventLedger.js';
+import {
+  resolveLedgerReadability,
+  describeLedgerSource,
+} from '../../src/lib/webhooks/emailEventLedgerSource.js';
+import { resolveEventSinkMode, SINK_HEALTH_KEY } from '../../src/lib/webhooks/emailEventSink.js';
+import { judgeEventSinkHealth } from '../../src/lib/webhooks/eventSinkHealth.js';
 import { validateSelection } from '../../src/lib/marketing/adminMultiFilter.js';
 import {
   buildCustomerListFormula, buildSegmentFormula, describeScanLimit, describeNotNarrowable,
@@ -879,6 +885,7 @@ export const handler = async (event) => {
     if (action === 'sequence') return await handleSequence({ KEY, BASE, now, req });
     if (action === 'sequenceMetrics') return await handleSeqMetrics({ req });
     if (action === 'engagementDigest') return await handleEngagementDigest({ now });
+    if (action === 'eventSinkHealth') return await handleEventSinkHealth({ KEY, BASE, now });
     if (action === 'prospectIntake') return await handleProspectIntake({ KEY, BASE, now, req });
     if (action === 'prospectSequenceCheck') return await handleProspectSequenceCheck({ now, req });
     if (action === 'prospectIndexAudit') return await handleProspectIndexAudit({ req });
@@ -1309,14 +1316,23 @@ async function handleCustomerDetail({ KEY, BASE, now, req }) {
   // ソフトバウンスは販促では除外対象。HARD/COMPLAINT とは別枠で持つ（既存ヘルパーを再利用）
   const blacklist = await loadBlacklistSets({ KEY, BASE });
 
+  // 台帳を **Airtable 経由で読めるか**は sink mode が決める（単一源）。
+  const ledgerReadability = resolveLedgerReadability(process.env);
+
   const [offers, provider, activity, ledger, ledgerUnattributed, measurement] = await Promise.all([
     fetchAll({ KEY, BASE, table: OFFERS_TABLE }).catch(() => []),
     fetchProviderSuppression({ apiKey: process.env.SENDGRID_API_KEY, now }).catch(() => ({ ok: false })),
     fetchDeliveryActivity({ email, apiKey: process.env.SENDGRID_API_KEY }),
     // 恒久台帳（EmailEvents）。**read-only**・この顧客に確定した行だけを引く。
     // 取得できなければ available:false（画面では「0 件」ではなく「取得不能」）。
-    fetchCustomerLedgerEvents({ KEY, BASE, customerRecordId: recordId }),
-    fetchLedgerUnattributed({ KEY, BASE }),
+    // ⚠️ `MARKETING_EVENT_SINK=blob` では行が Blob にあり Airtable は常に 0 行。
+    //    その状態で引くと「取得成功・0 件」＝**反応なし**に化けるので、読めるときだけ引く。
+    ledgerReadability.readable
+      ? fetchCustomerLedgerEvents({ KEY, BASE, customerRecordId: recordId })
+      : Promise.resolve({ rows: [], available: false }),
+    ledgerReadability.readable
+      ? fetchLedgerUnattributed({ KEY, BASE })
+      : Promise.resolve({ available: false, unresolved: null, conflict: null }),
     // 計測状態。**開封・クリックの「0」を数値として出してよいか**をここで決める。
     // これを渡さないと、Webhook が open を送っていないだけなのに
     // カルテが「開封 0 回」と断定してしまう（2026-08-04 に実際そうなっていた）。
@@ -1353,16 +1369,15 @@ async function handleCustomerDetail({ KEY, BASE, now, req }) {
       note: activity.note || '取得できませんでした（反応が無かったという意味ではありません）',
     },
     // 恒久台帳（EmailEvents）をどこまで引けたか。**「0 件」と「取得不能」を必ず区別させる**
-    ledgerSource: {
-      available: ledger.available,
+    ledgerSource: describeLedgerSource({
+      readable: ledgerReadability.readable,
+      sinkMode: ledgerReadability.sinkMode,
+      fetchAvailable: ledger.available,
       rows: ledger.rows.length,
       unresolvedTotal: ledgerUnattributed.unresolved,
       conflictTotal: ledgerUnattributed.conflict,
       unattributedAvailable: ledgerUnattributed.available,
-      note: ledger.available
-        ? '恒久台帳（EmailEvents）から集計。台帳の運用開始前のメールは記録がありません'
-        : '恒久台帳を取得できませんでした（反応が無かったという意味ではありません）',
-    },
+    }),
     providerSuppression: describeProviderSuppression(provider),
     // 計測状態（セグメント下見と同じ単一源）。カルテの開封・クリックは
     // **これが enabled のときだけ数値**。無効・不明なら「—（計測していません）」。
@@ -4217,6 +4232,92 @@ async function handleEngagementDigest({ now }) {
     openHashes,
     clickHashes,
     notice: 'これは読み取りのみです。アドレスは含まれません（hash だけ）。',
+  });
+}
+
+/**
+ * 配信イベントが**本当に記録されているか**を read-only で見る。
+ *
+ * ⚠️ `EmailEvents` の行数だけを見て判断しない。`MARKETING_EVENT_SINK=blob` では
+ *    Airtable へ書かない設計なので **0 行が正常**であり、行数からは何も言えない
+ *    （2026-08-28 にこれを「記録されていない」と誤読した）。
+ *    判定は `eventSinkHealth.js`（単一源）に委ね、ここは材料を集めるだけ。
+ * ⚠️ 1 バイトも書かない。アドレスも出さない（件数と時刻だけ）。
+ */
+async function handleEventSinkHealth({ KEY, BASE, now }) {
+  const sinkMode = resolveEventSinkMode(process.env);
+  const ledgerEnabled = process.env.EMAIL_EVENT_LEDGER_ENABLED === 'true';
+
+  // 観測カウンタ（webhook が毎回積む）。読めなければ「0」ではなく**取得不能**。
+  let counters = null;
+  let countersAvailable = false;
+  try {
+    const redis = makeRedisCmd(process.env);
+    const raw = await redis(['HGETALL', SINK_HEALTH_KEY]);
+    if (Array.isArray(raw)) {
+      counters = {};
+      for (let i = 0; i + 1 < raw.length; i += 2) counters[String(raw[i])] = raw[i + 1];
+      countersAvailable = true;
+    } else if (raw && typeof raw === 'object') {
+      counters = raw;
+      countersAvailable = true;
+    }
+  } catch {
+    counters = null;
+    countersAvailable = false;
+  }
+
+  const signals = await loadEngagementSignals();
+  const meta = (signals && signals.meta) || {};
+  const lastEventAtMs = Number.isFinite(meta.lastEventAtMs) ? meta.lastEventAtMs : null;
+
+  // Airtable 側は **1 ページだけ覗く**。行が在るか無いかしか見ない。
+  // ⚠️ `EmailEvents` の全件走査は禁止（容量対策で Blob へ移した経緯。
+  //    docs/EMAIL_EVENT_LEDGER.md / docs/AIRTABLE_CAPACITY.md）。件数は数えない。
+  let airtableHasRows = null;
+  let airtableAvailable = false;
+  try {
+    const url = new URL(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(EMAIL_EVENTS_TABLE)}`);
+    url.searchParams.set('pageSize', '1');
+    url.searchParams.set('fields[]', 'EventKey');
+    const res = await fetch(url, { headers: authHeaders(KEY) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    airtableHasRows = (data.records || []).length > 0;
+    airtableAvailable = true;
+  } catch {
+    airtableHasRows = null;
+    airtableAvailable = false;
+  }
+
+  const health = judgeEventSinkHealth({
+    sinkMode, ledgerEnabled, counters, countersAvailable, lastEventAtMs, nowMs: now,
+  });
+
+  return json(200, {
+    mode: 'event-sink-health',
+    sideEffects: 'none',
+    sinkMode,
+    ledgerEnabled,
+    recording: health.recording,
+    reasons: health.reasons,
+    airtable: {
+      hasRows: airtableHasRows,
+      available: airtableAvailable,
+      expectedRows: health.expectedAirtableRows,
+      countNote: '件数は数えない（全件走査は容量対策で禁止）。行の有無だけを見る',
+      note: health.expectedAirtableRows === 0
+        ? 'blob モードでは Airtable へ書かない。**0 行が正常**（記録は Netlify Blobs 側）'
+        : 'airtable / dual モードでは Airtable が正本',
+    },
+    counters: { available: countersAvailable, values: counters },
+    signals: {
+      available: signals && signals.available === true,
+      lastEventAt: lastEventAtMs ? new Date(lastEventAtMs).toISOString() : null,
+      firstOpenAt: meta.firstOpenAtMs ? new Date(meta.firstOpenAtMs).toISOString() : null,
+      startedAt: meta.startedAtMs ? new Date(meta.startedAtMs).toISOString() : null,
+    },
+    readAt: new Date(now).toISOString(),
   });
 }
 

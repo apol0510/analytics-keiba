@@ -7,27 +7,50 @@
 |---|---|---|
 | 1 | キュー登録が 1 ジョブぶんを取りこぼさない（`50/50` で `queue:unverified` が付かない）| **未達**（実証待ち）|
 | 2 | 積みかけジョブ `64230bf3` を 3 段階（repair → preview → promote）で完了させ、送信結果を確認 | **未達** |
-| 3 | **`EmailEvents = 0` の原因特定 → 恒久修正 → 本番でイベントが記録されることの確認** | **未達** |
+| 3 | **`EmailEvents = 0` の原因特定 → 恒久修正 → 本番でイベントが記録されることの確認** | 原因特定 **済**（設計どおり・下記）/ 恒久修正 **実装済**（PR）/ 本番確認は **deploy 後** |
 
 ⚠️ **3 を「別件」として先送りしない。** 2026-08-28 の指示で**この任務の完了条件に含めた**。
-原因が分かっただけ・修正しただけでは足りず、**本番で実際に行が増えることまで**確認する。
+原因が分かっただけ・修正しただけでは足りず、**本番でイベントが記録されていることまで**確認する。
+⚠️ 確認材料は **`EmailEvents` の行数ではない**（blob 構成では 0 が正常）。
+`eventSinkHealth` の `recording` と最終受信時刻で見る。
 
-## 3 の現時点の観測（read-only・2026-08-28）
+## 3 の決着（2026-08-28・read-only で確定）
 
-「未有効化」ではなく「**本来有効なのに 0 件**」＝ 異常。
+**「本来有効なのに 0 件＝異常」という当初の見立ては誤りだった。**
+`EmailEvents` が 0 行なのは **設計どおり**で、記録そのものは生きている。
 
-| 項目 | 実測 |
+| 項目 | 実測 | 意味 |
+|---|---|---|
+| `MARKETING_EVENT_SINK` | **`blob`** | **Airtable へは書かない**構成（`emailEventSink.js` の表）|
+| `EMAIL_EVENT_LEDGER_ENABLED` | `'true'` | 台帳 gate は開いている＝書いている |
+| `EmailEvents` 行数 | 0 | 容量対策で Blob へ退避し**行を消した**。この構成では **0 が正常** |
+| 反応集計 `ak:mkt:eng:v1:meta` | `last_event_at = 2026-08-28T00:45:02Z`（確認の約 7 分前）| **Webhook は生きて受信している** |
+| 同 `first_open_at` | `2026-08-12T02:26:36Z` | 計測開始以降ずっと記録されている |
+| open / click | 1,333 / 0 | click 0 は**意図どおり**（アカウント全体の click tracking は magic link を壊すため OFF）|
+| SendGrid Event Webhook | `enabled: true` / url 一致 / `public_key` あり | 署名付きで送られてくる |
+| 署名検証 | 偽署名 → `signature_mismatch`（`verification_key_missing` ではない）| **env の鍵は SPKI として正しく読めている** |
+
+> 「署名検証 NG で全イベントが 403」という仮説は**否定された**。403 は当方の偽署名に対する
+> 正しい応答であり、実際の SendGrid からのイベントは通って集計を更新し続けている。
+
+### それでも見つかった本物の欠陥（今回の恒久修正）
+
+顧客カルテは **Airtable の `EmailEvents` を読み続けていた**。blob 構成では常に 0 行なので
+`available:true / rows:0` を返し、画面には
+「台帳の運用開始前のメールは記録がありません」と出る。
+つまり **記録は生きているのに「記録が無い」と読める**状態で、
+「0 件」と「取得不能」を区別するというカルテの目的が**第 3 の形で破れていた**
+（今回の誤読そのものを生んだ表示でもある）。
+
+| 恒久修正 | 内容 |
 |---|---|
-| `EMAIL_EVENT_LEDGER_ENABLED` | **`'true'`**（Phase 1b の gate は開いている）|
-| SendGrid Event Webhook | **`enabled: true`** / url = `…/.netlify/functions/sendgrid-webhook` |
-| 有効イベント | delivered / open / bounce / dropped / spam_report / unsubscribe = ON |
-| `SENDGRID_WEBHOOK_VERIFICATION_KEY` | **設定あり**（`sendgrid-webhook.js` が読むのはこの名前。`SENDGRID_WEBHOOK_PUBLIC_KEY` は未使用）|
-| Phase 1c / 1d の実装 | **main に存在**（`custom_args` 刻印 / `emailEventDeliveryIndex.js`）|
-| 署名なし POST | **403**（fail closed は生きている）|
-| **`EmailEvents` 行数** | **0** |
+| `src/lib/webhooks/emailEventLedgerSource.js`（新・単一源）| sink mode から「Airtable 経由で読めるか」を決める。blob なら**引かず** `available:false` + 理由 `sink_blob` |
+| `admin-marketing.js` カルテ | 読めないときは `fetchCustomerLedgerEvents` / `fetchLedgerUnattributed` を**呼ばない**（0 行を掴まない）|
+| `src/lib/webhooks/eventSinkHealth.js`（新・単一源）| 「記録が生きているか」を **行数以外**（gate / 観測カウンタ / 最終受信時刻）で判定 |
+| `eventSinkHealth` action（read-only）| 本番で記録状況を確認できる面。`EmailEvents` の**全件走査はしない**（容量対策の恒久ルール）|
 
-最有力の仮説は**署名検証 NG で全イベントが 403**（SendGrid 側の鍵と env の値が食い違っている）。
-⚠️ `EMAIL_EVENT_LEDGER.md` の「**1b 未実施**」は**古い記述**（env は既に `true`）。正本の更新が要る。
+**禁止事項**: blob 構成で `rows: 0` を「反応なし」として表示しない。
+`MARKETING_EVENT_SINK` を呼び出し側で直接読んで分岐を再実装しない。
 
 ## 別件として残す（この任務の完了条件ではない）
 
