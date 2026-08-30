@@ -1,11 +1,32 @@
 ---
+/**
+ * dark-horse-picks.astro — 穴馬抽出ツール（無料・公開）
+ *
+ * ⚠️ **SSR 必須**（`prerender = false`）。静的生成へ戻してはいけない。
+ *
+ * 2026-08-30 の不具合: このページは `prerender = true` のまま「当日 (todayJst)」を
+ * **ビルド時刻**で決めていた。ビルドは前日夕方の自動取込でしか走らないため
+ * `todayJst` が前日で固定され、**当日は終日「前日の穴馬」が表示され続けていた**
+ * （本番 8/30 12 時の HTML が 2026-08-29 のデータ。当日 8/30 分はリポジトリに揃っていた）。
+ *
+ * 恒久対応: ページを SSR 化し、
+ *   - 「当日」は `jstDateString(new Date())` で **リクエストごと**に決める
+ *   - 当日分の computer JSON だけを `loadComputerEntriesForDate()` で **fs から読む**
+ *     （旧実装の `import.meta.glob(eager)` は全日付 約41MB をバンドルへ焼き込んでいた）
+ *   - 選定は従来どおり `selectTodaysEntries()`（当日完全一致・**過去日 fallback なし**）
+ *
+ * 外部 API（Airtable / SendGrid 等）はこの経路では**一切呼ばない**。読むのは fs のみ。
+ * SSR 関数へ当日分の `src/data/computer` を残すのは runtimeDataRetention.js の責務
+ * （`computer/{jra,nankan}` を BUILD_ONLY_SUBTREES へ戻すと当日分が消える）。
+ */
 import '../styles/global.css';
-import { selectTodaysEntries } from '../lib/darkHorse/selectTodaysDarkHorses.js';
+import { selectTodaysEntries, jstDateString } from '../lib/darkHorse/selectTodaysDarkHorses.js';
+import { loadComputerEntriesForDate } from '../lib/darkHorse/loadComputerEntriesForDate.js';
 
-export const prerender = true;
+export const prerender = false;
 
-// keiba-data-shared から取り込んだ computer JSON を読み込み（src/data/computer/{jra,nankan}/...）
-const modules = import.meta.glob('/src/data/computer/**/*.json', { eager: true });
+// 日付が変われば内容が変わる。CDN へ寝かせると「前日表示」が再発するため必ず再検証させる。
+Astro.response.headers.set('Cache-Control', 'public, max-age=0, must-revalidate');
 
 const VENUE_LABEL_JA = {
   TOK: '東京', NAK: '中山', KYO: '京都', HAN: '阪神', CHU: '中京',
@@ -13,29 +34,15 @@ const VENUE_LABEL_JA = {
   OOI: '大井', KAW: '川崎', FUN: '船橋', URA: '浦和'
 };
 
-// 各 JSON を venue エントリに正規化
-const allEntries = Object.entries(modules)
-  .map(([path, mod]) => {
-    const m = path.match(/\/computer\/(jra|nankan)\/(\d{4})\/(\d{2})\/(\d{4}-\d{2}-\d{2})-([A-Z]+)\.json$/);
-    if (!m) return null;
-    const [, category, , , date, venueCode] = m;
-    const data = (mod && mod.default) ? mod.default : mod;
-    if (!data || !Array.isArray(data.races)) return null;
-    return { path, category, date, venueCode, data };
-  })
-  .filter(Boolean);
-
-// 開催日（JST の今日）と完全一致するものだけを表示対象にする。
+// 開催日（**リクエスト時** JST の今日）と完全一致するものだけを表示対象にする。
 // - 過去日も未来日も出さない（次週の JRA データが先行アップされていても今日でなければ出さない）
 // - 今日 0 件なら fallback せず「本日の穴馬候補はまだ公開されていません」を出す
-const todayJst = (() => {
-  const now = new Date();
-  const jstMs = now.getTime() + 9 * 60 * 60 * 1000;
-  return new Date(jstMs).toISOString().slice(0, 10);
-})();
+const todayJst = jstDateString(new Date());
+
+// 当日分の computer JSON だけを fs から読む（他日は読み込まない＝混入しない）。
+const allEntries = loadComputerEntriesForDate(todayJst);
 
 // 選定は純粋ヘルパに集約（todayJst 完全一致 & darkHorses あり・過去日 fallback なし）。
-// 挙動は従来と同一（darkHorses 判定 → 当日一致の 2 段を 1 関数へ）。
 const todayEntries = selectTodaysEntries(allEntries, todayJst);
 
 // カテゴリごとに今日の日付を記録（client 側 storage key で利用）

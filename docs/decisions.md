@@ -1,3 +1,45 @@
+# 2026-08-30 — 穴馬抽出の「当日」判定を SSR へ移す（定期 rebuild は採らない）
+
+## 決定
+
+`/dark-horse-picks/` を **SSR (`prerender = false`)** にし、当日 (`todayJst`) を
+**リクエストごと**に `jstDateString(new Date())` で決める。当日分の computer JSON だけを
+`loadComputerEntriesForDate(todayJst)` で fs から読む。
+
+## 背景
+
+静的生成のまま当日を**ビルド時刻**で決めていたため、当日は終日「前日の穴馬」が出ていた
+（2026-08-30 のお客様報告。本番 12 時台の HTML が 8/29 のデータ）。
+ビルドは前日夕方の自動取込でしか走らないので、静的生成である限り必ず 1 日ズレる。
+
+## 却下した案と理由
+
+| 案 | 却下理由 |
+|---|---|
+| **毎日 0 時過ぎに定期 rebuild**（GitHub Actions cron → Netlify Build Hook）| コード変更ゼロで済むが、**ビルドが走らなければ再発する**構造が残る。ビルド失敗時は無言で前日表示へ戻り、外形監視で気づけない。毎日フルビルド 1 回分のコストも増える |
+| **「最新日」表示へポリシー変更**（他ページの `latestFile` 方式に揃える）| 差分は最小だが、前夜のビルド時点で**翌日分が公開されてしまう**。先行投入された将来日データがあるとそれを出す。`selectTodaysDarkHorses.js` が PR #133 で固定した「当日のみ・過去日 fallback なし」を捨てることになる |
+| **静的ページ + クライアント側で日付選択** | 当日と翌日の買い目候補を HTML に同梱することになり、当日前に翌日分が読める。JS 前提で SEO 本文も失う |
+
+## SSR 化の副作用と対処
+
+| 副作用 | 対処 |
+|---|---|
+| 実行時に `src/data/computer` を読む | `runtimeDataRetention.js` の `RUNTIME_SUBTREES` へ `computer/{jra,nankan}` を移動（`BUILD_ONLY_SUBTREES` から除去）。SSR 関数 112.0MB / 250MB（+4.3MB） |
+| 「新しい順 3 日」だと先行投入された未来日で枠が埋まり**当日が消える** | `maxAheadDays`（= ビルド日 +1）で上限を掛けてから新しい順に残す。上限以下が 0 日なら従来どおり（消しすぎない fail safe）|
+| 全日付を焼き込む `import.meta.glob(eager)` の廃止 | 当日分だけ fs で読む loader へ置換。ビルドも軽くなる |
+| CDN に寝かせると再発 | `Cache-Control: public, max-age=0, must-revalidate` |
+
+## 固定した検証
+
+`test:dark-horse`（SSR guard / JST 境界 8/29→8/30 / 過去日 fallback なし）、
+`test:ssr-retention`（computer を全削除へ戻さない / 上限日）、
+`check:ssr-runtime-data`（**成果物**を実 loader で引いて当日分の実在を確認）。
+`test:dark-horse` は CI には step があったが `check:safety` に無かったため追加した。
+
+詳細は [`dark-horse-picks-stability-plan.md`](./dark-horse-picks-stability-plan.md) の「0. 表示日付」。
+
+---
+
 # 2026-08-27 — 積みかけジョブの解除を repair から分離する
 
 ## ⚠️ 積みかけジョブの 3 段階（2026-08-27 の自動送信事故の恒久対策）

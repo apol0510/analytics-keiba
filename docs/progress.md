@@ -1,3 +1,64 @@
+# ✅ 穴馬抽出「前日のレースしか出ない」— **恒久修正（2026-08-30）/ 本番 deploy 前**
+
+**お客様報告（2026-08-30 03:12）**: 「穴馬ですが、当日の12時になっても前日のレースしか表示されません。」
+
+## 判定
+
+**再現・原因確定・恒久修正まで完了。本番 deploy は未実施（承認待ちで停止中）。**
+
+| 項目 | 実測 |
+|---|---|
+| 本番 HTML | 2026-08-30 15:13 JST 取得 → 日付は **`2026-08-29` のみ 40 箇所**（前日）|
+| 原因 | `dark-horse-picks.astro` が `prerender = true` のまま **当日をビルド時刻で決めていた** |
+| ビルド契機 | 直近コミットは 8/29 17:50〜19:30 の自動取込のみ。**JST 0 時〜昼にビルドが走る経路が無い** |
+| 当日データ | `src/data/computer/jra/2026/08/2026-08-30-{NII,CHU,SAP}.json` = 各 races=12 / withDark=12（**揃っていた**）|
+
+データ不足ではなく表示ロジックの構造的欠陥。**毎日「前日分が終日表示される」状態**だった。
+
+## 恒久対応
+
+SSR 化し、当日を**リクエストごと**に判定する（方式は `decisions.md` 2026-08-30 参照）。
+
+| 変更 | 内容 |
+|---|---|
+| `src/pages/dark-horse-picks.astro` | `prerender = false` / `jstDateString(new Date())` / 当日分だけ fs 読み / `Cache-Control: max-age=0, must-revalidate` |
+| `src/lib/darkHorse/selectTodaysDarkHorses.js` | `jstDateString()` を追加（JST 日付の単一源）|
+| `src/lib/darkHorse/loadComputerEntriesForDate.js` | **新規**。当日 1 日分だけ読む loader（他日 fallback なし・throw しない）|
+| `src/lib/ssr/runtimeDataRetention.js` | `computer/{jra,nankan}` を BUILD_ONLY → RUNTIME へ。`maxAheadDays` / `addDaysIso` 追加 |
+| `scripts/prune-ssr-function-data.mjs` | 上限日（ビルド日 +1）を配線 |
+| `scripts/check-ssr-runtime-data.mjs` | 穴馬 loader の成果物プローブを追加 |
+| `package.json` / `safety-check.yml` | `test:dark-horse` を `check:safety` へ / paths に prune・checker を追加 |
+
+## 検証結果（ローカル）
+
+| 検証 | 結果 |
+|---|---|
+| `npm run build` | exit 0。`dist/dark-horse-picks/` は生成されない（＝ SSR 化を確認）|
+| prune | `computer/jra 34.3→3.3MB 保持 9 ファイル（08-30, 08-29, 08-23）/ 上限日 2026-08-31` |
+| SSR 関数サイズ | **112.0MB / 250MB**（computer 追加で +4.3MB・余裕 138.0MB）|
+| `check:ssr-runtime-data` | `dark-horse: 2026-08-30 × jra:CHU/jra:NII/jra:SAP OK（当日 3 会場）` ほか全 ✅ |
+| 実 SSR レンダリング | dev サーバー実取得で **日付 `2026-08-30` のみ 40 箇所** / タブ 新潟・中京・札幌 / レースカード 36 / 「まだ公開されていません」0 件 / `cache-control: public, max-age=0, must-revalidate` |
+| `npm run check:safety` | **exit 0**（50 スクリプト）|
+| 新規・追加テスト | `test:dark-horse` 29 件 pass（loader 10 + 当日選定/JST 境界 13 + SSR guard 6）/ `test:ssr-retention` 20 件 pass |
+
+## 途中で見つけた別の欠陥（同時に修正）
+
+`check-ssr-runtime-data.mjs` の文字列 `'predictions/*.json'` に含まれる `/*` が、
+**あとから追加したブロックコメントの `*/` と対になり、その間のコードがコメント除去で
+まるごと消えて grep ガードが素通り**していた（`test:ssr-retention` の
+「horseStats の突き合わせが見当たらない」で顕在化）。文字列を書き換え、
+**文字列リテラルに `/*` を書かせない回帰テスト**を追加した。
+
+## 残（本番 deploy 前で停止）
+
+- **未実施**: merge / 本番 deploy。実施すると当日中に当日分が表示される
+- 本番反映後の確認: `https://analytics.keiba.link/dark-horse-picks/` の日付が当日になること
+- **JST 0 時直後**（翌日 00:05 頃）にも当日へ切り替わることの本番確認（SSR なので構造上切り替わるが、初回は実測する）
+- 別件（今回対象外）: `pricing.astro` / `admin/premium-plus-images.astro` にも
+  **ビルド時 today** 判定がある。影響有無は未調査
+
+---
+
 # ✅ メール配信基盤の是正 — **完了（2026-08-28）**
 
 > **2026-08-28 に完成条件を変更**（3 つすべてを満たすまでクローズしない）。

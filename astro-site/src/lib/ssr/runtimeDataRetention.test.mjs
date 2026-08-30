@@ -22,6 +22,8 @@ import {
   RUNTIME_SUBTREES,
   BUILD_ONLY_SUBTREES,
   KEEP_DATES,
+  MAX_AHEAD_DAYS,
+  addDaysIso,
   pickKeepDates,
   shouldKeepFile,
 } from './runtimeDataRetention.js';
@@ -141,5 +143,121 @@ test('成果物チェッカーは会場ごとに数える（複数会場開催�
   assert.ok(calls.length >= 2, 'horseStats の突き合わせが見当たらない');
   for (const c of calls) {
     assert.match(c, /date, code\)/, `会場スコープで数えていない: ${c}`);
+  }
+});
+
+// ── 7. computer サブツリー（/dark-horse-picks/ の SSR 化・2026-08-30）─────────
+//
+// 守りたい事故: 穴馬抽出ページが `prerender = true` のままビルド時刻で当日を決めており、
+// 当日は終日「前日の穴馬」が出ていた。SSR 化で **実行時に src/data/computer を読む**
+// ようになったため、prune が computer を丸ごと消すと当日分が引けなくなる。
+
+test('computer/{jra,nankan} は実行時サブツリー（全削除対象に戻っていない）', () => {
+  const subs = RUNTIME_SUBTREES.map((s) => s.sub);
+  assert.ok(subs.includes('computer/jra'), 'computer/jra が実行時サブツリーに無い');
+  assert.ok(subs.includes('computer/nankan'), 'computer/nankan が実行時サブツリーに無い');
+  assert.ok(!BUILD_ONLY_SUBTREES.includes('computer'), "'computer' を全削除対象へ戻している");
+  for (const b of BUILD_ONLY_SUBTREES) {
+    assert.ok(!'computer/jra'.startsWith(`${b}/`), `${b} を消すと computer/jra まで消える`);
+  }
+});
+
+test('computer の datePattern は会場別ファイル名を拾う', () => {
+  const spec = RUNTIME_SUBTREES.find((s) => s.sub === 'computer/jra');
+  assert.ok(spec.datePattern.test('2026-08-30-NII.json'));
+  assert.ok(spec.datePattern.test('2026-08-30-CHU.json'));
+  assert.equal(spec.datePattern.exec('2026-08-30-SAP.json')[1], '2026-08-30');
+  assert.ok(!spec.datePattern.test('2026-08-30.json'), '日付だけのファイル名を誤って拾っている');
+});
+
+test('同日 3 会場（JRA）を取りこぼさない', () => {
+  const spec = RUNTIME_SUBTREES.find((s) => s.sub === 'computer/jra');
+  const files = ['2026-08-30-NII.json', '2026-08-30-CHU.json', '2026-08-30-SAP.json', '2026-08-23-TOK.json'];
+  const keep = pickKeepDates(files, spec.datePattern, 1);
+  const kept = files.filter((f) => shouldKeepFile(f, spec.datePattern, keep));
+  assert.equal(kept.length, 3, `会場を取りこぼしている: ${kept.join(', ')}`);
+});
+
+// ── 8. maxAheadDays: 先行投入された未来日で「配信当日」を消さない ───────────
+test('未来日が先行投入されても、ビルド日+1 以内に絞って当日分を残す', () => {
+  const spec = RUNTIME_SUBTREES.find((s) => s.sub === 'computer/jra');
+  assert.equal(spec.maxAheadDays, MAX_AHEAD_DAYS);
+
+  // ビルド 2026-08-29 夕方。翌週 9/5・9/6・9/12 が先行投入済み。
+  const files = [
+    '2026-09-12-TOK.json', '2026-09-06-NAK.json', '2026-09-05-NAK.json',
+    '2026-08-30-NII.json', '2026-08-29-NII.json', '2026-08-23-TOK.json',
+  ];
+  const maxDate = addDaysIso('2026-08-29', MAX_AHEAD_DAYS); // 2026-08-30
+  assert.equal(maxDate, '2026-08-30');
+
+  const keep = pickKeepDates(files, spec.datePattern, KEEP_DATES, maxDate);
+  assert.ok(keep.includes('2026-08-30'), `配信当日 2026-08-30 が消える: ${keep.join(', ')}`);
+  assert.ok(keep.includes('2026-08-29'), `ビルド当日 2026-08-29 が消える: ${keep.join(', ')}`);
+  assert.ok(!keep.includes('2026-09-12'), '上限を超える未来日を残している');
+
+  // 上限を渡さない旧挙動だと当日が落ちる（＝この上限が必要な理由）
+  const noCap = pickKeepDates(files, spec.datePattern, KEEP_DATES);
+  assert.ok(!noCap.includes('2026-08-30'), '前提が崩れている（上限なしでも当日が残っている）');
+});
+
+test('maxDate 未指定・不正なら従来どおり新しい順（既存 5 サブツリーの挙動は不変）', () => {
+  const spec = RUNTIME_SUBTREES.find((s) => s.sub === 'featureScores/jra');
+  const files = ['2026-08-30-NII.json', '2026-08-29-NII.json', '2026-08-23-TOK.json'];
+  const base = pickKeepDates(files, spec.datePattern, 2);
+  assert.deepEqual(base, ['2026-08-30', '2026-08-29']);
+  for (const bad of [null, undefined, '', 'nope', 20260830]) {
+    assert.deepEqual(pickKeepDates(files, spec.datePattern, 2, bad), base, `maxDate=${String(bad)} で挙動が変わった`);
+  }
+  assert.ok(RUNTIME_SUBTREES.filter((s) => s.maxAheadDays == null).length >= 5, '既存 5 サブツリーへ上限を足していない');
+});
+
+test('上限以下の日付が 1 つも無ければ間引きで 0 件にしない（fail safe）', () => {
+  const spec = RUNTIME_SUBTREES.find((s) => s.sub === 'computer/jra');
+  const files = ['2026-09-05-NAK.json', '2026-09-06-NAK.json'];
+  const keep = pickKeepDates(files, spec.datePattern, KEEP_DATES, '2026-08-30');
+  assert.ok(keep.length >= 1, '未来日しか無いときに 0 件へ落としている');
+});
+
+test('addDaysIso は暦日で進み、不正入力は null', () => {
+  assert.equal(addDaysIso('2026-08-29', 1), '2026-08-30');
+  assert.equal(addDaysIso('2026-08-31', 1), '2026-09-01');
+  assert.equal(addDaysIso('2026-12-31', 1), '2027-01-01');
+  assert.equal(addDaysIso('2026-08-30', 0), '2026-08-30');
+  assert.equal(addDaysIso('2026-08-30', -1), '2026-08-29');
+  for (const bad of [null, undefined, '', 'nope', '2026-8-30']) assert.equal(addDaysIso(bad, 1), null);
+  assert.equal(addDaysIso('2026-08-30', NaN), null);
+});
+
+test('prune スクリプトが maxAheadDays を実際に配線している', () => {
+  const src = readFileSync(
+    fileURLToPath(new URL('../../../scripts/prune-ssr-function-data.mjs', import.meta.url)), 'utf8'
+  );
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.match(code, /maxAheadDays/, 'maxAheadDays を読んでいない');
+  assert.match(code, /addDaysIso/, '上限日を計算していない');
+  assert.match(code, /pickKeepDates\([\s\S]{0,160}?maxDate\)/, 'pickKeepDates へ上限日を渡していない');
+});
+
+// ── 9. ソース検査ガード自体が無効化されないこと ──────────────────────────
+//
+// 上のいくつかのテストは「スクリプトのソースからブロックコメントを除いて grep」する。
+// ところが**文字列リテラルの中に `/*` が入っている**と（例: 'predictions/*.json'）、
+// あとから追加された別のブロックコメントの `*/` と対になり、**その間のコードが
+// まるごと除去されて grep が素通り**する。2026-08-30 に実際これが起き、
+// horseStats の突き合わせ検査が「見当たらない」と誤検知した（本物の退行ではなかった）。
+// 文字列中の `/*` を機械的に禁止して、ガードが静かに死ぬ経路を塞ぐ。
+test('検査対象スクリプトの文字列リテラルに "/*" を書かない（grep ガードの無効化防止）', () => {
+  for (const rel of ['../../../scripts/check-ssr-runtime-data.mjs', '../../../scripts/prune-ssr-function-data.mjs']) {
+    const src = readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
+    src.split('\n').forEach((line, i) => {
+      // ブロックコメント本文（先頭が * や /* や //）は対象外。コメント内の "/*" は無害。
+      if (/^\s*(\*|\/\/|\/\*)/.test(line)) return;
+      for (const lit of line.match(/'[^']*'|"[^"]*"|`[^`]*`/g) || []) {
+        assert.ok(!lit.includes('/*'),
+          `${rel}:${i + 1} 文字列 ${lit} に "/*" が含まれる。`
+          + ' コメント除去が後続の */ と対になり、grep ガードが素通りする');
+      }
+    });
   }
 });

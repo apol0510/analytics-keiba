@@ -21,6 +21,10 @@ on:
       # Functions の未定義識別子（本番 500 になる import 漏れ）を静的に検出する
       - 'astro-site/scripts/check-functions-no-undef.mjs'
       - 'astro-site/scripts/check-no-unbounded-customer-scan.mjs'
+      # SSR 関数へ残す実行時データの間引き。ここが壊れると認可後・当日表示が静かに空になる
+      # （2026-08-30: /dark-horse-picks/ の SSR 化で src/data/computer も実行時データになった）
+      - 'astro-site/scripts/prune-ssr-function-data.mjs'
+      - 'astro-site/scripts/check-ssr-runtime-data.mjs'
       - 'astro-site/netlify/functions/**'
       - 'astro-site/src/lib/webhooks/**'
       - 'astro-site/public/robots.txt'
@@ -54,6 +58,10 @@ on:
       # Functions の未定義識別子（本番 500 になる import 漏れ）を静的に検出する
       - 'astro-site/scripts/check-functions-no-undef.mjs'
       - 'astro-site/scripts/check-no-unbounded-customer-scan.mjs'
+      # SSR 関数へ残す実行時データの間引き。ここが壊れると認可後・当日表示が静かに空になる
+      # （2026-08-30: /dark-horse-picks/ の SSR 化で src/data/computer も実行時データになった）
+      - 'astro-site/scripts/prune-ssr-function-data.mjs'
+      - 'astro-site/scripts/check-ssr-runtime-data.mjs'
       - 'astro-site/netlify/functions/**'
       - 'astro-site/src/lib/webhooks/**'
       - 'astro-site/public/robots.txt'
