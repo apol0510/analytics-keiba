@@ -1,8 +1,90 @@
 # AK 穴馬抽出ツール 安定化・表示改善タスク
 
 **作成日**: 2026-06-10
+**最終更新**: 2026-08-30
 **対象repo**: analytics-keiba（AK）
-**ステータス**: Phase 0（進捗管理docs作成・監査計画整理）— **実装未着手**
+**ステータス**: Phase 0（抽出ロジック監査）— **実装未着手** /
+別件で **表示日付の不具合を恒久修正済み**（下記「0. 表示日付」）
+
+---
+
+## 0. 表示日付：当日判定は SSR（2026-08-30 恒久修正・変更禁止事項）
+
+> ⚠️ **ここは抽出ロジック監査（Phase 0 以降）とは独立した確定仕様。**
+> Phase 1 以降で抽出条件を触るときも、この節の前提を崩さないこと。
+
+### 事故（お客様報告 2026-08-30 03:12）
+
+> 「穴馬ですが、当日の12時になっても前日のレースしか表示されません。」
+
+**再現・実測**: 2026-08-30 15:13 JST に本番 `https://analytics.keiba.link/dark-horse-picks/`
+を取得 → HTML 内の日付が **`2026-08-29` のみ 40 箇所**。当日 8/30 分
+（JRA 新潟 / 中京 / 札幌 各 12R・全レースに `darkHorses` あり）は
+**リポジトリに揃っていた**。データ不足ではない。
+
+### 原因
+
+ページが `prerender = true`（静的生成）のまま、当日を **ビルド時刻**で決めていた。
+
+```js
+export const prerender = true;                       // ← 静的生成
+const todayJst = /* new Date() を JST 変換 */;        // ← ビルド時に 1 回だけ評価
+selectTodaysEntries(allEntries, todayJst);            // 当日完全一致・fallback なし
+```
+
+ビルドは **前日夕方の自動取込コミット**でしか走らない（8/29 は 17:50〜19:30。
+JST 0 時以降〜昼にビルドが走る経路が無い）。結果 `todayJst` が前日で固定され、
+**当日は終日「前日の穴馬」が表示され続けていた**（今回だけの事象ではない）。
+
+`selectTodaysEntries` の「当日完全一致・過去日 fallback なし」は正しく動いていた。
+壊れていたのは **`todayJst` をいつ評価するか**。
+
+### 恒久対応（現行仕様）
+
+| 項目 | 仕様 |
+|---|---|
+| レンダリング | **SSR (`prerender = false`)**。静的生成へ戻さない |
+| 当日の決定 | `jstDateString(new Date())` を **リクエストごと**に評価（`selectTodaysDarkHorses.js`）|
+| データ読み | `loadComputerEntriesForDate(todayJst)` で **当日分だけ** fs から読む |
+| 選定 | 従来どおり `selectTodaysEntries()`（当日完全一致・**過去日 fallback なし**）|
+| 当日 0 件 | 「本日の穴馬候補はまだ公開されていません」。**前日を代わりに出さない** |
+| キャッシュ | `Cache-Control: public, max-age=0, must-revalidate`（CDN に寝かせると再発）|
+| 外部 API | この経路では **呼ばない**（Airtable / SendGrid 等ゼロ。読むのは fs のみ）|
+
+旧実装の `import.meta.glob('/src/data/computer/**/*.json', { eager: true })` は
+**全日付 約 41MB をバンドルへ焼き込んでいた**ため廃止。SSR 関数へ当日分を残すのは
+`src/lib/ssr/runtimeDataRetention.js` の責務（下記）。
+
+### 触ってはいけないこと
+
+- `export const prerender = true` へ戻さない（＝前日表示が即再発する）
+- ページ内で JST 変換（`9 * 60 * 60 * 1000` 等）を再実装しない。`jstDateString` を使う
+- `import.meta.glob` を復活させない
+- 前日 / 最新日への fallback を足さない
+- `runtimeDataRetention.js` の `computer/{jra,nankan}` を `BUILD_ONLY_SUBTREES` へ戻さない
+  （戻すと SSR 関数から当日データが消え、常に「まだ公開されていません」になる）
+- **定期 rebuild（GitHub Actions cron）で当日表示を担保しない**。ビルド依存を残す解決は採らない
+
+### 関連ファイル
+
+| 目的 | ファイル |
+|---|---|
+| ページ（SSR） | `astro-site/src/pages/dark-horse-picks.astro` |
+| 当日選定 + JST 日付（純粋） | `astro-site/src/lib/darkHorse/selectTodaysDarkHorses.js` |
+| 当日分 loader（fs） | `astro-site/src/lib/darkHorse/loadComputerEntriesForDate.js` |
+| SSR 保持ポリシー | `astro-site/src/lib/ssr/runtimeDataRetention.js` |
+| 間引き（postbuild） | `astro-site/scripts/prune-ssr-function-data.mjs` |
+| 成果物検査 | `astro-site/scripts/check-ssr-runtime-data.mjs` |
+
+### 検証
+
+```bash
+cd astro-site
+npm run test:dark-horse          # 当日選定 / JST 境界(8/29→8/30) / SSR guard
+npm run test:ssr-retention       # computer を全削除へ戻していない / 上限日
+npm run build                    # prune まで含む
+npm run check:ssr-runtime-data   # 成果物に当日分が実在するか（実 loader で確認）
+```
 
 ---
 

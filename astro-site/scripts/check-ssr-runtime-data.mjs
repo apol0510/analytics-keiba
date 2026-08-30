@@ -9,9 +9,10 @@
  * 検査:
  *   1. RUNTIME_SUBTREES の各サブツリーが存在し、**1 ファイル以上**残っている
  *   2. 残っているファイルが**同一開催日でまとまっている**（会場別の取りこぼしが無い）
- *   3. SSR 有料ページが runtime で通る fs loader を**全件実際に実行**して非空を確認
+ *   3. SSR ページが runtime で通る fs loader を**全件実際に実行**して非空を確認
  *      （loadJraVenuesForDisplay / loadFeatureScores / loadHorseHistoriesForVenue /
  *        loadHorseStatsNankan。＝認可後に「データがありません」へ落ちない）
+ *      + loadComputerEntriesForDate（/dark-horse-picks/ の当日分。2026-08-30 追加）
  *   4. SSR 関数サイズが 250MB 未満
  *
  * ビルド前（成果物が無い）はスキップして exit 0。CI では build の後に実行する。
@@ -207,7 +208,7 @@ async function probeNankanChain() {
   let latest = null;
   try {
     const files = (await readdir(srcDir)).filter((f) => /^\d{4}-\d{2}-\d{2}-[a-z]+\.json$/.test(f));
-    if (files.length === 0) return ng('NANKAN: ソースの predictions/*.json が 0 件（バンドル対象が無い）');
+    if (files.length === 0) return ng('NANKAN: ソースの predictions ディレクトリに .json が 0 件（バンドル対象が無い）');
     latest = files.sort().reverse()[0];
   } catch (e) {
     return ng(`NANKAN: predictions ディレクトリを読めない: ${e.message}`);
@@ -294,6 +295,64 @@ async function probeNankanChain() {
   }
 }
 
+/**
+ * 穴馬抽出（/dark-horse-picks/ · SSR）経路: ページと**同じ引数**で当日分を引く。
+ *
+ * 2026-08-30 の不具合はビルド時に当日を決めていたこと（＝静的生成）が原因だった。
+ * SSR 化後は「成果物に当日の computer が残っているか」が新たな死角になる
+ * （prune が消すと 500 にはならず「本日の穴馬候補はまだ公開されていません」になる）。
+ *
+ *  - 当日分を引ける                       → ok
+ *  - 引けない × ソースにも当日が無い      → warn（本日開催なし / 未取込。ページは正しく「未公開」表示）
+ *  - 引けない × **ソースには当日が在る**  → ng（prune が消した＝退行）
+ */
+async function probeDarkHorseChain() {
+  let today;
+  let loadComputerEntriesForDate;
+  let selectTodaysEntries;
+  try {
+    ({ loadComputerEntriesForDate } = await lib('darkHorse/loadComputerEntriesForDate.js'));
+    const m = await lib('darkHorse/selectTodaysDarkHorses.js');
+    selectTodaysEntries = m.selectTodaysEntries;
+    today = m.jstDateString(new Date());
+  } catch (e) {
+    return ng(`dark-horse loader の読み込みに失敗: ${e.message}`);
+  }
+  if (!today) return ng('dark-horse: 当日 (JST) を決められない');
+
+  // 成果物とソースの当日ファイル数を会場込みで突き合わせる（会場の取りこぼし検知）
+  let srcCount = 0;
+  let artCount = 0;
+  for (const cat of ['jra', 'nankan']) {
+    srcCount += await sourceCountFor(`computer/${cat}`, today);
+    const files = await listFiles(join(fnDataDir, 'computer', cat));
+    artCount += files.filter((f) => f.startsWith(`${today}-`) && f.endsWith('.json')).length;
+  }
+  if (srcCount > 0 && artCount < srcCount) {
+    ng(`dark-horse: ${today} 分がソース ${srcCount} 会場に対し成果物 ${artCount} 会場`
+      + ' → prune が会場単位で取りこぼしている');
+  }
+
+  // ページと同じ経路（loader → selectTodaysEntries）を実際に実行する
+  let selected = [];
+  try {
+    selected = selectTodaysEntries(loadComputerEntriesForDate(today), today);
+  } catch (e) {
+    return ng(`dark-horse loader の実行に失敗: ${e.message}`);
+  }
+
+  if (selected.length > 0) {
+    const venues = selected.map((e) => `${e.category}:${e.venueCode}`).join('/');
+    return ok(`dark-horse: ${today} × ${venues} OK（当日 ${selected.length} 会場）`);
+  }
+  if (srcCount > 0) {
+    return ng(`dark-horse: ${today} 分はソースに ${srcCount} 件あるのに成果物から引けない`
+      + ' → prune が消した（退行）');
+  }
+  warn(`dark-horse: ${today} 分はソースにも無い（本日開催なし / 未取込）。`
+    + ' ページは「本日の穴馬候補はまだ公開されていません」を出す（前日へは落とさない）');
+}
+
 async function main() {
   if (!existsSync(fnDataDir)) {
     console.log('[check-ssr-runtime-data] SSR 成果物が無いためスキップ（build 前）');
@@ -327,6 +386,7 @@ async function main() {
     process.chdir(fnRoot);
     await probeJraChain();
     await probeNankanChain();
+    await probeDarkHorseChain();
   } finally {
     process.chdir(prevCwd);
   }

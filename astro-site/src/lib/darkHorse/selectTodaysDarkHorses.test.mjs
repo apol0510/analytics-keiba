@@ -12,7 +12,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { selectTodaysEntries, entryHasDarkHorses } from './selectTodaysDarkHorses.js';
+import { selectTodaysEntries, entryHasDarkHorses, jstDateString } from './selectTodaysDarkHorses.js';
 
 // darkHorses を n 頭持つレースを count 個並べた computer エントリを作る
 const mk = (date, venueCode, category, dhCounts) => ({
@@ -108,4 +108,39 @@ test('date 不正 / todayJst 不正 / entries 非配列 は空配列（安全）
   assert.deepEqual(selectTodaysEntries([mk('2026-07-08', 'KAW', 'nankan', [1])], null), []);
   assert.deepEqual(selectTodaysEntries(null, '2026-07-08'), []);
   assert.deepEqual(selectTodaysEntries(undefined, '2026-07-08'), []);
+});
+
+// ── jstDateString: 「当日」は JST で決まる（2026-08-30 不具合の再発防止）──────
+//
+// 旧実装はこの計算を **ビルド時**に 1 回だけ行っていた（prerender = true）。
+// ビルドは前日夕方の自動取込でしか走らないため todayJst が前日で固定され、
+// 当日は終日「前日の穴馬」が表示されていた。SSR 化後はリクエストごとに評価する。
+
+test('JST 0 時境界：8/29 23:59:59 JST → 2026-08-29 / 8/30 00:00:00 JST → 2026-08-30', () => {
+  assert.equal(jstDateString(new Date('2026-08-29T14:59:59.999Z')), '2026-08-29');
+  assert.equal(jstDateString(new Date('2026-08-29T15:00:00.000Z')), '2026-08-30');
+});
+
+test('UTC 日付ではなく JST 日付を返す（UTC 8/29 深夜は JST 8/30）', () => {
+  // UTC では 2026-08-29 のままだが JST では既に 8/30。UTC 基準で切ると 1 日ズレる。
+  const d = new Date('2026-08-29T18:00:00.000Z');
+  assert.equal(d.toISOString().slice(0, 10), '2026-08-29');
+  assert.equal(jstDateString(d), '2026-08-30');
+});
+
+test('当日の 12 時（JST）は当日を返す（お客様報告の時刻帯）', () => {
+  // 2026-08-30T03:00:00Z = JST 2026-08-30 12:00
+  assert.equal(jstDateString(new Date('2026-08-30T03:00:00.000Z')), '2026-08-30');
+});
+
+test('月跨ぎ・年跨ぎでも JST で切り替わる', () => {
+  assert.equal(jstDateString(new Date('2026-08-31T15:00:00.000Z')), '2026-09-01');
+  assert.equal(jstDateString(new Date('2026-12-31T15:00:00.000Z')), '2027-01-01');
+});
+
+test('不正な Date / 非 Date は空文字（呼び出し側で 0 件になる）', () => {
+  assert.equal(jstDateString(new Date('nope')), '');
+  assert.equal(jstDateString(null), '');
+  assert.equal(jstDateString('2026-08-30'), '');
+  assert.deepEqual(selectTodaysEntries([mk('2026-08-30', 'NII', 'jra', [1])], jstDateString(null)), []);
 });

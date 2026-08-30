@@ -74,6 +74,28 @@ Customers は 15,962 件。先頭 N 件だけ読んで黙って打ち切ると**
 
 検証: `npm run check:no-unbounded-scan`
 
+## ルール 6: 「当日」を表示するページはビルド時に日付を決めない
+
+**根拠（2026-08-30 のお客様報告）**: `/dark-horse-picks/`（穴馬抽出）は
+`prerender = true`（静的生成）のまま、当日 (`todayJst`) を**ビルド時刻**で決めていた。
+ビルドは前日夕方の自動取込でしか走らないため `todayJst` が前日で固定され、
+**当日は終日「前日のレース」しか表示されなかった**
+（本番 8/30 12 時の HTML が `2026-08-29` のデータ。当日 8/30 分はリポジトリに揃っていた）。
+
+- 当日判定を伴うページは **SSR (`prerender = false`)**。当日は
+  `jstDateString(new Date())`（`src/lib/darkHorse/selectTodaysDarkHorses.js`）で
+  **リクエストごと**に決める。ページ内で `9 * 60 * 60 * 1000` を再実装しない
+- データは **当日分だけ** `loadComputerEntriesForDate(todayJst)` で fs から読む。
+  `import.meta.glob(eager)` で全日付をバンドルへ焼き込まない
+- **前日 / 最新日への fallback を足さない**。当日 0 件は「まだ公開されていません」が正しい
+- CDN に寝かせない（`Cache-Control: public, max-age=0, must-revalidate`）
+- SSR 化したサブツリーは `src/lib/ssr/runtimeDataRetention.js` の
+  `RUNTIME_SUBTREES` へ入れる。**`BUILD_ONLY_SUBTREES` へ戻すと当日分が消える**
+  （`computer/{jra,nankan}` は 2026-08-30 に build-only から移動）
+
+検証: `npm run test:dark-horse`（SSR guard 込み）/ `npm run test:ssr-retention`
+/ `npm run check:ssr-runtime-data`（**ビルド成果物**に当日分が残っているかを実際の loader で確認）
+
 ## ローカル確認コマンド
 
 ```bash
@@ -103,6 +125,9 @@ node scripts/check-free-prediction-horse-sections.mjs 2026-05-19 ooi
 5. `npm run check:free-mask` — 無料版マスクの打ち消し CSS まで検査
 6. `npm run check:ki-relics:*` — 旧 KI 風ブロックの再混入検知（3 ページ分の個別 step）
 7. `npm run check:no-unbounded-scan` — Customers の無フィルタ全件走査＋黙って打ち切りの検知
+8. `npm run test:dark-horse` — 穴馬抽出の当日選定（SSR 維持 / 過去日 fallback なし / JST 境界）
+9. `npm run test:ssr-retention` — SSR 実行時データの保持ポリシー（computer を全削除へ戻さない）
+10. `npm run check:ssr-runtime-data` — prune 後の成果物に当日データが実在するかを loader で確認
 
 実行エントリの正本は `astro-site/package.json` の `check:safety` / `verify:safety`。
 **新しい guard を足すときは `check:safety` と `safety-check.yml` の `paths` と

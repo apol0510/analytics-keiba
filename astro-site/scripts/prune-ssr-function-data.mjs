@@ -15,6 +15,11 @@
  *   そのまま zip される（＝関数から確実に外れる）。ビルド時の prerender は
  *   リポジトリ実体（/opt/build/repo/astro-site/src/data）を読むため影響しない。
  *
+ * ⚠️ 2026-08-30 の追加:
+ *   `/dark-horse-picks/`（穴馬抽出）を SSR 化したため `src/data/computer` は
+ *   **build-only ではなくなった**。BUILD_ONLY_SUBTREES へ戻すと当日の穴馬が出なくなる。
+ *   computer は `maxAheadDays` 付きで間引く（先行投入された未来日で枠が埋まらないように）。
+ *
  * 維持（runtime SSR が参照するため削除しない）:
  *   - src/data/predictions/*.json（root=南関予想。prediction/[slug] が実行時に読む）
  *   - src/data/archiveResults*.json（results / results-showcase が実行時に読む）
@@ -41,9 +46,14 @@ import {
   RUNTIME_SUBTREES,
   BUILD_ONLY_SUBTREES,
   KEEP_DATES,
+  addDaysIso,
   pickKeepDates,
   shouldKeepFile,
 } from '../src/lib/ssr/runtimeDataRetention.js';
+import { jstDateString } from '../src/lib/darkHorse/selectTodaysDarkHorses.js';
+
+/** ビルド日（JST）。`maxAheadDays` を持つ spec の上限日を決めるのに使う。 */
+const buildDateJst = jstDateString(new Date());
 
 /** サブツリー配下の全ファイルを再帰列挙する（{ path, name }）。 */
 async function listFiles(dir) {
@@ -73,7 +83,10 @@ async function thinRuntimeSubtree(spec) {
   }
   const before = await dirSizeMB(target);
   const files = await listFiles(target);
-  const keep = pickKeepDates(files.map((f) => f.name), spec.datePattern, KEEP_DATES);
+  // `maxAheadDays` 付きの spec は「ビルド日 + n 日」までに絞ってから新しい順に残す。
+  // 先行投入された未来日だけで枠が埋まり、配信当日のファイルが消えるのを防ぐ（2026-08-30）。
+  const maxDate = spec.maxAheadDays != null ? addDaysIso(buildDateJst, spec.maxAheadDays) : null;
+  const keep = pickKeepDates(files.map((f) => f.name), spec.datePattern, KEEP_DATES, maxDate);
   const keepSet = new Set(keep);
 
   let removed = 0;
@@ -87,6 +100,7 @@ async function thinRuntimeSubtree(spec) {
   console.log(
     `[prune-ssr] 間引き: src/data/${spec.sub} ${before.toFixed(1)}→${after.toFixed(1)} MB`
     + ` / 保持 ${kept} ファイル（${keep.join(', ') || '対象日なし'}）/ 削除 ${removed}`
+    + (maxDate ? ` / 上限日 ${maxDate}（ビルド日 ${buildDateJst} +${spec.maxAheadDays}）` : '')
   );
   if (kept === 0) {
     console.error(`[prune-ssr] ⚠️ ${spec.sub} が 0 ファイルになった。runtime loader が読めなくなる。`);
