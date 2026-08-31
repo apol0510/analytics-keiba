@@ -35,54 +35,6 @@
     Cache-Control = "max-age=31536000, immutable"
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 【2026-08-31】SSR ページの CDN キャッシュ（Function 実行回数の削減）
-#
-# このサイトは `output: 'server'` なので、静的化されていないページは
-# **1 アクセス = 1 Function 実行**になる。実測ではどの SSR ページも
-# `cache-control: no-cache` / `age: 0` で、再訪もクローラも毎回関数を起動していた。
-#
-# ⚠️ **`Netlify-CDN-Cache-Control` だけを付ける。** これは Netlify の CDN にだけ効き、
-#    ブラウザ向けの `Cache-Control` は変えない。**利用者から見た鮮度は従来どおり**で、
-#    エッジで再利用される分だけ関数呼び出しが減る。
-# ⚠️ **`/*` には掛けない。** Cookie で内容が変わるページ（会員向け予想・auth・admin）を
-#    エッジに載せると**他人の内容を配信し得る**。下の対象は
-#    `Astro.cookies` / `gatePaidPage` / `verifyPlanAccess` / `SessionKeepAlive` を
-#    **どれも使っていない公開ページだけ**に限っており、
-#    `scripts/check-cdn-cache-safety.mjs` が CI でその条件を検査する。
-# ⚠️ `s-maxage=300`（5分）と短くしてある。データ更新は deploy を伴うので、
-#    deploy 時にエッジは自動で無効化される。`stale-while-revalidate` は
-#    「古いものを返しつつ裏で更新」であり、**最大 5 分より古い内容は出さない**。
-
-# 公開アーカイブ（月別・年別。過去データなので変化しない）
-[[headers]]
-  for = "/archive/*"
-  [headers.values]
-    Netlify-CDN-Cache-Control = "public, s-maxage=300, stale-while-revalidate=86400"
-
-# 無料公開ページ（会員判定を持たない）
-[[headers]]
-  for = "/free/*"
-  [headers.values]
-    Netlify-CDN-Cache-Control = "public, s-maxage=300, stale-while-revalidate=86400"
-
-[[headers]]
-  for = "/free-prediction/*"
-  [headers.values]
-    Netlify-CDN-Cache-Control = "public, s-maxage=300, stale-while-revalidate=86400"
-
-# 実績ショーケース（公開・個人化なし）
-[[headers]]
-  for = "/results-showcase/*"
-  [headers.values]
-    Netlify-CDN-Cache-Control = "public, s-maxage=300, stale-while-revalidate=86400"
-
-# 日別結果（公開・過去データ）
-[[headers]]
-  for = "/results/*"
-  [headers.values]
-    Netlify-CDN-Cache-Control = "public, s-maxage=300, stale-while-revalidate=86400"
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 予想ページ URL 再編（南関/中央を対称構造へ）
 # 旧URLは 301 で新URLへ恒久移動
 # 重要:

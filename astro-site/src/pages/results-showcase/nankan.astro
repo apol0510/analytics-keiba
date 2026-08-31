@@ -1,4 +1,5 @@
 ---
+import { setPublicCdnCache } from '../../lib/cdnCache.mjs';
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
@@ -34,6 +35,12 @@ const pageTitle = view
 const pageDescription = view
   ? `${dateLabel} ${view.venueLabel} 有料会員に配信したメインレースの買い目と結果。的中${view.hitRaces}/${view.totalRaces}・回収率${view.recoveryRate}%。毎日自動更新。`
   : `${CATEGORY_LABEL}の有料版で配信したメインレース買い目の結果を毎日公開。`;
+
+// 【2026-08-31】公開ページなのでエッジに 5 分だけ載せる（Function 実行回数の削減）。
+// ⚠️ ブラウザ向け Cache-Control は変えないので、利用者から見た鮮度は従来どおり。
+// ⚠️ このページは Cookie も会員判定も使っていないことが前提
+//    （check-cdn-cache-safety.mjs が CI で検査する）。
+setPublicCdnCache(Astro);
 ---
 
 <BaseLayout title={pageTitle} description={pageDescription}>

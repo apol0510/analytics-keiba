@@ -1,4 +1,5 @@
 ---
+import { setPublicCdnCache } from '../../../../lib/cdnCache.mjs';
 import BaseLayout from '../../../../layouts/BaseLayout.astro';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
@@ -43,6 +44,12 @@ if (foundType && redirectUrl) {
 
 // データなし: 404 相当の「該当データなし」ページを返す
 Astro.response.status = 404;
+
+// 【2026-08-31】公開ページなのでエッジに 5 分だけ載せる（Function 実行回数の削減）。
+// ⚠️ ブラウザ向け Cache-Control は変えないので、利用者から見た鮮度は従来どおり。
+// ⚠️ このページは Cookie も会員判定も使っていないことが前提
+//    （check-cdn-cache-safety.mjs が CI で検査する）。
+setPublicCdnCache(Astro);
 ---
 <BaseLayout title={`${date} の結果は見つかりません`} description="指定された日付の結果データは存在しません">
   <main style="max-width: 720px; margin: 4rem auto; padding: 0 1rem; text-align: center;">

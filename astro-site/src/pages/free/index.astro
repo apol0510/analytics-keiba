@@ -1,4 +1,5 @@
 ---
+import { setPublicCdnCache } from '../../lib/cdnCache.mjs';
 /**
  * /free/ — 無料予想の索引ページ（2026-08-21 追加）
  *
@@ -66,6 +67,12 @@ function jpDate(iso: string | undefined) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
   return m ? `${Number(m[2])}月${Number(m[3])}日` : iso;
 }
+
+// 【2026-08-31】公開ページなのでエッジに 5 分だけ載せる（Function 実行回数の削減）。
+// ⚠️ ブラウザ向け Cache-Control は変えないので、利用者から見た鮮度は従来どおり。
+// ⚠️ このページは Cookie も会員判定も使っていないことが前提
+//    （check-cdn-cache-safety.mjs が CI で検査する）。
+setPublicCdnCache(Astro);
 ---
 
 <BaseLayout
