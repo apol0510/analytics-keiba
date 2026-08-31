@@ -1,3 +1,84 @@
+# ✅ メールアドレス移行 — **完了・クローズ（2026-08-31）**
+
+旧サイト（南関中心）時代の `nankan.analytics@gmail.com` / `nankan-analytics@keiba.link` を廃し、
+**問い合わせ・返信先 = `support@keiba.link` / システム送信元 = `noreply@keiba.link`** に統一した。
+コード側（PR #488）と運用側（Gmail Send-as）の**両方**を完了し、E2E で実証済み。
+
+## 判定
+
+**クローズ可能。目的（Gmail から `support@keiba.link` 名義で返信できる）を実測で達成。**
+
+## コード側（PR #488 / squash merge `ce41f414`・本番 deploy ready）
+
+| 項目 | 内容 |
+|---|---|
+| 正本 | `astro-site/netlify/functions/config/email-config.js` の 1 ファイルのみ。未使用の `ALT_EMAIL`（旧アドレス）を削除 |
+| 定数参照へ移行した Function | `contact-form` / `process-withdrawal` / `premium-plus-contact` / `point-exchange` / `expiry-notification` / `expiry-warning-notification` |
+| 文言修正 | `premium-select.astro` / `premium-plus.astro` / `premium-plus-v2.astro` |
+| 現役経路ではないもの | `src/lib/resend-utils.js`（repo 内から import 0 件）も正本参照へ揃え、未使用である旨を明記 |
+| guard | `src/lib/email/emailIdentity.guard.test.mjs` + `npm run test:email-identity` を `check:safety` と `safety-check.yml` の**個別 step**に配線 |
+| 正本ドキュメント | `astro-site/docs/EMAIL_ADDRESSES.md`（新規）/ `SAFETY_CHECKS.md` ルール 7 / `CLAUDE.md` |
+
+**寄せ替えていない 2 経路（guard で固定）**: 決済メールは `senderIdentity.js`（正式送信元 support・noreply への
+fallback 禁止・fail closed）、メルマガは `brand-config.js`（From は `DeliveryKey` の構成要素＝変えると二重送信）。
+
+**対象外**: `nankan-stripe-integration/` は `netlify.toml` の `base = "astro-site"` の外＝本サイトの build 対象外（旧実装）。
+
+検証: `npm run verify:safety` **exit 0** / `test:email-identity` 6 件 pass /
+**guard の実効性を確認済み**（旧アドレスを一時的に戻すと FAIL、復元で pass）/ main CI success。
+
+## 運用側（Gmail Send-as / 2026-08-31）
+
+`keiba.link` の MX は **Cloudflare Email Routing**（Xserver ではない）。Email Routing は**受信専用で SMTP を持たない**ため、
+Gmail から support@ 名義で返信するには Send-as の SMTP 登録が必要だった。新規 Gmail の取得も MX 付け替えも**不要**と判断。
+
+| 項目 | 最終状態 |
+|---|---|
+| Send-as | `KEIBA Analytics サポート <support@keiba.link>` = **デフォルト** / `smtp.sendgrid.net` / TLS 587 / 確認済み |
+| 返信モード | **メールを受信したアドレスから返信する** |
+| 旧 `nankan-analytics@keiba.link` | **削除済み** |
+| 旧 `nankan.analytics@gmail.com` | **削除不可**（Gmail アカウント本体のアドレス。既定からは外した） |
+| API キー | `Gmail_SendAs_support_20260831` を新規作成（**Mail Send のみ**）。既存キーは値が再表示されない仕様のため流用不可 |
+
+**着手前の実測（想定と違った点）**: `support@keiba.link` の Send-as は既に存在したが、
+**未確認**かつ SMTP が `smtp-relay.brevo.com` だった。Brevo は SPF include も DKIM も keiba.link に無く、
+そのままでは認証が通らないため削除して SendGrid で再作成した。
+
+## E2E 実測（テスト送信 1 通・自分宛ループバック）
+
+| 検証 | 結果 |
+|---|---|
+| 送信経路 | `s.wrqvbvss.outbound-mail.sendgrid.net (149.72.184.102)` → `cloudflare-email.net` → Gmail |
+| From | `KEIBA Analytics サポート <support@keiba.link>` |
+| Reply-To | ヘッダなし（＝返信先は From） |
+| SPF | `pass`（SendGrid 区間 `…@em3933.keiba.link` / Cloudflare 区間 `cfbounces@keiba.link`）|
+| DKIM | `pass header.d=keiba.link header.s=s1`。**転送後も元署名が生存**（＋Cloudflare `cf2024-1` 再署名）|
+| DMARC | `pass header.from=keiba.link`（`p=none`）/ `arc=pass` |
+| 迷惑メール判定 | 受信トレイ着信 / `X-CF-SpamH-Score: 0` |
+| 返信時の差出人 | **`KEIBA Analytics サポート <support@keiba.link>`**（実受信メールで実測・下書きは破棄） |
+
+実送信は承認済みの **1 通のみ**。外部の第三者への送信 0 / 本番 env 変更 0 / API キー値の記録 0。
+
+## 運用上の注意（次に触る人向け）
+
+- Gmail の Send-as **追加ポップアップは別ウィンドウ**、**削除はネイティブ確認ダイアログ**で、
+  Claude in Chrome からは操作できない（拡張がフリーズする）。**MK の手動操作が必要**。
+- SendGrid の **open tracking がアカウント既定で ON**。Gmail SMTP リレー経由の個別返信には
+  1px 計測ピクセルが入る（Function 側は各送信で `tracking_settings` を明示 OFF にしている経路がある）。
+  **click tracking はマジックリンクを壊すので触らない。**
+
+## 本任務のブロッカーにしない別任務（MK 合意済み・2026-08-31）
+
+1. **外部プロバイダ到達性の検証**（Yahoo!/docomo 等。今回は自分宛ループバックのみ）
+2. **DMARC 強化**（現状 `p=none` のまま。変更していない）
+3. **SendGrid open tracking の影響調査**（AK の他メール・マーケ配信への影響を read-only で確認してから判断）
+4. **旧 `Gmail_SMTP_20250923` キーの扱い**（Custom Access で Mail Send 以外にも広い権限。旧 Send-as 削除で
+   Gmail からは未使用化したが、**他用途の有無は未確認**。削除・ローテーションは未実施）
+5. **Premium 系 3 ページの本番目視**（`premium-select` / `premium-plus` / `premium-plus-v2` は会員限定で
+   匿名では 302 / 404。MK のログイン済みセッションでのみ確認可能）
+
+---
+
 # ✅ 穴馬抽出「前日のレースしか出ない」— **恒久修正（2026-08-30）/ 本番 deploy 前**
 
 **お客様報告（2026-08-30 03:12）**: 「穴馬ですが、当日の12時になっても前日のレースしか表示されません。」
