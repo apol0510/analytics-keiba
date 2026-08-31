@@ -326,7 +326,7 @@ export const CAMPAIGNS = Object.freeze([
     //   - `/pricing/` の顧客可視領域に「三連複」の記載は 0 件（本番 HTML 実測）
     //   - 実際の購入導線は `dashboard.astro` の「三連複を追加」ボタン → モーダル
     //     （`showPurchaseCta = canPurchaseSanrenpuku` でゲート／ログイン必須）
-    //   - `/plan-upgrade-guide/` は旧プラン体系（三連複を会員ランクとして説明）で現行仕様と不一致
+    //   - `/plan-upgrade-guide/` は旧プラン体系（三連複を会員ランクとして説明）で現行仕様と不一致だったため 2026-08-31 に削除
     //   案内先が確定するまで有効化しない。**推測で URL を作らない。**
     enabled: false,
     disabledReason: CAMPAIGN_DISABLED_REASON.NO_CTA,

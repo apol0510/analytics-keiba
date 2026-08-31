@@ -96,6 +96,20 @@
   to = "/legal/"
   status = 301
 
+# 旧プランアップグレードガイドの取り下げ（2026-08-31）。
+# 「Premium Sanrenpuku ¥19,820/月」という**現在売っていない旧価格**を掲載し続けており、
+# これを見た顧客が ¥19,820 を振り込む事故が実際に発生したため公開を停止した。
+# 現行の三連複は買い切り ¥78,000（/sanrenpuku-demo/ の購入モーダルが正本）。
+[[redirects]]
+  from = "/plan-upgrade-guide"
+  to = "/sanrenpuku-demo/"
+  status = 301
+
+[[redirects]]
+  from = "/plan-upgrade-guide/"
+  to = "/sanrenpuku-demo/"
+  status = 301
+
 [[redirects]]
   from = "/old-premium"
   to = "/premium-predictions"

@@ -107,8 +107,9 @@ export const REGULAR_PRICE = Object.freeze({
    * ⚠️ 実売の正本は**マイページの購入モーダル**
    *    `openBankModal('Premium Sanrenpuku Lifetime', 78000, 'lifetime')`。
    *    画面には「¥108,000 → ¥78,000」と出るが、**請求されるのは ¥78,000**。
-   * ⚠️ `/premium-sanrenpuku/` や `/plan-upgrade-guide/` の「¥19,820/月」は
-   *    旧体系の表示で、**現在その商品は売っていない**（2026-08-24 の点検で確認）。
+   * ⚠️ `/premium-sanrenpuku/` の「¥19,820/月」は旧体系の表示で、**現在その商品は
+   *    売っていない**（2026-08-24 の点検で確認）。同じ旧価格を載せていた
+   *    `/plan-upgrade-guide/` は 2026-08-31 に削除（/sanrenpuku-demo/ へ 301）。
    *    ここに月額を書き戻さないこと。
    */
   sanrenpuku_lifetime: 78000,
