@@ -1,6 +1,9 @@
 // 退会申請処理 - Airtable連携 + SendGrid通知
 // 2025-10-10新規実装
 // 2025-10-10 v1.3: メール文言最終版（銀行振込記述削除）
+// 2026-08-31: 管理者宛先・返信先・送信元を単一源 config/email-config.js へ統一
+
+import { SUPPORT_EMAIL, ADMIN_EMAIL } from './config/email-config.js';
 
 export const handler = async (event, context) => {
     const headers = {
@@ -127,7 +130,7 @@ export const handler = async (event, context) => {
         `;
 
         await sendEmailViaSendGrid({
-            to: 'nankan.analytics@gmail.com',
+            to: ADMIN_EMAIL,
             subject: `【退会申請】${email} - ${customerRecord.fields['プラン'] || customerRecord.fields.Plan || '会員'}`,
             html: adminEmailHtml,
             replyTo: email,  // 🔧 既に設定済み（管理者向けメール）
@@ -196,7 +199,7 @@ export const handler = async (event, context) => {
             to: email,
             subject: '【退会申請受付】KEIBA Analytics',
             html: userEmailHtml,
-            replyTo: 'nankan.analytics@gmail.com',  // 🔧 2025-11-26追加: サポート窓口への返信設定
+            replyTo: SUPPORT_EMAIL,  // サポート窓口への返信設定（単一源）
             fromName: 'KEIBA Analytics サポート'
         });
 
@@ -307,7 +310,7 @@ async function sendEmailViaSendGrid({ to, subject, html, replyTo, fromName }) {
         ],
         from: {
             name: fromName || "KEIBA Analytics サポート",
-            email: "support@keiba.link"  // 🔧 2025-11-26変更: 迷惑メール対策でsupportに変更
+            email: SUPPORT_EMAIL  // 迷惑メール対策で 2025-11-26 に support へ変更（noreply へ戻さない）
         },
         content: [
             {

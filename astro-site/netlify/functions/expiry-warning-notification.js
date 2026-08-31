@@ -91,9 +91,9 @@ exports.handler = async (event, context) => {
         }
       };
 
-      // 管理者向け通知メール（to は既存運用継続、from/reply_to のみ統一）
+      // 管理者向け通知メール（宛先・from/reply_to すべて単一源 email-config.js）
       const adminEmail = {
-        to: 'nankan-analytics@keiba.link',
+        to: ADMIN_EMAIL,
         from: { email: FROM_EMAIL, name: 'KEIBA Analytics' },
         replyTo: { email: FROM_EMAIL, name: 'KEIBA Analytics' },
         subject: `[管理者通知] ${email} 様に1週間前通知を送信しました`,

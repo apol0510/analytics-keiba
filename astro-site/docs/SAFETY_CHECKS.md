@@ -96,6 +96,23 @@ Customers は 15,962 件。先頭 N 件だけ読んで黙って打ち切ると**
 検証: `npm run test:dark-horse`（SSR guard 込み）/ `npm run test:ssr-retention`
 / `npm run check:ssr-runtime-data`（**ビルド成果物**に当日分が残っているかを実際の loader で確認）
 
+## ルール 7: メールアドレスを直書きしない（単一源 `email-config.js`）
+
+**根拠**: 旧サイト（南関中心）時代のアドレスが 6 本の Function とページに直書きで散在し、
+「問い合わせの返信が旧 Gmail に飛ぶ」「SendGrid で verify されていない旧ドメイン別名を
+`from` に使い、送信が無音で失敗しうる」状態だった（2026-08-31 に全廃）。
+
+- 問い合わせ・返信先 = `support@keiba.link`（`SUPPORT_EMAIL` / `ADMIN_EMAIL`）
+- システム送信元 = `noreply@keiba.link`（`FROM_EMAIL`）
+- 正本は `netlify/functions/config/email-config.js` **1 ファイルだけ**。
+  Function / ページ / コンポーネントにアドレスを直書きしない
+- **例外 2 経路を `FROM_EMAIL` へ寄せ替えない**:
+  決済メールは `src/lib/payments/senderIdentity.js`（noreply への fallback 禁止・fail closed）、
+  メルマガは `src/lib/newsletter/brand-config.js`（From は DeliveryKey の構成要素＝
+  変えると既送分と鍵が変わり**二重送信**）
+
+検証: `npm run test:email-identity`（正本: [`EMAIL_ADDRESSES.md`](./EMAIL_ADDRESSES.md)）
+
 ## ローカル確認コマンド
 
 ```bash
@@ -128,6 +145,7 @@ node scripts/check-free-prediction-horse-sections.mjs 2026-05-19 ooi
 8. `npm run test:dark-horse` — 穴馬抽出の当日選定（SSR 維持 / 過去日 fallback なし / JST 境界）
 9. `npm run test:ssr-retention` — SSR 実行時データの保持ポリシー（computer を全削除へ戻さない）
 10. `npm run check:ssr-runtime-data` — prune 後の成果物に当日データが実在するかを loader で確認
+11. `npm run test:email-identity` — 旧メールアドレスの再混入検知＋ support / noreply の役割固定
 
 実行エントリの正本は `astro-site/package.json` の `check:safety` / `verify:safety`。
 **新しい guard を足すときは `check:safety` と `safety-check.yml` の `paths` と

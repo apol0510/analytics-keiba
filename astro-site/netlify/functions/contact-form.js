@@ -1,4 +1,8 @@
 // お問い合わせフォーム処理 - SendGrid統合版
+// 2026-08-31: 管理者宛先・返信先・送信元を単一源 config/email-config.js へ統一
+//   （旧サイト名残の Gmail アドレスのハードコードを撤去）
+
+import { SUPPORT_EMAIL, ADMIN_EMAIL } from './config/email-config.js';
 
 export const handler = async (event, context) => {
     const headers = {
@@ -73,7 +77,7 @@ export const handler = async (event, context) => {
         `;
 
         await sendEmailViaSendGrid({
-            to: 'nankan.analytics@gmail.com',
+            to: ADMIN_EMAIL,
             subject: `【お問い合わせ】${subject}`,
             html: adminEmailHtml,
             replyTo: email,
@@ -121,7 +125,7 @@ export const handler = async (event, context) => {
             to: email,
             subject: '【自動返信】お問い合わせを受け付けました - KEIBA Analytics',
             html: autoReplyHtml,
-            replyTo: 'nankan.analytics@gmail.com',  // 🔧 2025-11-26追加: サポート窓口への返信設定
+            replyTo: SUPPORT_EMAIL,  // サポート窓口への返信設定（単一源）
             fromName: 'KEIBA Analytics サポート'
         });
 
@@ -165,7 +169,7 @@ async function sendEmailViaSendGrid({ to, subject, html, replyTo, fromName }) {
         ],
         from: {
             name: fromName || "KEIBA Analytics サポート",
-            email: "support@keiba.link"  // 🔧 2025-11-26変更: 迷惑メール対策でsupportに変更
+            email: SUPPORT_EMAIL  // 迷惑メール対策で 2025-11-26 に support へ変更（noreply へ戻さない）
         },
         content: [
             {

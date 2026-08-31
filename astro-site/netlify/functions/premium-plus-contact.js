@@ -179,7 +179,7 @@ exports.handler = async (event, context) => {
         subject: '【お問い合わせ受付】KEIBA Analytics'
       }],
       from: { email: FROM_EMAIL, name: 'KEIBA Analytics サポート' },
-      reply_to: { email: 'nankan.analytics@gmail.com', name: 'KEIBA Analytics サポート' },  // 🔧 2025-11-26追加: ユーザー宛メールにも返信先設定
+      reply_to: { email: SUPPORT_EMAIL, name: 'KEIBA Analytics サポート' },  // ユーザー宛メールにも返信先設定（単一源）
       content: [{
         type: 'text/html',
         value: `

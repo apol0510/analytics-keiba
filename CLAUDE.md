@@ -191,6 +191,7 @@ PR の merge / production deploy / 本番データ書込み / env の変更 / qu
 
 | 領域 | 正本 |
 |---|---|
+| **メールアドレスの正本（support / noreply の役割）** | [`EMAIL_ADDRESSES.md`](./astro-site/docs/EMAIL_ADDRESSES.md) |
 | ログイン（マジックリンク） | [`AUTH_LOGIN.md`](./astro-site/docs/AUTH_LOGIN.md) / [`AUTH_SESSION_DESIGN.md`](./astro-site/docs/AUTH_SESSION_DESIGN.md) |
 | 管理画面の Basic 認証（`/admin/*`） | [`ADMIN_BASIC_AUTH.md`](./astro-site/docs/ADMIN_BASIC_AUTH.md) |
 | 銀行振込 入金確認フロー | [`BANK_TRANSFER_FLOW.md`](./astro-site/docs/BANK_TRANSFER_FLOW.md) |
@@ -241,6 +242,7 @@ CLAUDE.md 再編（2026-08-13）で旧セクションがどこへ行ったかの
 | 販売導線の選択 | `src/lib/upsell/upsellTarget.js` |
 | マーケ対象判定 | `src/lib/marketing/customerMarketingAudience.js` |
 | 銀行振込の書込みフィールド | `src/lib/payments/bankPaymentFlow.js` |
+| メールアドレス（問い合わせ先 / 送信元） | `netlify/functions/config/email-config.js` |
 | 権限（entitlement） | `src/lib/entitlements/resolveEntitlements.js` |
 
 ページ側・Function 側にローカル判定を再実装しない。
@@ -295,6 +297,16 @@ CLAUDE.md 再編（2026-08-13）で旧セクションがどこへ行ったかの
   （AK の全メール自動化のマスタースイッチ。専用ゲートだけで解禁する）
 - SendGrid suppression は毎回照合し、**取得に失敗したら送信計画を作らない**（fail closed）
 - secret の値そのものを CLAUDE.md / ログ / commit に**絶対に記載しない**
+- **メールアドレスを Function / ページへ直書きしない。**
+  問い合わせ・返信先 = `support@keiba.link`（`SUPPORT_EMAIL` / `ADMIN_EMAIL`）、
+  システム送信元 = `noreply@keiba.link`（`FROM_EMAIL`）。正本は
+  `netlify/functions/config/email-config.js` **1 ファイルだけ**。
+  旧サイト名残の `nankan.analytics@gmail.com` / `nankan-analytics@keiba.link` は
+  2026-08-31 に現役経路から全廃済み（**復活させない**）。検証: `npm run test:email-identity`
+- ただし**決済メールは `senderIdentity.js`**（正式送信元 support / noreply への fallback 禁止）、
+  **メルマガは `brand-config.js`**（From は DeliveryKey の構成要素＝変えると二重送信）。
+  「統一」を理由にこの 2 経路を `FROM_EMAIL` へ寄せ替えない。正本:
+  [`EMAIL_ADDRESSES.md`](./astro-site/docs/EMAIL_ADDRESSES.md)
 - **認証情報をソースへ書かない**（env にだけ置く）。env 未設定は「認証不要」ではなく
   **誰も通さない**（fail closed）。正本: [`ADMIN_BASIC_AUTH.md`](./astro-site/docs/ADMIN_BASIC_AUTH.md)
 

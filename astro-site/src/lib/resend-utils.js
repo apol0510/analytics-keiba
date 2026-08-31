@@ -1,5 +1,12 @@
 // SendGrid統一メール送信システム
 // マジックリンク認証とお問い合わせフォーム用
+//
+// ⚠️ 2026-08-31 時点で **repo 内から import しているコードは無い**（現役経路ではない）。
+//   復活させる場合は netlify/functions/config/email-config.js の
+//   SUPPORT_EMAIL（問い合わせ・返信先）/ FROM_EMAIL（システム送信元）を参照すること。
+//   旧サイト名残のアドレスは 2026-08-31 に全廃済み（再混入は test:email-identity が検知）。
+
+import { SUPPORT_EMAIL, FROM_EMAIL } from '../../netlify/functions/config/email-config.js';
 
 // メールアドレスバリデーション
 function validateEmail(email) {
@@ -10,7 +17,7 @@ function validateEmail(email) {
 // 統一メール送信関数（SendGrid API）
 export async function sendEmail({ to, subject, html, replyTo, fromName = "KEIBA Analytics" }) {
     const apiKey = process.env.SENDGRID_API_KEY;
-    const fromEmail = process.env.FROM_EMAIL || 'nankan-analytics@keiba.link';
+    const fromEmail = process.env.FROM_EMAIL || FROM_EMAIL;
 
     if (!apiKey) {
         console.error('SENDGRID_API_KEY環境変数が設定されていません');
@@ -40,7 +47,7 @@ export async function sendEmail({ to, subject, html, replyTo, fromName = "KEIBA 
         // Reply-Toが指定されている場合は設定
         if (replyTo) {
             emailData.reply_to = {
-                email: replyTo || 'nankan.analytics@gmail.com'
+                email: replyTo || SUPPORT_EMAIL
             };
         }
 
@@ -109,7 +116,7 @@ export async function sendContactEmail({ name, email, subject, message }) {
     try {
         // 管理者向けメール
         const adminResult = await sendEmail({
-            to: 'nankan.analytics@gmail.com',
+            to: SUPPORT_EMAIL,
             subject: `【お問い合わせ】${subject}`,
             replyTo: email,
             fromName: 'KEIBA Analytics システム',
@@ -154,7 +161,7 @@ export async function sendContactEmail({ name, email, subject, message }) {
         const userResult = await sendEmail({
             to: email,
             subject: '【KEIBA Analytics】お問い合わせを受け付けました',
-            replyTo: 'nankan.analytics@gmail.com',
+            replyTo: SUPPORT_EMAIL,
             fromName: 'KEIBA Analytics',
             html: `
                 <!DOCTYPE html>
@@ -229,7 +236,7 @@ export async function sendWelcomeEmail(userEmail) {
     return await sendEmail({
         to: userEmail,
         subject: '🤖 KEIBA Analyticsへようこそ！',
-        replyTo: 'nankan.analytics@gmail.com',
+        replyTo: SUPPORT_EMAIL,
         html: `
             <!DOCTYPE html>
             <html>
