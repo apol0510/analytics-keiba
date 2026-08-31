@@ -196,7 +196,15 @@ Netlify 自動ビルド → https://analytics.keiba.link/
 
 ### GitHub Actions（`.github/workflows/`）
 
-`import-on-dispatch.yml` / `import-results-on-dispatch.yml` / `import-computer-on-dispatch.yml` / `import-entries-nankan-on-dispatch.yml` / `import-feature-scores-on-dispatch.yml` / `import-horse-histories-on-dispatch.yml` / `import-horse-stats-nankan-on-dispatch.yml` / `import-recent-horse-histories-nankan-on-dispatch.yml` / `import-prediction-daily.yml` / `import-results-jra{,-daily}.yml` / `import-results-nankan-daily.yml` / `archive-sync.yml` / `auto-sync-check.yml` / `verify-archive-sync.yml` / `check-publish-drift.yml` / `safety-check.yml`（`disabled/` 配下に無効化済みのものあり）
+`import-on-dispatch.yml` / `import-results-on-dispatch.yml` / `import-computer-on-dispatch.yml` / `import-entries-nankan-on-dispatch.yml` / `import-feature-scores-on-dispatch.yml` / `import-horse-histories-on-dispatch.yml` / `import-horse-stats-nankan-on-dispatch.yml` / `import-recent-horse-histories-nankan-on-dispatch.yml` / `import-prediction-daily.yml` / `import-results-jra{,-daily}.yml` / `import-results-nankan-daily.yml` / `archive-sync.yml` / `auto-sync-check.yml` / `check-publish-drift.yml` / `safety-check.yml`（`disabled/` 配下に無効化済みのものあり）
+
+> **`verify-archive-sync.yml` は 2026-08-31 に `disabled/` へ退避した。** この監視の正本は
+> keiba-intelligence 側で、本リポジトリのものは初期化コミット `6a7906ce`（2026-04-12）で入った
+> コピー。送信スクリプトも SendGrid secret も本リポジトリに無く、アラートを一度も送れていなかった
+> （96 success / 4 failure、failure 4 件はすべてアラート条件が立った回）。
+> shared の結果欠落は KI 側が検出・通知し、本リポジトリ自身の archive 未反映は
+> `archive-sync.yml`（Self-healing）と `auto-sync-check.yml`（Fallback）が自己修復する。
+> `astro-site/scripts/checkArchiveCoverage.mjs` とそのテストは残置。
 
 Concurrency Group: 南関 `archive-nankan-update` / JRA `archive-jra-update`。
 

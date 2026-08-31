@@ -1,3 +1,42 @@
+# ⛔ 2026-08-31 廃止（`disabled/` へ退避。GitHub はこのディレクトリを workflow として認識しない）
+#
+# ## なぜ止めたか
+#
+# **この監視の正本は keiba-intelligence 側**であり、本ファイルは analytics-keiba の
+# プロジェクト初期化コミット `6a7906ce`（2026-04-12）で入った**丸ごとコピー**だった。
+#
+# - KI 側が原本（2026-02-23 以降、アラート周りの修正履歴は KI にだけ蓄積している。
+#   例: `6dafc331 fix: resolve archive sync alert email script paths`）
+# - コピーの痕跡: 下の checkout step 名が「Checkout keiba-intelligence」のままだが
+#   `repository:` 指定が無いので実際は analytics-keiba 自身を取得している。
+#   アラート本文にも `/Users/apolon/Projects/keiba-intelligence` という KI 前提のパスが残る
+# - **本ファイルはアラートを一度も送れたことがない。** 呼び先の
+#   `.github/scripts/send-alert-email.js` は analytics-keiba に存在せず（git 履歴にも無い）、
+#   SendGrid 系 secret（SENDGRID_API_KEY / SENDGRID_FROM_EMAIL / ALERT_EMAIL）も
+#   このリポジトリには設定されていない。実測は 96 success / 4 failure で、
+#   **failure 4 件はすべて「アラート条件が立った回」**（#104 / #117 / #120 / #142）＝
+#   検出はできるが送信で必ず落ちる状態だった
+#
+# ## 監視が消えるわけではない
+#
+# - shared に結果が無い（NO_RESULTS）: **KI 側の同名 workflow が正常に検出・送信している**。
+#   2026-08-30 分も KI の run が success で、アラートメールは実際に届いている
+# - analytics-keiba 自身の archive 未反映（ARCHIVE_MISSING）:
+#   `archive-sync.yml`（Archive Sync / Self-healing）が直近14日を1日3回走査して自動 import し、
+#   `auto-sync-check.yml`（Fallback）が後追いする。**検知して人を呼ぶより先に自己修復する**経路が既にある
+#
+# ## 残したもの
+#
+# `astro-site/scripts/checkArchiveCoverage.mjs` と `checkArchiveCoverage.test.mjs` は残置する
+# （`npm run test:archive-coverage` で検証され続ける）。本ファイル以外から呼ばれていないが、
+# 監視を作り直す場合の資産になるため削除しない。
+#
+# ## 復活させる場合
+#
+# 本ファイルを `.github/workflows/` へ戻すだけでは**また同じ失敗をする**。
+# `.github/scripts/send-alert-email.js` の追加と SendGrid 系 secret の設定（高リスク操作）が
+# 前提であり、その前に「KI と重複させる意味があるか」を先に決めること。
+#
 name: Verify Archive Sync (Daily)
 
 on:
