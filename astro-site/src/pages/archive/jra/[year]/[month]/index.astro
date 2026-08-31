@@ -1,4 +1,5 @@
 ---
+import { setPublicCdnCache } from '../../../../../lib/cdnCache.mjs';
 import BaseLayout from '../../../../../layouts/BaseLayout.astro';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
@@ -54,6 +55,12 @@ const pageTitle = monthData.length > 0
 const pageDescription = monthData.length > 0
   ? `${year}年${parseInt(month)}月の中央競馬的中実績。開催日数${monthStats.totalDays}日、月間的中率${monthStats.hitRate}%、月間回収率${monthStats.returnRate}%、月間合計配当¥${monthStats.totalPayout.toLocaleString()}`
   : '中央競馬（JRA）の的中実績アーカイブ';
+
+// 【2026-08-31】公開ページなのでエッジに 5 分だけ載せる（Function 実行回数の削減）。
+// ⚠️ ブラウザ向け Cache-Control は変えないので、利用者から見た鮮度は従来どおり。
+// ⚠️ このページは Cookie も会員判定も使っていないことが前提
+//    （check-cdn-cache-safety.mjs が CI で検査する）。
+setPublicCdnCache(Astro);
 ---
 
 <BaseLayout title={pageTitle} description={pageDescription}>

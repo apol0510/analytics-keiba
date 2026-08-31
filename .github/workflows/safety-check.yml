@@ -21,6 +21,9 @@ on:
       # Functions の未定義識別子（本番 500 になる import 漏れ）を静的に検出する
       - 'astro-site/scripts/check-functions-no-undef.mjs'
       - 'astro-site/scripts/check-no-unbounded-customer-scan.mjs'
+      # CDN キャッシュを個人化ページへ掛けていないか（他人の HTML をエッジ配信しない）
+      - 'astro-site/scripts/check-cdn-cache-safety.mjs'
+      - 'netlify.toml'
       # SSR 関数へ残す実行時データの間引き。ここが壊れると認可後・当日表示が静かに空になる
       # （2026-08-30: /dark-horse-picks/ の SSR 化で src/data/computer も実行時データになった）
       - 'astro-site/scripts/prune-ssr-function-data.mjs'
@@ -58,6 +61,9 @@ on:
       # Functions の未定義識別子（本番 500 になる import 漏れ）を静的に検出する
       - 'astro-site/scripts/check-functions-no-undef.mjs'
       - 'astro-site/scripts/check-no-unbounded-customer-scan.mjs'
+      # CDN キャッシュを個人化ページへ掛けていないか（他人の HTML をエッジ配信しない）
+      - 'astro-site/scripts/check-cdn-cache-safety.mjs'
+      - 'netlify.toml'
       # SSR 関数へ残す実行時データの間引き。ここが壊れると認可後・当日表示が静かに空になる
       # （2026-08-30: /dark-horse-picks/ の SSR 化で src/data/computer も実行時データになった）
       - 'astro-site/scripts/prune-ssr-function-data.mjs'
@@ -246,6 +252,14 @@ jobs:
       - name: Verify 重複削除スクリプトの安全条件（既定 dry-run / 権利・参照があれば消さない / 値固定の個別許可）
         working-directory: astro-site
         run: npm run test:dedupe
+
+      - name: Verify CDN キャッシュを個人化ページへ掛けていない（他人の HTML をエッジ配信しない）
+        working-directory: astro-site
+        run: npm run check:cdn-cache
+
+      - name: Verify /results の飛び先が実在する（404 リダイレクトの回帰検知）
+        working-directory: astro-site
+        run: npm run test:archive-redirect
 
       - name: Verify Netlify deploy trigger（一過性 timeout は retry / 4xx は即 FAIL / 重複 build なし）
         run: bash .github/actions/netlify-deploy/tests/run-tests.sh

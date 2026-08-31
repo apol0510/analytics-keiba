@@ -1,4 +1,5 @@
 ---
+import { setPublicCdnCache } from '../../lib/cdnCache.mjs';
 /**
  * /free/nankan/ — 無料コンテンツ第 2 層（**仮 URL / 仮名称**）
  *
@@ -21,6 +22,12 @@ try {
 } catch (error) {
   console.error('[free/nankan] build error:', error);
 }
+
+// 【2026-08-31】公開ページなのでエッジに 5 分だけ載せる（Function 実行回数の削減）。
+// ⚠️ ブラウザ向け Cache-Control は変えないので、利用者から見た鮮度は従来どおり。
+// ⚠️ このページは Cookie も会員判定も使っていないことが前提
+//    （check-cdn-cache-safety.mjs が CI で検査する）。
+setPublicCdnCache(Astro);
 ---
 
 <BaseLayout

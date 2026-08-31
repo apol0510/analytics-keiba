@@ -1,26 +1,22 @@
 ---
+/**
+ * `/results-jra` — JRA の月別アーカイブ最新月へ送る。
+ *
+ * ⚠️ 飛び先の決定は `src/lib/archiveRedirect.mjs` に集約している（`/results` と同じ実装）。
+ *    以前は `archive[0]` を最新と決め打ちし、確定できないときは「今月」を組み立てていた。
+ *    並び順は保証されておらず、その月にデータが無ければ 404 になるため両方やめた。
+ */
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
+import { resolveArchiveRedirect } from '../lib/archiveRedirect.mjs';
 
-let redirectUrl = '/archive/jra/';
-
+let archive = null;
 try {
   const archivePath = join(process.cwd(), 'src', 'data', 'archiveResultsJra.json');
-  if (existsSync(archivePath)) {
-    const archive = JSON.parse(readFileSync(archivePath, 'utf-8'));
-    if (Array.isArray(archive) && archive.length > 0) {
-      const [y, m] = archive[0].date.split('-');
-      redirectUrl = `/archive/jra/${y}/${m}/`;
-    }
-  }
-} catch (error) {
-  // fallback は今月
+  if (existsSync(archivePath)) archive = JSON.parse(readFileSync(archivePath, 'utf-8'));
+} catch {
+  archive = null;
 }
 
-if (redirectUrl === '/archive/jra/') {
-  const now = new Date();
-  redirectUrl = `/archive/jra/${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, '0')}/`;
-}
-
-return Astro.redirect(redirectUrl);
+return Astro.redirect(resolveArchiveRedirect(archive, 'jra'));
 ---

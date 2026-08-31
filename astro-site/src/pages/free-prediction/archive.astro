@@ -1,4 +1,9 @@
 ---
+// 【2026-08-31】静的化。表示データは `import.meta.glob` で読む
+// `src/data/free-predictions/*.json` だけで、**ビルド時に確定する**
+// （JSON が増えるのは deploy 時なので SSR である必要がない）。
+// 認可も Astro.request も使っていない。**出力される HTML は同一。**
+export const prerender = true;
 import BaseLayout from '../../layouts/BaseLayout.astro';
 
 // src/data/free-predictions/ 内の全JSONファイルを取得

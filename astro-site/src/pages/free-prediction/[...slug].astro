@@ -1,4 +1,5 @@
 ---
+import { setPublicCdnCache } from '../../lib/cdnCache.mjs';
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import ProgressBarConfidence from '../../components/ProgressBarConfidence.astro';
 import { processRaceData, processUnifiedRaceData, normalizeHorseData, getRoleDisplayConfig, validateDataIntegrity, getHorseConfidenceFromMark, calculateMarkBasedConfidence, convertToStarRating, getRecommendationStars, generateStandardizedBets, calculateScoreBasedStats, getPredictionDataWithStrategies } from '../../lib/shared-prediction-logic.js';
@@ -79,6 +80,12 @@ const subHorseScore = getHorseConfidenceFromMark(mainRace.horses.sub);
 // アーカイブページ用のヘッダー情報
 const isArchive = true;
 const archiveDate = formattedDate;
+
+// 【2026-08-31】公開ページなのでエッジに 5 分だけ載せる（Function 実行回数の削減）。
+// ⚠️ ブラウザ向け Cache-Control は変えないので、利用者から見た鮮度は従来どおり。
+// ⚠️ このページは Cookie も会員判定も使っていないことが前提
+//    （check-cdn-cache-safety.mjs が CI で検査する）。
+setPublicCdnCache(Astro);
 ---
 
 <BaseLayout title={`【${formattedDate}】無料予想アーカイブ | ${raceInfo.title}`} description={`${formattedDate} ${track}競馬${raceInfo.raceName}のAI予想アーカイブ。機械学習モデルによる高精度予想の過去データ。`}>
