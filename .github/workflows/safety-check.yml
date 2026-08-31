@@ -221,6 +221,12 @@ jobs:
         working-directory: astro-site
         run: npm run test:bank-payment
 
+      # 旧サイト名残のアドレス（旧 Gmail / 旧ドメイン別名）が revert・コピペで復活すると
+      # 「返信が旧 Gmail へ飛ぶ」「未 verify の from で SendGrid が無音失敗する」事故に戻る。
+      - name: Verify メールアドレスの単一源（旧アドレス再混入なし / support・noreply の役割固定）
+        working-directory: astro-site
+        run: npm run test:email-identity
+
       - name: Verify Premium Plus 管理画面の表示条件（公開条件と分離 / 表示が販売資格を与えない）
         working-directory: astro-site
         run: npm run test:premium-plus-media

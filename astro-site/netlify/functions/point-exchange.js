@@ -1,6 +1,9 @@
 // ポイント交換申請処理
 // Airtableに申請データ保存 + SendGridメール通知
-// 最終更新: 2025-10-23 1:00 SendGridメール通知実装（管理者＋申請者）
+// 最終更新: 2026-08-31 管理者宛先・送信元を単一源 config/email-config.js へ統一
+//   （旧: to=旧Gmail / from=旧ドメイン別名。from は SendGrid 未 verify で無音失敗の恐れがあった）
+
+import { ADMIN_EMAIL, FROM_EMAIL } from './config/email-config.js';
 
 const Airtable = require('airtable');
 const sgMail = require('@sendgrid/mail');
@@ -104,8 +107,8 @@ exports.handler = async (event, context) => {
 
         // 1. 管理者向けメール
         const adminEmail = {
-          to: 'nankan.analytics@gmail.com',
-          from: 'nankan-analytics@keiba.link',
+          to: ADMIN_EMAIL,
+          from: FROM_EMAIL,
           subject: `【ポイント交換申請】${userEmail} - ${rewardName}`,
           html: `
             <h2>ポイント交換申請を受け付けました</h2>
@@ -145,7 +148,7 @@ exports.handler = async (event, context) => {
         // 2. 申請者向け確認メール
         const userEmail_data = {
           to: userEmail,
-          from: 'nankan-analytics@keiba.link',
+          from: FROM_EMAIL,
           subject: '【ポイント交換申請受付】KEIBA Analytics',
           html: `
             <h2>ポイント交換申請を受け付けました</h2>
