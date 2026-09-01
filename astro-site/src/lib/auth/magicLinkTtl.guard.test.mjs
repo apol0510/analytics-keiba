@@ -22,6 +22,7 @@ const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)),
 const sender = read('../../../netlify/functions/send-magic-link.js');
 const verifyPage = read('../../pages/auth/verify.astro');
 const loginPage = read('../../pages/login.astro');
+const paymentEmail = read('../payments/paymentConfirmationEmail.js');
 
 test('ESM 定数の分とミリ秒が整合する', () => {
   assert.equal(MAGIC_LINK_TTL_MS, MAGIC_LINK_TTL_MINUTES * 60 * 1000);
@@ -74,6 +75,26 @@ test('login.astro のスクリプトは define:vars にしない（TS を含む�
   // フォームが 1 行も動かなくなる（2026-08-09 verify.astro 障害と同型）。
   assert.doesNotMatch(loginPage, /<script[^>]*define:vars/,
     'login.astro の <script> に define:vars が付いている');
+});
+
+test('入金確認メールの分数も定数から出す（直書きしない）', async () => {
+  // 2026-09-01 の問い合わせ: 2026-08-09 に TTL を 15→60 分へ延ばした際、
+  // 入金確認メール（v2）だけ 15 のまま取り残され、実際より短い時間を案内していた。
+  // 有料化した直後の会員が最初に読むメールなので、ここがズレると
+  // 「もう期限切れだ」と誤認してログインを諦める。
+  assert.match(paymentEmail, /import \{ MAGIC_LINK_TTL_MINUTES \} from '\.\.\/auth\/constants\.js'/,
+    'paymentConfirmationEmail.js が単一源を import していない');
+  assert.doesNotMatch(paymentEmail, /export const MAGIC_LINK_TTL_MIN\s*=\s*\d+\s*;/,
+    'MAGIC_LINK_TTL_MIN に数値が直書きされている');
+
+  const { MAGIC_LINK_TTL_MIN, buildPaymentConfirmationEmail } = await import('../payments/paymentConfirmationEmail.js');
+  assert.equal(MAGIC_LINK_TTL_MIN, MAGIC_LINK_TTL_MINUTES,
+    `入金確認メール ${MAGIC_LINK_TTL_MIN} 分 と 定数 ${MAGIC_LINK_TTL_MINUTES} 分 がズレている`);
+
+  // 本文（HTML / text 両方）に実際の分数が出ることまで確認する。
+  const mail = buildPaymentConfirmationEmail({ plan: 'Light', planType: 'Monthly', expiration: '2026-10-01' });
+  assert.ok(mail.html.includes(`${MAGIC_LINK_TTL_MINUTES}分間`), 'HTML 本文に有効時間が出ていない');
+  assert.ok(mail.text.includes(`${MAGIC_LINK_TTL_MINUTES}分間`), 'text 本文に有効時間が出ていない');
 });
 
 test('配信遅延に耐える長さがある（30 分以上）', () => {

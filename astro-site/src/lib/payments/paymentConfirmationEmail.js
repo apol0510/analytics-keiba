@@ -9,7 +9,7 @@
  *
  * 恒久ルール:
  * - **入金確認メールには必ずログイン導線を含める**（ボタン + 生 URL の両方）。
- * - **マジックリンク方式であることを本文で説明する**（別便で届く / 件名 / 15 分で失効 / 迷惑メール確認）。
+ * - **マジックリンク方式であることを本文で説明する**（別便で届く / 件名 / 失効時間 / 迷惑メール確認）。
  *   これを書かないと「入金確認メールの中にログインリンクがあるはず」と探して詰まる。
  * - 差し込み値（氏名 / プラン等）は **必ず HTML エスケープ**する（Airtable 由来の外部入力）。
  * - 氏名は 600 件中 51 件しか埋まっていない。**空でも自然に読める文面**にする
@@ -17,6 +17,8 @@
  * - 本文の URL は `analytics.keiba.link` のみ。`analytics.keiba.jp`（存在しない）や
  *   Netlify サブドメインを絶対に書かない。
  */
+
+import { MAGIC_LINK_TTL_MINUTES } from '../auth/constants.js';
 
 /** 既定のサイト URL（env 未設定時のフォールバック。本番 URL 以外を書かない）。 */
 export const DEFAULT_SITE_BASE = 'https://analytics.keiba.link';
@@ -27,8 +29,16 @@ export const SUPPORT_ADDRESS = 'support@keiba.link';
 /** ログインリンクメールの件名（本文で「これを探してください」と案内するため単一源にする）。 */
 export const MAGIC_LINK_SUBJECT = '【KEIBA Analytics】ログインリンク';
 
-/** マジックリンクの有効時間（分）。send-magic-link.js と一致させること。 */
-export const MAGIC_LINK_TTL_MIN = 15;
+/**
+ * マジックリンクの有効時間（分）。**値は持たず `src/lib/auth/constants.js` から取る。**
+ *
+ * ⚠️ 2026-09-01 の問い合わせ: 2026-08-09 に TTL を 15→60 分へ延ばした際、
+ *    このファイルだけ 15 のまま取り残され、入金確認メールが**実際より短い時間**を
+ *    案内していた（login.astro で起きた 2026-08-23 の事故と同型）。
+ *    再発防止のため直値を置かず、単一源を再エクスポートする。
+ *    一致は `src/lib/auth/magicLinkTtl.guard.test.mjs` が強制する。
+ */
+export const MAGIC_LINK_TTL_MIN = MAGIC_LINK_TTL_MINUTES;
 
 /** HTML エスケープ（差し込み値は必ずこれを通す）。 */
 export function escapeHtml(value) {
