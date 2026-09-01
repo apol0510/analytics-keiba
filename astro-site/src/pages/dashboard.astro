@@ -435,6 +435,29 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
                 </div>
             </div>
 
+            <!--
+              メールアドレスの変更（2026-09-01）
+              入金完了報告はログイン中のアドレスでしか申し込めないようにしたため、
+              別のアドレスで申し込みたい人の逃げ道としてここを用意する。
+              ⚠️ ここでは何も変わらない。**新しいアドレス宛の確認リンク**を開いて初めて確定する。
+            -->
+            <div id="email-change-section" class="email-change-section" style="display: none;">
+                <h2>✉️ メールアドレスの変更</h2>
+                <p class="email-change-lead">
+                    現在のご登録: <span id="email-change-current">-</span>
+                </p>
+                <div class="email-change-form">
+                    <input type="email" id="email-change-input" class="email-change-input"
+                           placeholder="new@example.com" autocomplete="email">
+                    <button id="email-change-btn" class="action-btn upgrade" type="button">確認メールを送る</button>
+                </div>
+                <p class="email-change-note">
+                    新しいメールアドレス宛に確認メールをお送りします。メール内のリンクから確定するまで、
+                    現在のメールアドレスのままご利用いただけます。
+                </p>
+                <p id="email-change-result" class="email-change-result" style="display: none;"></p>
+            </div>
+
             <!-- 有料会員お問い合わせ（初期非表示・有料会員のときだけ JS で表示。無料会員は /contact/ を使用） -->
             <PremiumContactModal hidden={true} />
         </div>
@@ -4816,7 +4839,33 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
             font-size: 0.85rem;
         }
         .submission-history-clear:hover { background: rgba(148, 163, 184, 0.1); }
-    </style>
+    
+        /* メールアドレスの変更（2026-09-01） */
+        .email-change-section {
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid rgba(59, 130, 246, 0.2);
+            border-radius: 16px;
+            padding: 24px;
+            margin: 24px 0;
+        }
+        .email-change-section h2 { font-size: 1.1rem; margin: 0 0 12px; }
+        .email-change-lead { color: #cbd5e1; font-size: 0.9rem; margin: 0 0 14px; }
+        .email-change-lead span { color: #f1f5f9; font-weight: 600; }
+        .email-change-form { display: flex; gap: 10px; flex-wrap: wrap; }
+        .email-change-input {
+            flex: 1 1 240px; min-width: 0;
+            padding: 12px 14px; border-radius: 8px;
+            border: 1px solid rgba(148, 163, 184, 0.3);
+            background: rgba(15, 23, 42, 0.9); color: #f1f5f9; font-size: 0.95rem;
+        }
+        .email-change-note { color: #94a3b8; font-size: 0.8rem; line-height: 1.8; margin: 12px 0 0; }
+        .email-change-result {
+            margin: 12px 0 0; padding: 10px 12px; border-radius: 8px; font-size: 0.88rem; line-height: 1.7;
+        }
+        .email-change-result.ok { background: rgba(16, 185, 129, 0.12); color: #6ee7b7; }
+        .email-change-result.ng { background: rgba(239, 68, 68, 0.12); color: #fca5a5; }
+
+</style>
 
     
 
@@ -5961,3 +6010,69 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
 
     </script>
 </BaseLayout>
+
+<script>
+  // ── メールアドレスの変更（確認リンク方式）────────────────────────
+  // ⚠️ 表示条件はログイン済みかどうかだけ。実際の可否・本人確認はサーバーが行う。
+  (() => {
+    const section = document.getElementById('email-change-section');
+    const input = document.getElementById('email-change-input') as HTMLInputElement | null;
+    const btn = document.getElementById('email-change-btn') as HTMLButtonElement | null;
+    const result = document.getElementById('email-change-result');
+    const current = document.getElementById('email-change-current');
+    if (!section || !input || !btn || !result || !current) return;
+
+    function currentEmail(): string {
+      try {
+        const raw = localStorage.getItem('user-plan');
+        if (raw) {
+          const up = JSON.parse(raw);
+          if (up && typeof up.email === 'string' && up.email.trim()) return up.email.trim().toLowerCase();
+        }
+      } catch (_) {}
+      try {
+        const direct = localStorage.getItem('userEmail');
+        if (typeof direct === 'string' && direct.trim()) return direct.trim().toLowerCase();
+      } catch (_) {}
+      return '';
+    }
+
+    function show(text: string, ok: boolean) {
+      result.textContent = text;
+      result.className = ok ? 'email-change-result ok' : 'email-change-result ng';
+      (result as HTMLElement).style.display = 'block';
+    }
+
+    const email = currentEmail();
+    if (!email) return;                       // 未ログインでは出さない
+    current.textContent = email;
+    (section as HTMLElement).style.display = 'block';
+
+    btn.addEventListener('click', async () => {
+      const next = (input.value || '').trim().toLowerCase();
+      if (!next) { show('新しいメールアドレスを入力してください。', false); return; }
+      btn.disabled = true;
+      const label = btn.textContent;
+      btn.textContent = '送信中...';
+      try {
+        const res = await fetch('/.netlify/functions/request-email-change', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ newEmail: next }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data.success) {
+          input.value = '';
+          show(String(data.message || '確認メールをお送りしました。'), true);
+        } else {
+          show(String(data.error || '送信できませんでした。'), false);
+        }
+      } catch (_) {
+        show('通信エラーが発生しました。時間をおいて再度お試しください。', false);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = label;
+      }
+    });
+  })();
+</script>

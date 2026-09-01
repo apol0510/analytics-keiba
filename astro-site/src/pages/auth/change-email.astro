@@ -1,0 +1,126 @@
+---
+/**
+ * /auth/change-email — メールアドレス変更の確定ページ。
+ *
+ * ⚠️ **開いただけでは変更しない。** 利用者がボタンを押して初めて POST する。
+ *    メールのリンクを自動で開くセキュリティスキャナに確定させないため
+ *    （`confirm-email-change.js` も POST しか受け付けない）。
+ */
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { EMAIL_CHANGE_TTL_MIN } from '../../lib/auth/emailChange.js';
+
+export const prerender = false;
+---
+
+<BaseLayout
+  title="メールアドレス変更の確定 | KEIBA Analytics"
+  description="メールアドレス変更の確定"
+>
+  <section class="change-email-section">
+    <div class="container">
+      <div class="card" data-ttl-min={EMAIL_CHANGE_TTL_MIN}>
+        <h1 id="title">メールアドレスの変更</h1>
+        <p id="message">下のボタンを押すと、メールアドレスの変更が確定します。</p>
+
+        <div id="actions">
+          <button id="confirmBtn" class="primary-btn" type="button">変更を確定する</button>
+          <p class="note">
+            確定すると、次回からは新しいメールアドレスでログインしていただきます。<br>
+            このリンクは発行から <span id="ttl"></span> 分間のみ有効です。
+          </p>
+        </div>
+
+        <p id="result" class="result" style="display:none;"></p>
+        <p class="links"><a href="/dashboard/">マイページへ戻る</a> ／ <a href="/login">ログイン</a></p>
+      </div>
+    </div>
+  </section>
+</BaseLayout>
+
+<script>
+  const card = document.querySelector('.card') as HTMLElement | null;
+  const btn = document.getElementById('confirmBtn') as HTMLButtonElement | null;
+  const result = document.getElementById('result') as HTMLElement | null;
+  const actions = document.getElementById('actions') as HTMLElement | null;
+  const message = document.getElementById('message') as HTMLElement | null;
+  const ttlEl = document.getElementById('ttl');
+
+  if (ttlEl && card) ttlEl.textContent = String(card.dataset.ttlMin || '');
+
+  const token = new URLSearchParams(window.location.search).get('token') || '';
+
+  function show(text: string, ok: boolean) {
+    if (!result) return;
+    result.textContent = text;
+    result.className = ok ? 'result ok' : 'result ng';
+    result.style.display = 'block';
+  }
+
+  if (!token) {
+    if (actions) actions.style.display = 'none';
+    if (message) message.textContent = 'リンクが正しくありません。';
+    show('マイページからもう一度お手続きください。', false);
+  }
+
+  btn?.addEventListener('click', async () => {
+    btn.disabled = true;
+    btn.textContent = '確定しています...';
+    try {
+      const res = await fetch('/.netlify/functions/confirm-email-change', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
+        if (actions) actions.style.display = 'none';
+        if (message) message.textContent = '変更が完了しました。';
+        // 旧アドレスのまま残ると有料 UI と実際の権限がズレるため、必ず消す。
+        try {
+          for (const k of ['user-plan', 'isLoggedIn', 'userPlan', 'userEmail', 'planType', 'validUntil']) {
+            localStorage.removeItem(k);
+          }
+        } catch (_) {}
+        show(String(data.message || 'メールアドレスを変更しました。'), true);
+      } else {
+        btn.disabled = false;
+        btn.textContent = '変更を確定する';
+        show(String(data.error || '変更できませんでした。'), false);
+      }
+    } catch (_) {
+      btn.disabled = false;
+      btn.textContent = '変更を確定する';
+      show('通信エラーが発生しました。時間をおいて再度お試しください。', false);
+    }
+  });
+</script>
+
+<style lang="scss">
+  .change-email-section {
+    min-height: calc(100vh - 200px);
+    display: flex; align-items: center; padding: 80px 0;
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+  }
+  .container { max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+  .card {
+    max-width: 480px; margin: 0 auto; text-align: center;
+    background: rgba(15, 23, 42, 0.8);
+    border: 1px solid rgba(59, 130, 246, 0.2);
+    border-radius: 16px; padding: 48px 32px;
+  }
+  h1 { font-size: 1.4rem; color: #f8fafc; margin: 0 0 12px; }
+  p { color: #cbd5e1; line-height: 1.9; font-size: 0.95rem; }
+  .primary-btn {
+    margin: 20px 0 8px; padding: 14px 32px; border: none; border-radius: 10px;
+    background: linear-gradient(135deg, #0ea5e9, #2563eb);
+    color: #fff; font-size: 1rem; font-weight: 700; cursor: pointer;
+    &:disabled { opacity: 0.6; cursor: not-allowed; }
+  }
+  .note { font-size: 0.8rem; color: #94a3b8; }
+  .result {
+    margin-top: 16px; padding: 12px 14px; border-radius: 8px; font-size: 0.9rem;
+    &.ok { background: rgba(16, 185, 129, 0.12); color: #6ee7b7; }
+    &.ng { background: rgba(239, 68, 68, 0.12); color: #fca5a5; }
+  }
+  .links { margin-top: 24px; font-size: 0.85rem; a { color: #38bdf8; } }
+</style>
