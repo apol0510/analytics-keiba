@@ -2,6 +2,7 @@
 export const prerender = true;
 // 退会前アップセル専用ページ
 // クライアントサイドで日付計算（デプロイ不要）
+import BankApplicationEmailLock from '../components/BankApplicationEmailLock.astro';
 ---
 
 <!DOCTYPE html>
@@ -1183,5 +1184,6 @@ export const prerender = true;
     }
   });
 </script>
+  <BankApplicationEmailLock />
 </body>
 </html>

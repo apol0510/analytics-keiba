@@ -264,6 +264,7 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
   isChuo: e.circuit === 'chuo',
   hasImage: !!e.imageFile,
 }));
+import BankApplicationEmailLock from '../components/BankApplicationEmailLock.astro';
 ---
 
 <!DOCTYPE html>
@@ -1967,5 +1968,6 @@ const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
     import { installPlusFunnel } from '../lib/premiumPlus/premiumPlusFunnelClient.js';
     installPlusFunnel(window);
   </script>
+  <BankApplicationEmailLock />
 </body>
 </html>

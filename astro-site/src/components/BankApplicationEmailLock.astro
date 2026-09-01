@@ -1,0 +1,86 @@
+---
+/**
+ * BankApplicationEmailLock.astro — 入金完了報告フォームのメール欄を
+ * 「ログイン中のアドレス」で埋め、変更できないようにする。
+ *
+ * ## なぜ共通部品なのか
+ *
+ * 入金完了報告フォームは **17 ページに複製**されており、ログイン中のアドレスを
+ * 初期値に入れていたのは一部だけだった。そのため本アドレスでログインしたまま
+ * サブアドレスで申し込め、Customers に別レコードができて二重付与の一歩手前まで
+ * 行った（2026-09-01 / 八重樫様）。ページごとに直すと必ず取り残しが出るので、
+ * **構造アンカー（`transferDate` 入力）だけを頼りに全ページへ一括で効かせる**。
+ *
+ * ⚠️ これは入力補助であって**認可ではない**。localStorage はブラウザで書き換えられる。
+ *    実際の拒否はサーバー（`bank-transfer-application.js` が ak_session を検証）が行う。
+ *    ここを外されても二重申込は成立しない。
+ *
+ * ⚠️ 未ログイン時は**何もしない**。新規のお客様は自由入力で申し込めなければならない。
+ *
+ * 判定ロジックの正本は `src/lib/payments/loggedInEmail.js`。
+ * is:inline スクリプトは import できないため同一ロジックを複製している
+ * （`contact-autofill.js` と同じ方針）。変更時は両方を合わせること。
+ */
+---
+
+<script is:inline>
+  (function () {
+    /** localStorage からログイン中のアドレスを読む（正本: src/lib/payments/loggedInEmail.js）*/
+    function readLoggedInEmail() {
+      try {
+        var raw = localStorage.getItem('user-plan');
+        if (raw) {
+          var up = JSON.parse(raw);
+          if (up && typeof up.email === 'string' && up.email.trim()) {
+            return up.email.trim().toLowerCase();
+          }
+        }
+      } catch (_) {}
+      try {
+        var direct = localStorage.getItem('userEmail');
+        if (typeof direct === 'string' && direct.trim()) return direct.trim().toLowerCase();
+      } catch (_) {}
+      return '';
+    }
+
+    function lockOne(anchor, email) {
+      var scope = anchor.closest('form') || anchor.closest('.modal') || anchor.parentElement;
+      if (!scope) return;
+      var input = scope.querySelector('input[type="email"], input[name="email"]');
+      if (!input || input.dataset.akEmailLocked === '1') return;
+
+      input.value = email;
+      input.readOnly = true;
+      input.dataset.akEmailLocked = '1';
+      input.setAttribute('aria-readonly', 'true');
+      input.style.opacity = '0.85';
+      input.style.cursor = 'not-allowed';
+
+      var hint = document.createElement('p');
+      hint.className = 'ak-email-lock-hint';
+      hint.style.cssText = 'margin:6px 0 0;font-size:12px;line-height:1.7;color:#94a3b8;';
+      hint.innerHTML = 'ログイン中のメールアドレスです。'
+        + '別のアドレスでお申し込みの場合は'
+        + '<a href="/dashboard/" style="color:#38bdf8;">マイページ</a>'
+        + 'でメールアドレスを変更してください。';
+      if (input.parentElement) input.parentElement.appendChild(hint);
+    }
+
+    /** 何度呼ばれても安全（1 度ロックした欄は触らない）。 */
+    function lockAll() {
+      var email = readLoggedInEmail();
+      if (!email) return; // 未ログイン → 自由入力のまま
+      var anchors = document.querySelectorAll('[name="transferDate"], #transferDate');
+      for (var i = 0; i < anchors.length; i++) lockOne(anchors[i], email);
+    }
+
+    window.__akLockBankEmail = lockAll;
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', lockAll);
+    } else {
+      lockAll();
+    }
+    // モーダルを後から描画するページがあるため、開く操作のあとにも効かせる。
+    document.addEventListener('click', function () { setTimeout(lockAll, 0); }, true);
+  })();
+</script>

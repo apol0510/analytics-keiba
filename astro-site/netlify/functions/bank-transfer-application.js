@@ -6,6 +6,10 @@
 
 import { SUPPORT_EMAIL, ADMIN_EMAIL, FROM_EMAIL } from './config/email-config.js';
 import { buildApplicationFields } from '../../src/lib/payments/bankPaymentFlow.js';
+// 「誰の申込か」の単一源。ログイン中は**セッションのアドレス以外で申し込めない**
+import {
+  decideApplicationEmail, APPLICATION_EMAIL, APPLICATION_EMAIL_MISMATCH_MESSAGE,
+} from '../../src/lib/payments/applicationIdentity.js';
 // 申込価格の正本（クーポン適用込み）。**クライアントの言い値を使わない**
 import { resolveOrderPricing } from '../../src/lib/premiumPlus/premiumPlusCouponApply.js';
 // 全会員向けキャンペーン割引。**価格はサーバーが決める**（クライアントの申告は読まない）
@@ -35,6 +39,49 @@ import { isSaleDateFieldEnabled, SALE_TARGET_DATE_FIELD } from '../../src/lib/pa
 import raceCalendarRaw from '../../src/data/premiumPlusRaceCalendar.json' with { type: 'json' };
 import { recordPlusCheckoutStart } from '../../src/lib/premiumPlus/premiumPlusFunnelServer.js';
 import { normalizeSalePaused, PP_SALE_PAUSE_FIELDS } from '../../src/lib/premiumPlus/premiumPlusRelease.js';
+
+/**
+ * 検証済みセッション（ak_session Cookie）から Customers の Email を引く。
+ *
+ * ⚠️ **読めないときは空文字を返す**（Cookie 無し / 署名鍵未設定 / 署名不正 / 期限切れ /
+ *    Airtable 障害）。呼び出し側は空 = 未ログイン扱いで**申込を通す**こと。
+ *    ここを fail closed にすると、障害時に購入導線が全部止まる。
+ *    目的はなりすまし防止ではなく**アドレスの取り違え防止**なので、この非対称は意図的。
+ *
+ * @returns {Promise<string>} 正規化前の Email（無ければ ''）
+ */
+async function resolveSessionEmail(event) {
+  try {
+    const KEY = process.env.AIRTABLE_API_KEY;
+    const BASE = process.env.AIRTABLE_BASE_ID;
+    const secret = process.env.SESSION_SIGNING_SECRET;
+    if (!KEY || !BASE || !secret) return '';
+
+    const { checkSigningSecret, readSessionCookie, verifySession } = await import('../../src/lib/auth/index.js');
+    if (!checkSigningSecret(secret).ok) return '';
+
+    const token = readSessionCookie(event.headers?.cookie || event.headers?.Cookie || '');
+    if (!token) return '';
+
+    const verified = await verifySession({ token, secret, now: Date.now() });
+    if (!verified.ok) return '';
+
+    const recordId = String(verified.payload?.sub || '');
+    if (!recordId) return '';
+
+    const res = await fetch(
+      `https://api.airtable.com/v0/${BASE}/Customers/${encodeURIComponent(recordId)}`,
+      { headers: { Authorization: `Bearer ${KEY}` } },
+    );
+    if (!res.ok) return '';
+    const rec = await res.json();
+    return String(rec?.fields?.Email || '');
+  } catch (e) {
+    // 判定できないだけ。申込は止めない。
+    console.warn('⚠️ [bank-transfer] セッション解決に失敗（未ログイン扱いで継続）:', String(e && e.message).slice(0, 120));
+    return '';
+  }
+}
 
 exports.handler = async (event, context) => {
   // CORSヘッダー設定
@@ -88,6 +135,31 @@ exports.handler = async (event, context) => {
         statusCode: 400,
         headers,
         body: JSON.stringify({ success: false, error: '必須項目が入力されていません' })
+      };
+    }
+
+    // ========================================
+    // 申込アドレスの一致チェック（2026-09-01）
+    // ログイン中は**セッションのアドレス以外で申し込めない**。
+    // 本アドレスとサブアドレスの二重申込で Customers に別レコードができ、
+    // 二重付与の一歩手前まで行った事故（八重樫様）への恒久対応。
+    // 未ログイン（＝セッションを読めない場合を含む）は従来どおり通す。
+    // 判定は単一源 src/lib/payments/applicationIdentity.js。
+    // ========================================
+    const sessionEmail = await resolveSessionEmail(event);
+    const identity = decideApplicationEmail({ sessionEmail, submittedEmail: email });
+    if (!identity.ok) {
+      console.warn('⚠️ [bank-transfer] ログイン中のアドレスと不一致のため拒否:'
+        + ` session=${identity.sessionEmail} submitted=${identity.submittedEmail}`);
+      return {
+        statusCode: 403,
+        headers,
+        body: JSON.stringify({
+          success: false,
+          error: APPLICATION_EMAIL_MISMATCH_MESSAGE,
+          code: APPLICATION_EMAIL.MISMATCH,
+          loginEmail: identity.sessionEmail,
+        })
       };
     }
 

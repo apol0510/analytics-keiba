@@ -1,5 +1,6 @@
 ---
 import '../styles/global.css';
+import BankApplicationEmailLock from '../components/BankApplicationEmailLock.astro';
 
 export const prerender = true;
 
@@ -1507,5 +1508,7 @@ const fullTitle = pageTitle
             });
         });
     </script>
+  <!-- 入金完了報告フォームのメール欄をログイン中のアドレスで固定する（全ページ共通） -->
+  <BankApplicationEmailLock />
 </body>
 </html>
