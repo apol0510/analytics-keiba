@@ -20,10 +20,24 @@
 import { DISTANCE_CHANGE_METERS } from './thresholds.js';
 
 /**
- * 「長い休み」とみなす日数。12 週。
- * 休み明け / 叩き◯戦目 の判定はすべてこの 1 つの値を基準にする。
+ * 「長い休み」とみなす日数。**2ヶ月 = 60 日**（2026-09-01 に 84 → 60 へ改定）。
+ * 休み明け / 叩き◯戦目 / `calcInterval` の「休養明け」ラベルは、すべてこの 1 つの値を基準にする。
+ *
+ * 暦月ではなく日数で扱う（本モジュールは日数演算で統一。差は 1〜2 日）。
  */
-export const LAYOFF_DAYS = 84;
+export const LAYOFF_DAYS = 60;
+
+/**
+ * 「続けて使っている（＝叩いている）」と言える間隔の上限。**中6週 = 42 日**。
+ *
+ * 休み明け以降がこの間隔以内で続いているときだけ「叩き◯戦目」を名乗る。
+ * これが無いと、70 日おきに走るローテ馬まで「叩き◯戦目」になってしまう
+ * （2026-09-02 大井 11R ③ティントレットの実例。`docs/decisions.md` 2026-09-01 参照）。
+ *
+ * ⚠️ `LAYOFF_DAYS` / `CAMPAIGN_MAX_GAP_DAYS` はどちらも**判断値**であって測定値ではない。
+ *    変更時は `docs/decisions.md` に新旧と理由を残し、境界テストを更新すること。
+ */
+export const CAMPAIGN_MAX_GAP_DAYS = 42;
 
 const num = (v) => {
   if (v === null || v === undefined || v === '') return null;
@@ -42,7 +56,7 @@ export function parseDate(value) {
 /**
  * 出走間隔。**日付が取れないときは null**（「連闘」と誤って言わないため）。
  *
- * 中◯週 は「前走から何週空けたか」。7 日以内を連闘、12 週以上を休養明けとする。
+ * 中◯週 は「前走から何週空けたか」。7 日以内を連闘、`LAYOFF_DAYS`（60日＝2ヶ月）以上を休養明けとする。
  *
  * @param {string} raceDate 今日のレース日（YYYY-MM-DD）
  * @param {string} prevDate 前走の日付（YYYY-MM-DD）
@@ -151,9 +165,14 @@ export function buildSameConditionTable(horses, today) {
  * 休み明け / 叩き◯戦目。
  *
  * 長い休み（`LAYOFF_DAYS` 以上の間隔）のあと、**今日が何戦目か**を数える。
- *   今日 ← 前走 の間隔が長い            → 休み明け（＝復帰initial戦）
+ *   今日 ← 前走 の間隔が長い            → 休み明け（＝復帰初戦）
  *   前走 ← 2走前 の間隔が長い           → 叩き2戦目
  *   2走前 ← 3走前 の間隔が長い          → 叩き3戦目 …
+ *
+ * ただし **「叩き」を名乗れるのは、休み明け以降を詰めて使っているときだけ**。
+ * 休み明け以降の各間隔が 1 本でも `CAMPAIGN_MAX_GAP_DAYS` を超えていたら `null` を返す
+ * （例: 70 日おきに 3 走している馬を「叩き3戦目」と読ませない）。
+ * 「休み明け」自体（今日 ← 前走が長い）はこの条件の対象外＝そのまま出す。
  *
  * **持っている過去走の範囲でしか分からない**。5 走ぶんしか無いので、
  * それより前に休みがあった場合は判定できず `null` を返す
@@ -168,17 +187,24 @@ export function calcLayoffRun(raceDate, past) {
   const today = parseDate(raceDate);
   if (today === null || list.length === 0) return null;
 
+  // gaps[i] = （今日 or list[i-1]） ← list[i] の間隔。長い休みを見つけた時点で
+  // gaps[0..i-1] が「休み明け以降の各間隔」になる。
+  const gaps = [];
   let prev = today;
   for (let i = 0; i < list.length; i += 1) {
     const at = parseDate(list[i]?.date);
     if (at === null) return null;           // 日付が欠けたら判定しない
     const gap = Math.round((prev - at) / 86400000);
     if (gap < 0) return null;               // 並びが壊れている
+    gaps.push(gap);
     if (gap >= LAYOFF_DAYS) {
-      // i=0 なら今日が休み明け、i=1 なら叩き2戦目 …
-      return i === 0
-        ? { kind: 'layoff', nth: 1, gapDays: gap }
-        : { kind: 'run-after-layoff', nth: i + 1, gapDays: gap };
+      // i=0 なら今日が休み明け（復帰初戦）。詰めて使ったかは問わない。
+      if (i === 0) return { kind: 'layoff', nth: 1, gapDays: gap };
+      // i>=1 は「休み明けから i+1 走目」。ただし休み明け以降を詰めて使っている場合だけ
+      // 「叩き」と呼ぶ。1 本でも空いていたら判定しない（断定より無表示を選ぶ）。
+      const ranTight = gaps.slice(0, i).every((g) => g <= CAMPAIGN_MAX_GAP_DAYS);
+      if (!ranTight) return null;
+      return { kind: 'run-after-layoff', nth: i + 1, gapDays: gap };
     }
     prev = at;
   }
@@ -202,5 +228,5 @@ export function buildHorseExtras(horse, today) {
 
 export default {
   parseDate, calcInterval, calcLayoffRun, calcBodyWeight, buildConditionHistory,
-  buildSameConditionTable, buildHorseExtras, LAYOFF_DAYS,
+  buildSameConditionTable, buildHorseExtras, LAYOFF_DAYS, CAMPAIGN_MAX_GAP_DAYS,
 };
