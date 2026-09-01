@@ -101,10 +101,25 @@ function makeDb({ member = {}, offers = [], ledger = 'ok' } = {}) {
   };
 }
 
+/**
+ * 予約行のフィクスチャ。
+ *
+ * ⚠️ **日付を固定値で書かないこと。** このファイルの操作（grant / correct / reissue）は
+ *    実時計で `ClaimedAt` を書くため、`StartsAt` を固定日付にすると
+ *    その日を過ぎた瞬間に `isCurrentCycleReservation`（`StartsAt >= ClaimedAt`）が
+ *    false になり、予約が「前の 1 枚」と判定されて落ちる。
+ *    実際 `StartsAt: '2026-09-01T00:00:00.000Z'` が 2026-09-01 に腐り、
+ *    CI が赤になった（本番ロジックは正常・テストの固定日付だけの問題）。
+ *    ここを実時計基準にすると、いつ実行しても「いまの 1 枚」に属する。
+ *
+ *    ※ 兄弟テスト（premiumPlusCouponAdmin など）は `NOW` を固定して
+ *      判定へ渡しているので固定日付のままで腐らない。混同しないこと。
+ */
 const reservationFields = (status) => ({
   OfferKey: 'k1', CustomerRecordId: REC, Email: EMAIL, OfferId: couponIdWithVersion(),
   Source: RESERVATION_SOURCE, Status: status,
-  StartsAt: '2026-09-01T00:00:00.000Z', ExpiresAt: '2026-09-30T00:00:00.000Z',
+  StartsAt: new Date().toISOString(),
+  ExpiresAt: new Date(Date.now() + 29 * 24 * 60 * 60 * 1000).toISOString(),
   RegularPrice: 68000, OfferPrice: 58000,
 });
 
