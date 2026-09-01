@@ -4,6 +4,7 @@
 // 2026-08-31: 管理者宛先・返信先・送信元を単一源 config/email-config.js へ統一
 
 import { SUPPORT_EMAIL, ADMIN_EMAIL } from './config/email-config.js';
+import { formatJst } from '../../src/lib/datetime/jstTimestamp.js';
 
 export const handler = async (event, context) => {
     const headers = {
@@ -50,7 +51,7 @@ export const handler = async (event, context) => {
             };
         }
 
-        const timestamp = new Date().toLocaleString('ja-JP');
+        const timestamp = formatJst();
         const withdrawalReason = reason || '理由未記入';
 
         // 1. Airtableから顧客情報を取得

@@ -7,6 +7,7 @@
 //   旧サイト名残のアドレスは 2026-08-31 に全廃済み（再混入は test:email-identity が検知）。
 
 import { SUPPORT_EMAIL, FROM_EMAIL } from '../../netlify/functions/config/email-config.js';
+import { formatJst } from './datetime/jstTimestamp.js';
 
 // メールアドレスバリデーション
 function validateEmail(email) {
@@ -145,7 +146,7 @@ export async function sendContactEmail({ name, email, subject, message }) {
                             <p><strong>お名前:</strong> ${name || '(未入力)'}</p>
                             <p><strong>メールアドレス:</strong> <a href="mailto:${email}">${email}</a></p>
                             <p><strong>件名:</strong> ${subject}</p>
-                            <p><strong>受信日時:</strong> ${new Date().toLocaleString('ja-JP')}</p>
+                            <p><strong>受信日時:</strong> ${formatJst()}</p>
                         </div>
                         <div class="message-box">
                             <h3>📝 お問い合わせ内容</h3>

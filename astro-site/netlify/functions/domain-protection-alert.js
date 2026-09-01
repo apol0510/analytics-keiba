@@ -1,6 +1,8 @@
 // ドメイン保護アラートシステム
 // 高リスク状況の早期検知・管理者通知
 
+import { formatJst } from '../../src/lib/datetime/jstTimestamp.js';
+
 export default async function handler(request, context) {
   const headers = {
     'Access-Control-Allow-Origin': '*',
@@ -331,7 +333,7 @@ function generateAlertEmailHtml({ alertType, message, riskLevel, stats }) {
 
       <div style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
         <p style="color: #6b7280; font-size: 12px; margin: 0;">
-          ${new Date().toLocaleString('ja-JP')} - KEIBA Analytics ドメイン保護システム
+          ${formatJst()} - KEIBA Analytics ドメイン保護システム
         </p>
       </div>
     </div>

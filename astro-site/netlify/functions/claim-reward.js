@@ -1,5 +1,6 @@
 // 特典申請処理Function
 import Airtable from 'airtable';
+import { formatJst } from '../../src/lib/datetime/jstTimestamp.js';
 
 export const handler = async (event, context) => {
   console.log('特典申請処理開始');
@@ -172,7 +173,7 @@ async function sendAdminNotification(data) {
             <tr><td><strong>メールアドレス</strong></td><td>${data.customerEmail}</td></tr>
             <tr><td><strong>プラン</strong></td><td>${data.customerPlanJapanese}</td></tr>
             <tr><td><strong>現在のポイント</strong></td><td>${data.currentPoints}pt</td></tr>
-            <tr><td><strong>申請日時</strong></td><td>${new Date(data.claimTimestamp).toLocaleString('ja-JP')}</td></tr>
+            <tr><td><strong>申請日時</strong></td><td>${formatJst(data.claimTimestamp)}</td></tr>
           </table>
           
           <p>Airtableで詳細を確認し、特典をお送りください。</p>

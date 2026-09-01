@@ -3,6 +3,7 @@
 //   （旧サイト名残の Gmail アドレスのハードコードを撤去）
 
 import { SUPPORT_EMAIL, ADMIN_EMAIL } from './config/email-config.js';
+import { formatJst } from '../../src/lib/datetime/jstTimestamp.js';
 
 export const handler = async (event, context) => {
     const headers = {
@@ -50,7 +51,7 @@ export const handler = async (event, context) => {
             };
         }
 
-        const timestamp = new Date().toLocaleString('ja-JP');
+        const timestamp = formatJst();
 
         // 管理者向けメール
         const adminEmailHtml = `

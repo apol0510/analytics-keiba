@@ -6,6 +6,7 @@
 import Airtable from 'airtable';
 import { SUPPORT_EMAIL, ADMIN_EMAIL, FROM_EMAIL } from './config/email-config.js';
 import { buildAdminContactSubject } from '../../src/lib/contact/contactSubject.js';
+import { formatJst } from '../../src/lib/datetime/jstTimestamp.js';
 
 /**
  * email から Airtable Customers の会員種別（プラン）を引く。fail-open:
@@ -74,16 +75,8 @@ exports.handler = async (event, context) => {
       };
     }
 
-    // 日本時間表示用
-    const japanTime = new Date(timestamp).toLocaleString('ja-JP', {
-      timeZone: 'Asia/Tokyo',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit'
-    });
+    // 日本時間表示用（表記の単一源は src/lib/datetime/jstTimestamp.js）
+    const japanTime = formatJst(timestamp);
 
     // SendGrid API設定
     const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY;
