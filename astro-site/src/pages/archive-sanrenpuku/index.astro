@@ -11,8 +11,8 @@
 //     per-month JSON（archiveSanrenpukuResults_YYYY-MM.json）は **2026-05 を最後に追加が止まり**、
 //     新しい月は combined（archiveSanrenpukuResults.json）へ自動取込される運用に変わっている。
 //     ＝ その月次手順自体が既に使われていないため、依存ごと整理した。
-//   - 併せて scripts/validate-archive-data.js の参照先を「実際に import しているページ」へ、
-//     scripts/update-archive-imports.js / create-new-month-archive.js の該当手順を実態へ更新した。
+//   - 併せて scripts/validate-archive-data.js の参照先を「実際に使っているページ」へ更新し、
+//     旧月次スクリプト 2 本は削除した（手順は MONTHLY_ARCHIVE_GUIDE.md に集約）。
 //
 // **本文を戻さないこと。** 戻すなら /archive-sanrenpuku-all/ 側に足す。
 return Astro.redirect('/archive-sanrenpuku-all/', 301);
