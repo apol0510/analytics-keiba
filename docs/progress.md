@@ -1,3 +1,114 @@
+# 🚧 会員が予想へ辿り着けない導線 — 本番反映済み・**実会員での目視確認が未実施**（2026-09-02）
+
+Light 会員から「今日のメインレースが見れません」。調査の結果 **システム側に不具合は無く**
+（権利 active / 期限内、当日データ 大井 12R・R11 メイン買い目生成済み、本番反映済み）、
+**壊れていたのは導線**だった。顧客は 5 分後に「見れました」と自己解決したが、
+同じ形は誰にでも起きるため恒久修正した。
+
+`981c6308`（PR #496 squash merge）で **main 反映・本番 deploy 済み（production / ready / 08:05 UTC）**。
+
+## ⚠️ 残っている確認（この見出しをクローズしない理由）
+
+**実会員のログイン済み画面を目視できていない。**
+`SESSION_SIGNING_SECRET` は masked secret のため本番の会員セッションを作れず、
+Deploy Preview も会員画面は確認できない（マジックリンクが本番 URL 固定・Cookie はホスト単位）。
+
+確認が必要なのは次の 3 点。**実会員（または MK 自身のアカウント）でログインして目視する**こと。
+
+| # | 確認内容 | 期待 |
+|---|---|---|
+| 1 | ログイン後の上部ナビ | 先頭が「🎯 今日の予想」に**入れ替わる**（🔍 無料予想 は消える） |
+| 2 | 「今日の予想」を押す | Light → `/light-predictions/` ／ Premium → `/premium-prediction/nankan/` |
+| 3 | マイページ | 権利に応じた予想カードが出て「予想を見る」が押せる |
+
+**localStorage を消した状態でも 1〜3 が成立するか**まで見ると、今回の事故そのものの再現確認になる
+（マイページはサーバー権威なので出るはず。ナビだけは localStorage 由来のため
+「無料予想」表示のままになる — これは既知の仕様・下記「未対応」参照）。
+
+## 何が壊れていたか（3 つの重なり）
+
+| # | 内容 |
+|---|---|
+| **A** | ナビ（PC / スマホ / フッター）に**有料予想への直リンクが 1 本も無い**。有料会員が予想へ行く道はマイページのカード 1 枚だけ |
+| **B** | マイページの「ログイン済みか」が **localStorage だけ**で決まる（`isAuthenticated()` = 5 キーのいずれかが在るか） |
+| **C** | 予想カードが**プラン文字列一致**でしか出ない（既定 `display:none`） |
+
+→ `ak_session`（idle 30 日）が有効な有料会員でも、**履歴を消しただけでサイト内から予想へ行く手段が全部消える。**
+
+## 直した形
+
+正本は **`astro-site/docs/MEMBER_PREDICTION_FUNNEL.md`**（CLAUDE.md からも参照）。
+
+| 目的 | 単一源 |
+|---|---|
+| いま見ているのは誰で何を見られるか | `src/lib/auth/viewerEntitlements.js`（`resolveViewer`） |
+| 権利 → 出すカード | `src/lib/entitlements/resolveEntitlements.js`（`viewFromEntitlements`） |
+| 「今日の予想」の行き先 | `src/lib/navigation/predictionDestination.js` |
+
+- `resolveViewer` は**第三の認証方式を作らない**。`verifyPlanAccess`（ak_session）+
+  `resolveEntitlements`（Airtable）へ委譲するだけ
+- state は **3 値**（`member` / `anonymous` / `unknown`）。
+  **一時障害を `anonymous` に丸めない**（有効な会員へ再ログインを促さないため）
+- マイページを `prerender=false`（SSR）化。権威値を `window.__AK_SERVER_AUTH__` で渡す
+  （列挙した項目だけ。`entitlements` 全体や Airtable レコードは渡さない）。`private, no-store`
+- SSR ルータ `/today/` を新設。ナビは**入れ替え制**で項目を増やさない
+  （上部ナビ 6 項目上限＝`navLayout.guard`。未ログイン時の見た目・行き先は不変）
+- 孤立していた `light-predictions-{urawa,funabashi}` を `/light-predictions/` へ **301 のみ**に
+
+> ⚠️ **`effectiveTier` を行き先の判定に使わない。**
+> 三連複のみ保有＋馬単期限切れの会員が `/premium-prediction/nankan/` へ送られ、
+> そこで `canViewPremium` を要求されて跳ね返され**往復する**。
+> 行き先は必ず「そのページが要求する権利そのもの」で選ぶ。
+
+> **localStorage 経路を消してはいけない。** 無料登録だけの会員は `ak_session` を持たない。
+
+## 本番 read-only 実測（2026-09-02 / 未ログイン）
+
+| URL | 結果 |
+|---|---|
+| `/today/` | 302 → `/free/` |
+| `/light-predictions-urawa/` | **301** → `/light-predictions/` |
+| `/light-predictions-funabashi/` | **301** → `/light-predictions/` |
+| `/light-predictions/` | 302 → `/login/?r=no_session`（fail closed 維持） |
+| `/premium-prediction/nankan/` | 302 → `/login/?r=no_session`（同上） |
+| `/dashboard/` | 200・`__AK_SERVER_AUTH__={"state":"anonymous","predictionHref":"/free/","cards":null,"profile":null}`・`cache-control: private,no-store`・`age: 0` |
+| トップの nav markup | `id="nav-today"`（既定 `display:none`）と `id="nav-free"`（既定表示）が両方存在。`href="/today/"` は PC + スマホの 2 箇所 |
+
+## ローカル SSR 実測（本番非接触 / fetch 差し替え + 合成レコード + 使い捨て鍵 / **localStorage ゼロ**）
+
+| ケース | `/today/` | dashboard の権威値 | 有料ページ直打ち |
+|---|---|---|---|
+| 未ログイン | 302 `/free/` | `anonymous` | 302 `?r=no_session` |
+| **Light 会員** | 302 `/light-predictions/` | `light=true` | 200 |
+| Premium 会員 | 302 `/premium-prediction/nankan/` | `premiumActive=true` | — |
+| 権利なし（期限切れ） | 302 `/free/` | `free=true` / `premiumExpired=true` | 302 `?r=not_entitled` |
+| Airtable 一時障害 | 302 `/dashboard/` | `unknown`（ログアウト扱いにしない） | — |
+
+## 未対応（意図的・今回はやらない）
+
+- **ナビの出し分け自体は従来どおり localStorage 由来**（`readNavAuthState`）。
+  履歴を消した会員のナビには「無料予想」が出る。**マイページはサーバー権威なので導線は途切れない**。
+  ナビまでサーバー権威にするには BaseLayout の全ページ SSR 化が必要で、静的ページのコストが跳ね上がる
+- `dashboard.astro` が SSR になったため表示ごとに Airtable 参照が入る
+  （既存の 10 分プロセス内キャッシュあり）。負荷は本番で未観測
+
+## 顧客対応
+
+**末吉様（`163doob@gmail.com`）への返信は未送信。**
+文面のみ用意済み（自己解決へのお礼＋直リンクのブックマーク案内＋ログイン保持期間）。
+`~/.analytics-keiba-ops/` への書き込みが許可されておらず送信スクリプトを作れていないため、
+**送信は MK の指示待ち**。
+
+## 検証コマンド
+
+```bash
+npm run test:nav            # 導線先・カード表示・ページ配線 guard
+npm run test:auth-session   # resolveViewer（会員/未ログイン/権利なし/一時障害）
+npm run check:safety        # 上記すべてを含む（新規 40 件も収録済み）
+```
+
+---
+
 # 🚨 購入済み会員を無料体験へ誤誘導したインシデント（2026-09-02）— **クローズ（MK 本番目視確認 済み ＋ 同型残存も解消）**
 
 三連複を購入済みの会員が `/premium-sanrenpuku/`（南関 有料三連複）を開くと、
