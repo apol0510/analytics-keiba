@@ -194,6 +194,7 @@ PR の merge / production deploy / 本番データ書込み / env の変更 / qu
 | **メールアドレスの正本（support / noreply の役割）** | [`EMAIL_ADDRESSES.md`](./astro-site/docs/EMAIL_ADDRESSES.md) |
 | ログイン（マジックリンク） | [`AUTH_LOGIN.md`](./astro-site/docs/AUTH_LOGIN.md) / [`AUTH_SESSION_DESIGN.md`](./astro-site/docs/AUTH_SESSION_DESIGN.md) |
 | **有料ページ認可の単一源（ページに独自 plan 判定を書かない）** | [`PAID_PAGE_AUTHORIZATION.md`](./astro-site/docs/PAID_PAGE_AUTHORIZATION.md) |
+| **会員が予想へ辿り着く導線（マイページ表示 / ナビの行き先）** | [`MEMBER_PREDICTION_FUNNEL.md`](./astro-site/docs/MEMBER_PREDICTION_FUNNEL.md) |
 | 管理画面の Basic 認証（`/admin/*`） | [`ADMIN_BASIC_AUTH.md`](./astro-site/docs/ADMIN_BASIC_AUTH.md) |
 | 銀行振込 入金確認フロー | [`BANK_TRANSFER_FLOW.md`](./astro-site/docs/BANK_TRANSFER_FLOW.md) |
 | 入金確認メール v2 | [`PAYMENT_EMAIL_V2.md`](./astro-site/docs/PAYMENT_EMAIL_V2.md) |
@@ -232,6 +233,35 @@ CLAUDE.md 再編（2026-08-13）で旧セクションがどこへ行ったかの
   **`PromotionalOffers` に監査行を混ぜない**（価格の無い行が顧客分類を壊す）
 - 割引額 / 期限 / 配布条件 / 併用可否 / 自動付与条件は**商品ごとに MK が決める**。
   **決まっていない条件を既定値で埋めない**
+
+### 🧭 会員が予想へ辿り着く導線（2026-09-02 集約）
+
+**「見られる権利がある」と「画面から辿り着ける」は別。** 正本は
+[`MEMBER_PREDICTION_FUNNEL.md`](./astro-site/docs/MEMBER_PREDICTION_FUNNEL.md)。
+
+事故: Light 会員から「今日のメインレースが見れない」。権利（active / 期限内）も当日データも
+本番反映もすべて正常だった。壊れていたのは導線で、次の 3 つが重なっていた。
+
+1. ナビ（PC / スマホ / フッター）に**有料予想への直リンクが 1 本も無い**
+2. マイページの「ログイン済みか」が **localStorage だけ**で決まる
+3. 予想カードが**プラン文字列一致**でしか出ない（既定 `display:none`）
+
+→ `ak_session` が有効な有料会員でも、履歴を消しただけで**サイト内から予想へ行く手段が全部消える**。
+
+- 閲覧者の確定は **`src/lib/auth/viewerEntitlements.js`（`resolveViewer`）**。
+  判定は `verifyPlanAccess`（ak_session）+ `resolveEntitlements`（Airtable）へ委譲し、
+  **第三の認証方式を作らない**
+- 状態は **3 値**。`unknown`（鍵未設定 / Airtable 一時障害）を `anonymous` に丸めない。
+  丸めると**有効な会員に再ログインを促す**
+- ナビは行き先を **`/today/` 1 本**に集約し、振り分けはサーバーが行う。
+  ナビから `/light-predictions` `/premium-prediction` を**直接指さない**
+- ナビは**入れ替え制**（未ログイン=🔍 無料予想 / ログイン後=🎯 今日の予想）。
+  **項目を足さない**（未ログイン時の見た目・行き先は従来と同一）
+- 行き先は**そのページが要求する権利そのもの**で選ぶ。**`effectiveTier` を使わない**
+  （三連複のみ保有＋馬単期限切れの会員が有料馬単へ送られ、拒否されて往復する）
+- 上部ナビは**同時 6 項目**が上限（`navLayout.guard.test.mjs`）。項目を増やさない
+- マイページの localStorage 経路は**消さない**。無料登録だけの会員は `ak_session` を持たない
+- 検証: `npm run test:nav` / `npm run test:auth-session`（`check:safety` に収録済み）
 
 ### 🔐 有料ページの認可（2026-09-02 集約）
 

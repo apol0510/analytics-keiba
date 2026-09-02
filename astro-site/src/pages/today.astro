@@ -1,0 +1,33 @@
+---
+/**
+ * `/today/` — 「今日の予想」導線のサーバー側ルータ（2026-09-02）
+ *
+ * ナビの「今日の予想」はこの 1 本だけを指す。**誰をどこへ送るかはサーバーが決める**。
+ * クライアントに分岐を持たせないので、localStorage が消えていても壊れない。
+ *
+ * 行き先の決定は単一源 `src/lib/navigation/predictionDestination.js`。
+ * 閲覧者の確定は単一源 `src/lib/auth/viewerEntitlements.js`（= ak_session + Airtable）。
+ * **このページは権利を与えない。**有料本文の保護は行き先ページの `gatePaidPage` が行う。
+ *
+ * ⚠️ prerender は禁止。静的化すると全員が同じ行き先に固定される。
+ * ⚠️ 302（恒久化しない）。会員の権利は日々変わるので 301 でキャッシュさせない。
+ */
+export const prerender = false;
+
+import { resolveViewer } from '../lib/auth/viewerEntitlements.js';
+import { resolvePredictionDestination, PREDICTION_DESTINATIONS } from '../lib/navigation/predictionDestination.js';
+
+let destination = PREDICTION_DESTINATIONS.free;
+try {
+  const viewer = await resolveViewer({ request: Astro.request, env: process.env });
+  destination = resolvePredictionDestination(viewer);
+} catch {
+  // 判定そのものが落ちても導線を殺さない。無料予想は誰でも見られるので安全側。
+  destination = PREDICTION_DESTINATIONS.free;
+}
+
+// 会員ごとに行き先が変わる。共有キャッシュへ載せない（別人の行き先を配らない）。
+Astro.response.headers.set('Cache-Control', 'private, no-store');
+
+return Astro.redirect(destination, 302);
+---

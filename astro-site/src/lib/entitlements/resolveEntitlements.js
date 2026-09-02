@@ -324,7 +324,24 @@ export function resolveClientView(userPlanRaw, flags = {}, now = Date.now()) {
     validUntil: flags.validUntil && flags.validUntil !== 'null' ? flags.validUntil : undefined,
     isWithdrawalRequested: flags.isWithdrawalRequested === true || flags.isWithdrawalRequested === 'true',
   });
-  const e = resolveEntitlements(customer, now);
+  return viewFromEntitlements(resolveEntitlements(customer, now));
+}
+
+/**
+ * **権利 → 画面に出すカード**の対応。`resolveClientView` から切り出した**単一源**。
+ *
+ * ── なぜ切り出したか（2026-09-02）────────────────────────────────
+ * マイページのカード表示は長らく **localStorage のプラン文字列**で決めていた。
+ * そのため localStorage が消えた会員（別ブラウザ・履歴消去）は、`ak_session` が
+ * 有効でもカードが 1 枚も出ず、**予想ページへのリンクが画面から消えた**。
+ * サーバーが確定した entitlements をそのまま流し込めるよう、判定式をここに集約する。
+ *
+ * ⚠️ 入力は **`resolveEntitlements` の戻り値**。プラン文字列を受け取ってはいけない
+ *    （文字列判定に戻すと同じ事故が再発する）。
+ *
+ * @param {object} e resolveEntitlements の戻り値
+ */
+export function viewFromEntitlements(e) {
   return {
     // 互換維持（= showPremiumActiveCard と同義）。同じ条件を複数箇所に書かないため resolver 値を単一源にする。
     showBaCard: e.canViewPremium,
@@ -341,6 +358,12 @@ export function resolveClientView(userPlanRaw, flags = {}, now = Date.now()) {
     showSanrenpukuCard: e.canViewSanrenpuku,
     // 三連複購入CTA
     showPurchaseCta: e.canPurchaseSanrenpuku,
+    // Light カード。**プラン文字列ではなく権利で決める**（2026-09-02）。
+    // Premium を見られる人には Premium カードを出すので Light は重ねない。
+    // 無料特典で Light 相当が有効な会員（契約は期限切れ）にも正しく出る。
+    showLightCard: e.canViewLight && !e.canViewPremium,
+    // 無料予想カード。有料の閲覧権が 1 つも無いときだけ出す。
+    showFreeCard: !e.canViewLight && !e.canViewPremium && !e.canViewSanrenpuku,
     entitlements: e,
   };
 }

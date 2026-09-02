@@ -15,11 +15,11 @@ const nankan = readFileSync(join(root, 'src/pages/premium-prediction/nankan.astr
 const jra = readFileSync(join(root, 'src/pages/premium-prediction/jra.astro'), 'utf8');
 
 // Light 会員が閲覧するページ（AccessControl requiredPlan="standard"）
+// 2026-09-02: 会場別 2 ページ（-urawa / -funabashi）は 301 のみへ畳んだため、
+// 予想を描画する Light ページはこの 2 枚だけ（memberPredictionFunnel.guard.test.mjs が固定）。
 const LIGHT_PAGES = [
   'src/pages/light-predictions.astro',
   'src/pages/light-predictions-jra.astro',
-  'src/pages/light-predictions-urawa.astro',
-  'src/pages/light-predictions-funabashi.astro',
 ];
 
 test('両ページが単一源 sanrenpukuCtaStage を import して planSanrenpukuDisplay を使う', () => {

@@ -34,8 +34,11 @@ function topLevelItems() {
 function simultaneousCounts() {
   const items = topLevelItems();
   const always = items.filter((l) => !l.includes('nav-auth-item'));
-  const loggedOut = items.filter((l) => /id="nav-(signup|login)"/.test(l));
-  const loggedIn = items.filter((l) => /id="nav-(notice|dashboard)"/.test(l));
+  // 2026-09-02: 先頭項目も入れ替え制になった（未ログイン=nav-free / ログイン後=nav-today）。
+  // ⚠️ ここに id を書き足し忘れると、その項目が**どちらの合計にも入らず**、
+  //    上限 6 の検査が静かに緩む（項目を足しても気づけなくなる）。
+  const loggedOut = items.filter((l) => /id="nav-(signup|login|free)"/.test(l));
+  const loggedIn = items.filter((l) => /id="nav-(notice|dashboard|today)"/.test(l));
   return {
     items,
     loggedOut: always.length + loggedOut.length,
@@ -48,6 +51,17 @@ test('上部ナビは同時に 6 項目まで（実測でヘッダに収まる�
   assert.ok(c.items.length > 0, 'ナビの項目を数えられていない（検査が素通りしている）');
   assert.ok(c.loggedOut <= 6, `未ログイン時に ${c.loggedOut} 項目ある`);
   assert.ok(c.loggedIn <= 6, `ログイン後に ${c.loggedIn} 項目ある`);
+});
+
+test('入れ替え制の項目は必ずどちらかの合計に入る（検査が静かに緩まない）', () => {
+  const items = topLevelItems();
+  const authItems = items.filter((l) => l.includes('nav-auth-item'));
+  const counted = items.filter((l) => /id="nav-(signup|login|free|notice|dashboard|today)"/.test(l));
+  assert.equal(
+    authItems.length, counted.length,
+    '出し分け項目のうち、上の集計 id に載っていないものがある'
+    + `（未集計: ${authItems.filter((l) => !counted.includes(l)).map((l) => (l.match(/id="([^"]+)"/) || [])[1]).join(', ')}）`,
+  );
 });
 
 test('紹介ページはフッターから辿れる（ナビから外した先が行き止まりにならない）', () => {
