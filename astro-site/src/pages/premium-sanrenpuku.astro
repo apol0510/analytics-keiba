@@ -89,7 +89,7 @@ const formattedDate = `${year}年${parseInt(month)}月${parseInt(day)}日`;
     <AccessControl requiredPlan="Premium Sanrenpuku">
 
         <!-- 三連複予想コンテンツ（Premium Sanrenpuku / Premium Full会員向け） -->
-        <div id="sanrenpuku-content" class="page-container" style="display: none;">
+        <div id="sanrenpuku-content" class="page-container">
             <!-- ヘッダーセクション -->
             <div class="header-section">
                 <div class="ai-badge premium-select-badge">
@@ -288,66 +288,21 @@ const formattedDate = `${year}年${parseInt(month)}月${parseInt(day)}日`;
         <AccordionClickClose />
         <RaceAccordionClickClose />
 
-        <!-- プラン判定スクリプト -->
-        <script is:inline>
-            (function() {
-                console.log('🔍 Premium Sanrenpuku - プラン判定開始');
+        {/* 2026-09-02: クライアント側のプラン判定スクリプトを削除した（復活させないこと）。
 
-                // プラン情報取得
-                function getCurrentUserPlan() {
-                    // 3. user-plan
-                    const userPlanData = localStorage.getItem('user-plan');
-                    if (userPlanData) {
-                        try {
-                            const userData = JSON.parse(userPlanData);
-                            return userData.plan || 'free';
-                        } catch (error) {
-                            console.error('User plan parsing error:', error);
-                        }
-                    }
+            事故: 三連複を買い切りで購入した会員（`プラン=Premium` + `LifetimeSanrenpuku=true`）が
+            このページを開くと、localStorage の `plan` が 'Premium' のため
+            「未購入の Premium 会員」と誤判定され、無料体験ページへリダイレクトされていた。
+            購入済みの方に無料体験を見せる状態で、中央（JRA）側は同じスクリプトを持たないため
+            正常に表示されていた（＝南関だけが壊れていた）。
 
-                    return null;
-                }
-
-                // プラン判定と表示切り替え
-                function checkPlanAndDisplay() {
-                    const userPlan = getCurrentUserPlan();
-                    console.log('📋 現在のプラン:', userPlan);
-
-                    const contentSection = document.getElementById('sanrenpuku-content');
-
-                    if (!contentSection) {
-                        console.error('❌ セクション要素が見つかりません');
-                        return;
-                    }
-
-                    // Premium Sanrenpuku または Premium Combo または Premium Full 会員の場合 → 予想表示
-                    if (userPlan === 'Premium Sanrenpuku' || userPlan === 'Premium Combo' || userPlan === 'Premium Full') {
-                        console.log('✅ Premium Sanrenpuku/Combo/Full会員 → 三連複予想表示');
-                        contentSection.style.display = 'block';
-                    }
-                    // Premium Predictions または Premium 会員の場合 → sanrenpuku-demoへリダイレクト
-                    else if (userPlan === 'Premium Predictions' || userPlan === 'Premium' || userPlan === 'premium') {
-                        console.log('🎯 Premium会員 → sanrenpuku-demoへリダイレクト');
-                        window.location.href = '/sanrenpuku-demo/';
-                    }
-                    // その他（プラン不明）→ 何も表示しない（判定は AccessControl に委ねる）
-                    // ※ この分岐の経緯は frontmatter のコメント参照。is:inline のコメントは HTML に出力されるため、
-                    //    商品名・金額を含む説明をここに書かないこと。
-                    else {
-                        console.log('❌ プラン不明 → 予想は表示しない');
-                        contentSection.style.display = 'none';
-                    }
-                }
-
-                // DOM読み込み完了後に実行
-                if (document.readyState === 'loading') {
-                    document.addEventListener('DOMContentLoaded', checkPlanAndDisplay);
-                } else {
-                    checkPlanAndDisplay();
-                }
-            })();
-        </script>
+            このページの認可は 2 層で確定している:
+              1. サーバー: frontmatter の gatePaidPage（ak_session + resolveEntitlements）
+                 → 権利が無ければ有料本文を 1 バイトも返さない
+              2. クライアント: AccessControl requiredPlan="Premium Sanrenpuku"
+                 → lifetimeSanrenpuku を見る単一源
+            localStorage の `plan` 文字列だけを見る 3 つ目の判定を足さない。
+            構造は中央版 premium-sanrenpuku-jra.astro と同じに保つ。 */}
     </AccessControl>
 </BaseLayout>
 

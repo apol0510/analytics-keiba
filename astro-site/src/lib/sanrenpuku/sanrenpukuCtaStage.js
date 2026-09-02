@@ -41,8 +41,18 @@ export function normalizePlanKey(planRaw) {
 
 /**
  * 段階表示の funnel 対象か（馬単のみの Premium 系。三連複保有者・無料・未ログインは false）。
+ *
+ * ⚠️ `plan` 文字列だけでは三連複の保有を判定できない。三連複は買い切りの**追加権**で、
+ *    承認時に書かれるのは `LifetimeSanrenpuku` だけ（`プラン` は 'Premium' のまま）。
+ *    そのため買い切り購入者を plan だけで見ると「未購入の Premium 会員」と誤判定し、
+ *    購入済みの方に追加購入 CTA（無料体験ページへの導線）を出してしまう。
+ *    → 第 2 引数で買い切りフラグを受け取り、true なら funnel 対象外にする（2026-09-02）。
+ *
+ * @param {string} planRaw               localStorage user-plan の plan 文字列
+ * @param {boolean} [lifetimeSanrenpuku] 同 lifetimeSanrenpuku（三連複 買い切り保有）
  */
-export function isFunnelTarget(planRaw) {
+export function isFunnelTarget(planRaw, lifetimeSanrenpuku = false) {
+  if (lifetimeSanrenpuku === true) return false; // 買い切りで三連複を保有 → 追加 CTA 不要
   const p = normalizePlanKey(planRaw);
   if (!p) return false;
   if (HAS_SRP.indexOf(p) !== -1) return false; // 既に三連複保有 → 追加 CTA 不要
@@ -66,6 +76,7 @@ export function computeSanrenpukuStage(elapsedMs) {
  *
  * @param {Object} p
  * @param {string} p.planRaw            localStorage user-plan の plan 文字列
+ * @param {boolean} [p.lifetimeSanrenpuku] 同 lifetimeSanrenpuku（三連複 買い切り保有 → funnel 対象外）
  * @param {boolean} [p.dismissed]       CTA を ×閉じ 済みか（ak-srp-cta-dismissed === '1'）
  * @param {number} p.firstSeen          初回表示時刻(ms)。未設定なら now を渡す
  * @param {number} p.now                Date.now()
@@ -80,9 +91,9 @@ export function computeSanrenpukuStage(elapsedMs) {
  *   - teaser!=='none' と showCta は同時に true にならない（予告と通常CTAが同居しない）。
  *   - showCta（アーカイブ導線を含む）が true のとき teaser は 'none'（解禁前案内と同居しない）。
  */
-export function planSanrenpukuDisplay({ planRaw, dismissed = false, firstSeen, now, hasResultSection = false }) {
+export function planSanrenpukuDisplay({ planRaw, lifetimeSanrenpuku = false, dismissed = false, firstSeen, now, hasResultSection = false }) {
   const off = { isFunnelTarget: false, stage: SRP_STAGE.HIDDEN, teaser: 'none', showResult: false, showCta: false };
-  if (!isFunnelTarget(planRaw)) return off;
+  if (!isFunnelTarget(planRaw, lifetimeSanrenpuku)) return off;
   if (typeof now !== 'number' || !isFinite(now)) return off;
 
   const first = typeof firstSeen === 'number' && isFinite(firstSeen) && firstSeen > 0 ? firstSeen : now;

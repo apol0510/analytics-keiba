@@ -375,16 +375,18 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                 var resultEl = document.getElementById('sanrenpuku-yesterday-results');
                 if (!teaserEl && !ctaEl) return;
                 var planRaw = '';
-                try { var raw = localStorage.getItem('user-plan'); if (raw) planRaw = (JSON.parse(raw).plan || ''); } catch (e) {}
+                var srpLifetime = false;
+                // 三連複の買い切り購入者は plan が 'Premium' のままなので、保有の目印は lifetimeSanrenpuku だけ。
+                try { var raw = localStorage.getItem('user-plan'); if (raw) { var up = JSON.parse(raw); planRaw = (up.plan || ''); srpLifetime = up.lifetimeSanrenpuku === true; } } catch (e) {}
                 if (!planRaw) { try { planRaw = localStorage.getItem('userPlan') || ''; } catch (e) {} }
-                if (!isFunnelTarget(planRaw)) return; // 三連複保有・無料・未ログイン → 既存ゲートが担当
+                if (!isFunnelTarget(planRaw, srpLifetime)) return; // 三連複保有・無料・未ログイン → 既存ゲートが担当
                 var now = Date.now();
                 var firstSeen = 0;
                 try { firstSeen = parseInt(localStorage.getItem('ak-umatan-first-seen') || '0', 10) || 0; } catch (e) {}
                 if (!firstSeen) { firstSeen = now; try { localStorage.setItem('ak-umatan-first-seen', String(now)); } catch (e) {} }
                 var dismissed = false;
                 try { dismissed = localStorage.getItem('ak-srp-cta-dismissed') === '1'; } catch (e) {}
-                var view = planSanrenpukuDisplay({ planRaw: planRaw, dismissed: dismissed, firstSeen: firstSeen, now: now, hasResultSection: !!resultEl });
+                var view = planSanrenpukuDisplay({ planRaw: planRaw, lifetimeSanrenpuku: srpLifetime, dismissed: dismissed, firstSeen: firstSeen, now: now, hasResultSection: !!resultEl });
                 // 予告カード（2日目=day2 / 3日目=day3。4日目以降は none で下の CTA に切替＝排他）
                 if (teaserEl) {
                     var day2 = teaserEl.querySelector('.srp-teaser-day2');

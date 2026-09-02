@@ -110,11 +110,15 @@ const actualDescription = '本命ファーンヒル（88pt）の信頼度が高�
                 try {
                     const userData = JSON.parse(userPlanData);
                     const userPlan = userData.plan;
+                    // 三連複の買い切り購入者は `プラン` が 'Premium' のままで、
+                    // 購入の目印は lifetimeSanrenpuku だけ。plan 文字列だけで判定すると
+                    // 購入済みの方に無料体験を見せてしまう（2026-09-02 の事故）。
+                    const ownsSanrenpuku = userData.lifetimeSanrenpuku === true;
 
                     console.log('🔍 sanrenpuku-demo アクセスチェック:', userPlan);
 
-                    // Premium Sanrenpuku・Premium Comboは閲覧不可（既に三連複を購入済み）
-                    if (userPlan === 'Premium Sanrenpuku' || userPlan === 'Premium Combo') {
+                    // 既に三連複を購入済みの方は閲覧不可（買い切り購入者を含む）
+                    if (ownsSanrenpuku || userPlan === 'Premium Sanrenpuku' || userPlan === 'Premium Combo') {
                         alert('既に三連複をご利用中のため、このページは表示できません');
                         window.location.href = '/premium-sanrenpuku';
                         return;

@@ -59,7 +59,8 @@ test('JRA に三連複的中結果セクションを新設し、getLatestSanrenp
 
 test('JRA 結果は funnel（未購入 Premium）限定・段階ゲート経由でのみ表示＝購入済み/無料/未ログインに出さない', () => {
   // funnel 対象外は早期 return。結果表示は view.showResult（helper が購入済み=false を保証）でのみ発火。
-  assert.match(jra, /if \(!isFunnelTarget\(planRaw\)\) return;/, 'jra コントローラに funnel 早期 return が無い');
+  // 第2引数は三連複の買い切りフラグ（2026-09-02: 購入済みに追加購入 CTA を出さないため）。
+  assert.match(jra, /if \(!isFunnelTarget\(planRaw, srpLifetime\)\) return;/, 'jra コントローラに funnel 早期 return が無い');
   assert.match(jra, /resultEl && view\.showResult/, 'jra 結果表示が段階ゲート（view.showResult）を経由していない');
   // JRA には結果をプラン直判定で無条件表示するゲートを設けない
   assert.ok(!/userPlan === 'Premium Sanrenpuku'/.test(jra), 'jra に購入済みへ結果を出すプラン直ゲートが混入している');
