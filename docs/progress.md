@@ -3640,6 +3640,18 @@ env 変更 / **Step2 の queue・dispatch・実送信** / `rolloutResume` / 新�
 実顧客データ書込み / 実メール送信 / queue 登録 / dispatch 呼出 / schema・env・datastore 変更。
 **#372（Light trial rollout 修復）には触れていない**。
 
+### クローズ（2026-08-19 / MK 判断）— **完了・残件なし**
+
+DRM 基盤は **MK 判断でクローズ**した。**残件は無い。**
+
+- 完成条件の正本は `astro-site/docs/DRM_FOUNDATION.md` の **「DRM の完成条件」11 項目だけ**で、
+  **11 項目すべて達成済み**（PR #374 / `6ed73865` 本番反映済み）。
+- 上に記録した **`correlated` の実例が未観測** であることは **本番 read-only 実測の事実の記録**であり、
+  **完成条件ではない**（名指しした対象と当該 sequence の touch が交差しなかったため）。
+  これを残件として再提起しない。
+- `direct` が成立しないのは provider の click tracking が無効なためで、**仕様どおり**。
+- **#374 / DRM を再監査しない。** 完成条件に独自の追加条件を足さない。
+
 ## 2026-08-19 — 【本番実行】再募集クーポンの初取得を 1 件記録（Daniel / 3 列のみ・0→1）
 
 PR #373 を squash merge（`367cccbc`）したうえで、承認どおり
