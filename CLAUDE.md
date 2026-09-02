@@ -246,8 +246,10 @@ CLAUDE.md 再編（2026-08-13）で旧セクションがどこへ行ったかの
 
 - ページ内で `localStorage` / `sessionStorage` の plan を読んで**表示可否を決めない**
   （入力補助・表示ラベル・UI 状態の保存は対象外）
-- ページが `user-plan` / `userPlan` / `userData` を**書かない**
-  （書いてよいのは `src/pages/auth/verify.astro` だけ）
+- `user-plan` / `userPlan` / `userData` に書いてよいのは**サーバー応答が返した値だけ**。
+  クライアントが作った値・URL クエリ由来の値を書かない
+  （有料会員の正本は `src/pages/auth/verify.astro`。`login` / `free-signup` / `dashboard` は
+  `auth-user` の応答を保存するが、有料会員は `requiresMagicLink` で必ず検証経路へ回る）
 - **URL クエリから権限を作らない**（`/welcome/?plan=` は撤去済み）
 - 正規の書き込み元が無い権限チャネルを読まない
   （`auth_data` / `sessionStorage.temp_auth` は削除済み。**復活させない**）

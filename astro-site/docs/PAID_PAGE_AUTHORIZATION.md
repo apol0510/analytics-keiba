@@ -67,8 +67,12 @@ for (const [k, v] of Object.entries(PAID_PAGE_HEADERS)) Astro.response.headers.s
 
 1. ページ内で `localStorage` / `sessionStorage` の plan を読んで**表示可否を決めない**
    （入力補助・表示ラベル・保存された UI 状態はこの限りではない）
-2. ページが `user-plan` / `userPlan` / `userData` を**書かない**。
-   書いてよいのは `src/pages/auth/verify.astro`（マジックリンク検証の応答）だけ
+2. `user-plan` / `userPlan` / `userData` に書いてよいのは
+   **サーバー応答（`verify-magic-link` / `auth-user`）が返した値だけ**。
+   クライアントが作った値・URL クエリ由来の値を書かない。
+   正本の書き込み元は `src/pages/auth/verify.astro`（有料会員はここだけ）。
+   `login.astro` / `free-signup.astro` / `dashboard.astro` は `auth-user` の応答を保存するが、
+   **有料会員はマジックリンク必須**（`requiresMagicLink`）なのでここから有料権限は生まれない
 3. URL クエリから権限を作らない（`/welcome/?plan=premium` は 2026-09-02 に撤去）
 4. 正規の書き込み元が無い権限チャネルを読まない
    （`auth_data` は 2026-08-08、`sessionStorage.temp_auth` は 2026-09-02 に削除）
