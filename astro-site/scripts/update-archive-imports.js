@@ -9,6 +9,23 @@
  *   node scripts/update-archive-imports.js        （引数なし = 今月）
  */
 
+/**
+ * ⚠️ 【2026-09-02】この手順は **現行運用ではない**（旧・月次手動フローの名残）。
+ *
+ * 実態:
+ *   - per-month JSON（archiveResults_YYYY-MM.json / archiveSanrenpukuResults_YYYY-MM.json）は
+ *     **凍結済み**（馬単 2026-04 / 三連複 2026-05 が最後。以降 1 件も追加されていない）。
+ *   - 新しい月は **combined JSON**（archiveResults.json / archiveSanrenpukuResults.json 等）へ
+ *     GitHub Actions の自動取込が書き込む。ページはそれを読むので **手作業は不要**。
+ *   - archive/index.astro は per-month を import せず combined を実行時に読む。
+ *   - archive-sanrenpuku/index.astro は **無条件 301 のランディング**（本文なし）。
+ *   - 月別詳細は archive-sanrenpuku/[year]/[month].astro（動的ルート）で、
+ *     `{year}/{month}.astro` を月ごとに作る運用ではなくなっている。
+ *
+ * したがって本スクリプトの各ステップは現状ほぼ空振りする。**復活させる前に上記の実態を確認すること。**
+ * 参照先の正しさは `npm run validate`（scripts/validate-archive-data.js）が検査する。
+ */
+
 const fs = require('fs');
 const path = require('path');
 
@@ -99,42 +116,13 @@ if (fs.existsSync(archiveYearIndexPath)) {
 }
 
 // ============================================================
-// 3. archive-sanrenpuku/index.astro 更新
+// 3. （削除済み）archive-sanrenpuku/index.astro 更新
 // ============================================================
-
-const sanrenpukuIndexPath = path.join(__dirname, '../src/pages/archive-sanrenpuku/index.astro');
-let sanrenpukuIndexContent = fs.readFileSync(sanrenpukuIndexPath, 'utf-8');
-
-// インポート文を追加
-const importStatement3 = `import archiveData${year}_${month} from '../../data/archiveSanrenpukuResults_${year}-${month}.json';`;
-if (!sanrenpukuIndexContent.includes(importStatement3)) {
-  const lastImportMatch = sanrenpukuIndexContent.match(/(import archiveData\d+_\d+ from '.*?';)\n/g);
-  if (lastImportMatch) {
-    const lastImport = lastImportMatch[lastImportMatch.length - 1];
-    sanrenpukuIndexContent = sanrenpukuIndexContent.replace(lastImport, lastImport + importStatement3 + '\n');
-  }
-
-  // archiveSanrenpukuResultsオブジェクトに追加
-  const yearDataMatch = sanrenpukuIndexContent.match(/('${year}':\s*\{[\s\S]*?\})/);
-  if (yearDataMatch) {
-    const yearDataBlock = yearDataMatch[0];
-    const newYearDataBlock = yearDataBlock.replace(/\}$/, `    ...archiveData${year}_${month}['${year}'],\n  }`);
-    sanrenpukuIndexContent = sanrenpukuIndexContent.replace(yearDataBlock, newYearDataBlock);
-  } else {
-    // 年がまだない場合は新規追加
-    const archiveDataMatch = sanrenpukuIndexContent.match(/(const archiveSanrenpukuResults = \{[\s\S]*?\};)/);
-    if (archiveDataMatch) {
-      const archiveDataBlock = archiveDataMatch[0];
-      const newArchiveDataBlock = archiveDataBlock.replace(/\};$/, `,\n  '${year}': {\n    ...archiveData${year}_${month}['${year}']\n  }\n};`);
-      sanrenpukuIndexContent = sanrenpukuIndexContent.replace(archiveDataBlock, newArchiveDataBlock);
-    }
-  }
-
-  fs.writeFileSync(sanrenpukuIndexPath, sanrenpukuIndexContent, 'utf-8');
-  console.log('✅ 更新: src/pages/archive-sanrenpuku/index.astro');
-} else {
-  console.log('⚠️  既存: src/pages/archive-sanrenpuku/index.astro（既にインポート済み）');
-}
+//
+// 2026-09-02: 同ファイルは無条件 301 のランディングになり、本文と import を削除した。
+// ここで import を追記しようとしても対象が無く、**変更なしのまま「✅ 更新」と表示する**
+// 誤解を招く挙動になっていたため、ステップごと除去した。
+// 月別データを参照しているのは 2025/index.astro ・ 2026/index.astro ・ [year]/[month].astro。
 
 // ============================================================
 // 4. archive-sanrenpuku/YEAR/index.astro 更新

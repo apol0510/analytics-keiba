@@ -48,9 +48,13 @@ const env = { SESSION_SIGNING_SECRET: SECRET };
 const FUTURE = '2027-08-01';
 const PAST = '2026-03-31';
 
-/** 三連複アーカイブ 6 ページ（判定は 1 つの定数に集約されている） */
+/**
+ * 三連複アーカイブのうち **本文を返すページ**（判定は 1 つの定数に集約されている）。
+ * `archive-sanrenpuku/index.astro` と `archive-sanrenpuku-jra/index.astro` は
+ * 無条件 301 のランディングで本文を返さないため、ここには入れない
+ * （301 が消えていないことは別テストで固定する）。
+ */
 const ARCHIVE_PAGES = [
-  'src/pages/archive-sanrenpuku/index.astro',
   'src/pages/archive-sanrenpuku/2025/index.astro',
   'src/pages/archive-sanrenpuku/2026/index.astro',
   'src/pages/archive-sanrenpuku-all/index.astro',
@@ -203,6 +207,11 @@ test('南関アーカイブのランディングは無条件 301 のまま（死
   const upto = src.slice(0, src.indexOf("Astro.redirect('/archive-sanrenpuku-all/', 301)"));
   assert.ok(!/\bif\s*\(/.test(upto.split('---')[1] ?? upto),
     `${rel}: 301 が条件付きになっている（無条件であること）`);
+  // 到達しない本文・import を持ち込まない（2026-09-02 に 917 行を削除した状態を維持する）
+  assert.ok(!/<BaseLayout|<div /.test(src), `${rel}: 到達しない本文が戻っている`);
+  // 経緯コメントで名前に触れるのは可。**import 文**が戻っていないことを見る。
+  assert.ok(!/import\s+\w+\s+from\s+['"][^'"]*archiveSanrenpukuResults_/.test(src),
+    `${rel}: per-month JSON の import が戻っている（月別ページが正本）`);
   // 中央側と同じ集約先であること
   assert.match(read('src/pages/archive-sanrenpuku-jra/index.astro'),
     /Astro\.redirect\('\/archive-sanrenpuku-all\/', 301\)/, '中央側ランディングの 301 が消えている');
