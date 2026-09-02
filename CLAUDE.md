@@ -193,6 +193,7 @@ PR の merge / production deploy / 本番データ書込み / env の変更 / qu
 |---|---|
 | **メールアドレスの正本（support / noreply の役割）** | [`EMAIL_ADDRESSES.md`](./astro-site/docs/EMAIL_ADDRESSES.md) |
 | ログイン（マジックリンク） | [`AUTH_LOGIN.md`](./astro-site/docs/AUTH_LOGIN.md) / [`AUTH_SESSION_DESIGN.md`](./astro-site/docs/AUTH_SESSION_DESIGN.md) |
+| **有料ページ認可の単一源（ページに独自 plan 判定を書かない）** | [`PAID_PAGE_AUTHORIZATION.md`](./astro-site/docs/PAID_PAGE_AUTHORIZATION.md) |
 | 管理画面の Basic 認証（`/admin/*`） | [`ADMIN_BASIC_AUTH.md`](./astro-site/docs/ADMIN_BASIC_AUTH.md) |
 | 銀行振込 入金確認フロー | [`BANK_TRANSFER_FLOW.md`](./astro-site/docs/BANK_TRANSFER_FLOW.md) |
 | 入金確認メール v2 | [`PAYMENT_EMAIL_V2.md`](./astro-site/docs/PAYMENT_EMAIL_V2.md) |
@@ -232,6 +233,33 @@ CLAUDE.md 再編（2026-08-13）で旧セクションがどこへ行ったかの
 - 割引額 / 期限 / 配布条件 / 併用可否 / 自動付与条件は**商品ごとに MK が決める**。
   **決まっていない条件を既定値で埋めない**
 
+### 🔐 有料ページの認可（2026-09-02 集約）
+
+**認可はサーバー側 `gatePaidPage`（`ak_session` + `resolveEntitlements`）だけで決める。
+ページに独自の plan 判定を書かない。** 正本は
+[`PAID_PAGE_AUTHORIZATION.md`](./astro-site/docs/PAID_PAGE_AUTHORIZATION.md)。
+
+事故: 三連複は買い切りの**追加権**で、入金確認時に書かれるのは `LifetimeSanrenpuku=true`
+**だけ**（`プラン` は `Premium` のまま）。`plan` 文字列だけを見るページ独自スクリプトが、
+購入済み会員を**無料体験ページへリダイレクト**し、**三連複アーカイブから締め出し**、
+**追加購入 CTA を出し続けて**いた。サーバー gate と `AccessControl` は正しく通していた。
+
+- ページ内で `localStorage` / `sessionStorage` の plan を読んで**表示可否を決めない**
+  （入力補助・表示ラベル・UI 状態の保存は対象外）
+- `user-plan` / `userPlan` / `userData` に書いてよいのは**サーバー応答が返した値だけ**。
+  クライアントが作った値・URL クエリ由来の値を書かない
+  （有料会員の正本は `src/pages/auth/verify.astro`。`login` / `free-signup` / `dashboard` は
+  `auth-user` の応答を保存するが、有料会員は `requiresMagicLink` で必ず検証経路へ回る）
+- **URL クエリから権限を作らない**（`/welcome/?plan=` は撤去済み）
+- 正規の書き込み元が無い権限チャネルを読まない
+  （`auth_data` / `sessionStorage.temp_auth` は削除済み。**復活させない**）
+- 三連複の保有を `plan` 文字列だけで判定しない。必ず `lifetimeSanrenpuku` を併せて見る
+- 南関だけ / 中央だけにページ独自の表示判定を足さない（**片側だけ壊れる**）
+- `gatePaidPage({ requiredPlan: [...] })` は any-of。三連複アーカイブ 6 ページは
+  `SANRENPUKU_ARCHIVE_PLANS`（馬単アップセル面 ＋ 保有者の実績面）を共有する
+
+検証: `npm run test:auth-session`（`paidPageSingleSourceGate.test.mjs`）— `check:safety` に組込済み
+
 ### 単一源を再実装しない
 
 | 判定 | 単一源 |
@@ -244,6 +272,8 @@ CLAUDE.md 再編（2026-08-13）で旧セクションがどこへ行ったかの
 | 銀行振込の書込みフィールド | `src/lib/payments/bankPaymentFlow.js` |
 | メールアドレス（問い合わせ先 / 送信元） | `netlify/functions/config/email-config.js` |
 | 権限（entitlement） | `src/lib/entitlements/resolveEntitlements.js` |
+| 有料ページの入口（サーバー認可） | `src/lib/auth/paidPageGate.js` の `gatePaidPage()` |
+| 三連複 CTA / 予告 / 結果の出し分け | `src/lib/sanrenpuku/sanrenpukuCtaStage.js` |
 
 ページ側・Function 側にローカル判定を再実装しない。
 

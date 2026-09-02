@@ -179,21 +179,12 @@ const { requiredPlan, showUpgrade = true } = Astro.props;
 
         // ⚠️ auth_data は正当な書き込み元が 1 つも無く、読むと localStorage 注入を
         //    そのまま権限として信じることになるため 2026-08-08 に削除した。
-        // 6. セッションストレージチェック（2026-02-09更新: Lifetime対応）
-        const sessionAuth = sessionStorage.getItem('temp_auth');
-        if (sessionAuth) {
-            try {
-                const { plan, planType, lifetimeSanrenpuku } = JSON.parse(sessionAuth);
-                return {
-                    user: { temp: true },
-                    plan: plan || 'free',
-                    planType: planType || 'Monthly',
-                    lifetimeSanrenpuku: lifetimeSanrenpuku || false
-                };
-            } catch (error) {
-                sessionStorage.removeItem('temp_auth');
-            }
-        }
+        // ⚠️ sessionStorage の `temp_auth` も**同じ理由で 2026-09-02 に削除**した。
+        //    repo 内に書き込み元が 1 つも存在せず（再確認済み）、読むと
+        //    「sessionStorage に JSON を入れるだけで plan と lifetimeSanrenpuku を
+        //    宣言できる」経路になっていた。**復活させないこと。**
+        //    会員状態の正本は ak_session（HttpOnly 署名 Cookie）と Airtable であり、
+        //    クライアントに書けるのは `auth/verify.astro` が保存する `user-plan` だけ。
 
         // 7. デフォルトは未登録
         console.log('❌ 認証データなし - 未登録状態');

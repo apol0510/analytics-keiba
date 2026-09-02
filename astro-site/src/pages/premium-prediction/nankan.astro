@@ -324,38 +324,9 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
             <span class="premium-status-text">プレミアム会員限定コンテンツ</span>
         </div>
 
-        <script is:inline>
-            // Premium会員のみ三連複昨日の結果を表示
-            (function() {
-                // user-plan（ハイフン）からJSON取得
-                const userPlanData = localStorage.getItem('user-plan');
-                let userPlan = null;
-
-                if (userPlanData) {
-                    try {
-                        const data = JSON.parse(userPlanData);
-                        userPlan = data.plan;
-                    } catch (e) {
-                        console.error('user-plan parse error:', e);
-                    }
-                }
-
-                // フォールバック：userPlan（キャメルケース）も確認
-                if (!userPlan) {
-                    userPlan = localStorage.getItem('userPlan');
-                }
-
-                const sanrenpukuSection = document.getElementById('sanrenpuku-yesterday-results');
-
-                if (sanrenpukuSection) {
-                    // 三連複購入済み（Premium Sanrenpuku / Combo / Full）には売る導線を出さない方針のため、
-                    // 的中結果の先行表示もここでは行わない（購入済み向け利用導線は別タスク）。
-                    // 馬単のみの未購入 Premium の先行結果は段階表示コントローラ（sanrenpukuCtaStage / 3日目以降）が担当する。
-                    // Light/Standard の表示は下部ゲートで制御。
-                    console.log('ℹ️ 三連複結果の先行表示は購入状況に応じて別ロジックで制御（userPlan: ' + userPlan + '）');
-                }
-            })();
-        </script>
+        {/* 2026-09-02: ここにあった「plan を読むだけで何も決めない」スクリプトを撤去した。
+            三連複の結果・CTA の表示可否は下の段階表示コントローラ（単一源
+            sanrenpukuCtaStage.js）が単独で持つ。判定をページに散らさない。 */}
 
         <script>
             // 三連複 段階表示コントローラ（単一源 sanrenpukuCtaStage.js を使用 / 中央 jra と同型）:
@@ -1330,49 +1301,10 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
             });
         }
 
-        // 🔒 三連複昨日の結果・アクセス制御（Standard/Premium会員のみ表示）
-        const sanrenpukuResultsSection = document.getElementById('sanrenpuku-yesterday-results');
-        if (sanrenpukuResultsSection) {
-            // AccessControlコンポーネントと同じロジックでプラン取得
-            let userPlan = null;
-
-            // 2. user-plan（新形式・JSON）
-            if (!userPlan) {
-                const userPlanData = localStorage.getItem('user-plan');
-                if (userPlanData) {
-                    try {
-                        const userData = JSON.parse(userPlanData);
-                        userPlan = userData.plan;
-                        console.log('📦 プラン検出（user-plan）:', userPlan);
-                    } catch (error) {
-                        // JSON parseに失敗したら文字列として扱う
-                        userPlan = userPlanData;
-                        console.log('📦 プラン検出（user-plan・文字列）:', userPlan);
-                    }
-                }
-            }
-
-            // 3. userPlan（旧形式互換）
-            if (!userPlan) {
-                userPlan = localStorage.getItem('userPlan');
-                console.log('📦 プラン検出（userPlan）:', userPlan);
-            }
-
-            console.log('🔍 最終プラン判定:', userPlan);
-
-            // Light/Standard（未購入・アップセル層）は従来どおり表示。
-            // 三連複購入済み（Premium Sanrenpuku / Combo / Full）には売る導線を出さない方針のため先行結果も非表示
-            // （購入済み向け利用導線は別タスク）。馬単のみの未購入 Premium は段階表示コントローラ（3日目以降）が担当。
-            if (userPlan === 'Light' || userPlan === 'light' || userPlan === 'ライト' ||
-                userPlan === 'Standard' || userPlan === 'standard') {
-                sanrenpukuResultsSection.style.display = 'block';
-                console.log('✅ 三連複昨日の結果表示: ' + userPlan + '会員');
-            } else if (userPlan === 'Premium Combo') {
-                console.log('🚫 三連複昨日の結果非表示: Premium Combo会員（/premium-sanrenpuku/で閲覧可能）');
-            } else {
-                console.log('🚫 三連複昨日の結果非表示: ' + (userPlan || '不明') + '（アクセス権限なし）');
-            }
-        }
+        // 三連複「昨日の結果」の表示可否は、上部の段階表示コントローラ
+        // （単一源 sanrenpukuCtaStage.js）が決める。ここに plan 文字列の判定を書かない。
+        // ⚠️ 2026-09-02: ここには plan 文字列だけを見る競合判定があり、
+        //    買い切り購入者（プラン=Premium + LifetimeSanrenpuku）を読み違えていた。
     });
 
     // お問い合わせモーダル制御

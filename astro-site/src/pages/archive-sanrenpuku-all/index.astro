@@ -1,11 +1,18 @@
 ---
 // 三連複 的中実績アーカイブ 統合ページ（中央JRA・南関を1ページにタブで並べる）。
 // ★ 的中実績（統計）は合算しない。中央と南関はそれぞれ独立して集計・表示する。
-// - 中央タブ: archiveSanrenpukuResultsJra.json を集計。月カードは /archive-sanrenpuku-jra/{y}/{m}/（getStaticPaths 生成）へ。
+// - 中央タブ: archiveSanrenpukuResultsJra.json を集計。月カードは /archive-sanrenpuku-jra/{y}/{m}/（SSR）へ。
 // - 南関タブ: 旧 per-month legacy JSON（＝手書き詳細ページと1:1）＋ combined をマージして集計。
 //   月カードは既存詳細ページ /archive-sanrenpuku/{y}/{m}/ が存在する月のみ（import.meta.glob で検証）。
 // 会員ゲート＋CTA＋銀行振込モーダル＋Sticky CTA は JRA archive と同型。購入は Premium Sanrenpuku（中央＋南関 両方）。
-export const prerender = true;
+// ⚠️ SSR。有料本文を組み立てる前にサーバー側で認可を確定させる（2026-09-02）。
+//    以前は「静的 HTML ＋ localStorage の plan 文字列」だけで判定しており、
+//      (1) 三連複を買い切りで保有する会員（プラン=Premium + LifetimeSanrenpuku）を締め出し、
+//      (2) 非会員でも URL 直打ち / localStorage 改変で本文を読めた。
+//    判定は正本（ak_session + resolveEntitlements）へ一本化する。ページ側に独自判定を書かない。
+export const prerender = false;
+import { gatePaidPage, PAID_PAGE_HEADERS, SANRENPUKU_ARCHIVE_PLANS } from '../../lib/auth/paidPageGate.js';
+import SessionKeepAlive from '../../components/SessionKeepAlive.astro';
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import jraData from '../../data/archiveSanrenpukuResultsJra.json';
 import nankanCombined from '../../data/archiveSanrenpukuResults.json';
@@ -13,7 +20,7 @@ import nankanCombined from '../../data/archiveSanrenpukuResults.json';
 const MONTH_LABEL = ['', '1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
 
 // 南関: 旧 per-month legacy JSON を全読み込み（詳細ページと同一の月データ）＋ combined をマージ。
-// 詳細ページは archive-sanrenpuku/[year]/[month].astro（getStaticPaths）で全月生成されるため、
+// 詳細ページは archive-sanrenpuku/[year]/[month].astro（SSR）が同じデータから描画するため、
 // 「リンク可能な月」の存在チェックは不要（全月リンク可・JRA と同方式）。
 const legacyMods = import.meta.glob('../../data/archiveSanrenpukuResults_*.json', { eager: true });
 
@@ -81,9 +88,9 @@ function buildVenue(data, hrefBase, validSet) {
   return { monthCards, hitRate, recovery, payout, hits, races, hasData: monthCards.length > 0, period };
 }
 
-// 中央: JRA は getStaticPaths で全月ページ生成済み → validSet 不要（全月リンク可）。
+// 中央: JRA は同じ JSON を SSR で引く → validSet 不要（全月リンク可）。
 const jra = buildVenue(jraData, '/archive-sanrenpuku-jra', null);
-// 南関: getStaticPaths で全月ページ生成済み → 全月カード化（validSet 不要・JRA と同方式）。
+// 南関: 同じマージ結果を SSR で引く → 全月カード化（validSet 不要・JRA と同方式）。
 const nankan = buildVenue(mergeNankan(), '/archive-sanrenpuku', null);
 
 const pageTitle = '中央競馬（JRA）・南関競馬 三連複 的中実績';
@@ -96,33 +103,29 @@ const jsonLd = {
   description: pageDesc,
   about: '中央競馬 JRA 南関競馬 三連複 AI予想 的中実績',
 };
+
+// ── サーバー側認可（この行より前で有料本文を組み立てない）──
+// any-of: 馬単 Premium（アップセル面）または 三連複保有（実績面）のどちらかで開く。
+const gate = await gatePaidPage({
+  request: Astro.request,
+  requiredPlan: SANRENPUKU_ARCHIVE_PLANS,
+  env: process.env, // 認可ライブラリは env を直接参照しない方針のため、ページ側で注入する
+});
+if (gate.response) return gate.response;
+for (const [k, v] of Object.entries(PAID_PAGE_HEADERS)) Astro.response.headers.set(k, v);
+
+// 三連複を保有しているか（購入済みに追加購入 CTA を出さないための判定）。
+// **サーバー側の正本 `resolveEntitlements` の結果をそのまま使う**。
+// 以前はクライアントで plan 文字列だけを見ており、買い切り購入者（プラン=Premium +
+// LifetimeSanrenpuku）に「三連複プランを見る」CTA が出続けていた（2026-09-02 と同型）。
+const ownsSanrenpuku = gate.entitlements?.canViewSanrenpuku === true;
+
 ---
 
+{/* ak_session の idle TTL 延長（会員確定ページのみ）*/}
+<SessionKeepAlive />
+
 <BaseLayout title={pageTitle} description={pageDesc} canonical="/archive-sanrenpuku-all/">
-    <!-- 🔒 会員専用認証チェック（クライアントサイド / casing 非依存 / dev はバイパス） -->
-    <script is:inline>
-      (function () {
-        function isDev() {
-          return location.hostname === 'localhost' || location.hostname === '127.0.0.1'
-            || location.port === '4321' || location.port === '3000';
-        }
-        var userPlan = null;
-        try {
-          var d = localStorage.getItem('user-plan');
-          if (d) userPlan = JSON.parse(d).plan;
-        } catch (e) {}
-        if (!userPlan) userPlan = localStorage.getItem('userPlan');
-        var planLower = userPlan ? String(userPlan).toLowerCase() : '';
-        var ALLOWED = ['premium','premium predictions','premiumpredictions',
-          'premium sanrenpuku','premiumsanrenpuku','premium combo','premiumcombo',
-          'premium plus','premiumplus','premium full'];
-        var isAllowed = !!userPlan && ALLOWED.indexOf(planLower) !== -1;
-        if (!isDev() && !isAllowed) {
-          alert('この実績ページは会員専用です。\n\nPremium会員にアップグレードすると、三連複の的中実績をご覧いただけます。');
-          window.location.href = '/premium-prediction/nankan/';
-        }
-      })();
-    </script>
 
     <div class="archive-container">
         <div class="archive-hero">
@@ -131,8 +134,9 @@ const jsonLd = {
             <p class="archive-sub">AI_SANRENPUKU_AXIS_V1 による自動集計実績（中央・南関それぞれの実績を掲載）</p>
         </div>
 
-        <!-- CTA（premium 馬単会員へのアップセル / 三連複保有会員には JS で非表示） -->
-        <div class="cta-box" id="cta-upsell-box" style="display: none;">
+        {/* CTA（馬単 Premium 会員へのアップセル）。三連複保有会員には出さない（判定はサーバー側 entitlements）*/}
+        {!ownsSanrenpuku && (
+        <div class="cta-box" id="cta-upsell-box">
             <h2 class="cta-title">🎯 中央＋南関、両方の三連複がこの一つで</h2>
             <p class="cta-text">
                 <strong>Premium Sanrenpuku なら中央（JRA）と南関、両方の三連複が使えます。</strong><br>
@@ -157,6 +161,7 @@ const jsonLd = {
                 </button>
             </div>
         </div>
+        )}
 
         <!-- 会場タブ（中央 / 南関）。的中実績は会場ごとに独立表示（合算しない）。 -->
         <div class="venue-tabs">
@@ -364,7 +369,8 @@ const jsonLd = {
     </div>
 
     <!-- Sticky CTA（三連複保有会員には JS で非表示） -->
-    <div class="sticky-cta" id="sticky-cta" style="display: none;">
+    {!ownsSanrenpuku && (
+    <div class="sticky-cta" id="sticky-cta">
         <div class="sticky-cta-content">
             <div class="sticky-cta-text">
                 <div class="sticky-cta-title">🎯 中央＋南関の三連複買い目をお求めの方へ</div>
@@ -375,6 +381,7 @@ const jsonLd = {
             </button>
         </div>
     </div>
+    )}
 
     <script type="application/ld+json" set:html={JSON.stringify(jsonLd)}></script>
 
@@ -392,24 +399,6 @@ const jsonLd = {
       });
     </script>
 
-    <!-- CTA / Sticky の表示制御: 三連複保有（Sanrenpuku/Combo/Full）会員には出さない。casing 非依存。 -->
-    <script is:inline>
-      (function () {
-        try {
-          var raw = localStorage.getItem('user-plan');
-          var plan = '';
-          if (raw) { try { plan = (JSON.parse(raw).plan || '').toString(); } catch (e) {} }
-          if (!plan) plan = localStorage.getItem('userPlan') || '';
-          plan = plan.toString().trim().toLowerCase();
-          var HAS_SRP = ['premium sanrenpuku','premiumsanrenpuku','premium combo','premiumcombo','premium full'];
-          if (HAS_SRP.indexOf(plan) !== -1) return;
-          var box = document.getElementById('cta-upsell-box');
-          var sticky = document.getElementById('sticky-cta');
-          if (box) box.style.display = '';
-          if (sticky) sticky.style.display = '';
-        } catch (e) {}
-      })();
-    </script>
 
     <!-- 銀行振込モーダル JS（JRA archive と同型 / 送信プラン=Premium Sanrenpuku Lifetime） -->
     <script is:inline>
