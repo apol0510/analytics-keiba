@@ -640,11 +640,13 @@ console.log('');
 // ============================================================
 
 console.log(`📝 次のステップ:\n`);
-console.log(`1. archive/index.astro を更新（${year}-${month}データをインポート）`);
-console.log(`2. archive/${year}/index.astro を更新（${year}-${month}データをインポート）`);
-console.log(`3. archive-sanrenpuku/index.astro を更新（${year}-${month}データをインポート）`);
-console.log(`4. archive-sanrenpuku/${year}/index.astro を更新（${year}-${month}データをインポート）`);
-console.log(`5. archive-sanrenpuku/${year}/${month}.astro を作成（前月をコピー）`);
+// ⚠️ 2026-09-02: この案内は旧・月次手動フローのもの。現行では per-month JSON は凍結され、
+//    新しい月は combined JSON へ自動取込される（手作業は不要）。実態は下の注記を参照。
+console.log(`1. archive-sanrenpuku/${year}/index.astro を更新（${year}-${month}データをインポート）`);
+console.log(`   ※ archive/index.astro は combined を実行時に読むため更新不要`);
+console.log(`   ※ archive-sanrenpuku/index.astro は 301 ランディングのため更新不要`);
+console.log(`   ※ 月別詳細は [year]/[month].astro（動的ルート）。月ごとのファイル作成は不要`);
+console.log(`2. npm run validate で参照漏れが無いか確認`);
 console.log('');
 console.log(`💡 自動更新スクリプトを実行:`);
 console.log(`   node scripts/update-archive-imports.js ${year} ${month}`);
