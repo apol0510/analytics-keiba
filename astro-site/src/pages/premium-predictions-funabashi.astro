@@ -165,79 +165,47 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
             <span class="premium-status-text">プレミアム会員限定コンテンツ</span>
         </div>
 
-        <script is:inline>
-            // Premium会員のみ三連複昨日の結果を表示
-            (function() {
-                // user-plan（ハイフン）からJSON取得
-                const userPlanData = localStorage.getItem('user-plan');
-                let userPlan = null;
-
-                if (userPlanData) {
-                    try {
-                        const data = JSON.parse(userPlanData);
-                        userPlan = data.plan;
-                    } catch (e) {
-                        console.error('user-plan parse error:', e);
-                    }
-                }
-
-                // フォールバック：userPlan（キャメルケース）も確認
-                if (!userPlan) {
-                    userPlan = localStorage.getItem('userPlan');
-                }
-
-                const sanrenpukuSection = document.getElementById('sanrenpuku-yesterday-results');
-
-                if (sanrenpukuSection) {
-                    // 🔧 2025-12-01修正: Premium会員・Premium Sanrenpuku会員のみ三連複結果を表示（Comboは非表示）
-                    if (userPlan === 'Premium' || userPlan === 'Premium Sanrenpuku') {
-                        sanrenpukuSection.style.display = 'block';
-                        console.log('✅ 三連複昨日の結果表示: ' + userPlan + '会員');
-                    } else if (userPlan === 'Premium Combo') {
-                        console.log('🚫 三連複昨日の結果非表示: Premium Combo会員（/premium-sanrenpuku/で閲覧可能）');
+        <script>
+            // 三連複 段階表示コントローラ（単一源 sanrenpukuCtaStage.js / premium-prediction/{nankan,jra} と同型）。
+            //
+            // ⚠️ 2026-09-02: ここには以前「plan 文字列だけを見る」独自スクリプトが 3 本あり、
+            //    三連複を買い切りで保有する会員（プラン=Premium + LifetimeSanrenpuku）を
+            //    「未購入の Premium 会員」と誤読して、**購入済みの方に追加購入 CTA と
+            //    無料体験ページ（/sanrenpuku-demo/）への導線を出し続けていた**。
+            //    判定はページに書かず、正本 `isFunnelTarget` / `planSanrenpukuDisplay` に委ねる。
+            import { isFunnelTarget, planSanrenpukuDisplay } from '../lib/sanrenpuku/sanrenpukuCtaStage.js';
+            // 販売導線の選択（UpsellTarget）。plus / none 指定なら三連複は出さない（2 商品を並べない）。
+            import { canShowSanrenpukuUpsell } from '../lib/upsell/upsellClient.js';
+            (async function () {
+                if (!(await canShowSanrenpukuUpsell())) return;
+                var ctaEl = document.getElementById('sanrenpuku-cta-section');
+                var resultEl = document.getElementById('sanrenpuku-yesterday-results');
+                if (!ctaEl && !resultEl) return;
+                var planRaw = '';
+                var srpLifetime = false;
+                // 三連複の買い切り購入者は plan が 'Premium' のままなので、保有の目印は lifetimeSanrenpuku だけ。
+                try { var raw = localStorage.getItem('user-plan'); if (raw) { var up = JSON.parse(raw); planRaw = (up.plan || ''); srpLifetime = up.lifetimeSanrenpuku === true; } } catch (e) {}
+                if (!planRaw) { try { planRaw = localStorage.getItem('userPlan') || ''; } catch (e) {} }
+                if (!isFunnelTarget(planRaw, srpLifetime)) return; // 三連複保有・無料・未ログイン → 何も出さない
+                var now = Date.now();
+                var firstSeen = 0;
+                try { firstSeen = parseInt(localStorage.getItem('ak-umatan-first-seen') || '0', 10) || 0; } catch (e) {}
+                if (!firstSeen) { firstSeen = now; try { localStorage.setItem('ak-umatan-first-seen', String(now)); } catch (e) {} }
+                var dismissed = false;
+                try { dismissed = localStorage.getItem('ak-srp-cta-dismissed') === '1'; } catch (e) {}
+                var view = planSanrenpukuDisplay({ planRaw: planRaw, lifetimeSanrenpuku: srpLifetime, dismissed: dismissed, firstSeen: firstSeen, now: now, hasResultSection: !!resultEl });
+                if (resultEl && view.showResult) resultEl.style.display = 'block';
+                if (ctaEl) {
+                    ctaEl.style.display = view.showCta ? '' : 'none';
+                    if (view.showCta) {
+                        var closeBtn = ctaEl.querySelector('.srp-cta-close');
+                        if (closeBtn) closeBtn.addEventListener('click', function () {
+                            ctaEl.style.display = 'none';
+                            try { localStorage.setItem('ak-srp-cta-dismissed', '1'); } catch (e) {}
+                        });
                     }
                 }
             })();
-        </script>
-
-        <script is:inline>
-            // Premium Combo・Premium Sanrenpuku会員は三連複CTAを非表示
-            document.addEventListener('DOMContentLoaded', function() {
-                // user-plan（ハイフン）からJSON取得
-                const userPlanData = localStorage.getItem('user-plan');
-                let userPlan = null;
-
-                if (userPlanData) {
-                    try {
-                        const data = JSON.parse(userPlanData);
-                        userPlan = data.plan;
-                    } catch (e) {
-                        console.error('user-plan parse error:', e);
-                    }
-                }
-
-                // フォールバック：userPlan（キャメルケース）も確認
-                if (!userPlan) {
-                    userPlan = localStorage.getItem('userPlan');
-                }
-
-                console.log('🔍 CTA制御: userPlan =', userPlan);
-
-                const sanrenpukuCta = document.getElementById('sanrenpuku-cta-section');
-                console.log('📍 sanrenpuku-cta-section要素:', sanrenpukuCta);
-
-                // Premium Combo・Premium Sanrenpuku会員はCTA非表示
-                if (userPlan === 'Premium Combo' || userPlan === 'Premium Sanrenpuku') {
-                    if (sanrenpukuCta) {
-                        sanrenpukuCta.style.display = 'none';
-                        console.log('✅ 三連複CTA非表示完了');
-                    } else {
-                        console.error('❌ sanrenpuku-cta-section要素が見つかりません');
-                    }
-                } else {
-                    console.log('ℹ️ 三連複CTA表示（プラン:', userPlan, ')');
-                }
-            });
         </script>
 
         <!-- 買い目モデルの選び方ガイド（アコーディオン） -->
@@ -922,7 +890,8 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
         </div>
 
         <!-- 三連複商品への導線セクション -->
-        <div class="sanrenpuku-upsell-section" id="sanrenpuku-cta-section">
+        {/* 既定は非表示（fail closed）。段階表示コントローラが funnel 対象にだけ出す。 */}
+        <div class="sanrenpuku-upsell-section" id="sanrenpuku-cta-section" style="display: none;">
           <div class="sanrenpuku-upsell-card">
             <div class="upsell-icon-wrapper">
               <span class="new-badge">NEW</span>
@@ -1114,52 +1083,8 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
             });
         }
 
-        // 🔒 三連複昨日の結果・アクセス制御（Standard/Premium会員のみ表示）
-        const sanrenpukuResultsSection = document.getElementById('sanrenpuku-yesterday-results');
-        if (sanrenpukuResultsSection) {
-            // AccessControlコンポーネントと同じロジックでプラン取得
-            let userPlan = null;
-
-            // 2. user-plan（新形式・JSON）
-            if (!userPlan) {
-                const userPlanData = localStorage.getItem('user-plan');
-                if (userPlanData) {
-                    try {
-                        const userData = JSON.parse(userPlanData);
-                        userPlan = userData.plan;
-                        console.log('📦 プラン検出（user-plan）:', userPlan);
-                    } catch (error) {
-                        // JSON parseに失敗したら文字列として扱う
-                        userPlan = userPlanData;
-                        console.log('📦 プラン検出（user-plan・文字列）:', userPlan);
-                    }
-                }
-            }
-
-            // 3. userPlan（旧形式互換）
-            if (!userPlan) {
-                userPlan = localStorage.getItem('userPlan');
-                console.log('📦 プラン検出（userPlan）:', userPlan);
-            }
-
-            console.log('🔍 最終プラン判定:', userPlan);
-
-            // 🔧 2025-12-01修正: Premium会員・Premium Sanrenpuku会員のみ三連複結果を表示（Comboは非表示）
-            // Standard/Premium（馬単プラン）は三連複アップセル用に表示
-            // Premium Sanrenpukuは契約プランとして表示
-            // Premium Comboは/premium-sanrenpuku/で閲覧（/premium-predictions/では非表示）
-            if (userPlan === 'Light' || userPlan === 'light' || userPlan === 'ライト' ||
-                userPlan === 'Standard' || userPlan === 'standard' ||
-                userPlan === 'Premium' || userPlan === 'premium' ||
-                userPlan === 'Premium Sanrenpuku') {
-                sanrenpukuResultsSection.style.display = 'block';
-                console.log('✅ 三連複昨日の結果表示: ' + userPlan + '会員');
-            } else if (userPlan === 'Premium Combo') {
-                console.log('🚫 三連複昨日の結果非表示: Premium Combo会員（/premium-sanrenpuku/で閲覧可能）');
-            } else {
-                console.log('🚫 三連複昨日の結果非表示: ' + (userPlan || '不明') + '（アクセス権限なし）');
-            }
-        }
+        // 三連複「昨日の結果」の表示可否は、上部の段階表示コントローラ
+        // （単一源 sanrenpukuCtaStage.js）が決める。ここに plan 文字列の判定を書かない。
     });
 
     // お問い合わせモーダル制御

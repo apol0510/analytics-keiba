@@ -1,5 +1,12 @@
 ---
-export const prerender = true;
+// ⚠️ SSR。有料本文を組み立てる前にサーバー側で認可を確定させる（2026-09-02）。
+//    以前は「静的 HTML ＋ localStorage の plan 文字列」だけで判定しており、
+//      (1) 三連複を買い切りで保有する会員（プラン=Premium + LifetimeSanrenpuku）を締め出し、
+//      (2) 非会員でも URL 直打ち / localStorage 改変で本文を読めた。
+//    判定は正本（ak_session + resolveEntitlements）へ一本化する。ページ側に独自判定を書かない。
+export const prerender = false;
+import { gatePaidPage, PAID_PAGE_HEADERS, SANRENPUKU_ARCHIVE_PLANS } from '../../../lib/auth/paidPageGate.js';
+import SessionKeepAlive from '../../../components/SessionKeepAlive.astro';
 import archiveData2025_11 from '../../../data/archiveSanrenpukuResults_2025-11.json';
 import archiveData2025_12 from '../../../data/archiveSanrenpukuResults_2025-12.json';
 
@@ -57,7 +64,19 @@ const monthSummaries = months.map(month => {
 });
 
 const yearHitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) : 0;
+
+// ── サーバー側認可（この行より前で有料本文を組み立てない）──
+// any-of: 馬単 Premium（アップセル面）または 三連複保有（実績面）のどちらかで開く。
+const gate = await gatePaidPage({
+  request: Astro.request,
+  requiredPlan: SANRENPUKU_ARCHIVE_PLANS,
+  env: process.env, // 認可ライブラリは env を直接参照しない方針のため、ページ側で注入する
+});
+if (gate.response) return gate.response;
+for (const [k, v] of Object.entries(PAID_PAGE_HEADERS)) Astro.response.headers.set(k, v);
+
 ---
+
 
 <!DOCTYPE html>
 <html lang="ja">
@@ -67,52 +86,6 @@ const yearHitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 1
   <title>2025年 三連複的中実績アーカイブ | KEIBA Analytics｜競馬アナリティクス</title>
   <meta name="description" content="2025年の全月別三連複的中実績。パーフェクト的中の記録と月間統計を確認できます。">
 
-  <!-- 🔒 Premium会員専用認証チェック（クライアントサイドJavaScript） -->
-  <script is:inline>
-    // LocalStorageからプラン情報取得
-    let userPlan = null;
-    let userEmail = null;
-
-    const userPlanData = localStorage.getItem('user-plan');
-    if (userPlanData) {
-      try {
-        const parsed = JSON.parse(userPlanData);
-        userPlan = parsed.plan;
-        userEmail = parsed.email;
-      } catch (e) {
-        console.error('user-plan parse error:', e);
-      }
-    }
-
-    if (!userPlan) {
-      userPlan = localStorage.getItem('userPlan');
-    }
-
-    // Premium Predictions → Premium 自動正規化
-    if (userPlan) {
-      const planLowerOriginal = userPlan.toLowerCase();
-      if (planLowerOriginal === 'premium predictions') {
-        localStorage.setItem('userPlan', 'Premium');
-        userPlan = 'Premium';
-      }
-    }
-
-    console.log('🔍 Archive Sanrenpuku 2025年トップ アクセスチェック');
-    console.log('Email:', userEmail);
-    console.log('Plan:', userPlan);
-
-    // Premium会員のみアクセス可能（大文字小文字区別なし）
-    const planLower = userPlan ? userPlan.toLowerCase() : '';
-    const isPremium = planLower === 'premium' || planLower === 'premium predictions';
-
-    if (!userPlan || !isPremium) {
-      console.log('❌ アクセス拒否 - planLower:', planLower);
-      alert('この機能はPremium会員専用です。\n\nPremium会員にアップグレードすると、三連複的中実績をご覧いただけます。');
-      window.location.href = '/premium-prediction/nankan';
-    } else {
-      console.log('✅ アクセス許可 - isPremium:', isPremium);
-    }
-  </script>
 
   <style>
     * {
@@ -313,6 +286,8 @@ const yearHitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 1
   </style>
 </head>
 <body>
+    {/* ak_session の idle TTL 延長（会員確定ページのみ）*/}
+    <SessionKeepAlive />
   <div class="container">
     <div class="header">
       <h1 class="title">🏆 2025年 三連複的中実績アーカイブ</h1>

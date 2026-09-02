@@ -1,4 +1,12 @@
 ---
+// ⚠️ SSR。有料本文を組み立てる前にサーバー側で認可を確定させる（2026-09-02）。
+//    以前は「静的 HTML ＋ localStorage の plan 文字列」だけで判定しており、
+//      (1) 三連複を買い切りで保有する会員（プラン=Premium + LifetimeSanrenpuku）を締め出し、
+//      (2) 非会員でも URL 直打ち / localStorage 改変で本文を読めた。
+//    判定は正本（ak_session + resolveEntitlements）へ一本化する。ページ側に独自判定を書かない。
+export const prerender = false;
+import { gatePaidPage, PAID_PAGE_HEADERS, SANRENPUKU_ARCHIVE_PLANS } from '../../lib/auth/paidPageGate.js';
+import SessionKeepAlive from '../../components/SessionKeepAlive.astro';
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import archiveData2025_11 from '../../data/archiveSanrenpukuResults_2025-11.json';
 import archiveData2025_12 from '../../data/archiveSanrenpukuResults_2025-12.json';
@@ -91,79 +99,29 @@ const latestMonth = latestMonths[0];
 
 const title = '三連複的中実績アーカイブ';
 const description = 'KEIBA Analyticsの三連複買い目的中実績を年別にご覧いただけます。AI予想による高精度な三連複予想の実績をご確認ください。';
+
+// ── サーバー側認可（この行より前で有料本文を組み立てない）──
+// any-of: 馬単 Premium（アップセル面）または 三連複保有（実績面）のどちらかで開く。
+const gate = await gatePaidPage({
+  request: Astro.request,
+  requiredPlan: SANRENPUKU_ARCHIVE_PLANS,
+  env: process.env, // 認可ライブラリは env を直接参照しない方針のため、ページ側で注入する
+});
+if (gate.response) return gate.response;
+for (const [k, v] of Object.entries(PAID_PAGE_HEADERS)) Astro.response.headers.set(k, v);
+
+// 三連複を保有しているか（購入済みに追加購入 CTA を出さないための判定）。
+// **サーバー側の正本 `resolveEntitlements` の結果をそのまま使う**。
+// 以前はクライアントで plan 文字列だけを見ており、買い切り購入者（プラン=Premium +
+// LifetimeSanrenpuku）に追加購入 CTA が出続けていた（2026-09-02 の事故と同型）。
+const ownsSanrenpuku = gate.entitlements?.canViewSanrenpuku === true;
+
 ---
 
+{/* ak_session の idle TTL 延長（会員確定ページのみ）*/}
+<SessionKeepAlive />
+
 <BaseLayout title={title} description={description}>
-  <!-- 🔒 Premium会員専用認証チェック（クライアントサイドJavaScript） -->
-  <script is:inline>
-    // LocalStorageからプラン情報取得
-    // 🔴 重要: user-planオブジェクトから取得（premium-predictions.astroと同じロジック）
-    let userPlan = null;
-    let userEmail = null;
-
-    // user-planオブジェクトから取得（メインの認証方法）
-    const userPlanData = localStorage.getItem('user-plan');
-    if (userPlanData) {
-      try {
-        const parsed = JSON.parse(userPlanData);
-        userPlan = parsed.plan;
-        userEmail = parsed.email;
-      } catch (e) {
-        console.error('user-plan parse error:', e);
-      }
-    }
-
-    // フォールバック：userPlan（キャメルケース）も確認
-    if (!userPlan) {
-      userPlan = localStorage.getItem('userPlan');
-    }
-
-    // 🔴 LocalStorageキャッシュ問題対策（2025-11-04）
-    // 問題: 古い'Premium Predictions'がLocalStorageに残り続ける
-    // 解決: クライアントサイドで自動正規化してLocalStorageを更新
-    if (userPlan) {
-      const planLowerOriginal = userPlan.toLowerCase();
-      let normalizedPlan = userPlan;
-
-      // Premium Predictionsを自動的にPremiumに正規化
-      if (planLowerOriginal === 'premium predictions') {
-        normalizedPlan = 'Premium';
-        localStorage.setItem('userPlan', normalizedPlan);
-        console.log('🔄 プラン正規化: "Premium Predictions" → "Premium"');
-        userPlan = normalizedPlan;
-      }
-    }
-
-    // デバッグログ
-    console.log('🔍 Archive Sanrenpuku アクセスチェック');
-    console.log('Email:', userEmail);
-    console.log('Plan:', userPlan);
-
-    // Premium会員のみアクセス可能（大文字小文字区別なし）
-    // Premium Combo・Premium Sanrenpukuはアクセス不可
-    // ※Premium Plusは単発商品（会員プランではない）のため判定不要
-    const planLower = userPlan ? userPlan.toLowerCase() : '';
-
-    // 🔴 三連複アーカイブアクセス制御（2026-05-08修正: Standard廃止に伴いPremiumのみへ）
-    // アクセス可能: Premium / Premium Predictions
-    // アクセス不可: Free / Standard / Premium Sanrenpuku / Premium Combo
-    const isPremium = planLower === 'premium' || planLower === 'premium predictions';
-    const isAllowed = isPremium;
-
-    console.log('🔍 三連複アーカイブアクセス判定:');
-    console.log('  userPlan:', userPlan);
-    console.log('  planLower:', planLower);
-    console.log('  isPremium:', isPremium);
-    console.log('  isAllowed:', isAllowed);
-
-    if (!userPlan || !isAllowed) {
-      console.log('❌ アクセス拒否');
-      alert('この機能はPremium会員専用です。\n\nPremium会員にアップグレードすると、三連複的中実績をご覧いただけます。');
-      window.location.href = '/premium-prediction/nankan';
-    } else {
-      console.log('✅ アクセス許可');
-    }
-  </script>
 
   <div class="archive-container">
     <!-- ヘッダーセクション -->
@@ -215,7 +173,8 @@ const description = 'KEIBA Analyticsの三連複買い目的中実績を年別�
       ))}
     </div>
 
-    <!-- CTAセクション -->
+    {/* CTA（馬単 Premium 会員へのアップセル）。三連複保有会員には出さない（判定はサーバー側 entitlements）*/}
+    {!ownsSanrenpuku && (
     <div class="cta-box">
       <h2 class="cta-title">🎯 高性能AI三連複絞り込み機能搭載</h2>
       <p class="cta-text">
@@ -244,6 +203,7 @@ const description = 'KEIBA Analyticsの三連複買い目的中実績を年別�
         </button>
       </div>
     </div>
+    )}
   </div>
 
     <!-- 銀行振込モーダル -->
