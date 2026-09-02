@@ -1,9 +1,23 @@
 ---
-// ⚠️ SSR。有料本文を組み立てる前にサーバー側で認可を確定させる（2026-09-02）。
-//    以前は「静的 HTML ＋ localStorage の plan 文字列」だけで判定しており、
-//      (1) 三連複を買い切りで保有する会員（プラン=Premium + LifetimeSanrenpuku）を締め出し、
-//      (2) 非会員でも URL 直打ち / localStorage 改変で本文を読めた。
-//    判定は正本（ak_session + resolveEntitlements）へ一本化する。ページ側に独自判定を書かない。
+// ⚠️ このページは **無条件 301 リダイレクトだけ**を行う（下の Astro.redirect）。
+//    以降のコード（gate / imports / 本文 / style）は **到達しない死んだコード**である。
+//
+//    2026-09-02 訂正: #491 の作業時、ここに「以前は静的 HTML ＋ localStorage の plan 文字列で
+//    判定しており、非会員でも URL 直打ちで本文を読めた」と書いたが、**この 1 ページについては誤り**。
+//    301 は #491 より前から入っており、本文は一度も返していない（本番でも 301 を実測）。
+//    実際に購入済み会員を締め出していたのは、到達可能な `2025/index.astro` / `2026/index.astro`。
+//
+//    死んだコードを消していない理由（**消す前に必ず読むこと**）:
+//      月次メンテのスクリプトがこのファイルの **import 行**を正本として読んでいる。
+//        - `scripts/validate-archive-data.js`（`npm run validate`）… import 漏れを検出し **hasError にする**
+//        - `scripts/update-archive-imports.js` … 新しい月の import を **このファイルに追記**する
+//        - `scripts/create-new-month-archive.js` … 手順書として本ファイル名を案内する
+//      本文だけ消すと上記が壊れる / 黙って no-op になる。純粋な 301 ページ
+//      （`archive-sanrenpuku-jra/index.astro` と同じ形）へ整理するなら、
+//      **3 スクリプトの参照先を実際に描画するページへ移すのが先**。別タスク。
+//
+//    なお 301 を外した場合でも、下の `gatePaidPage` が本文より前に実行されるため
+//    未認可へ本文が出ることはない（fail closed は維持されている）。
 export const prerender = false;
 import { gatePaidPage, PAID_PAGE_HEADERS, SANRENPUKU_ARCHIVE_PLANS } from '../../lib/auth/paidPageGate.js';
 import SessionKeepAlive from '../../components/SessionKeepAlive.astro';

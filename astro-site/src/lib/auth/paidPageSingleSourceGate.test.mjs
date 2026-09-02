@@ -191,6 +191,23 @@ test('三連複アーカイブ 6 ページは SSR + 正本 gate で、独自判�
   }
 });
 
+test('南関アーカイブのランディングは無条件 301 のまま（死んだ本文を live にしない）', () => {
+  const rel = 'src/pages/archive-sanrenpuku/index.astro';
+  const src = read(rel);
+  // 301 は #491 より前から入っており、このページは本文を返さない。
+  // 以降のコードは到達しないが、月次メンテ 3 スクリプトが import 行を読むため残している
+  // （経緯はファイル冒頭のコメント）。**リダイレクトを消すと 900 行超の古い本文が live になる。**
+  assert.match(src, /Astro\.redirect\('\/archive-sanrenpuku-all\/', 301\)/,
+    `${rel}: 301 が消えている（到達しないはずの本文が live になる）`);
+  // 条件分岐の中に入れられていない＝無条件であること
+  const upto = src.slice(0, src.indexOf("Astro.redirect('/archive-sanrenpuku-all/', 301)"));
+  assert.ok(!/\bif\s*\(/.test(upto.split('---')[1] ?? upto),
+    `${rel}: 301 が条件付きになっている（無条件であること）`);
+  // 中央側と同じ集約先であること
+  assert.match(read('src/pages/archive-sanrenpuku-jra/index.astro'),
+    /Astro\.redirect\('\/archive-sanrenpuku-all\/', 301\)/, '中央側ランディングの 301 が消えている');
+});
+
 test('アーカイブの購入 CTA は購入済み（canViewSanrenpuku）に出さない', () => {
   for (const rel of ARCHIVE_PAGES) {
     const src = read(rel);
