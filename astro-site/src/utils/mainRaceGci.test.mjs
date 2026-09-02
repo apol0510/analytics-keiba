@@ -202,11 +202,15 @@ test('getMainRaceNumber は開催数から一意にメインを決める', () =>
 
 // ── Light・Premium 正本収束（ソース静的検査） ─────────────────────
 const src = (rel) => readFileSync(new URL(rel, import.meta.url), 'utf8');
+// 2026-09-02: 会場別 2 ページ（-urawa / -funabashi）は **301 リダイレクトのみ**へ畳んだ。
+// サイト内から一切リンクされておらず、`/light-predictions/` が会場を問わず南関の
+// 最新開催日を表示するため機能的に重複していた（重複したまま直すと片側が旧仕様で残る）。
+// 予想を描画する Light ページはこの 2 枚だけ。
+// 畳んだ 2 枚が予想描画に戻っていないことは
+// `src/lib/navigation/memberPredictionFunnel.guard.test.mjs` が検査する。
 const LIGHT_PAGES = [
   '../pages/light-predictions.astro',
   '../pages/light-predictions-jra.astro',
-  '../pages/light-predictions-urawa.astro',
-  '../pages/light-predictions-funabashi.astro',
 ];
 
 test('4つのLightページにローカル generateOneLineUmatanBets が残っていない', () => {
@@ -233,7 +237,7 @@ test('Premium JRA は保存 bettingLines.umatan を優先（無ければ正本�
   assert.ok(s.includes('generateRaceUmatanLines'), 'フォールバックの正本生成を参照していない');
 });
 
-test('浦和・船橋を含む全Lightがメインレース買い目だけを表示する既存ゲートを維持', () => {
+test('予想を描画する全Lightページがメインレース買い目だけを表示する既存ゲートを維持', () => {
   for (const p of LIGHT_PAGES) {
     const s = src(p);
     assert.ok(s.includes('standardRaces') || s.includes('PLAN_ACCESS.standard'), `${p} のメイン限定ゲートが消えている`);

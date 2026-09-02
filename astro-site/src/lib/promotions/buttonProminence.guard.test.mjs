@@ -80,7 +80,15 @@ const DARK_PAGES = allPages().filter((p) => read(p).includes('.dark-horse-link-b
 
 test('穴馬リンクを置いているページを取りこぼしていない', () => {
   // 0 件なら guard が素通りしている（検査対象の消失を失敗として扱う）
-  assert.ok(DARK_PAGES.length >= 12, `検査対象が ${DARK_PAGES.length} ページしかない`);
+  //
+  // 2026-09-02: 12 → 10 へ**意図的に**減らした。
+  // `light-predictions-urawa.astro` / `light-predictions-funabashi.astro` は
+  // サイト内から一切リンクされていない孤立ページだったため、`/light-predictions/` への
+  // 301 のみに畳んだ（正本: docs/MEMBER_PREDICTION_FUNNEL.md）。
+  // ⚠️ **表示を持つページから穴馬リンクが消えたわけではない。**
+  //    この数字を下げるのは「ページごと畳んだ」ときだけ。スタイル崩れや
+  //    リンク削除で減ったときは、下げずに原因を直すこと。
+  assert.ok(DARK_PAGES.length >= 10, `検査対象が ${DARK_PAGES.length} ページしかない`);
 });
 
 test('穴馬リンクは塗りつぶしのオレンジにしない（本文より目立たせない）', () => {

@@ -873,7 +873,29 @@ const fullTitle = pageTitle
                              しかも有料への導線であるプレビューが先頭に来ていた。
                              プレビューは有料版の中身を見せる導線なので「有料版」に統合する。
                              トップ項目 8→7 になり、1009px でのはみ出し(58px)も解消する。 */}
-                        <li class="has-submenu">
+                        {/* 2026-09-02: ログイン後だけ先頭を「🎯 今日の予想」に差し替える。
+                             ⚠️ **項目は増やしていない**（上部ナビは同時 6 項目が上限。
+                                navLayout.guard.test.mjs が固定している）。
+                                未ログイン = 無料予想 / ログイン後 = 今日の予想 の**入れ替え**。
+                             それまで上部ナビには **有料予想へのリンクが 1 本も無く**、
+                             Light / Premium 会員が予想へ行く道はマイページのカード 1 枚だけだった。
+                             そのカードは localStorage 依存で消えるため、会員がサイト内から
+                             予想へ到達できなくなる事故が起きていた（2026-09-02 の問い合わせ）。
+                             行き先は `/today/` が**サーバー側で**権利を見て振り分ける
+                             （src/lib/navigation/predictionDestination.js が単一源）。
+                             ⚠️ ナビの出し分け自体は従来どおり localStorage（readNavAuthState）由来。
+                                履歴を消した会員には「無料予想」が出るが、その場合でも
+                                **マイページはサーバー権威で会員と判定して予想カードを出す**ので
+                                導線は途切れない（正本: docs/MEMBER_PREDICTION_FUNNEL.md）。 */}
+                        <li id="nav-today" class="has-submenu nav-auth-item" style="display: none;">
+                            <a href="/today/"><span class="nav-icon">🎯</span> <span class="nav-text">今日の予想</span><span class="nav-caret">▾</span></a>
+                            <ul class="submenu submenu-grouped">
+                                <li class="submenu-group-label">🔍 無料予想</li>
+                                <li><a href="/free/jra/">中央競馬<span class="venue-tag">JRA</span></a></li>
+                                <li><a href="/free/nankan/">南関競馬<span class="venue-tag">NANKAN</span></a></li>
+                            </ul>
+                        </li>
+                        <li id="nav-free" class="has-submenu nav-auth-item">
                             <a href="/free/"><span class="nav-icon">🔍</span> <span class="nav-text">無料予想</span><span class="nav-caret">▾</span></a>
                             <ul class="submenu">
                                 <li><a href="/free/jra/">中央競馬<span class="venue-tag">JRA</span></a></li>
@@ -938,6 +960,9 @@ const fullTitle = pageTitle
         <nav class="mobile-nav-menu" id="mobile-nav-menu">
             <div class="container">
                 <ul>
+                    {/* 2026-09-02: スマホにも「今日の予想」を先頭へ。行き先はサーバー（/today/）が決める。
+                         スマホは件数上限が無いので、無料予想の入口はそのまま残す。 */}
+                    <li><a href="/today/" onclick="document.getElementById('mobile-nav-menu').classList.remove('active')"><span class="mobile-nav-icon">🎯</span> 今日の予想</a></li>
                     <li><a href="/free/" onclick="document.getElementById('mobile-nav-menu').classList.remove('active')"><span class="mobile-nav-icon">🔍</span> 無料予想</a></li>
                     <li><a href="/free/jra/" class="mobile-nav-sublink" onclick="document.getElementById('mobile-nav-menu').classList.remove('active')">┗ 中央競馬（JRA）</a></li>
                     <li><a href="/free/nankan/" class="mobile-nav-sublink" onclick="document.getElementById('mobile-nav-menu').classList.remove('active')">┗ 南関競馬（NANKAN）</a></li>
@@ -1138,6 +1163,11 @@ const fullTitle = pageTitle
                 const navSignup = document.getElementById('nav-signup');
                 const navLogin = document.getElementById('nav-login');
                 const navDashboard = document.getElementById('nav-dashboard');
+                // 2026-09-02: 先頭項目の入れ替え（未ログイン=無料予想 / ログイン後=今日の予想）。
+                // ⚠️ **足すのではなく入れ替える**。上部ナビは同時 6 項目が上限
+                //    （navLayout.guard.test.mjs）。両方出すと 7 項目になり、ヘッダから溢れる。
+                const navToday = document.getElementById('nav-today');
+                const navFree = document.getElementById('nav-free');
                 
                 const mobileNavSignup = document.getElementById('mobile-nav-signup');
                 const mobileNavLogin = document.getElementById('mobile-nav-login');
@@ -1156,6 +1186,8 @@ const fullTitle = pageTitle
                     if (navSignup) navSignup.style.display = 'none';
                     if (navLogin) navLogin.style.display = 'none';
                     if (navDashboard) navDashboard.style.display = 'block';
+                    if (navToday) navToday.style.display = 'block';
+                    if (navFree) navFree.style.display = 'none';
                     
                     if (mobileNavSignup) mobileNavSignup.style.display = 'none';
                     if (mobileNavLogin) mobileNavLogin.style.display = 'none';
@@ -1175,6 +1207,8 @@ const fullTitle = pageTitle
                     if (navSignup) navSignup.style.display = 'block';
                     if (navLogin) navLogin.style.display = 'block';
                     if (navDashboard) navDashboard.style.display = 'none';
+                    if (navToday) navToday.style.display = 'none';
+                    if (navFree) navFree.style.display = 'block';
                     
                     if (mobileNavSignup) mobileNavSignup.style.display = 'block';
                     if (mobileNavLogin) mobileNavLogin.style.display = 'block';

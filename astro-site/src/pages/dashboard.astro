@@ -1,20 +1,84 @@
 ---
-export const prerender = true; // 静的サイト生成用に戻す
+/**
+ * マイページ。
+ *
+ * ⚠️ 2026-09-02: `prerender = true`（静的）から **SSR へ変更**した。
+ *
+ * それまでこのページは「ログイン済みか」も「どのカードを出すか」も
+ * **localStorage だけ**で決めていた。
+ *
+ *   isAuthenticated() = user-plan || isLoggedIn || userPlan || user_plan || user_email
+ *   showPlanContent(plan) … plan 文字列が 'light' 等に一致したときだけカード表示
+ *
+ * そのため localStorage が消えた会員（別ブラウザ・履歴消去・プライベートウィンドウ）は、
+ * `ak_session` が有効でも**ログインフォームが出て、予想ページへのリンクが 1 本も無くなる**。
+ * 上部ナビにも有料予想への直リンクが無かったため、会員はサイト内から予想へ到達できなかった。
+ *
+ * ここではサーバー側で `ak_session` + Airtable から権利を確定し、その結果を
+ * `window.__AK_SERVER_AUTH__` として**権威値**として渡す。
+ * localStorage は**消しても壊れない補助**（無料登録のみの会員は ak_session を持たないため残す）。
+ *
+ * ⚠️ 判定式をこのページに書かない。単一源は
+ *    - 閲覧者の確定 … `src/lib/auth/viewerEntitlements.js`
+ *    - 権利→カード  … `viewFromEntitlements`（`resolveEntitlements.js`）
+ *    - 予想の行き先 … `src/lib/navigation/predictionDestination.js`
+ */
+export const prerender = false;
 import BaseLayout from '../layouts/BaseLayout.astro';
 import PremiumContactModal from '../components/PremiumContactModal.astro';
+import { resolveViewer, VIEWER_STATE } from '../lib/auth/viewerEntitlements.js';
+import { viewFromEntitlements } from '../lib/entitlements/resolveEntitlements.js';
+import { resolvePredictionDestination } from '../lib/navigation/predictionDestination.js';
+
+// 判定が落ちても画面は出す（従来の localStorage 経路へフォールバックする）。
+let viewer = { state: VIEWER_STATE.UNKNOWN, reason: 'not_resolved', entitlements: null, profile: null, isMember: false };
+try {
+    viewer = await resolveViewer({ request: Astro.request, env: process.env });
+} catch {
+    // 例外の内容はページに出さない（fail closed）
+}
+
+const _view = viewer.isMember ? viewFromEntitlements(viewer.entitlements) : null;
+// ⚠️ 画面へ渡すのは**ここに列挙した値だけ**。entitlements 全体やレコードは渡さない。
+const serverAuth = {
+    state: viewer.state,
+    predictionHref: resolvePredictionDestination(viewer),
+    cards: _view ? {
+        free: _view.showFreeCard === true,
+        light: _view.showLightCard === true,
+        premiumActive: _view.showPremiumActiveCard === true,
+        premiumExpired: _view.showPremiumExpiredCard === true,
+        sanrenpuku: _view.showSanrenpukuCard === true,
+        purchaseCta: _view.showPurchaseCta === true,
+    } : null,
+    profile: viewer.isMember ? (viewer.profile || null) : null,
+};
+// 会員ごとに中身が変わる。共有キャッシュに載せない（別人へ配られるのを防ぐ）。
+Astro.response.headers.set('Cache-Control', 'private, no-store');
+
+// `</script>` 断片で script を閉じられないようにしてから埋め込む
+const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
 ---
 
 <BaseLayout title="マイページ">
+    <!-- サーバーが確定した会員状態（権威値）。localStorage より先に置く。 -->
+    <script is:inline set:html={`window.__AK_SERVER_AUTH__ = ${serverAuthJson};`}></script>
+
     <!-- ログイン済みユーザーが「マイページ」を開いたとき、login form が一瞬見えるのを防ぐため、
-         インライン script で localStorage を即時判定して loading / login の初期表示を切替える -->
+         インライン script で即時判定して loading / login の初期表示を切替える。
+         ⚠️ サーバー判定を最優先。localStorage が空でも会員なら loading を出す。 -->
     <script is:inline>
       (function() {
         try {
-          var keys = ['user-plan', 'isLoggedIn', 'userPlan', 'user_plan', 'user_email'];
-          var loggedIn = keys.some(function(k) {
-            var v = localStorage.getItem(k);
-            return v && v !== 'false';
-          });
+          var srv = window.__AK_SERVER_AUTH__;
+          var loggedIn = !!(srv && srv.state === 'member');
+          if (!loggedIn) {
+            var keys = ['user-plan', 'isLoggedIn', 'userPlan', 'user_plan', 'user_email'];
+            loggedIn = keys.some(function(k) {
+              var v = localStorage.getItem(k);
+              return v && v !== 'false';
+            });
+          }
           // CSS で初期表示を決めるためのフラグ class を root に付与
           document.documentElement.classList.add(loggedIn ? 'auth-likely-in' : 'auth-likely-out');
         } catch (_) {}
@@ -493,16 +557,45 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
         // 権限判定の単一源（共通 resolver）。カード/CTA の表示可否は必ずこれ経由で決める。
         import { resolveClientView, persistLifetimeForUser, persistNameForUser } from '../lib/entitlements/resolveEntitlements.js';
 
-        // localStorage の user-plan + 補助フラグから、共通 resolver で表示可否を得る。
-        // 同じ判定式を dashboard 内へ再実装しないための唯一の入口。
+        // サーバーが確定した権威値（ak_session + Airtable）。無ければ null。
+        // ⚠️ これは**表示の権威**であって、有料本文の保護ではない（それは gatePaidPage の仕事）。
+        function getServerAuth() {
+            const s = window.__AK_SERVER_AUTH__;
+            return (s && typeof s === 'object') ? s : null;
+        }
+        function isServerMember() {
+            const s = getServerAuth();
+            return !!(s && s.state === 'member' && s.cards);
+        }
+
+        // カード/CTA の表示可否。**サーバーが会員と確定していればサーバー値が勝つ。**
+        // localStorage が消えていてもカードが出る（2026-09-02 の導線事故の是正）。
+        // サーバーが会員と確定できないときだけ、従来どおり localStorage から共通 resolver で判定する
+        // （無料登録だけの会員は ak_session を持たないため、この経路が必要）。
         function getClientView() {
-            return resolveClientView(
-                localStorage.getItem('user-plan'),
-                {
-                    isExpired: localStorage.getItem('isExpired'),
-                    validUntil: localStorage.getItem('validUntil'),
-                    isWithdrawalRequested: localStorage.getItem('isWithdrawalRequested'),
-                },
+            const s = getServerAuth();
+            if (isServerMember()) {
+                return {
+                    showBaCard: s.cards.premiumActive,
+                    showPremiumActiveCard: s.cards.premiumActive,
+                    showPremiumExpiredCard: s.cards.premiumExpired,
+                    showSanrenpukuCard: s.cards.sanrenpuku,
+                    showPurchaseCta: s.cards.purchaseCta,
+                    showLightCard: s.cards.light,
+                    showFreeCard: s.cards.free,
+                    source: 'server',
+                };
+            }
+            return Object.assign(
+                resolveClientView(
+                    localStorage.getItem('user-plan'),
+                    {
+                        isExpired: localStorage.getItem('isExpired'),
+                        validUntil: localStorage.getItem('validUntil'),
+                        isWithdrawalRequested: localStorage.getItem('isWithdrawalRequested'),
+                    },
+                ),
+                { source: 'local' },
             );
         }
 
@@ -522,7 +615,12 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
         }
 
         // 簡略化されたセッション管理
+        // ⚠️ **サーバー（ak_session）を最優先**にする。2026-09-02 まではここが
+        //    localStorage だけを見ていたため、履歴を消した会員が「未ログイン」に化けて
+        //    予想ページへのリンクを一切失っていた。
+        //    localStorage 側は消さない: 無料登録だけの会員は ak_session を持たない。
         function isAuthenticated() {
+            if (isServerMember()) return true;
             const userPlanData = localStorage.getItem('user-plan');
             const isLoggedIn = localStorage.getItem('isLoggedIn') === 'true';
             const userPlan = localStorage.getItem('userPlan');
@@ -1695,36 +1793,37 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
 
             const planLower = (plan || '').toLowerCase();
 
+            // ⚠️ 2026-09-02: 無料 / Light のカードは**プラン文字列で決めない**。
+            //    サーバーが会員と確定していれば権利（entitlements）で決める。
+            //    プラン文字列判定のままだと、localStorage が消えた会員に何も出ない。
+            //    サーバー判定が無いときだけ、従来のプラン文字列判定へフォールバックする。
+            const _cardView = getClientView();
+            const _byServer = _cardView.source === 'server';
+
             // 無料予想の表示制御（南関 + 中央）
             const freeJraCard = document.getElementById('free-predictions-jra');
-            if (planLower === 'free' || planLower === '' || !planLower) {
-                console.log('無料予想を表示（Free会員 / 南関 + 中央）');
-                document.getElementById('free-predictions').style.display = 'block';
-                if (freeJraCard) freeJraCard.style.display = 'block';
-            } else {
-                console.log('無料予想を非表示（有料会員）');
-                document.getElementById('free-predictions').style.display = 'none';
-                if (freeJraCard) freeJraCard.style.display = 'none';
-            }
+            const showFree = _byServer
+                ? _cardView.showFreeCard === true
+                : (planLower === 'free' || planLower === '' || !planLower);
+            document.getElementById('free-predictions').style.display = showFree ? 'block' : 'none';
+            if (freeJraCard) freeJraCard.style.display = showFree ? 'block' : 'none';
+            console.log(showFree ? '無料予想を表示' : '無料予想を非表示', `(source=${_cardView.source})`);
 
             // Light（旧 Standard）予想の表示制御（南関 + 中央）
-            if (planLower === 'light' || planLower === 'standard' || planLower === 'ライト') {
-                console.log('Light予想を表示（南関 / 中央 メインのみ）');
-                document.getElementById('standard-predictions').style.display = 'block';
-                const jraCard = document.getElementById('standard-predictions-jra');
-                if (jraCard) jraCard.style.display = 'block';
-            } else {
-                console.log('Light予想を非表示');
-                document.getElementById('standard-predictions').style.display = 'none';
-                const jraCard = document.getElementById('standard-predictions-jra');
-                if (jraCard) jraCard.style.display = 'none';
-            }
+            const showLight = _byServer
+                ? _cardView.showLightCard === true
+                : (planLower === 'light' || planLower === 'standard' || planLower === 'ライト');
+            document.getElementById('standard-predictions').style.display = showLight ? 'block' : 'none';
+            const jraCard = document.getElementById('standard-predictions-jra');
+            if (jraCard) jraCard.style.display = showLight ? 'block' : 'none';
+            console.log(showLight ? 'Light予想を表示' : 'Light予想を非表示', `(source=${_cardView.source})`);
 
             // Premium予想の表示制御（プラン別）
             // 馬単は中央・南関を1枚に統合した #premium-predictions（中央/南関の2ボタン）で表示。
             // 全 Premium 系（premium / premium plus / premium sanrenpuku / premium combo）に共通表示。
-            // Premium/三連複カードは共通 resolver（resolveClientView）の結果で制御する。判定式を dashboard に再実装しない。
-            const _view = getClientView();
+            // Premium/三連複カードは共通 resolver の結果で制御する。判定式を dashboard に再実装しない。
+            // 上の無料/Light と**同じ判定結果**を使う（2 回引かない・食い違わせない）。
+            const _view = _cardView;
             // Premium 有効 → 通常の馬単カード（中央/南関 予想リンクあり）
             if (_view.showPremiumActiveCard) {
                 console.log('Premium予想（有効）を表示');
@@ -1949,6 +2048,32 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
         // localStorage のみから即時に customerData を組み立てる（ネットワーク無し）
         function getCachedCustomerData() {
             try {
+                // ⚠️ localStorage が空でも、サーバーが会員と確定していれば**そこから組み立てる**。
+                //    これが無いと「セッションは有効だが localStorage が無い」会員に対して
+                //    showDashboard が一度も呼ばれず、ログインフォームのまま止まる（2026-09-02 の事故）。
+                const s = getServerAuth();
+                if (isServerMember()) {
+                    const p = s.profile || {};
+                    let stored = {};
+                    try { stored = JSON.parse(localStorage.getItem('user-plan') || '{}') || {}; } catch (_) {}
+                    // 同一ユーザーのときだけ localStorage の補助値（ポイント等）を使う。
+                    const sameUser = !!(p.email && stored.email
+                        && String(p.email).trim().toLowerCase() === String(stored.email).trim().toLowerCase());
+                    return {
+                        email: p.email || (sameUser ? stored.email : '') || '',
+                        plan: p.plan || 'free',
+                        planType: p.planType || undefined,
+                        // 三連複買い切りはサーバーの権利をそのまま使う（localStorage から継承しない）
+                        lifetimeSanrenpuku: s.cards.sanrenpuku === true,
+                        points: typeof p.points === 'number'
+                            ? p.points
+                            : (sameUser && typeof stored.points === 'number' ? stored.points : 0),
+                        hasClaimedReward: localStorage.getItem('hasClaimedReward') === 'true',
+                        registrationDate: sameUser ? stored.registeredAt : undefined,
+                        name: p.name || (sameUser ? (stored.name || '') : ''),
+                        validUntil: p.validUntil || undefined,
+                    };
+                }
                 const raw = localStorage.getItem('user-plan');
                 if (raw) {
                     const u = JSON.parse(raw);
