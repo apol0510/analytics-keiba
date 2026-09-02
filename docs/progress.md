@@ -1,4 +1,4 @@
-# 🚨 購入済み会員を無料体験へ誤誘導したインシデント（2026-09-02）— **クローズ条件 充足（MK 本番目視確認 済み）**
+# 🚨 購入済み会員を無料体験へ誤誘導したインシデント（2026-09-02）— **クローズ（MK 本番目視確認 済み ＋ 同型残存も解消）**
 
 三連複を購入済みの会員が `/premium-sanrenpuku/`（南関 有料三連複）を開くと、
 `/sanrenpuku-demo/`（**無料体験ページ**）へリダイレクトされていた。
@@ -131,11 +131,75 @@ Airtable Customers 4,030 件のうち、三連複の保有・申込がある **6
    これは本修正で作り込んだものではなく `AccessControl` の既存仕様だが、
    **再ログインで解消する**ことを案内側で押さえておく必要がある。
 
+## 同型事故の残存を解消（PR #491 / squash merge `1b00d5dc` / 本番 deploy ready）
+
+`b72b5558` は申告のあった 1 ページを直しただけだった。read-only 監査で**同じ読み違いが
+他ページにも残っている**ことを実測したため、認可を正本へ統一した。
+
+### 何が残っていたか（実測）
+
+| 区分 | 箇所 | 症状 |
+|---|---|---|
+| A | `archive-sanrenpuku/{index,2025,2026}` | ALLOWED が `premium` / `premium predictions` のみで **`Premium Sanrenpuku`・`Premium Combo` を明示的に拒否**（alert + 強制送還）。**購入済みを実績ページから締め出していた** |
+| A | 上記＋`-all` / 月別 2 本（計 6 ページ） | 静的 HTML / クライアント判定のみ ＝ **URL 直打ち・localStorage 改変で非会員も本文を読めた** |
+| A | 同 3 ページ | `localStorage.setItem('userPlan','Premium')` で**ページが権限キーを書き換えていた** |
+| C | `welcome.astro` | `?plan=&email=` から `status:'active'` の有料プランを **localStorage へ自己付与**できた |
+| C | `AccessControl.astro` | 正規 writer が repo 内に 1 つも無い `sessionStorage.temp_auth` を読んでいた（`auth_data` と同型の残骸） |
+| B | `premium-predictions-{urawa,funabashi}` | 三連複 CTA の非表示条件が plan 文字列のみ ＝ **買い切り購入者に追加購入 CTA と `/sanrenpuku-demo/` 導線** |
+
+### 何をしたか
+
+- アーカイブ 6 ページを **SSR 化 ＋ `gatePaidPage`** へ統一。独自判定・alert ゲート・
+  localStorage の読み書きを全廃。`getStaticPaths` は URL パラメータ検証へ置換
+  （形式固定 ＋ `hasOwnProperty`）。`SessionKeepAlive` も配線
+- `gatePaidPage` に **any-of**（`requiredPlan` 配列）を追加し、閲覧条件を
+  `SANRENPUKU_ARCHIVE_PLANS = ['premium', 'Premium Sanrenpuku']` に集約。
+  このページ群は「馬単 Premium へのアップセル面」と「三連複保有者の実績面」の 2 つの読者を持ち、
+  **片方だけで判定するともう一方を締め出す**。1 語でも未知が混ざれば fail closed
+- `welcome.astro` の自己付与を撤去 / `temp_auth` を削除
+- CTA は単一源 `sanrenpukuCtaStage` と `gate.entitlements.canViewSanrenpuku` へ統一
+- 正本 doc `astro-site/docs/PAID_PAGE_AUTHORIZATION.md` ＋ `CLAUDE.md` に不変条件を追記
+
+### 本番反映
+
+`1b00d5dc`（squash merge・2026-09-02 04:28 UTC）→ Netlify production deploy **ready**（04:29 UTC）。
+CI は Safety Check / deploy-preview とも success。`package.json` / `package-lock.json` 無変更。
+
+### 本番確認（read-only・未ログイン状態で実測）
+
+**非権利状態では URL 直打ちで有料本文が出ないこと**を、変更した全ルートで確認した。
+
+| 確認 | 結果 |
+|---|---|
+| 有料 14 ルート（三連複 2・アーカイブ 8・有料予想 4）を未ログインで取得 | **全て `/login/` へ**。応答は 21,370 バイトのログイン画面**のみ**で、`sanrenpuku-content` / `的中実績アーカイブ` / `sticky-cta` / `cta-upsell-box` の**痕跡ゼロ** |
+| 不正な月（`/archive-sanrenpuku/2026/99/`・`/abcd/05/`） | 同じく `/login/`（**認可が先・パラメータ検証は後**＝ fail closed の順序） |
+| `/welcome/?plan=premium&email=...` | HTML・同梱 JS とも `URLSearchParams` / `setItem('user-plan'\|'userPlan'\|'userData')` **なし**（自己付与は消えている） |
+| `/sanrenpuku-demo/` | 買い切り判定 `lifetimeSanrenpuku === true` が載っている |
+
+### ⚠️ 本番で未確認（会員セッションが必要・MK の操作待ち）
+
+作業ブラウザに**ログイン済みセッションが無い**（`user-plan` 空・`/premium-sanrenpuku/` が
+`no_session` で `/login/` へ）。したがって以下は**当方では未確認**:
+
+1. `/premium-sanrenpuku/` が会員に正常表示されること
+2. 三連複アーカイブが正規購入者に表示されること
+3. 購入済み会員に追加購入 CTA / demo 導線が出ないこと
+
+いずれもサーバー側は `paidPageSingleSourceGate.test.mjs` の 21 件で固定しているが、
+**「サーバー判定が通る」＝「表示されている」ではない**。MK が本番にログインして
+目視するか、当該ブラウザでログインしてもらえれば read-only で確認できる。
+
 ## 再発防止
 
 - 三連複の保有を **`plan` 文字列だけで判定しない**。必ず `lifetimeSanrenpuku` を併せて見る。
 - 南関だけ／中央だけにページ独自の表示判定スクリプトを足さない（**片側だけ壊れる**）。
-- 上記を `sanrenpukuPurchasedNotDemo.guard.test.mjs` で CI 強制（`check:safety`）。
+- **有料ページの認可はサーバー側 `gatePaidPage` だけで決める。ページに独自 plan 判定を書かない。**
+  正本は [`PAID_PAGE_AUTHORIZATION.md`](../astro-site/docs/PAID_PAGE_AUTHORIZATION.md)。
+- CI 強制（`check:safety`）: `sanrenpukuPurchasedNotDemo.guard.test.mjs` ＋
+  `paidPageSingleSourceGate.test.mjs`（21 件）。
+- 修正後の再走査で、**有料コンテンツの可否を決める独自 plan / localStorage 判定は 0 件**。
+  残るのは無料ページの登録済み判定 / 価格ティア表示 / 取得回数上限 / 入力補助 / 表示ラベルで、
+  いずれも認可ではない（意図的に据置）。
 
 ---
 
