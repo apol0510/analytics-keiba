@@ -72,53 +72,23 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 </BaseLayout>
 
 <script>
-    document.addEventListener('DOMContentLoaded', async function() {
-        // URLパラメータからプラン情報を取得
-        const urlParams = new URLSearchParams(window.location.search);
-        const planType = urlParams.get('plan');  // 'standard' or 'premium'
-        const email = urlParams.get('email');
-        const sessionId = urlParams.get('session_id');
-        
+    /**
+     * ⚠️ 2026-09-02: URL クエリ（?plan=&email=&session_id=）から
+     *    localStorage へ `user-plan` / `userPlan` / `userData` を書いていた処理を**撤去**した。
+     *
+     *    その処理は Stripe 決済完了ページとして作られたものだが、
+     *    **URL を打つだけで誰でも自分のブラウザに `status:'active'` の有料プランを
+     *    自己付与できる**状態だった（`/welcome/?plan=premium&email=...`）。
+     *    サーバー側 gate（ak_session + resolveEntitlements）で守られたページは
+     *    影響を受けないが、クライアント判定に依存する画面は騙せてしまう。
+     *
+     *    会員状態の正本は **HttpOnly 署名 Cookie `ak_session` と Airtable** であり、
+     *    `user-plan` を書いてよいのは `auth/verify.astro`（マジックリンク検証の応答）だけ。
+     *    このページは案内文だけを表示する。**復活させないこと。**
+     */
+    document.addEventListener('DOMContentLoaded', function () {
         const planNameEl = document.getElementById('plan-name');
-        
-        console.log('URL Parameters:', { planType, email, sessionId });
-        
-        if (planType && email) {
-            // プラン情報をLocalStorageに保存
-            const userData = {
-                email: email,
-                plan: planType,
-                status: 'active',
-                sessionId: sessionId,
-                registeredAt: new Date().toISOString(),
-                expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
-            };
-            
-            // 新しい形式でLocalStorageに保存（plan-storage.js互換）
-            localStorage.setItem('user-plan', JSON.stringify(userData));
-            localStorage.setItem('userPlan', planType); // 互換性のため
-            localStorage.setItem('userData', JSON.stringify(userData)); // 互換性のため
-            
-            // プラン名を表示
-            const planNames = {
-                'standard': 'スタンダード',
-                'premium': 'プレミアム'
-            };
-            
-            planNameEl.textContent = `${planNames[planType] || planType}会員`;
-            
-            // ナビゲーション更新イベントを発火
-            window.dispatchEvent(new CustomEvent('planUpdated', {
-                detail: { plan: planType, email: email }
-            }));
-            
-            console.log('✅ プラン情報が正常に更新されました:', userData);
-            
-        } else {
-            // URLパラメータが不足している場合
-            console.warn('⚠️ プラン情報またはメールアドレスが不足しています');
-            planNameEl.textContent = '会員登録完了';
-        }
+        if (planNameEl) planNameEl.textContent = '会員登録完了';
     });
 </script>
 

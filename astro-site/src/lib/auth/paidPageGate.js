@@ -57,7 +57,12 @@ export const REQUIRED_PLAN_ENTITLEMENT = Object.freeze({
   standard: 'canViewLight',
 });
 
-/** 表記ゆれを吸収して entitlement フラグ名を返す。未知は null（fail closed）。 */
+/**
+ * 表記ゆれを吸収して entitlement フラグ名を返す。未知は null（fail closed）。
+ *
+ * ⚠️ 複数の権利のどれかで開くページ（例: 三連複アーカイブ = 馬単 Premium の
+ *    アップセル面 かつ 三連複保有者の実績面）は `resolveEntitlementFlags` を使う。
+ */
 export function resolveEntitlementFlag(requiredPlan) {
   const key = String(requiredPlan ?? '').trim();
   if (Object.prototype.hasOwnProperty.call(REQUIRED_PLAN_ENTITLEMENT, key)) {
@@ -69,6 +74,48 @@ export function resolveEntitlementFlag(requiredPlan) {
   }
   return null;
 }
+
+/**
+ * requiredPlan（1 語 or 複数語の配列）→ entitlement フラグ名の配列。
+ *
+ * **any-of（どれか 1 つでも true なら通す）**。1 つのページに複数の入り口を
+ * 認めたいときに使う。判定式そのものは `resolveEntitlements` のままで、
+ * ここは「どのフラグを見るか」を決めるだけ（新しい認可を作らない）。
+ *
+ * 用途の実例 — `/archive-sanrenpuku*`（三連複の的中実績）:
+ *   - 馬単のみの Premium 会員 … 購入前に実績を見せるアップセル面（`canViewPremium`）
+ *   - 三連複の保有会員       … 自分が買った商品の実績面（`canViewSanrenpuku`）
+ * どちらか一方だけで判定すると、もう一方を締め出す（2026-09-02 の事故と同型）。
+ *
+ * **1 つでも未知の語が混ざったら null**（＝ fail closed。設定ミスで全開にしない）。
+ *
+ * @param {string|string[]} requiredPlan
+ * @returns {string[]|null}
+ */
+export function resolveEntitlementFlags(requiredPlan) {
+  const list = Array.isArray(requiredPlan) ? requiredPlan : [requiredPlan];
+  if (list.length === 0) return null;
+  const flags = [];
+  for (const p of list) {
+    const f = resolveEntitlementFlag(p);
+    if (!f) return null;
+    if (!flags.includes(f)) flags.push(f);
+  }
+  return flags;
+}
+
+/**
+ * 三連複の的中実績アーカイブ（`/archive-sanrenpuku*` 系）の閲覧条件。**単一源**。
+ *
+ * このページ群は 2 つの読者を同時に持つ:
+ *   - 馬単のみの Premium 会員 … 購入前に実績を見せる**アップセル面**（`canViewPremium`）
+ *   - 三連複の保有会員       … 自分が買った商品の**実績面**（`canViewSanrenpuku`）
+ *
+ * 片方だけで判定すると、もう一方を締め出す。実際 2026-09-02 以前は
+ * `plan === 'premium'` だけを許可しており、**三連複会員が自分の実績から締め出されていた**。
+ * 6 ページすべてがこの定数を使う（ページごとに許可リストを書かない）。
+ */
+export const SANRENPUKU_ARCHIVE_PLANS = Object.freeze(['premium', 'Premium Sanrenpuku']);
 
 /** 有料本文を CDN / 共有キャッシュへ載せない（別人へ配られるのを防ぐ）。 */
 export const PAID_PAGE_HEADERS = Object.freeze({
@@ -191,7 +238,7 @@ function denyResponse(notFound, reason) {
  *
  * @param {{
  *   request: Request,
- *   requiredPlan: string,
+ *   requiredPlan: string|string[],
  *   env: object,                 **必須**。この層は process.env を直接参照しない
  *                                （ランタイム非依存にするため。呼び出し側が注入する）
  *   now?: number,
@@ -228,7 +275,8 @@ export async function gatePaidPage({
   notFound = false,
   lookup = lookupCustomerFieldsResult,
 } = {}) {
-  const flag = resolveEntitlementFlag(requiredPlan);
+  // any-of。単一語のときも配列 1 要素として扱う（分岐を増やさない）。
+  const flags = resolveEntitlementFlags(requiredPlan);
   const deny = (reason) => {
     logPaidGateDeny(reason, requiredPlan);
     // 一時障害は「認証failed」ではない。/login へ送らず 503 で返す（再ログインを促さない）。
@@ -239,7 +287,7 @@ export async function gatePaidPage({
   };
 
   // 設定ミスで全開にしない
-  if (!flag) return deny('unknown_required_plan');
+  if (!flags) return deny('unknown_required_plan');
   // env 未注入は fail closed（既定値で process.env を掴まない）
   if (!env || typeof env !== 'object') return deny('env_missing');
 
@@ -277,7 +325,8 @@ export async function gatePaidPage({
   const fields = r.fields;
 
   const ent = resolveEntitlements(fromAirtableFields(fields), now);
-  if (ent[flag] !== true) return deny('entitlement_denied');
+  // any-of: 指定された権利のどれか 1 つでも true なら通す。0 個は上で弾いている。
+  if (!flags.some((f) => ent[f] === true)) return deny('entitlement_denied');
 
   return { ok: true, response: null, reason: 'ok', entitlements: ent };
 }

@@ -1,13 +1,21 @@
 ---
 // 南関競馬 三連複 的中実績 月別詳細ページ。
 // 旧 per-month legacy JSON（archiveSanrenpukuResults_*.json）＋ combined（archiveSanrenpukuResults.json）を
-// マージした {YYYY}{MM} から getStaticPaths でルート生成（統合ページ archive-sanrenpuku-all の mergeNankan と同一データ）。
+// マージした {YYYY}{MM} を URL パラメータで引く（SSR。統合ページ archive-sanrenpuku-all の mergeNankan と同一データ）。
 // 統合ページ /archive-sanrenpuku-all/ の南関タブ月カードからここへ遷移。会員ゲート＋Sticky CTA＋SEO＋戻るリンク。
-export const prerender = true;
+// ⚠️ SSR。有料本文を組み立てる前にサーバー側で認可を確定させる（2026-09-02）。
+//    以前は「静的 HTML ＋ localStorage の plan 文字列」だけで判定しており、
+//      (1) 三連複を買い切りで保有する会員（プラン=Premium + LifetimeSanrenpuku）を締め出し、
+//      (2) 非会員でも URL 直打ち / localStorage 改変で本文を読めた。
+//    判定は正本（ak_session + resolveEntitlements）へ一本化する。ページ側に独自判定を書かない。
+//    SSR 化に伴い getStaticPaths は廃止し、URL パラメータをその場で検証する。
+export const prerender = false;
+import { gatePaidPage, PAID_PAGE_HEADERS, SANRENPUKU_ARCHIVE_PLANS } from '../../../lib/auth/paidPageGate.js';
+import SessionKeepAlive from '../../../components/SessionKeepAlive.astro';
 import BaseLayout from '../../../layouts/BaseLayout.astro';
 import nankanCombined from '../../../data/archiveSanrenpukuResults.json';
 // 旧 per-month legacy JSON（combined は 2025/11〜2026/02 を含まないため静的 import で補完）。
-// ※ getStaticPaths 内では import.meta.glob が使えないため個別 import する。新規月は combined 側に入る。
+// ※ SSR 関数へ確実に同梱するため個別 import する。新規月は combined 側に入る。
 import leg202511 from '../../../data/archiveSanrenpukuResults_2025-11.json';
 import leg202512 from '../../../data/archiveSanrenpukuResults_2025-12.json';
 import leg202601 from '../../../data/archiveSanrenpukuResults_2026-01.json';
@@ -17,24 +25,6 @@ import leg202604 from '../../../data/archiveSanrenpukuResults_2026-04.json';
 import leg202605 from '../../../data/archiveSanrenpukuResults_2026-05.json';
 
 const MONTH_LABEL = ['', '1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
-
-export function getStaticPaths() {
-  // ルート列挙は helper を呼ばず imported JSON を直接走査（Astro の getStaticPaths 抽出制約回避）。
-  const sources = [leg202511, leg202512, leg202601, leg202602, leg202603, leg202604, leg202605, nankanCombined];
-  const seen = new Set();
-  const paths = [];
-  for (const src of sources) {
-    for (const year of Object.keys(src || {})) {
-      for (const month of Object.keys(src[year] || {})) {
-        const key = year + '/' + month;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        paths.push({ params: { year, month }, props: { year, month } });
-      }
-    }
-  }
-  return paths;
-}
 
 // 南関: 旧 per-month legacy JSON ＋ combined を後勝ちでマージ（統合ページ mergeNankan と同方針）。
 const LEGACY = [leg202511, leg202512, leg202601, leg202602, leg202603, leg202604, leg202605];
@@ -63,8 +53,38 @@ function investedOfDay(dd) {
   return 0;
 }
 
-const { year, month } = Astro.props;
+
+// ── サーバー側認可（この行より前で有料本文を組み立てない）──
+// any-of: 馬単 Premium（アップセル面）または 三連複保有（実績面）のどちらかで開く。
+const gate = await gatePaidPage({
+  request: Astro.request,
+  requiredPlan: SANRENPUKU_ARCHIVE_PLANS,
+  env: process.env, // 認可ライブラリは env を直接参照しない方針のため、ページ側で注入する
+});
+if (gate.response) return gate.response;
+for (const [k, v] of Object.entries(PAID_PAGE_HEADERS)) Astro.response.headers.set(k, v);
+
+// 三連複を保有しているか（購入済みに追加購入 CTA を出さないための判定）。
+// **サーバー側の正本 `resolveEntitlements` の結果をそのまま使う**。
+// 以前はクライアントで plan 文字列だけを見ており、買い切り購入者（プラン=Premium +
+// LifetimeSanrenpuku）に「三連複プランを見る」CTA が出続けていた（2026-09-02 と同型）。
+const ownsSanrenpuku = gate.entitlements?.canViewSanrenpuku === true;
+
+// ── URL パラメータの検証（getStaticPaths の代わり）──
+// 形式を固定してから hasOwnProperty で引く。`__proto__` 等を辿らせない。
+const rawYear = String(Astro.params.year ?? '');
+const rawMonth = String(Astro.params.month ?? '');
+const validParams = /^\d{4}$/.test(rawYear) && /^(0[1-9]|1[0-2])$/.test(rawMonth);
+const hasMonth = (src, y, m) => !!src
+  && Object.prototype.hasOwnProperty.call(src, y)
+  && Object.prototype.hasOwnProperty.call(src[y] ?? {}, m);
+
+const year = rawYear;
+const month = rawMonth;
 const NANKAN = mergeNankan();
+if (!validParams || !hasMonth(NANKAN, year, month)) {
+  return new Response('Not Found', { status: 404 });
+}
 const daysObj = NANKAN[year][month] || {};
 const monthNum = parseInt(month);
 const monthLabel = `${year}年${MONTH_LABEL[monthNum]}`;
@@ -104,31 +124,10 @@ const jsonLd = {
 };
 ---
 
+{/* ak_session の idle TTL 延長（会員確定ページのみ）*/}
+<SessionKeepAlive />
+
 <BaseLayout title={pageTitle} description={pageDesc} canonical={canonicalPath}>
-    <!-- 🔒 会員専用認証チェック（クライアントサイド / casing 非依存 / dev はバイパス） -->
-    <script is:inline>
-      (function () {
-        function isDev() {
-          return location.hostname === 'localhost' || location.hostname === '127.0.0.1'
-            || location.port === '4321' || location.port === '3000';
-        }
-        var userPlan = null;
-        try {
-          var d = localStorage.getItem('user-plan');
-          if (d) userPlan = JSON.parse(d).plan;
-        } catch (e) {}
-        if (!userPlan) userPlan = localStorage.getItem('userPlan');
-        var planLower = userPlan ? String(userPlan).toLowerCase() : '';
-        var ALLOWED = ['premium','premium predictions','premiumpredictions',
-          'premium sanrenpuku','premiumsanrenpuku','premium combo','premiumcombo',
-          'premium plus','premiumplus','premium full'];
-        var isAllowed = !!userPlan && ALLOWED.indexOf(planLower) !== -1;
-        if (!isDev() && !isAllowed) {
-          alert('この実績ページは会員専用です。\n\nPremium会員にアップグレードすると、南関競馬 三連複の的中実績をご覧いただけます。');
-          window.location.href = '/premium-prediction/nankan/';
-        }
-      })();
-    </script>
 
     <div class="archive-container">
         <div class="detail-topbar">
@@ -187,8 +186,9 @@ const jsonLd = {
         </div>
     </div>
 
-    <!-- Sticky CTA（リンク型 / 三連複保有会員には JS で非表示） -->
-    <div class="sticky-cta" id="sticky-cta" style="display: none;">
+    {/* Sticky CTA。三連複保有会員には出さない（判定はサーバー側 entitlements）*/}
+    {!ownsSanrenpuku && (
+    <div class="sticky-cta" id="sticky-cta">
         <div class="sticky-cta-content">
             <div class="sticky-cta-text">
                 <div class="sticky-cta-title">🎯 中央＋南関の三連複買い目をお求めの方へ</div>
@@ -197,25 +197,10 @@ const jsonLd = {
             <a href="/archive-sanrenpuku-all/" class="sticky-cta-button">👑 三連複プランを見る</a>
         </div>
     </div>
+    )}
 
     <script type="application/ld+json" set:html={JSON.stringify(jsonLd)}></script>
 
-    <!-- Sticky の表示制御: 三連複保有（Sanrenpuku/Combo/Full）会員には出さない。casing 非依存。 -->
-    <script is:inline>
-      (function () {
-        try {
-          var raw = localStorage.getItem('user-plan');
-          var plan = '';
-          if (raw) { try { plan = (JSON.parse(raw).plan || '').toString(); } catch (e) {} }
-          if (!plan) plan = localStorage.getItem('userPlan') || '';
-          plan = plan.toString().trim().toLowerCase();
-          var HAS_SRP = ['premium sanrenpuku','premiumsanrenpuku','premium combo','premiumcombo','premium full'];
-          if (HAS_SRP.indexOf(plan) !== -1) return;
-          var sticky = document.getElementById('sticky-cta');
-          if (sticky) sticky.style.display = '';
-        } catch (e) {}
-      })();
-    </script>
 </BaseLayout>
 
 <style is:global>
