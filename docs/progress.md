@@ -176,18 +176,42 @@ CI は Safety Check / deploy-preview とも success。`package.json` / `package-
 | `/welcome/?plan=premium&email=...` | HTML・同梱 JS とも `URLSearchParams` / `setItem('user-plan'\|'userPlan'\|'userData')` **なし**（自己付与は消えている） |
 | `/sanrenpuku-demo/` | 買い切り判定 `lifetimeSanrenpuku === true` が載っている |
 
-### ⚠️ 本番で未確認（会員セッションが必要・MK の操作待ち）
+### ✅ 会員ログイン状態での本番確認（read-only / 2026-09-02）
 
-作業ブラウザに**ログイン済みセッションが無い**（`user-plan` 空・`/premium-sanrenpuku/` が
-`no_session` で `/login/` へ）。したがって以下は**当方では未確認**:
+MK のブラウザで**三連複の閲覧権を持つ会員**にログインしたうえで実測した。
+使用したアカウントの実効状態: `plan='Premium Sanrenpuku'` / `lifetimeSanrenpuku=false`
+（＝**旧プラン名だけで保有している会員**。修正前の狭い ALLOWED が締め出していた当の型）。
 
-1. `/premium-sanrenpuku/` が会員に正常表示されること
-2. 三連複アーカイブが正規購入者に表示されること
-3. 購入済み会員に追加購入 CTA / demo 導線が出ないこと
+| # | 確認 | 結果 |
+|---|---|---|
+| 1 | `/premium-sanrenpuku/` が正常表示 | ✅ 無料体験へリダイレクトせず 200。`#content-area` / `#sanrenpuku-content` とも `block/visible`（1014×1885）、`#access-denied` は hidden。`elementFromPoint` で H1「2026年9月2日 大井競馬 - Premium 三連複厳選予想」が実際に最前面に描画されていることを裏取り |
+| 2 | 三連複アーカイブが正規購入者に表示 | ✅ `/archive-sanrenpuku-all/` `/archive-sanrenpuku/2025/` `/archive-sanrenpuku/2026/` `/archive-sanrenpuku/2026/05/` `/archive-sanrenpuku-jra/2026/08/` すべて **200 で本文表示**（月別カード・的中率・回収率）。alert も追い返しも無し |
+| 3 | 購入済みに追加購入 CTA / demo 導線が出ない | ✅ アーカイブ 5 ページとも `openBankModal` ボタン **0 個**・`sticky-cta` / `cta-upsell-box` **要素ごと非出力**。有料予想 4 ページ（南関・中央・浦和・船橋）は `sanrenpuku-cta-section` / teaser / 昨日の結果がすべて **display:none**、**画面に見えている `/sanrenpuku-demo/` リンクは 0 本**（`elementFromPoint` で判定） |
 
-いずれもサーバー側は `paidPageSingleSourceGate.test.mjs` の 21 件で固定しているが、
-**「サーバー判定が通る」＝「表示されている」ではない**。MK が本番にログインして
-目視するか、当該ブラウザでログインしてもらえれば read-only で確認できる。
+補足: 三連複の買い目セクション（`.sanrenpuku-section`）は 12 個すべて `srp-access-granted`
+＝**保有者には従来どおり見える**。締め出しと出し分けの両方が意図どおり。
+
+### 改変耐性（同じセッションで実測）
+
+`localStorage` に `plan='Premium Sanrenpuku'` / `lifetimeSanrenpuku=true` / `isLoggedIn=true` を、
+`sessionStorage` に `temp_auth` を注入した状態でも、**無料会員のセッションでは有料本文は出ない**
+（`/premium-sanrenpuku/` `/archive-sanrenpuku/` `/archive-sanrenpuku-all/` `/archive-sanrenpuku/2026/05/`
+すべて `/login/?r=no_session`）。注入した値は同一操作内で**完全復元済み**・サーバーへの書き込みは 0。
+
+### ⚠️ この確認で**カバーしていない**型
+
+`プラン=Premium` ＋ `LifetimeSanrenpuku=true`（＝ 2026-09-02 の申告者と同じ**買い切り 4 名**）の
+実ログイン確認は**していない**。使用アカウントが旧プラン名保持者だったため。
+サーバー判定は `paidPageSingleSourceGate.test.mjs` が固定しているが、実画面は未確認。
+
+### 📌 監査時の記述の訂正
+
+`archive-sanrenpuku/index.astro` は **2026-09-02 の修正前から `Astro.redirect('/archive-sanrenpuku-all/', 301)`**
+であり、本文を返していなかった（本番でも 301 を実測）。同ファイルのクライアントゲートは
+到達しない死んだコードで、「このページが購入済みを締め出していた」という監査時の記述は**誤り**。
+実際に締め出していたのは**到達可能な `2025/index.astro` / `2026/index.astro`**（今回 200 表示を確認）。
+なお 301 の手前に置いた SSR gate も同様に到達しないため、**このファイルは純粋な 301 ページへ
+整理するのが正しい**（`archive-sanrenpuku-jra/index.astro` と同じ形）。**未実施・別タスク**。
 
 ## 再発防止
 
