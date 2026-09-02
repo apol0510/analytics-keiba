@@ -74,7 +74,22 @@ function findImporters(prefix) {
   return { byFile, pages };
 }
 
-/** 共通チェック本体。「どのページからも import されていない per-month JSON」を検出する */
+/**
+ * per-month JSON を **fs 読み込み**で使っているページを探す。
+ *
+ * ⚠️ `import` していない ＝ 未使用ではない。馬単の per-month snapshot は
+ * `src/pages/archive/nankan/**` が `readFileSync` / `readdirSync` で読んでいる
+ * （月一覧は combined の日付と snapshot の **union**）。
+ * ここを見落とすと「未参照だから消してよい」と誤読され、その月の実績が消える。
+ */
+function findFsReaders(prefix) {
+  const needle = new RegExp(`${prefix}(\\$\\{|\\(|\\\\d)`);
+  return allPages
+    .filter((pg) => /readFileSync|readdirSync/.test(pg.src) && needle.test(pg.src))
+    .map((pg) => pg.rel);
+}
+
+/** 共通チェック本体。per-month JSON が「どこからも使われていない」状態を検出する */
 function checkArchive(label, prefix, { requireImport }) {
   console.log(`\n${colors.blue}📊 ${label}${colors.reset}`);
   const files = fs.readdirSync(path.join(rootDir, 'src/data'))
@@ -83,22 +98,29 @@ function checkArchive(label, prefix, { requireImport }) {
   console.log(`  データファイル: ${files.length}件`);
 
   const { byFile, pages } = findImporters(prefix);
+  const fsReaders = findFsReaders(prefix);
   console.log(`  import しているページ: ${pages.length}件`);
   pages.forEach((f) => console.log(`    - src/pages/${f}`));
+  console.log(`  fs 読み込みで使っているページ: ${fsReaders.length}件`);
+  fsReaders.forEach((f) => console.log(`    - src/pages/${f}`));
 
-  console.log(`\n  ${colors.yellow}チェック1: どのページからも参照されていないファイル${colors.reset}`);
-  const orphan = files.filter((f) => !byFile.has(f));
-  if (orphan.length === 0) {
-    console.log(`  ${colors.green}✅ 全データファイルが参照済み${colors.reset}`);
+  console.log(`\n  ${colors.yellow}チェック1: import 漏れ${colors.reset}`);
+  const missing = files.filter((f) => !byFile.has(f));
+  if (missing.length === 0) {
+    console.log(`  ${colors.green}✅ 全データファイルが import 済み${colors.reset}`);
   } else if (requireImport) {
-    console.log(`  ${colors.red}❌ 以下が参照されていません:${colors.reset}`);
-    orphan.forEach((f) => console.log(`    ${colors.red}- ${f}.json${colors.reset}`));
+    console.log(`  ${colors.red}❌ 以下が import されていません（月別ページからその月が消えます）:${colors.reset}`);
+    missing.forEach((f) => console.log(`    ${colors.red}- ${f}.json${colors.reset}`));
     hasError = true;
+  } else if (fsReaders.length > 0) {
+    // ⚠️ 「import されていない」＝「未使用」ではない。
+    //    馬単 snapshot は archive/nankan/** が fs で読む設計。**消してはいけない。**
+    console.log(`  ${colors.yellow}ℹ️  import なし ${missing.length}件 — ただし上記ページが fs で読んでいる（設計どおり）${colors.reset}`);
+    console.log(`  ${colors.yellow}    → これらのファイルを「未使用」と判断して削除しないこと${colors.reset}`);
   } else {
-    // 馬単は combined JSON を実行時に読む設計なので、per-month JSON の未参照は**異常ではない**。
-    // 事実として出すが hasError にはしない（常に赤いチェックを作らない）。
-    console.log(`  ${colors.yellow}ℹ️  未参照 ${orphan.length}件（この系統は combined JSON を実行時に読む設計のため正常）${colors.reset}`);
-    orphan.forEach((f) => console.log(`      - ${f}.json`));
+    console.log(`  ${colors.red}❌ import も fs 読み込みも無い ${missing.length}件（本当に未使用の可能性）:${colors.reset}`);
+    missing.forEach((f) => console.log(`    ${colors.red}- ${f}.json${colors.reset}`));
+    hasError = true;
   }
 
   console.log(`\n  ${colors.yellow}チェック2: 存在しないファイルへの import${colors.reset}`);
@@ -112,8 +134,9 @@ function checkArchive(label, prefix, { requireImport }) {
   }
 }
 
-// 馬単: archive/index.astro は combined（archiveResults.json）を実行時に読む。
-//       per-month JSON は凍結済みで、参照が無くても異常ではない。
+// 馬単: archive/index.astro は combined（archiveResults.json）を実行時に読み、
+//       per-month snapshot は archive/nankan/** が fs で読む（import はしない）。
+//       月一覧は combined の日付と snapshot の union なので、snapshot が無い月も欠けない。
 checkArchive('馬単アーカイブチェック', 'archiveResults_', { requireImport: false });
 
 // 三連複: 2025/ ・ 2026/ ・ [year]/[month].astro が per-month JSON を実際に import している。
