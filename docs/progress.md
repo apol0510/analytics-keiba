@@ -93,7 +93,7 @@ Light 会員から「今日のメインレースが見れません」。調査�
 ## 顧客対応 — **返信済み（2026-09-02 17:36 JST）**
 
 末吉様（`163doob@gmail.com`）へ `support@keiba.link` から **1 通**送信。
-SendGrid `202` / `X-Message-Id: y0tE89FPQo6H__Vv8Q6Wlw`。
+SendGrid `202` / `X-Message-Id: y0tE89FPQo6H__Vv8Q6Wlw` / **`delivered` 実測（2026-09-02 08:36:07 UTC = 17:36 JST）**。
 件名「【KEIBA Analytics】ご確認ありがとうございます｜Light 予想ページへの入り方」。
 
 内容: 自己解決へのお礼と分かりにくかったことへのお詫び／**ご指摘を受けてログイン後メニューに
