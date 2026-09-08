@@ -16,12 +16,30 @@
  *   - ボタンの行き先が **いま見ているページと違う**
  *   - 行き先が **実在し、会員資格を要求しない**
  */
-import { test, beforeEach, afterEach } from 'node:test';
+import { test, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import { resolveBannerView } from './campaignBannerView.js';
+import { CAMPAIGN_WINDOW, isCampaignActive } from './campaignOffers.js';
+
+/**
+ * ⚠️ **実時計を使わない**（2026-09-08 修正）。
+ *
+ * バナーは `isCampaignActive(Date.now())` が真のときだけ出る（期間外に案内すると
+ * 割引が乗らないので、この停止は**正しい挙動**）。ところがこのファイルは実時計で
+ * API を叩いていたため、キャンペーン期間が終わった翌日から **5 件が一斉に赤くなった**。
+ *
+ * 見たいのは「全プラン × 全ページで押せないボタン・行き止まりを出さないか」であって
+ * 暦ではないので、**期間内の時刻へ固定**する。期間そのものの挙動は
+ * 下の「期間外」テストで別に固定する（**期間は延ばさない**）。
+ */
+const DAY = 86400_000;
+/** 期間の 2 日目（開始境界に依存しない） */
+const IN_WINDOW = Date.parse(CAMPAIGN_WINDOW.startsAtIso) + DAY;
+/** 期間終了の 1 時間後 */
+const OUT_OF_WINDOW = Date.parse(CAMPAIGN_WINDOW.endsAtIso) + 3600_000;
 
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
 const PAGES_DIR = fileURLToPath(new URL('../../pages/', import.meta.url));
@@ -77,8 +95,11 @@ beforeEach(() => {
   // 停止していない状態
   globalThis.fetch = async () => new Response(JSON.stringify({ result: null }),
     { status: 200, headers: { 'Content-Type': 'application/json' } });
+  // 期間内の時刻へ固定する（暦で赤くならないように）
+  mock.timers.enable({ apis: ['Date'], now: IN_WINDOW });
 });
 afterEach(() => {
+  mock.timers.reset();
   globalThis.fetch = realFetch;
   for (const k of Object.keys(process.env)) if (!(k in realEnv)) delete process.env[k];
   Object.assign(process.env, realEnv);
@@ -199,4 +220,24 @@ test('説明画面の金額も割引後に揃える（印を付けた場所を�
   assert.ok(marks.length >= 4, `三連複の金額に印が足りない: ${marks.length}`);
   // ページ側は金額を書き換えるコードを持たない
   assert.doesNotMatch(page, /plan-option-price[^]{0,80}textContent\s*=/, 'ページで金額を書き換えている');
+});
+
+// ── 期間そのものの挙動（**期間は延ばさない**。外側の正しさを固定する）──────────
+test('前提: 固定した時刻が期間内で、期間外は false になる', () => {
+  assert.equal(isCampaignActive(IN_WINDOW), true, '固定時刻が期間内でない');
+  assert.equal(isCampaignActive(OUT_OF_WINDOW), false, '期間外が期間内と判定されている');
+});
+
+test('【期間外】全プラン × 全ページでバナーを出さない', async () => {
+  mock.timers.setTime(OUT_OF_WINDOW);
+  for (const plan of PLANS) {
+    const banner = await bannerFor(plan);
+    assert.equal(banner.show, false, `${plan || '(未登録)'}: 期間外なのに API が show:true を返す`);
+    for (const page of BANNER_PAGES) {
+      const v = resolveBannerView({ banner, currentPath: page });
+      assert.equal(v.show, false,
+        `${plan || '(未登録)'} @ ${page}: 期間外なのにご案内が出ている（割引は乗らない）`);
+      assert.equal(v.cta.show, false, `${plan || '(未登録)'} @ ${page}: 期間外なのにボタンが出ている`);
+    }
+  }
 });

@@ -10,12 +10,32 @@
  * 判定ロジック（`campaignOffers.js`）は正しく 3 件返していたので、
  * 純粋関数のテストだけでは**永久に気づけない**。ここは API を実際に叩いて確かめる。
  */
-import { test, beforeEach, afterEach } from 'node:test';
+import { test, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createSessionV2 } from '../auth/session.js';
 import { SESSION_COOKIE_NAME } from '../auth/constants.js';
 import { clearAnchorCache } from '../premiumPlus/purchaseAnchorLookup.js';
+import {
+  CAMPAIGN_WINDOW, isCampaignActive, resolveCampaignPricing,
+} from './campaignOffers.js';
+
+/**
+ * ⚠️ **実時計を使わない**（2026-09-08 修正）。
+ *
+ * 案内は `isCampaignActive(Date.now())` が真のときだけ出る（期間外に案内すると
+ * 「メールは届くのに 1 円も割り引かれない」になるため、この停止は**正しい挙動**）。
+ * ところがこのファイルは実時計で API を叩いていたので、キャンペーン期間が
+ * 終わった翌日から **9 件が一斉に赤くなった**（2026-09-07 00:00 JST 以降）。
+ *
+ * 見たいのは「その相手に届くか」であって暦ではないので、**期間内の時刻へ固定**する。
+ * 期間そのものの挙動は下の「期間外」テストで別に固定する（期間は延ばさない）。
+ */
+const DAY = 86400_000;
+/** 期間の 2 日目（開始直後の境界に依存しない） */
+const IN_WINDOW = Date.parse(CAMPAIGN_WINDOW.startsAtIso) + DAY;
+/** 期間終了の 1 時間後 */
+const OUT_OF_WINDOW = Date.parse(CAMPAIGN_WINDOW.endsAtIso) + 3600_000;
 
 const SECRET = 'test-secret-value-at-least-32-characters-long!!';
 const REC = 'recSYNTH000000010';
@@ -78,8 +98,11 @@ beforeEach(() => {
   process.env.UPSTASH_REDIS_REST_TOKEN = 'stub';
   process.env.COMEBACK_OFFER_TABLE_READY = '1';
   stub();
+  // 期間内の時刻へ固定する（暦で赤くならないように）
+  mock.timers.enable({ apis: ['Date'], now: IN_WINDOW });
 });
 afterEach(() => {
+  mock.timers.reset();
   globalThis.fetch = realFetch;
   for (const k of Object.keys(process.env)) if (!(k in realEnv)) delete process.env[k];
   Object.assign(process.env, realEnv);
@@ -166,4 +189,42 @@ test('Light の方に Premium Plus の存在を漏らさない（入口を広げ
   assert.equal(body.coupon.claimed, false);
   assert.equal(body.coupon.canClaim, false);
   assert.ok(!JSON.stringify(body).includes('Premium Plus'), 'Premium Plus の名前が漏れている');
+});
+
+// ── 期間そのものの挙動（**期間は延ばさない**。外側の正しさを固定する）──────────
+test('前提: 固定した時刻が期間内で、期間外は false になる', () => {
+  assert.equal(isCampaignActive(IN_WINDOW), true, '固定時刻が期間内でない');
+  assert.equal(isCampaignActive(OUT_OF_WINDOW), false, '期間外が期間内と判定されている');
+});
+
+test('【期間外】公開 API は active: false になり、案内を 1 件も返さない', async () => {
+  mock.timers.setTime(OUT_OF_WINDOW);
+  for (const plan of ['free', 'light', 'premium']) {
+    const { status, body } = await campaignApi(plan);
+    assert.equal(status, 200, `${plan}: 期間外に API が落ちている`);
+    assert.equal(body.active, false, `${plan}: 期間外なのに案内が有効になっている`);
+    assert.equal(body.offers.length, 0, `${plan}: 期間外なのに案内が ${body.offers.length} 件出ている`);
+  }
+});
+
+test('【期間外】会員 API も案内を出さない（届いてしまうと割引が乗らない案内になる）', async () => {
+  mock.timers.setTime(OUT_OF_WINDOW);
+  record = MEMBERS.light;
+  const { status, body } = await upsell(SESSION_PLAN.light);
+  assert.equal(status, 200);
+  assert.equal(body.campaign.active, false, '期間外なのに案内が有効になっている');
+  assert.equal(body.campaign.offers.length, 0);
+});
+
+test('【期間外】割引は 1 円も乗らない（表示と請求の食い違いを作らない）', () => {
+  const entitlements = { paidLightActive: false, paidPremiumActive: false, canViewSanrenpuku: false };
+  const args = {
+    planName: 'Light', planType: 'Monthly', entitlements, registered: true,
+    allowed: { allowed: true, reason: '', note: '' },
+  };
+  const inside = resolveCampaignPricing({ ...args, nowMs: IN_WINDOW });
+  assert.equal(inside.applied, true, '前提: 期間内なら割引が乗る');
+  const outside = resolveCampaignPricing({ ...args, nowMs: OUT_OF_WINDOW });
+  assert.equal(outside.applied, false, '期間外に割引が乗っている');
+  assert.equal(outside.reason, 'outside_window');
 });
