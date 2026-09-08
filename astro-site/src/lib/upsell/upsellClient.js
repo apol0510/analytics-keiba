@@ -119,7 +119,10 @@ export async function getCouponNotice() {
   // ⚠️ 無料の方はセッションが無く `d.campaign` が取れない。公開 API から取り直す
   const campaign = (d && d.campaign) ? d.campaign : await getCampaign();
   const all = describeAllNotices({
-    coupon: d && d.coupon, campaign, seen: readSeen(),
+    coupon: d && d.coupon, campaign,
+    // ⚠️ サーバーが作った文字列をそのまま渡す。ランク判定をここで作らない
+    rankNotice: d && d.rankNotice,
+    seen: readSeen(),
   });
   const first = all.items[0] || null;
   return {

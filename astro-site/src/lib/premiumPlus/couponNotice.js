@@ -141,20 +141,33 @@ export function describeCampaignNotice(campaign) {
  *    - `all` / `total` … いま有効なお知らせ**すべて**（既読を含む）＝ナビに出す条件
  *    - `items` / `count` … そのうち**未読だけ**＝赤い点に出す件数
  *
- * @param {{ coupon?: object, campaign?: object, seen?: Record<string,string> }} input
- *   `seen` は種類ごとの既読 signature
+ * ## ランク別の常設お知らせ（2026-09-08 追加）
+ *
+ * クーポンの期限切れ・キャンペーン期間外で**お知らせが 0 件になる**のを防ぐ土台。
+ * ⚠️ **フォールバック**。具体的な行動があるお知らせ（クーポン / 割引）が 1 件でも
+ *    あるときは出さない。並べるとどれを見ればよいか分からなくなる。
+ *
+ * @param {{ coupon?: object, campaign?: object, rankNotice?: object,
+ *           seen?: Record<string,string> }} input
+ *   `seen` は種類ごとの既読 signature。`rankNotice` はサーバー（`/api/upsell.json`）が
+ *   `describeRankNotice()` で作った結果をそのまま渡す（クライアントで作らない）
  * @returns {{ count: number, items: Array<{kind,label,signature}>,
  *             total: number, all: Array<{kind,label,signature,unseen:boolean}> }}
  */
-export function describeAllNotices({ coupon, campaign, seen } = {}) {
+export function describeAllNotices({ coupon, campaign, rankNotice, seen } = {}) {
   const read = seen || {};
   const all = [];
   const items = [];
-  for (const n of [describeCouponNotice(coupon), describeCampaignNotice(campaign)]) {
-    if (n.show !== true || !n.signature) continue;
+  const push = (n) => {
+    if (n.show !== true || !n.signature) return;
     const unseen = isCouponNoticeUnseen(n, read[n.kind]);
-    all.push({ kind: n.kind, label: n.label, signature: n.signature, unseen });
-    if (unseen) items.push({ kind: n.kind, label: n.label, signature: n.signature });
-  }
+    const row = { kind: n.kind, label: n.label, signature: n.signature, unseen };
+    if (n.href) row.href = n.href;
+    all.push(row);
+    if (unseen) items.push({ kind: n.kind, label: n.label, signature: n.signature, ...(n.href ? { href: n.href } : {}) });
+  };
+  for (const n of [describeCouponNotice(coupon), describeCampaignNotice(campaign)]) push(n);
+  // ⚠️ 行動があるお知らせが 1 件も無いときだけ、ランク別の土台を出す
+  if (all.length === 0) push(rankNotice || { show: false });
   return { count: items.length, items, total: all.length, all };
 }

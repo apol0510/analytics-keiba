@@ -36,6 +36,8 @@ import { listReservationsFor } from '../../lib/premiumPlus/premiumPlusCouponRese
 import { describeCouponLifecycle } from '../../lib/premiumPlus/premiumPlusCouponReservation.js';
 // 全会員向けキャンペーン割引（Light / Premium / 三連複）。Premium Plus とは別物。
 import { describeCampaignForMember, isCampaignActive } from '../../lib/promotions/campaignOffers.js';
+// ランク別の常設お知らせ（お知らせが 0 件になるのを防ぐ土台）。文言・URL は単一源が持つ
+import { describeRankNotice } from '../../lib/promotions/rankNotice.js';
 import { campaignControlStore } from '../../lib/promotions/campaignControlStore.js';
 import { resolveCampaignAllowed } from '../../lib/promotions/campaignControl.js';
 import { fromAirtableFields, resolveEntitlements } from '../../lib/entitlements/resolveEntitlements.js';
@@ -189,11 +191,20 @@ export async function GET({ request }) {
     allowed: campaignAllowed,
   });
 
+  // ⚠️ 文言も案内先もサーバーが確定させる（クライアントで条件文を組み立てない）。
+  //    Premium Plus に触れてよいのは channel が plus のときだけ（存在秘匿）。
+  const rankNotice = describeRankNotice({
+    entitlements: resolveEntitlements(fromAirtableFields(fields || {}), now),
+    plusAllowed: view.channel === UPSELL_CHANNEL.PLUS,
+    plusPurchasable: view.plus?.purchaseEnabled === true,
+  });
+
   const body = {
     channel: view.channel,
     reason: view.reason,
     coupon: couponBody,
     campaign,
+    rankNotice,
     // 三連複は「出してよいか」だけ。段階（予告/CTA）はクライアントが決める。
     sanrenpuku: { allowed: view.sanrenpuku.allowed },
     plus: view.channel === UPSELL_CHANNEL.PLUS
