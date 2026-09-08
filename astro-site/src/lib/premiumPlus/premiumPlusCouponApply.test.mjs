@@ -184,7 +184,8 @@ test('API は本人セッションだけで会員を決め、書き込みをし�
 });
 
 test('申込画面は価格を送らず couponId だけ送る', () => {
-  for (const f of ['../../pages/premium-plus.astro', '../../pages/premium-plus-v2.astro']) {
+  // /premium-plus/ は認可付きリダイレクト（2026-09-08）。商品ページ本体は v2 のみ
+  for (const f of ['../../pages/premium-plus-v2.astro']) {
     const src = read(f);
     assert.match(src, /couponId: \(typeof window\.__akPpCouponId/, `${f}: couponId を送っていない`);
     const payload = src.slice(src.indexOf('const formData = {'), src.indexOf('const formData = {') + 1200);

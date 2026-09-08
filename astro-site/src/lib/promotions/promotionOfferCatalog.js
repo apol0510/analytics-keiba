@@ -97,7 +97,7 @@ export const REGULAR_PRICE = Object.freeze({
   /**
    * Premium Plus（1 日 1 鞍の単品商品）。`/pricing/` では売らないので上の 4 つとは
    * 突き合わせ先が違い、**商品ページ `premium-plus.astro` の `PRICE`** が実売価格。
-   * ⚠️ 変更したら商品ページ（premium-plus / premium-plus-v2）と**必ず両方**直す。
+   * ⚠️ 変更したら商品ページ `premium-plus-v2.astro` を直す（2026-09-08 に v2 へ一本化済み）。
    *    ズレは `premiumPlusCouponTerms.test.mjs` が検知して落ちる。
    */
   premium_plus: 68000,

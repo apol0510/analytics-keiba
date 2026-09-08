@@ -24,15 +24,16 @@ const adminPage = read('../../pages/admin/premium-plus-eligibility.astro');
 const dashboard = read('../../pages/dashboard.astro');
 const jra = read('../../pages/premium-prediction/jra.astro');
 const nankan = read('../../pages/premium-prediction/nankan.astro');
+// 商品ページ本体は v2 のみ（/premium-plus/ は 2026-09-08 に認可付きリダイレクトへ縮小し、
+// 販売導線・channel 判定は持たない。会員判定だけ通して v2 へ 301 する）
 const plusV2 = read('../../pages/premium-plus-v2.astro');
-const plusV1 = read('../../pages/premium-plus.astro');
 const stageLib = read('../sanrenpuku/sanrenpukuCtaStage.js');
 
 // ── 1. 単一源を通る ───────────────────────────────────────────
 
 test('1. 販売導線を出すページは単一源 resolver を経由する', () => {
   for (const [name, src] of [['/api/upsell.json', upsellApi], ['/api/premium-plus-stage.json', stageApi],
-    ['premium-plus-v2', plusV2], ['premium-plus', plusV1], ['admin function', adminFn]]) {
+    ['premium-plus-v2', plusV2], ['admin function', adminFn]]) {
     assert.ok(/resolveUpsellForCustomer/.test(src), `${name}: 単一源を経由していない`);
   }
   // クライアント側は共有ヘルパ経由（ページごとに fetch を書かない）
@@ -44,7 +45,7 @@ test('1. 販売導線を出すページは単一源 resolver を経由する', (
 });
 
 test('1-b. 商品ページ / 予告 API は channel が plus でなければ 404（2 商品を並べない）', () => {
-  for (const [name, src] of [['premium-plus-v2', plusV2], ['premium-plus', plusV1]]) {
+  for (const [name, src] of [['premium-plus-v2', plusV2]]) {
     assert.ok(/ppUpsell\.channel !== UPSELL_CHANNEL\.PLUS/.test(src), `${name}: channel を見ていない`);
   }
   assert.ok(/upsell\.channel !== UPSELL_CHANNEL\.PLUS\) return notFound\(\)/.test(stageApi),
@@ -200,7 +201,7 @@ test('7-c-2. 管理画面は経過日数の文言を自前で決めない（未�
 test('7-d. targetOverride は管理経路だけ。顧客向けページ/API では使わない', () => {
   for (const [name, src] of [
     ['upsell.json', upsellApi], ['stage API', stageApi],
-    ['premium-plus-v2', plusV2], ['premium-plus', plusV1],
+    ['premium-plus-v2', plusV2],
     ['dashboard', dashboard], ['premium-prediction/jra', jra], ['premium-prediction/nankan', nankan],
   ]) {
     assert.ok(!/targetOverride/.test(strip(src)), `${name}: 顧客向け経路で targetOverride を使っている`);

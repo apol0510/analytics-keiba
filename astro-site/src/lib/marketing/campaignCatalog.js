@@ -336,7 +336,9 @@ export const CAMPAIGNS = Object.freeze([
     campaignId: 'premium-plus-offer',
     benefitType: 'exclusive_perk',
     benefitDescription: '1日1鞍の三連単フォーメーションを特別価格でご案内します',
-    version: 2,
+    // v3: CTA 先を /premium-plus/ → /premium-plus-v2/ へ（2026-09-08 の v2 一本化）。
+    // 配信済みの v2 メールの /premium-plus/ は認可付き 301 で生き続けるので着地は壊れない。
+    version: 3,
     name: 'Premium Plus 案内',
     description: 'Premium Plus の販売資格があり、商品ページを閲覧できる会員だけに案内する。',
     subject: '【KEIBA Analytics】1日1鞍の予想について',
@@ -352,10 +354,10 @@ export const CAMPAIGNS = Object.freeze([
       '1日1鞍に絞り込む設計です。',
     ].join('\n'),
     ctaLabel: '詳細を見る',
-    ctaUrl: `${SITE}/premium-plus/`,
+    ctaUrl: `${SITE}/premium-plus-v2/`,
     recommendedSegments: ['plan:premium_sanrenpuku'],
     audienceRule: { contracts: [], plans: [MK_PLAN.PREMIUM_SANRENPUKU], enforce: true },
-    // ⚠️ CTA 先 `/premium-plus/` は段階公開の対象で、PHASE 3 未満・非 eligible には 404。
+    // ⚠️ CTA 先 `/premium-plus-v2/` は段階公開の対象で、PHASE 3 未満・非 eligible には 404。
     //    プラン条件だけでは全員がリンク切れに着地するため、**販売資格と PHASE を追加判定**する。
     //    判定は既存正本（resolvePremiumPlusRelease）を再利用し、PHASE 計算を複製しない。
     extraAudience: 'premium_plus_release',

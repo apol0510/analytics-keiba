@@ -115,7 +115,7 @@ review / 未設定なら Plus を出しません。免除は**明示指定のと
 | ブラウザ用の取得ヘルパ | `src/lib/upsell/upsellClient.js` |
 | 配信 API（SSR・read-only） | `src/pages/api/upsell.json` |
 | Plus 予告 API（channel を尊重） | `src/pages/api/premium-plus-stage.json` |
-| 商品ページ | `src/pages/premium-plus-v2.astro` / `premium-plus.astro` |
+| 商品ページ | `src/pages/premium-plus-v2.astro`（唯一の正本。`premium-plus.astro` は認可付き 301 のみ） |
 | 三連複 CTA 設置ページ | `src/pages/premium-prediction/{jra,nankan}.astro` |
 | 主要導線 | `src/pages/dashboard.astro` |
 | 管理画面 | `src/pages/admin/premium-plus-eligibility.astro` + `netlify/functions/premium-plus-eligibility.js` |

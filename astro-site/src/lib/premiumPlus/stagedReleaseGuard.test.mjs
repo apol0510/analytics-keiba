@@ -24,7 +24,6 @@ const LOOKUP_LIB = read('./purchaseAnchorLookup.js');
 const ENDPOINT = read('../../pages/api/premium-plus-stage.json.js');
 const TEASER = read('../../components/PremiumPlusStageTeaser.astro');
 const PRODUCT_PAGES = {
-  'premium-plus.astro': read('../../pages/premium-plus.astro'),
   'premium-plus-v2.astro': read('../../pages/premium-plus-v2.astro'),
 };
 const SANRENPUKU_PAGES = {

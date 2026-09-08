@@ -19,7 +19,6 @@ const stripComments = (src) => String(src)
 const API = read('../../pages/api/premium-plus-coupon.json.js');
 const COUPON_PAGE = read('../../pages/premium-plus-coupon.astro');
 const PRODUCT_PAGES = {
-  'premium-plus.astro': read('../../pages/premium-plus.astro'),
   'premium-plus-v2.astro': read('../../pages/premium-plus-v2.astro'),
 };
 const ADMIN_FN = read('../../../netlify/functions/premium-plus-eligibility.js');

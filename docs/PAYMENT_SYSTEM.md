@@ -116,7 +116,7 @@ PayPay銀行 本店営業部
 | Premium 買い切り/年払い/月払い | /dashboard/ | 全レース（1R〜12R） |
 | Premium Sanrenpuku 買い切り | /dashboard/ | 全レース + 三連複予想 |
 | Premium Combo 買い切り | /dashboard/ | 全レース + 三連複 + Combo限定 |
-| Premium Plus | /premium-plus/ | 単品商品・高精度予想（永久アクセス） |
+| Premium Plus | /premium-plus-v2/ | 単品商品・高精度予想（永久アクセス）。旧 URL /premium-plus/ は会員のみ 301 |
 
 ---
 

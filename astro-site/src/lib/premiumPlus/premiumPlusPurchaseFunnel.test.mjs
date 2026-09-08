@@ -281,7 +281,6 @@ test('【重要】購入完了を記録するのは入金確認の Function だ�
   // クライアントから届く経路・画面には無いこと
   for (const [name, src] of [
     ['premium-plus-v2.astro', readFile('../../pages/premium-plus-v2.astro')],
-    ['premium-plus.astro', readFile('../../pages/premium-plus.astro')],
     ['dashboard.astro', readFile('../../pages/dashboard.astro')],
     ['pp-funnel.json.js', readFile('../../pages/api/pp-funnel.json.js')],
   ]) {

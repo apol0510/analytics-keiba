@@ -44,7 +44,8 @@ test('通常価格は価格の正本（REGULAR_PRICE.premium_plus）から取る
 });
 
 test('通常価格が商品ページの実売価格と一致する（ズレたら落ちる）', () => {
-  for (const f of ['../../pages/premium-plus.astro', '../../pages/premium-plus-v2.astro']) {
+  // /premium-plus/ は認可付きリダイレクト（2026-09-08）。商品ページ本体は v2 のみ
+  for (const f of ['../../pages/premium-plus-v2.astro']) {
     const m = /const PRICE = (\d+);/.exec(read(f));
     assert.ok(m, `${f}: PRICE を読み取れない`);
     assert.equal(Number(m[1]), REGULAR_PRICE.premium_plus, `${f}: 商品ページの価格と正本がズレている`);

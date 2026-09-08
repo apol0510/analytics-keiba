@@ -23,7 +23,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
-const PAGES = ['../../pages/premium-plus.astro', '../../pages/premium-plus-v2.astro'];
+// 商品ページ本体は v2 のみ（/premium-plus/ は 2026-09-08 に認可付きリダイレクトへ縮小）
+const PAGES = ['../../pages/premium-plus-v2.astro'];
 const COUPON_UI = read('../../components/PremiumPlusCouponApply.astro');
 
 // ── 金額はすべて同じ値へ揃う ────────────────────────────────

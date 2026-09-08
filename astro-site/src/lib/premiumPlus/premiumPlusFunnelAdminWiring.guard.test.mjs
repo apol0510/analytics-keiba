@@ -177,8 +177,8 @@ test('【重要】全件走査を作っていない・部分取得は fail close
 // ══════════════════════════════════════════════════════════════
 const TEASER = read('../../components/PremiumPlusStageTeaser.astro');
 const DASH = read('../../pages/dashboard.astro');
+// 商品ページ本体は v2 のみ（/premium-plus/ は 2026-09-08 に認可付きリダイレクトへ縮小）
 const PPV2 = read('../../pages/premium-plus-v2.astro');
-const PP = read('../../pages/premium-plus.astro');
 const CLIENT = read('./premiumPlusFunnelClient.js');
 
 test('【重要】source はサーバーの allow-list で検証する（クライアント任意値を保存しない）', () => {
@@ -201,7 +201,7 @@ test('【重要】dashboard の「会員限定のご案内を見る」は dashbo
 });
 
 test('【重要】商品ページ内の購入導線は plus_page を送る（3 サーフェス目）', () => {
-  for (const [name, src] of [['premium-plus', PP], ['premium-plus-v2', PPV2]]) {
+  for (const [name, src] of [['premium-plus-v2', PPV2]]) {
     // 表示は「画面に入ったとき」だけ（DOM にあるだけでは数えない）
     assert.match(src, /id="pp-offer"/, `${name} に観測対象の id が無い`);
     assert.match(src, /event: 'cta_view', el: offer, source: 'plus_page'/, `${name} が表示を送っていない`);
@@ -224,7 +224,7 @@ test('【重要】商品ページ内の導線を「流入」として URL から
   assert.ok(!/normalizeFunnelSource\(u\.searchParams/.test(SERVER),
     '?from= が全 allow-list を受けている（plus_page を名乗れてしまう）');
   // 商品ページのリンクに from=plus_page を付けていないこと
-  for (const [name, src] of [['premium-plus', PP], ['premium-plus-v2', PPV2], ['dashboard', DASH], ['teaser', TEASER]]) {
+  for (const [name, src] of [['premium-plus-v2', PPV2], ['dashboard', DASH], ['teaser', TEASER]]) {
     assert.ok(!/from=plus_page/.test(src), `${name} が from=plus_page を付けている`);
   }
 });
@@ -244,7 +244,7 @@ test('【重要】商品ページ内の導線に「到達」を作らない（0 
 });
 
 test('【重要】商品ページ到達も導線を allow-list 経由で記録する', () => {
-  for (const [name, src] of [['premium-plus-v2', PPV2], ['premium-plus', PP]]) {
+  for (const [name, src] of [['premium-plus-v2', PPV2]]) {
     assert.match(src, /readPlusSourceFromUrl\(Astro\.url\)/, `${name} が導線を読んでいない`);
   }
   assert.match(SERVER, /export function readPlusSourceFromUrl/);

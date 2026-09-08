@@ -188,7 +188,8 @@ test('【重要】顧客向けの値は停止を反映した release のまま',
 
 test('【重要】資格の軸は顧客向け判定・申込 403 に流用されていない', () => {
   for (const rel2 of ['../../pages/api/upsell.json.js', '../../pages/api/premium-plus-stage.json.js',
-    '../../pages/premium-plus.astro', '../../pages/premium-plus-v2.astro',
+    // /premium-plus/ は認可付きリダイレクト（2026-09-08）。商品ページ本体は v2 のみ
+    '../../pages/premium-plus-v2.astro',
     '../../../netlify/functions/bank-transfer-application.js']) {
     const src = readFileSync(new URL(rel2, import.meta.url), 'utf8');
     assert.ok(!src.includes('eligibilityAxis'), `顧客向け経路が資格の軸を使っている: ${rel2}`);

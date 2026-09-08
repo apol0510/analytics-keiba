@@ -4,7 +4,9 @@
  *   node --test src/lib/auth/premiumPlusPageGuard.test.mjs
  *
  * 対象ページ（どちらも同一の fail-closed 認可ゲートを持つこと）:
- *   - src/pages/premium-plus.astro     … 旧 SSR 経路（Netlify functions cache 固着のため
+ *   - src/pages/premium-plus.astro     … 旧 URL。2026-09-08 に認可付き 301 スタブへ縮小した
+ *                                        （商品本体は持たないが、非会員には従来どおり 404 を
+ *                                        返す必要があるのでこのガードの対象に残す）。旧経緯:
  *                                          非公開のまま残置。導線からは切り離し済み）
  *   - src/pages/premium-plus-v2.astro   … 新しい正式商品ページ（本番検証済みの新モジュール経路）
  *

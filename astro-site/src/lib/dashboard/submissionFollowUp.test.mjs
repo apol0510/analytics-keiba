@@ -103,7 +103,8 @@ test('マイページは文言を自分で組み立てない（単一源を呼�
 });
 
 test('Premium Plus の送信完了画面もマイページで確認できるとは言わない', () => {
-  for (const rel of ['../../pages/premium-plus.astro', '../../pages/premium-plus-v2.astro']) {
+  // /premium-plus/ は認可付きリダイレクト（2026-09-08）。商品ページ本体は v2 のみ
+  for (const rel of ['../../pages/premium-plus-v2.astro']) {
     const src = read(rel);
     const code = src.replace(/\/\/[^\n]*/g, '');
     assert.ok(!code.includes('お申し込みの状況はマイページからご確認いただけます'),

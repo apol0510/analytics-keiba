@@ -29,7 +29,6 @@ const LAUNCH_LIB = read('./premiumPlusReopenLaunch.js');
 
 /** クーポンの条件・期限を顧客へ出す面（**全部ここから、本人の recordId で読む**） */
 const SURFACES = Object.freeze([
-  ['/premium-plus/（受付休止ページ）', '../../pages/premium-plus.astro'],
   ['/premium-plus-v2/（受付休止ページ）', '../../pages/premium-plus-v2.astro'],
   ['/premium-plus-coupon/（クーポンページ）', '../../pages/premium-plus-coupon.astro'],
   ['/api/upsell.json（マイページ）', '../../pages/api/upsell.json.js'],

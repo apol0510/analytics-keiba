@@ -464,7 +464,8 @@ test('【重要】salePauseGuard（deny-marker 設計）が存在しない', () 
   }
   // 顧客向け経路からも参照されていない
   for (const rel of ['../../pages/api/upsell.json.js', '../../pages/api/premium-plus-stage.json.js',
-    '../../pages/premium-plus.astro', '../../pages/premium-plus-v2.astro',
+    // /premium-plus/ は認可付きリダイレクト（2026-09-08）。商品ページ本体は v2 のみ
+    '../../pages/premium-plus-v2.astro',
     '../../../netlify/functions/bank-transfer-application.js']) {
     assert.ok(!read(rel).includes('salePauseGuard'), `salePauseGuard を参照している: ${rel}`);
     assert.ok(!read(rel).includes('enforceSalePause'), `enforceSalePause を参照している: ${rel}`);

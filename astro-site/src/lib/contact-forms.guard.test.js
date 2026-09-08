@@ -24,7 +24,8 @@ const read = (rel) => readFileSync(join(process.cwd(), rel), 'utf-8');
 // 対象フォーム実体（PremiumContactModal は dashboard + JRA の 2 フォームを兼ねる → 計 6 フォーム）
 const FORM_FILES = [
   { file: 'src/components/PremiumContactModal.astro', covers: 'dashboard + JRA(premium)' },
-  { file: 'src/pages/premium-plus.astro', covers: 'premium-plus' },
+  // /premium-plus/ は 2026-09-08 に認可付きリダイレクトへ縮小（フォームを持たない）ため対象外。
+  // Premium Plus の申込フォーム実体は premium-plus-v2.astro だけ。
   { file: 'src/pages/premium-plus-v2.astro', covers: 'premium-plus-v2（正式商品ページ）' },
   { file: 'src/pages/premium-prediction/nankan.astro', covers: '南関(premium)' },
   { file: 'src/pages/premium-predictions-funabashi.astro', covers: '船橋(premium)' },

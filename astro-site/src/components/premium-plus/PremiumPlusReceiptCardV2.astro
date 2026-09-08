@@ -6,7 +6,8 @@
  * 旧版に固着している問題を、**新しい独立ファイル経路**で回避するための v2 実装。
  *
  * 制約（重要）:
- * - `src/pages/premium-plus.astro` のカードコードを import / 流用しない（固着モジュール経路の回避）。
+ * - 旧ページ `src/pages/premium-plus.astro` のカード複製は 2026-09-08 に廃止（v2 へ一本化）。
+ *   同じカードを別ページへ書き写さず、必ずこのコンポーネントを使うこと。
  * - データは admin が保存した既存台帳（`premiumPlusResults.json` / `premiumPlusResults.js`）を
  *   read-only で利用する。admin 画面・保存 Function・JSON schema は変更しない。
  * - このコンポーネントは `card`（deriveCard 形状のオブジェクト）を1件受け取り自己完結で描画する。

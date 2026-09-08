@@ -174,7 +174,7 @@ test('【version ロック】本文を変えたら version を上げる', () => 
     'expired-comeback': { version: 2, hash: 'e6077db532e76564' },
     'premium-renewal': { version: 2, hash: '1bfa299fb86a339c' },
     'sanrenpuku-offer': { version: 2, hash: '59a115bc1933cb46' },
-    'premium-plus-offer': { version: 2, hash: '24d5b10d69335767' },
+    'premium-plus-offer': { version: 3, hash: '9bdc2b32b4aa546a' },
     'dormant-reactivation': { version: 2, hash: '8bc34393b414464b' },
     'general-announcement': { version: 1, hash: '7e6dc6ed7461489d' },
     // Light 永久無料 再スタート案内（2026-08-25 新規）。旧三連複会員 18 名の正規化に

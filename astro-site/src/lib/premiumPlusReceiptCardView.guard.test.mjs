@@ -207,7 +207,6 @@ test('CSS 同期: .vref.spat .bet .c3 が全コピーで一致（片方だけ直
   const files = [
     '../styles/premiumPlusReceiptCard.css',
     '../components/premium-plus/PremiumPlusReceiptCardV2.astro',
-    '../pages/premium-plus.astro',
     '../pages/premium-plus-v2.astro',
   ];
   const rules = files.map((f) => {
@@ -271,7 +270,6 @@ test('JRA 払戻金額合計は .hlrow.back でラベルごと赤（構造は不
 test('ドリフト検知: 本番コンポーネント / ページも払戻表示をそろえている', () => {
   for (const rel of [
     '../components/premium-plus/PremiumPlusReceiptCardV2.astro',
-    '../pages/premium-plus.astro',
   ]) {
     const src = read(rel);
     assert.ok(!src.includes('払戻/返還金額'), `${rel}: 旧ラベル「払戻/返還金額」が残っている`);
@@ -305,7 +303,6 @@ test('ラベル変更は JRA のみ（南関 SPAT4 には出さない）', () =>
 test('ドリフト検知: 本番コンポーネント / ページも新ラベルにそろえている', () => {
   for (const rel of [
     '../components/premium-plus/PremiumPlusReceiptCardV2.astro',
-    '../pages/premium-plus.astro',
   ]) {
     const src = read(rel);
     assert.ok(src.includes('>購入金額合計<'), `${rel}: 「購入金額合計」でない`);
@@ -323,12 +320,12 @@ test('ドリフト検知: 本番コンポーネント / ページも新ラベル
 
 /**
  * SPAT4 レシート部分のソース（AK 独自ヘッダーは含めない）。
- * ⚠️ 同じレシートの実装が **3 か所**にある（コンポーネント / 旧ページ / 管理画面レンダラ）。
+ * ⚠️ 同じレシートの実装が **2 か所**にある（コンポーネント / 管理画面レンダラ）。
+ *    旧ページ premium-plus.astro のインライン複製は 2026-09-08 に廃止（v2 へ一本化）。
  *    片方だけ直すドリフトが実際に起きたので、全部を同じ性質で固定する。
  */
 const SPAT_SOURCES = [
   ['PremiumPlusReceiptCardV2.astro', '../components/premium-plus/PremiumPlusReceiptCardV2.astro'],
-  ['premium-plus.astro（旧ページ）', '../pages/premium-plus.astro'],
 ];
 
 function spatVrefFrom(rel) {
@@ -382,7 +379,7 @@ test('ドリフト検知: 管理画面レンダラと本番コンポーネント
   assert.equal(outsideBr.length, 1, 'Astro 側: 常に出る <br> は 1 個（＝不的中は 2 行）であるべき');
 });
 
-test('ドリフト検知: SPAT4 レシートの実装 3 か所すべてが同じ性質（不的中を書かない / 的中時だけ 3 行目）', () => {
+test('ドリフト検知: SPAT4 レシートの実装 2 か所すべてが同じ性質（不的中を書かない / 的中時だけ 3 行目）', () => {
   for (const [label, rel] of SPAT_SOURCES) {
     const vref = spatVrefFrom(rel);
     assert.ok(!vref.includes('不的中'), `${label}: レシート複製に「不的中」がある`);
@@ -394,14 +391,13 @@ test('ドリフト検知: SPAT4 レシートの実装 3 か所すべてが同じ
   }
 });
 
-// ── JRA（中央）レシートも 3 実装で固定する（2026-07-31 追加）──────────
+// ── JRA（中央）レシートも 2 実装で固定する（2026-07-31 追加 / 2026-09-08 に旧ページ分を削除）──
 // SPAT4 側で「片方だけ直す」ドリフトが実際に起きたため、JRA 側も同じ形で固定しておく。
 // JRA は否定表現を出さず「払戻金額 0円」で不的中を表す（実物どおり）。ここを崩さない。
 
 const JRA_SOURCES = [
   ['premiumPlusReceiptCardView.js（管理画面）', './premiumPlusReceiptCardView.js'],
   ['PremiumPlusReceiptCardV2.astro（本番 v2）', '../components/premium-plus/PremiumPlusReceiptCardV2.astro'],
-  ['premium-plus.astro（旧ページ）', '../pages/premium-plus.astro'],
 ];
 
 /**
@@ -427,7 +423,7 @@ function jraVrefFrom(rel) {
     .replace(/\bc\.wDispPad\b/g, 'wDispPad');
 }
 
-test('JRA: 3 実装ともレシート内に否定表現（不的中 / .miss）を出さない', () => {
+test('JRA: 2 実装ともレシート内に否定表現（不的中 / .miss）を出さない', () => {
   for (const [label, rel] of JRA_SOURCES) {
     const jra = jraVrefFrom(rel);
     assert.ok(!jra.includes('不的中'),
@@ -436,7 +432,7 @@ test('JRA: 3 実装ともレシート内に否定表現（不的中 / .miss）�
   }
 });
 
-test('JRA: 3 実装とも同じ固定ラベルを出す', () => {
+test('JRA: 2 実装とも同じ固定ラベルを出す', () => {
   const LABELS = ['購入金額合計', '払戻金額合計', 'すべて閉じる', '購入馬/組番', '払戻単価', '払戻金額'];
   for (const [label, rel] of JRA_SOURCES) {
     const jra = jraVrefFrom(rel);
