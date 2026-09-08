@@ -188,12 +188,12 @@ const circuitLabel = service === 'jra' ? '中央' : '南関';
   .pp-badge.bet { color: #cbd5e1; border: 1px solid rgba(148,163,184,.28); background: rgba(148,163,184,.08); }
   .pp-badge.hit { color: #06301f; background: linear-gradient(180deg, #4ade80, #0f9d6b); }
   .pp-badge.miss { color: #e6edf7; border: 1px solid rgba(248,113,113,.4); background: rgba(248,113,113,.12); }
-  .pp-evi-body { display: grid; grid-template-columns: 1fr; gap: 0; }
+  .pp-evi-body { display: grid; grid-template-columns: minmax(0,1fr); gap: 0; }
   @media (min-width: 860px) { .pp-evi-body { grid-template-columns: minmax(0,1fr) auto; } }
   .pp-left { padding: 20px; display: flex; flex-direction: column; gap: 18px; border-bottom: 1px solid var(--line); }
   @media (min-width: 860px) { .pp-left { border-bottom: 0; border-right: 1px solid var(--line); } }
   .pp-flabel { font-size: .72rem; color: var(--muted); letter-spacing: .14em; margin-bottom: .9em; }
-  .pp-form { display: grid; grid-template-columns: auto auto 1fr; gap: .5rem .7rem; align-items: start; }
+  .pp-form { display: grid; grid-template-columns: auto auto minmax(0,1fr); gap: .5rem .7rem; align-items: start; }
   .pp-fcol { display: flex; flex-direction: column; gap: .5rem; }
   .pp-ch { font-size: .64rem; color: #6f819c; text-align: center; }
   .pp-chips { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; }
@@ -207,11 +207,13 @@ const circuitLabel = service === 'jra' ? '中央' : '南関';
   .pp-mi b { font-weight: 700; }
   .pp-mi b.pay { color: var(--gold); font-size: 1.1rem; }
   .pp-right { padding: 20px; display: flex; align-items: center; justify-content: center; background: repeating-linear-gradient(135deg, rgba(255,255,255,.012) 0 8px, transparent 8px 16px), rgba(6,11,22,.5); }
+/* スマホはレシート(375px 設計)を画面内に収めるため左右の余白を詰める */
+@media (max-width: 480px) { .pp-right { padding: 12px 8px; } .pp-left { padding: 16px 14px; } }
 
   .vref { width: 375px; max-width: 100%; overflow: hidden; box-shadow: 0 16px 40px -20px rgba(0,0,0,.95); text-align: left; font-family: "ヒラギノ角ゴ Pro W3","Hiragino Kaku Gothic Pro","Hiragino Sans","メイリオ",Meiryo,sans-serif; color: #222; line-height: 1.4; }
-  .vref .chrome { width: 375px; max-width: 100%; background-repeat: no-repeat; background-position: 0 0; }
+  .vref .chrome { width: 100%; background-repeat: no-repeat; background-position: 0 0; }
   .vref.jra { background: #000; }
-  .vref.jra .chrome { height: 52px; background-image: url('/premium-plus-proof/jra-head.png'); background-size: 375px auto; }
+  .vref.jra .chrome { height: 52px; background-image: url('/premium-plus-proof/jra-head.png'); background-size: 100% auto; }
   .vref.jra .r2 { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px 5px; background: linear-gradient(to bottom, #1c1c1c, #232323); }
   .vref.jra .r2 .nav { width: 34px; height: 30px; border: 1px solid #444; border-radius: 5px; background: linear-gradient(to bottom, #2a2a2a, #111); color: #eee; text-align: center; line-height: 28px; font-size: 12px; }
   .vref.jra .r2 .c { flex: 1; text-align: center; color: #fff; }
@@ -239,7 +241,7 @@ const circuitLabel = service === 'jra' ? '中央' : '南関';
   .vref.jra .dt .uma .pf { font-weight: bold; }
   .vref.jra .dt .rc.red { color: #b70000; }
   .vref.spat { background: #fff; border: 1px solid #cfcfcf; }
-  .vref.spat .chrome { height: 86px; background-image: url('/premium-plus-proof/spat4-head.png'); background-size: 375px auto; }
+  .vref.spat .chrome { height: 86px; background-image: url('/premium-plus-proof/spat4-head.png'); background-size: 100% auto; }
   .vref.spat table { width: 100%; border-collapse: collapse; }
   .vref.spat .recv td { border-top: 1px solid #ccc; border-bottom: 1px solid #ccc; padding: 4px 8px; font-size: 15px; line-height: 1.3; }
   .vref.spat .recv tr:nth-child(odd) { background: #F1F8F8; }
