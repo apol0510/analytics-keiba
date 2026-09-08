@@ -158,6 +158,72 @@ dry-run : willSend 0 / blocked: queue_unverified / preview.wouldSend 50 / wouldS
 ⚠️ **これは次バッチが積まれるたびに繰り返す。** `stage: paused` のままでも、
 片付いた直後の tick が次の 50 名を queue する。恒久的に止めるには別の手段が要る（下記の調査）。
 
+### ✅ `rolloutKill` を実行して既存シーケンスを完全停止した（2026-09-08 10:29:37Z / MK 承認）
+
+`stage: paused` では新規 queue 生成を止められないことが本番で確定したため、
+**`rolloutKill` を 1 回だけ**実行した（`campaignId: light-trial-to-premium-sequence`）。
+
+#### なぜ kill を選んだか（他の手段との比較）
+
+| 手段 | queue 生成を止める | 巻き添え | 反映 | rollback |
+|---|---|---|---|---|
+| `rolloutPause`（実施済みの状態）| ❌ **止まらない**（新規付与のみ）| — | — | — |
+| `dailyLimit` を 0 | ❌ 止まらない（①②③ は上限判定より前）| — | — | — |
+| **`rolloutKill`** | ✅ **止まる**（`tickRollout` の ⓪ で最優先評価）| **なし**（Redis の展開状態のみ）| 即時（次 tick）| `rolloutResume` 1 操作 |
+| `MARKETING_ROLLOUT_ENABLED` unset | ✅ 止まる | ⚠️ **admin の rollout 操作が全部 503 になり kill も押せなくなる** | redeploy 必須 | env 再設定 + redeploy |
+| `MARKETING_CAMPAIGN_*` unset | ✅ 止まる | ⚠️ **割引 3 本・他キャンペーンの enqueue / 送信も止まる** | redeploy 必須 | 同上 |
+
+#### 実行直前の read-only ゲート（10:29:27Z / 7 項目すべて一致）
+
+`killed false` / `stage paused` / PENDING は `3fa04ae6` の 1 件のみ / その 50 名は `sent 0` /
+`blocked: queue_unverified`（`willSend 0`）/ 運転手の追跡ジョブ 0（`pendingJobIds: []`）/
+**全体 dry-run の `willSend` 合計 0**（＝いま送れるジョブが 1 件も無い＝送信中も 0）。
+
+> ⚠️ 最初のゲート実装は `dispatchStalled` の有無を条件に入れていたが、これは **cron のログ用**
+> フィールドで admin 応答には存在しない（`undefined` が正常）。判定式の誤りだったので、
+> 「送信中 0」の根拠を `pendingJobIds` と**全体 dry-run の willSend 合計**へ置き換えて再実行した。
+> 判定基準を緩めたのではなく、**同じことをより強い証拠で確かめる形へ直した**。
+
+#### 実行結果（`sideEffects: 展開状態（Redis）のみ`）
+
+```
+op: kill / killed: true / stage: paused / autoStopped: false / stopReason: null
+version 802 → 803 / updatedAt 2026-09-08T10:29:37.203Z
+```
+
+#### 実行後の read-only 確認（10:30 / 10:38 ＝ 2 tick 以上経過）
+
+| 確認 | 実測 | 判定 |
+|---|---|---|
+| killed | **true**（10:38 も維持）| ✅ |
+| stage | **paused**（kill は段階を変えない）| ✅ |
+| PENDING 50 名 | `3fa04ae6` / **sent 0 / failed 0 / 配信行 queued 50・sent 0・cancelled 0** | ✅ |
+| 新規ジョブ | `jobsTotal` **438 のまま**（kill 後 9 分・2 tick で増加 0）| ✅ |
+| tick の副作用 | `stateVersion` **803 のまま**（tick が ⓪ で戻り、1 バイトも書いていない）| ✅ |
+| 割引 3 本 | free `step1 13,499` / light `5` / premium `13`、`dup 0`、集計の更新時刻も不変 | 影響なし ✅ |
+| 台帳集計 | `light-trial…: jobs 124 / sent 5,528 / failed 0 / pending 1`（不変）| ✅ |
+| prospect | 11,976 / 反応済み未登録 0 / 永久除外 0 | 影響なし ✅ |
+
+#### いまの状態と、再開するときに起きること
+
+- **止まっているもの**: 体験中 6 通・体験終了後 18 通の**新規 queue 生成・送信起動・無料付与**
+- **残っているもの**: `3fa04ae6` の 50 名は PENDING のまま（kill は既存ジョブを消さない）。
+  `queue:unverified` で block されているので**放置しても送信されない**
+- **再開手順**: `rolloutResume`（`killed:false` に戻す。**stage は `paused` のまま**なので
+  いきなり配り始めない）。redeploy 不要
+- ⚠️ `killed` 中は tick が ⓪ で戻るため `pendingJobIds` の片付けも走らない
+  （現在 `[]` なので実害なし）
+
+#### 残量の見積り（`action=history` / 正本のシーケンス定義より）
+
+| 区分 | 残り |
+|---|---|
+| 体験中 step4 | 約 **643 名 ＝ 13 バッチ**（送信済み 912 / in_trial 1,555）|
+| 体験中 step5・step6 | 約 **3,110 通 ＝ 62 バッチ** |
+| 体験終了後 18 通 | 約 **28,000 通 ＝ 560 バッチ**（累計 delay 約 136 日）|
+| **合計（上限）** | 約 **31,700 通 ＝ 約 635 バッチ**（購入・配信停止・無反応打ち切りで減る）|
+
+
 ## 本番反映後の実測（2026-09-08 08:37–09:03 UTC / **read-only・書き込み 0・送信 0**）
 
 deploy は `3e667c32`（08:36:11Z ready）。運転手（`cron-marketing-rollout`）は 5 分ごとなので、
