@@ -660,6 +660,7 @@ AND(
 | 2 | 走査カーソル（Airtable offset）の失効から自力復帰できない | `sequenceLedgerScan.js` | `sequenceLedgerScanRecovery.test.mjs` |
 | 3 | step1 未送信者が step2 以降を巻き添えで止める | `sequenceAutomation.js` / `sequenceProgress.js` | `sequenceFirstStepIsolation.test.mjs` |
 | 4 | 最終 step がキャンペーン期間からはみ出す定義を置ける | `sequenceWindowFit.js` | `sequenceWindowFit.test.mjs` |
+| 5 | 送れない PENDING ジョブがあると、運転手が片付けを保存できず**完了ジョブを毎 tick 数え直す** | `cron-marketing-rollout.js`（正本は [`MARKETING_ROLLOUT.md`](./MARKETING_ROLLOUT.md)）| `rolloutSettleIdempotency.test.mjs` |
 
 ### 11-1. 「購入で停止」は campaign が宣言する
 

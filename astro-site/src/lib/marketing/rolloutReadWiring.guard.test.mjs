@@ -79,13 +79,21 @@ test('【配線】進行読みの据え置きは、積んだ tick で必ず解�
   assert.match(ROLLOUT_CODE, /saveStateAfterAction = \(next\) => saveState\(clearSequenceDefer\(next\)\)/,
     '据え置きを解かずに書き戻すと「積んだのに次が来ない」時間が伸びる');
   /**
-   * 素の `saveState({...})` を直接呼んでよいのは **1 か所だけ**
-   * （SKIP の tick が据え置きを**張る**ための書き戻し）。
-   * 行動した tick は必ず `saveStateAfterAction` を通す。
+   * 素の `saveState({...})` を直接呼んでよいのは **2 か所だけ**。
+   *
+   *   1. SKIP の tick が据え置きを**張る**ための書き戻し
+   *   2. 終わったジョブの片付けを**決断より前に**永続化する書き戻し（2026-09-08 追加）
+   *
+   * どちらも「行動していない」書き戻しなので、据え置きを**解いてはいけない**
+   * （解くと次の tick が最重量の進行読みをやり直し、API 予算を焼く）。
+   * 行動した tick は従来どおり必ず `saveStateAfterAction` を通す。
    */
   const raw = (ROLLOUT_CODE.match(/await saveState\(\{/g) || []).length;
-  assert.equal(raw, 1,
+  assert.equal(raw, 2,
     `素の saveState が ${raw} か所ある。行動した tick は saveStateAfterAction を通すこと`);
+  // 片付けの先行永続化が「行動した tick の書き戻し」に化けていないこと
+  assert.match(ROLLOUT_CODE, /settlePersisted = await saveState\(\{ \.\.\.state \}\)/,
+    '片付けの先行永続化が素の saveState を通っていない（据え置きを解いてしまう）');
   const wrapped = (ROLLOUT_CODE.match(/await saveStateAfterAction\(\{/g) || []).length;
   assert.ok(wrapped >= 5, `行動した tick の書き戻しが少なすぎる（${wrapped} か所）`);
 });

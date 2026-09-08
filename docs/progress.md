@@ -35,7 +35,7 @@ failed 0 / duplicates 0 / prospect の値欠け 0。**送信の冪等性は破�
 | 2 | **走査カーソルの固着**。Airtable の `offset` を Redis に保存して 10 分後に再利用する設計で、失効時の throw が**カーソル更新より前**にあり自力復帰できない | free の集計が 8/27 20:50Z / pass 15 で凍結。offset を持たない light / premium だけ無傷 |
 | 3 | **step1 未送信者の巻き添え**。`selectNextDueStep` は最小 due step を返すので、step0 が 1 人でも居ると `first_step_manual` で **tick 全体が中止** | prospect 11,976 のうち step0 が **328 名**、step1 済みが **11,648 名** |
 | 4 | **キャンペーン期間切れ**（9/7 00:00 JST）。以後は `getCampaign()` が null を返し tick が即終了 | 集計の最終更新が 9/6 14:50/14:51Z ＝ **期限の 9 分前** |
-| 5 | **運転手の追跡リストが片付かない**。書き戻しが「実績を写したときだけ」で、ジョブ照会の失敗も握り潰していた | 9/3 06:35Z に SENT のジョブが 5 日間 `pendingJobIds` に残存。PENDING 50 名も未送信 |
+| 5 | **運転手の追跡リストが片付かない + 完了ジョブの二重計上**。`queue:unverified` の PENDING ジョブがあると auto-stop 経路が**保存前に return** し、毎 tick 同じ完了ジョブを settle し直して `bumpSteps` を呼ぶ | 9/3 06:35Z に SENT のジョブが 5 日間 `pendingJobIds` に残存。step4 の集計が **68,168 → 70,918（5 時間で +2,750）** に対し実送信は 862 通 |
 
 ## 修正（`fix/sequence-stall-rootcauses`）
 
@@ -46,9 +46,10 @@ failed 0 / duplicates 0 / prospect の値欠け 0。**送信の冪等性は破�
 | `src/lib/marketing/sequenceLedgerScan.js` + `cron-campaign-sequence.js` | 失効 offset を捨てて先頭から読み直す。5xx は触らない。復帰をログへ出す |
 | `src/lib/marketing/sequenceAutomation.js` + `sequenceProgress.js` | step1 は**除外**（`excludeSteps`）。step1 しか居ないときだけ従来どおり `first_step_manual` |
 | `src/lib/marketing/sequenceWindowFit.js`（新） | 最終 step が `CAMPAIGN_WINDOW` に収まることをカタログ全体で固定 |
-| `netlify/functions/cron-marketing-rollout.js` | ジョブを読めた tick で必ず追跡リストを書き戻す / 読めない理由をログへ出す |
+| `netlify/functions/cron-marketing-rollout.js` | 片付けを**決断より前に永続化**し、**保存できたときだけ 1 回だけ**計上する。CAS の version を進めて 1 tick 2 回保存を可能に。読めない理由を `jobs_unreadable` でログへ |
 
-新規テスト 5 本（33 ケース）。`npm run test:marketing` = **2,654 pass / 0 fail**。
+新規テスト 6 本（38 ケース）。`npm run test:marketing` = **2,661 pass / 0 fail**。
+`rolloutSettleIdempotency.test.mjs` は偽の世界で 4 tick 回し、**修正前のコードでは 3 件落ちる**ことを確認済み。
 
 ## 【訂正】滞留ジョブ②（`recQFIJfJ1lekzucn`）は **未修復ではない**
 
@@ -69,8 +70,12 @@ completedAt: 2026-08-27T13:40:27.816Z
 ## Open Questions（この PR では触らない）
 
 1. **PENDING 50 名の滞留**: `…-d9a88b59-1` / `recqqadkAZvDkORZ8` / 9/3 06:46Z 登録 / sent 0。
-   送るか取り消すかは**運用判断**。修正 #5 により、追跡リストが片付けば
-   次の tick で dispatch が起動され得る（＝ **再開前に扱いを決める必要がある**）
+   **dry-run 実測（2026-09-08）で `willSend 0` / `blocked: queue_unverified`**。
+   つまり **merge / deploy だけでは送信されない**（送るには `campaignJobPromote` が要る）。
+   `preview.wouldSend 50 / wouldSkip 0 / previewFingerprint v1:4eb535db6a8209eec0175abf44f89861`。
+   送るか取り消すかは**運用判断**（2026-09-08 時点でユーザーは「送信する方向で保留」）。
+   ⚠️ **cancel すると Redis の DeliveryKey が残る**（`MARKETING_DELIVERY_STORE=dual` は
+   Airtable ∪ Redis の和集合で既送信を判定する）ため、**この 50 名には step4 が二度と届かない**
 2. **`main` が現時点で赤い**（本 PR とは無関係の既存失敗・stash で再現確認済み）:
    - `src/lib/promotions/campaignBannerPerPlan.test.mjs` 5 件 /
      `campaignReachesMembers.smoke.test.mjs` 4 件 … **キャンペーン期間切れ**が原因。

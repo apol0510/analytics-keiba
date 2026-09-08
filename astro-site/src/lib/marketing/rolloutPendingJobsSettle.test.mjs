@@ -58,18 +58,31 @@ test('まだ PENDING のジョブ・見えないジョブは残す（勝手に�
 // ── 配線（この修正が実経路に入っていること）──────────────────────
 test('【配線】ジョブを読めた tick では必ず追跡リストを書き戻す', () => {
   assert.match(
-    CODE, /if \(jobs\) state\.pendingJobIds = settledJobs\.stillRunning;/,
+    CODE, /if \(jobs\) \{\s*state\.pendingJobIds = settledJobs\.stillRunning;/,
     '「実績を写したときだけ」書き戻す旧実装へ戻っている',
   );
 });
 
-test('【配線】追跡リストが変わった SKIP tick は状態を保存する', () => {
-  assert.match(CODE, /const pendingJobIdsChanged = Boolean\(jobs\)/);
-  const skipBlock = CODE.slice(CODE.indexOf('TICK_ACTION.SKIP'), CODE.indexOf('TICK_ACTION.GRANT'));
-  assert.ok(
-    skipBlock.includes('pendingJobIdsChanged'),
-    'SKIP tick で書き戻さないため、古い ID が残り続ける',
-  );
+test('【配線】片付けは**決断より前に**永続化される（どの経路で return しても失われない）', () => {
+  assert.match(CODE, /settlePersisted = await saveState\(\{ \.\.\.state \}\)/);
+  // 決断の分岐（SKIP / DISPATCH / GRANT）より前に保存していること
+  const persistAt = CODE.indexOf('settlePersisted = await saveState');
+  const decideAt = CODE.indexOf('if (decision.action === TICK_ACTION.SKIP)');
+  assert.ok(persistAt > 0 && decideAt > 0 && persistAt < decideAt,
+    '片付けの保存が決断より後にある（auto-stop 経路で失われる）');
+});
+
+test('【配線】計上は「保存できたときだけ」（保存 → 計上の順序を崩さない）', () => {
+  assert.match(CODE, /if \(settlePersisted && Object\.keys\(settledJobs\.byStep\)\.length > 0\)/);
+  const persistAt = CODE.indexOf('settlePersisted = await saveState');
+  const bumpAt = CODE.indexOf('await bumpSteps(settledJobs.byStep)');
+  assert.ok(persistAt < bumpAt, '計上が保存より先にある（保存失敗回の二重計上が復活する）');
+  assert.match(CODE, /warn: 'settle_not_persisted'/, '保存できなかった事実がログに出ない');
+});
+
+test('【配線】1 tick で 2 回保存できる（CAS の version を進めている）', () => {
+  assert.match(CODE, /persistedExists \? state\.version : null/);
+  assert.match(CODE, /state\.version = Number\(res\.state\.version\);/);
 });
 
 test('【配線】ジョブ照会の失敗を握り潰さない（理由をログに出す）', () => {
