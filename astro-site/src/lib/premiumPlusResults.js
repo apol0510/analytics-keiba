@@ -24,8 +24,19 @@ export { computeStats, formatYen, formatShortDate, STATS_WINDOW, MIN_RATE_SAMPLE
 /** 1 点あたりの投票額（円）。合計金額 = 点数 × これ。 */
 export const UNIT_STAKE = 1000;
 
-/** ページの実績カードに出す最大件数（最新から） */
-export const CARD_LIMIT = 8;
+/**
+ * ページの実績カードに出す最大件数（最新から）。
+ * 枚数の単一源。呼び出し側で数字を書かず、この定数を変えて増減させること
+ * （2026-09-08 に 8 → 7）。
+ */
+export const CARD_LIMIT = 7;
+
+/**
+ * 「直近の 1 鞍」帯に出す最大件数（最新から。古いものから落ちる）。
+ * スマホで 3 列 × 5 行に収まる 15 件。見出しの件数表記もこの定数から出すので、
+ * 数字をページ側に書かない（表示件数と見出しがズレないようにするため）。
+ */
+export const LEDGER_LIMIT = 15;
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 

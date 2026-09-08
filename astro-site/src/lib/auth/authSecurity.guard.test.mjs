@@ -209,6 +209,33 @@ const CLIENT_ONLY_PAID_PAGES_KNOWN = [
   // 追記せず gatePaidPage を使うこと。
 ];
 
+/**
+ * サーバー側認可で守っている有料ページの**実名リスト**（2026-09-08 に件数の
+ * マジックナンバーから置き換え）。
+ *
+ * ⚠️ 以前は `serverAuth.length >= 11` という**床**だけを見ていた。
+ *    `premium-plus.astro` を v2 へ一本化して**認可付きリダイレクト専用**へ縮小した
+ *    （＝ `<AccessControl>` を持たなくなり分類対象から外れた）とき、
+ *    実装は正しいのに床を割って CI が赤くなり、しかも「どのページが減ったのか」が
+ *    エラーからは分からなかった。
+ *
+ * 実名で突き合わせると、**増えた・減った・入れ替わった**のどれも名前で分かる。
+ * ページを増減させたときは、ここも一緒に更新すること（それが唯一の作業）。
+ * リダイレクト専用になったページの契約は `redirectOnlyPages.guard.test.mjs` が固定する。
+ */
+const SERVER_AUTH_PAID_PAGES_KNOWN = [
+  'src/pages/light-predictions-jra.astro',
+  'src/pages/light-predictions.astro',
+  'src/pages/premium-plus-v2.astro',
+  'src/pages/premium-prediction/jra.astro',
+  'src/pages/premium-prediction/nankan.astro',
+  'src/pages/premium-predictions-funabashi.astro',
+  'src/pages/premium-predictions-urawa.astro',
+  'src/pages/premium-sanrenpuku-jra.astro',
+  'src/pages/premium-sanrenpuku.astro',
+  'src/pages/premium-select.astro',
+];
+
 /** 有料ゲートのあるページを分類する（生ファイルで判定。コメント除去は誤爆するため使わない）。 */
 function classifyPaidPages() {
   const out = { serverAuth: [], clientOnly: [] };
@@ -230,8 +257,10 @@ function classifyPaidPages() {
 
 test('有料ゲートのあるページを 1 つ以上検出できている（分類の素通り防止）', () => {
   const { serverAuth, clientOnly } = classifyPaidPages();
-  assert.ok(serverAuth.length + clientOnly.length >= 10,
-    `有料ページの検出数が少なすぎる: ${serverAuth.length + clientOnly.length}`);
+  assert.ok(serverAuth.length + clientOnly.length > 0,
+    `有料ページを 1 件も検出できていない（分類が壊れている）`);
+  assert.equal(serverAuth.length + clientOnly.length, SERVER_AUTH_PAID_PAGES_KNOWN.length,
+    '検出数と既知リストが食い違っている（どちらかが古い）');
 });
 
 test('client-side gate だけの有料ページを新規に増やさない', () => {
@@ -256,13 +285,25 @@ test('client-side gate だけの有料ページは 0 件（B 群 = 0）', () => 
   assert.deepEqual(clientOnly, [],
     `client-side gate だけの有料ページが残っている: ${clientOnly.join(', ')}`);
   assert.deepEqual(CLIENT_ONLY_PAID_PAGES_KNOWN, [], '既知リストが空でない（B 群 = 0 を維持すること）');
-  assert.ok(serverAuth.length >= 11,
-    `サーバー側認可の有料ページが想定より少ない: ${serverAuth.length}`);
+  // ⚠️ 件数の床ではなく**実名**で突き合わせる（減った・増えた・入れ替わったが名前で分かる）
+  assert.deepEqual(serverAuth, SERVER_AUTH_PAID_PAGES_KNOWN,
+    'サーバー側認可の有料ページが既知リストと違う（ゲートが外れたか、リストが古い）');
+});
+
+test('認可付きリダイレクト専用ページは、認可を落としていない', () => {
+  // ⚠️ `<AccessControl>` を持たないので上の分類には出てこない。
+  //    「分類に出てこない = 認可が無い」と誤読しないよう、ここで明示的に固定する。
+  //    契約の全文は `redirectOnlyPages.guard.test.mjs`。
+  const raw = readFileSync(join(ROOT, 'src/pages/premium-plus.astro'), 'utf8');
+  assert.match(raw, /export const prerender\s*=\s*false/, 'SSR でない（静的化すると認可が消える）');
+  assert.match(raw, /verifyPlanAccess\(/, 'サーバー側認可を通していない');
+  assert.match(raw, /status:\s*404/, '非会員へ 404 を返していない（存在秘匿が壊れる）');
 });
 
 test('サーバー側認可のページは gatePaidPage か verifyPlanAccess を通す', () => {
   const { serverAuth } = classifyPaidPages();
-  assert.ok(serverAuth.length >= 3, `サーバー側認可のページが少なすぎる: ${serverAuth.length}`);
+  assert.equal(serverAuth.length, SERVER_AUTH_PAID_PAGES_KNOWN.length,
+    `サーバー側認可のページ数が既知リストと違う: ${serverAuth.length}`);
   for (const f of serverAuth) {
     const raw = readFileSync(join(ROOT, f), 'utf8');
     assert.match(raw, /export const prerender\s*=\s*false/,
