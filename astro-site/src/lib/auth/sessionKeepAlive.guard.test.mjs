@@ -46,6 +46,25 @@ const rel = (f) => relative(SRC, f);
 const isMemberConfirmed = (src) => /gatePaidPage\(/.test(src) || /verifyPlanAccess\(/.test(src);
 const hasKeepAlive = (src) => /<SessionKeepAlive\s*\/>/.test(src);
 
+/**
+ * `.astro` のテンプレート部（frontmatter `---` より後ろ）。
+ *
+ * ⚠️ keep-alive は**描画された HTML の中で動く script**なので、本文を描画しない
+ *    ページ（認可付きリダイレクト専用など）に置いても**動かない**。
+ *    2026-09-08: `premium-plus.astro` が v2 へのリダイレクト専用になったのに、
+ *    この guard が v1 にも keep-alive を要求し続けて CI が赤くなった。
+ *    要求する対象を「**本文を描画する**会員確定ページ」へ限定する。
+ *    リダイレクト専用ページ側の契約は `redirectOnlyPages.guard.test.mjs` が固定する。
+ */
+function templateOf(src) {
+  const s = String(src);
+  if (!s.startsWith('---')) return s;
+  const end = s.indexOf('\n---', 3);
+  if (end < 0) return '';
+  return s.slice(end + 4);
+}
+const rendersBody = (src) => templateOf(src).trim().length > 0;
+
 test('部品が存在し、refresh-session を叩く実装を持つ', () => {
   const src = readFileSync(COMPONENT, 'utf8');
   assert.match(src, /\/\.netlify\/functions\/refresh-session/);
@@ -64,12 +83,27 @@ test('gatePaidPage を使う SSR ページはすべて配線されている', ()
     'keep-alive 未配線の有料ページがある（30日で強制再ログインになる）:\n' + missing.join('\n'));
 });
 
-test('premium-plus 系も同じ部品を使う（実装を 2 つ持たない）', () => {
-  for (const name of ['premium-plus.astro', 'premium-plus-v2.astro']) {
-    const p = pageFiles.find((x) => x.path.endsWith('/' + name));
-    assert.ok(p, `${name} が見つからない`);
-    assert.ok(hasKeepAlive(p.src), `${name} が SessionKeepAlive を使っていない`);
-  }
+test('本文を描画する会員確定ページは、すべて同じ部品を使う（実装を 2 つ持たない）', () => {
+  const rendering = pageFiles.filter((p) => isMemberConfirmed(p.src) && rendersBody(p.src));
+  assert.ok(rendering.length >= 11,
+    `会員確定かつ本文を描画するページが ${rendering.length} 件（検出が壊れている疑い）`);
+  const missing = rendering.filter((p) => !hasKeepAlive(p.src)).map((p) => rel(p.path));
+  assert.deepEqual(missing, [],
+    'keep-alive 未配線の会員ページがある（30日で強制再ログインになる）:\n' + missing.join('\n'));
+  // 商品ページの正本（v2）が対象から漏れていないこと
+  const v2 = pageFiles.find((x) => x.path.endsWith('/premium-plus-v2.astro'));
+  assert.ok(v2, 'premium-plus-v2.astro が見つからない');
+  assert.ok(rendering.includes(v2), 'Premium Plus 商品ページが検査対象から外れている');
+  assert.ok(hasKeepAlive(v2.src), 'premium-plus-v2.astro が SessionKeepAlive を使っていない');
+});
+
+test('本文を描画しないページには置かない（置いても動かない）', () => {
+  const useless = pageFiles
+    .filter((p) => hasKeepAlive(p.src) && !rendersBody(p.src))
+    .map((p) => rel(p.path));
+  assert.deepEqual(useless, [],
+    'リダイレクト専用ページに keep-alive を置いている（描画されないので動かない）:\n'
+    + useless.join('\n'));
 });
 
 test('keep-alive の実装はページに直書きしない（単一源）', () => {
