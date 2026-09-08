@@ -11,7 +11,7 @@
 | 根本原因の特定 | ✅ 4 件 + 運転手の追跡不具合 1 件 |
 | 正本への記録 | ✅ `CAMPAIGN_SEQUENCE.md` §11 / `MARKETING_ROLLOUT.md` / `decisions.md` |
 | コード修正 + テスト | ✅ `branch: fix/sequence-stall-rootcauses` |
-| Draft PR / CI | ✅ 作成済み（**merge は未実施**）|
+| Draft PR / CI | ✅ **PR #499**（`fix/sequence-stall-rootcauses`）。main（PR #500 merge 後）を通常 merge で取り込み済み。**merge / deploy は未実施** |
 | 再開（配信の再開判断） | 🔵 **未実施・ユーザー判断待ち** |
 
 ## 何が起きていたか（本番実測 / 2026-09-08 01:51–02:10 UTC・read-only）
@@ -76,14 +76,19 @@ completedAt: 2026-08-27T13:40:27.816Z
    送るか取り消すかは**運用判断**（2026-09-08 時点でユーザーは「送信する方向で保留」）。
    ⚠️ **cancel すると Redis の DeliveryKey が残る**（`MARKETING_DELIVERY_STORE=dual` は
    Airtable ∪ Redis の和集合で既送信を判定する）ため、**この 50 名には step4 が二度と届かない**
-2. **`main` が現時点で赤い**（本 PR とは無関係の既存失敗・stash で再現確認済み）:
-   - `src/lib/promotions/campaignBannerPerPlan.test.mjs` 5 件 /
-     `campaignReachesMembers.smoke.test.mjs` 4 件 … **キャンペーン期間切れ**が原因。
-     期間を延ばすか、テストを期間非依存にするかは**運用判断**なので触っていない
-   - `src/lib/auth/authSecurity.guard.test.mjs` 1 件 / `sessionKeepAlive.guard.test.mjs` 1 件 /
-     `paidPageGate` 系 1 件 … `82e95d21`（premium-plus v2 一本化）以降の既存失敗
-   - 本 PR で直したのは `engagementSuppressionCohort.test.mjs` の 1 件だけ
-     （連続配信の配線テストが暦依存で落ちていたため、期間非依存へ）
+2. ~~**`main` が現時点で赤い**~~ → **解消済み（2026-09-08 / PR #500 squash `4e7f03b0`）**
+   - `promotions` 9 件（`campaignBannerPerPlan` 5 / `campaignReachesMembers.smoke` 4）…
+     **キャンペーン期間切れ**が原因の暦依存。**期間は延ばさず**、`mock.timers` で
+     `CAMPAIGN_WINDOW` 内へ固定し、**期間外の挙動（active:false / バナー非表示 /
+     割引非適用）を新規テストで固定**した
+   - `auth` 2 テスト（`authSecurity.guard` / `sessionKeepAlive.guard`）…
+     `82e95d21`（premium-plus v2 一本化）後の正本にテストが追随していなかった。
+     件数のマジックナンバーを実名リストへ、keep-alive の要求を「本文を描画する会員ページ」へ限定。
+     新規 `redirectOnlyPages.guard.test.mjs` でリダイレクト専用ページの契約を固定し、
+     正本 `astro-site/docs/PREMIUM_PLUS.md` も更新した
+   - `engagementSuppressionCohort.test.mjs` の 1 件は本 PR と PR #500 の**同一修正**。
+     main 取り込み時に競合せず解消（本 PR の差分からは消えている）
+   - **本番コードは 1 行も変えていない**（#500 はテスト 5 本 + 新規 guard 1 本 + 正本 doc 1 本）
 3. **`MARKETING_SEQUENCE_CAMPAIGN_ID` が割引 3 本に固定**されているため、
    `light-trial-post-expiry-sequence`（体験終了後 18 通）は `cron-campaign-sequence` の対象外。
    進めるのは `cron-marketing-rollout` だけで、その rollout は `stage: paused`。
