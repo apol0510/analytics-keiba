@@ -31,6 +31,13 @@ export const UNIT_STAKE = 1000;
  */
 export const CARD_LIMIT = 7;
 
+/**
+ * 「直近の 1 鞍」帯に出す最大件数（最新から。古いものから落ちる）。
+ * スマホで 3 列 × 5 行に収まる 15 件。見出しの件数表記もこの定数から出すので、
+ * 数字をページ側に書かない（表示件数と見出しがズレないようにするため）。
+ */
+export const LEDGER_LIMIT = 15;
+
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 function toInt(v) {

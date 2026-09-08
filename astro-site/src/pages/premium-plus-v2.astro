@@ -27,7 +27,7 @@ import AccessControl from '../components/AccessControl.astro';
 import SessionKeepAlive from '../components/SessionKeepAlive.astro';
 import { verifyPlanAccess, PREMIUM_PLUS_CANDIDATE_PLANS } from '../lib/auth/index.js';
 import ppResultsRaw from '../data/premiumPlusResults.json';
-import { computeStats, latestCards, sortResults, formatYen, formatYenShort } from '../lib/premiumPlusResults.js';
+import { computeStats, latestCards, sortResults, formatYen, formatYenShort, LEDGER_LIMIT } from '../lib/premiumPlusResults.js';
 import PremiumPlusReceiptCardV2 from '../components/premium-plus/PremiumPlusReceiptCardV2.astro';
 import { PP_RELEASE_COPY, intakeCopy } from '../lib/premiumPlus/premiumPlusRelease.js';
 // 「いま売っているのは何日分か」の単一源。表示・注文はここだけを使う
@@ -239,9 +239,11 @@ const ppTeaser = (() => {
 const ppTeaserEyebrow = ppTeaser.isToday ? '本日の 1 鞍' : `${ppTeaser.m}月${ppTeaser.d}日の 1 鞍`;
 const ppTeaserCta = ppTeaser.isToday ? '🔓 本日の1鞍を抽出する' : `🔓 ${ppTeaser.m}月${ppTeaser.d}日の1鞍を抽出する`;
 
-// --- 連勝レジャー帯（台帳の全件を最新順で・すべて掲載）---
+// --- 連勝レジャー帯（最新 LEDGER_LIMIT 件・古いものから落ちる）---
 // 数値は台帳の実データのみ（手書き禁止）。payout は formatYenShort で短縮表示。
-const ppLedger = sortResults(ppResultsRaw).slice(0, 14).map((e) => ({
+// ⚠️ 件数は LEDGER_LIMIT が単一源。ここにも見出しにも数字を書かない
+//    （かつて slice(0,14) に対し見出しが「すべて掲載」で、15 件目から黙って嘘になる状態だった）。
+const ppLedger = sortResults(ppResultsRaw).slice(0, LEDGER_LIMIT).map((e) => ({
   short: ppFmtDate(e.date).short,
   isHit: !!e.isHit,
   payoutShort: e.isHit ? formatYenShort(e.payout) : '—',
@@ -581,7 +583,7 @@ import BankApplicationEmailLock from '../components/BankApplicationEmailLock.ast
     .why-punch { margin: 0; font-size: clamp(1.02rem,2.7vw,1.2rem); line-height: 1.75; font-weight: 700; border-left: 3px solid var(--gold); padding-left: 1.1rem; }
     .why-punch .accent { color: var(--gold); }
 
-    /* ===== 連勝レジャー帯（直近の1鞍・すべて掲載） ===== */
+    /* ===== 連勝レジャー帯（直近の1鞍・最新 LEDGER_LIMIT 件） ===== */
     .ledger-h { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin: clamp(24px,4vw,32px) 0 14px; }
     .ledger-h h3 { margin: 0; font-size: 1.02rem; font-weight: 700; }
     .ledger-sub { color: #6f819c; font-size: .76rem; }
@@ -599,6 +601,8 @@ import BankApplicationEmailLock from '../components/BankApplicationEmailLock.ast
     .ledger .day .cc { display: inline-block; margin-top: 3px; font-size: .58rem; font-weight: 700; padding: .05em .4em; border-radius: 5px; }
     .ledger .day .cc.nk { color: #38bdf8; background: rgba(56,189,248,.1); }
     .ledger .day .cc.ch { color: #c084fc; background: rgba(192,132,252,.1); }
+    /* スマホは 3 列固定（15 件 = 3 列 × 5 行）。auto-fill 任せだと狭い端末で 2 列に割れる */
+    @media (max-width: 480px) { .ledger { grid-template-columns: repeat(3, 1fr); } }
 
     /* ── 届くもの（3ステップ） ─────────── */
     .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 1rem; }
@@ -1137,7 +1141,7 @@ import BankApplicationEmailLock from '../components/BankApplicationEmailLock.ast
       {ppLedger.length > 0 && (
         <>
           <div class="ledger-h">
-            <h3>直近の 1 鞍（すべて掲載）</h3>
+            <h3>直近の 1 鞍（最新 {LEDGER_LIMIT} 件）</h3>
             <span class="ledger-sub">✅的中 ／ ×不的中 ・ 📷=実スクショ有</span>
           </div>
           <div class="ledger">
