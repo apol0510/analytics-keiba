@@ -178,11 +178,9 @@ const PRICE = 68000;
 const LIST_PRICE = 98000;
 
 // --- 実績台帳（git コミット / 管理画面 premium-plus-results から入力）---
-// 的中率・払戻の数値は computeStats() の自動集計のみ（手書き禁止）。10 鞍未満は非表示。
+// 数値は computeStats() の自動集計のみ（手書き禁止）。10 鞍未満は非表示。
+// 回収率カードは MK 指示（2026-09-08）で非掲載。復活させないこと。
 const ppStats = computeStats(ppResultsRaw);
-// 回収率のみ実績集計を使わず「推定値」の固定表示（MK 指示 / 2026-09-08）。
-// 実績値ではないため、ラベル・注記でも必ず「推定」と明示すること。
-const PP_ESTIMATED_ROI = 200;
 const PP_WD = ['日', '月', '火', '水', '木', '金', '土'];
 const ppFmtDate = (d) => {
   const [y, m, day] = String(d).split('-').map(Number);
@@ -998,23 +996,23 @@ import BankApplicationEmailLock from '../components/BankApplicationEmailLock.ast
         選ぶのも、迷うのも、こちらの仕事です。
       </p>
 
-      <!-- 的中率・払戻は computeStats() の自動集計のみ（手書き禁止・10鞍未満は非表示）。回収率のみ推定値の固定表示 -->
-      <div class="stats">
-        {ppStats.rate.available && (
-          <div class="stat"><b>{ppStats.rate.hitRate}%</b><span>的中率（直近 {ppStats.rate.races} 鞍）</span></div>
-        )}
-        <div class="stat"><b>{PP_ESTIMATED_ROI}%</b><span>推定回収率</span></div>
-        {ppStats.payout.available && (
-          <div class="stat"><b>{formatYen(ppStats.payout.max)}</b><span>最高払戻</span></div>
-        )}
-        {ppStats.payout.available && (
-          <div class="stat"><b>{formatYen(ppStats.payout.avg)}</b><span>的中時の平均払戻</span></div>
-        )}
-      </div>
-      <p class="stats-note">
-        ※ 推定回収率は当社の想定値であり、実績の集計値ではありません。将来の結果を保証するものではありません。
-        {!ppStats.rate.available && '的中率は不的中を含む記録が 10 鞍たまり次第、自動掲載します。'}
-      </p>
+      <!-- 実績数値は computeStats() の自動集計のみ（手書き禁止・10鞍未満は非表示）。回収率カードは非掲載 -->
+      {(ppStats.rate.available || ppStats.payout.available) && (
+        <div class="stats">
+          {ppStats.rate.available && (
+            <div class="stat"><b>{ppStats.rate.hitRate}%</b><span>的中率（直近 {ppStats.rate.races} 鞍）</span></div>
+          )}
+          {ppStats.payout.available && (
+            <div class="stat"><b>{formatYen(ppStats.payout.max)}</b><span>最高払戻</span></div>
+          )}
+          {ppStats.payout.available && (
+            <div class="stat"><b>{formatYen(ppStats.payout.avg)}</b><span>的中時の平均払戻</span></div>
+          )}
+        </div>
+      )}
+      {ppStats.payout.available && !ppStats.rate.available && (
+        <p class="stats-note">※ 的中率は不的中を含む記録が 10 鞍たまり次第、自動掲載します。上記は的中した回の払戻実績です。</p>
+      )}
     </header>
 
     <!-- ══ 本日の1鞍（ティザー・購入導線） ══ -->
@@ -1297,7 +1295,6 @@ import BankApplicationEmailLock from '../components/BankApplicationEmailLock.ast
         掲載中の一部の画像は 2026 年 3〜4 月に的中した回のもので、当時は不的中の日の控えを保存していなかったため、
         <strong>的中率の算出には含めていません</strong>（画像の「集計外」表記が該当分です）。
         的中率は、不的中を含めて記録を開始した以降の実データのみで自動集計しています。
-        <strong>回収率は推定値であり、実績の集計値ではありません。</strong>
         競馬に確実はありません。過去の実績は将来の結果を保証するものではなく、
         馬券の購入はご自身の判断と責任でお願いいたします。
       </div>
