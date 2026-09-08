@@ -804,6 +804,12 @@ export const CAMPAIGNS = Object.freeze([
       plans: [MK_PLAN.LIGHT],
       enforce: true,
     },
+    /**
+     * ⚠️ **宛先は Light 有効な方**なので、既定の「Light か Premium が有効なら停止」
+     *    のままだと 1 通目の直後に全員が `purchased` で恒久停止し、2 通目が出ない
+     *    （2026-09-08 の障害）。目的達成は**上位商品を買ったとき**だけ。
+     */
+    stopOnPurchase: { signals: ['premium', 'sanrenpuku'] },
     get enabled() { return isCampaignActive(); },
     disabledReason: CAMPAIGN_DISABLED_REASON.WINDOW_CLOSED,
     disabledDetail: `お申し込み対象は${DISCOUNT_DEADLINE}。期間外は申込時に割引が適用されない`,
@@ -827,6 +833,11 @@ export const CAMPAIGNS = Object.freeze([
       plans: [MK_PLAN.PREMIUM],
       enforce: true,
     },
+    /**
+     * ⚠️ **宛先は Premium 有効な方**。売るものは三連複 買い切りなので、
+     *    Premium を持っていることは目的達成ではない（2026-09-08 の障害）。
+     */
+    stopOnPurchase: { signals: ['sanrenpuku'] },
     get enabled() { return isCampaignActive(); },
     disabledReason: CAMPAIGN_DISABLED_REASON.WINDOW_CLOSED,
     disabledDetail: `お申し込み対象は${DISCOUNT_DEADLINE}。期間外は申込時に割引が適用されない`,

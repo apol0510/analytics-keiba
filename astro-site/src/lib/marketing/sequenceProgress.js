@@ -44,6 +44,7 @@ import { resolveRoutedStep } from '../drm/drmRouting.js';
 import { resolveEntitlements, fromAirtableFields } from '../entitlements/resolveEntitlements.js';
 import { resolvePromotionalGrants } from '../entitlements/promotionalGrants.js';
 import { matchesImportCohort, COHORT_SKIP_LABEL } from '../crm/importedCohort.js';
+import { hasPurchasedForCampaign } from './sequencePurchaseStop.js';
 
 /** 受信者ごとの状態 */
 export const SEQ_STATUS = Object.freeze({
@@ -205,10 +206,16 @@ function checkGrantState({ fields, marketing, requirement, nowMs }) {
   return SEQ_STOP.GRANT_REQUIRED;
 }
 
-/** 購入済み（このシーケンスの目的を達成した）か */
-function hasPurchased(marketing) {
-  const m = marketing || {};
-  return m.premiumActive === true || m.lightActive === true;
+/**
+ * 購入済み（このシーケンスの目的を達成した）か。
+ *
+ * ⚠️ **campaign ごとに「何を買ったら目的達成か」は違う**ので、ここで判定を持たない。
+ *    単一源は `sequencePurchaseStop.js`（宣言が無ければ従来どおり Light / Premium）。
+ *    直書きへ戻すと、上位商品を案内するシーケンス（Light 会員へ Premium 等）が
+ *    **1 通目の直後に全員恒久停止**する（2026-09-08 の障害）。
+ */
+function hasPurchased(campaign, marketing) {
+  return hasPurchasedForCampaign({ campaign, marketing });
 }
 
 /**
@@ -264,7 +271,7 @@ export function resolveRecipientProgress({
     return stop(SEQ_STOP.PROVIDER_SUPPRESSED);
   }
   if (softBounced instanceof Set && softBounced.has(email)) return stop(SEQ_STOP.SOFT_BOUNCE);
-  if (hasPurchased(mk)) return stop(SEQ_STOP.PURCHASED);
+  if (hasPurchased(campaign, mk)) return stop(SEQ_STOP.PURCHASED);
 
   // ── 無料体験の状態（宣言したシーケンスだけ）──────────────────────
   // 判定は既存の単一源だけを使う（`resolveEntitlements` / `resolvePromotionalGrants`）。
@@ -425,12 +432,34 @@ export function buildSequenceProgress({
  * **1 回の実行で送るのは 1 ステップだけ**にする（複数ステップを混ぜると、
  * 1 人に 2 通同時に届く事故が起きうる）。いちばん小さい due ステップを返す。
  *
- * @returns {{step:number|null, recordIds:string[], emails:string[], counts:object}}
+ * ⚠️ `excludeSteps` は「**この step は自動では送れない**」を伝えるためのもの。
+ *    渡された step は候補から**外して**、残りの中で最小の due step を選ぶ。
+ *    外した結果 1 人も残らなければ `step: null` + `excludedOnly` を返す
+ *    （呼び出し側が「除外の結果ゼロ」と「そもそもゼロ」を区別できるように）。
+ *
+ *    2026-09-08 の障害: step1 未送信の人が 1 人でも混ざると最小 due step が 1 になり、
+ *    `planSequenceTick` が `first_step_manual` で **tick 全体を中止**していた。
+ *    本番では 328 名（step1 未送信）が居たために、step2 を待っていた 11,648 名が
+ *    **1 通も進まなかった**。除外は「その人を送らない」だけで済ませる。
+ *
+ * @returns {{step:number|null, recordIds:string[], emails:string[], counts:object,
+ *            excludedOnly?: boolean, excludedSteps?: number[]}}
  */
-export function selectNextDueStep(progress, { maxRecipients } = {}) {
+export function selectNextDueStep(progress, { maxRecipients, excludeSteps } = {}) {
   if (!progress || progress.ok !== true) return { step: null, recordIds: [], emails: [], counts: {} };
-  const due = progress.rows.filter((r) => r.status === SEQ_STATUS.DUE && Number.isInteger(r.nextStep));
-  if (due.length === 0) return { step: null, recordIds: [], emails: [], counts: progress.summary.dueByStep };
+  const excluded = (Array.isArray(excludeSteps) ? excludeSteps : [])
+    .map((n) => Number(n))
+    .filter((n) => Number.isInteger(n));
+  const allDue = progress.rows.filter((r) => r.status === SEQ_STATUS.DUE && Number.isInteger(r.nextStep));
+  const due = excluded.length > 0 ? allDue.filter((r) => !excluded.includes(r.nextStep)) : allDue;
+  if (due.length === 0) {
+    return {
+      step: null, recordIds: [], emails: [], counts: progress.summary.dueByStep,
+      /** 除外しなければ送る相手が居た（＝「誰も居ない」ではない） */
+      excludedOnly: allDue.length > 0,
+      excludedSteps: excluded,
+    };
+  }
 
   const step = Math.min(...due.map((r) => r.nextStep));
   let picked = due.filter((r) => r.nextStep === step);
@@ -444,5 +473,6 @@ export function selectNextDueStep(progress, { maxRecipients } = {}) {
     emails: picked.map((r) => r.email).filter(Boolean),
     counts: progress.summary.dueByStep,
     truncated,
+    excludedSteps: excluded,
   };
 }

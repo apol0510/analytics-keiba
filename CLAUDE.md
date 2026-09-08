@@ -199,6 +199,7 @@ PR の merge / production deploy / 本番データ書込み / env の変更 / qu
 | 銀行振込 入金確認フロー | [`BANK_TRANSFER_FLOW.md`](./astro-site/docs/BANK_TRANSFER_FLOW.md) |
 | 入金確認メール v2 | [`PAYMENT_EMAIL_V2.md`](./astro-site/docs/PAYMENT_EMAIL_V2.md) |
 | 顧客マーケティング管理 | [`CUSTOMER_MARKETING.md`](./astro-site/docs/CUSTOMER_MARKETING.md) / [`CAMPAIGN_SEQUENCE.md`](./astro-site/docs/CAMPAIGN_SEQUENCE.md) / [`ENGAGEMENT_SUPPRESSION.md`](./astro-site/docs/ENGAGEMENT_SUPPRESSION.md) |
+| 大規模継続配信の運用（展開・停止・追跡） | [`MARKETING_ROLLOUT.md`](./astro-site/docs/MARKETING_ROLLOUT.md) |
 | カムバック施策（無料特典 + 割引オファー） | [`COMEBACK_GRANTS.md`](./astro-site/docs/COMEBACK_GRANTS.md) |
 | SendGrid Event Webhook | [`SENDGRID_WEBHOOK.md`](./astro-site/docs/SENDGRID_WEBHOOK.md) / [`EMAIL_EVENT_LEDGER.md`](./astro-site/docs/EMAIL_EVENT_LEDGER.md) / [`DELIVERY_MEASUREMENT.md`](./astro-site/docs/DELIVERY_MEASUREMENT.md) |
 | 顧客重複整理 | [`CUSTOMER_DEDUPE.md`](./astro-site/docs/CUSTOMER_DEDUPE.md) / [`CUSTOMERS_DEDUP_GUIDE.md`](./astro-site/docs/CUSTOMERS_DEDUP_GUIDE.md) |

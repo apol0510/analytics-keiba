@@ -285,11 +285,39 @@ test('【配線】cron が 10 分間隔で動く（1 日 1 回では配り切れ
 });
 
 // ── 8. 3 区分とも自動で回る（1 本だけ進める実装では足りない）──────────
+//
+// ⚠️ **暦に依存させない**（2026-09-08 修正）。割引 3 本は
+//    `get enabled() { return isCampaignActive(); }` なので、キャンペーン期間が
+//    閉じた翌日からこのテストが落ちていた（配線ではなく暦で赤くなる）。
+//    見たいのは「env 未指定なら**有効な連続配信を全部**進める」という配線なので、
+//    期待値をカタログの「いま有効な連続配信」から作る。
 test('【要件】env 指定が無ければ有効な連続配信をすべて自動で進める', async () => {
   const { resolveTickCampaignIds } = await import('../../../netlify/functions/cron-campaign-sequence.js');
+  const { listCampaigns } = await import('./campaignCatalog.js');
+  const usable = listCampaigns({ includeDisabled: false })
+    .filter((c) => c.usable !== false && c.sequence)
+    .map((c) => c.campaignId);
+  assert.ok(usable.length > 0, '有効な連続配信が 1 本も無い（検査が素通りしている）');
+  assert.deepEqual(
+    resolveTickCampaignIds({}).slice().sort(), usable.slice().sort(),
+    '有効な連続配信の一部しか自動で進めていない（手動送信が必要なままになる）',
+  );
+});
+
+test('【要件】割引 3 区分は「期間内なら」自動対象（外れる理由は期間だけ）', async () => {
+  const { resolveTickCampaignIds } = await import('../../../netlify/functions/cron-campaign-sequence.js');
+  const { getCampaign } = await import('./campaignCatalog.js');
+  const { isCampaignActive } = await import('../promotions/campaignOffers.js');
   const ids = resolveTickCampaignIds({});
   for (const id of ['campaign-discount-free', 'campaign-discount-light', 'campaign-discount-premium']) {
-    assert.ok(ids.includes(id), `${id} が自動対象に入っていない（手動送信が必要なままになる）`);
+    if (isCampaignActive()) {
+      assert.ok(ids.includes(id), `${id} が自動対象に入っていない（手動送信が必要なままになる）`);
+    } else {
+      // 期間外は停止が正しい。**期間以外の理由で外れていないこと**を確かめる
+      assert.equal(ids.includes(id), false);
+      assert.equal(getCampaign(id), null, `${id} が期間外なのに使える`);
+      assert.ok(getCampaign(id, { includeDisabled: true }).sequence, `${id} の連続配線が消えている`);
+    }
   }
 });
 

@@ -1,3 +1,89 @@
+# 🔧 連続配信が 2 通目以降を出せなかった件 — **原因確定 / 修正 Draft PR まで（2026-09-08）**
+
+> **再開はまだ行っていない。** 期間延長・unpause・dailyLimit 変更・PENDING 50 名の送信/取消・
+> queue 登録・env 変更・Redis/Airtable 本番書き込み・実送信・merge は**すべて未実施**。
+
+## 現在地
+
+| 工程 | 状態 |
+|---|---|
+| 本番 read-only 調査 | ✅ 完了（書き込み 0 / 送信 0）|
+| 根本原因の特定 | ✅ 4 件 + 運転手の追跡不具合 1 件 |
+| 正本への記録 | ✅ `CAMPAIGN_SEQUENCE.md` §11 / `MARKETING_ROLLOUT.md` / `decisions.md` |
+| コード修正 + テスト | ✅ `branch: fix/sequence-stall-rootcauses` |
+| Draft PR / CI | ✅ 作成済み（**merge は未実施**）|
+| 再開（配信の再開判断） | 🔵 **未実施・ユーザー判断待ち** |
+
+## 何が起きていたか（本番実測 / 2026-09-08 01:51–02:10 UTC・read-only）
+
+1 通目は 3 区分あわせて 15,509 通 届いた。その後 **2 通目（8/31 予定）・3 通目（9/6 予定）が
+1 通も出ていない**。`sequenceMetrics` に step2 以降の行が 1 つも無い。
+
+| campaign | 集計 | step1 | step2 |
+|---|---|---|---:|
+| `campaign-discount-free` | 途中経過（**8/27 20:50Z で凍結** / pass 15）| sent 13,499 / queued 1 | **0** |
+| `campaign-discount-light` | 1 周読み切り（9/6 14:50Z）| sent 5 | **0** |
+| `campaign-discount-premium` | 1 周読み切り（9/6 14:51Z）| sent 13 | **0** |
+
+failed 0 / duplicates 0 / prospect の値欠け 0。**送信の冪等性は破れていない**。
+
+## 根本原因（独立した 4 + 1）
+
+| # | 原因 | 証拠 |
+|---|---|---|
+| 1 | **宛先条件と「購入で停止」の衝突**。`hasPurchased()` が `lightActive \|\| premiumActive` を「目的達成」と判定するのに、light / premium の宛先は**まさにその権利を持つ人**。1 通目の直後に全員 `purchased` で恒久停止 | 確定集計に step2 が 0 行 |
+| 2 | **走査カーソルの固着**。Airtable の `offset` を Redis に保存して 10 分後に再利用する設計で、失効時の throw が**カーソル更新より前**にあり自力復帰できない | free の集計が 8/27 20:50Z / pass 15 で凍結。offset を持たない light / premium だけ無傷 |
+| 3 | **step1 未送信者の巻き添え**。`selectNextDueStep` は最小 due step を返すので、step0 が 1 人でも居ると `first_step_manual` で **tick 全体が中止** | prospect 11,976 のうち step0 が **328 名**、step1 済みが **11,648 名** |
+| 4 | **キャンペーン期間切れ**（9/7 00:00 JST）。以後は `getCampaign()` が null を返し tick が即終了 | 集計の最終更新が 9/6 14:50/14:51Z ＝ **期限の 9 分前** |
+| 5 | **運転手の追跡リストが片付かない**。書き戻しが「実績を写したときだけ」で、ジョブ照会の失敗も握り潰していた | 9/3 06:35Z に SENT のジョブが 5 日間 `pendingJobIds` に残存。PENDING 50 名も未送信 |
+
+## 修正（`fix/sequence-stall-rootcauses`）
+
+| 対象 | 変更 |
+|---|---|
+| `src/lib/marketing/sequencePurchaseStop.js`（新） | 「購入で停止」を campaign の宣言にする。既定は従来どおり。**宛先と停止条件の衝突をカタログ検査で禁止** |
+| `src/lib/marketing/campaignCatalog.js` | light に `stopOnPurchase: {signals:['premium','sanrenpuku']}` / premium に `{signals:['sanrenpuku']}` |
+| `src/lib/marketing/sequenceLedgerScan.js` + `cron-campaign-sequence.js` | 失効 offset を捨てて先頭から読み直す。5xx は触らない。復帰をログへ出す |
+| `src/lib/marketing/sequenceAutomation.js` + `sequenceProgress.js` | step1 は**除外**（`excludeSteps`）。step1 しか居ないときだけ従来どおり `first_step_manual` |
+| `src/lib/marketing/sequenceWindowFit.js`（新） | 最終 step が `CAMPAIGN_WINDOW` に収まることをカタログ全体で固定 |
+| `netlify/functions/cron-marketing-rollout.js` | ジョブを読めた tick で必ず追跡リストを書き戻す / 読めない理由をログへ出す |
+
+新規テスト 5 本（33 ケース）。`npm run test:marketing` = **2,654 pass / 0 fail**。
+
+## 【訂正】滞留ジョブ②（`recQFIJfJ1lekzucn`）は **未修復ではない**
+
+本ファイルの「🚧 滞留ジョブ② は **未修復**（クローズ禁止・常設）」は**実態と一致しない**。
+`jobsBrief` の実測:
+
+```
+jobId: mkt-light-trial-to-premium-sequence-v1-c52fdcec-1
+status: SENT / recipientCount 100 / sentCount 100 / failedCount 0
+completedAt: 2026-08-27T13:40:27.816Z
+```
+
+これは 8/27 の「repair の印外しで 100 通が自動送信された」事故そのもの。
+**PR #476（in-place 修復）は不要**になっている。同節は訂正済み（記録としては残す）。
+
+代わりに**別のジョブが滞留している**（下記 Open Questions）。
+
+## Open Questions（この PR では触らない）
+
+1. **PENDING 50 名の滞留**: `…-d9a88b59-1` / `recqqadkAZvDkORZ8` / 9/3 06:46Z 登録 / sent 0。
+   送るか取り消すかは**運用判断**。修正 #5 により、追跡リストが片付けば
+   次の tick で dispatch が起動され得る（＝ **再開前に扱いを決める必要がある**）
+2. **`main` が現時点で赤い**（本 PR とは無関係の既存失敗・stash で再現確認済み）:
+   - `src/lib/promotions/campaignBannerPerPlan.test.mjs` 5 件 /
+     `campaignReachesMembers.smoke.test.mjs` 4 件 … **キャンペーン期間切れ**が原因。
+     期間を延ばすか、テストを期間非依存にするかは**運用判断**なので触っていない
+   - `src/lib/auth/authSecurity.guard.test.mjs` 1 件 / `sessionKeepAlive.guard.test.mjs` 1 件 /
+     `paidPageGate` 系 1 件 … `82e95d21`（premium-plus v2 一本化）以降の既存失敗
+   - 本 PR で直したのは `engagementSuppressionCohort.test.mjs` の 1 件だけ
+     （連続配信の配線テストが暦依存で落ちていたため、期間非依存へ）
+3. **`MARKETING_SEQUENCE_CAMPAIGN_ID` が割引 3 本に固定**されているため、
+   `light-trial-post-expiry-sequence`（体験終了後 18 通）は `cron-campaign-sequence` の対象外。
+   進めるのは `cron-marketing-rollout` だけで、その rollout は `stage: paused`。
+   **設計どおりだが、いまは誰も進めていない**（`CAMPAIGN_SEQUENCE.md` §11-5 に明記した）
+
 # ✅ 会員が予想へ辿り着けない導線 — **クローズ（MK 本番目視確認 済み / 2026-09-02）**
 
 Light 会員から「今日のメインレースが見れません」。調査の結果 **システム側に不具合は無く**
@@ -624,12 +710,25 @@ exact な `wouldSend` / `previewFingerprint` を確認）→ ③promote（件数
 
 ---
 
-# 🚧 滞留ジョブ② は **未修復**（クローズ禁止・常設）
+# ✅ 滞留ジョブ② — **解消済み（2026-08-27 に送信完了）/ 2026-09-08 訂正**
 
-> **新しいセッションはここから読むこと。** この節が残っている間、②は直っていない。
-> 送信 gate は閉じており、dispatcher も block するので**放置しても送信されない**。急ぎではない。
+> ⚠️ **この節の「未修復」は誤りだった。** 2026-09-08 の本番 read-only 実測（`jobsBrief`）:
+>
+> ```
+> jobId: mkt-light-trial-to-premium-sequence-v1-c52fdcec-1
+> recordId: recQFIJfJ1lekzucn
+> status: SENT / recipientCount 100 / sentCount 100 / failedCount 0
+> completedAt: 2026-08-27T13:40:27.816Z
+> ```
+>
+> これは 8/27 の「repair の印外しで 100 通が自動送信された」事故そのもの。
+> つまり②は**その事故で送り切られており**、`queue:unverified` の滞留は残っていない。
+> **PR #476（in-place 修復）は不要**。以下は当時の記録として残す（対応は不要）。
+>
+> **いま滞留しているのは別のジョブ**（`…-d9a88b59-1` / `recqqadkAZvDkORZ8` /
+> 2026-09-03T06:46Z 登録 / recipients 50 / sent 0）。冒頭の 2026-09-08 の節を参照。
 
-## 対象ジョブ（未修復）
+## 対象ジョブ（**2026-08-27 に送信完了済み**・以下は当時の記録）
 
 | | |
 |---|---|

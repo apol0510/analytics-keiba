@@ -34,6 +34,7 @@ import {
 import { getCampaign, renderCampaign, listCampaigns } from '../../src/lib/marketing/campaignCatalog.js';
 import {
   createSequenceScanStore, nextScanCursor, resolvePagesPerTick,
+  shouldResetCursorOnFailure, cursorAfterFailure,
 } from '../../src/lib/marketing/sequenceLedgerScan.js';
 import {
   createSequenceMetricsStore, emptyMetrics, accumulateMetrics,
@@ -119,7 +120,13 @@ async function fetchCampaignDeliveries({ KEY, BASE, campaignType, startOffset = 
       `https://api.airtable.com/v0/${BASE}/${encodeURIComponent(DELIVERIES_TABLE)}/listRecords`,
       { method: 'POST', headers: { ...auth(KEY), 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
     );
-    if (!res.ok) throw new Error(`deliveries_fetch_${res.status}`);
+    if (!res.ok) {
+      // ⚠️ status を持たせる（呼び出し側が「失効した offset か」を判断する材料）
+      const err = new Error(`deliveries_fetch_${res.status}`);
+      err.status = res.status;
+      err.hadOffset = Boolean(startOffset);
+      throw err;
+    }
     const data = await res.json();
     out.push(...(data.records || []));
     offset = data.offset;
@@ -191,7 +198,25 @@ export async function runSequenceTick({ env = process.env, now = Date.now(), cam
   const redisCmd = safeRedisCmd();
   const scanStore = createSequenceScanStore({ redisCmd });
   const cursor = await scanStore.read(campaignType);
-  const scan = await fetchCampaignDeliveries({ KEY, BASE, campaignType, startOffset: cursor.offset });
+  /**
+   * ⚠️ **保存した offset が失効していても自力で復帰する**（2026-09-08 の障害）。
+   *    失効した offset で落ちたまま throw すると、カーソルが更新されないので
+   *    次の tick も同じ失効値で落ちる = **その campaign は永久に進まない**。
+   *    失効と判断できるときは**カーソルを捨てて先頭から読み直す**。
+   *    走査の重複は送信の重複にならない（冪等性は `DeliveryKey` が持つ）。
+   */
+  let scan;
+  let scanRecovered = null;
+  try {
+    scan = await fetchCampaignDeliveries({ KEY, BASE, campaignType, startOffset: cursor.offset });
+  } catch (e) {
+    const reset = shouldResetCursorOnFailure({ hadOffset: Boolean(cursor.offset), status: e && e.status });
+    if (!reset) throw e;
+    scanRecovered = `offset_expired_${(e && e.status) || 'unknown'}`;
+    console.error(`${SEQ_LOG_TAG} 走査カーソルが失効したため先頭から読み直します: ${scanRecovered}`);
+    await scanStore.write(campaignType, cursorAfterFailure({ pass: cursor.pass }));
+    scan = await fetchCampaignDeliveries({ KEY, BASE, campaignType, startOffset: null });
+  }
   const deliveries = scan.records;
   const next = nextScanCursor({ offset: scan.offset, pass: cursor.pass });
   await scanStore.write(campaignType, next);
@@ -540,6 +565,7 @@ export async function runSequenceTick({ env = process.env, now = Date.now(), cam
   summary['prospect対象'] = prospectRecipients.length;
   summary['Airtable台帳'] = deliveryRecords.length;
   if (prospectDegraded) summary['prospect除外'] = prospectDegraded;
+  if (scanRecovered) summary['走査カーソル復帰'] = scanRecovered;
   if (prospectBlocked > 0) summary['prospect予約不可'] = prospectBlocked;
   if (prospectClaimFailure) summary['prospect予約失敗'] = prospectClaimFailure;
   if (releaseFailed > 0) summary['予約戻し失敗'] = releaseFailed;

@@ -697,7 +697,19 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
    * ① 送信待ちジョブ（**軽い照会**）。①送信起動の判断はこれだけで決まる。
    *    見張り中のジョブは名指しで渡す（PENDING を抜けたものを拾うため）。
    */
-  const jobs = await loadJobs({ watchJobIds: state.pendingJobIds }).catch(() => null);
+  /**
+   * ⚠️ **読めなかった理由を握り潰さない**（2026-09-08 の調査で判明）。
+   *    ここが null になると `tickRollout` は `facts_unreadable` で SKIP し、
+   *    送信待ちジョブがあっても**起動しない**。旧実装は `.catch(() => null)` で
+   *    理由を捨てていたため、外からは「静かに何もしていない」としか見えず、
+   *    本番で 5 日間 PENDING のまま残ったジョブの原因を特定できなかった。
+   */
+  let jobsFailure = null;
+  const jobs = await loadJobs({ watchJobIds: state.pendingJobIds }).catch((e) => {
+    jobsFailure = String((e && e.message) || 'unknown');
+    return null;
+  });
+  if (!jobs) log({ ok: false, warn: 'jobs_unreadable', reason: jobsFailure || 'jobs_brief_unavailable' });
   reads.push(TICK_READ.JOBS);
 
   /** まだ queue していない付与の数（**運転手のローカル状態**が正。Airtable を読まない） */
@@ -873,7 +885,6 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
   // 集計へ写す（失敗しても運用は止めない）。写した ぶんは追跡対象から外す
   if (settledJobs.finished.length > 0) {
     if (Object.keys(settledJobs.byStep).length > 0) await bumpSteps(settledJobs.byStep);
-    state.pendingJobIds = settledJobs.stillRunning;
     // 終わったジョブは対応表からも外す（状態を無限に太らせない）
     for (const j of settledJobs.finished) {
       delete state.jobSteps[j.jobId];
@@ -881,6 +892,18 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
     }
     log({ settled: settledJobs.finished.length, sent: settledJobs.sent, failed: settledJobs.failed });
   }
+  /**
+   * ⚠️ **ジョブを読めた tick では必ず追跡リストを書き戻す**（2026-09-08 の恒久修正）。
+   *    旧実装は「実績を写したとき（`finished.length > 0`）」だけ書き戻していた。
+   *    ジョブ照会が失敗し続けた期間に入ると `pendingJobIds` が固まり、
+   *    **9/3 に送信完了したジョブが 5 日間 残り続けた**。
+   *    `collectFinishedJobs` は見えないジョブを `stillRunning` に残すので、
+   *    無条件の代入で取りこぼしは起きない（読めない tick では `jobs` が null）。
+   */
+  const pendingJobIdsChanged = Boolean(jobs)
+    && (state.pendingJobIds.length !== settledJobs.stillRunning.length
+      || state.pendingJobIds.some((id, i) => id !== settledJobs.stillRunning[i]));
+  if (jobs) state.pendingJobIds = settledJobs.stillRunning;
   // 進んだジョブは監視から外す。**進んでいないものは残す**（次 tick で再評価する）
   for (const a of progress.advanced) delete state.dispatchWatch[a.jobId];
   if (progress.stalled.length > 0) {
@@ -914,7 +937,9 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
   //    送信を起動した次の tick は普通「今日はもう配った」で skip する。
   //    ここで先に return すると、送ったのに画面が 0 通のまま何日も残る。
   if (decision.action === TICK_ACTION.SKIP) {
-    const touched = settledJobs.finished.length > 0 || progress.advanced.length > 0;
+    const touched = settledJobs.finished.length > 0 || progress.advanced.length > 0
+      // 追跡リストが変わったなら**必ず**書き戻す（古い ID を残さない）
+      || pendingJobIdsChanged;
     /**
      * ⚠️ 読みの据え置き（`nextDueAtMs` / `grantPlanReadAtMs`）は
      *    **書き戻さないと意味が無い**。書かずに戻ると次の tick が同じ重い読みを

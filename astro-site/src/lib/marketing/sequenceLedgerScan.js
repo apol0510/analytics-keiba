@@ -55,6 +55,42 @@ export function nextScanCursor({ offset, pass = 0 } = {}) {
 }
 
 /**
+ * 保存した `offset` で読み直せなかったときに、**先頭から読み直してよいか**（純粋）。
+ *
+ * ## なぜ要るか（2026-09-08 の障害）
+ *
+ * Airtable の `offset` は**短命**で、保存して 10 分後の tick で使うと失効しうる。
+ * 失効した offset を渡すと 4xx が返り、旧実装はそこで throw していた。
+ * throw はカーソルの更新より前なので **失効した offset が保存されたまま**になり、
+ * 以後の tick は永久に同じ場所で落ち続ける（自力復帰できない）。
+ *
+ * 本番実測: `campaign-discount-free` の走査が **2026-08-27T20:50:48Z（pass 15）で凍結**し、
+ * 以後 10 日間 1 度も進まなかった。台帳が小さく offset を持たない campaign
+ * （light / premium）だけが無傷だったのが決め手。
+ *
+ * ## 先頭から読み直して安全な理由
+ *
+ * 走査は「誰がシーケンスに入っているか」を集めるだけで、**送信の冪等性は
+ * `DeliveryKey`（campaign × version × step × 受信者）が持つ**。同じ人を 2 回読んでも
+ * 2 通にはならない（このファイル冒頭の設計どおり）。読み直しの代償はページ数だけ。
+ *
+ * ⚠️ `offset` を渡していない失敗（＝先頭から読んで落ちた）は**リセットで直らない**。
+ *    その場合は false を返し、従来どおり呼び出し側で失敗させる。
+ */
+export function shouldResetCursorOnFailure({ hadOffset, status } = {}) {
+  if (hadOffset !== true) return false;
+  const code = Number(status);
+  // 5xx（Airtable 側の一時障害）は待てば直る。カーソルは触らない
+  if (Number.isFinite(code) && code >= 500) return false;
+  return true;
+}
+
+/** 失効した offset を捨てて先頭から読み直すカーソル（周回数は保つ） */
+export function cursorAfterFailure({ pass } = {}) {
+  return { offset: null, pass: Number(pass) || 0, completedPass: false };
+}
+
+/**
  * カーソルの保存層。Redis が無ければ**毎回先頭から**読む
  * （進まなくなるだけで、誤送信にはならない）。
  */

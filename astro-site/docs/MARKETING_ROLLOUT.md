@@ -973,3 +973,59 @@ rollout 運転手の進捗表示であり、**在籍数ではない**。
 
 ⚠️ Redis の `steps[]` は cron が加算する設計。**管理経路から手動で queue / dispatch すると増えない**
 （2026-08-20 の Step1 159 通・Step2 598 通はいずれも `steps[]` に反映されていない）。実数は台帳で数える。
+
+---
+
+# 追跡中ジョブ（`pendingJobIds`）は必ず片付ける（2026-09-08 恒久修正）
+
+## 本番で起きたこと（read-only 実測）
+
+| 事実 | 値 |
+|---|---|
+| 送信完了したのに追跡に残り続けたジョブ | `mkt-light-trial-to-premium-sequence-v1-8baffb52-1`（9/3 06:35Z に SENT / 50 通）|
+| 送信されないまま残った PENDING ジョブ | `…-d9a88b59-1`（9/3 06:46Z 登録 / recipients 50 / sent 0）|
+| 展開状態 | `stage: paused` / `killed: false` / `autoStopped: false` |
+| 経過 | **5 日間**（2026-09-08 の調査時点）|
+
+`stage: paused` は理由にならない。`tickRollout` は
+**① 送信待ちジョブを先に流す**を停止判定より前に置いている（積んだメールを放置しないため）。
+`MARKETING_CAMPAIGN_DISPATCH_ENABLED=true` なので、tick が最後まで回っていれば
+5 分以内に起動されるはずだった。
+
+## 何が悪かったか
+
+1. **追跡リストの書き戻しが「実績を写したときだけ」だった**
+
+   ```js
+   if (settledJobs.finished.length > 0) { ... state.pendingJobIds = settledJobs.stillRunning; }
+   ```
+
+   ジョブ照会が失敗し続ける期間に入ると `finished` が常に 0 になり、
+   `pendingJobIds` が**永久に固まる**。
+
+2. **ジョブ照会の失敗を握り潰していた**
+
+   ```js
+   const jobs = await loadJobs({ ... }).catch(() => null);   // 理由が消える
+   ```
+
+   `jobs` が null になると `tickRollout` は `facts_unreadable` で SKIP する。
+   つまり**送信待ちがあっても起動しない**のに、外からは「静かに何もしていない」
+   としか見えず、原因を特定できなかった。
+
+## 直した形（不変条件）
+
+- **ジョブを読めた tick では必ず** `state.pendingJobIds = settledJobs.stillRunning` を書き戻す。
+  `collectFinishedJobs` は見えないジョブを `stillRunning` に残すので、無条件の代入で取りこぼさない
+- 追跡リストが変わった SKIP tick は**状態を保存する**（`pendingJobIdsChanged`）
+- ジョブ照会が読めなかったら **`warn: 'jobs_unreadable'` を理由つきでログへ出す**
+
+固定テスト: `src/lib/marketing/rolloutPendingJobsSettle.test.mjs`
+（完了ジョブが追跡から外れる / 書き戻しの配線 / 握り潰しの禁止 /
+「一時停止中でも送信待ちを優先する」「緊急停止は送信起動より強い」の順序）。
+
+## 運用で見るところ
+
+- ログに `jobs_unreadable` が続く → **展開は静かに止まっている**。まず `jobsBrief` を疑う
+- `rollout` の `pendingJobIds` に**既に SENT のジョブ ID**が載っている → 上と同じ状態
+- PENDING のジョブが 10 分以上残る → dispatch 起動か background 実行のどちらかが進んでいない
