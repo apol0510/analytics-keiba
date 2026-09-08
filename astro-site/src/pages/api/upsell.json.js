@@ -193,10 +193,13 @@ export async function GET({ request }) {
 
   // ⚠️ 文言も案内先もサーバーが確定させる（クライアントで条件文を組み立てない）。
   //    Premium Plus に触れてよいのは channel が plus のときだけ（存在秘匿）。
+  //    停止判定は `purchaseEnabled`（既存の単一源）だけを見る。ここで日付を比べない。
   const rankNotice = describeRankNotice({
     entitlements: resolveEntitlements(fromAirtableFields(fields || {}), now),
     plusAllowed: view.channel === UPSELL_CHANNEL.PLUS,
     plusPurchasable: view.plus?.purchaseEnabled === true,
+    // 再開のたびに「新しいお知らせ」にするための識別子。会員ごとの開始日時（単一源）
+    reopenStartsAt: reopen.startsAtIso,
   });
 
   const body = {

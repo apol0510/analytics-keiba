@@ -1,3 +1,58 @@
+# 会員ランク別の常設お知らせ（2026-09-08 確定）
+
+マイページ・ナビのベルに出す「お知らせ」の土台。**クーポンや割引のお知らせが 0 件に
+なったときだけ**出るフォールバックで、具体的な行動があるお知らせと並べない。
+
+単一源: `astro-site/src/lib/promotions/rankNotice.js`（純粋・I/O なし）
+まとめ役: `astro-site/src/lib/premiumPlus/couponNotice.js` の `describeAllNotices()`
+組み立て: `astro-site/src/pages/api/upsell.json.js`（サーバーが文言まで確定させる）
+
+## 出し分け（確定・変更するときはここと実装を必ず両方直す）
+
+| いまのご契約 | お知らせ | 案内先 |
+|---|---|---|
+| 無料 | 有料プランのご案内 | `/pricing/` |
+| Light | Premium のご案内 | `/pricing/` |
+| Premium（三連複なし）| 三連複のご案内 | `/sanrenpuku-demo/` |
+| 三連複あり・**販売停止中** | **出さない** | — |
+| 三連複あり・**販売中** | Premium Plus の募集を再開しました | `/premium-plus-v2/` |
+| 三連複あり・Plus 対象外 | **出さない**（存在秘匿）| — |
+
+## 確定事項（2026-09-08 MK）
+
+1. **無料 / Light / Premium は現状維持**。上表のまま常設する
+2. **一度見たら赤い点だけ消し、お知らせ自体はナビに残す**
+   （`describeAllNotices()` の `count`=未読 / `total`=既読を含む全件）
+3. **販売停止中は Premium Plus のお知らせを出さない。**
+   「募集再開をお待ちください」を常設しない。お客様にできることが何も無いお知らせを
+   ベルに残さないため。**停止中はお知らせ 0 件でよい**（無理に埋めない）
+4. **募集を再開したら自動で**「Premium Plus の募集を再開しました」→ `/premium-plus-v2/`
+5. **存在秘匿・販売資格・停止判定に独自判定を追加しない。** すべて既存の単一源を使う
+
+## 独自判定を作らない（この 3 つは呼び出し側が解決して渡す）
+
+| 渡す値 | 単一源 |
+|---|---|
+| `plusAllowed`（案内してよい相手か＝存在秘匿）| `resolveUpsellForCustomer().channel === UPSELL_CHANNEL.PLUS` |
+| `plusPurchasable`（いま買えるか＝停止判定）| `resolveUpsellForCustomer().plus.purchaseEnabled` |
+| `reopenStartsAt`（会員ごとの再募集開始日時）| `loadReopenStart().startsAtIso` |
+
+`rankNotice.js` の中で日付を比べたり販売可否を再計算したりしないこと。
+三連複というランクだけで Premium Plus に触れないこと（管理画面で対象外にした会員がいる）。
+
+## 「再開したら自動で表示」が 2 回目以降も働く理由
+
+signature に**会員ごとの再募集開始日時**を含める（`rank:plus_reopened:<startsAtIso>`）。
+含めないと 2 回目の再開が既読扱いになり、赤い点が出ない。
+クーポンのお知らせが取得日時を含めているのと同じ考え方。
+
+## 金額を持たない
+
+価格・割引額は `promotionOfferCatalog.js` と各商品ページが単一源。
+`rankNotice.js` は**案内先の URL と文言だけ**を持ち、金額を書き写さない。
+
+検証: `npm run test:promotions`（`check:safety` に組込済み）
+
 # 連続配信の責務境界（2026-09-08 確定）
 
 **「誰がどのシーケンスを進めるか」を取り違えると、動いているのに進まない状態になる。**
