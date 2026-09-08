@@ -77,6 +77,60 @@ Light 会員の応答に Premium Plus が現れないことも確認した（存
 | PR / CI | ✅ **PR #499 merged**（squash `3e667c32`）。CI green を確認して squash merge。main の既存赤は先行して PR #500（squash `4e7f03b0`）で解消済み |
 | 再開（配信の再開判断） | 🔵 **未実施・ユーザー判断待ち** |
 
+## ✅ 滞留していた PENDING 50 名を送信完了（2026-09-08 09:15 UTC / **正常完了**）
+
+9/3 06:46Z に積まれたまま `queue:unverified` で 5 日間止まっていた step4 の最終バッチ
+（`mkt-light-trial-to-premium-sequence-v1-d9a88b59-1` / `recqqadkAZvDkORZ8`）を、
+**この 50 名に限定して**送信した。MK 承認済み。
+
+### 送信直前ゲート（09:15:03Z / read-only dry-run・9 項目すべて一致）
+
+| 項目 | 期待 | 実測 |
+|---|---|---|
+| status / sent | PENDING / 0 | PENDING / 0 |
+| verified / total | 50 / 50 | 50 / 50 |
+| wouldSend / wouldSkip | 50 / 0 | 50 / 0 |
+| previewFingerprint | `v1:4eb535db6a8209eec0175abf44f89861` | 一致（`fingerprintOk: true`）|
+| 新規 suppression / blacklist / 退会 / 配信停止 | 0 | `skipByReason {}` / `skippedByReason {}` |
+| provider suppression 取得 | 可能 | `available: true` / 合計 470（内訳も従前と同一）|
+
+**1 項目でも外れたら promote せず停止する**形で自動判定させ、全一致のときだけ次へ進んだ。
+
+### 実施した書き込み操作（この 2 つだけ）
+
+1. `campaignJobPromote`（`expectedWillSend 50` + 上記指紋 + 確認文字列）→ `unverifiedCleared: true`
+   - サーバー側でも dispatcher の dry-run を取り直して件数・指紋を再突合（**二重ゲート**）
+2. その結果 `cron-marketing-rollout` が **09:15:21Z に送信完了**（promote から約 20 秒）
+
+### 結果（read-only 確認）
+
+| 項目 | 実測 |
+|---|---|
+| status / completedAt | **SENT** / `2026-09-08T09:15:21.365Z` |
+| sent / failed / skipped / cancelled | **50 / 0 / 0 / 0** |
+| 配信台帳（CampaignDeliveries）| `queued 0 / sent 50 / failed 0 / skipped 0 / cancelled 0` |
+| duplicate | **0**（`recipientCount 50 = sent 50`。DeliveryKey は campaign×version×step×宛先で一意）|
+| errorReasons | `{}` |
+| provider 受理 | **50 通すべて 202 受理**（dispatcher は 202 を受けた通だけ `sent` に数える）|
+| イベント記録 | `recording: ok` / `blob_failed 0` / 送信 23 秒後に `lastEventAt 09:15:44Z` / `blob_ok` 23,008 → 23,061 |
+
+### この 50 名以外は動いていない（同時刻の read-only 実測）
+
+`jobsTotal` **437（不変）** / PENDING **0 件** / 新規ジョブ **0** /
+割引 3 本は step1 のみ・`duplicates 0`・集計の更新時刻も不変 /
+prospect **11,976・反応済み未登録 0・永久除外 0・writeEnabled false** /
+rollout は `stage: paused` `killed false` `autoStopped false`（**unpause も dailyLimit 変更もしていない**）。
+
+> ℹ️ rollout 画面の step4 カウンタ（72,268）は動いていない。これは表示用の増分集計で、
+> **運転手が自分で積んだジョブ**（`pendingJobIds` 経由）だけを数える仕様のため。
+> 今回のジョブは 9/3 に別経路で積まれたので集計に乗らない。**送信の正本は台帳**（sent 50 / failed 0）。
+
+### この 50 名について今後やらないこと
+
+- **追加送信・repair・再送を行わない**（`cancelReason: already_sent`）
+- 数時間後に delivered / bounce / block / spam / open / click と
+  `eventSinkHealth`、`failed` / `duplicate` が後から増えていないことを **read-only で確認するだけ**
+
 ## 本番反映後の実測（2026-09-08 08:37–09:03 UTC / **read-only・書き込み 0・送信 0**）
 
 deploy は `3e667c32`（08:36:11Z ready）。運転手（`cron-marketing-rollout`）は 5 分ごとなので、
