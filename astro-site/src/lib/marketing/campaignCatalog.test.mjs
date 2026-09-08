@@ -209,33 +209,48 @@ test('【version ロック】本文を変えたら version を上げる', () => 
     //       送信済み Step は `DELIVERED_STEPS` に登録し、下の専用テストで
     //       **1 文字も変わっていない**ことを固定する。
     /**
-     * 全会員向けキャンペーン割引（2026-08-24〜09-06）。文面の金額・期限は
-     * offer カタログから生成されるため、**価格を直せばハッシュが変わる**。
-     * 価格を変えたら version を上げて下表を更新すること（＝別の案内として配り直す）。
+     * 全会員向けキャンペーン割引。文面の金額・期限は offer カタログと
+     * `CAMPAIGN_WINDOW` から生成されるため、**価格や期間を直せばハッシュが変わる**。
+     *
+     * ── 第 2 期（再募集 / 2026-09-10〜09-23）で全 step のハッシュを更新（2026-09-08）──
+     *
+     * 第 1 期（2026-08-24〜09-06）は step1 を 15,509 通配ったところで連続配信の不具合
+     * （`CAMPAIGN_SEQUENCE.md` §11）により step2 以降が 1 通も出ずに期間が終了した。
+     * 修正済みなので、**同じ割引条件で期間を取り直す**。
+     *
+     *   - **version は 1 のまま**（上げると DeliveryKey が変わり、既に配った step1 が
+     *     「未送信」に戻って**全員へ再送**される）
+     *   - step2 / step3 の文面変更は **(B) 未送信 Step の修正**（誰にも届いていない）。
+     *     「一度締め切ったが改めて期間を設けた」ことを本文で説明する形へ書き換えた
+     *   - **step1 の文章そのものは 1 文字も変えていない。** それでもハッシュが動くのは、
+     *     件名・本文へ `DISCOUNT_DEADLINE`（= `CAMPAIGN_WINDOW` 由来）が差し込まれるため。
+     *     期間を取り直せば step1 のハッシュも必ず動く（＝ `delivered` に登録できない）
+     *   - 再送は起きない: DeliveryKey は `campaignId × version × step × 受信者` で、
+     *     **本文ハッシュを含まない**（`campaignSend.computeCampaignDeliveryKey`）
      */
     'campaign-discount-free': {
       version: 1,
       delivered: [],
       steps: {
-        1: '63b9519417736b5f',
-        2: 'ab33001bb70404ca',
-        3: 'b082a5addddc9734',
+        1: 'c70cf2831298104e',
+        2: '02090ad305bf1287',
+        3: '59e45de935761a24',
       },
     },
     'campaign-discount-light': {
       version: 1,
       delivered: [],
       steps: {
-        1: '14720dcd214dbfd0',
-        2: 'bcb26e969d67d4f6',
+        1: 'b3cc855b64928f6d',
+        2: 'a52338ee29cc8c7f',
       },
     },
     'campaign-discount-premium': {
       version: 1,
       delivered: [],
       steps: {
-        1: '88f0ad30b0e61d08',
-        2: 'e904aaac96f43828',
+        1: 'd5729f8a3f74e86d',
+        2: '45d4adc1cf072ab1',
       },
     },
     'light-trial-to-premium-sequence': {

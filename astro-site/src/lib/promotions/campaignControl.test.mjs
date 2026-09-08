@@ -11,11 +11,12 @@ import { fileURLToPath } from 'node:url';
 
 import { resolveCampaignAllowed, describeCampaignControl, CAMPAIGN_BLOCK } from './campaignControl.js';
 import { createCampaignControlStore, isSafeRecordId } from './campaignControlStore.js';
-import { describeCampaignForMember, resolveCampaignPricing } from './campaignOffers.js';
+import { describeCampaignForMember, resolveCampaignPricing, CAMPAIGN_WINDOW } from './campaignOffers.js';
 
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
 const OK = { available: true, paused: false };
-const IN = Date.parse('2026-08-25T03:00:00Z');
+/** ⚠️ 日付を直書きしない。期間の単一源（`CAMPAIGN_WINDOW`）から導出する */
+const IN = Date.parse(CAMPAIGN_WINDOW.startsAtIso) + 86400_000;   // 期間 2 日目
 
 // ── 配ってよいかの判定 ──────────────────────────────────────
 test('期間内・停止なし・除外なし のときだけ配る', () => {
