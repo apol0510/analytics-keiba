@@ -131,6 +131,33 @@ rollout は `stage: paused` `killed false` `autoStopped false`（**unpause も d
 - 数時間後に delivered / bounce / block / spam / open / click と
   `eventSinkHealth`、`failed` / `duplicate` が後から増えていないことを **read-only で確認するだけ**
 
+### ⚠️ 送信の 6 分後に、**別の 50 名分のジョブが自動で queue された**（2026-09-08 09:21:03Z）
+
+```
+jobId  : mkt-light-trial-to-premium-sequence-v1-3fa04ae6-1
+record : reclExQONVapcdvpm
+作成    : 2026-09-08T09:21:03.216Z（今回の送信 09:15:21Z の 6 分後）
+状態    : PENDING / recipients 50 / sent 0 / failed 0 / 配信行 queued 50
+dry-run : willSend 0 / blocked: queue_unverified / preview.wouldSend 50 / wouldSkip 0
+指紋    : v1:8d059589919b2353b983c11c3d1c463a（今回送った 50 名とは**別集合**）
+```
+
+| 事実 | 内容 |
+|---|---|
+| 何が起きたか | 詰まっていたジョブ（`d9a88b59`）が片付いたことで運転手が次の工程へ進み、**step4 の次バッチ 50 名を queue 登録した** |
+| **`stage: paused` は止められない** | paused が止めるのは**新規付与だけ**。既にシーケンスに入っている人の **queue 登録・送信は進める**のが現行仕様（2026-08-18「積んだメールを放置しない」修正。`tickRollout` は ① 送信待ち → ② 引き継ぎ → ③ queue 待ち を停止判定より前に評価する）|
+| いまの安全性 | 新ジョブには **`queue:unverified` が付いており dispatcher が block**（`willSend 0`）。作成 45 分後も `sent 0` のままで、**自動では送信されない** |
+| jobsTotal | 437 → **438**（増えたのはこの 1 件のみ）|
+| 取った措置 | **なし**（promote / cancel / repair / 実送信はいずれも未実施。当面 PENDING のまま維持する）|
+
+**cancel は保留する。** `cancelJob` は CampaignDeliveries を `cancelled` にするが、
+`MARKETING_DELIVERY_STORE=dual` の既送信判定は **Airtable ∪ Redis の和集合**
+（`deliveryKeySource.resolveDeliveredKeys`）で、**Redis の DeliveryKey は cancel で消えない**。
+したがって cancel すると**この 50 名は step4 を永久に受け取れなくなる**恐れがある。
+
+⚠️ **これは次バッチが積まれるたびに繰り返す。** `stage: paused` のままでも、
+片付いた直後の tick が次の 50 名を queue する。恒久的に止めるには別の手段が要る（下記の調査）。
+
 ## 本番反映後の実測（2026-09-08 08:37–09:03 UTC / **read-only・書き込み 0・送信 0**）
 
 deploy は `3e667c32`（08:36:11Z ready）。運転手（`cron-marketing-rollout`）は 5 分ごとなので、
