@@ -35,32 +35,73 @@ test('Premium の方には三連複のご案内', () => {
   assert.equal(n.href, RANK_NOTICE_HREF.SANRENPUKU);
 });
 
-test('三連複の方には Premium Plus（販売中／停止中で文言が変わる）', () => {
-  const base = { entitlements: ent({ canViewLight: true, canViewPremium: true, canViewSanrenpuku: true }), plusAllowed: true };
-  const onSale = describeRankNotice({ ...base, plusPurchasable: true });
-  const paused = describeRankNotice({ ...base, plusPurchasable: false });
-  assert.equal(onSale.show, true);
-  assert.equal(paused.show, true);
-  assert.notEqual(onSale.label, paused.label, '販売中と停止中で同じ文言になっている');
-  assert.equal(paused.href, RANK_NOTICE_HREF.PLUS);
+const sanrenpuku = ent({ canViewLight: true, canViewPremium: true, canViewSanrenpuku: true });
+
+test('【確定仕様】販売停止中は Premium Plus のお知らせを出さない（2026-09-08 MK）', () => {
+  const n = describeRankNotice({
+    entitlements: sanrenpuku, plusAllowed: true, plusPurchasable: false,
+    reopenStartsAt: '2026-09-01T00:00:00.000Z',
+  });
+  assert.equal(n.show, false, '停止中に「募集再開をお待ちください」を常設表示している');
+  assert.equal(n.label, '');
+});
+
+test('【確定仕様】募集を再開したら「募集を再開しました」を出す', () => {
+  const n = describeRankNotice({
+    entitlements: sanrenpuku, plusAllowed: true, plusPurchasable: true,
+    reopenStartsAt: '2026-09-01T00:00:00.000Z',
+  });
+  assert.equal(n.show, true);
+  assert.match(n.label, /募集を再開しました/);
+  assert.equal(n.href, RANK_NOTICE_HREF.PLUS);
+});
+
+test('停止中の文言そのものを持たない（復活させない）', () => {
+  const all = [
+    describeRankNotice({ entitlements: sanrenpuku, plusAllowed: true, plusPurchasable: false }),
+    describeRankNotice({ entitlements: sanrenpuku, plusAllowed: true, plusPurchasable: true }),
+  ].map((n) => n.label).join(' ');
+  assert.doesNotMatch(all, /お待ちください/, '停止中を待たせる文言が復活している');
+});
+
+test('再開のたびに別のお知らせになる（2 回目の再開でも赤い点が出る）', () => {
+  const first = describeRankNotice({
+    entitlements: sanrenpuku, plusAllowed: true, plusPurchasable: true,
+    reopenStartsAt: '2026-09-01T00:00:00.000Z',
+  });
+  const second = describeRankNotice({
+    entitlements: sanrenpuku, plusAllowed: true, plusPurchasable: true,
+    reopenStartsAt: '2026-10-01T00:00:00.000Z',
+  });
+  assert.notEqual(first.signature, second.signature, '2 回目の再開が既読扱いになる');
 });
 
 // ── 存在秘匿 ────────────────────────────────────────────────
-test('【重要】Plus 対象外の三連複会員には Premium Plus を出さない（存在秘匿）', () => {
-  const n = describeRankNotice({
-    entitlements: ent({ canViewLight: true, canViewPremium: true, canViewSanrenpuku: true }),
-    plusAllowed: false, plusPurchasable: false,
-  });
-  assert.equal(n.show, false, '管理画面で対象外にした会員に商品名を出している');
-  assert.equal(n.label, '');
+test('【重要】Plus 対象外の三連複会員には Premium Plus を出さない（存在秘匿・販売中でも）', () => {
+  for (const purchasable of [false, true]) {
+    const n = describeRankNotice({
+      entitlements: sanrenpuku, plusAllowed: false, plusPurchasable: purchasable,
+      reopenStartsAt: '2026-09-01T00:00:00.000Z',
+    });
+    assert.equal(n.show, false, '管理画面で対象外にした会員に商品名を出している');
+    assert.equal(n.label, '');
+  }
 });
 
 // ── まとめ役でのフォールバック ────────────────────────────────
 const usableCoupon = { claimed: true, claimedAt: '2026-08-22T23:10:37.041Z', usage: { known: true, used: false, reserved: false } };
 const expiredCoupon = { claimed: true, claimedAt: '2026-08-22T23:10:37.041Z', usage: { known: true, used: false, reserved: false, expired: true } };
 const plusRank = describeRankNotice({
-  entitlements: ent({ canViewLight: true, canViewPremium: true, canViewSanrenpuku: true }),
-  plusAllowed: true, plusPurchasable: false,
+  entitlements: sanrenpuku, plusAllowed: true, plusPurchasable: true,
+  reopenStartsAt: '2026-09-01T00:00:00.000Z',
+});
+
+test('【確定仕様】停止中はお知らせが 0 件でよい（無理に埋めない）', () => {
+  const paused = describeRankNotice({
+    entitlements: sanrenpuku, plusAllowed: true, plusPurchasable: false,
+  });
+  const r = describeAllNotices({ coupon: expiredCoupon, rankNotice: paused, seen: {} });
+  assert.equal(r.total, 0, '停止中なのにお知らせを作っている');
 });
 
 test('【本件の要件】クーポンが期限切れになったら、自動でランク別のお知らせに入れ替わる', () => {
