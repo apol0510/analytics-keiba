@@ -194,7 +194,8 @@ const ppFmtDate = (d) => {
 };
 // カード描画は本番検証済みの自己完結コンポーネント PremiumPlusReceiptCardV2 に委譲
 // （受付日時整形・勝ち馬ハイライト・防御正規化はコンポーネント側）。ここでは台帳を read-only で渡すだけ。
-const ppCards = latestCards(ppResultsRaw, { limit: 8 });
+// 掲載枚数の単一源は premiumPlusResults.js の CARD_LIMIT（現在 7 枚）。ここに数字を書かない
+const ppCards = latestCards(ppResultsRaw);
 
 // --- 本日の1鞍ティザー（購入導線・買い目はロック） ---
 // 会場サーキットは曜日から導出（平日=南関/SPAT4 ・ 土日=中央/JRA）。特定会場は伏せる（推測で会場名を書かない）。
