@@ -32,6 +32,26 @@ test('使い終わった / 申込に適用済みなら知らせない（行動�
   }
 });
 
+test('**期限切れなら「お使いいただけます」と言わない**（2026-09-08 MK 報告）', () => {
+  // 通知は「使えます」と出すのに、開くと「期限切れで使えない」と出ていた
+  const n = describeCouponNotice({
+    claimed: true,
+    claimedAt: '2026-08-22T23:10:37.041Z',
+    usage: known({ expired: true }),
+  });
+  assert.equal(n.show, false, '期限切れのクーポンを「お使いいただけます」と通知している');
+});
+
+test('期限切れでも保有・使用状況の記録は通知の判定に影響されない（記録は別レイヤー）', () => {
+  // ここが返すのは「いま通知を出すか」だけ。使用済み判定は usage 側の責務で、
+  // 期限切れの使用済みクーポンも同じく通知しない（二重に通知しない）。
+  const expiredUsed = describeCouponNotice({
+    claimed: true, claimedAt: '2026-08-22T23:10:37.041Z',
+    usage: known({ expired: true, used: true }),
+  });
+  assert.equal(expiredUsed.show, false);
+});
+
 test('状態を確認できないときは「使えます」と言わない', () => {
   const n = describeCouponNotice({
     claimed: true, claimedAt: '2026-08-22T00:00:00.000Z', usage: { known: false },

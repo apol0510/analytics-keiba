@@ -13,9 +13,14 @@
  * | 状態 | 知らせる |
  * |---|---|
  * | 受け取れるクーポンがある（未取得）| ✅ 受け取ってもらう必要がある |
- * | 取得済みでまだ使っていない | ✅ 使えることを知ってもらう |
+ * | 取得済みでまだ使っていない（期限内）| ✅ 使えることを知ってもらう |
  * | お申し込みに適用済み / ご利用済み | ❌ お客様の行動は終わっている |
+ * | **有効期限を過ぎている** | ❌ **できることが無い**（2026-09-08 追加）|
  * | 対象外 / 確認できない | ❌ 断定しない |
+ *
+ * ⚠️ 「知らせない」は**保有の記録を消すこととは別**。取得済み・使用済みかどうかは
+ *    マイページのクーポンカード（`describeCouponUsageForMember`）が持ち続ける。
+ *    ここが決めるのは「いま行動をうながす通知を出すか」だけ。
  *
  * ## 「新しいか」の見分け方
  *
@@ -43,7 +48,7 @@ const TEXT = Object.freeze({
  * いま知らせるべきことを 1 つ返す（無ければ `show: false`）。
  *
  * @param {{ claimed?: boolean, canClaim?: boolean,
- *           usage?: { used?: boolean, reserved?: boolean, known?: boolean },
+ *           usage?: { used?: boolean, reserved?: boolean, known?: boolean, expired?: boolean },
  *           claimedAt?: string, expiryText?: string }} coupon
  *   `/api/upsell.json` の `coupon`
  * @returns {{ show: boolean, kind: string, label: string, signature: string, count: number }}
@@ -55,6 +60,10 @@ export function describeCouponNotice(coupon) {
 
   // 使い終わった / 申込に適用済み / 確認できない → お客様の行動は残っていない
   if (usage.used === true || usage.reserved === true) return none;
+  // ⚠️ 期限切れ（2026-09-08 MK 報告）。「お使いいただけるクーポンがあります」と出したのに、
+  //    開いたら「期限切れで使えない」と出ていた。使えないものを使えるように見せない。
+  //    保有と使用状況の記録は消さない（カード側が「ご利用期限切れ」として出し続ける）。
+  if (usage.expired === true) return none;
   // ⚠️ 状態を確認できていないときに「使えます」と言わない
   if (c.claimed === true && usage.known === false) return none;
 
