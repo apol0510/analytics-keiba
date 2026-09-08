@@ -1,18 +1,48 @@
-# 🔧 連続配信が 2 通目以降を出せなかった件 — **原因確定 / 修正 Draft PR まで（2026-09-08）**
+# 🔧 連続配信が 2 通目以降を出せなかった件 — **修正を本番反映済み（2026-09-08）/ 配信の再開は未実施**
 
-> **再開はまだ行っていない。** 期間延長・unpause・dailyLimit 変更・PENDING 50 名の送信/取消・
-> queue 登録・env 変更・Redis/Airtable 本番書き込み・実送信・merge は**すべて未実施**。
+> **配信の再開はまだ行っていない。** 期間延長・unpause・dailyLimit 変更・
+> PENDING 50 名の promote / cancel / 実送信・step0 328 名への初回送信・queue 登録・
+> env 変更・Redis/Airtable 本番書き込みは**すべて未実施**。
+> 反映したのは**コード修正のみ**で、反映後の実測でも送信・queue は 0 件（下記）。
 
 ## 現在地
 
 | 工程 | 状態 |
 |---|---|
+| **本番反映（production deploy）** | ✅ **完了（2026-09-08 08:36:11Z / squash `3e667c32` / PR #499）** |
+| **本番 read-only 検証（5 項目）** | ✅ **全て期待どおり**（下記「本番反映後の実測」）|
 | 本番 read-only 調査 | ✅ 完了（書き込み 0 / 送信 0）|
 | 根本原因の特定 | ✅ 4 件 + 運転手の追跡不具合 1 件 |
 | 正本への記録 | ✅ `CAMPAIGN_SEQUENCE.md` §11 / `MARKETING_ROLLOUT.md` / `decisions.md` |
-| コード修正 + テスト | ✅ `branch: fix/sequence-stall-rootcauses` |
-| Draft PR / CI | ✅ **PR #499**（`fix/sequence-stall-rootcauses`）。main（PR #500 merge 後）を通常 merge で取り込み済み。**merge / deploy は未実施** |
+| コード修正 + テスト | ✅ 新規テスト 6 本（38 ケース）。`test:marketing` 2,661 pass / 0 fail |
+| PR / CI | ✅ **PR #499 merged**（squash `3e667c32`）。CI green を確認して squash merge。main の既存赤は先行して PR #500（squash `4e7f03b0`）で解消済み |
 | 再開（配信の再開判断） | 🔵 **未実施・ユーザー判断待ち** |
+
+## 本番反映後の実測（2026-09-08 08:37–09:03 UTC / **read-only・書き込み 0・送信 0**）
+
+deploy は `3e667c32`（08:36:11Z ready）。運転手（`cron-marketing-rollout`）は 5 分ごとなので、
+**3 tick 以上をまたいで**観測した。
+
+| # | 確認 | 実測 | 判定 |
+|---|---|---|---|
+| 1 | PENDING 50 名が据え置かれている | `status PENDING / total 50 / sent 0 / willSend 0 / willSkip 50 / blocked: queue_unverified`。`preview.wouldSend 50` / 指紋 `v1:4eb535db6a8209eec0175abf44f89861`（反映前と同一）| ✅ |
+| 2 | 完了ジョブの**二重計上が止まった** | step4 `sent`: 08:37 **72,218** → 08:48 **72,268**（**+50 = 最後の 1 回だけ計上**）→ 08:49 / 09:03 **72,268 のまま**（3 tick 以上 差分 0）| ✅ |
+| 3 | `pendingJobIds` が settle し、**永続化**される | `["…-8baffb52-1"]` → **`[]`**。`stateVersion` **800 → 801** で保存を確認。以後 801 のまま安定 | ✅ |
+| 4 | 割引 3 本は期間外のまま送信 0 | free `step1 sent 13,499 / queued 1`（更新 8/27 20:50Z のまま）、light `step1 sent 5`・premium `step1 sent 13`（いずれも更新 9/6 14:5xZ のまま）。**step2 以降の行は 0**。tick は `not_a_sequence` で即終了し 1 行も書いていない | ✅ |
+| 5 | 意図しない queue / send / duplicate が無い | `jobsTotal` **437（反映前と同じ）** / PENDING は例の 1 件のみ / 直近ジョブは 2026-09-03 06:46Z が最新（**新規ジョブ 0**）/ 全 campaign で `duplicates 0` `failed 0` / prospect **11,976・反応済み未登録 0・永久除外 0・writeEnabled false**（不変）| ✅ |
+
+補足:
+
+- 2 の「+50 が 1 回だけ」は**設計どおり**。反映前の tick はこのジョブを毎回数え直していたが
+  （実送信 862 通に対し 72,218 まで膨張）、反映後の最初の tick が**保存してから 1 回だけ**計上し、
+  以後は追跡から外れているので二度と数えない
+- 3 の `stateVersion` が動いたことが、**auto-stop 経路でも片付けが失われない**ことの直接証拠
+  （反映前は同じ経路で保存されず 800 のまま止まっていた）
+- 展開状態は `stage: paused` / `killed: false` / `autoStopped: false` / `stopReason: null` のまま。
+  **unpause も dailyLimit 変更も行っていない**
+
+⚠️ 送信系の操作（promote / cancel / 実送信 / queue 登録）、campaign 期間延長、env 変更、
+Redis・Airtable への書き込みは**一切行っていない**。
 
 ## 何が起きていたか（本番実測 / 2026-09-08 01:51–02:10 UTC・read-only）
 
