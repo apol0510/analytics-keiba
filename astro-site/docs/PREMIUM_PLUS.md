@@ -199,7 +199,31 @@ Premium Plus は**単品購入**で、`planName` を送らないため
 | 単品商品（サブスクではない） | ページに継続課金の表現を置かない。FAQ に明記 |
 | **Premium Sanrenpuku 会員にのみ表示**。Premium / Light には存在も知らせない | `AccessControl requiredPlan="Premium Sanrenpuku"` + `<meta name="robots" content="noindex, nofollow">` + `public/robots.txt` の `Disallow: /premium-plus/` + CTA は三連複ページのみ |
 | 超精密 AI が厳選 1 鞍を提供 | コピーの中核。レース数を増やす訴求はしない |
-| 価格 ¥98,000 → ¥68,000 | `premium-plus.astro` 冒頭の `PRICE` / `LIST_PRICE` |
+| 価格 ¥98,000 → ¥68,000 | **`premium-plus-v2.astro`** 冒頭の `PRICE` / `LIST_PRICE` |
+
+### 商品ページの正本は `premium-plus-v2.astro` 1 枚（2026-09-08 一本化）
+
+`/premium-plus/` と `/premium-plus-v2/` はほぼ同一の約 1,900 行を二重管理していた
+（v2 は Netlify の functions cache が古い SSR バンドルを再利用する drift を避けるために
+別パス名で作り直したもの）。全ての修正を毎回両方へ当てる必要があり、実際に食い違いも起きた。
+
+| URL | いまの実体 |
+|---|---|
+| `/premium-plus-v2/` | **商品ページ本体**（`AccessControl` / `SessionKeepAlive` / `PRICE` / 申込導線）|
+| `/premium-plus/` | **認可付きリダイレクト専用**（57 行）。`verifyPlanAccess` → 会員だけ 301 → v2 |
+
+- 顧客導線（`PremiumPlusCta` / dashboard / `premium-plus-stage.json` の `PRODUCT_HREF`）は
+  すべて v2 を指す。**旧 URL を指すリンクを新たに作らない**
+- 旧 URL を消さないのは、**配信済みキャンペーンメール**（`premium-plus-offer`）の CTA が
+  この URL だったため。削除ではなくリダイレクトで生かしている
+- **`netlify.toml` の静的 301 にはしない。** 誰にでも 301 を返すと「Premium Plus という商品がある」
+  ことが非会員に漏れる。SSR のまま認可し、非会員は従来どおり **404**（存在秘匿）
+- **`premium-plus.astro` に商品のマークアップ・価格を復活させないこと**（二重管理へ逆戻りする）
+
+検証: `npm run test:auth-session`（`redirectOnlyPages.guard.test.mjs` が
+「SSR / `verifyPlanAccess` / 非会員 404 / 会員 301 / 本文を描画しない / CDN 非共有 /
+静的リダイレクトを足さない」を固定。`authSecurity.guard` は有料ページを**実名リスト**で
+突き合わせ、`sessionKeepAlive.guard` は keep-alive を**本文を描画する会員ページ**に限定する）
 
 **CTA (`PremiumPlusCta.astro`) を Premium / Light / 無料ページに置いてはいけない。**
 置いてよいのは Premium Sanrenpuku 会員だけが到達するページに限る。
