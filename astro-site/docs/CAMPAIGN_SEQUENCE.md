@@ -645,3 +645,97 @@ AND(
 | `admin-marketing.js`（`loadCustomerMarketing`: customers / customerDetail / segments） | 残件 |
 | `admin-comeback-grants.js` | 残件 |
 | `admin-customer-import.js` / `admin-customer-import-run.js` | 残件（全件突合が要件。打ち切りを fail closed へ） |
+
+---
+
+## 11. 連続配信が「無言で止まる」4 つの原因（2026-09-08 恒久修正）
+
+2026-08-24 開始の割引キャンペーン（3 区分・15,509 通）で、**2 通目以降が 1 通も出なかった**。
+エラーも警告も出ておらず、管理画面にも異常は見えなかった。本番の read-only 調査で
+**独立した 4 つの原因**が特定できたので、それぞれ不変条件として固定する。
+
+| # | 原因 | 単一源 | 固定したテスト |
+|---|---|---|---|
+| 1 | 宛先条件と「購入で停止」が衝突していた | `sequencePurchaseStop.js` | `sequencePurchaseStop.test.mjs` |
+| 2 | 走査カーソル（Airtable offset）の失効から自力復帰できない | `sequenceLedgerScan.js` | `sequenceLedgerScanRecovery.test.mjs` |
+| 3 | step1 未送信者が step2 以降を巻き添えで止める | `sequenceAutomation.js` / `sequenceProgress.js` | `sequenceFirstStepIsolation.test.mjs` |
+| 4 | 最終 step がキャンペーン期間からはみ出す定義を置ける | `sequenceWindowFit.js` | `sequenceWindowFit.test.mjs` |
+| 5 | 送れない PENDING ジョブがあると、運転手が片付けを保存できず**完了ジョブを毎 tick 数え直す** | `cron-marketing-rollout.js`（正本は [`MARKETING_ROLLOUT.md`](./MARKETING_ROLLOUT.md)）| `rolloutSettleIdempotency.test.mjs` |
+
+### 11-1. 「購入で停止」は campaign が宣言する
+
+停止条件 `purchased` は**このシーケンスの目的を達成したか**であって、
+「有料会員かどうか」ではない。**上位商品を案内するシーケンスでは、
+宛先条件そのものが停止条件と一致してしまう**。
+
+| campaign | 宛先 | 売るもの | 宣言 |
+|---|---|---|---|
+| `campaign-discount-free` | 無料・期限切れ | Light / Premium | 宣言なし（＝ Light or Premium で停止） |
+| `campaign-discount-light` | **Light 有効** | Premium 年額 / 買い切り | `stopOnPurchase: { signals: ['premium','sanrenpuku'] }` |
+| `campaign-discount-premium` | **Premium 有効** | 三連複 買い切り | `stopOnPurchase: { signals: ['sanrenpuku'] }` |
+
+- 宣言が無い campaign は**従来どおり**（Light / Premium のどちらかが有効なら停止）
+- 宣言が壊れていたら**既定へ倒す**（「止めない」に倒さない）
+- **カタログに衝突する campaign を置けない**: `findPurchaseStopAudienceConflicts()` が
+  「宛先が要求する権利 ∩ 停止条件」を検出し、1 件でもあればテストが落ちる
+
+> 実測（2026-09-08）: light 5 名 / premium 13 名が step1 送信の直後から
+> `stopReason: 'purchased'` で恒久停止。台帳を 1 周読み切った確定集計にも step2 の行が 0。
+
+### 11-2. 走査カーソルは失効したら先頭から読み直す
+
+台帳の走査は Airtable の `offset` を Redis（`ak:marketing:seq-scan:v1:<campaign>:v<n>`）へ
+保存し、10 分後の tick で再利用する。**offset は短命**で失効しうる。
+
+- 失効した offset で落ちたら、**カーソルを捨てて先頭から読み直す**（`shouldResetCursorOnFailure`）
+- 5xx（Airtable 側の一時障害）は待てば直るので**カーソルを触らない**
+- offset を渡していない失敗はリセットで直らないので**投げ直す**
+- 復帰したら `走査カーソル復帰` をログへ出す（**無言で直さない**）
+
+走査が重複しても送信は重複しない（冪等性は `DeliveryKey` が持つ）。読み直しの代償はページ数だけ。
+
+> 実測（2026-09-08）: `campaign-discount-free` の集計が **2026-08-27T20:50:48Z / pass 15 /
+> 読み切り前**で凍結し、10 日間 1 度も進まなかった。台帳が小さく offset を持たない
+> light / premium だけが無傷だったのが決め手。
+
+### 11-3. step1 未送信者は「除外」であって「中止」ではない
+
+`selectNextDueStep` は**いちばん小さい due step**を返す。step1 未送信の人が 1 人でも
+混ざると step が 1 になり、`planSequenceTick` が `first_step_manual` で
+**tick 全体を中止**していた。
+
+- `selectNextDueStep(progress, { excludeSteps: [1] })` … step1 の人を**候補から外す**
+- 外した結果ゼロなら `excludedOnly: true` を返し、呼び出し側が
+  `first_step_manual`（step1 しか居ない）と `no_due`（そもそも居ない）を区別する
+- **初回接触を自動で撃たない**という契約は変えていない
+
+> 実測（2026-09-08）: prospect 11,976 名のうち **328 名が step1 未送信**。
+> そのために step2 を待っていた **11,648 名が 1 通も進まなかった**。
+
+### 11-4. 最終 step は期間内に収まっていること
+
+期間限定キャンペーンは期間外になると `enabled` が false になり、途中まで送った人は
+`campaign_disabled` で**恒久停止**する（期間外に案内すると割引が適用されないので、
+この停止自体は正しい）。**配り切れない定義を置けてしまう**のが問題だった。
+
+- `delayDays` は直前の送信からの日数なので、最終 step は開始から**総和**日後に届く
+- `disabledReason: CAMPAIGN_DISABLED_REASON.WINDOW_CLOSED` を持つ campaign は
+  `CAMPAIGN_WINDOW` に収まることをテストで固定する
+- 1 通目が期間の初日に出るとは限らない（本番の 1 通目は開始翌日）。
+  `startedAtMs` を渡せば実運用の開始時刻で検査できる
+
+> 実測（2026-09-08）: 期間は 8/24 00:00 〜 **9/7 00:00 JST**。
+> 集計の最終更新は light `2026-09-06T14:50:44Z` / premium `14:51:14Z`（＝ JST 23:50 / 23:51）で、
+> **期限の 9 分前**を最後に tick が `not_a_sequence` で即終了している。
+
+### 11-5. 誰がどのシーケンスを進めるか（**混同しない**）
+
+| シーケンス | 進める Function | 補足 |
+|---|---|---|
+| `campaign-discount-free` / `-light` / `-premium` | `cron-campaign-sequence`（10 分ごと） | `MARKETING_SEQUENCE_CAMPAIGN_ID` が指定されていればその分だけ |
+| `light-trial-to-premium-sequence`（体験中 6 通） | **`cron-marketing-rollout`**（5 分ごと・`FOLLOW_UP`） | 展開状態（Redis）の `stage` に従う |
+| `light-trial-post-expiry-sequence`（体験終了後 18 通） | 同上 | `JOURNEY_PHASES` の 2 番目。`cron-campaign-sequence` は触らない |
+
+⚠️ `MARKETING_SEQUENCE_CAMPAIGN_ID` に値を入れると、**入れた campaign しか進まない**。
+本番は割引 3 本を指定しているので、体験シーケンスは rollout 側だけが進める。
+どちらが担当かを取り違えると「動いているのに進まない」に見える。

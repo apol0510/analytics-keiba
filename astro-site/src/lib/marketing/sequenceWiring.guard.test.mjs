@@ -84,9 +84,14 @@ test('【安全】cron は全件走査しない・打ち切りを黙って通さ
   assert.equal(/fetchAll\(/.test(code), false, '全件走査へ戻っている');
 });
 
-test('【安全】step1 は自動で撃たない', () => {
-  assert.match(AUTO, /next\.step === 1 && allowFirstStep !== true/);
+test('【安全】step1 は自動で撃たない（除外であって、tick 全体の中止ではない）', () => {
+  // ⚠️ 2026-09-08: 「最小 due step が 1 なら tick ごと中止」から
+  //    「step1 の人だけ候補から外す」へ変更。撃たないことは変わっていない。
+  assert.match(AUTO, /const excludeSteps = allowFirstStep === true \? \[\] : \[1\];/);
+  assert.match(AUTO, /selectNextDueStep\(progress, \{ excludeSteps \}\)/);
   assert.match(AUTO, /FIRST_STEP_MANUAL/);
+  // step1 未送信が混ざっただけで step2 以降を止めない（巻き添えの再発防止）
+  assert.match(AUTO, /next\.excludedOnly === true/);
 });
 
 test('【安全】進行は保存せず送信の事実から導く（別の進行テーブルを作らない）', () => {

@@ -697,7 +697,19 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
    * ① 送信待ちジョブ（**軽い照会**）。①送信起動の判断はこれだけで決まる。
    *    見張り中のジョブは名指しで渡す（PENDING を抜けたものを拾うため）。
    */
-  const jobs = await loadJobs({ watchJobIds: state.pendingJobIds }).catch(() => null);
+  /**
+   * ⚠️ **読めなかった理由を握り潰さない**（2026-09-08 の調査で判明）。
+   *    ここが null になると `tickRollout` は `facts_unreadable` で SKIP し、
+   *    送信待ちジョブがあっても**起動しない**。旧実装は `.catch(() => null)` で
+   *    理由を捨てていたため、外からは「静かに何もしていない」としか見えず、
+   *    本番で 5 日間 PENDING のまま残ったジョブの原因を特定できなかった。
+   */
+  let jobsFailure = null;
+  const jobs = await loadJobs({ watchJobIds: state.pendingJobIds }).catch((e) => {
+    jobsFailure = String((e && e.message) || 'unknown');
+    return null;
+  });
+  if (!jobs) log({ ok: false, warn: 'jobs_unreadable', reason: jobsFailure || 'jobs_brief_unavailable' });
   reads.push(TICK_READ.JOBS);
 
   /** まだ queue していない付与の数（**運転手のローカル状態**が正。Airtable を読まない） */
@@ -814,13 +826,24 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
   const bumpSteps = async (delta) => {
     try { await metrics.bumpSteps({ campaignId: STATE_KEY, delta, nowMs: now }); } catch { /* 表示だけ */ }
   };
-  /** CAS で書き戻す。競合したら**書かない**（次 tick が読み直して続きから進む） */
+  /**
+   * CAS で書き戻す。競合したら**書かない**（次 tick が読み直して続きから進む）。
+   *
+   * ⚠️ **1 tick で 2 回保存することがある**（settle の先行永続化 → 行動後の書き戻し）。
+   *    保存に成功したら手元の `version` / 存在フラグを**必ず進める**。進めないと
+   *    2 回目が必ず CAS 競合で落ち、「片付けたのに保存されない」状態に逆戻りする。
+   */
+  let persistedExists = loaded.exists;
   const saveState = async (next) => {
     try {
-      await store.save({
+      const res = await store.save({
         campaignId: STATE_KEY, state: next,
-        expectedVersion: loaded.exists ? state.version : null,
+        expectedVersion: persistedExists ? state.version : null,
       });
+      if (res && res.state && Number.isFinite(Number(res.state.version))) {
+        state.version = Number(res.state.version);
+      }
+      persistedExists = true;
       return true;
     } catch (e) {
       log({ ok: false, stage: 'state_write', code: (e && e.code) || 'unknown' });
@@ -870,21 +893,75 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
     }
   }
 
-  // 集計へ写す（失敗しても運用は止めない）。写した ぶんは追跡対象から外す
-  if (settledJobs.finished.length > 0) {
-    if (Object.keys(settledJobs.byStep).length > 0) await bumpSteps(settledJobs.byStep);
+  /**
+   * ── 終わったジョブの片付けは、**決断より前に永続化する**（2026-09-08 の恒久修正）──
+   *
+   * ## 何が起きていたか（本番実測）
+   *
+   * `queue:unverified` が付いたまま残った **PENDING** ジョブがあると、
+   * 送信起動の直前 dry-run が `willSend 0` を返す。ジョブは `SENT` ではないので
+   * `will_send_zero_unfinished` = **異常側**に分類され、運転手は
+   * auto-stop 経路（`dispatch_failed`）へ入って**状態を保存せずに return** していた。
+   *
+   * 片付け（`pendingJobIds` から外す / `jobSteps` を消す）はメモリ上だけで消え、
+   * 次の tick が**同じ完了ジョブをもう一度 settle して `bumpSteps` を呼ぶ**。
+   * これが 5 分ごとに繰り返され、step4 の `sent` が
+   * **68,168 → 70,918（実測 5 時間）**まで膨れ上がった（実送信は 862 通）。
+   *
+   * ## 直した形（順序が本体）
+   *
+   *   ① メモリ上の状態を整える（追跡リスト・対応表・監視）
+   *   ② **保存する**（ここで失敗したら数えない）
+   *   ③ 保存できたときだけ **1 回だけ** `bumpSteps` する
+   *
+   * ⚠️ **保存 → 計上**の順序を入れ替えないこと。逆にすると、保存に失敗した回の
+   *    計上だけが残り、次の tick が同じジョブをまた数える（＝ 二重計上の再発）。
+   * ⚠️ 集計は**画面のためだけ**（正本は台帳）。保存できた回に数え損ねる方が、
+   *    実態の何十倍にも膨らむより安全。
+   * ⚠️ ここは**送信の判断に一切触れない**。`queue:unverified` の印を外したり、
+   *    停止中の展開を動かしたりはしない（印を外すのは `campaignJobPromote` だけ）。
+   */
+  const pendingJobIdsChanged = Boolean(jobs)
+    && (state.pendingJobIds.length !== settledJobs.stillRunning.length
+      || state.pendingJobIds.some((id, i) => id !== settledJobs.stillRunning[i]));
+  if (jobs) {
+    // ① 追跡から外す（`collectFinishedJobs` は見えないジョブを `stillRunning` に残す）
     state.pendingJobIds = settledJobs.stillRunning;
-    // 終わったジョブは対応表からも外す（状態を無限に太らせない）
     for (const j of settledJobs.finished) {
       delete state.jobSteps[j.jobId];
       delete state.dispatchWatch[j.jobId];
     }
-    log({ settled: settledJobs.finished.length, sent: settledJobs.sent, failed: settledJobs.failed });
   }
   // 進んだジョブは監視から外す。**進んでいないものは残す**（次 tick で再評価する）
   for (const a of progress.advanced) delete state.dispatchWatch[a.jobId];
   if (progress.stalled.length > 0) {
     log({ ok: false, warn: 'dispatch_no_progress', jobIds: progress.stalled.map((x) => x.jobId) });
+  }
+
+  // ② 片付けが変わったなら、**この時点で**保存する（以降どの経路で return しても失われない）
+  const settleChanged = Boolean(jobs)
+    && (settledJobs.finished.length > 0 || pendingJobIdsChanged || progress.advanced.length > 0);
+  let settlePersisted = false;
+  if (settleChanged) {
+    settlePersisted = await saveState({ ...state });
+    if (!settlePersisted) {
+      // 保存できない回は**数えない**。次の tick が同じジョブを片付け直して数える
+      log({
+        ok: false, warn: 'settle_not_persisted',
+        settled: settledJobs.finished.length, pendingJobIds: state.pendingJobIds.length,
+      });
+    }
+  }
+
+  // ③ 実績の写しは**保存できたときだけ・1 回だけ**（失敗しても運用は止めない）
+  if (settledJobs.finished.length > 0) {
+    if (settlePersisted && Object.keys(settledJobs.byStep).length > 0) {
+      await bumpSteps(settledJobs.byStep);
+    }
+    log({
+      settled: settledJobs.finished.length, sent: settledJobs.sent, failed: settledJobs.failed,
+      counted: settlePersisted,
+    });
   }
 
   // ── 終端に入る（配る相手が居なくなった）────────────────────────
@@ -914,15 +991,16 @@ export async function runRolloutTick({ env = process.env, now = Date.now(), dryR
   //    送信を起動した次の tick は普通「今日はもう配った」で skip する。
   //    ここで先に return すると、送ったのに画面が 0 通のまま何日も残る。
   if (decision.action === TICK_ACTION.SKIP) {
-    const touched = settledJobs.finished.length > 0 || progress.advanced.length > 0;
+    // 片付けは②で保存済み。ここで見るのは**保存し損ねた変化**だけ（もう一度だけ試す）
+    const settleRetry = settleChanged && !settlePersisted;
     /**
      * ⚠️ 読みの据え置き（`nextDueAtMs` / `grantPlanReadAtMs`）は
      *    **書き戻さないと意味が無い**。書かずに戻ると次の tick が同じ重い読みを
      *    やり直し、間隔ぶんだけ同じ請求を払い続けることになる。
      */
     const marked = Boolean(sequenceDefer) || wantGrantPlan;
-    if (touched || marked) await saveState({ ...state });
-    const sideEffects = touched ? 'metrics_only' : (marked ? 'state_only' : 'none');
+    if (settleRetry || marked) await saveState({ ...state });
+    const sideEffects = settlePersisted || settleRetry ? 'state_only' : (marked ? 'state_only' : 'none');
     log({ ...view, sideEffects });
     return { ok: true, ...view, sideEffects };
   }

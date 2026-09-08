@@ -138,13 +138,26 @@ export function planSequenceTick({
   }
   if (!progress || progress.ok !== true) return { ok: false, abort: TICK_ABORT.NOT_A_SEQUENCE };
 
-  const next = selectNextDueStep(progress);
+  // ── 初回接触は自動で撃たない（母集団が最大になるため）─────────────
+  //
+  // ⚠️ **2026-09-08 の障害で「中止」から「除外」へ変更**。
+  //    以前は最小 due step が 1 になった時点で `first_step_manual` を返し、
+  //    **tick 全体を中止**していた。step1 未送信の人が 1 人でも混ざると
+  //    step2 以降を待っている全員が巻き添えで止まる
+  //    （本番: 328 名の step0 が居たために 11,648 名の step2 が永久に出なかった）。
+  //
+  //    いまは **step1 の人だけを候補から外し**、残りの最小 due step を進める。
+  //    step1 しか居なければ従来どおり `first_step_manual` で止まる（既存挙動）。
+  const excludeSteps = allowFirstStep === true ? [] : [1];
+  const next = selectNextDueStep(progress, { excludeSteps });
   if (!next.step || next.recordIds.length === 0) {
+    // 除外した結果ゼロ = 「step1 の人しか居ない」。理由を区別して返す
+    if (next.excludedOnly === true) {
+      return {
+        ok: false, abort: TICK_ABORT.FIRST_STEP_MANUAL, step: 1, counts: progress.summary.dueByStep,
+      };
+    }
     return { ok: false, abort: TICK_ABORT.NO_DUE, counts: progress.summary.dueByStep };
-  }
-  // 初回接触は自動で撃たない（母集団が最大になるため）
-  if (next.step === 1 && allowFirstStep !== true) {
-    return { ok: false, abort: TICK_ABORT.FIRST_STEP_MANUAL, step: 1, counts: progress.summary.dueByStep };
   }
   // ── 上限を超えたときの扱い ────────────────────────────────────
   //

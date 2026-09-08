@@ -973,3 +973,111 @@ rollout 運転手の進捗表示であり、**在籍数ではない**。
 
 ⚠️ Redis の `steps[]` は cron が加算する設計。**管理経路から手動で queue / dispatch すると増えない**
 （2026-08-20 の Step1 159 通・Step2 598 通はいずれも `steps[]` に反映されていない）。実数は台帳で数える。
+
+---
+
+# 追跡中ジョブ（`pendingJobIds`）は必ず片付ける（2026-09-08 恒久修正）
+
+## 本番で起きたこと（read-only 実測）
+
+| 事実 | 値 |
+|---|---|
+| 送信完了したのに追跡に残り続けたジョブ | `mkt-light-trial-to-premium-sequence-v1-8baffb52-1`（9/3 06:35Z に SENT / 50 通）|
+| 送信されないまま残った PENDING ジョブ | `…-d9a88b59-1`（9/3 06:46Z 登録 / recipients 50 / sent 0）|
+| 展開状態 | `stage: paused` / `killed: false` / `autoStopped: false` |
+| 経過 | **5 日間**（2026-09-08 の調査時点）|
+
+`stage: paused` は理由にならない。`tickRollout` は
+**① 送信待ちジョブを先に流す**を停止判定より前に置いている（積んだメールを放置しないため）。
+`MARKETING_CAMPAIGN_DISPATCH_ENABLED=true` なので、tick が最後まで回っていれば
+5 分以内に起動されるはずだった。
+
+## 何が悪かったか
+
+1. **追跡リストの書き戻しが「実績を写したときだけ」だった**
+
+   ```js
+   if (settledJobs.finished.length > 0) { ... state.pendingJobIds = settledJobs.stillRunning; }
+   ```
+
+   ジョブ照会が失敗し続ける期間に入ると `finished` が常に 0 になり、
+   `pendingJobIds` が**永久に固まる**。
+
+2. **ジョブ照会の失敗を握り潰していた**
+
+   ```js
+   const jobs = await loadJobs({ ... }).catch(() => null);   // 理由が消える
+   ```
+
+   `jobs` が null になると `tickRollout` は `facts_unreadable` で SKIP する。
+   つまり**送信待ちがあっても起動しない**のに、外からは「静かに何もしていない」
+   としか見えず、原因を特定できなかった。
+
+## 直した形（不変条件）
+
+- **ジョブを読めた tick では必ず** `state.pendingJobIds = settledJobs.stillRunning` を書き戻す。
+  `collectFinishedJobs` は見えないジョブを `stillRunning` に残すので、無条件の代入で取りこぼさない
+- 追跡リストが変わった SKIP tick は**状態を保存する**（`pendingJobIdsChanged`）
+- ジョブ照会が読めなかったら **`warn: 'jobs_unreadable'` を理由つきでログへ出す**
+
+固定テスト: `src/lib/marketing/rolloutPendingJobsSettle.test.mjs`
+（完了ジョブが追跡から外れる / 書き戻しの配線 / 握り潰しの禁止 /
+「一時停止中でも送信待ちを優先する」「緊急停止は送信起動より強い」の順序）。
+
+## 運用で見るところ
+
+- ログに `jobs_unreadable` が続く → **展開は静かに止まっている**。まず `jobsBrief` を疑う
+- `rollout` の `pendingJobIds` に**既に SENT のジョブ ID**が載っている → 上と同じ状態
+- PENDING のジョブが 10 分以上残る → dispatch 起動か background 実行のどちらかが進んでいない
+
+## 追記（2026-09-08）— 二重計上の真因は auto-stop 経路だった
+
+上の「書き戻しが実績を写したときだけ」は**必要条件だったが十分ではなかった**。
+本番の read-only 再取得で、**運転手は 5 分ごとに動き続けていた**ことが分かった。
+
+| 実測 | 値 |
+|---|---|
+| step4 の `sent` カウンタ | **68,168（01:51Z）→ 70,918（06:40Z）**（+2,750 / 5 時間）|
+| step4 の実送信 | **862 通**（ScheduledEmails の実績）|
+| PENDING ジョブの dry-run | `willSend 0` / `blocked: queue_unverified` / `preview.wouldSend 50` |
+
+### 何が起きていたか（経路）
+
+```
+① 送信待ちジョブあり → DISPATCH を決断
+② 起動直前の dry-run … willSend 0（queue:unverified で block）
+③ ジョブは PENDING（SENT ではない）→ reason = will_send_zero_unfinished
+④ will_send_zero_unfinished は BENIGN_DISPATCH_SKIP に入っていない = **異常側**
+⑤ classifyDispatchStart.ok = false → auto-stop 経路 → **状態を保存せず return**
+⑥ 片付け（pendingJobIds から外す／jobSteps を消す）がメモリ上だけで消える
+⑦ 次の tick が**同じ完了ジョブをもう一度 settle**して bumpSteps を呼ぶ → ④へ戻る
+```
+
+`queue:unverified` は**送信前の最後の栓として正しく効いている**（だから 5 日間 1 通も出ていない）。
+壊れていたのは「送れないジョブがあると片付けも保存されない」という**運転手側の順序**だけ。
+
+### 直した形（順序が本体）
+
+```
+① メモリ上の状態を整える（pendingJobIds / jobSteps / dispatchWatch）
+② **保存する**（settlePersisted）… ここで失敗したら数えない
+③ 保存できたときだけ **1 回だけ** bumpSteps する
+④ 以降どの経路（SKIP / auto-stop / DISPATCH / completed）で return しても失われない
+```
+
+- **保存 → 計上の順序を入れ替えない。** 逆にすると保存失敗回の計上だけが残り、二重計上が再発する
+- 集計は**画面のためだけ**（正本は台帳）。数え損ねる方が、実態の何十倍に膨らむより安全
+- 1 tick で 2 回保存しうるので、`saveState` は成功時に **CAS の version を進める**
+  （進めないと 2 回目が必ず競合し、元の症状へ戻る）
+- 素の `saveState` を使うのは**据え置きを解きたくない書き戻しだけ**
+  （SKIP の据え置き + この片付け）。行動した tick は従来どおり `saveStateAfterAction`
+
+### この修正が**しないこと**
+
+- `queue:unverified` の印を外さない（外すのは `campaignJobPromote` だけ）
+- 停止中（`paused`）の展開を動かさない・送信しない
+- 送信の判断（`tickRollout` の順序 / dispatcher の契約）を 1 ミリも変えない
+
+固定テスト: `src/lib/marketing/rolloutSettleIdempotency.test.mjs`
+（偽の世界で 4 tick 回して **計上が 1 回だけ**・追跡リストが片付く・印付き PENDING を
+promote しない・1 通も送らない、を確認。**修正前のコードでは 3 件が落ちる**ことも確認済み）

@@ -1,3 +1,22 @@
+# 連続配信の責務境界（2026-09-08 確定）
+
+**「誰がどのシーケンスを進めるか」を取り違えると、動いているのに進まない状態になる。**
+詳細な仕様は `astro-site/docs/CAMPAIGN_SEQUENCE.md` §11 が正本。ここでは境界だけを固定する。
+
+| シーケンス | 進める Function | 間隔 | 停止の握り |
+|---|---|---|---|
+| `campaign-discount-free` / `-light` / `-premium` | `cron-campaign-sequence` | 10 分 | env 3 種 + キャンペーン期間（`enabled`）|
+| `light-trial-to-premium-sequence`（体験中 6 通）| `cron-marketing-rollout` | 5 分 | 展開状態（Redis）の `stage` / `killed` |
+| `light-trial-post-expiry-sequence`（終了後 18 通）| `cron-marketing-rollout` | 5 分 | 同上 |
+
+- `MARKETING_SEQUENCE_CAMPAIGN_ID` に値があると **`cron-campaign-sequence` はその campaign しか進めない**
+  （本番は割引 3 本を指定）。体験シーケンスをここへ足しても rollout と二重に進めることになるので**足さない**
+- **判定は 1 か所**: 誰が次に何通目かは `sequenceProgress.js` だけが決める。
+  cron・管理画面・dry-run はすべて同じ関数を通る
+- **送信経路も 1 本**: 実送信は `marketing-campaign-dispatch` のみ。
+  cron はどちらも ScheduledEmails / CampaignDeliveries に積むだけ
+- 連続配信が無言で止まる 4 つの原因と、その不変条件は `CAMPAIGN_SEQUENCE.md` §11
+
 # 🚧 メール配信基盤の是正 — **完了条件（クローズ禁止・常設）**
 
 > **2026-08-28 に完成条件を変更。** 下の 3 つが**すべて**満たされるまで、この任務は
