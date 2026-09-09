@@ -134,6 +134,11 @@ ubuntu ランナー同梱の Chrome を使うので**依存パッケージは追
   （`mkdtemp`）に作り、**finally / exit で必ず削除**する。
   2026-09-10 に `astro-site/.e2e-profile/` を repo 内へ作り、Chromium 内部ファイル
   **316 件を PR に混入**させた（changed files 321 件）。保険として `.gitignore` にも入れてある。
+- **待ちには必ず時間制限を付ける。** WebSocket の open も CDP の各呼び出しも、
+  応答が来ないと永久に待つ。2026-09-10 に CI で **10 分無出力のままタイムアウト**した。
+- **各フェーズで進捗を出す。** 無出力のまま固まると、どこで止まったか分からない。
+- CI（GitHub Actions の runner）ではサンドボックスが使えないので
+  `--no-sandbox --disable-setuid-sandbox` を付ける。
 - dev サーバーの**起動と停止は E2E スクリプトの中で完結**させる。
   **CI の step でバックグラウンド起動してはいけない** — 子プロセスのために
   Actions の step が終了できず **hang する**（2026-09-10 に実際に起きた）。

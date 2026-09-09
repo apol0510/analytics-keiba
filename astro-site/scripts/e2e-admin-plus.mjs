@@ -81,6 +81,13 @@ process.on('exit', () => {
   try { rmSync(PROFILE_DIR, { recursive: true, force: true }); } catch {}
 });
 
+/**
+ * 進捗ログ。**CI で無出力のまま固まると原因が分からない**ため、各フェーズで必ず出す。
+ * 2026-09-10 に CI で 10 分無出力のままタイムアウトし、切り分けに手間取った。
+ */
+const t0 = Date.now();
+const step = (m) => console.log(`[${((Date.now() - t0) / 1000).toFixed(1)}s] ${m}`);
+
 const fails = [];
 const passes = [];
 const check = (ok, msg) => { (ok ? passes : fails).push(msg); if (!ok) console.error('  ✗ ' + msg); else console.log('  ✓ ' + msg); };
@@ -136,6 +143,7 @@ const server = createServer(async (req, res) => {
   } catch { res.writeHead(500).end(); }
 });
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
+step('dist の静的配信を開始');
 const BASE = `http://127.0.0.1:${server.address().port}`;
 
 // ── 未認証チェック用の dev サーバー（自前で起動し、必ず落とす）──────
@@ -166,30 +174,59 @@ async function startDevServer() {
 const stopDevServer = () => { if (devProc && devProc.exitCode === null) { try { devProc.kill('SIGTERM'); } catch {} } };
 process.on('exit', stopDevServer);
 
+step('未認証チェック用の dev サーバーを起動中…');
 await startDevServer();
+step(devBase ? 'dev サーバー準備完了' : `dev サーバーなし（${devError || 'E2E_NO_DEV'}）`);
 
 // ── Chromium を起動して CDP で操作 ──────────────────────────
+step(`Chromium 起動: ${BROWSER.split('/').pop()}`);
 const proc = spawn(BROWSER, [
   '--headless=new', '--remote-debugging-port=0', '--no-first-run', '--no-default-browser-check',
+  // ⚠️ CI（GitHub Actions の runner）ではサンドボックスが使えず起動できないことがある
+  '--no-sandbox', '--disable-setuid-sandbox',
   `--user-data-dir=${PROFILE_DIR}`, '--disable-gpu', '--disable-dev-shm-usage',
   'about:blank',
 ], { stdio: ['ignore', 'ignore', 'pipe'] });
 
 let wsUrl = null;
+let browserErr = '';
 proc.stderr.on('data', (b) => {
+  browserErr += String(b);
   const m = String(b).match(/ws:\/\/[^\s]+/);
   if (m && !wsUrl) wsUrl = m[0];
 });
-for (let i = 0; i < 80 && !wsUrl; i += 1) await sleep(250);
-if (!wsUrl) { console.error('⛔ Chromium の DevTools に接続できませんでした'); server.close(); proc.kill(); process.exit(2); }
+for (let i = 0; i < 120 && !wsUrl; i += 1) {
+  if (proc.exitCode !== null) break;
+  await sleep(250);
+}
+if (!wsUrl) {
+  console.error('⛔ Chromium の DevTools に接続できませんでした'
+    + (proc.exitCode !== null ? `（exit ${proc.exitCode}）` : '（30 秒待っても ws URL が出ませんでした）'));
+  if (browserErr.trim()) console.error('--- ブラウザの出力 ---\n' + browserErr.trim().slice(0, 1500));
+  server.close(); proc.kill(); process.exit(2);
+}
+step('DevTools の ws URL を取得');
 
 const browserWs = new WebSocket(wsUrl);
-await new Promise((r, j) => { browserWs.onopen = r; browserWs.onerror = j; });
+// ⚠️ 時間制限を入れる。open も error も来ないと**永久に待ち続ける**（CI で実際に起きた）
+await withDeadline(
+  new Promise((r, j) => { browserWs.onopen = r; browserWs.onerror = () => j(new Error('WebSocket error')); }),
+  20000, 'DevTools への WebSocket 接続',
+);
+step('CDP 接続');
 let msgId = 0; const pending = new Map();
-const rpc = (ws) => (method, params = {}, sessionId) => new Promise((res, rej) => {
+/** 応答が返らない CDP 呼び出しで固まらないよう、必ず時間制限を付ける */
+function withDeadline(promise, ms, what) {
+  let timer;
+  return Promise.race([
+    promise.finally(() => clearTimeout(timer)),
+    new Promise((_, rej) => { timer = setTimeout(() => rej(new Error(`${what} が ${ms}ms で応答しませんでした`)), ms); }),
+  ]);
+}
+const rpc = (ws) => (method, params = {}, sessionId) => withDeadline(new Promise((res, rej) => {
   const id = ++msgId; pending.set(id, { res, rej });
   ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
-});
+}), 60000, `CDP ${method}`);
 browserWs.onmessage = (ev) => {
   const m = JSON.parse(ev.data);
   if (m.id && pending.has(m.id)) {
@@ -361,7 +398,9 @@ const openPage = async () => {
 };
 
 console.log(`\n■ 実 DOM E2E（${BROWSER.split('/').pop()} / dist 配信）\n`);
+step('管理画面を開く');
 await openPage();
+step('一覧の描画を確認');
 
 // ── 1. 上部 4 カードと一覧の一致 ──────────────────────────────
 const snap = await evaluate(`(() => {
