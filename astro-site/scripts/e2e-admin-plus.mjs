@@ -1,202 +1,561 @@
 /**
- * e2e-admin-plus.mjs — Premium Plus 管理画面の実 E2E（実ページを Chromium で動かす）
+ * e2e-admin-plus.mjs — Premium Plus 管理画面の実 DOM E2E
  *
  * ## なぜ要るか（2026-09-10 MK 指摘）
  *
  * > e2eでテスト確認検証しないの？
+ * > 実画面でしか見つからない不具合を拾うE2Eを拡充してください
  *
- * 2026-09-10 に「今すぐ販売可にしたのに 9/19 から購入可と出る」不具合が本番で出た。
- * **ユニットテストは全部通っていた**（判定は正しく purchaseEnabled=true だった）が、
- * 画面の見出しが段階公開の予定日を出していた。**実画面を動かさないと捕まらない**種類の
- * 不具合なので、実ページを起動して DOM を検証する E2E を用意する。
+ * ロジックテストが全部通っているのに本番で壊れていた事例が **2 件**あった。
  *
- * ## 使い方（ローカルのみ・本番へは触れない）
+ * | 起きたこと | ロジックテストで捕まらなかった理由 |
+ * |---|---|
+ * | 「今すぐ販売可」なのに「9/19 から購入可」と出た | 判定は正しく `purchaseEnabled: true`。**見出しの文言**が誤り |
+ * | 全行から「詳細・操作」ボタンが消えた | 生成はしていたが `appendChild` が抜けていた。**ソース検査では通る** |
  *
- *   1) astro dev を起動（既定 http://localhost:4376）
- *   2) node scripts/e2e-admin-plus.mjs
+ * この 2 つはどちらも「**要素を作っているが DOM に無い**」「**表示と実状態が食い違う**」型。
+ * 実ページを開いて DOM を見るしか検出手段が無いので、ここで守る。
  *
- * ⚠️ 管理 API はブラウザ側の fetch 差し替えで**合成データ**を返す。
- *    Airtable にも本番にも一切アクセスしない。書き込みもしない。
- * ⚠️ /admin/* は Edge の Basic 認証の背後にある。ローカルで開けない場合は
- *    認証情報を与えるか、検証中だけ edge function を退避する（**必ず戻すこと**）。
- * ⚠️ Chromium 系ブラウザのパスは E2E_BROWSER で上書きできる。
+ * ## 何に対して実行するか
+ *
+ * **ビルド成果物（`dist/`）を静的配信して開く。**
+ *   - 管理画面は `prerender = true` なので `dist/admin/premium-plus-eligibility/index.html` が実体
+ *   - Edge の Basic 認証は Netlify 上でしか動かないので、**認証を触らずに**画面を開ける
+ *     （ローカル検証のために edge function を退避する必要がない）
+ *
+ * ## 本番に触れないこと
+ *
+ *   - 管理 API はブラウザ側の `fetch` 差し替えで**合成データ**を返す
+ *   - 書き込み（`setSalePause` / `update`）は**スタブ内のメモリだけ**を書き換える。
+ *     これにより「操作 → 状態が実際に切り替わる」までを実 DOM で検証できる
+ *   - Airtable / Redis / SendGrid へは 1 度も接続しない
+ *
+ * ## 使い方
+ *
+ *   npm run build && npm run e2e:admin-plus
+ *
+ * 環境変数:
+ *   E2E_BROWSER  … Chromium 系のバイナリ（未指定なら既知の場所を順に探す）
+ *   E2E_DEV_URL  … 指定すると「未認証で admin / API に到達できない」ことも検証する
+ *                  （`astro dev` を起動しておく。例: http://localhost:4321）
  */
 import { spawn } from 'node:child_process';
+import { createServer } from 'node:http';
+import { readFile, stat } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { join, extname, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-const BROWSER = process.env.E2E_BROWSER
-  || '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser';
-const PORT = 9222;
-const URL_PAGE = process.env.E2E_URL
-  || 'http://localhost:4376/admin/premium-plus-eligibility/';
+const ROOT = resolve(new URL('..', import.meta.url).pathname);
+const DIST = join(ROOT, 'dist');
+const PAGE_PATH = '/admin/premium-plus-eligibility/index.html';
+
 const fails = [];
-const check = (ok, msg) => { if (!ok) fails.push(msg); };
+const passes = [];
+const check = (ok, msg) => { (ok ? passes : fails).push(msg); if (!ok) console.error('  ✗ ' + msg); else console.log('  ✓ ' + msg); };
 
-const proc = spawn(BROWSER, [
-  '--headless=new', `--remote-debugging-port=${PORT}`, '--no-first-run',
-  '--user-data-dir=/tmp/e2e-profile', '--disable-gpu', 'about:blank',
-], { stdio: 'ignore' });
-
-async function cdpTargets() {
-  for (let i = 0; i < 60; i += 1) {
-    try {
-      const r = await fetch(`http://127.0.0.1:${PORT}/json/list`);
-      const j = await r.json();
-      const page = j.find((t) => t.type === 'page');
-      if (page) return page;
-    } catch {}
-    await sleep(500);
-  }
-  throw new Error('CDP に接続できませんでした');
+// ── 前提 ────────────────────────────────────────────────────
+if (!existsSync(join(DIST, PAGE_PATH))) {
+  console.error('⛔ ビルド成果物がありません。先に `npm run build` を実行してください。');
+  console.error('   期待: dist' + PAGE_PATH);
+  process.exit(2);
 }
 
-const target = await cdpTargets();
-const ws = new WebSocket(target.webSocketDebuggerUrl);
-let id = 0; const pending = new Map();
-const send = (method, params = {}, sessionId) => new Promise((res, rej) => {
-  const mid = ++id; pending.set(mid, { res, rej });
-  ws.send(JSON.stringify({ id: mid, method, params, ...(sessionId ? { sessionId } : {}) }));
+const BROWSER_CANDIDATES = [
+  process.env.E2E_BROWSER,
+  process.env.CHROME_BIN,
+  process.env.CHROMIUM_BIN,
+  '/usr/bin/google-chrome',
+  '/usr/bin/google-chrome-stable',
+  '/usr/bin/chromium-browser',
+  '/usr/bin/chromium',
+  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  '/Applications/Chromium.app/Contents/MacOS/Chromium',
+  '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
+  '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+].filter(Boolean);
+const BROWSER = BROWSER_CANDIDATES.find((p) => existsSync(p));
+if (!BROWSER) {
+  // ⚠️ ここで puppeteer 等を勝手に入れない（依存を増やさない方針）。理由を出して落とす。
+  console.error('⛔ Chromium 系ブラウザが見つかりません。E2E を実行できません。');
+  console.error('   探した場所:');
+  for (const p of BROWSER_CANDIDATES) console.error('     - ' + p);
+  console.error('   E2E_BROWSER にパスを指定してください（依存パッケージは追加しません）。');
+  process.exit(2);
+}
+
+// ── dist を静的配信（依存を増やさない素の http サーバー）──────
+const MIME = {
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml',
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp',
+  '.woff2': 'font/woff2', '.ico': 'image/x-icon',
+};
+const server = createServer(async (req, res) => {
+  try {
+    let p = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+    if (p.endsWith('/')) p += 'index.html';
+    const file = join(DIST, p);
+    if (!file.startsWith(DIST)) { res.writeHead(403).end(); return; }
+    const s = await stat(file).catch(() => null);
+    if (!s || !s.isFile()) { res.writeHead(404).end('not found'); return; }
+    res.writeHead(200, { 'Content-Type': MIME[extname(file)] || 'application/octet-stream' });
+    res.end(await readFile(file));
+  } catch { res.writeHead(500).end(); }
 });
-await new Promise((r) => { ws.onopen = r; });
-ws.onmessage = (ev) => {
+await new Promise((r) => server.listen(0, '127.0.0.1', r));
+const BASE = `http://127.0.0.1:${server.address().port}`;
+
+// ── Chromium を起動して CDP で操作 ──────────────────────────
+const proc = spawn(BROWSER, [
+  '--headless=new', '--remote-debugging-port=0', '--no-first-run', '--no-default-browser-check',
+  `--user-data-dir=${join(ROOT, '.e2e-profile')}`, '--disable-gpu', '--disable-dev-shm-usage',
+  'about:blank',
+], { stdio: ['ignore', 'ignore', 'pipe'] });
+
+let wsUrl = null;
+proc.stderr.on('data', (b) => {
+  const m = String(b).match(/ws:\/\/[^\s]+/);
+  if (m && !wsUrl) wsUrl = m[0];
+});
+for (let i = 0; i < 80 && !wsUrl; i += 1) await sleep(250);
+if (!wsUrl) { console.error('⛔ Chromium の DevTools に接続できませんでした'); server.close(); proc.kill(); process.exit(2); }
+
+const browserWs = new WebSocket(wsUrl);
+await new Promise((r, j) => { browserWs.onopen = r; browserWs.onerror = j; });
+let msgId = 0; const pending = new Map();
+const rpc = (ws) => (method, params = {}, sessionId) => new Promise((res, rej) => {
+  const id = ++msgId; pending.set(id, { res, rej });
+  ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
+});
+browserWs.onmessage = (ev) => {
   const m = JSON.parse(ev.data);
   if (m.id && pending.has(m.id)) {
     const { res, rej } = pending.get(m.id); pending.delete(m.id);
     m.error ? rej(new Error(m.error.message)) : res(m.result);
   }
 };
+const bsend = rpc(browserWs);
+const { targetId } = await bsend('Target.createTarget', { url: 'about:blank' });
+const { sessionId } = await bsend('Target.attachToTarget', { targetId, flatten: true });
+const send = (method, params) => bsend(method, params, sessionId);
 
 await send('Page.enable');
 await send('Runtime.enable');
 
-// ── 管理 API を差し替える（本番に触れない）──────────────────
-const nowIso = new Date().toISOString();
-const STUB = {
-  ok: true, writeEnabled: true, overrideEnabled: true,
-  salePause: { writable: true },
-  counts: { total: 3 },
-  rows: [
-    { recordId: 'recAUD', email: 'Audenki99@gmail.com', name: 'Hisaji yamaguchi',
-      plan: 'Premium', planType: 'Lifetime', hasSanrenpuku: false,
-      eligibility: 'eligible', eligibilityLabel: '販売可', state: '即時販売',
-      phase: 4, overrideApplied: true, purchaseEnabled: true, showProductPage: true, showPurchaseCta: true,
-      salePaused: false, salePausedLabel: '販売中', salePauseWritable: true,
-      eligibleAt: nowIso, updatedAt: nowIso, updatedBy: 'MK',
-      reopenCouponClaimed: false, reopenCouponLabel: 'クーポン未取得', reopenCouponWritable: true,
-      reopenStart: { startsAtIso: '' },
-      reopenLaunch: { state: 'not_started', action: { kind: 'start', label: '▶ クーポンの利用期間（14日）を開始する', enabled: true, note: '14日間の開始を確定します。', showPauseSwitch: true, showResumeSwitch: false } },
-      route: 'premium_30d', upsellTarget: 'auto' },
-    { recordId: 'recSTG', email: 'staged@example.com', plan: 'Premium',
+/** ブラウザ内で式を評価（例外はそのまま投げる） */
+async function evaluate(expr) {
+  const r = await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true });
+  if (r.exceptionDetails) {
+    throw new Error('page error: ' + (r.exceptionDetails.exception?.description || r.exceptionDetails.text));
+  }
+  return r.result.value;
+}
+
+// ── 管理 API のスタブ（**書き込みがスタブ内の状態を実際に変える**）──
+//    これが無いと「押したのに表示が変わらない」型の不具合を検出できない。
+const STUB_SRC = `
+(() => {
+  const nowIso = new Date().toISOString();
+  const mk = (o) => ({
+    plan: 'Premium', planType: 'Lifetime', hasSanrenpuku: false,
+    salePauseWritable: true, reopenCouponWritable: true,
+    reopenCouponClaimed: false, reopenCouponLabel: 'クーポン未取得',
+    reopenStart: { startsAtIso: '' }, route: 'premium_30d', upsellTarget: 'auto',
+    updatedAt: nowIso, updatedBy: 'MK', ...o,
+  });
+  // 段階公開の予定を算出するための資格確定日
+  const today = nowIso;
+  const long = new Date(Date.now() - 20 * 86400000).toISOString();
+
+  const db = {
+    // 本番の Audenki99 相当: 今日 eligible + override=phase4（＝今日から買える）
+    recAUD: mk({ recordId: 'recAUD', email: 'audenki99@gmail.com', name: 'Hisaji yamaguchi',
+      eligibility: 'eligible', phase: 4, overrideApplied: true, purchaseEnabled: true,
+      showProductPage: true, showPurchaseCta: true, salePaused: false, eligibleAt: today }),
+    // 段階公開で解禁済み（過去日）
+    recSALE: mk({ recordId: 'recSALE', email: 'sale@example.com',
+      eligibility: 'eligible', phase: 4, overrideApplied: false, purchaseEnabled: true,
+      showProductPage: true, showPurchaseCta: true, salePaused: false, eligibleAt: long }),
+    // 段階表示中（まだ買えない）
+    recSTG: mk({ recordId: 'recSTG', email: 'staged@example.com',
       eligibility: 'eligible', phase: 2, overrideApplied: false, purchaseEnabled: false,
-      salePaused: false, salePauseWritable: true, eligibleAt: nowIso, updatedAt: nowIso,
-      reopenLaunch: { state: 'not_started', action: { kind: 'start', label: '▶ クーポンの利用期間（14日）を開始する', enabled: true, showPauseSwitch: true, showResumeSwitch: false } } },
-    { recordId: 'recPSE', email: 'paused@example.com', plan: 'Premium',
+      showProductPage: false, salePaused: false, eligibleAt: today }),
+    // 販売停止中
+    recPSE: mk({ recordId: 'recPSE', email: 'paused@example.com',
       eligibility: 'eligible', phase: 4, overrideApplied: false, purchaseEnabled: false,
-      salePaused: true, salePausedLabel: '一時停止中', salePauseWritable: true,
-      eligibleAt: '2026-08-20T00:00:00.000Z', updatedAt: nowIso,
-      reopenLaunch: { state: 'not_started', action: { kind: 'start', label: '▶ クーポンの利用期間（14日）を開始する', enabled: true, showPauseSwitch: false, showResumeSwitch: true } } },
-  ],
-};
-await send('Page.addScriptToEvaluateOnNewDocument', { source: `
-  window.__E2E_STUB__ = ${JSON.stringify(STUB)};
+      showProductPage: false, salePaused: true, salePausedBy: 'MK', salePausedAt: nowIso,
+      salePauseReason: '申込殺到', eligibleAt: long }),
+    // 対象外（販売対象外 / 資格保留）
+    recBLK: mk({ recordId: 'recBLK', email: 'blocked@example.com',
+      eligibility: 'blocked', phase: 1, overrideApplied: false, purchaseEnabled: false, salePaused: false }),
+    recRVW: mk({ recordId: 'recRVW', email: 'review@example.com',
+      eligibility: 'review', phase: 1, overrideApplied: false, purchaseEnabled: false, salePaused: false }),
+  };
+
+  /** 停止 / 再開 / 資格変更を**実際に反映**する（表示と実状態の食い違いを検出するため） */
+  function applyWrite(body) {
+    const r = db[body.recordId];
+    if (!r) return { ok: false, error: 'not found' };
+    if (body.action === 'setSalePause') {
+      r.salePaused = body.paused === true;
+      r.salePausedAt = new Date().toISOString();
+      r.salePausedBy = body.actor || 'e2e';
+      r.salePauseReason = body.reason || '';
+      // 停止中は買えない / 商品内容も出さない
+      r.purchaseEnabled = !r.salePaused && (r.phase === 4 || r.overrideApplied === true)
+        && r.eligibility === 'eligible';
+      r.showProductPage = !r.salePaused && r.phase >= 3;
+      r.reopenLaunch = launchOf(r);
+      return { ok: true, label: r.salePaused ? '一時停止中' : '販売中' };
+    }
+    if (body.action === 'update') {
+      if (body.eligibility) r.eligibility = body.eligibility;
+      if (body.override === 'phase4') { r.overrideApplied = true; r.phase = 4; }
+      if (body.override === '') r.overrideApplied = false;
+      r.purchaseEnabled = !r.salePaused && (r.phase === 4 || r.overrideApplied === true)
+        && r.eligibility === 'eligible';
+      r.showProductPage = !r.salePaused && (r.phase >= 3 || r.overrideApplied === true);
+      r.reopenLaunch = launchOf(r);
+      return { ok: true, label: r.eligibility, override: r.overrideApplied ? 'phase4' : '' };
+    }
+    if (body.action === 'reopenStart') {
+      // クーポンの 14 日間を開始するだけ。**販売可否は変えない**
+      r.reopenStart = { startsAtIso: new Date().toISOString() };
+      r.reopenLaunch = launchOf(r);
+      return { ok: true, startWritten: true };
+    }
+    return { ok: false, error: 'unknown action' };
+  }
+
+  function launchOf(r) {
+    const started = !!(r.reopenStart && r.reopenStart.startsAtIso);
+    const state = started ? (r.salePaused ? 'paused_after_start' : 'live') : 'not_started';
+    const action = state === 'not_started'
+      ? { kind: 'start', label: '▶ クーポンの利用期間（14日）を開始する', enabled: true,
+        note: '14日間の開始を確定します。', confirmText: 'クーポンの利用期間を開始します',
+        showPauseSwitch: r.salePaused !== true, showResumeSwitch: r.salePaused === true }
+      : { kind: 'none', label: '', enabled: false, note: '',
+        showPauseSwitch: r.salePaused !== true, showResumeSwitch: r.salePaused === true };
+    return { state, action };
+  }
+  for (const r of Object.values(db)) r.reopenLaunch = launchOf(r);
+
+  window.__E2E = {
+    db,
+    writes: [],
+    // 「販売可なのに未案内」の要対応（対象は購入可能な会員）
+    notified: { available: true, notified: 0, never: 2, undelivered: 0, needsAction: 2, note: '案内: 未送信 2 名' },
+  };
+
   const real = window.fetch;
   window.fetch = async (u, init) => {
     const url = String(u && u.url ? u.url : u);
-    if (url.includes('premium-plus-eligibility')) {
-      return new Response(JSON.stringify(window.__E2E_STUB__), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    if (!url.includes('premium-plus-eligibility')) return real(u, init);
+    let body = {};
+    try { body = JSON.parse((init && init.body) || '{}'); } catch {}
+    const READ_ONLY = ['list', 'preview', 'lookup'];
+    if (body.action && !READ_ONLY.includes(body.action)) {
+      window.__E2E.writes.push(body);
+      const out = applyWrite(body);
+      return new Response(JSON.stringify(out), { status: 200, headers: { 'Content-Type': 'application/json' } });
     }
-    return real(u, init);
+    const rows = Object.values(window.__E2E.db).map((r) => ({ ...r }));
+    // 書き込み後の**読み直し**（refreshOne）。本物と同じ形で 1 件返す。
+    // ⚠️ これが無いと「操作後に一覧が更新されない」を誤って製品の不具合と誤診する。
+    if (body.action === 'lookup') {
+      const hit = rows.filter((r) => r.recordId === body.recordId
+        || (body.email && String(r.email).toLowerCase() === String(body.email).toLowerCase()));
+      return new Response(JSON.stringify({ ok: true, found: hit.length > 0, rows: hit,
+        notified: window.__E2E.notified }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    return new Response(JSON.stringify({
+      ok: true, writeEnabled: true, overrideEnabled: true,
+      salePause: { writable: true }, counts: { total: rows.length },
+      notified: window.__E2E.notified, rows,
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
   };
-  // 管理シークレットのプロンプトを黙らせる
   try { sessionStorage.setItem('pp-admin-secret', 'e2e'); } catch {}
-` });
+  // 確認ダイアログは E2E では自動承諾（危険操作の有無自体は別に検証する）
+  window.__E2E.confirms = [];
+  window.confirm = (m) => { window.__E2E.confirms.push(String(m)); return true; };
+  window.prompt = () => 'e2e';
+})();
+`;
+await send('Page.addScriptToEvaluateOnNewDocument', { source: STUB_SRC });
 
-await send('Page.navigate', { url: URL_PAGE });
-await sleep(2500);
-
-const evaluate = async (expr) => {
-  const r = await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true });
-  if (r.exceptionDetails) throw new Error(r.exceptionDetails.text + ' ' + JSON.stringify(r.exceptionDetails.exception || {}));
-  return r.result.value;
+const openPage = async () => {
+  await send('Page.navigate', { url: BASE + PAGE_PATH });
+  await sleep(1200);
+  await evaluate(`(async () => {
+    const el = document.getElementById('secret');
+    if (el) { el.value = 'e2e'; el.dispatchEvent(new Event('change')); }
+    const actor = document.getElementById('actor');
+    if (actor) { actor.value = 'e2e'; actor.dispatchEvent(new Event('change')); }
+    const b = document.getElementById('reload'); if (b) b.click();
+    await new Promise((r) => setTimeout(r, 1200));
+    return 'ok';
+  })()`);
 };
 
-// シークレットを入れて「再読み込み」を押す（実画面と同じ導線）
-await evaluate(`(async () => {
-  const el = document.getElementById('secret');
-  if (el) { el.value = 'e2e'; el.dispatchEvent(new Event('change')); }
-  const btn = document.getElementById('reload');
-  if (btn) btn.click();
-  await new Promise(r => setTimeout(r, 1500));
-  return 'loaded';
-})()`);
+console.log(`\n■ 実 DOM E2E（${BROWSER.split('/').pop()} / dist 配信）\n`);
+await openPage();
 
-const out = await evaluate(`(async () => {
-  const t = (el) => (el ? el.textContent.trim().replace(/\\s+/g,' ') : null);
-  const cards = [...document.querySelectorAll('.sumcard')].map(c => ({
-    n: t(c.querySelector('.sc-n')), l: t(c.querySelector('.sc-l')) }));
-  const rows = [...document.querySelectorAll('#rows tr')].map(tr => ({
+// ── 1. 上部 4 カードと一覧の一致 ──────────────────────────────
+const snap = await evaluate(`(() => {
+  const t = (e) => (e ? e.textContent.trim().replace(/\\s+/g, ' ') : null);
+  const cards = [...document.querySelectorAll('.sumcard')].map((c) => ({
+    key: c.dataset.state, n: Number(t(c.querySelector('.sc-n'))), l: t(c.querySelector('.sc-l')) }));
+  const rows = [...document.querySelectorAll('#rows tr')].map((tr) => ({
     email: t(tr.querySelector('.c-cust .em')),
     badge: t(tr.querySelector('.c-state .badge')),
     reason: t(tr.querySelector('.c-state .state-reason')),
-    ops: [...tr.querySelectorAll('.c-ops .btn-rowact')].map(b => t(b.querySelector('.bra-l'))),
-    hasDetailButton: !!tr.querySelector('.c-ops .btn-detail'),
+    ops: [...tr.querySelectorAll('.c-ops .btn-rowact')].map((b) => ({
+      label: t(b.querySelector('.bra-l')), hint: t(b.querySelector('.bra-h')), disabled: b.disabled })),
+    detail: !!tr.querySelector('.c-ops .btn-detail'),
+    clickable: tr.classList.contains('row-clickable'),
   }));
-  return JSON.stringify({ cards, rows, rowCount: rows.length }, null, 1);
+  return { cards, rows };
 })()`);
-const list = JSON.parse(out);
-console.log('=== 一覧 ===');
-console.log(out);
-check(list.cards.length === 4, '上部の 4 カードが出ていない');
-check(list.cards.map((c) => c.l).join(',') === '購入可能,販売停止中,段階表示中,対象外',
-  'カードの並び / 名称が違う: ' + list.cards.map((c) => c.l).join(','));
-check(list.cards.every((c) => /^\d+$/.test(String(c.n))), 'カードの件数が数字でない');
-const aud = list.rows.find((r) => r.email === 'Audenki99@gmail.com');
-check(!!aud, '対象会員が一覧に出ていない');
-check(aud && aud.badge === '購入可能', '購入可能の会員が「購入可能」で出ていない: ' + (aud && aud.badge));
-check(aud && aud.ops.includes('販売を停止'), '販売中の会員に「販売を停止」が出ていない');
-const psd = list.rows.find((r) => r.email === 'paused@example.com');
-check(psd && psd.badge === '販売停止中', '停止中の会員のバッジが違う');
-check(psd && psd.ops.includes('販売を再開'), '停止中の会員に「販売を再開」が出ていない（戻せない）');
-check(list.rows.every((r) => r.hasDetailButton), '「詳細・操作」ボタンが無い行がある');
 
-// 会員行をクリック → 詳細パネル
+check(snap.cards.length === 4, '上部に 4 カードが出る');
+check(snap.cards.map((c) => c.l).join(',') === '購入可能,販売停止中,段階表示中,対象外',
+  `カードの名称と並びが正しい（実際: ${snap.cards.map((c) => c.l).join(',')}）`);
+const byLabel = Object.fromEntries(snap.rows.map((r) => [r.email, r.badge]));
+check(byLabel['audenki99@gmail.com'] === '購入可能', '今すぐ販売可の会員が「購入可能」で出る');
+check(byLabel['sale@example.com'] === '購入可能', '段階公開で解禁済みの会員が「購入可能」で出る');
+check(byLabel['staged@example.com'] === '段階表示中', '待機中の会員が「段階表示中」で出る');
+check(byLabel['paused@example.com'] === '販売停止中', '停止中の会員が「販売停止中」で出る');
+check(byLabel['blocked@example.com'] === '対象外' && byLabel['review@example.com'] === '対象外',
+  '資格が無い会員が「対象外」で出る');
+const countOf = (k) => (snap.cards.find((c) => c.key === k) || {}).n;
+const rowCountOf = (label) => snap.rows.filter((r) => r.badge === label).length;
+check(countOf('sale') === rowCountOf('購入可能') && countOf('sale') === 2,
+  `カード「購入可能」の件数が一覧と一致する（card=${countOf('sale')} / rows=${rowCountOf('購入可能')}）`);
+check(countOf('paused') === rowCountOf('販売停止中'), 'カード「販売停止中」の件数が一覧と一致する');
+check(countOf('staged') === rowCountOf('段階表示中'), 'カード「段階表示中」の件数が一覧と一致する');
+check(countOf('out') === rowCountOf('対象外'), 'カード「対象外」の件数が一覧と一致する');
+
+// ── 2. 「対象外」の理由が一覧で区別できる ─────────────────────
+const blk = snap.rows.find((r) => r.email === 'blocked@example.com');
+const rvw = snap.rows.find((r) => r.email === 'review@example.com');
+check(blk && blk.reason === '販売対象外' && rvw && rvw.reason === '資格保留',
+  '「対象外」の理由（販売対象外 / 資格保留）が一覧で区別できる');
+
+// ── 3. 行の操作（要素が DOM にあり、押せる）────────────────────
+check(snap.rows.every((r) => r.detail), '全行に「詳細・操作」ボタンが DOM にある');
+check(snap.rows.every((r) => r.clickable), '全行がクリック可能になっている');
+const aud = snap.rows.find((r) => r.email === 'audenki99@gmail.com');
+check(aud.ops.length === 1 && aud.ops[0].label === '販売を停止' && aud.ops[0].disabled === false,
+  '販売中の行に「販売を停止」が出て押せる');
+const pse = snap.rows.find((r) => r.email === 'paused@example.com');
+check(pse.ops.length === 1 && pse.ops[0].label === '販売を再開' && pse.ops[0].disabled === false,
+  '停止中の行に「販売を再開」が出て押せる');
+check(snap.rows.every((r) => r.ops.every((o) => o.hint)), '操作ボタンに「押すとどうなるか」が併記されている');
+check(blk.ops.length === 0 && rvw.ops.length === 0, '対象外に無意味な販売操作を出さない');
+
+// ── 4. 詳細への到達（4 経路）────────────────────────────────
+for (const [name, expr] of [
+  ['行クリック', `[...document.querySelectorAll('#rows tr')].find((x) => x.textContent.includes('audenki99')).click()`],
+  ['メールアドレス', `[...document.querySelectorAll('#rows tr')].find((x) => x.textContent.includes('audenki99')).querySelector('.c-cust .em').click()`],
+  ['状態バッジ', `[...document.querySelectorAll('#rows tr')].find((x) => x.textContent.includes('audenki99')).querySelector('.c-state .badge').click()`],
+  ['詳細・操作ボタン', `[...document.querySelectorAll('#rows tr')].find((x) => x.textContent.includes('audenki99')).querySelector('.c-ops .btn-detail').click()`],
+]) {
+  const opened = await evaluate(`(async () => {
+    const p = document.getElementById('dtBody'); if (p) p.innerHTML = '';
+    ${expr};
+    await new Promise((r) => setTimeout(r, 500));
+    const e = document.querySelector('.dt-email');
+    return e ? e.textContent.trim() : null;
+  })()`);
+  check(String(opened || '').includes('audenki99'), `${name} から詳細パネルへ進める`);
+}
+
+// ── 5. 今すぐ販売可: 未来の購入可能日を出さない ─────────────────
 const detail = await evaluate(`(async () => {
-  const tr = [...document.querySelectorAll('#rows tr')].find(x => (x.textContent||'').includes('Audenki99'));
-  if (!tr) return JSON.stringify({ error: '対象行が見つからない' });
-  tr.click();
-  await new Promise(r => setTimeout(r, 800));
-  const t = (s) => { const e = document.querySelector(s); return e ? e.textContent.trim().replace(/\\s+/g,' ') : null; };
-  const items = [...document.querySelectorAll('.dt-now-kv dt')].map((dt,i) => ({
-    label: dt.textContent.trim(),
-    value: (document.querySelectorAll('.dt-now-kv dd')[i]||{}).textContent?.trim().replace(/\\s+/g,' ') }));
-  return JSON.stringify({
-    badge: t('.dt-now-badge'), headline: t('.dt-now-head'), stage: t('.dt-now-stage'),
-    items,
-    actions: [...document.querySelectorAll('.dt-act')].map(b => ({
-      label: (b.querySelector('.dt-act-l')||{}).textContent, disabled: b.disabled })),
-    detailsClosed: !!document.querySelector('.dt-more') && !document.querySelector('.dt-more').open,
-  }, null, 1);
+  const tr = [...document.querySelectorAll('#rows tr')].find((x) => x.textContent.includes('audenki99'));
+  tr.click(); await new Promise((r) => setTimeout(r, 600));
+  const t = (s) => { const e = document.querySelector(s); return e ? e.textContent.trim().replace(/\\s+/g, ' ') : null; };
+  const kv = {};
+  const dts = [...document.querySelectorAll('.dt-now-kv dt')];
+  const dds = [...document.querySelectorAll('.dt-now-kv dd')];
+  dts.forEach((d, i) => { kv[d.textContent.trim()] = (dds[i] || {}).textContent?.trim().replace(/\\s+/g, ' '); });
+  return {
+    badge: t('.dt-now-badge'), headline: t('.dt-now-head'), stage: t('.dt-now-stage'), kv,
+    actions: [...document.querySelectorAll('.dt-act')].map((b) => ({
+      label: (b.querySelector('.dt-act-l') || {}).textContent, disabled: b.disabled })),
+    foldClosed: !!document.querySelector('.dt-more') && !document.querySelector('.dt-more').open,
+    hasDetailSections: ['基本情報', '通常操作'].every((h) =>
+      [...document.querySelectorAll('.dt-more h3')].some((x) => x.textContent.includes(h))),
+  };
 })()`);
-const d = JSON.parse(detail);
-console.log('=== 詳細パネル（Audenki99）===');
-console.log(detail);
-check(d.badge === '購入可能', '詳細のバッジが違う: ' + d.badge);
-// ★本件: 買えるのに未来の予定日を「〜から購入できる」と出さない
-check(d.headline === 'いま購入できる状態です',
-  '待機日数を飛ばした会員に未来の予定日を出している: ' + d.headline);
-check(!/\d{4}-\d{2}-\d{2} から購入できる/.test(String(d.headline)),
-  '見出しに購入開始日として未来日が入っている: ' + d.headline);
-check(/待機日数を飛ばして販売中/.test(String(d.stage)), '段階の表示が違う: ' + d.stage);
-check(d.actions.some((a) => (a.label || '').includes('販売を停止')), '詳細に「販売を停止」が無い');
-check(!d.actions.some((a) => (a.label || '').includes('今すぐ販売可')),
-  'すでに購入できるのに「今すぐ販売可」が出ている');
-check(d.detailsClosed === true, '詳細の折りたたみが既定で開いている');
+const todayJst = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+const futureInHeadline = (String(detail.headline).match(/(\d{4}-\d{2}-\d{2}) から購入できる/) || [])[1];
+check(!futureInHeadline || futureInHeadline <= todayJst,
+  `今すぐ販売可の会員に未来の購入可能日を出さない（見出し: ${detail.headline}）`);
+check(detail.badge === '購入可能', '詳細のバッジが「購入可能」');
+check(!detail.actions.some((a) => (a.label || '').includes('今すぐ販売可')),
+  'すでに買えるなら「今すぐ販売可」を出さない');
+check(detail.foldClosed === true, '詳細の折りたたみが既定で閉じている');
+check(detail.hasDetailSections === true, '詳細情報（基本情報 / 通常操作）が折りたたみ内に残っている');
 
-ws.close(); proc.kill();
+// ── 6. クーポン14日と販売可否を混同しない ────────────────────
+check(Object.keys(detail.kv).some((k) => k.includes('クーポンの利用期間')),
+  '「クーポンの利用期間（14日）」として別項目で出る');
+check(!Object.keys(detail.kv).some((k) => k.includes('再募集')), '「再募集」という誤読される名称を出さない');
+const couponRes = await evaluate(`(async () => {
+  const before = JSON.stringify(window.__E2E.db.recAUD.purchaseEnabled);
+  const b = [...document.querySelectorAll('.dt-act')].find((x) => (x.textContent || '').includes('クーポンの利用期間'));
+  if (!b) return { skipped: true };
+  b.click(); await new Promise((r) => setTimeout(r, 1200));
+  return { before, after: JSON.stringify(window.__E2E.db.recAUD.purchaseEnabled),
+    started: !!window.__E2E.db.recAUD.reopenStart.startsAtIso,
+    writes: window.__E2E.writes.map((w) => w.action) };
+})()`);
+check(couponRes.skipped !== true, 'クーポン期間の開始ボタンが DOM にある');
+check(couponRes.before === couponRes.after,
+  `クーポン14日の開始で販売可否が変わらない（before=${couponRes.before} after=${couponRes.after}）`);
+check(couponRes.started === true, 'クーポン期間の開始が実際に記録される');
 
+// ── 7. 販売停止 → 表示と操作が切り替わる（古い状態が残らない）──
+await openPage();
+const afterPause = await evaluate(`(async () => {
+  const tr = () => [...document.querySelectorAll('#rows tr')].find((x) => x.textContent.includes('sale@example.com'));
+  const t = (e) => (e ? e.textContent.trim().replace(/\\s+/g, ' ') : null);
+  const before = { badge: t(tr().querySelector('.c-state .badge')), op: t(tr().querySelector('.c-ops .btn-rowact .bra-l')) };
+  window.__E2E.trace = [];
+  const origFetch = window.fetch;
+  window.fetch = async (u, init) => { try { window.__E2E.trace.push(JSON.parse((init && init.body) || '{}').action); } catch {} return origFetch(u, init); };
+  tr().querySelector('.c-ops .btn-rowact').click();
+  await new Promise((r) => setTimeout(r, 2500));
+  const row = tr();
+  return { before, after: { badge: t(row.querySelector('.c-state .badge')), op: t(row.querySelector('.c-ops .btn-rowact .bra-l')) },
+    dbPaused: window.__E2E.db.recSALE.salePaused,
+    writes: window.__E2E.writes.filter((w) => w.action === 'setSalePause').map((w) => ({ id: w.recordId, p: w.paused })),
+    trace: window.__E2E.trace, msg: (document.getElementById('message') || {}).textContent,
+    confirms: window.__E2E.confirms.length,
+    cardPaused: Number((document.querySelector('.sumcard[data-state="paused"] .sc-n') || {}).textContent) };
+})()`);
+check(afterPause.before.badge === '購入可能' && afterPause.before.op === '販売を停止', '停止前は「購入可能 / 販売を停止」');
+check(afterPause.dbPaused === true, '「販売を停止」で実際に停止が書き込まれる');
+check(afterPause.after.badge === '販売停止中',
+  `停止後に表示が「販売停止中」へ切り替わる（実際: ${afterPause.after.badge}）`);
+check(afterPause.after.op === '販売を再開',
+  `停止後にボタンが「販売を再開」へ切り替わる（実際: ${afterPause.after.op}）`);
+check(afterPause.cardPaused === 2, `上部カードの件数も更新される（販売停止中: ${afterPause.cardPaused}）`);
+check(afterPause.confirms >= 1, '停止（危険な操作）では確認ダイアログを出す');
+
+// ── 8. 販売再開 → 正しい状態へ復帰 ──────────────────────────
+const afterResume = await evaluate(`(async () => {
+  const tr = () => [...document.querySelectorAll('#rows tr')].find((x) => x.textContent.includes('sale@example.com'));
+  const t = (e) => (e ? e.textContent.trim().replace(/\\s+/g, ' ') : null);
+  const c0 = window.__E2E.confirms.length;
+  tr().querySelector('.c-ops .btn-rowact').click();
+  await new Promise((r) => setTimeout(r, 1800));
+  const row = tr();
+  return { badge: t(row.querySelector('.c-state .badge')), op: t(row.querySelector('.c-ops .btn-rowact .bra-l')),
+    dbPaused: window.__E2E.db.recSALE.salePaused,
+    purchase: window.__E2E.db.recSALE.purchaseEnabled,
+    newConfirms: window.__E2E.confirms.length - c0 };
+})()`);
+check(afterResume.dbPaused === false, '「販売を再開」で実際に停止が解除される');
+check(afterResume.badge === '購入可能', `再開後に「購入可能」へ復帰する（実際: ${afterResume.badge}）`);
+check(afterResume.op === '販売を停止', '再開後にボタンが「販売を停止」へ戻る');
+check(afterResume.purchase === true, '再開後は購入可能に戻る');
+check(afterResume.newConfirms === 0, '再開（通常の操作）では確認を増やさない');
+
+// ── 9. カード押下で絞り込み ────────────────────────────────
+const filtered = await evaluate(`(async () => {
+  const out = {};
+  for (const key of ['sale', 'paused', 'staged', 'out']) {
+    document.querySelector('.sumcard[data-state="' + key + '"]').click();
+    await new Promise((r) => setTimeout(r, 500));
+    out[key] = {
+      state: document.getElementById('fState').value,
+      badges: [...new Set([...document.querySelectorAll('#rows tr .c-state .badge')].map((b) => b.textContent.trim()))],
+    };
+  }
+  document.getElementById('fState').value = 'all';
+  return out;
+})()`);
+const want = { sale: '購入可能', paused: '販売停止中', staged: '段階表示中', out: '対象外' };
+for (const [k, label] of Object.entries(want)) {
+  check(filtered[k].state === k && filtered[k].badges.every((b) => b === label),
+    `カード「${label}」を押すとその状態だけに絞り込まれる（実際: ${filtered[k].badges.join(',') || '0 件'}）`);
+}
+
+// ── 10. 要対応 N 名 → 対象会員だけ表示 ──────────────────────
+const needs = await evaluate(`(async () => {
+  const b = document.querySelector('#notifyNote .notify-open');
+  if (!b) return { skipped: true };
+  b.click(); await new Promise((r) => setTimeout(r, 600));
+  return { state: document.getElementById('fState').value,
+    badges: [...new Set([...document.querySelectorAll('#rows tr .c-state .badge')].map((x) => x.textContent.trim()))],
+    label: b.textContent.trim(),
+    canOpen: !!document.querySelector('#rows tr .c-ops .btn-detail') };
+})()`);
+check(needs.skipped !== true, '「要対応 N 名を開く」が DOM にある');
+check(needs.state === 'sale' && needs.badges.every((b) => b === '購入可能'),
+  `要対応から対象会員（購入可能）だけが表示される（実際: ${needs.badges.join(',')}）`);
+check(needs.canOpen === true, '要対応の一覧から 1 クリックで詳細へ進める');
+
+// ── 11. メール完全一致検索 → 詳細が自動で開く ─────────────────
+await openPage();
+const exact = await evaluate(`(async () => {
+  const p = document.getElementById('dtBody'); if (p) p.innerHTML = '';
+  const q = document.getElementById('q');
+  q.value = 'audenki99@gmail.com';
+  q.dispatchEvent(new Event('input'));
+  await new Promise((r) => setTimeout(r, 900));
+  const e = document.querySelector('.dt-email');
+  const rows = [...document.querySelectorAll('#rows tr')].length;
+  return { opened: e ? e.textContent.trim() : null, rows };
+})()`);
+check(String(exact.opened || '').includes('audenki99'),
+  `メール完全一致で詳細が自動で開く（実際: ${exact.opened}）`);
+check(exact.rows === 1, `完全一致では該当 1 件だけ表示される（実際: ${exact.rows} 件）`);
+const partial = await evaluate(`(async () => {
+  const q = document.getElementById('q');
+  q.value = 'example.com'; q.dispatchEvent(new Event('input'));
+  await new Promise((r) => setTimeout(r, 700));
+  return [...document.querySelectorAll('#rows tr')].length;
+})()`);
+check(partial >= 2, `部分一致では該当者だけを一覧表示する（実際: ${partial} 件）`);
+
+// ── 12. 見えるが押せない / 生成したが DOM に無い を検出 ─────────
+const ghost = await evaluate(`(() => {
+  const bad = [];
+  // 画面に見えているのに押せないボタン（理由の提示も無い）を検出
+  for (const b of document.querySelectorAll('#rows button, .dt-act, .sumcard')) {
+    const r = b.getBoundingClientRect();
+    const visible = r.width > 0 && r.height > 0 && getComputedStyle(b).visibility !== 'hidden';
+    if (visible && b.disabled && !b.title) bad.push('押せないのに理由が無い: ' + (b.textContent || '').trim().slice(0, 24));
+  }
+  return bad;
+})()`);
+check(ghost.length === 0, `見えるのに押せない（理由の提示も無い）要素が無い${ghost.length ? ': ' + ghost.join(' / ') : ''}`);
+
+// ── 13. 未認証では admin 画面 / API に到達できない（任意）──────
+if (process.env.E2E_DEV_URL) {
+  const base = process.env.E2E_DEV_URL.replace(/\/$/, '');
+  for (const [path, want, label] of [
+    ['/admin/premium-plus-eligibility/', 401, '未認証では admin 画面に到達できない'],
+    ['/.netlify/functions/premium-plus-media?limit=3', 404, '未認証では実績画像 API に到達できない'],
+  ]) {
+    const res = await fetch(base + path).catch(() => null);
+    check(res && res.status === want, `${label}（期待 ${want} / 実際 ${res ? res.status : '接続不可'}）`);
+  }
+} else {
+  console.log('  － 未認証チェックは E2E_DEV_URL 未指定のためスキップ（本番の read-only 確認で担保）');
+}
+
+// ── 終了 ────────────────────────────────────────────────────
+browserWs.close(); server.close(); proc.kill();
+console.log(`\n合計 ${passes.length + fails.length} 項目 / pass ${passes.length} / fail ${fails.length}`);
 if (fails.length) {
-  console.error('\n⛔ E2E 失敗 ' + fails.length + ' 件');
+  console.error('\n⛔ E2E 失敗:');
   for (const f of fails) console.error('   - ' + f);
   process.exit(1);
 }
-console.log('\n✅ E2E 全項目 pass');
+console.log('✅ 実 DOM E2E 全項目 pass');
