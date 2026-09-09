@@ -152,22 +152,31 @@ const BASE = `http://127.0.0.1:${server.address().port}`;
 let devProc = null;
 let devBase = process.env.E2E_DEV_URL ? process.env.E2E_DEV_URL.replace(/\/$/, '') : null;
 let devError = null;
+let devLog = '';
 
 async function startDevServer() {
   if (devBase || process.env.E2E_NO_DEV === '1') return;
   const port = 4300 + Math.floor(Math.random() * 200);
-  devProc = spawn('npx', ['astro', 'dev', '--port', String(port), '--host', '127.0.0.1'], {
-    cwd: ROOT, stdio: 'ignore', detached: false,
+  // ⚠️ `npx` を経由しない。解決に失敗すると**黙って固まる**ことがある。
+  //    ローカルに入っている astro を直接起動する。
+  const bin = join(ROOT, 'node_modules', '.bin', 'astro');
+  if (!existsSync(bin)) { devError = `astro が見つかりません（${bin}）。npm ci を先に実行してください`; return; }
+  devProc = spawn(bin, ['dev', '--port', String(port), '--host', '127.0.0.1'], {
+    cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'], detached: false,
     // admin の認証情報は**渡さない**。未設定なら fail closed で 401 になるのが正しい挙動で、
     // それをそのまま検証する。
     env: { ...process.env, ADMIN_BASIC_AUTH_USER: '', ADMIN_BASIC_AUTH_PASSWORD: '' },
   });
+  // ⚠️ 出力を捨てない。起動しなかったときに**理由が分からない**と直せない
+  //    （CI で「120 秒以内に応答しません」だけが出て原因不明になった）。
+  devProc.stdout.on('data', (b) => { devLog += String(b); });
+  devProc.stderr.on('data', (b) => { devLog += String(b); });
   const base = `http://127.0.0.1:${port}`;
   // ⚠️ 疎通確認は **public/ の静的ファイル**へ投げる。`/` は SSR を走らせるので
   //    CI では返るまでに時間がかかり、待ちが終わらない（2026-09-10 に 15 分ハングした）。
   // ⚠️ **1 回ごとに時間制限**を付ける。付けないと fetch が返らないまま
   //    ループが 1 周目から進まず、上限 90 秒に到達しない。
-  const deadlineAt = Date.now() + 120000;
+  const deadlineAt = Date.now() + 180000;
   let probes = 0;
   while (Date.now() < deadlineAt) {
     probes += 1;
@@ -178,7 +187,7 @@ async function startDevServer() {
     if (devProc.exitCode !== null) { devError = `dev サーバーが起動前に終了しました (exit ${devProc.exitCode})`; return; }
     await sleep(1000);
   }
-  devError = 'dev サーバーが 120 秒以内に応答しませんでした';
+  devError = 'dev サーバーが 180 秒以内に応答しませんでした';
 }
 const stopDevServer = () => { if (devProc && devProc.exitCode === null) { try { devProc.kill('SIGTERM'); } catch {} } };
 process.on('exit', stopDevServer);
@@ -660,6 +669,11 @@ if (devBase) {
   // ⚠️ 黙ってスキップしない。確認観点が減ったことに気づけなくなる
   //    （PR 時 56 項目 / CI 54 項目のズレが実際に起きた）。
   check(false, '未認証チェックを実行できませんでした: ' + (devError || 'E2E_NO_DEV=1 が指定されています'));
+  if (devLog.trim()) {
+    console.error('--- dev サーバーの出力（末尾）---');
+    console.error(devLog.trim().slice(-2000));
+    console.error('--- ここまで ---');
+  }
 }
 stopDevServer();
 
