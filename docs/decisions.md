@@ -33,6 +33,11 @@
 | 27 | E2E は **CI で必須実行**。ubuntu 同梱の Chrome を使い、**依存パッケージを追加しない**。実行不能なら理由を出して失敗させる | `safety-check.yml` |
 | 28 | E2E は **`dist` を静的配信**して開く（Edge 認証を触らない・Netlify も本番も使わない）| `scripts/e2e-admin-plus.mjs` |
 | 29 | E2E のスタブは**書き込みで状態が実際に変わる**ようにする。そうしないと「押したのに表示が変わらない」型を検出できない | 同上 |
+| 30 | **E2E の確認観点を黙って減らさない**。未認証チェックが実行できなければ E2E を**失敗させる** | `scripts/e2e-admin-plus.mjs` |
+| 31 | E2E 用の dev サーバーは**スクリプト内で起動・停止**する。**CI の step でバックグラウンド起動しない**（step が終了できず hang する）| 同上 / `safety-check.yml` |
+| 32 | E2E の**ブラウザプロファイルを repo 内に作らない**。OS の一時ディレクトリに作り必ず削除する（`.gitignore` にも保険）| `scripts/e2e-admin-plus.mjs` / `astro-site/.gitignore` |
+| 33 | E2E の**すべての待ちに時間制限**を付け、**各フェーズで進捗を出す**。CI で無出力のまま固まらせない | `scripts/e2e-admin-plus.mjs` |
+| 34 | 未認証チェックの **2 観点は環境に関わらず必ず実行**し、**確認手段だけ替える**（Deno 有=HTTP / Deno 無=本物のハンドラ直呼び）。**CI へ Deno を勝手に足さない** | `scripts/e2e-admin-plus.mjs` / `docs/spec.md` |
 
 確定仕様は `docs/spec.md`「Premium Plus 管理画面と販売停止（2026-09-09 確定）」。
 

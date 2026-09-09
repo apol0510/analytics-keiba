@@ -1,3 +1,135 @@
+# 🔎 E2E の確認観点が CI で 2 件減っていた — **復元（2026-09-10）**
+
+> テストと CI 設定のみ。製品コード・顧客データ・env は**一切変更していない**。
+
+## MK 指摘
+
+> E2EがPR時56項目、main CIでは54項目になっている理由だけread-onlyで確認してください
+
+## 確認した事実（read-only）
+
+| 実行 | 項目数 | 差分 |
+|---|---|---|
+| 手元（`E2E_DEV_URL` 指定）| 56 | — |
+| CI | 54 | **未認証では admin 画面に到達できない** / **未認証では実績画像 API に到達できない** |
+
+スクリプトが `E2E_DEV_URL` 未指定時にこの 2 件をスキップする作りで、
+CI はこの変数を渡していなかった。**確認観点が実際に減っていた。**
+
+## 復元
+
+| # | 内容 |
+|---|---|
+| 1 | dev サーバーの**起動と停止を E2E スクリプト内で完結**させた（追加の env も step も不要）|
+| 2 | admin の認証情報は**渡さない**（未設定なら fail closed で 401 になるのが正しく、それを検証する）|
+| 3 | 未認証チェックが**実行できなければ E2E を失敗**させる（黙って減らせない）|
+| 4 | 実行サマリに「未認証チェックを含む / 含まない」を明記 |
+| 5 | CI は単一 step（`timeout-minutes: 10`）。**step でのバックグラウンド起動はしない** |
+
+### ⚠️ PR を汚染した（自分のミス・#513 は close / 再構成済み）
+
+Chromium の E2E 用プロファイルを **repo 内（`astro-site/.e2e-profile/`）に作ってしまい**、
+Cookies / Login Data / History / Local State 等の内部ファイル **316 件が PR に混入**した
+（changed files 321 件）。
+
+read-only で内容を検査（**値は一切表示していない**）:
+
+| 検査 | 結果 |
+|---|---|
+| `ak_session` / Bearer / Airtable / Upstash / SendGrid / Stripe / AWS の各様式 | **0 件** |
+| Cookies | 空（ホスト 0 件）|
+| Login Data | スキーマのみ（保存済み資格情報なし）|
+| History | `127.0.0.1` のローカル URL のみ |
+| メールアドレス | `@example.com` 1 種のみ。既に追跡ファイルにある placeholder |
+| 高エントロピー文字列 | Chromium 自身の `os_crypt` 鍵・MAC seed 等（使い捨てプロファイルのもの）|
+
+**実 secret / session / 顧客 PII は無し。rotation は不要と判断。**
+
+対処: #513 を close・remote branch を通常削除し、最新 `origin/main` から
+新ブランチを作って**意図した 6 ファイルだけを再構成**した。
+プロファイルは OS の一時ディレクトリへ移し、`.gitignore` にも保険を入れた。
+履歴改変（amend / force push 等）は行っていない。
+
+### ⚠️ CI で E2E が失敗（4 回・原因はすべて別物）
+
+**4 回目で根本原因が判明**: dev サーバーの出力を残したことで理由が読めた。
+
+```
+Error: Could not establish a connection to the Netlify Edge Functions local development server
+    at EdgeFunctionsHandler.waitForDenoServer (...)
+```
+
+この repo の `astro dev` は edge function（`netlify/edge-functions/admin-auth.ts`）を
+**必ずローカル実行**しようとし、それには **Deno** が要る。
+Deno は初回に netlify のキャッシュ（手元は `~/Library/Preferences/netlify/deno-cli/deno`・2026-05-20 取得）へ
+落ちるのでローカルでは動くが、**GitHub Actions の runner には Deno が無い**。
+edge-functions-dev の待ち時間は **3 秒固定**（`DENO_SERVER_POLL_TIMEOUT = 3e3`）で、
+cold start が間に合わず初期化がリクエストごとに失敗し続け、
+結果として **dev サーバーが 1 リクエストも返さない**（3 分待っても同じ）。
+
+対処（**依存は増やしていない**。Deno のセットアップ action も npm パッケージも足していない）:
+
+| 方針 | 内容 |
+|---|---|
+| 観点は減らさない | 未認証の **2 観点は環境に関わらず必ず実行**（合計 56 項目のまま）|
+| 手段だけ替える | Deno 有（ローカル）= `astro dev` へ **HTTP で 401 / 404**。Deno 無（CI）= **本物の判定モジュール／本物のハンドラを直接呼ぶ** |
+| 無駄に待たない | Deno の有無を先に見て、無ければ dev サーバーを**起動しない** |
+| 何で確認したか出す | 実行サマリに「HTTP で実施 / ハンドラ直呼びで実施」を明記 |
+
+CI 側で確認する内容: `/admin/*` に edge 認証が配線されていること・`decideAdminAccess` が
+env 未設定でも通さないこと（fail closed）・`handleMediaGet` がセッション無しで **404**（401/403 にしない）。
+
+> Deno を CI へ入れれば HTTP のまま確認できるが、**CI に新しい依存を足す判断は MK 待ち**。
+
+
+**3 回目**: DOM 側 **54 項目は CI で全て pass**。残るは dev サーバーが CI で
+120 秒以内に応答しない点のみ。`stdio: 'ignore'` にしていたため理由が分からなかったので、
+
+| 対処 | 内容 |
+|---|---|
+| `npx` を経由しない | `node_modules/.bin/astro` を直接起動（npx は解決に失敗すると黙って固まる）|
+| 出力を捨てない | dev サーバーの stdout/stderr を保持し、失敗時に末尾 2000 字を出す |
+| 待ち時間 | 120 秒 → 180 秒 |
+
+### ⚠️ CI で E2E がタイムアウト（1・2 回目・原因は別物・いずれも修正済み）
+
+**2 回目**: 進捗ログを入れた結果、`dev サーバーを起動中…` で 15 分止まっていることが判明。
+
+| 原因 | 対処 |
+|---|---|
+| 起動待ちの `fetch` に**1 回ごとの時間制限が無い**。返らないとループが 1 周目から進まず、上限 90 秒に到達しない | `AbortSignal.timeout(4000)` を付け、全体 120 秒の deadline で回す |
+| 疎通確認を `/` に投げており **SSR が走る**。CI では返ってこない | `public/robots.txt`（静的配信）へ投げる |
+| 待っている間が無出力 | 10 回ごとに待機中のログを出す |
+
+ローカル実測: `robots.txt` 0.017 秒 / `/` 1.77 秒。CI では `/` が返らなかった。
+
+### ⚠️ CI で E2E が 10 分無出力のままタイムアウト（1 回目・修正済み）
+
+ローカルでは 25 秒で終わるのに、CI では **1 行も出力せず** 10 分でタイムアウトした。原因は 2 つ。
+
+| 原因 | 対処 |
+|---|---|
+| WebSocket の open と CDP 呼び出しに**時間制限が無く**、応答が来ないと永久に待つ | すべての待ちに deadline を付けた（ws 20s / CDP 60s）|
+| `--no-sandbox` 未指定で runner ではブラウザが起動しないことがある | `--no-sandbox --disable-setuid-sandbox` を追加。stderr を保存して失敗時に出す |
+| 進捗ログが無く「どこで止まったか」が分からなかった | 各フェーズで経過秒付きのログを出すようにした |
+
+step の timeout は 15 分へ。ローカル実測は dev サーバー 3.8 秒 / 全体 25 秒。
+
+### ⚠️ 途中で CI を hang させた（自分のミス・修正済み）
+
+最初は CI の step で `nohup npx astro dev &` して待つ形にしたが、
+**子プロセスのために Actions の step が終了できず 20 分以上 hang**した（run は cancel 済み）。
+dev サーバーの起動・停止はスクリプト内で完結させる形に直し、正本にも禁止事項として記載した。
+
+## 検証
+
+| 内容 | 結果 |
+|---|---|
+| ローカル（Deno あり・HTTP で未認証チェック）| **56 項目 pass / 0 fail** |
+| CI 相当（`E2E_NO_DEV=1`・ハンドラ直呼び）| **56 項目 pass / 0 fail** |
+| admin の env 無しでの 401 / 404 | 期待どおり |
+| `check:safety` / `build` | exit 0 / exit 0 |
+
 # 🧪 管理画面の実 DOM E2E を拡充し CI 必須化 — **完了 / Draft PR（2026-09-10）**
 
 > 表示・テストのみ。顧客データ・env・送信は**一切変更していない**。
