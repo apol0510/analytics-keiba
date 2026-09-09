@@ -163,13 +163,22 @@ async function startDevServer() {
     env: { ...process.env, ADMIN_BASIC_AUTH_USER: '', ADMIN_BASIC_AUTH_PASSWORD: '' },
   });
   const base = `http://127.0.0.1:${port}`;
-  for (let i = 0; i < 90; i += 1) {
-    const ok = await fetch(base + '/').then(() => true).catch(() => false);
+  // ⚠️ 疎通確認は **public/ の静的ファイル**へ投げる。`/` は SSR を走らせるので
+  //    CI では返るまでに時間がかかり、待ちが終わらない（2026-09-10 に 15 分ハングした）。
+  // ⚠️ **1 回ごとに時間制限**を付ける。付けないと fetch が返らないまま
+  //    ループが 1 周目から進まず、上限 90 秒に到達しない。
+  const deadlineAt = Date.now() + 120000;
+  let probes = 0;
+  while (Date.now() < deadlineAt) {
+    probes += 1;
+    if (probes % 10 === 0) step(`dev サーバーの起動を待っています（${probes} 回目）`);
+    const ok = await fetch(base + '/robots.txt', { signal: AbortSignal.timeout(4000) })
+      .then(() => true).catch(() => false);
     if (ok) { devBase = base; return; }
     if (devProc.exitCode !== null) { devError = `dev サーバーが起動前に終了しました (exit ${devProc.exitCode})`; return; }
     await sleep(1000);
   }
-  devError = 'dev サーバーが 90 秒以内に応答しませんでした';
+  devError = 'dev サーバーが 120 秒以内に応答しませんでした';
 }
 const stopDevServer = () => { if (devProc && devProc.exitCode === null) { try { devProc.kill('SIGTERM'); } catch {} } };
 process.on('exit', stopDevServer);
@@ -643,7 +652,8 @@ if (devBase) {
     ['/admin/premium-plus-eligibility/', 401, '未認証では admin 画面に到達できない'],
     ['/.netlify/functions/premium-plus-media?limit=3', 404, '未認証では実績画像 API に到達できない'],
   ]) {
-    const res = await fetch(base + path).catch(() => null);
+    // ⚠️ ここにも時間制限。返らない相手で E2E 全体が止まらないようにする
+    const res = await fetch(base + path, { signal: AbortSignal.timeout(20000) }).catch(() => null);
     check(res && res.status === want, `${label}（期待 ${want} / 実際 ${res ? res.status : '接続不可'}）`);
   }
 } else {
