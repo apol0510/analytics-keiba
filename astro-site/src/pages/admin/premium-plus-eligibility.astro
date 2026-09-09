@@ -3758,6 +3758,10 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         btn.className = 'btn-detail';
         btn.textContent = '詳細・操作';
         btn.addEventListener('click', () => openDetail(r.recordId));
+        // ⚠️ 2026-09-10: ここの appendChild が落ちていて、全行から「詳細・操作」が
+        //    消えていた（E2E で検出）。ソース検査のガードでは見抜けないので、
+        //    E2E（scripts/e2e-admin-plus.mjs）で毎回 DOM を確認すること。
+        c8.appendChild(btn);
         if (window.__ppList) {
           for (const a of window.__ppList.describeRowActions(r, { salePauseWritable: pauseAvailable() })) {
             const rb = document.createElement('button');

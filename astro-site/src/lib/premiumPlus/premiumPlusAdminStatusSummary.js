@@ -64,6 +64,21 @@ export function jstDateTime(iso) {
   return `${d.slice(0, 10)} ${d.slice(11, 16)}`;
 }
 
+/**
+ * その日付が**今日より先**か（JST の暦日で比較）。
+ *
+ * ⚠️ 2026-09-10 の不具合。すでに購入できる会員に、段階公開の予定日
+ *    （例 2026-09-19）を「〜から購入できる状態です」と出していた。
+ *    「今すぐ販売可」で待機日数を飛ばした会員は**今日から買える**ので、
+ *    未来の予定日を購入開始日として出してはいけない。
+ */
+export function isFutureJst(dateStr, nowMs = Date.now()) {
+  const d = String(dateStr || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
+  const todayJst = new Date(nowMs + JST_OFFSET_MS).toISOString().slice(0, 10);
+  return d > todayJst;
+}
+
 /** 販売資格の確定日（0 日目）から各段階に入る JST 暦日 */
 export function phaseSchedule(eligibleAtIso) {
   const t = Date.parse(String(eligibleAtIso || ''));
@@ -94,9 +109,14 @@ export function describeAdminStatusSummary(row) {
   const sched = phaseSchedule(r.eligibleAt);
 
   // ── 1. 購入可否（最初に答える）────────────────────────────
+  // ⚠️ 買える理由が「待機日数を飛ばした」なら予定日は関係ない。
+  //    予定日が未来のときも「その日から買える」と書かない（もう買えているため）。
+  const saleFrom = (sched && sched.sale && r.overrideApplied !== true && !isFutureJst(sched.sale))
+    ? sched.sale : '';
   if (canBuy) {
     add('purchase', '購入可否', '✅ いま購入できます', 'ok',
-      sched && sched.sale ? `${sched.sale} から購入できる状態です` : '');
+      saleFrom ? `${saleFrom} から購入できる状態です`
+        : (r.overrideApplied === true ? '待機日数を飛ばして販売中です' : ''));
   } else if (paused) {
     add('purchase', '購入可否', '⛔ 購入できません（販売を一時停止中）', 'stop',
       '停止を解除すれば、元の段階公開の状態に戻ります');
@@ -134,9 +154,11 @@ export function describeAdminStatusSummary(row) {
   add('phase', '公開の状況',
     r.overrideApplied === true ? '待機日数を飛ばして販売中' : phaseName,
     phase === PP_PHASE.SALE || r.overrideApplied === true ? 'ok' : 'warn',
-    sched
-      ? `資格確定 ${sched.day0} → 予告 ${sched.teaser} → ページ公開 ${sched.preview} → 購入解禁 ${sched.sale}`
-      : '資格確定日が読めないため予定を計算できません');
+    !sched
+      ? '資格確定日が読めないため予定を計算できません'
+      : (r.overrideApplied === true
+        ? `待機日数を飛ばしているため、段階公開の予定（購入解禁 ${sched.sale}）は適用されません`
+        : `資格確定 ${sched.day0} → 予告 ${sched.teaser} → ページ公開 ${sched.preview} → 購入解禁 ${sched.sale}`));
 
   // ── 4. クーポン ─────────────────────────────────────────
   const claimed = r.reopenCouponClaimed === true;
@@ -159,7 +181,7 @@ export function describeAdminStatusSummary(row) {
   // ── 大きな 1 行（色分け用の短いバッジ付き）────────────────
   //    ⚠️ ここは**短く断定**する。長い説明は note へ回す（眼精疲労対策）
   const headline = canBuy
-    ? (sched && sched.sale ? `${sched.sale} から購入できる状態です` : 'いま購入できる状態です')
+    ? (saleFrom ? `${saleFrom} から購入できる状態です` : 'いま購入できる状態です')
     : (paused ? '販売を一時停止中です（購入できません）'
       : (r.eligibility === 'blocked' ? '販売対象外です'
         : (r.eligibility !== 'eligible' ? '販売資格が保留のため購入できません'

@@ -16,7 +16,7 @@ import assert from 'node:assert/strict';
 
 import {
   describeAdminStatusSummary, describeActionConflicts, describeNextActions, describeStageLine,
-  phaseSchedule, jstDate, jstDateTime, daysSinceJst,
+  phaseSchedule, jstDate, jstDateTime, daysSinceJst, isFutureJst,
 } from './premiumPlusAdminStatusSummary.js';
 
 /** 小田元さんの実データ相当（2026-09-09 に本番から read-only で取得した組み合わせ）*/
@@ -417,4 +417,70 @@ test('【要件】対象外には「販売を停止」を出さないが、停�
       .find((a) => a.key === 'salePauseToggle');
     assert.equal(on.label, '販売を再開', `対象外(${el})の停止中に再開が出ない`);
   }
+});
+
+
+// ══ 2026-09-10 の不具合: 買えるのに未来の予定日を「〜から購入できる」と出していた ══
+//
+// 本番の Audenki99@gmail.com で発生。今日 eligible にしたため段階公開の予定は
+// 購入解禁 = 10 日後（9/19）。そこへ「今すぐ販売可」を当てたので**今日から買える**のに、
+// 画面は「2026-09-19 から購入できる状態です」と出続けていた。
+
+const OVERRIDDEN_TODAY = {
+  eligibility: 'eligible', phase: 4, overrideApplied: true,
+  purchaseEnabled: true, showProductPage: true, salePaused: false,
+  // 今日 eligible にした（＝段階公開の予定はすべて未来）
+  eligibleAt: new Date().toISOString(),
+  reopenCouponClaimed: false, reopenLaunch: { state: 'not_started' },
+};
+
+test('【本件】今すぐ販売可の会員に、未来の予定日を「〜から購入できる」と出さない', () => {
+  const s = describeAdminStatusSummary(OVERRIDDEN_TODAY);
+  assert.equal(s.badge, '購入可能');
+  assert.equal(s.headline, 'いま購入できる状態です');
+  assert.doesNotMatch(s.headline, /から購入できる状態です/,
+    '未来の予定日を購入開始日として出している');
+  assert.match(itemOf(s, 'purchase').note, /待機日数を飛ばして販売中/);
+});
+
+test('【本件】待機日数を飛ばしているとき、段階公開の予定は「適用されない」と書く', () => {
+  const note = itemOf(describeAdminStatusSummary(OVERRIDDEN_TODAY), 'phase').note;
+  assert.match(note, /適用されません/, '飛ばしているのに予定表をそのまま並べている');
+});
+
+test('【重要】買える会員の表示に、今日より先の日付を出さない（全組み合わせ）', () => {
+  const bad = [];
+  for (const overrideApplied of [false, true]) {
+    for (const days of [0, 3, 6, 10, 20]) {
+      const at = new Date(Date.now() - days * 86400000).toISOString();
+      const purchaseEnabled = overrideApplied || days >= 10;
+      const s = describeAdminStatusSummary({
+        eligibility: 'eligible', phase: purchaseEnabled ? 4 : 2, overrideApplied,
+        purchaseEnabled, showProductPage: true, salePaused: false, eligibleAt: at,
+        reopenCouponClaimed: false, reopenLaunch: { state: 'not_started' },
+      });
+      if (!purchaseEnabled) continue;
+      // 「〜から購入できる」と書くなら、その日付は**今日以前**でなければならない
+      for (const text of [s.headline, itemOf(s, 'purchase').note]) {
+        const m = String(text).match(/(\d{4}-\d{2}-\d{2}) から購入できる/);
+        if (m && isFutureJst(m[1])) {
+          bad.push(`買えるのに未来日を購入開始日にしている: ${text} (override=${overrideApplied}/${days}日前)`);
+        }
+      }
+    }
+  }
+  assert.deepEqual(bad, [], bad.join('\n  '));
+});
+
+test('段階公開で解禁済みの会員は、これまでどおり解禁日を出す（過去日なので正しい）', () => {
+  const s = describeAdminStatusSummary(row({ phase: 4, purchaseEnabled: true, overrideApplied: false }));
+  assert.match(s.headline, /2026-09-04 から購入できる状態です/);
+});
+
+test('isFutureJst は JST の暦日で比べる', () => {
+  const now = Date.parse('2026-09-10T00:30:00+09:00');
+  assert.equal(isFutureJst('2026-09-11', now), true);
+  assert.equal(isFutureJst('2026-09-10', now), false);
+  assert.equal(isFutureJst('2026-09-09', now), false);
+  assert.equal(isFutureJst('', now), false);
 });
