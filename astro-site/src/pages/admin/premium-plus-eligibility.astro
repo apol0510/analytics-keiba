@@ -84,13 +84,10 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
             <button type="button" id="qClear" class="btn-ghost btn-sm">クリア</button>
           </div>
         </details>
-      <select id="fState" aria-label="状態で絞り込み">
-        <option value="all">すべての状態</option>
-        <option value="review">保留（確認待ち）</option>
-        <option value="eligible">販売できる</option>
-        <option value="immediate">即時販売（CTA表示・購入可）</option>
-        <option value="blocked">販売対象外</option>
-      </select>
+      <!-- ⚠️ 選択肢は主状態の 4 分類だけ。「即時販売」= override 操作の名前なので出さない。
+           「いま購入できる会員」は必ず「購入可能」で拾えること（2026-09-09 確定仕様）。
+           文言は単一源 listStateFilterOptions() が入れる（ここに直書きしない）。 -->
+      <select id="fState" aria-label="状態で絞り込み"></select>
       <select id="fPause" aria-label="販売の一時停止で絞り込み">
         <option value="all">停止・稼働を問わない</option>
         <option value="paused">一時停止中だけ</option>
@@ -132,8 +129,12 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
     <p class="msg" id="message"></p>
     <p class="count" id="count"></p>
-    <!-- 表示 → クリック → 商品ページ到達 の人数と転換率（分母が確定しなければ率は出さない） -->
-    <div class="funnel-bar" id="funnelBar" hidden></div>
+    <!-- ⚠️ 2026-09-09: 表示→クリック→到達→決済開始 の分析は**日常運用では読ませない**。
+         既定で閉じた折りたたみへ入れる（運営サマリーと操作を主表示にするため）。 -->
+    <details class="measure-fold" id="measureFold">
+      <summary>効果測定を開く（表示 → クリック → 到達 → 決済開始）</summary>
+      <div class="funnel-bar" id="funnelBar" hidden></div>
+    </details>
     <!-- 実閲覧の前提。計測開始より前は記録が存在せず確認できない、と常設で書く -->
     <!-- いま販売している対象日（16:30 以降は翌日分） -->
     <p class="measure-note" id="saleTargetNote"></p>
@@ -152,17 +153,10 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
             <th class="c-cust">顧客</th>
             <th class="c-state">状態</th>
             <th class="c-plan">プラン</th>
-            <th class="c-route">Route</th>
-            <th class="c-kind">区分</th>
-            <th class="c-upsell">販売CTA</th>
-            <!-- ⚠️ この 3 列は意味が違う。混同すると「見えているはず」を「届いた」と読み違える。
-                 表示判定 = 設定と条件から導いた「出るはず」
-                 実閲覧   = 本人が画面で見た実測
-                 案内     = こちらから送った実績（CampaignDeliveries） -->
-            <th class="c-display">表示判定</th>
-            <th class="c-realview">実閲覧</th>
-            <th class="c-notified">案内</th>
-            <th class="c-phase">PHASE</th>
+            <!-- ⚠️ 2026-09-09: 日常運用で読むのは「誰が今どの状態か」「次に何を押せるか」だけ。
+                 Route / 区分 / 販売CTA / 表示判定 / 実閲覧 / 案内 / PHASE は
+                 内部の軸・集計なので一覧から外し、詳細パネルと「効果測定」で見る。
+                 （横スクロールを日常運用で要求しないため）-->
             <th class="c-eligible">販売許可日</th>
             <th class="c-updated">最終更新</th>
             <th class="c-ops">操作</th>
@@ -1482,7 +1476,12 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   .ppe .badge.immediate { background: linear-gradient(135deg, var(--gold), var(--gold-2)); color: #2a1d02; border: 1px solid rgba(245,196,81,.7); }
   .ppe .badge.blocked { background-color: #2a1416; color: #fca5a5; border: 1px solid rgba(248,113,113,.4); }
   /* 一時停止。「販売対象外(blocked=赤)」と**見た目で区別**する（琥珀＝止まっているだけ・戻せる） */
-  .ppe .badge.paused { background-color: #3a2a08; color: #fcd34d; border: 1px solid rgba(245,196,81,.55); }
+  .ppe .badge.paused { background-color: #3a1418; color: #fca5a5; border: 1px solid rgba(248,113,113,.6); }
+  /* ═══ 主状態 4 分類のバッジ（2026-09-09 確定仕様）═══
+     購入可能 = 緑 / 販売停止中 = 赤 / 段階表示中 = 黄 / 対象外 = 灰
+     ⚠️ `immediate`（override 操作の名前）は一覧の状態に使わない。 */
+  .ppe .badge.staged { background-color: #3a2a08; color: #fcd34d; border: 1px solid rgba(245,196,81,.55); }
+  .ppe .badge.out { background-color: #1b2334; color: #cbd5e1; border: 1px solid rgba(148,163,184,.45); }
   /* 再募集クーポン取得済み。資格バッジ・停止バッジのどちらとも別の軸 */
   .ppe .badge.coupon { background-color: #0b2f2a; color: #5eead4; border: 1px solid rgba(45,212,191,.5); }
 
@@ -1857,6 +1856,25 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   .ppe .dt-more > summary { cursor: pointer; padding: .7rem .9rem; font-size: .86rem; font-weight: 700; color: #93a4bd; }
   .ppe .dt-more[open] > summary { border-bottom: 1px solid rgba(148,163,184,.18); margin-bottom: .7rem; }
   .ppe .dt-more > .dt-sec { margin: 0 .7rem .7rem; }
+  /* ═══ 一覧: 大きな色バッジ + 結果が分かる操作ボタン（2026-09-09）═══ */
+  .ppe .tbl td.c-state .badge { font-size: .95rem; font-weight: 800; padding: .3rem .8rem; }
+  .ppe .btn-rowact { display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
+    margin-left: .4rem; padding: .5rem .8rem; border-radius: 10px; cursor: pointer;
+    background: #16233c; border: 2px solid rgba(148,163,184,.4); color: #e6edf7; text-align: left; }
+  .ppe .btn-rowact:hover:not([disabled]) { border-color: rgba(148,163,184,.75); }
+  .ppe .btn-rowact[disabled] { opacity: .45; cursor: not-allowed; }
+  .ppe .btn-rowact.tone-stop { border-color: rgba(248,113,113,.7); }
+  .ppe .btn-rowact.tone-ok { border-color: rgba(52,211,153,.7); }
+  .ppe .btn-rowact .bra-l { font-size: .95rem; font-weight: 800; }
+  .ppe .btn-rowact .bra-h { font-size: .7rem; color: #93a4bd; }
+  .ppe .row-warn { display: block; margin-top: 3px; font-size: .74rem; font-weight: 700; color: #fca5a5; }
+  .ppe .measure-fold { margin: .6rem 0; border: 1px solid rgba(148,163,184,.2); border-radius: 10px; background: #0e1729; }
+  .ppe .measure-fold > summary { cursor: pointer; padding: .6rem .85rem; font-size: .82rem; font-weight: 700; color: #93a4bd; }
+  .ppe .measure-fold[open] > summary { border-bottom: 1px solid rgba(148,163,184,.18); }
+  .ppe .measure-fold .funnel-bar { margin: .7rem; }
+  .ppe .notify-open { margin-left: .4rem; padding: .25rem .7rem; border-radius: 8px; cursor: pointer;
+    background: #3a1418; color: #fca5a5; border: 1px solid rgba(248,113,113,.6); font-weight: 700; font-size: .78rem; }
+  .ppe .notify-open:hover { background: #4a1a20; }
   .ppe .kv { display: grid; grid-template-columns: max-content 1fr; gap: .3rem .9rem; font-size: .8rem; margin: 0; }
   .ppe .kv dt { color: #93a4bd; }
   .ppe .kv dd { margin: 0; font-weight: 700; overflow-wrap: anywhere; }
@@ -2479,6 +2497,17 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   window.__ppStatus = {
     describeAdminStatusSummary, describeActionConflicts, describeNextActions, describeStageLine,
   };
+  // 一覧の主状態（4 分類）・運営サマリー・行の操作。内部用語を一覧へ出さないための単一源
+  import {
+    classifyListState, LIST_STATE, LIST_STATE_LABEL, LIST_STATE_TONE,
+    summarizeListStates, listStateFilterOptions, matchesListState,
+    findExactEmailMatch, describeAttention, describeLastChange, describeRowActions,
+  } from '../../lib/premiumPlus/premiumPlusAdminListView.js';
+  window.__ppList = {
+    classifyListState, LIST_STATE, LIST_STATE_LABEL, LIST_STATE_TONE,
+    summarizeListStates, listStateFilterOptions, matchesListState,
+    findExactEmailMatch, describeAttention, describeLastChange, describeRowActions,
+  };
   import {
     buildPlanView, updateSelection, offscreenSelection, labelFor, PLAN_KIND,
   } from '../../lib/marketing/campaignPlanView.js';
@@ -2738,12 +2767,18 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     //    どのフィルタにも出てこなくなり（キーが paused に化けるため）、
     //    件数（サーバーは eligibility で数える）とも食い違った。
     //    停止は pauseBadge() が**別バッジ**として添え、fPause が別途絞り込む。
+    /**
+     * 一覧の主状態。**4 分類だけ**（購入可能 / 販売停止中 / 段階表示中 / 対象外）。
+     * ⚠️ 判定はここで作らない（単一源 premiumPlusAdminListView.js）。
+     *    旧実装は override を「即時販売」、PHASE 4 を「販売中」と別扱いし、
+     *    停止を見ていなかったため「購入可能な会員」を取り逃していた（2026-09-09 MK 指摘）。
+     */
     function classify(r) {
-      if (r.eligibility === 'blocked') return { key: 'blocked', badge: 'blocked', short: '販売対象外', order: 4 };
-      if (r.eligibility !== 'eligible') return { key: 'review', badge: 'review', short: '保留', order: 1 };
-      if (r.overrideApplied) return { key: 'immediate', badge: 'immediate', short: '即時販売', order: 3 };
-      if (r.phase === 4) return { key: 'sale', badge: 'sale', short: '販売中', order: 2 };
-      return { key: 'staged', badge: 'staged', short: 'PHASE ' + r.phase, order: 2 };
+      const L = window.__ppList;
+      if (!L) return { key: 'staged', badge: 'staged', short: '—', order: 9 };
+      const key = L.classifyListState(r);
+      const order = { sale: 1, paused: 2, staged: 3, out: 4 }[key] || 9;
+      return { key, badge: key, short: L.LIST_STATE_LABEL[key], tone: L.LIST_STATE_TONE[key], order };
     }
     /**
      * 販売の一時停止が本番で使えるか（`lastData.salePause`）。
@@ -2898,15 +2933,34 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
     let lastData = null;
 
+    /** 状態フィルタの選択肢を単一源から入れる（文言を画面に直書きしない） */
+    function fillStateFilter() {
+      const sel = $('fState');
+      if (!sel || !window.__ppList || sel.options.length) return;
+      for (const o of window.__ppList.listStateFilterOptions()) {
+        const op = document.createElement('option');
+        op.value = o.value; op.textContent = o.label;
+        sel.appendChild(op);
+      }
+    }
+
+    /**
+     * メール完全一致で 1 件だけなら、その会員の詳細・操作パネルをすぐ開く。
+     * ⚠️ 一覧から再度探させない（2026-09-09 MK 指示）。2 件以上 / 0 件では飛ばさない。
+     */
+    function openExactMatchIfSingle() {
+      if (!window.__ppList || !lastData) return false;
+      const q = ($('q') && $('q').value) || '';
+      const hit = window.__ppList.findExactEmailMatch(lastData.rows || [], q);
+      if (!hit || dtRecordId === hit.recordId) return false;
+      openDetail(hit.recordId);
+      return true;
+    }
+
     function matches(r) {
-      const st = classify(r).key;
-      const fs = $('fState').value;
-      if (fs === 'review' && st !== 'review') return false;
-      if (fs === 'eligible' && !(st === 'staged' || st === 'sale')) return false;
-      if (fs === 'immediate' && st !== 'immediate') return false;
-      if (fs === 'blocked' && st !== 'blocked') return false;
-      // 一時停止は資格とは**別の軸**なので独立して絞り込む
-      // （資格フィルタから停止中の会員を消さない）
+      // 主状態フィルタ（4 分類）。判定は単一源
+      if (window.__ppList && !window.__ppList.matchesListState(r, $('fState').value)) return false;
+      // 一時停止は主状態にも含まれるが、独立した軸としても絞り込めるようにしておく
       const fp = $('fPause').value;
       if (fp === 'paused' && r.salePaused !== true) return false;
       if (fp === 'active' && r.salePaused === true) return false;
@@ -2997,13 +3051,15 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         return;
       }
       renderPauseAvailability();
-      const items = [
-        ['即時販売', c.immediate, 'immediate', 'immediate'],
-        ['販売可', c.eligible, 'eligible', 'eligible'],
-        ['保留', c.review, 'review', 'review'],
-        ['販売対象外', c.blocked, 'blocked', 'blocked'],
-        ['候補', c.total, '', 'all'],
-      ];
+      // ⚠️ 2026-09-09: 運営サマリーは主状態の 4 分類だけ（「購入可能 5名 / 停止 0名 …」）。
+      //    件数は**いま画面に出ている行から数える**（内部の軸の内訳ではない）。
+      //    押すとその状態で絞り込む。判定・文言は単一源。
+      const L = window.__ppList;
+      const rowsForSum = (lastData && lastData.rows) || [];
+      const items = L
+        ? L.summarizeListStates(rowsForSum).items.map((i) => [i.label + ' ' + i.count + '名', null, i.key, i.key])
+          .concat([['候補 ' + rowsForSum.length + '名', null, '', 'all']])
+        : [['候補', c.total, '', 'all']];
       // 一時停止は資格の内訳ではないので、区切ってから別に出す
       // （販売可・即時販売の数からは引かない＝資格は保持されているため）
       const pausedCount = c.salePaused == null ? 0 : c.salePaused;
@@ -3234,6 +3290,22 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       el.className = 'measure-note'
         + (!notified.available || notified.needsAction > 0 ? ' warn' : '');
       el.textContent = parts.filter(Boolean).join(' ／ ');
+      // ⚠️ 2026-09-09: 要対応は**数字だけで終わらせない**。
+      //    「販売可なのに未案内」の対象会員をその場で開けるようにする。
+      if (notified.available && notified.needsAction > 0) {
+        const a = document.createElement('button');
+        a.type = 'button';
+        a.className = 'notify-open';
+        a.textContent = `要対応 ${notified.needsAction} 名を開く`;
+        a.addEventListener('click', () => {
+          // 購入可能な会員に絞る（＝売れる状態なのに案内が届いていない相手）
+          $('fState').value = 'sale';
+          if ($('fNotified')) $('fNotified').value = 'never';
+          render();
+        });
+        el.appendChild(document.createTextNode(' '));
+        el.appendChild(a);
+      }
     }
 
     /**
@@ -3501,6 +3573,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 
     function render() {
       if (!lastData) return;
+      fillStateFilter();
       renderOpWarning();
       const data = lastData;
       // 取得が確定していないなら集計も出さない（誤った販売判断を招く）
@@ -3511,6 +3584,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         + (data.overrideEnabled ? ' / 今すぐ販売可: 利用可' : ' / 今すぐ販売可: 無効（PREMIUM_PLUS_OVERRIDE_READY 未設定）');
 
       renderFunnelBar(data.truncated ? null : (data.funnel || null));
+      // 検索が 1 件に絞れているなら、そのまま操作できる状態にする
+      openExactMatchIfSingle();
       // 段階での絞り込み（未知の値では絞らない＝人を隠さない）
       let base = (data.rows || []).filter(matches);
       const stage = $('fFunnel') ? $('fFunnel').value : '';
@@ -3530,6 +3605,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         c1.appendChild(em);
         tr.appendChild(c1);
 
+        // 状態は**大きな色バッジ**で（細かい文字を追わせない）
         const c2 = document.createElement('td');
         c2.className = 'c-state';
         const badge = document.createElement('span');
@@ -3565,34 +3641,13 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           cP.appendChild(sb);
         }
         tr.appendChild(cP);
-        tr.appendChild(td('c-route', 'Route', ROUTE_SHORT[r.route] || r.route));
 
-        // 区分（表示専用。route 未成立でレビュー対象に出している理由を明示する）
-        const cK = document.createElement('td');
-        cK.className = 'c-kind';
-        cK.setAttribute('data-label', '区分');
-        const kb = document.createElement('span');
-        kb.className = 'kind ' + (r.candidateKind || '');
-        kb.textContent = kindShort(r);
-        if (r.candidateNote) kb.title = r.candidateNote;
-        cK.appendChild(kb);
-        tr.appendChild(cK);
-        // 販売CTA（管理者が設定した値）/ 表示判定（条件から導いた結果）/ 実閲覧（実測）を分けて出す
-        tr.appendChild(td('c-upsell', '販売CTA', UPSELL_LABEL[r.upsellTarget] || '自動',
-          (r.upsellTarget || 'auto') === 'auto' ? 'muted' : ''));
-        const cD = document.createElement('td');
-        cD.className = 'c-display';
-        cD.setAttribute('data-label', '表示判定');
-        cD.textContent = r.upsellDisplay || '—';
-        cD.title = `判定（この人には出るはず）。実際に見た記録ではありません。${r.upsellReason ? '\n理由: ' + r.upsellReason : ''}`;
-        if (!r.upsellDisplay || r.upsellDisplay === '表示なし') cD.classList.add('muted');
-        tr.appendChild(cD);
-        tr.appendChild(realViewCell(r));
-        tr.appendChild(notifiedCell(r));
-        tr.appendChild(td('c-phase', 'PHASE', String(r.phase)));
+        // ⚠️ 区分 / 販売CTA / 表示判定 は内部の軸なので**一覧に出さない**（詳細パネルで確認する）。
         tr.appendChild(td('c-eligible', '販売許可日', fmtDate(r.eligibleAt), r.eligibleAt ? '' : 'muted'));
         tr.appendChild(td('c-updated', '最終更新', fmtDate(r.updatedAt), r.updatedAt ? '' : 'muted'));
 
+        // ⚠️ 次に起こる結果をボタン名にする（販売中→「販売を停止」/ 停止中→「販売を再開」）。
+        //    出す操作は 1 個だけ。それ以外は詳細パネルへ（一覧に全部並べない）。
         const c8 = document.createElement('td');
         c8.className = 'c-ops';
         const btn = document.createElement('button');
@@ -3600,9 +3655,40 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         btn.className = 'btn-detail';
         btn.textContent = '詳細・操作';
         btn.addEventListener('click', () => openDetail(r.recordId));
-        c8.appendChild(btn);
+        if (window.__ppList) {
+          for (const a of window.__ppList.describeRowActions(r, { salePauseWritable: pauseAvailable() })) {
+            const rb = document.createElement('button');
+            rb.type = 'button';
+            rb.className = 'btn-rowact tone-' + (a.tone || 'muted');
+            rb.dataset.rowact = a.key;
+            rb.disabled = a.enabled !== true;
+            rb.title = a.enabled === true ? a.hint : a.reason;
+            const rl = document.createElement('span'); rl.className = 'bra-l'; rl.textContent = a.label;
+            const rh = document.createElement('span'); rh.className = 'bra-h';
+            rh.textContent = a.enabled === true ? a.hint : a.reason;
+            rb.appendChild(rl); rb.appendChild(rh);
+            // ⚠️ 実行処理は詳細パネルの 1 か所だけ。ここでは開いて委譲する
+            //    （確認ダイアログ・履歴記録・その場更新を二重実装しない）。
+            rb.addEventListener('click', () => {
+              openDetail(r.recordId);
+              const t = $('dtBody') && $('dtBody').querySelector('[data-op="salePauseToggle"]');
+              if (t && !t.disabled) t.click();
+            });
+            c8.appendChild(rb);
+          }
+        }
         tr.appendChild(c8);
 
+        if (window.__ppList) {
+          const warns = window.__ppList.describeAttention(r);
+          if (warns.length) {
+            const wcell = c1;
+            for (const w of warns) {
+              const wp = document.createElement('span'); wp.className = 'row-warn'; wp.textContent = '⚠️ ' + w;
+              wcell.appendChild(wp);
+            }
+          }
+        }
         tb.appendChild(tr);
       }
       // ⚠️ 取得が確定していないときに件数を出さない（0 件や不正確な全体件数を見せない）

@@ -79,10 +79,16 @@ test('ログにアドレス・レコード内容を出さない', () => {
 });
 
 // ── 画面側 ────────────────────────────────────────────────
-test('【重要】一覧に「案内」列がある（列ヘッダと本体の両方）', () => {
-  assert.match(PAGE, /<th class="c-notified">案内<\/th>/);
-  assert.match(PAGEC, /function notifiedCell\(/);
-  assert.match(PAGEC, /tr\.appendChild\(notifiedCell\(r\)\)/);
+test('【重要】案内の状況は失われていない（一覧からは外し、要対応は開けるようにする）', () => {
+  // ⚠️ 2026-09-09 確定仕様: 案内・実閲覧・表示判定は**集計**なので一覧の列から外した
+  //    （日常運用で読むのは「誰が今どの状態か」「次に何を押せるか」だけ）。
+  //    ただし判定と要対応の導線は残す。数字だけで終わらせない。
+  assert.ok(!PAGE.includes('<th class="c-notified">案内</th>'), '案内列が一覧に残っている');
+  assert.match(PAGEC, /function notifiedCell\(/, '案内の判定そのものを消してしまっている');
+  assert.match(PAGEC, /function renderNotifyNote\(/);
+  // 要対応は対象会員をその場で開ける（リンク/ボタン）
+  assert.match(PAGEC, /要対応 \$\{notified\.needsAction\} 名を開く/);
+  assert.match(PAGEC, /\$\('fState'\)\.value = 'sale'/, '要対応から購入可能へ絞り込めていない');
 });
 
 test('【重要】「販売可なのに未案内」を要対応として明示する', () => {
@@ -105,10 +111,16 @@ test('検索・再読込の経路でも案内の集計を落とさない', () =>
   assert.ok(merges.length >= 2, `案内の引き継ぎが ${merges.length} 箇所（検索と再読込の 2 経路が必要）`);
 });
 
-test('案内・実閲覧・表示判定を同じ列にまとめていない', () => {
-  for (const th of ['<th class="c-display">表示判定</th>', '<th class="c-realview">実閲覧</th>', '<th class="c-notified">案内</th>']) {
-    assert.ok(PAGE.includes(th), `列が消えている: ${th}`);
+test('案内・実閲覧・表示判定は日常運用の主表示に出さない（意味の混同を防ぐ）', () => {
+  // 3 つは意味が違う（出るはず / 実測 / 送った実績）。混ぜて 1 列にするのは禁止のままだが、
+  // 2026-09-09 以降は**一覧に出さない**（詳細パネルと「効果測定」で見る）。
+  for (const th of ['<th class="c-display">表示判定</th>', '<th class="c-realview">実閲覧</th>',
+    '<th class="c-notified">案内</th>']) {
+    assert.ok(!PAGE.includes(th), `集計列が一覧に残っている: ${th}`);
   }
+  // 効果測定は既定で閉じた折りたたみに入っている
+  assert.match(PAGE, /<details class="measure-fold" id="measureFold">/);
+  assert.match(PAGE, /効果測定を開く/);
 });
 
 // ── 判定側の不変条件 ────────────────────────────────────────
