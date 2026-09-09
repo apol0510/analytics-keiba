@@ -243,15 +243,25 @@ test('日数は JST の暦日で数える（当日 = 0 日目）', () => {
 });
 
 // ── 販売状態はトグル 1 つ ────────────────────────────────────
-test('【要件】販売中なら「販売中」ボタン、停止中なら「販売停止中」ボタン（トグル 1 つ）', () => {
+test('【要件】ボタン名は**押すと起こること**（状態名をボタンにしない）', () => {
+  // ⚠️ 2026-09-10 MK 指摘: 「販売停止中」は状態表示であって操作名ではない。
+  //    いまの状態は上の要約（バッジ・1 行）が伝え、ボタンには結果を書く。
   const selling = describeNextActions(row({ phase: 4, purchaseEnabled: true, reopenLaunch: LAUNCH_START }), CAPS);
   const t1 = selling.find((a) => a.key === 'salePauseToggle');
-  assert.equal(t1.label, '販売中');
+  assert.equal(t1.label, '販売を停止');
   assert.equal(t1.kind, 'pause');
+  assert.equal(t1.danger, true, '停止が危険操作になっていない');
   const paused = describeNextActions(row({ salePaused: true, purchaseEnabled: false, reopenLaunch: LAUNCH_START }), CAPS);
   const t2 = paused.find((a) => a.key === 'salePauseToggle');
-  assert.equal(t2.label, '販売停止中');
+  assert.equal(t2.label, '販売を再開');
   assert.equal(t2.kind, 'resume');
+  assert.equal(t2.danger, false, '再開に確認を増やしている');
+  // 状態名をボタン名に使っていない
+  for (const t of [t1, t2]) {
+    for (const w of ['販売中', '販売停止中']) {
+      assert.notEqual(t.label, w, `状態名がボタン名になっている: ${w}`);
+    }
+  }
 });
 
 test('【要件】販売の切替は常に 1 つだけ（停止と再開を並べない）', () => {
@@ -335,11 +345,18 @@ test('【重要】状態の全組み合わせで、要約と大ボタンが矛�
             if (canBuy && !/購入可能/.test(stage)) bad.push(`バッジ=購入可能 なのに段階が違う: ${stage} (${tag})`);
             if (salePaused && !/販売停止中/.test(stage)) bad.push(`停止中なのに段階が違う: ${stage} (${tag})`);
             if (salePaused && canBuy) bad.push(`停止中なのに購入可能: ${tag}`);
-            // 3. 販売切替は必ず 1 つ、ラベルは現状を表す
+            // 3. 販売切替は「意味があるときだけ」1 つ。名前は結果を表す
+            //    ⚠️ 対象外（資格なし）で停止していない会員には出さない（結果が変わらない）。
+            //       停止中なら**資格に関係なく必ず 1 つ出す**（戻せない状態を作らない）。
             const toggles = acts.filter((a) => a.kind === 'pause' || a.kind === 'resume');
-            if (toggles.length !== 1) bad.push(`販売切替が ${toggles.length} 個: ${tag}`);
-            else if ((toggles[0].label === '販売停止中') !== salePaused) {
-              bad.push(`トグルのラベルが現状と逆: ${toggles[0].label} (${tag})`);
+            const shouldShow = salePaused || eligibility === 'eligible';
+            if (shouldShow && toggles.length !== 1) bad.push(`販売切替が ${toggles.length} 個: ${tag}`);
+            if (!shouldShow && toggles.length !== 0) {
+              bad.push(`結果が変わらない販売切替を出している: ${tag}`);
+            }
+            if (salePaused && toggles.length !== 1) bad.push(`停止中に再開できない: ${tag}`);
+            if (toggles.length === 1 && (toggles[0].label === '販売を再開') !== salePaused) {
+              bad.push(`ボタン名が状態と噛み合っていない: ${toggles[0].label} (${tag})`);
             }
             // 4. 押せない操作には必ず理由がある
             for (const a of acts) {
@@ -364,5 +381,40 @@ test('【要件】上部の主表示に内部用語（PHASE / override / eligibi
       assert.ok(!shown.includes(w), `主表示に内部用語 "${w}" が出ている: ${shown.slice(0, 120)}`);
     }
     assert.ok(!shown.includes('再募集'), `主表示に誤読語「再募集」が出ている`);
+  }
+});
+
+// ══ 2026-09-10: 停止 ⇄ 再開が必ず往復できる ══════════════════════
+
+test('【最優先】停止中はどのクーポン期間の状態でも「販売を再開」できる', () => {
+  for (const state of ['not_started', 'live', 'incomplete', 'paused_after_start', 'unknown']) {
+    const acts = describeNextActions(row({
+      salePaused: true, purchaseEnabled: false, phase: 1,
+      reopenLaunch: { state, action: LAUNCH_START.action },
+    }), CAPS);
+    const t = acts.find((a) => a.key === 'salePauseToggle');
+    assert.ok(t, `再開の操作が無い: ${state}`);
+    assert.equal(t.label, '販売を再開');
+    assert.equal(t.enabled, true, `押せない: ${state}`);
+  }
+});
+
+test('【最優先】販売中 ⇄ 停止中でボタン名が往復する', () => {
+  const a = describeNextActions(row({ phase: 4, purchaseEnabled: true, reopenLaunch: LAUNCH_START }), CAPS)
+    .find((x) => x.key === 'salePauseToggle');
+  const b = describeNextActions(row({ salePaused: true, purchaseEnabled: false, reopenLaunch: LAUNCH_START }), CAPS)
+    .find((x) => x.key === 'salePauseToggle');
+  assert.deepEqual([a.label, b.label], ['販売を停止', '販売を再開']);
+  assert.deepEqual([a.kind, b.kind], ['pause', 'resume']);
+});
+
+test('【要件】対象外には「販売を停止」を出さないが、停止中なら再開を出す', () => {
+  for (const el of ['blocked', 'review']) {
+    const off = describeNextActions(row({ eligibility: el, purchaseEnabled: false, salePaused: false }), CAPS)
+      .filter((a) => a.key === 'salePauseToggle');
+    assert.deepEqual(off, [], `対象外(${el})に結果の変わらない操作が出ている`);
+    const on = describeNextActions(row({ eligibility: el, purchaseEnabled: false, salePaused: true }), CAPS)
+      .find((a) => a.key === 'salePauseToggle');
+    assert.equal(on.label, '販売を再開', `対象外(${el})の停止中に再開が出ない`);
   }
 });

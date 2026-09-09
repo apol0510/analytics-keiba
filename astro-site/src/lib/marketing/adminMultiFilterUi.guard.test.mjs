@@ -144,14 +144,20 @@ test('guard(api): 許可値以外は 400（formula へ直結させない）', ()
 
 /* ── 説明性とレイアウト（2026-08-03）───────────────────────────── */
 
-test('guard(ui): Email 検索は補助機能として畳まれている', () => {
-  for (const id of ['q', 'mkQ', 'cbQ']) {
+test('guard(ui): Email 検索は補助機能として畳まれている（Plus 一覧の検索を除く）', () => {
+  // ⚠️ 2026-09-10 変更: Premium Plus 一覧の検索（id="q"）だけは
+  //    **日常運用の主入口**なので常時展開する（MK 指示）。
+  //    マーケティング / カムバックの検索は従来どおり補助機能として畳む。
+  assert.match(PAGE, /<div class="email-search open" id="qBox">/, 'Plus 一覧の検索が主入口になっていない');
+  for (const id of ['mkQ', 'cbQ']) {
     assert.match(PAGE, new RegExp(`<details class="email-search" id="${id}Box">`), `${id} が折りたたみでない`);
     assert.equal(new RegExp(`<details class="email-search" id="${id}Box" open`).test(PAGE), false,
       `${id} が初期から開いている`);
     assert.ok(PAGE.includes(`id="${id}Badge"`), `${id} のバッジが無い`);
     assert.ok(PAGE.includes(`id="${id}Clear"`), `${id} のクリアが無い`);
   }
+  assert.ok(PAGE.includes('id="qBadge"') && PAGE.includes('id="qClear"'),
+    'Plus 一覧の検索にバッジ / クリアが無い');
   assert.match(PAGE, /特定の顧客をメールアドレスで探す場合だけ使用します。/, '用途の説明が無い');
   assert.match(PAGE, /Email 条件あり/, '入力中のバッジ文言が無い');
   const css = STYLE.slice(STYLE.indexOf('.ppe .email-search'));

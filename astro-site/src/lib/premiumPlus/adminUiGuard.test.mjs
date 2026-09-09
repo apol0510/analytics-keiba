@@ -143,7 +143,10 @@ test('状態フィルター 5 種 + Route フィルター + Email 検索（ク�
   assert.ok(!PAGE.includes('<option value="immediate">'), '「即時販売」が状態フィルタに残っている');
   assert.ok(PAGE.includes('<option value="sanrenpuku">'));
   assert.ok(PAGE.includes('<option value="premium_30d">'));
-  assert.match(PAGE, /id="q"[^>]*placeholder="氏名 または アドレスの一部"/);
+  // ⚠️ 2026-09-10: 検索は日常運用の主入口なので常時展開し、
+  //    完全一致で自動的に詳細が開くことを placeholder でも伝える。
+  assert.match(PAGE, /id="q"[^>]*placeholder="[^"]*完全一致[^"]*"/);
+  assert.match(PAGE, /<div class="email-search open" id="qBox">/, '検索が折りたたまれている');
   // 手元に完全なアドレスが無くても引けること（氏名でもアドレスの一部でも絞り込める）
   assert.match(PAGE, /\$\{String\(r\.email \|\| ''\)\} \$\{String\(r\.name \|\| ''\)\}/);
   assert.match(PAGE, /hay\.includes\(q\)/);
@@ -165,7 +168,7 @@ test('並び順: 購入可能 → 販売停止中 → 段階表示中 → 対象
 test('サマリーは主状態 4 分類の運営サマリー・クリックでフィルター', () => {
   // 「購入可能 5名 / 販売停止中 0名 / 段階表示中 13名 / 対象外 N名」を単一源から作る
   assert.match(PAGE, /L\.summarizeListStates\(rowsForSum\)\.items/);
-  assert.match(PAGE, /i\.label \+ ' ' \+ i\.count \+ '名'/);
+  assert.match(PAGE, /card\.className = 'sumcard tone-' \+ it\.tone/);
   assert.ok(!PAGE.includes("['即時販売', c.immediate"), '内部の軸がサマリーに残っている');
   assert.match(PAGE, /\$\('fState'\)\.value = filter/);
   // ROUTE は補助表示（別行）

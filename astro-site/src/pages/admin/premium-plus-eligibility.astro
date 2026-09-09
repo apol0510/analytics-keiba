@@ -71,23 +71,25 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     <div class="sumsub" id="summarySub"></div>
 
     <div class="toolbar">
-      <details class="email-search" id="qBox">
-          <summary class="email-summary">🔎 個別検索（氏名・アドレス）<span class="email-badge" id="qBadge" hidden>検索条件あり</span></summary>
-          <p class="email-note">
-            特定の顧客を探すときだけ使います。<b>氏名の一部・アドレスの一部</b>でも引けます
-            （例: <code>Daniel</code> / <code>0510apolone</code> / <code>tori</code>）。
-            販売候補の一覧に居ない人も検索できます。Enter で実行。
-          </p>
+      <!-- ⚠️ 2026-09-10: 個別検索は**日常運用の主入口**。折りたたまず常時展開する。
+           アドレス完全一致 1 件なら詳細・操作パネルを自動で開く（一覧から探し直させない）。 -->
+      <div class="email-search open" id="qBox">
+          <label class="email-summary" for="q">🔎 会員を検索<span class="email-badge" id="qBadge" hidden>検索条件あり</span></label>
           <div class="email-row">
-            <input type="search" id="q" placeholder="氏名 または アドレスの一部" autocomplete="off" aria-label="氏名・アドレス検索" />
-            <button type="button" id="qSearch" class="btn-ghost btn-sm">検索</button>
-            <button type="button" id="qClear" class="btn-ghost btn-sm">クリア</button>
+            <input type="search" id="q" placeholder="メールアドレス（完全一致で自動で開きます）／ 氏名・アドレスの一部" autocomplete="off" aria-label="氏名・アドレス検索" />
+            <button type="button" id="qSearch" class="btn-ghost">検索</button>
+            <button type="button" id="qClear" class="btn-ghost">クリア</button>
           </div>
-        </details>
+          <p class="email-note">氏名の一部・アドレスの一部でも引けます。Enter で実行。</p>
+        </div>
       <!-- ⚠️ 選択肢は主状態の 4 分類だけ。「即時販売」= override 操作の名前なので出さない。
            「いま購入できる会員」は必ず「購入可能」で拾えること（2026-09-09 確定仕様）。
            文言は単一源 listStateFilterOptions() が入れる（ここに直書きしない）。 -->
       <select id="fState" aria-label="状態で絞り込み"></select>
+      <!-- ⚠️ 2026-09-10: 通常運用の主表示は「検索」と「状態」だけ。
+           以下の細かい条件は折りたたみへ（既定は閉じる）。削除はしない。 -->
+      <details class="more-filters" id="moreFilters">
+      <summary>詳細条件を開く</summary>
       <select id="fPause" aria-label="販売の一時停止で絞り込み">
         <option value="all">停止・稼働を問わない</option>
         <option value="paused">一時停止中だけ</option>
@@ -124,6 +126,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         <option value="default">並び: 既定（状態順）</option>
         <option value="reaction">並び: 反応が新しい順</option>
       </select>
+      </details>
       <label class="chk"><input type="checkbox" id="autoRefresh" checked /> 自動更新</label>
     </div>
 
@@ -1876,7 +1879,58 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     background: #3a1418; color: #fca5a5; border: 1px solid rgba(248,113,113,.6); font-weight: 700; font-size: .78rem; }
   .ppe .notify-open:hover { background: #4a1a20; }
   /* 「対象外」の理由（販売対象外 / 資格保留）。バッジの下に短く添える */
-  .ppe .state-reason { display: block; margin-top: 3px; font-size: .76rem; font-weight: 700; color: #cbd5e1; }
+  .ppe .state-reason { display: block; margin-top: 4px; font-size: .9rem; font-weight: 700; color: #cbd5e1; }
+
+  /* ═══════════════════════════════════════════════════════════════
+     2026-09-10 確定仕様: 細かい文字を読まずに運営できる大きさへ。
+     ⚠️ ここで下げた文字サイズを再び小さくしないこと（眼精疲労対策）。
+     ═══════════════════════════════════════════════════════════════ */
+  .ppe { font-size: 16px; line-height: 1.75; }
+  .ppe .tbl { font-size: 1rem; }
+  .ppe .tbl th { font-size: .92rem; padding: .7rem .6rem; }
+  .ppe .tbl td { padding: .85rem .6rem; }
+  .ppe .tbl td.c-cust .em { font-size: 1.05rem; font-weight: 700; }
+  .ppe select, .ppe input[type="search"], .ppe input[type="text"] { font-size: 1rem; padding: .5rem .7rem; }
+  .ppe .chk { font-size: .95rem; }
+  .ppe .measure-note { font-size: .9rem; line-height: 1.8; }
+  /* 薄すぎる文字を減らす */
+  .ppe .muted { color: #a9b6c9; }
+
+  /* 上部の 4 カード（大きく・押すと絞り込む） */
+  .ppe .sumcards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: .8rem; margin: .2rem 0 .9rem; }
+  .ppe .sumcard { display: flex; flex-direction: column; align-items: center; gap: .2rem; cursor: pointer;
+    padding: 1rem .8rem; border-radius: 14px; background: #111c33; border: 2px solid rgba(148,163,184,.3); color: #e6edf7; }
+  .ppe .sumcard:hover { border-color: rgba(148,163,184,.7); }
+  .ppe .sumcard .sc-n { font-size: 2.1rem; font-weight: 800; line-height: 1.1; }
+  .ppe .sumcard .sc-l { font-size: 1rem; font-weight: 700; }
+  .ppe .sumcard.tone-ok { border-color: rgba(52,211,153,.65); }
+  .ppe .sumcard.tone-ok .sc-n, .ppe .sumcard.tone-ok .sc-l { color: #6ee7b7; }
+  .ppe .sumcard.tone-stop { border-color: rgba(248,113,113,.65); }
+  .ppe .sumcard.tone-stop .sc-n, .ppe .sumcard.tone-stop .sc-l { color: #fca5a5; }
+  .ppe .sumcard.tone-warn { border-color: rgba(245,196,81,.65); }
+  .ppe .sumcard.tone-warn .sc-n, .ppe .sumcard.tone-warn .sc-l { color: #f5c451; }
+  .ppe .sumcard.tone-muted .sc-n, .ppe .sumcard.tone-muted .sc-l { color: #cbd5e1; }
+  .ppe .sumsub { font-size: .95rem; color: #a9b6c9; margin-bottom: .5rem; }
+
+  /* 会員行はどこを押しても詳細・操作へ */
+  .ppe .tbl tr.row-clickable { cursor: pointer; }
+  .ppe .tbl tr.row-clickable:hover { background: rgba(148,163,184,.08); }
+  .ppe .tbl tr.row-clickable:focus-visible { outline: 2px solid rgba(96,165,250,.8); outline-offset: -2px; }
+
+  /* 検索を主入口として大きく出す */
+  .ppe .email-search.open { display: block; width: 100%; padding: .9rem 1rem; margin-bottom: .7rem;
+    border: 2px solid rgba(96,165,250,.4); border-radius: 12px; background: #101c30; }
+  .ppe .email-search.open .email-summary { display: block; font-size: 1.05rem; font-weight: 800; margin-bottom: .55rem; }
+  .ppe .email-search.open .email-row { display: flex; gap: .5rem; flex-wrap: wrap; }
+  .ppe .email-search.open #q { flex: 1 1 420px; font-size: 1.05rem; padding: .65rem .8rem; }
+  .ppe .email-search.open .email-note { margin: .5rem 0 0; font-size: .88rem; color: #a9b6c9; }
+
+  /* 細かい条件は折りたたみ（既定は閉じる） */
+  .ppe .more-filters { border: 1px solid rgba(148,163,184,.25); border-radius: 10px; background: #0e1729; }
+  .ppe .more-filters > summary { cursor: pointer; padding: .6rem .9rem; font-size: .95rem; font-weight: 700; color: #a9b6c9; }
+  .ppe .more-filters[open] { padding-bottom: .7rem; }
+  .ppe .more-filters[open] > summary { border-bottom: 1px solid rgba(148,163,184,.18); margin-bottom: .6rem; }
+  .ppe .more-filters select, .ppe .more-filters .chk { margin: .25rem .4rem; }
   .ppe .kv { display: grid; grid-template-columns: max-content 1fr; gap: .3rem .9rem; font-size: .8rem; margin: 0; }
   .ppe .kv dt { color: #93a4bd; }
   .ppe .kv dd { margin: 0; font-weight: 700; overflow-wrap: anywhere; }
@@ -3055,15 +3109,34 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         return;
       }
       renderPauseAvailability();
-      // ⚠️ 2026-09-09: 運営サマリーは主状態の 4 分類だけ（「購入可能 5名 / 停止 0名 …」）。
-      //    件数は**いま画面に出ている行から数える**（内部の軸の内訳ではない）。
-      //    押すとその状態で絞り込む。判定・文言は単一源。
+      // ⚠️ 2026-09-10: 上部は**大きな 4 カード**（購入可能 / 販売停止中 / 段階表示中 / 対象外）。
+      //    押すとその状態だけに絞り込む。ラベルと件数を別要素で出す
+      //    （以前は件数を文言に混ぜたため「購入可能 4名 0」と余計な 0 が出ていた）。
       const L = window.__ppList;
       const rowsForSum = (lastData && lastData.rows) || [];
-      const items = L
-        ? L.summarizeListStates(rowsForSum).items.map((i) => [i.label + ' ' + i.count + '名', null, i.key, i.key])
-          .concat([['候補 ' + rowsForSum.length + '名', null, '', 'all']])
-        : [['候補', c.total, '', 'all']];
+      if (L) {
+        bar.className = 'sumcards';
+        for (const it of L.summarizeListStates(rowsForSum).items) {
+          const card = document.createElement('button');
+          card.type = 'button';
+          card.className = 'sumcard tone-' + it.tone;
+          card.dataset.state = it.key;
+          card.title = it.label + 'の会員だけを表示する';
+          const n = document.createElement('span'); n.className = 'sc-n'; n.textContent = String(it.count);
+          const l = document.createElement('span'); l.className = 'sc-l'; l.textContent = it.label;
+          card.appendChild(n); card.appendChild(l);
+          card.addEventListener('click', () => {
+            $('fState').value = it.key; $('fPause').value = 'all'; $('fCoupon').value = 'all';
+            if ($('fNotified')) $('fNotified').value = 'all';
+            render();
+          });
+          bar.appendChild(card);
+        }
+        const sub = $('summarySub');
+        if (sub) sub.textContent = `候補 ${rowsForSum.length} 名`;
+        return;
+      }
+      const items = [['候補', c.total, '', 'all']];
       // 一時停止は資格の内訳ではないので、区切ってから別に出す
       // （販売可・即時販売の数からは引かない＝資格は保持されているため）
       const pausedCount = c.salePaused == null ? 0 : c.salePaused;
@@ -3601,6 +3674,20 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         const st = classify(r);
         const tr = document.createElement('tr');
 
+        // ⚠️ 2026-09-10: 行のどこを押しても詳細・操作パネルを開く（探し直させない）。
+        //    右端の「詳細・操作」ボタンは**残す**（見つけやすさのため）。
+        tr.classList.add('row-clickable');
+        tr.tabIndex = 0;
+        tr.title = '詳細・操作をひらく';
+        const openThis = (ev) => {
+          // 行内のボタン・リンクを押したときは行のクリックとして扱わない
+          if (ev && ev.target && ev.target.closest('button, a, input, select')) return;
+          openDetail(r.recordId);
+        };
+        tr.addEventListener('click', openThis);
+        tr.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); openDetail(r.recordId); }
+        });
         const c1 = td('c-cust', '', undefined);
         const em = document.createElement('span');
         em.className = 'em';

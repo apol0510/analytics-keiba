@@ -418,8 +418,10 @@ test('一覧が会員ごとの状態と期限を返す（開始した人だけ�
   const before = await post({ action: 'list' });
   assert.equal(rowOf(before, A).reopenLaunch.state, LAUNCH_STATE.NOT_STARTED);
   assert.equal(rowOf(before, A).reopenLaunch.action.kind, 'start');
-  // 未開始 + 停止中では「販売を再開する」を出さない（主操作と並べない）
-  assert.equal(rowOf(before, A).reopenLaunch.action.showResumeSwitch, false);
+  // ⚠️ 2026-09-10 変更: 未開始 + **停止中**では「販売を再開」を必ず出す。
+  //    旧仕様は「クーポン期間の開始が同時に再開する」前提で隠していたが、
+  //    販売の切替をトグル 1 つへ集約したため、隠すと**止めた会員を戻す手段が消える**。
+  assert.equal(rowOf(before, A).reopenLaunch.action.showResumeSwitch, true);
   assert.match(rowOf(before, A).reopenCouponExpiryText, /募集再開日から14日間/);
 
   await launch(A);
@@ -461,5 +463,8 @@ test('read 不能時は unknown で、操作を出さない（fail closed）', a
   assert.equal(list.body.counts.reopenIncomplete, null);
   assert.equal(rowOf(list, A).reopenLaunch.state, LAUNCH_STATE.UNKNOWN);
   assert.equal(rowOf(list, A).reopenLaunch.action.kind, 'none');
-  assert.equal(rowOf(list, A).reopenLaunch.action.showResumeSwitch, false);
+  // ⚠️ 2026-09-10: クーポン期間の操作は出さない（fail closed）が、
+  //    **販売の再開は別軸**（Airtable だけの操作で、クーポン期間の保存先とは無関係）。
+  //    クーポン期間を確認できないことを理由に再開を塞ぐと、止めた会員が戻せなくなる。
+  assert.equal(rowOf(list, A).reopenLaunch.action.showResumeSwitch, true);
 });

@@ -251,14 +251,22 @@ export function describeNextActions(row, caps = {}) {
   const paused = r.salePaused === true;
   const conflicts = describeActionConflicts(r);
 
-  // 1. 販売状態のトグル（いまの状態がラベル）
+  // 1. 販売状態のトグル（ボタン名は押すと起こること）
   const pauseWritable = caps.salePauseWritable === true;
-  out.push({
+  // ⚠️ 資格が無い会員（対象外）に「販売を停止」は意味がない（商品ページ自体が出ない）。
+  //    ただし**停止中なら必ず再開を出す**（止めたまま戻せない状態を作らない）。
+  const showToggle = paused || r.eligibility === 'eligible';
+  // ⚠️ 2026-09-10 MK 指摘: 「販売停止中」は**状態表示であって操作名ではない**。
+  //    ボタンには**押すと起こること**を書く（停止中 → 販売を再開 / 販売中 → 販売を停止）。
+  //    いまの状態は上の要約（バッジ・1 行）が伝える。ボタンと状態表示の役割を混ぜない。
+  if (showToggle) out.push({
     key: 'salePauseToggle',
-    label: paused ? '販売停止中' : '販売中',
-    sub: paused ? '押すと販売を再開します' : '押すと販売を停止します',
-    tone: paused ? 'stop' : 'ok',
+    label: paused ? '販売を再開' : '販売を停止',
+    sub: paused ? 'この会員だけ再開します（結果・商品内容も再び見えます）' : 'この会員だけ止めます（結果・商品内容も見えなくなります）',
+    tone: paused ? 'ok' : 'stop',
     kind: paused ? 'resume' : 'pause',
+    /** 危険な操作か（確認ダイアログを出すのは停止のときだけ） */
+    danger: !paused,
     enabled: pauseWritable,
     reason: pauseWritable ? '' : '本番でまだ有効化されていないため実行できません',
   });
