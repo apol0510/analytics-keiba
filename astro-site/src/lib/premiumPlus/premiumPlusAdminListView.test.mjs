@@ -169,3 +169,21 @@ test('未知の資格値でも断定せず、隠しもしない', () => {
   assert.match(describeStateReason({ eligibility: 'weird', purchaseEnabled: false }), /weird/);
   assert.equal(describeStateReason({ purchaseEnabled: false }), '資格が未設定');
 });
+
+test('【要件】対象外には意味のない「販売を停止」を出さない', () => {
+  for (const r of [BLOCKED, REVIEW]) {
+    assert.deepEqual(describeRowActions(r, { salePauseWritable: true }), [],
+      `対象外に結果の変わらない操作が出ている: ${r.email}`);
+  }
+  // 購入可能・段階表示中には出す
+  for (const r of [ODAMOTO, STAGED]) {
+    assert.equal(describeRowActions(r, { salePauseWritable: true }).length, 1);
+  }
+});
+
+test('【最優先】対象外でも**停止中なら必ず再開できる**（止めたまま戻せない状態を作らない）', () => {
+  const a = describeRowActions({ ...BLOCKED, salePaused: true }, { salePauseWritable: true });
+  assert.equal(a.length, 1);
+  assert.equal(a[0].label, '販売を再開');
+  assert.equal(a[0].enabled, true);
+});

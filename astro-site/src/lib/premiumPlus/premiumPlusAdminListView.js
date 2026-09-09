@@ -192,6 +192,10 @@ export function describeRowActions(row, caps = {}) {
   const r = row || {};
   const paused = r.salePaused === true;
   const writable = caps.salePauseWritable === true && r.salePauseWritable !== false;
+  // ⚠️ 結果が変わらない操作は出さない（2026-09-09 確定仕様 §5）。
+  //    資格が無い会員（対象外）は商品ページ自体が出ないので「販売を停止」に意味がない。
+  //    ただし**停止中なら必ず再開を出す**（止めたまま戻せない状態を作らない）。
+  if (!paused && r.eligibility !== 'eligible') return [];
   return [{
     key: 'salePauseToggle',
     // 押すと起こる結果をそのまま名前にする

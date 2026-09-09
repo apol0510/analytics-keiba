@@ -45,9 +45,18 @@ test('【重要】状態フィルタは単一源が入れる（内部用語を�
   assert.ok(!PAGE.includes('<option value="immediate">'), '「即時販売」が状態フィルタに残っている');
 });
 
-test('【重要】上部は運営サマリー（購入可能 N 名 …）を先に出す', () => {
+test('【重要】上部は大きな 4 カード（押すとその状態で絞り込む）', () => {
   assert.match(PAGE, /L\.summarizeListStates\(rowsForSum\)\.items/);
-  assert.match(PAGE, /i\.label \+ ' ' \+ i\.count \+ '名'/);
+  // ⚠️ 2026-09-10: 件数を文言に混ぜない（「購入可能 4名 0」という余計な 0 が出ていた）。
+  //    ラベルと件数は別要素に出す。
+  assert.match(PAGE, /n\.textContent = String\(it\.count\)/);
+  assert.match(PAGE, /l\.textContent = it\.label/);
+  assert.ok(!PAGE.includes("i.label + ' ' + i.count + '名'"), '件数を文言に混ぜている');
+  assert.match(PAGE, /card\.className = 'sumcard tone-' \+ it\.tone/);
+  assert.match(PAGE, /\$\('fState'\)\.value = it\.key/, 'カードで絞り込めない');
+  // 数字は大きく出す
+  const m = PAGE.match(/\.sumcard \.sc-n \{[^}]*font-size:\s*([\d.]+)rem/);
+  assert.ok(m && Number(m[1]) >= 1.8, `カードの数字が小さい: ${m && m[1]}rem`);
 });
 
 test('【重要】効果測定は既定で閉じた折りたたみ（日常運用では読ませない）', () => {
@@ -80,4 +89,47 @@ test('【重要】「対象外」の理由を一覧のバッジに添えてい�
   assert.match(PAGE, /rs\.textContent = reason/, '理由を単一源から取っていない');
   assert.ok(!PAGE.includes("'販売対象外'") || !PAGE.includes("rs.textContent = '販売対象外'"),
     '理由を画面に直書きしている');
+});
+
+// ══ 2026-09-10 追加要件（読みやすさ・主入口・行クリック）══════════
+
+test('【要件】会員行はどこを押しても詳細・操作を開く（右端のボタンも残す）', () => {
+  assert.match(PAGE, /tr\.classList\.add\('row-clickable'\)/);
+  assert.match(PAGE, /tr\.addEventListener\('click', openThis\)/);
+  // 行内のボタン・リンクは行クリックとして扱わない（誤操作防止）
+  assert.match(PAGE, /closest\('button, a, input, select'\)/);
+  // キーボードでも開ける
+  assert.match(PAGE, /ev\.key === 'Enter' \|\| ev\.key === ' '/);
+  // 右端の「詳細・操作」は残す
+  assert.match(PAGE, /btn\.textContent = '詳細・操作'/);
+});
+
+test('【要件】検索は主入口として常時展開（折りたたまない）', () => {
+  assert.match(PAGE, /<div class="email-search open" id="qBox">/);
+  assert.ok(!PAGE.includes('<details class="email-search" id="qBox">'), '検索が折りたたまれている');
+  assert.match(PAGE, /placeholder="[^"]*完全一致[^"]*"/);
+});
+
+test('【要件】細かい条件は「詳細条件を開く」に畳む（既定は閉じる）', () => {
+  const m = PAGE.match(/<details class="more-filters" id="moreFilters">[\s\S]*?<\/details>/);
+  assert.ok(m, '詳細条件の折りたたみが無い');
+  assert.match(m[0], /詳細条件を開く/);
+  assert.ok(!/<details class="more-filters"[^>]*\sopen[\s>]/.test(PAGE), '既定で開いている');
+  // 通常運用の主表示（検索・状態）は折りたたみの外
+  const iState = PAGE.indexOf('<select id="fState"');
+  const iMore = PAGE.indexOf('<details class="more-filters"');
+  assert.ok(iState > 0 && iMore > 0 && iState < iMore, '状態フィルタが折りたたみの中にある');
+  // 細かい条件は中に入っている（削除していない）
+  for (const id of ['fPause', 'fCoupon', 'fRoute', 'fKind', 'fUpsell', 'fFunnel', 'fSort']) {
+    assert.ok(m[0].includes(`id="${id}"`), `${id} が詳細条件の外にある / 消えている`);
+  }
+});
+
+test('【要件】管理画面全体の文字が十分大きい（眼精疲労対策）', () => {
+  const base = PAGE.match(/\.ppe \{ font-size:\s*(\d+)px/);
+  assert.ok(base && Number(base[1]) >= 16, `本文が小さい: ${base && base[1]}px`);
+  const tbl = PAGE.match(/\.ppe \.tbl \{ font-size:\s*([\d.]+)rem/);
+  assert.ok(tbl && Number(tbl[1]) >= 1, `表の文字が小さい: ${tbl && tbl[1]}rem`);
+  const sel = PAGE.match(/\.ppe select, \.ppe input\[type="search"\][^{]*\{[^}]*font-size:\s*([\d.]+)rem/);
+  assert.ok(sel && Number(sel[1]) >= 1, `フィルタの文字が小さい: ${sel && sel[1]}rem`);
 });

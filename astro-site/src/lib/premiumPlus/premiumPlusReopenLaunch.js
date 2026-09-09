@@ -330,7 +330,14 @@ export function describeLaunchAction({ view, memberLabel, salePauseWritable } = 
   };
 
   if (v.state === LAUNCH_STATE.UNKNOWN) {
-    return { ...none, note: v.note || '状態を確認できないため、操作は表示していません。' };
+    return {
+      ...none,
+      note: v.note || '状態を確認できないため、クーポン期間の操作は表示していません。',
+      // ⚠️ 販売の停止/再開は **Airtable だけ**の操作で、クーポン期間の保存先とは無関係。
+      //    クーポン期間を確認できないことを理由に再開を塞ぐと、
+      //    止めた会員を戻す手段が無くなる（結果・商品内容が見えないまま残る）。
+      showResumeSwitch: v.salePaused === true && salePauseWritable === true,
+    };
   }
 
   if (v.state === LAUNCH_STATE.NOT_STARTED) {
@@ -346,9 +353,12 @@ export function describeLaunchAction({ view, memberLabel, salePauseWritable } = 
       note: v.salePaused === true
         ? '販売の再開と14日間の開始を、この 1 操作で同時に行います。'
         : '14日間の開始を確定します。',
-      // ⚠️ 未開始の会員に「販売を再開する」を出さない（主操作と並べない）
+      // ⚠️ 2026-09-10 修正: 停止中は**必ず再開スイッチを出す**。
+      //    以前は「主操作（クーポン期間の開始）が同時に再開する」前提で隠していたが、
+      //    2026-09-09 に販売の切替をトグル 1 つへ集約したため、
+      //    隠したままだと**停止した会員を再開する手段が画面から消える**（実際に消えていた）。
       showPauseSwitch: v.salePaused !== true && salePauseWritable === true,
-      showResumeSwitch: false,
+      showResumeSwitch: v.salePaused === true && salePauseWritable === true,
     };
   }
 
@@ -375,11 +385,13 @@ export function describeLaunchAction({ view, memberLabel, salePauseWritable } = 
     };
   }
 
-  // LIVE: 主操作は無い。安全スイッチ（停止）だけ残す
+  // LIVE: 主操作は無い。販売の切替スイッチだけ残す
+  // ⚠️ 通常 LIVE は「開始済み + 販売中」なので停止スイッチだが、
+  //    停止フラグが立っている入力でも**再開手段を必ず残す**（止めたまま戻せない状態を作らない）。
   return {
     ...none,
     note: v.note || '',
-    showPauseSwitch: salePauseWritable === true,
-    showResumeSwitch: false,
+    showPauseSwitch: v.salePaused !== true && salePauseWritable === true,
+    showResumeSwitch: v.salePaused === true && salePauseWritable === true,
   };
 }
