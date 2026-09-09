@@ -260,7 +260,9 @@ import BankApplicationEmailLock from '../components/BankApplicationEmailLock.ast
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Premium Plus | KEIBA Analytics</title>
   <meta name="description" content="Premium Sanrenpuku 会員限定。1日1鞍・三連単フォーメーション。">
-  <!-- 会員限定の非公開商品。検索結果に出さない（robots.txt でも Disallow） -->
+  {/* 会員限定の非公開商品。検索結果に出さない（robots.txt でも Disallow）
+      ⚠️ 開発メモは JSX コメントで書く。HTML コメント <!-- --> は配信 HTML に残り、
+         ソース表示でお客様に読まれる（2026-09-09 MK 報告の再発防止）。 */}
   <meta name="robots" content="noindex, nofollow">
   <style>
     :root {
@@ -815,6 +817,8 @@ import BankApplicationEmailLock from '../components/BankApplicationEmailLock.ast
       border-radius: 12px;
       padding: 1.25rem;
     }
+    .disclaimer p { margin: 0 0 0.7rem; line-height: 1.85; }
+    .disclaimer p:last-child { margin-bottom: 0; }
 
     .back-link { text-align: center; padding: 2.5rem 0 1rem; }
     .back-link a { color: var(--muted); text-decoration: none; font-size: 0.88rem; }
@@ -1003,7 +1007,7 @@ import BankApplicationEmailLock from '../components/BankApplicationEmailLock.ast
         選ぶのも、迷うのも、こちらの仕事です。
       </p>
 
-      <!-- 実績数値は computeStats() の自動集計のみ（手書き禁止・10鞍未満は非表示）。回収率カードは非掲載 -->
+      {/* 実績数値は computeStats() の自動集計のみ（手書き禁止・10鞍未満は非表示）。回収率カードは非掲載 */}
       {(ppStats.rate.available || ppStats.payout.available) && (
         <div class="stats">
           {ppStats.rate.available && (
@@ -1297,12 +1301,18 @@ import BankApplicationEmailLock from '../components/BankApplicationEmailLock.ast
         )}
       </div>
 
+      {/*
+        注記の文言は MK 指定（2026-09-09 確定）。**勝手に書き換えないこと。**
+        社内の集計事情（旧画像の扱い・集計方法）はここに書かない
+        （正本: docs/spec.md「顧客向け画面に内部運用を出さない」）。
+      */}
       <div class="disclaimer">
-        掲載している画像は、実際に投票した投票内容照会のスクリーンショットです。
-        2026 年 3〜4 月の画像は<strong>的中率の算出に含めていません</strong>（該当する画像に表記があります）。
-        的中率は、的中・不的中を問わずすべての配信実績から算出しています。
-        競馬に確実はありません。過去の実績は将来の結果を保証するものではなく、
-        馬券の購入はご自身の判断と責任でお願いいたします。
+        <p>掲載している画像は、実際に投票した投票内容照会のスクリーンショットです。</p>
+        <p>
+          Premium Plus では、厳選した 1 鞍に集中して予想をお届けしています。
+          実際の投票内容とこれまでの結果をご確認いただき、ご自身の競馬に取り入れるかどうかをご判断ください。
+        </p>
+        <p>※掲載している実績は過去の結果であり、将来の的中や利益を保証するものではありません。</p>
       </div>
     </section>
 
@@ -1575,7 +1585,7 @@ import BankApplicationEmailLock from '../components/BankApplicationEmailLock.ast
   </div>
   </AccessControl>
 
-  <!-- 送信完了画面の共通処理（旧版はこの読み込みが無く、送信成功時に何も表示されなかった） -->
+  {/* 送信完了画面の共通処理（旧版はこの読み込みが無く、送信成功時に何も表示されなかった） */}
   <script is:inline src="/js/submission-result.js"></script>
 
   {/* ak_session の idle TTL 延長。実装は SessionKeepAlive.astro が単一源 */}
@@ -1837,11 +1847,11 @@ import BankApplicationEmailLock from '../components/BankApplicationEmailLock.ast
     });
   </script>
 
-  <!-- ══ 商品ページ内の導線の実閲覧（クリック元 = plus_page）══
+  {/* ══ 商品ページ内の導線の実閲覧（クリック元 = plus_page）══
        同じ Premium Plus の CTA でも、ダッシュボード / 三連複ページ / この商品ページ内の
        どこで押されたかで意味が違う。運用者が判別できるよう導線を添えて数える。
        ⚠️ 値の採否は**サーバーの allow-list**が決める（クライアント申告は信用しない）。
-       ⚠️ 送信の判断は premiumPlusFunnelClient.js の 1 か所だけが持つ。ここは積むだけ。 -->
+       ⚠️ 送信の判断は premiumPlusFunnelClient.js の 1 か所だけが持つ。ここは積むだけ。 */}
   <script is:inline>
     (function () {
       try {
