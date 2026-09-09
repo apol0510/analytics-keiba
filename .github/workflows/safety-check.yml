@@ -152,8 +152,13 @@ jobs:
       #    （見出しの文言誤り / ボタンを生成しているが appendChild が抜けていた）。
       #    ubuntu ランナーには Chrome が同梱されているので**依存は追加しない**。
       #    ビルド成果物（dist）を静的配信して開くので、Netlify も本番も使わない。
+      # ⚠️ dev サーバーは**スクリプトの中で**起動・停止する。
+      #    step でバックグラウンド起動すると、子プロセスのために Actions の step が
+      #    終了できず **hang する**（2026-09-10 に実際に起きた）。ここでは常駐させない。
+      #    未認証チェック（admin 画面 / 実績画像 API）が実行できなければ E2E は失敗する。
       - name: E2E（Premium Plus 管理画面・実 DOM）
         working-directory: astro-site
+        timeout-minutes: 10
         env:
           E2E_BROWSER: /usr/bin/google-chrome
         run: npm run e2e:admin-plus

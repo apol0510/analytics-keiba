@@ -1,3 +1,70 @@
+# 🔎 E2E の確認観点が CI で 2 件減っていた — **復元（2026-09-10）**
+
+> テストと CI 設定のみ。製品コード・顧客データ・env は**一切変更していない**。
+
+## MK 指摘
+
+> E2EがPR時56項目、main CIでは54項目になっている理由だけread-onlyで確認してください
+
+## 確認した事実（read-only）
+
+| 実行 | 項目数 | 差分 |
+|---|---|---|
+| 手元（`E2E_DEV_URL` 指定）| 56 | — |
+| CI | 54 | **未認証では admin 画面に到達できない** / **未認証では実績画像 API に到達できない** |
+
+スクリプトが `E2E_DEV_URL` 未指定時にこの 2 件をスキップする作りで、
+CI はこの変数を渡していなかった。**確認観点が実際に減っていた。**
+
+## 復元
+
+| # | 内容 |
+|---|---|
+| 1 | dev サーバーの**起動と停止を E2E スクリプト内で完結**させた（追加の env も step も不要）|
+| 2 | admin の認証情報は**渡さない**（未設定なら fail closed で 401 になるのが正しく、それを検証する）|
+| 3 | 未認証チェックが**実行できなければ E2E を失敗**させる（黙って減らせない）|
+| 4 | 実行サマリに「未認証チェックを含む / 含まない」を明記 |
+| 5 | CI は単一 step（`timeout-minutes: 10`）。**step でのバックグラウンド起動はしない** |
+
+### ⚠️ PR を汚染した（自分のミス・#513 は close / 再構成済み）
+
+Chromium の E2E 用プロファイルを **repo 内（`astro-site/.e2e-profile/`）に作ってしまい**、
+Cookies / Login Data / History / Local State 等の内部ファイル **316 件が PR に混入**した
+（changed files 321 件）。
+
+read-only で内容を検査（**値は一切表示していない**）:
+
+| 検査 | 結果 |
+|---|---|
+| `ak_session` / Bearer / Airtable / Upstash / SendGrid / Stripe / AWS の各様式 | **0 件** |
+| Cookies | 空（ホスト 0 件）|
+| Login Data | スキーマのみ（保存済み資格情報なし）|
+| History | `127.0.0.1` のローカル URL のみ |
+| メールアドレス | `@example.com` 1 種のみ。既に追跡ファイルにある placeholder |
+| 高エントロピー文字列 | Chromium 自身の `os_crypt` 鍵・MAC seed 等（使い捨てプロファイルのもの）|
+
+**実 secret / session / 顧客 PII は無し。rotation は不要と判断。**
+
+対処: #513 を close・remote branch を通常削除し、最新 `origin/main` から
+新ブランチを作って**意図した 6 ファイルだけを再構成**した。
+プロファイルは OS の一時ディレクトリへ移し、`.gitignore` にも保険を入れた。
+履歴改変（amend / force push 等）は行っていない。
+
+### ⚠️ 途中で CI を hang させた（自分のミス・修正済み）
+
+最初は CI の step で `nohup npx astro dev &` して待つ形にしたが、
+**子プロセスのために Actions の step が終了できず 20 分以上 hang**した（run は cancel 済み）。
+dev サーバーの起動・停止はスクリプト内で完結させる形に直し、正本にも禁止事項として記載した。
+
+## 検証
+
+| 内容 | 結果 |
+|---|---|
+| CI と同じ手順をローカル再現（dev 起動 → `CI=true E2E_DEV_URL=...`）| **56 項目 pass / 0 fail** |
+| `E2E_DEV_URL` 無しで `CI=true` | **意図どおり fail**（観点が減ったことを検出）|
+| admin の env 無しでの 401 / 404 | 期待どおり |
+| `check:safety` / `build` | exit 0 / exit 0 |
+
 # 🧪 管理画面の実 DOM E2E を拡充し CI 必須化 — **完了 / Draft PR（2026-09-10）**
 
 > 表示・テストのみ。顧客データ・env・送信は**一切変更していない**。

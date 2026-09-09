@@ -36,19 +36,50 @@
  *
  * 環境変数:
  *   E2E_BROWSER  … Chromium 系のバイナリ（未指定なら既知の場所を順に探す）
- *   E2E_DEV_URL  … 指定すると「未認証で admin / API に到達できない」ことも検証する
- *                  （`astro dev` を起動しておく。例: http://localhost:4321）
+ *   E2E_DEV_URL  … 既に起動している dev サーバーを使う（例 http://localhost:4321）。
+ *                  未指定なら**このスクリプトが自分で `astro dev` を起動して終了時に落とす**。
+ *   E2E_NO_DEV=1 … dev サーバーを使わない（未認証チェックは実行できない＝CI では失敗させる）
+ *
+ * ⚠️ dev サーバーを CI の step でバックグラウンド起動しないこと。
+ *    Actions の step が子プロセスのために終了できず **hang する**（2026-09-10 に実際に起きた）。
+ *    起動と停止は必ずこのスクリプトの中で完結させる。
  */
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
-import { readFile, stat } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { readFile, stat, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { existsSync, rmSync } from 'node:fs';
 import { join, extname, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 const ROOT = resolve(new URL('..', import.meta.url).pathname);
 const DIST = join(ROOT, 'dist');
 const PAGE_PATH = '/admin/premium-plus-eligibility/index.html';
+
+/**
+ * Chromium のプロファイル置き場。
+ *
+ * ⚠️ **repo の中に作らないこと。**
+ *    2026-09-10 に `astro-site/.e2e-profile/` を repo 内に作ってしまい、
+ *    Cookies / Login Data / History / Local State などの Chromium 内部ファイル
+ *    **316 件が PR に混入**した（changed files 321 件）。
+ *    実 secret / session / 顧客 PII は含まれていなかったが、
+ *    そもそも repo に入る場所へ作ってはいけない。
+ *    OS の一時ディレクトリへ作り、**finally で必ず削除**する。
+ */
+const PROFILE_DIR = await mkdtemp(join(tmpdir(), 'ak-e2e-profile-'));
+let profileRemoved = false;
+async function removeProfile() {
+  if (profileRemoved) return;
+  profileRemoved = true;
+  await rm(PROFILE_DIR, { recursive: true, force: true }).catch(() => {});
+}
+// 異常終了（early exit / 例外）でも消えるよう、exit では同期 API で片付ける
+process.on('exit', () => {
+  if (profileRemoved) return;
+  profileRemoved = true;
+  try { rmSync(PROFILE_DIR, { recursive: true, force: true }); } catch {}
+});
 
 const fails = [];
 const passes = [];
@@ -107,10 +138,40 @@ const server = createServer(async (req, res) => {
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const BASE = `http://127.0.0.1:${server.address().port}`;
 
+// ── 未認証チェック用の dev サーバー（自前で起動し、必ず落とす）──────
+//    `dist` の静的配信では Edge 認証も Functions も動かないため、
+//    この 2 観点だけは dev サーバーが要る。
+let devProc = null;
+let devBase = process.env.E2E_DEV_URL ? process.env.E2E_DEV_URL.replace(/\/$/, '') : null;
+let devError = null;
+
+async function startDevServer() {
+  if (devBase || process.env.E2E_NO_DEV === '1') return;
+  const port = 4300 + Math.floor(Math.random() * 200);
+  devProc = spawn('npx', ['astro', 'dev', '--port', String(port), '--host', '127.0.0.1'], {
+    cwd: ROOT, stdio: 'ignore', detached: false,
+    // admin の認証情報は**渡さない**。未設定なら fail closed で 401 になるのが正しい挙動で、
+    // それをそのまま検証する。
+    env: { ...process.env, ADMIN_BASIC_AUTH_USER: '', ADMIN_BASIC_AUTH_PASSWORD: '' },
+  });
+  const base = `http://127.0.0.1:${port}`;
+  for (let i = 0; i < 90; i += 1) {
+    const ok = await fetch(base + '/').then(() => true).catch(() => false);
+    if (ok) { devBase = base; return; }
+    if (devProc.exitCode !== null) { devError = `dev サーバーが起動前に終了しました (exit ${devProc.exitCode})`; return; }
+    await sleep(1000);
+  }
+  devError = 'dev サーバーが 90 秒以内に応答しませんでした';
+}
+const stopDevServer = () => { if (devProc && devProc.exitCode === null) { try { devProc.kill('SIGTERM'); } catch {} } };
+process.on('exit', stopDevServer);
+
+await startDevServer();
+
 // ── Chromium を起動して CDP で操作 ──────────────────────────
 const proc = spawn(BROWSER, [
   '--headless=new', '--remote-debugging-port=0', '--no-first-run', '--no-default-browser-check',
-  `--user-data-dir=${join(ROOT, '.e2e-profile')}`, '--disable-gpu', '--disable-dev-shm-usage',
+  `--user-data-dir=${PROFILE_DIR}`, '--disable-gpu', '--disable-dev-shm-usage',
   'about:blank',
 ], { stdio: ['ignore', 'ignore', 'pipe'] });
 
@@ -537,8 +598,8 @@ const ghost = await evaluate(`(() => {
 check(ghost.length === 0, `見えるのに押せない（理由の提示も無い）要素が無い${ghost.length ? ': ' + ghost.join(' / ') : ''}`);
 
 // ── 13. 未認証では admin 画面 / API に到達できない（任意）──────
-if (process.env.E2E_DEV_URL) {
-  const base = process.env.E2E_DEV_URL.replace(/\/$/, '');
+if (devBase) {
+  const base = devBase;
   for (const [path, want, label] of [
     ['/admin/premium-plus-eligibility/', 401, '未認証では admin 画面に到達できない'],
     ['/.netlify/functions/premium-plus-media?limit=3', 404, '未認証では実績画像 API に到達できない'],
@@ -547,12 +608,18 @@ if (process.env.E2E_DEV_URL) {
     check(res && res.status === want, `${label}（期待 ${want} / 実際 ${res ? res.status : '接続不可'}）`);
   }
 } else {
-  console.log('  － 未認証チェックは E2E_DEV_URL 未指定のためスキップ（本番の read-only 確認で担保）');
+  // ⚠️ 黙ってスキップしない。確認観点が減ったことに気づけなくなる
+  //    （PR 時 56 項目 / CI 54 項目のズレが実際に起きた）。
+  check(false, '未認証チェックを実行できませんでした: ' + (devError || 'E2E_NO_DEV=1 が指定されています'));
 }
+stopDevServer();
 
 // ── 終了 ────────────────────────────────────────────────────
 browserWs.close(); server.close(); proc.kill();
-console.log(`\n合計 ${passes.length + fails.length} 項目 / pass ${passes.length} / fail ${fails.length}`);
+await removeProfile();
+const skippedUnauth = !devBase;
+console.log(`\n合計 ${passes.length + fails.length} 項目 / pass ${passes.length} / fail ${fails.length}`
+  + (skippedUnauth ? '（未認証チェック 2 件は未実行）' : '（未認証チェックを含む）'));
 if (fails.length) {
   console.error('\n⛔ E2E 失敗:');
   for (const f of fails) console.error('   - ' + f);

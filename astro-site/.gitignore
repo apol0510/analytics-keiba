@@ -107,3 +107,8 @@ tmp/newsletter-backfill/
 # 移行の中間成果物（PII を含む・checkpoint）
 .migration-export/
 .migration-state/
+
+# E2E（scripts/e2e-admin-plus.mjs）のブラウザプロファイル。
+# ⚠️ 本来は OS の一時ディレクトリに作るので repo には出来ないが、
+#    2026-09-10 に repo 内へ作って 316 ファイルを PR に混入させたため保険で無視する。
+.e2e-profile/
