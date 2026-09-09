@@ -331,6 +331,12 @@ function buildAdminRow(rec, now, ledger = UNREAD_LEDGER) {
         // 資格の軸（停止で動かさない）。停止の有無は salePaused 列が持つ。
         overrideApplied: axis.overrideApplied,
         state: describeReleaseState(release),
+        // ── 顧客に何が見えているか（**再計算しない**。release の値をそのまま渡す）──
+        // ⚠️ 画面上部の「現在の状態」要約が使う。ここを画面側で導出すると、
+        //    受付時間帯（16:30 以降）の判定などが二重実装になり必ずズレる。
+        purchaseEnabled: release.purchaseEnabled === true,
+        showProductPage: release.showProductPage === true,
+        showPurchaseCta: release.showPurchaseCta === true,
         eligibleAt: fields['PremiumPlusEligibleAt'] || '',
         updatedAt: fields['PremiumPlusEligibilityUpdatedAt'] || '',
         updatedBy: fields['PremiumPlusEligibilityUpdatedBy'] || '',

@@ -337,7 +337,9 @@ export function describeLaunchAction({ view, memberLabel, salePauseWritable } = 
     return {
       ...none,
       kind: 'start',
-      label: '▶ この会員の再募集を開始する',
+      // ⚠️ 2026-09-09 改称。「再募集」は販売再開と誤読される。実際に始まるのは
+      //    クーポンの利用期間（14日）なので、その意味が分かる名前にする。
+      label: '▶ クーポンの利用期間（14日）を開始する',
       confirmText: buildLaunchConfirmText({ memberLabel, resumeSale: v.salePaused === true }),
       // 停止中なのに解除できない環境では押させない（片側状態を作らない）
       enabled: v.salePaused !== true || salePauseWritable === true,
@@ -354,7 +356,7 @@ export function describeLaunchAction({ view, memberLabel, salePauseWritable } = 
     return {
       ...none,
       kind: 'repair',
-      label: '▶ 販売再開をやり直す',
+      label: '▶ 販売再開をやり直す（開始日時は変わりません）',
       confirmText: buildLaunchConfirmText({ memberLabel, repair: true }),
       enabled: salePauseWritable === true,
       note: '開始日時は変わりません。販売の一時停止だけを解除します。',
