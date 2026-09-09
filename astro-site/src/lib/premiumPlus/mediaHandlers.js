@@ -81,9 +81,31 @@ function resolveStore(store) {
 }
 
 /** GET: 会員認可付き閲覧。 */
-export async function handleMediaGet({ params = {}, cookieHeader, secret, now, store, allowedPlans = PREMIUM_PLUS_ALLOWED_PLANS, subtle }) {
+export async function handleMediaGet({
+  params = {}, cookieHeader, secret, now, store,
+  allowedPlans = PREMIUM_PLUS_ALLOWED_PLANS, subtle,
+  /**
+   * その会員に**実績を見せてよいか**（販売停止中は見せない / 2026-09-09 確定仕様 §4）。
+   *
+   * ⚠️ 停止は「購入 CTA を止める」だけではなく、**結果・商品内容を見せない**状態。
+   *    プラン認可だけ通すと、停止中の会員が URL 直打ちで実績画像を取得できてしまう。
+   * ⚠️ 判定はここで作らない。呼び出し側が既存の単一源
+   *    （`resolveUpsellForCustomer()` の `salePaused` / `channel`）で解いて渡す。
+   * ⚠️ 解決できないときは**見せない**（fail closed）。省略時は従来どおり通す
+   *    （テスト・旧呼び出しの互換のため。本番の Function は必ず渡す）。
+   * @type {undefined | ((recordId: string|null) => Promise<{allowed:boolean}>)}
+   */
+  memberGate,
+}) {
   const access = await verifyPlanAccess({ cookieHeader, secret, now, allowedPlans, subtle });
   if (!access.ok) return notFound();
+
+  if (typeof memberGate === 'function') {
+    let gate = null;
+    try { gate = await memberGate(access.payload?.sub || null); } catch { gate = null; }
+    // 確認できない / 停止中 → 存在秘匿と同じ 404（実績を 1 件も返さない）
+    if (!gate || gate.allowed !== true) return notFound();
+  }
 
   const resolved = resolveStore(store);
   const { manifest } = await readCurrent(resolved);

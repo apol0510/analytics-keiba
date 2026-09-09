@@ -1816,6 +1816,47 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   .ppe .dt-sec h3 { font-size: .72rem; color: #93a4bd; margin: 0 0 .55rem; font-weight: 700; }
   .ppe .dt-sec.danger { border-color: rgba(248,113,113,.32); }
   .ppe .dt-sec.danger h3 { color: #f87171; }
+  /* 詳細パネル先頭の「現在の状態」。まず状態、次に詳細と操作 */
+  .ppe .dt-now { border-width: 2px; }
+  .ppe .dt-now.tone-ok { border-color: rgba(52,211,153,.55); background: #0f2033; }
+  .ppe .dt-now.tone-warn { border-color: rgba(245,196,81,.55); background: #1a1a2b; }
+  .ppe .dt-now.tone-stop { border-color: rgba(248,113,113,.55); background: #24151d; }
+  .ppe .dt-now.tone-ok .dt-now-head { color: #6ee7b7; }
+  .ppe .dt-now.tone-warn .dt-now-head { color: #f5c451; }
+  .ppe .dt-now.tone-stop .dt-now-head { color: #fca5a5; }
+  .ppe .dt-now-kv dd { display: flex; flex-direction: column; gap: 2px; }
+  .ppe .dt-now-v { font-weight: 700; }
+  .ppe .dt-now-v.tone-ok { color: #6ee7b7; }
+  .ppe .dt-now-v.tone-warn { color: #f5c451; }
+  .ppe .dt-now-v.tone-stop { color: #fca5a5; }
+  .ppe .dt-now-v.tone-muted { color: #cbd5e1; }
+  .ppe .dt-now-note { font-size: .74rem; color: #93a4bd; line-height: 1.6; }
+  /* 大きな 1 行 + 色バッジ（細かい文字を追わずに判別できるように） */
+  .ppe .dt-now-top { display: flex; align-items: center; gap: .7rem; flex-wrap: wrap; margin-bottom: .45rem; }
+  .ppe .dt-now-badge { font-size: 1rem; font-weight: 800; padding: .3rem .85rem; border-radius: 999px; white-space: nowrap; }
+  .ppe .dt-now-badge.tone-ok { background: rgba(52,211,153,.18); color: #6ee7b7; border: 1px solid rgba(52,211,153,.6); }
+  .ppe .dt-now-badge.tone-warn { background: rgba(245,196,81,.16); color: #f5c451; border: 1px solid rgba(245,196,81,.6); }
+  .ppe .dt-now-badge.tone-stop { background: rgba(248,113,113,.16); color: #fca5a5; border: 1px solid rgba(248,113,113,.6); }
+  .ppe .dt-now-badge.tone-muted { background: rgba(148,163,184,.16); color: #cbd5e1; border: 1px solid rgba(148,163,184,.5); }
+  .ppe .dt-now-head { font-size: 1.35rem; font-weight: 800; line-height: 1.4; margin: 0; }
+  .ppe .dt-now-stage { margin: 0 0 .6rem; font-size: 1rem; font-weight: 700; color: #cbd5e1; line-height: 1.55; }
+  /* 次に可能な操作: 大きなボタン */
+  .ppe .dt-acts-row { display: flex; flex-wrap: wrap; gap: .7rem; }
+  .ppe .dt-act { display: flex; flex-direction: column; gap: .2rem; align-items: flex-start; text-align: left;
+    min-width: 220px; padding: .85rem 1.1rem; border-radius: 12px; cursor: pointer;
+    background: #16233c; border: 2px solid rgba(148,163,184,.35); color: #e6edf7; }
+  .ppe .dt-act:hover:not([disabled]) { border-color: rgba(148,163,184,.7); }
+  .ppe .dt-act[disabled] { opacity: .5; cursor: not-allowed; }
+  .ppe .dt-act.tone-ok { border-color: rgba(52,211,153,.7); }
+  .ppe .dt-act.tone-warn { border-color: rgba(245,196,81,.7); }
+  .ppe .dt-act.tone-stop { border-color: rgba(248,113,113,.7); }
+  .ppe .dt-act-l { font-size: 1.08rem; font-weight: 800; }
+  .ppe .dt-act-s { font-size: .78rem; color: #93a4bd; line-height: 1.5; }
+  /* 詳細は折りたたみ（既定は閉じる） */
+  .ppe .dt-more { margin-top: .9rem; border: 1px solid rgba(148,163,184,.22); border-radius: 10px; background: #0e1729; }
+  .ppe .dt-more > summary { cursor: pointer; padding: .7rem .9rem; font-size: .86rem; font-weight: 700; color: #93a4bd; }
+  .ppe .dt-more[open] > summary { border-bottom: 1px solid rgba(148,163,184,.18); margin-bottom: .7rem; }
+  .ppe .dt-more > .dt-sec { margin: 0 .7rem .7rem; }
   .ppe .kv { display: grid; grid-template-columns: max-content 1fr; gap: .3rem .9rem; font-size: .8rem; margin: 0; }
   .ppe .kv dt { color: #93a4bd; }
   .ppe .kv dd { margin: 0; font-weight: 700; overflow-wrap: anywhere; }
@@ -2431,6 +2472,13 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   // 操作履歴（このタブ内）。正規化・表示文言の正本は adminOperationLog.js
   import { createOperationLog, describeEntry } from '../../lib/premiumPlus/adminOperationLog.js';
   window.__ppOpLog = { createOperationLog, describeEntry };
+  // 詳細パネル先頭の「現在の状態」要約と、状態と食い違う操作の判定
+  import {
+    describeAdminStatusSummary, describeActionConflicts, describeNextActions, describeStageLine,
+  } from '../../lib/premiumPlus/premiumPlusAdminStatusSummary.js';
+  window.__ppStatus = {
+    describeAdminStatusSummary, describeActionConflicts, describeNextActions, describeStageLine,
+  };
   import {
     buildPlanView, updateSelection, offscreenSelection, labelFor, PLAN_KIND,
   } from '../../lib/marketing/campaignPlanView.js';
@@ -3924,6 +3972,93 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       head.appendChild(em); head.appendChild(b);
       body.appendChild(head);
 
+      // ── 先頭に「現在の状態」（2026-09-09 MK 指示）────────────────
+      // ⚠️ 操作だけを並べると、すでに購入できる会員に「今すぐ販売可」が押せる形で出て
+      //    運営が状態を誤読する。**まず状態を断定して見せ、詳細と操作はその下に残す。**
+      //    文言・順番の正本は premiumPlusAdminStatusSummary.js（画面で作らない）。
+      const summary = (window.__ppStatus && window.__ppStatus.describeAdminStatusSummary)
+        ? window.__ppStatus.describeAdminStatusSummary(r) : null;
+      if (summary) {
+        const sm = document.createElement('div');
+        sm.className = 'dt-sec dt-now tone-' + (summary.tone || 'muted');
+        const smH = document.createElement('h3'); smH.textContent = '現在の状態'; sm.appendChild(smH);
+        // ⚠️ 眼精疲労対策（2026-09-09）。色バッジ + 大きな 1 行 + 段階 1 行だけを主表示にする。
+        //    長い説明は下の折りたたみへ。ここに長文を足さないこと。
+        const smTop = document.createElement('div'); smTop.className = 'dt-now-top';
+        const smBadge = document.createElement('span');
+        smBadge.className = 'dt-now-badge tone-' + (summary.tone || 'muted');
+        smBadge.textContent = summary.badge || '';
+        const smHead = document.createElement('span'); smHead.className = 'dt-now-head';
+        smHead.textContent = summary.headline;
+        smTop.appendChild(smBadge); smTop.appendChild(smHead); sm.appendChild(smTop);
+        if (summary.stageLine) {
+          const smStage = document.createElement('p'); smStage.className = 'dt-now-stage';
+          smStage.textContent = summary.stageLine; sm.appendChild(smStage);
+        }
+        const smDl = document.createElement('dl'); smDl.className = 'kv dt-now-kv';
+        for (const it of summary.items) {
+          const dt = document.createElement('dt'); dt.textContent = it.label;
+          const dd = document.createElement('dd');
+          const v = document.createElement('span');
+          v.className = 'dt-now-v tone-' + (it.tone || 'muted');
+          v.textContent = it.value;
+          dd.appendChild(v);
+          if (it.note) {
+            const n = document.createElement('span'); n.className = 'dt-now-note';
+            n.textContent = it.note; dd.appendChild(n);
+          }
+          smDl.appendChild(dt); smDl.appendChild(dd);
+        }
+        sm.appendChild(smDl);
+        body.appendChild(sm);
+      }
+
+      // ── 次に可能な操作（大きなボタン。長文を読ませない）────────────
+      // ⚠️ 実行処理は**下の詳細セクションの既存ボタンに委譲**する（click）。
+      //    確認ダイアログ・履歴記録・再描画を二重実装しないため。
+      //    どの操作を出すかの判定は単一源 describeNextActions（画面で条件を作らない）。
+      const nextActs = (window.__ppStatus && window.__ppStatus.describeNextActions)
+        ? window.__ppStatus.describeNextActions(r, {
+          salePauseWritable: r.salePauseWritable !== false && pauseAvailable(),
+          overrideEnabled: data.overrideEnabled === true,
+        })
+        : [];
+      if (nextActs.length) {
+        const na = document.createElement('div'); na.className = 'dt-sec dt-acts';
+        const naH = document.createElement('h3'); naH.textContent = '次に可能な操作'; na.appendChild(naH);
+        const naRow = document.createElement('div'); naRow.className = 'dt-acts-row';
+        for (const a of nextActs) {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'dt-act tone-' + (a.tone || 'muted');
+          btn.disabled = a.enabled !== true;
+          if (a.reason) btn.title = a.reason;
+          const l = document.createElement('span'); l.className = 'dt-act-l'; l.textContent = a.label;
+          btn.appendChild(l);
+          if (a.sub) { const t = document.createElement('span'); t.className = 'dt-act-s'; t.textContent = a.sub; btn.appendChild(t); }
+          if (a.enabled !== true && a.reason) {
+            const w = document.createElement('span'); w.className = 'dt-act-s'; w.textContent = a.reason; btn.appendChild(w);
+          }
+          btn.addEventListener('click', () => {
+            const target = body.querySelector('[data-op="' + a.key + '"]');
+            if (!target || target.disabled) { msg('この操作はいま実行できません', 'err'); return; }
+            const more = body.querySelector('.dt-more');
+            if (more) more.open = true;   // 何が起きたか追えるよう詳細を開く
+            target.click();
+          });
+          naRow.appendChild(btn);
+        }
+        na.appendChild(naRow);
+        body.appendChild(na);
+      }
+
+      // ── ここから下は詳細（既定は閉じる。眼精疲労対策で主表示にしない）──
+      const more = document.createElement('details'); more.className = 'dt-more';
+      const moreSum = document.createElement('summary');
+      moreSum.textContent = '詳細情報と個別操作をひらく';
+      more.appendChild(moreSum);
+      body.appendChild(more);
+
       const info = document.createElement('div'); info.className = 'dt-sec';
       const h1 = document.createElement('h3'); h1.textContent = '基本情報'; info.appendChild(h1);
       const dl = document.createElement('dl'); dl.className = 'kv';
@@ -3996,7 +4131,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         memo.textContent = '内部メモ: ' + r.reason;
         info.appendChild(memo);
       }
-      body.appendChild(info);
+      more.appendChild(info);
 
       // ── 販売CTA（UpsellTarget）: 何を売る導線を見せるか ──────────────
       // ⚠️ 販売資格（下の「通常操作」）とは別概念。ここは「見せる商品の選択」だけ。
@@ -4124,7 +4259,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         w.textContent = '⚠️ 販売CTA の変更は無効です（Airtable に UpsellTarget を作成し UPSELL_TARGET_FIELD_READY=1 を設定してください）。表示は「自動」として動作します。';
         upSec.appendChild(w);
       }
-      body.appendChild(upSec);
+      more.appendChild(upSec);
 
       // ── 販売の一時停止（会員単位）──────────────────────────────
       // ⚠️ 「販売対象外(blocked)」とは**別の操作**。ここは資格を保持したまま
@@ -4168,6 +4303,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       psBtn.type = 'button';
       psBtn.className = r.salePaused ? 'btn-primary' : 'btn-danger';
       psBtn.textContent = r.salePaused ? '▶ 販売を再開する' : '⏸ 販売を一時停止する';
+      // 上部の大ボタンからの委譲先（実行処理はこの 1 か所だけ）
+      psBtn.dataset.op = 'salePauseToggle';
       // 行の値と一覧全体の可用性の**どちらか**が使えないなら押させない
       const psUsable = r.salePauseWritable !== false && pauseAvailable();
       psBtn.disabled = !psUsable;
@@ -4237,7 +4374,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           + '有効化するまで停止操作は受け付けません（止めたつもりで売れ続けるのを防ぐため）。';
         psSec.appendChild(w);
       }
-      body.appendChild(psSec);
+      more.appendChild(psSec);
 
       // ── 再募集（**この会員だけ**）────────────────────────────
       // 「この会員の再募集を開始する」＝**1 つの業務操作**で
@@ -4294,6 +4431,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         rsBtn.type = 'button';
         rsBtn.className = act.kind === 'repair' ? 'btn-primary' : 'btn-danger';
         rsBtn.textContent = act.label;
+        rsBtn.dataset.op = 'couponPeriod';
         rsBtn.disabled = act.enabled !== true;
         if (act.enabled !== true) {
           rsBtn.title = '本番でまだ有効化されていないため実行できません';
@@ -4370,7 +4508,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           rsSec.appendChild(n2);
         }
       }
-      body.appendChild(rsSec);
+      more.appendChild(rsSec);
 
       // ── 再募集クーポン（資格・停止とは**別の第 3 の軸**）────────────
       // ⚠️ 原則は「**お客様自身が受け取る**もの」。
@@ -4473,7 +4611,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       //    ボタンの活性はあくまで案内（押しても通らないものは理由まで出す）。
       renderCouponOps(rcSec, r);
 
-      body.appendChild(rcSec);
+      more.appendChild(rcSec);
 
       const pvSec = document.createElement('div'); pvSec.className = 'dt-sec';
       const h2 = document.createElement('h3'); h2.textContent = '表示確認'; pvSec.appendChild(h2);
@@ -4482,7 +4620,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       pvBtn.addEventListener('click', () => openPreview(r.recordId));
       const ops0 = document.createElement('div'); ops0.className = 'ops'; ops0.appendChild(pvBtn);
       pvSec.appendChild(ops0);
-      body.appendChild(pvSec);
+      more.appendChild(pvSec);
 
       // メモ入力（write payload の reason に載せる）
       const memoInput = document.createElement('input');
@@ -4559,7 +4697,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       opsN.appendChild(mkBtn('review', '保留', 'b-review', r.eligibility === 'review'));
       if (isStagedNow) { const s = document.createElement('span'); s.className = 'applied'; s.textContent = '適用中'; opsN.appendChild(s); }
       secN.appendChild(opsN);
-      body.appendChild(secN);
+      more.appendChild(secN);
 
       const secD = document.createElement('div'); secD.className = 'dt-sec danger';
       const h4 = document.createElement('h3'); h4.textContent = '強い操作（本番の販売状態が変わります）'; secD.appendChild(h4);
@@ -4582,16 +4720,30 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       //    「会員に見えるもの」の説明が**一度も表示されない**（2026-08-13 まで実際にそうだった）
       secD.appendChild(noteWhere);
       const opsD = document.createElement('div'); opsD.className = 'ops';
-      opsD.appendChild(mkBtn('immediate', '今すぐ販売可（CTA表示・購入可）', 'b-immediate', isImmediate, !data.overrideEnabled));
+      // ⚠️ 状態と食い違う操作は押させない（2026-09-09 MK 指摘）。
+      //    すでに購入できる会員に「今すぐ販売可」を押せる形で出すと、上の要約と逆のことを言う。
+      //    判定は単一源 describeActionConflicts（画面で条件を作らない）。
+      const conflicts = (window.__ppStatus && window.__ppStatus.describeActionConflicts)
+        ? window.__ppStatus.describeActionConflicts(r) : {};
+      const immBtn = mkBtn('immediate', '今すぐ販売可（CTA表示・購入可）', 'b-immediate', isImmediate,
+        !data.overrideEnabled || !!conflicts.immediate);
+      immBtn.dataset.op = 'immediate';
+      if (conflicts.immediate) {
+        immBtn.title = conflicts.immediate;
+        const why = document.createElement('span'); why.className = 'applied';
+        why.textContent = conflicts.immediate; opsD.appendChild(immBtn); opsD.appendChild(why);
+      } else {
+        opsD.appendChild(immBtn);
+      }
       opsD.appendChild(mkBtn('blocked', '販売対象外', 'b-blocked', r.eligibility === 'blocked'));
       if (isImmediate) { const s = document.createElement('span'); s.className = 'applied'; s.textContent = '適用中'; opsD.appendChild(s); }
       secD.appendChild(opsD);
-      body.appendChild(secD);
+      more.appendChild(secD);
 
       const secM = document.createElement('div'); secM.className = 'dt-sec';
       const h5 = document.createElement('h3'); h5.textContent = '内部メモ'; secM.appendChild(h5);
       secM.appendChild(memoInput);
-      body.appendChild(secM);
+      more.appendChild(secM);
 
       // ── 変更履歴 ────────────────────────────────────────────────
       // 「正本に残っている最後の 1 回」と「このタブでの操作」は別物なので分けて出す。
@@ -4645,7 +4797,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       });
       const opsH = document.createElement('div'); opsH.className = 'ops'; opsH.appendChild(reBtn);
       secH.appendChild(opsH);
-      body.appendChild(secH);
+      more.appendChild(secH);
     }
 
     // オーバーレイ表示中は背面の一覧をスクロールさせない（閉じたら必ず元に戻す）

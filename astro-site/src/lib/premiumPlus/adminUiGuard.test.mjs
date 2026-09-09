@@ -63,7 +63,13 @@ test('二重送信防止を維持（busy フラグ + 行内ボタン一括 disab
 
 test('fail closed: 書込 gate が無効ならボタンを押せない', () => {
   assert.match(PAGE, /btn\.disabled = !data\.writeEnabled \|\| isCurrent \|\| !!extraDisabled/);
-  assert.match(PAGE, /mkBtn\('immediate',[^)]*!data\.overrideEnabled\)/);
+  // 「今すぐ販売可」の disabled には **必ず** !data.overrideEnabled が入る。
+  // ⚠️ 2026-09-09: 状態と食い違う操作を押させない条件（conflicts.immediate）を
+  //    足したため、`!data.overrideEnabled)` の完全一致では検知できなくなった。
+  //    ここは**条件が増えても gate が外れていないこと**を見る（増設を禁止しない）。
+  const m = PAGE.match(/mkBtn\('immediate',[\s\S]{0,240}?\)\s*;/);
+  assert.ok(m, '「今すぐ販売可」の描画が見つからない');
+  assert.match(m[0], /!data\.overrideEnabled/, 'gate（overrideEnabled）が disabled から外れている');
 });
 
 // ── 一覧はテーブル。write ボタンを露出させない ───────────────────
