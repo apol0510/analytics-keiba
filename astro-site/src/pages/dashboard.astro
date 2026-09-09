@@ -526,8 +526,21 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
             <PremiumContactModal hidden={true} />
         </div>
 
-        <!-- 申請・送信履歴（ログイン状態に関わらず表示） -->
-        <div id="submission-history-section" class="submission-history-section">
+        <!--
+          申請・送信履歴（**ログイン後だけ表示**）
+
+          ⚠️ 2026-09-08 MK 報告「ログイン前から申請送信履歴が表示されてしまっている」。
+             この記録は端末の localStorage にあり、**送り主が分からない記録は消さない**
+             方針（ログイン前の送信を失わせないため / submissionHistoryOwner.test.mjs）。
+             そのため未ログインでも中身が出うる状態だった。端末を共有していると、
+             前の方の申込がログインしていない人に見えることになる。
+
+          ⚠️ **初期値は display:none（fail closed）**。認証が確定するまで出さない。
+             表示するのは `dashboard-section` を出すのと**同じ 1 か所**だけ
+             （ログイン判定をここで作らない）。未認証の分岐では何もしない＝隠れたまま。
+             ここに `style` を足したり、既定を表示に戻したりしないこと。
+        -->
+        <div id="submission-history-section" class="submission-history-section" style="display: none;">
             <div class="submission-history-card">
                 <div class="submission-history-header">
                     <h2>📜 申請・送信履歴</h2>
@@ -1015,6 +1028,9 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
             document.documentElement.classList.remove('auth-likely-in');
             document.getElementById('login-section').style.display = 'none';
             document.getElementById('dashboard-section').style.display = 'block';
+            // 申請・送信履歴はログインが確定してから出す（未ログインには見せない）
+            const historySection = document.getElementById('submission-history-section');
+            if (historySection) historySection.style.display = '';
 
             // 期限切れチェック・警告表示
             const isExpired = localStorage.getItem('isExpired') === 'true';
