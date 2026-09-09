@@ -73,9 +73,17 @@ test('fail closed: 書込 gate が無効ならボタンを押せない', () => {
 });
 
 // ── 一覧はテーブル。write ボタンを露出させない ───────────────────
-test('一覧は 8 列のテーブル', () => {
-  for (const th of ['顧客', '状態', 'プラン', 'Route', 'PHASE', '販売許可日', '最終更新', '操作']) {
+test('一覧は日常運用に必要な列だけ（内部の軸を一覧に出さない）', () => {
+  // ⚠️ 2026-09-09 確定仕様。Route / 区分 / 販売CTA / 表示判定 / 実閲覧 / 案内 / PHASE は
+  //    内部の軸・集計なので一覧から外し、詳細パネルと「効果測定」で見る
+  //    （横スクロールを日常運用で要求しないため）。
+  for (const th of ['顧客', '状態', 'プラン', '販売許可日', '最終更新', '操作']) {
     assert.ok(PAGE.includes('>' + th + '</th>'), `列が無い: ${th}`);
+  }
+  for (const th of ['Route', 'PHASE', '区分', '販売CTA', '表示判定', '実閲覧']) {
+    assert.ok(!PAGE.includes('<th class="c-' + ({
+      Route: 'route', PHASE: 'phase', 区分: 'kind', 販売CTA: 'upsell', 表示判定: 'display', 実閲覧: 'realview',
+    })[th] + '">'), `内部の軸が一覧に残っている: ${th}`);
   }
   assert.match(PAGE, /<tbody id="rows">/);
   assert.match(PAGE, /\$\('rows'\)/);
@@ -103,32 +111,36 @@ test('write は詳細パネル内だけで行う', () => {
 });
 
 // ── 状態バッジ ───────────────────────────────────────────────────
-test('状態バッジ 5 種（短いラベル）と分類ロジックがある', () => {
-  for (const k of ['review', 'staged', 'sale', 'immediate', 'blocked']) {
+test('主状態は 4 分類。判定を画面で作らない（2026-09-09 確定仕様）', () => {
+  // 購入可能 / 販売停止中 / 段階表示中 / 対象外 の 4 つだけ
+  for (const k of ['sale', 'paused', 'staged', 'out']) {
     assert.ok(STYLE.includes(`.badge.${k}`), `バッジ CSS が無い: ${k}`);
   }
   assert.match(PAGE, /function classify\(r\)/);
-  assert.match(PAGE, /short: '保留'/);
-  assert.match(PAGE, /short: 'PHASE ' \+ r\.phase/);
-  assert.match(PAGE, /short: '販売中'/);
-  assert.match(PAGE, /short: '即時販売'/);
-  assert.match(PAGE, /short: '販売対象外'/);
-  // 一覧では短いバッジ（長文の「段階公開中 PHASE 1」を一覧に出さない）
-  assert.doesNotMatch(PAGE, /'段階公開中 PHASE '/);
+  assert.match(PAGE, /L\.classifyListState\(r\)/, '分類を単一源に委譲していない');
+  // 内部の軸をラベルに使わない
+  for (const w of ["short: '即時販売'", "short: 'PHASE ' + r.phase", "'段階公開中 PHASE '"]) {
+    assert.ok(!PAGE.includes(w), `一覧に内部用語が残っている: ${w}`);
+  }
+  // 一覧の分類で override / phase を直接見ない（漏れの原因だった）
+  assert.ok(!/function classify\(r\)[\s\S]{0,400}r\.overrideApplied/.test(PAGE),
+    'classify が override を見ている（購入可能を取り逃す）');
 });
 
-test('分類は eligibility → override → phase の順（サーバ判定に追従）', () => {
-  assert.match(PAGE, /if \(r\.eligibility === 'blocked'\)/);
-  assert.match(PAGE, /if \(r\.eligibility !== 'eligible'\)/);
-  assert.match(PAGE, /if \(r\.overrideApplied\)/);
-  assert.match(PAGE, /if \(r\.phase === 4\)/);
+test('「購入可能」はサーバーが解決した購入可否だけで決める', () => {
+  const mod = readFileSync(new URL('./premiumPlusAdminListView.js', import.meta.url).pathname, 'utf8');
+  assert.match(mod, /r\.purchaseEnabled === true\) return LIST_STATE\.SALE/,
+    '購入可能の判定が purchaseEnabled だけになっていない');
+  assert.ok(!/overrideApplied/.test(mod), '一覧の分類が override を見ている（片方が漏れる）');
+  assert.match(mod, /r\.salePaused === true\) return LIST_STATE\.PAUSED/, '停止が最優先になっていない');
 });
 
 // ── 検索・フィルター ─────────────────────────────────────────────
 test('状態フィルター 5 種 + Route フィルター + Email 検索（クライアント側のみ）', () => {
-  for (const v of ['all', 'review', 'eligible', 'immediate', 'blocked']) {
-    assert.ok(PAGE.includes(`<option value="${v}">`), `状態フィルターが無い: ${v}`);
-  }
+  // 状態フィルタは単一源が入れる（内部用語「即時販売」を選択肢に出さない）
+  assert.match(PAGE, /function fillStateFilter\(\)/);
+  assert.match(PAGE, /window\.__ppList\.listStateFilterOptions\(\)/);
+  assert.ok(!PAGE.includes('<option value="immediate">'), '「即時販売」が状態フィルタに残っている');
   assert.ok(PAGE.includes('<option value="sanrenpuku">'));
   assert.ok(PAGE.includes('<option value="premium_30d">'));
   assert.match(PAGE, /id="q"[^>]*placeholder="氏名 または アドレスの一部"/);
@@ -143,18 +155,18 @@ test('状態フィルター 5 種 + Route フィルター + Email 検索（ク�
   assert.doesNotMatch(PAGE, /addEventListener\('input',[^)]*lookupOutsideCandidates/);
 });
 
-test('並び順: 保留 → 販売可/販売中 → 即時販売 → 販売対象外、同群は最終更新の新しい順', () => {
-  assert.match(PAGE, /order: 4[\s\S]{0,400}order: 1[\s\S]{0,400}order: 3[\s\S]{0,400}order: 2[\s\S]{0,400}order: 2/);
+test('並び順: 購入可能 → 販売停止中 → 段階表示中 → 対象外、同群は最終更新の新しい順', () => {
+  assert.match(PAGE, /\{ sale: 1, paused: 2, staged: 3, out: 4 \}/);
   assert.match(PAGE, /classify\(a\)\.order - classify\(b\)\.order/);
   assert.match(PAGE, /return ub\.localeCompare\(ua\);/);
 });
 
 // ── サマリーバー ─────────────────────────────────────────────────
-test('サマリーは 1 行バー・優先度順・クリックでフィルター', () => {
-  const i = (s) => PAGE.indexOf(s);
-  assert.ok(i("['即時販売', c.immediate") < i("['販売可', c.eligible"));
-  assert.ok(i("['販売可', c.eligible") < i("['保留', c.review"));
-  assert.ok(i("['保留', c.review") < i("['候補', c.total"));
+test('サマリーは主状態 4 分類の運営サマリー・クリックでフィルター', () => {
+  // 「購入可能 5名 / 販売停止中 0名 / 段階表示中 13名 / 対象外 N名」を単一源から作る
+  assert.match(PAGE, /L\.summarizeListStates\(rowsForSum\)\.items/);
+  assert.match(PAGE, /i\.label \+ ' ' \+ i\.count \+ '名'/);
+  assert.ok(!PAGE.includes("['即時販売', c.immediate"), '内部の軸がサマリーに残っている');
   assert.match(PAGE, /\$\('fState'\)\.value = filter/);
   // ROUTE は補助表示（別行）
   assert.match(PAGE, /summarySub/);
