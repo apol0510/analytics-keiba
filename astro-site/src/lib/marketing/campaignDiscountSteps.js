@@ -136,24 +136,32 @@ export const DISCOUNT_FREE_STEPS = Object.freeze([
     benefitTitle: `割引価格（${DISCOUNT_DEADLINE}）`,
     benefitItems: discountItems('free'),
   }),
+  // ⚠️ **第 2 期（再募集）の 1 通目にあたる文面**（2026-09-08 改訂）。
+  //    step1 は第 1 期に配信済みで、そのときの期限（8月下旬〜9月上旬）は既に過ぎている。
+  //    期限だけ差し替えると「前に見た期限と違う」とだけ映るので、
+  //    **一度締め切ったこと**と**改めて期間を設けたこと**を先に書く。
+  //    日付は書かない（`DISCOUNT_DEADLINE` が `CAMPAIGN_WINDOW` から導出する）。
   step({
     n: 2, delayDays: 5, angle: 'プランの違い',
-    name: 'プランの違い',
-    subject: '【KEIBA Analytics】Light と Premium の違いについて',
-    preheader: 'どちらを選べばよいかのご参考に、ご覧いただける範囲をまとめました。',
-    badge: '',
-    headline: 'ご覧いただける範囲の違い',
+    name: 'プランの違い（再募集のご案内）',
+    subject: '【KEIBA Analytics】割引を再度ご用意しました（Light と Premium の違い）',
+    preheader: '締め切っていた割引を、改めてご用意しました。プランの違いもあわせてご案内します。',
+    badge: '再募集',
+    headline: '割引を改めてご用意しました',
     body: [
       'KEIBA Analytics です。',
       '',
-      '先日ご案内した割引について、どのプランを選べばよいかのご参考に、',
+      '先日ご案内した割引は一度締め切っておりましたが、',
+      'ご検討中というお声をいただき、改めて期間を設けました。',
+      '',
+      'どのプランを選べばよいかのご参考に、',
       'それぞれでご覧いただける範囲をお伝えします。',
       '',
       '前日のメインレース買い目とその結果は、的中・不的中を正確なデータとして',
       'そのまま無料で公開しています。実際の中身をご確認いただいたうえで',
       'ご検討いただければ幸いです。',
       '',
-      `割引は${DISCOUNT_DEADLINE}のお申し込みが対象です。`,
+      `今回の割引は${DISCOUNT_DEADLINE}のお申し込みが対象です。`,
     ],
     benefitTitle: 'ご覧いただける範囲',
     benefitItems: [
@@ -172,12 +180,13 @@ export const DISCOUNT_FREE_STEPS = Object.freeze([
     body: [
       'KEIBA Analytics です。',
       '',
-      `先日よりご案内している割引は、${DISCOUNT_DEADLINE}のお申し込みが対象です。`,
+      `改めてご用意した割引は、${DISCOUNT_DEADLINE}のお申し込みが対象です。`,
       '',
       'ご検討中の方は、ご登録のメールアドレスでログインしていただくと、',
       'マイページのお知らせからそのままお申し込みいただけます。',
       '',
       '期限を過ぎたあとは通常価格でのご案内となります。',
+      '次回の再募集の予定は未定です。',
     ],
     benefitTitle: `割引価格（${DISCOUNT_DEADLINE}）`,
     benefitItems: discountItems('free'),
@@ -220,7 +229,8 @@ export const DISCOUNT_LIGHT_STEPS = Object.freeze([
     body: [
       'KEIBA Analytics です。',
       '',
-      `先日ご案内した Premium の割引は、${DISCOUNT_DEADLINE}のお申し込みが対象です。`,
+      '先日ご案内した Premium の割引は一度締め切っておりましたが、',
+      `改めて期間を設けました。今回は${DISCOUNT_DEADLINE}のお申し込みが対象です。`,
       '',
       'Light プランはそのままご利用いただけます。',
       '切り替えをご検討中の場合のみ、マイページからお手続きください。',
@@ -269,7 +279,8 @@ export const DISCOUNT_PREMIUM_STEPS = Object.freeze([
     body: [
       'KEIBA Analytics です。',
       '',
-      `先日ご案内した三連複（買い切り）の割引は、${DISCOUNT_DEADLINE}のお申し込みが対象です。`,
+      '先日ご案内した三連複（買い切り）の割引は一度締め切っておりましたが、',
+      `改めて期間を設けました。今回は${DISCOUNT_DEADLINE}のお申し込みが対象です。`,
       '',
       'Premium プランはそのままご利用いただけます。',
       '追加をご検討中の場合のみ、マイページの「三連複を追加」からお手続きください。',

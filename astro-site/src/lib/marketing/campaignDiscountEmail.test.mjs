@@ -28,7 +28,7 @@ import {
 } from './campaignDiscountSteps.js';
 import {
   resolveCampaignOfferIdsFor, describeCampaignDeadline, describeCampaignOfferLine,
-  CAMPAIGN_OFFER_IDS, isCampaignActive,
+  CAMPAIGN_OFFER_IDS, isCampaignActive, CAMPAIGN_WINDOW,
 } from '../promotions/campaignOffers.js';
 import { resolveOffer } from '../promotions/promotionOfferCatalog.js';
 
@@ -174,18 +174,22 @@ test('大量配信の benefit guard を通る（15,000 名規模で送れる）'
 });
 
 test('【fail closed】キャンペーン期間外は自動的に使用停止になる', () => {
+  // ⚠️ **日付を直書きしない**（2026-09-08）。期間は `CAMPAIGN_WINDOW` が単一源で、
+  //    再募集のたびに動く。リテラルで書くと**期間を取り直した瞬間に落ちる**。
+  const startsAtMs = Date.parse(CAMPAIGN_WINDOW.startsAtIso);
+  const endsAtMs = Date.parse(CAMPAIGN_WINDOW.endsAtIso);
   const real = Date.now;
   try {
-    Date.now = () => Date.parse('2026-09-08T00:00:00+09:00');
+    Date.now = () => endsAtMs;                     // 終了ちょうど = 期間外
     assert.equal(isCampaignActive(), false, '前提: 期間外');
     for (const id of IDS) {
       assert.equal(def(id).enabled, false, `${id}: 期間外なのに有効`);
       // fail closed: 通常の取得経路では取り出せない = dry-run も送信もできない
       assert.equal(getCampaign(id), null, `${id}: 期間外に取得できてしまう`);
     }
-    Date.now = () => Date.parse('2026-08-23T23:59:00+09:00');
+    Date.now = () => startsAtMs - 60_000;          // 開始 1 分前
     for (const id of IDS) assert.equal(def(id).enabled, false, `${id}: 開始前なのに有効`);
-    Date.now = () => Date.parse('2026-08-25T12:00:00+09:00');
+    Date.now = () => startsAtMs + 86400_000;       // 期間 2 日目
     for (const id of IDS) assert.equal(def(id).enabled, true, `${id}: 期間内なのに無効`);
   } finally {
     Date.now = real;
