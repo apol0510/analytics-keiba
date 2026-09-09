@@ -74,6 +74,25 @@ export function classifyListState(row) {
   return LIST_STATE.STAGED;
 }
 
+/**
+ * 主状態の**理由**（一覧で短く添える）。
+ *
+ * ⚠️ 2026-09-09 MK 指摘: 「対象外」は主バッジのままでよいが、
+ *    **販売対象外なのか資格保留なのかを一覧で区別できること**。
+ *    詳細を開かないと分からない状態を作らない。
+ * ⚠️ 短く（10 文字前後）。長い説明は詳細パネルへ。
+ *
+ * @returns {string} 添える理由。不要なら空文字
+ */
+export function describeStateReason(row) {
+  const r = row || {};
+  if (classifyListState(r) !== LIST_STATE.OUT) return '';
+  if (r.eligibility === 'blocked') return '販売対象外';
+  if (r.eligibility === 'review') return '資格保留';
+  // eligible でも blocked でもない未知の値は**断定しない**（隠しもしない）
+  return r.eligibility ? `資格: ${r.eligibility}` : '資格が未設定';
+}
+
 /** 主状態のラベル */
 export const listStateLabel = (row) => LIST_STATE_LABEL[classifyListState(row)];
 /** 主状態の色 */

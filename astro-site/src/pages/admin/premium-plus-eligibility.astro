@@ -1875,6 +1875,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   .ppe .notify-open { margin-left: .4rem; padding: .25rem .7rem; border-radius: 8px; cursor: pointer;
     background: #3a1418; color: #fca5a5; border: 1px solid rgba(248,113,113,.6); font-weight: 700; font-size: .78rem; }
   .ppe .notify-open:hover { background: #4a1a20; }
+  /* 「対象外」の理由（販売対象外 / 資格保留）。バッジの下に短く添える */
+  .ppe .state-reason { display: block; margin-top: 3px; font-size: .76rem; font-weight: 700; color: #cbd5e1; }
   .ppe .kv { display: grid; grid-template-columns: max-content 1fr; gap: .3rem .9rem; font-size: .8rem; margin: 0; }
   .ppe .kv dt { color: #93a4bd; }
   .ppe .kv dd { margin: 0; font-weight: 700; overflow-wrap: anywhere; }
@@ -2502,11 +2504,13 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     classifyListState, LIST_STATE, LIST_STATE_LABEL, LIST_STATE_TONE,
     summarizeListStates, listStateFilterOptions, matchesListState,
     findExactEmailMatch, describeAttention, describeLastChange, describeRowActions,
+    describeStateReason,
   } from '../../lib/premiumPlus/premiumPlusAdminListView.js';
   window.__ppList = {
     classifyListState, LIST_STATE, LIST_STATE_LABEL, LIST_STATE_TONE,
     summarizeListStates, listStateFilterOptions, matchesListState,
     findExactEmailMatch, describeAttention, describeLastChange, describeRowActions,
+    describeStateReason,
   };
   import {
     buildPlanView, updateSelection, offscreenSelection, labelFor, PLAN_KIND,
@@ -3605,7 +3609,9 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         c1.appendChild(em);
         tr.appendChild(c1);
 
-        // 状態は**大きな色バッジ**で（細かい文字を追わせない）
+        // 状態は**大きな色バッジ**で（細かい文字を追わせない）。
+        // ⚠️ 「対象外」だけは理由（販売対象外 / 資格保留）を短く添える。
+        //    詳細を開かないと区別できない状態を作らないため（2026-09-09 MK 指摘）。
         const c2 = document.createElement('td');
         c2.className = 'c-state';
         const badge = document.createElement('span');
@@ -3613,6 +3619,16 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         badge.textContent = st.short;
         badge.title = r.state || st.short;
         c2.appendChild(badge);
+        // 「対象外」の理由（販売対象外 / 資格保留）を短く添える。文言は単一源
+        if (window.__ppList) {
+          const reason = window.__ppList.describeStateReason(r);
+          if (reason) {
+            const rs = document.createElement('span');
+            rs.className = 'state-reason';
+            rs.textContent = reason;
+            c2.appendChild(rs);
+          }
+        }
         // 一時停止は資格バッジを**置き換えず**に添える。
         // 置き換えると「止まっているが資格は販売可」なのか「販売対象外」なのかが読めない。
         const pb = pauseBadge(r);

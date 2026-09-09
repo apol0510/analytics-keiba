@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import {
   LIST_STATE, LIST_STATE_LABEL, LIST_STATE_ORDER, classifyListState, listStateLabel,
   summarizeListStates, listStateFilterOptions, matchesListState, findExactEmailMatch,
-  describeAttention, describeLastChange, describeRowActions,
+  describeAttention, describeLastChange, describeRowActions, describeStateReason,
 } from './premiumPlusAdminListView.js';
 
 /** odamoto の実データ相当（override なしで PHASE 4 に到達＝旧実装で取り逃していた形） */
@@ -147,4 +147,25 @@ test('【重要】主状態のラベル・分類に内部用語が混ざらな�
   for (const w of ['即時販売', 'override', 'PHASE', 'eligibility']) {
     assert.ok(!all.includes(w), `主状態に内部用語が出ている: ${w}`);
   }
+});
+
+
+test('【重要】「対象外」は理由まで一覧で分かる（詳細を開かせない）', () => {
+  assert.equal(describeStateReason(BLOCKED), '販売対象外');
+  assert.equal(describeStateReason(REVIEW), '資格保留');
+  assert.notEqual(describeStateReason(BLOCKED), describeStateReason(REVIEW),
+    '販売対象外と資格保留が一覧で区別できない');
+  // 短く（長い説明は詳細パネルへ）
+  for (const r of [BLOCKED, REVIEW]) assert.ok(describeStateReason(r).length <= 10);
+});
+
+test('対象外**以外**には理由を添えない（正常な行に文字を増やさない）', () => {
+  for (const r of [ODAMOTO, OVERRIDDEN, STAGED, PAUSED]) {
+    assert.equal(describeStateReason(r), '', `理由が余計に出ている: ${r.email}`);
+  }
+});
+
+test('未知の資格値でも断定せず、隠しもしない', () => {
+  assert.match(describeStateReason({ eligibility: 'weird', purchaseEnabled: false }), /weird/);
+  assert.equal(describeStateReason({ purchaseEnabled: false }), '資格が未設定');
 });

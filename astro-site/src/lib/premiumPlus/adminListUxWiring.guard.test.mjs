@@ -72,3 +72,12 @@ test('一覧の状態バッジは大きい（細かい文字を追わせない�
   const m = PAGE.match(/\.tbl td\.c-state \.badge \{[^}]*font-size:\s*([\d.]+)rem/);
   assert.ok(m && Number(m[1]) >= 0.9, `一覧のバッジが小さい: ${m && m[1]}rem`);
 });
+
+
+test('【重要】「対象外」の理由を一覧のバッジに添えている', () => {
+  assert.match(PAGE, /window\.__ppList\.describeStateReason\(r\)/);
+  assert.match(PAGE, /rs\.className = 'state-reason'/);
+  assert.match(PAGE, /rs\.textContent = reason/, '理由を単一源から取っていない');
+  assert.ok(!PAGE.includes("'販売対象外'") || !PAGE.includes("rs.textContent = '販売対象外'"),
+    '理由を画面に直書きしている');
+});
