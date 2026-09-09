@@ -37,6 +37,7 @@
 | 31 | E2E 用の dev サーバーは**スクリプト内で起動・停止**する。**CI の step でバックグラウンド起動しない**（step が終了できず hang する）| 同上 / `safety-check.yml` |
 | 32 | E2E の**ブラウザプロファイルを repo 内に作らない**。OS の一時ディレクトリに作り必ず削除する（`.gitignore` にも保険）| `scripts/e2e-admin-plus.mjs` / `astro-site/.gitignore` |
 | 33 | E2E の**すべての待ちに時間制限**を付け、**各フェーズで進捗を出す**。CI で無出力のまま固まらせない | `scripts/e2e-admin-plus.mjs` |
+| 34 | 未認証チェックの **2 観点は環境に関わらず必ず実行**し、**確認手段だけ替える**（Deno 有=HTTP / Deno 無=本物のハンドラ直呼び）。**CI へ Deno を勝手に足さない** | `scripts/e2e-admin-plus.mjs` / `docs/spec.md` |
 
 確定仕様は `docs/spec.md`「Premium Plus 管理画面と販売停止（2026-09-09 確定）」。
 

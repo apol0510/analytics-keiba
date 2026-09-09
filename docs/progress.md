@@ -50,7 +50,37 @@ read-only で内容を検査（**値は一切表示していない**）:
 プロファイルは OS の一時ディレクトリへ移し、`.gitignore` にも保険を入れた。
 履歴改変（amend / force push 等）は行っていない。
 
-### ⚠️ CI で E2E が失敗（3 回・原因はすべて別物）
+### ⚠️ CI で E2E が失敗（4 回・原因はすべて別物）
+
+**4 回目で根本原因が判明**: dev サーバーの出力を残したことで理由が読めた。
+
+```
+Error: Could not establish a connection to the Netlify Edge Functions local development server
+    at EdgeFunctionsHandler.waitForDenoServer (...)
+```
+
+この repo の `astro dev` は edge function（`netlify/edge-functions/admin-auth.ts`）を
+**必ずローカル実行**しようとし、それには **Deno** が要る。
+Deno は初回に netlify のキャッシュ（手元は `~/Library/Preferences/netlify/deno-cli/deno`・2026-05-20 取得）へ
+落ちるのでローカルでは動くが、**GitHub Actions の runner には Deno が無い**。
+edge-functions-dev の待ち時間は **3 秒固定**（`DENO_SERVER_POLL_TIMEOUT = 3e3`）で、
+cold start が間に合わず初期化がリクエストごとに失敗し続け、
+結果として **dev サーバーが 1 リクエストも返さない**（3 分待っても同じ）。
+
+対処（**依存は増やしていない**。Deno のセットアップ action も npm パッケージも足していない）:
+
+| 方針 | 内容 |
+|---|---|
+| 観点は減らさない | 未認証の **2 観点は環境に関わらず必ず実行**（合計 56 項目のまま）|
+| 手段だけ替える | Deno 有（ローカル）= `astro dev` へ **HTTP で 401 / 404**。Deno 無（CI）= **本物の判定モジュール／本物のハンドラを直接呼ぶ** |
+| 無駄に待たない | Deno の有無を先に見て、無ければ dev サーバーを**起動しない** |
+| 何で確認したか出す | 実行サマリに「HTTP で実施 / ハンドラ直呼びで実施」を明記 |
+
+CI 側で確認する内容: `/admin/*` に edge 認証が配線されていること・`decideAdminAccess` が
+env 未設定でも通さないこと（fail closed）・`handleMediaGet` がセッション無しで **404**（401/403 にしない）。
+
+> Deno を CI へ入れれば HTTP のまま確認できるが、**CI に新しい依存を足す判断は MK 待ち**。
+
 
 **3 回目**: DOM 側 **54 項目は CI で全て pass**。残るは dev サーバーが CI で
 120 秒以内に応答しない点のみ。`stdio: 'ignore'` にしていたため理由が分からなかったので、
@@ -95,8 +125,8 @@ dev サーバーの起動・停止はスクリプト内で完結させる形に�
 
 | 内容 | 結果 |
 |---|---|
-| CI と同じ手順をローカル再現（dev 起動 → `CI=true E2E_DEV_URL=...`）| **56 項目 pass / 0 fail** |
-| `E2E_DEV_URL` 無しで `CI=true` | **意図どおり fail**（観点が減ったことを検出）|
+| ローカル（Deno あり・HTTP で未認証チェック）| **56 項目 pass / 0 fail** |
+| CI 相当（`E2E_NO_DEV=1`・ハンドラ直呼び）| **56 項目 pass / 0 fail** |
 | admin の env 無しでの 401 / 404 | 期待どおり |
 | `check:safety` / `build` | exit 0 / exit 0 |
 

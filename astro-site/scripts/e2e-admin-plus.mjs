@@ -38,7 +38,7 @@
  *   E2E_BROWSER  … Chromium 系のバイナリ（未指定なら既知の場所を順に探す）
  *   E2E_DEV_URL  … 既に起動している dev サーバーを使う（例 http://localhost:4321）。
  *                  未指定なら**このスクリプトが自分で `astro dev` を起動して終了時に落とす**。
- *   E2E_NO_DEV=1 … dev サーバーを使わない（未認証チェックは実行できない＝CI では失敗させる）
+ *   E2E_NO_DEV=1 … dev サーバーを使わない（未認証 2 観点はハンドラ直呼びで確認する）
  *
  * ⚠️ dev サーバーを CI の step でバックグラウンド起動しないこと。
  *    Actions の step が子プロセスのために終了できず **hang する**（2026-09-10 に実際に起きた）。
@@ -51,6 +51,7 @@ import { tmpdir } from 'node:os';
 import { existsSync, rmSync } from 'node:fs';
 import { join, extname, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { pathToFileURL } from 'node:url';
 
 const ROOT = resolve(new URL('..', import.meta.url).pathname);
 const DIST = join(ROOT, 'dist');
@@ -154,8 +155,34 @@ let devBase = process.env.E2E_DEV_URL ? process.env.E2E_DEV_URL.replace(/\/$/, '
 let devError = null;
 let devLog = '';
 
+/**
+ * Netlify Edge Functions のローカル実行に使う Deno があるか。
+ *
+ * ⚠️ この repo の `astro dev` は edge function (`netlify/edge-functions/admin-auth.ts`) を
+ *    必ずローカル実行しようとする。Deno が無いと edge の初期化に失敗し続け、
+ *    **dev サーバーが 1 リクエストも返さない**（CI で 3 回再現）。
+ *    無いと分かっている環境で 3 分待つのは無駄なので、先に見て切り替える。
+ */
+function findDeno() {
+  const home = process.env.HOME || process.env.USERPROFILE || '';
+  const candidates = [
+    join(home, 'Library', 'Preferences', 'netlify', 'deno-cli', 'deno'), // macOS
+    join(process.env.XDG_CONFIG_HOME || join(home, '.config'), 'netlify', 'deno-cli', 'deno'), // Linux
+    join(process.env.APPDATA || '', 'netlify', 'Config', 'deno-cli', 'deno.exe'), // Windows
+  ];
+  for (const c of candidates) { if (c && existsSync(c)) return c; }
+  for (const dir of String(process.env.PATH || '').split(':')) {
+    if (dir && existsSync(join(dir, 'deno'))) return join(dir, 'deno');
+  }
+  return null;
+}
+
 async function startDevServer() {
   if (devBase || process.env.E2E_NO_DEV === '1') return;
+  if (!findDeno()) {
+    devError = 'Deno が無いため Netlify Edge をローカル実行できません（dev サーバーは起動しても応答しません）';
+    return;
+  }
   const port = 4300 + Math.floor(Math.random() * 200);
   // ⚠️ `npx` を経由しない。解決に失敗すると**黙って固まる**ことがある。
   //    ローカルに入っている astro を直接起動する。
@@ -176,7 +203,7 @@ async function startDevServer() {
   //    CI では返るまでに時間がかかり、待ちが終わらない（2026-09-10 に 15 分ハングした）。
   // ⚠️ **1 回ごとに時間制限**を付ける。付けないと fetch が返らないまま
   //    ループが 1 周目から進まず、上限 90 秒に到達しない。
-  const deadlineAt = Date.now() + 180000;
+  const deadlineAt = Date.now() + 120000;
   let probes = 0;
   while (Date.now() < deadlineAt) {
     probes += 1;
@@ -654,24 +681,67 @@ const ghost = await evaluate(`(() => {
 })()`);
 check(ghost.length === 0, `見えるのに押せない（理由の提示も無い）要素が無い${ghost.length ? ': ' + ghost.join(' / ') : ''}`);
 
-// ── 13. 未認証では admin 画面 / API に到達できない（任意）──────
+// ── 13. 未認証では admin 画面 / 実績画像 API に到達できない ──────
+//
+// ⚠️ HTTP で確かめるには `astro dev` が要る。この repo の dev サーバーは
+//    Netlify Edge Functions を**必ずローカル実行**しようとし、そのために Deno を使う。
+//    Deno バイナリは初回に netlify のキャッシュ（`~/.../netlify/deno-cli`）へ落ちるため
+//    ローカルでは動くが、GitHub Actions の runner には Deno が無く、
+//    edge-functions-dev の待ち時間（**3 秒固定**）に cold start が間に合わず
+//    dev サーバーが一切応答しない（2026-09-10 に CI で 3 回再現）。
+//
+//    「実行不能なら依存を勝手に追加しない」方針に従い、Deno のセットアップは足さない。
+//    代わりに、Deno が無い環境では**同じ観点**を、本物の判定モジュール／本物のハンドラを
+//    直接呼ぶ形で確認する（観点は減らさない。確認手段だけ環境に合わせて替える）。
 if (devBase) {
   const base = devBase;
   for (const [path, want, label] of [
-    ['/admin/premium-plus-eligibility/', 401, '未認証では admin 画面に到達できない'],
-    ['/.netlify/functions/premium-plus-media?limit=3', 404, '未認証では実績画像 API に到達できない'],
+    ['/admin/premium-plus-eligibility/', 401, '未認証では admin 画面に到達できない（HTTP）'],
+    ['/.netlify/functions/premium-plus-media?limit=3', 404, '未認証では実績画像 API に到達できない（HTTP）'],
   ]) {
     // ⚠️ ここにも時間制限。返らない相手で E2E 全体が止まらないようにする
     const res = await fetch(base + path, { signal: AbortSignal.timeout(20000) }).catch(() => null);
     check(res && res.status === want, `${label}（期待 ${want} / 実際 ${res ? res.status : '接続不可'}）`);
   }
 } else {
-  // ⚠️ 黙ってスキップしない。確認観点が減ったことに気づけなくなる
-  //    （PR 時 56 項目 / CI 54 項目のズレが実際に起きた）。
-  check(false, '未認証チェックを実行できませんでした: ' + (devError || 'E2E_NO_DEV=1 が指定されています'));
+  if (devError) step(`dev サーバーを使わない検証へ切替（${devError}）`);
+  // A. admin 画面 — /admin/* に edge 認証が配線され、env 未設定でも 401（fail closed）
+  let adminOk = false; let adminNote = '';
+  try {
+    const edgeSrc = await readFile(join(ROOT, 'netlify', 'edge-functions', 'admin-auth.ts'), 'utf8');
+    const wiredPath = /path:\s*'\/admin\/\*'/.test(edgeSrc);
+    const usesSingleSource = /decideAdminAccess\(/.test(edgeSrc);
+    const denies401 = /status:\s*401/.test(edgeSrc);
+    const { decideAdminAccess } = await import(pathToFileURL(join(ROOT, 'src', 'lib', 'auth', 'adminBasicAuth.js')).href);
+    // 認証ヘッダ無し・env 未設定（＝設定ミス）でも通してはいけない
+    const noHeader = decideAdminAccess({ header: null, env: {}, decodeBase64: (b) => Buffer.from(b, 'base64').toString('utf8') });
+    const withHeader = decideAdminAccess({
+      header: 'Basic ' + Buffer.from('admin:admin').toString('base64'),
+      env: {}, decodeBase64: (b) => Buffer.from(b, 'base64').toString('utf8'),
+    });
+    adminOk = wiredPath && usesSingleSource && denies401 && noHeader.allow !== true && withHeader.allow !== true;
+    if (!adminOk) {
+      adminNote = ` [path=${wiredPath} 単一源=${usesSingleSource} 401=${denies401}`
+        + ` ヘッダ無し=${noHeader.allow} 適当な資格情報=${withHeader.allow}]`;
+    }
+  } catch (e) { adminNote = ` [${e && e.message ? e.message : String(e)}]`; }
+  check(adminOk, '未認証では admin 画面に到達できない（/admin/* に edge 認証が配線され、env 未設定でも通さない）' + adminNote);
+
+  // B. 実績画像 API — セッション無しなら 404（存在秘匿。401/403 にしない）
+  let mediaStatus = null; let mediaNote = '';
+  try {
+    const { handleMediaGet } = await import(pathToFileURL(join(ROOT, 'src', 'lib', 'premiumPlus', 'mediaHandlers.js')).href);
+    const res = await handleMediaGet({
+      params: { limit: 3 }, cookieHeader: '', secret: 'e2e-not-a-real-secret-0000000000',
+      now: Date.now(), store: { getBytes: async () => null, get: async () => null, setJSON: async () => {} },
+    });
+    mediaStatus = res && res.statusCode;
+  } catch (e) { mediaNote = ` [${e && e.message ? e.message : String(e)}]`; }
+  check(mediaStatus === 404, `未認証では実績画像 API に到達できない（期待 404 / 実際 ${mediaStatus === null ? '呼び出し失敗' : mediaStatus}）` + mediaNote);
+
   if (devLog.trim()) {
     console.error('--- dev サーバーの出力（末尾）---');
-    console.error(devLog.trim().slice(-2000));
+    console.error(devLog.trim().slice(-1200));
     console.error('--- ここまで ---');
   }
 }
@@ -680,9 +750,8 @@ stopDevServer();
 // ── 終了 ────────────────────────────────────────────────────
 browserWs.close(); server.close(); proc.kill();
 await removeProfile();
-const skippedUnauth = !devBase;
 console.log(`\n合計 ${passes.length + fails.length} 項目 / pass ${passes.length} / fail ${fails.length}`
-  + (skippedUnauth ? '（未認証チェック 2 件は未実行）' : '（未認証チェックを含む）'));
+  + (devBase ? '（未認証チェックは HTTP で実施）' : '（未認証チェックはハンドラ直呼びで実施＝Deno 不在環境）'));
 if (fails.length) {
   console.error('\n⛔ E2E 失敗:');
   for (const f of fails) console.error('   - ' + f);
