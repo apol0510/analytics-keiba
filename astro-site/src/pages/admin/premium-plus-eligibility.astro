@@ -3716,9 +3716,11 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
             c2.appendChild(rs);
           }
         }
-        // 一時停止は資格バッジを**置き換えず**に添える。
-        // 置き換えると「止まっているが資格は販売可」なのか「販売対象外」なのかが読めない。
-        const pb = pauseBadge(r);
+        // ⚠️ 2026-09-10: 主状態が 4 分類になり、停止は「販売停止中」バッジ自体で分かる。
+        //    そこへ「一時停止中」チップを重ねると同じことを 2 回言うことになるので、
+        //    **停止中のときは添えない**（停止していない行では従来どおり出さない）。
+        //    資格の内訳（販売対象外 / 資格保留）は state-reason が担う。
+        const pb = st.key === 'paused' ? null : pauseBadge(r);
         if (pb) c2.appendChild(pb);
         // クーポン取得も別軸。資格・停止のどちらのバッジも置き換えない。
         const cb = couponBadge(r);
@@ -3758,6 +3760,10 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         btn.className = 'btn-detail';
         btn.textContent = '詳細・操作';
         btn.addEventListener('click', () => openDetail(r.recordId));
+        // ⚠️ 2026-09-10: ここの appendChild が落ちていて、全行から「詳細・操作」が
+        //    消えていた（E2E で検出）。ソース検査のガードでは見抜けないので、
+        //    E2E（scripts/e2e-admin-plus.mjs）で毎回 DOM を確認すること。
+        c8.appendChild(btn);
         if (window.__ppList) {
           for (const a of window.__ppList.describeRowActions(r, { salePauseWritable: pauseAvailable() })) {
             const rb = document.createElement('button');
@@ -4539,6 +4545,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
             ? '販売を一時停止しました（保存を確認済み / 資格は変更していません）'
             : '販売を再開しました（保存を確認済み）', 'ok');
         }
+        // ⚠️ 一覧の更新は refreshOne() が内部で render() 済み（読み直した値で描き直す）。
+        //    ここで重ねて render() しない。
         renderDetail();
       });
       if (psShowToggle) {
@@ -4865,7 +4873,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
               + (fresh ? '（保存を確認済み）' : '（保存後の再読込に失敗しました。再読込で確認してください）'),
               fresh ? 'ok' : 'err');
           }
-          renderDetail(); // パネルを最新状態で再構成
+          renderDetail(); // パネルを最新状態で再構成（一覧は refreshOne が更新済み）
         });
         buttons.push(btn);
         return btn;
