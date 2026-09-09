@@ -23,12 +23,13 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import { derivePlanFromProductName, hasOwnSpecialPrice } from '../payments/productName.js';
-import { resolveCampaignPricing, isCampaignActive } from './campaignOffers.js';
+import { resolveCampaignPricing, isCampaignActive, CAMPAIGN_WINDOW } from './campaignOffers.js';
 import * as catalog from './campaignOffers.js';
 
 const PAGES_DIR = fileURLToPath(new URL('../../pages/', import.meta.url));
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
-const NOW = Date.parse('2026-08-25T03:00:00Z');
+/** ⚠️ 日付を直書きしない。期間の単一源（`CAMPAIGN_WINDOW`）から導出する */
+const NOW = Date.parse(CAMPAIGN_WINDOW.startsAtIso) + 86400_000;   // 期間 2 日目
 const ALLOWED = { allowed: true };
 
 /** サイト中の購入ボタン（`openBankModal('商品名', 金額, '期間')`）を全部集める */

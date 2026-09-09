@@ -18,6 +18,9 @@
 import { getStore, connectLambda } from '@netlify/blobs';
 import { handleMediaGet, handleMediaPost } from '../../src/lib/premiumPlus/mediaHandlers.js';
 import { resolvePremiumPlusStoreName } from '../../src/lib/premiumPlus/storeSelection.js';
+// 販売停止中の会員に実績を見せない（2026-09-09 確定仕様 §4）。判定は既存の単一源のみ。
+import { lookupCustomerFields } from '../../src/lib/premiumPlus/purchaseAnchorLookup.js';
+import { resolveUpsellForCustomer, UPSELL_CHANNEL } from '../../src/lib/upsell/upsellTarget.js';
 
 /** Netlify Blobs を manifestStore が期待する注入インターフェースにアダプトする。 */
 function blobStore(storeName) {
@@ -139,6 +142,19 @@ export async function runHandler(event, deps = {}) {
         now,
         // 会員認可を通ってから getStore を呼ぶ（factory を渡す）
         store,
+        // ⚠️ プラン認可だけでは足りない。**販売停止中の会員には実績を返さない**。
+        //    判定は resolveUpsellForCustomer（既存の単一源）。ここで停止を再計算しない。
+        //    fields が読めない / Plus 対象外 / 停止中 は見せない（fail closed）。
+        memberGate: async (recordId) => {
+          if (!recordId) return { allowed: false };
+          const fields = await lookupCustomerFields({ recordId, env: process.env, now });
+          if (!fields) return { allowed: false };
+          const view = resolveUpsellForCustomer({
+            fields, nowMs: now, fallbackAnchor: process.env.PREMIUM_PLUS_FUNNEL_ANCHOR,
+          });
+          if (view.plusRelease?.salePaused === true) return { allowed: false };
+          return { allowed: view.channel === UPSELL_CHANNEL.PLUS };
+        },
       });
     }
 

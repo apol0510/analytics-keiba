@@ -171,9 +171,14 @@ test('管理画面: クーポンは独立したフィルタ・件数・バッジ
   assert.match(ADMIN_PAGE, /function couponBadge\(r\)/);
   assert.match(ADMIN_PAGE, /r\.reopenCouponClaimed !== true\) return null/);
   assert.match(ADMIN_PAGE, /c\.reopenCouponClaimed/);
-  // 資格バッジ・停止バッジを消していない
+  // 資格バッジ・停止バッジの判定を消していない
+  // ⚠️ 2026-09-10: 主状態が 4 分類になり「販売停止中」が主バッジになったため、
+  //    停止中の行に「一時停止中」チップを**重ねない**（同じことを 2 回言わない）。
+  //    判定そのものは残し、停止していない行では従来どおりの扱い。
   assert.match(ADMIN_PAGE, /function pauseBadge\(r\)/);
-  assert.match(ADMIN_PAGE, /const pb = pauseBadge\(r\);/);
+  assert.match(ADMIN_PAGE, /pauseBadge\(r\)/);
+  assert.match(ADMIN_PAGE, /st\.key === 'paused' \? null : pauseBadge\(r\)/,
+    '停止中に停止チップを重ねない実装になっていない');
   // 詳細にも出る
   assert.match(ADMIN_PAGE, /再募集クーポン/);
   assert.match(ADMIN_PAGE, /r\.reopenCouponClaimedAt/);

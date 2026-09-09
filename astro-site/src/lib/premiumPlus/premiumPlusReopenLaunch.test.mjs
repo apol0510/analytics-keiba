@@ -141,13 +141,15 @@ test('開始済み会員を後から停止しても、開始日時と期限の�
 });
 
 // ── admin の主操作は 1 つだけ ───────────────────────────────
-test('未開始 + 停止中: 主操作は「再募集を開始」だけ（販売再開ボタンを並べない）', () => {
+test('未開始 + 停止中: クーポン期間の開始に加え、**販売を再開できる**（戻す手段を必ず残す）', () => {
+  // ⚠️ 2026-09-10 変更。旧仕様は「開始が同時に再開する」前提で再開スイッチを隠していたが、
+  //    販売の切替をトグル 1 つへ集約したため、隠すと**止めた会員を戻す手段が画面から消える**。
   const v = classifyLaunch({ reopen: notStarted, fields: paused(BEFORE) });
   const a = describeLaunchAction({ view: v, memberLabel: 'x@example.invalid', salePauseWritable: true });
   assert.equal(a.kind, 'start');
   assert.equal(a.enabled, true);
-  assert.equal(a.showResumeSwitch, false, '「販売を再開する」を並べない');
-  assert.equal(a.showPauseSwitch, false, '停止スイッチも出さない（停止中なので）');
+  assert.equal(a.showResumeSwitch, true, '停止中なのに再開スイッチが出ない');
+  assert.equal(a.showPauseSwitch, false, '停止中に停止スイッチを出さない（同時に出さない）');
   assert.match(a.confirmText, /販売一時停止を解除/);
   assert.match(a.confirmText, /x@example\.invalid/);
 });

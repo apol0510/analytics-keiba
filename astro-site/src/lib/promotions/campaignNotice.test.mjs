@@ -15,8 +15,13 @@ import {
 import { describeCampaignNotice, describeAllNotices } from '../premiumPlus/couponNotice.js';
 
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
-const IN = Date.parse('2026-08-25T03:00:00Z');
-const OUT = Date.parse('2026-10-01T00:00:00Z');
+/**
+ * ⚠️ **日付を直書きしない**（2026-09-08）。期間は `CAMPAIGN_WINDOW` が単一源で、
+ *    再募集のたびに動く。リテラルで書くと**期間を変えた瞬間にテストが落ちる**
+ *    （実際に第 2 期の設定で落ちた）。窓から導出する。
+ */
+const IN = Date.parse(CAMPAIGN_WINDOW.startsAtIso) + 86400_000;      // 期間 2 日目
+const OUT = Date.parse(CAMPAIGN_WINDOW.endsAtIso) + 86400_000;       // 期間終了の翌日
 
 // ── 期間 ────────────────────────────────────────────────────
 test('期間内だけ案内する（期間外は 1 件も出さない）', () => {
