@@ -169,3 +169,30 @@ test('プレビュー領域のカード CSS 単一源を維持', () => {
   // .vref（本物の控え再現）を .ppr 名前空間で上書きしていない
   assert.doesNotMatch(STYLE, /\.vref/);
 });
+
+// ── 金額は直接入力（スピナー・ホイールで動かさない）──────────────
+//
+// 2026-09-10 MK 指摘「払い戻しと払い戻し単価の２箇所は直接入力するので
+// スクロールで数字を選択するのをやめたい」。
+// `type="number"` はスピナー / ホイール / 上下キーで**勝手に値が変わる**。
+// 払戻は 1 桁違うと実績（最高払戻・的中時平均）まで狂うので、type を戻さないよう固定する。
+test('払戻金額 / 払戻単価は type="number" ではない（勝手に増減させない）', () => {
+  for (const id of ['payout', 'unitPayout']) {
+    const m = PAGE.match(new RegExp(`<input[^>]*id="${id}"[^>]*>`));
+    assert.ok(m, `入力欄が見つからない: #${id}`);
+    assert.doesNotMatch(m[0], /type="number"/, `#${id} が type="number" に戻っている`);
+    assert.match(m[0], /type="text"/, `#${id} は type="text"`);
+    assert.match(m[0], /inputmode="numeric"/, `#${id} はスマホでも数字キーパッドを出す`);
+  }
+});
+
+test('数字以外は入力側で落とす（type="text" にした分の担保）', () => {
+  assert.match(PAGE, /for \(const id of \['payout', 'unitPayout'\]\)/);
+  assert.match(PAGE, /el\.value\.replace\(\/\[\^\\d\]\/g, ''\)/);
+});
+
+test('プレビューの払戻単価がコンマ付きで桁落ちしない', () => {
+  // parseInt('599,000', 10) === 599 になるため、必ず数字以外を落としてから解釈する
+  assert.doesNotMatch(PAGE, /unitPayout: isHit \? \(parseInt\(e\.unitPayout, 10\)/);
+  assert.match(PAGE, /unitPayout: isHit \? Math\.max\(0, parseInt\(String\(e\.unitPayout \|\| ''\)\.replace/);
+});
