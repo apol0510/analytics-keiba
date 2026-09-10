@@ -50,6 +50,7 @@
     "test:free-viewpoints": "node --test src/lib/freeViewpoints/*.test.mjs",
     "test:nav": "node --test src/lib/navigation/*.test.mjs",
     "e2e:admin-plus": "node scripts/e2e-admin-plus.mjs",
+    "e2e:magic-link": "node scripts/e2e-magic-link-verify.mjs",
     "test:premium-plus-admin": "node --test src/lib/premiumPlus/premiumPlusAdminStatusSummary.test.mjs src/lib/premiumPlus/adminStatusSummaryWiring.guard.test.mjs src/lib/premiumPlus/adminSummaryLayout.guard.test.mjs src/lib/premiumPlus/pausedHidesContent.guard.test.mjs src/lib/premiumPlus/premiumPlusAdminListView.test.mjs src/lib/premiumPlus/adminListUxWiring.guard.test.mjs",
     "test:copy": "node --test src/lib/copy/*.test.mjs",
     "test:dashboard": "node --test src/lib/dashboard/*.test.mjs",
