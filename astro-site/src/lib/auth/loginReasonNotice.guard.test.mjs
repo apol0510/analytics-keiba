@@ -85,16 +85,20 @@ test('ログインメールに別ブラウザの案内を戻していない', ()
   assert.match(sendMagicLink, /以下のURLをコピーしてブラウザに貼り付けてください/);
 });
 
-test('/auth/verify 成功画面が「このブラウザにログインした」と伝える', () => {
-  assert.match(verifyPage, /このブラウザへのログインが完了しました/);
-  assert.match(verifyPage, /次回から同じブラウザのブックマークからアクセスできます/);
+// 2026-09-10 MK 確定方針: 画面には「今すること」と「結果」だけを出す。
+// ブラウザ差の説明は成功画面からも外した（旧: 「このブラウザへのログインが完了しました」）。
+test('/auth/verify 成功画面は結果だけを伝える', () => {
+  assert.match(verifyPage, /status\.textContent = 'ログインしました'/);
+  assert.match(verifyPage, /msg\.textContent = 'まもなくマイページへ移動します。'/);
+  assert.doesNotMatch(verifyPage, /このブラウザへのログインが完了しました/);
+  assert.doesNotMatch(verifyPage, /次回から同じブラウザのブックマークからアクセスできます/);
 });
 
-test('成功画面の自動遷移が案内を読める長さある（3秒に戻さない）', () => {
+test('成功画面の自動遷移が短すぎず長すぎない', () => {
   const m = verifyPage.match(/const REDIRECT_DELAY_MS = (\d+);/);
   assert.ok(m, 'REDIRECT_DELAY_MS が無い');
-  assert.ok(Number(m[1]) >= 5000,
-    `自動遷移 ${m[1]}ms は案内を読み切れない（5000ms 以上にすること）`);
-  // 表示秒数は定数から出す（文言と実挙動がズレないこと）
-  assert.match(verifyPage, /Math\.round\(REDIRECT_DELAY_MS \/ 1000\)\}秒後に/);
+  const ms = Number(m[1]);
+  // 旧: 長い案内を読ませるため 5000ms 以上を強制していた。案内を外したので短くてよい。
+  // ただし「ログインしました」が見えないほど短くしない。
+  assert.ok(ms >= 1500 && ms <= 5000, `自動遷移 ${ms}ms は範囲外（1500〜5000ms）`);
 });

@@ -19,13 +19,16 @@ export const prerender = false;
              「使用済み」**になり、貼り付けた先で必ず認証エラーになっていた。
              メールのリンク検査ボット・先読みでも同じことが起きる。
              検証は「ログインする」を**押したときだけ**行う。
+
+          ⚠️ **画面に出すのは「今すること」と「結果」だけ**（2026-09-10 MK 確定方針）。
+             トークンの消費・ブラウザ差・長押し・先読み・セッションといった内部事情は
+             ユーザー向け画面／メールに書かない。理由の説明はこのコメントに置く。
         -->
         <div id="verify-state" class="verify-content">
           <div class="spinner" id="spinner" hidden></div>
-          <h1 id="status">ログインの確認</h1>
-          <p id="message">下の「ログインする」を押すと、このブラウザへのログインが完了します。</p>
+          <h1 id="status">ログイン</h1>
+          <p id="message">ログインするには、下のボタンを押してください。</p>
           <button type="button" id="login-btn" class="login-btn">ログインする</button>
-          <p class="hint" id="hint">押すまでリンクは使われません。コピーや長押しでは消費されません。</p>
         </div>
       </div>
     </div>
@@ -72,7 +75,6 @@ export const prerender = false;
   }
   .login-btn:hover { filter: brightness(1.08); }
   .login-btn[disabled] { opacity: .5; cursor: default; }
-  .hint { margin-top: 14px; font-size: 13px; color: #64748b; }
   .verify-content.error h1 { background: linear-gradient(135deg, #dc2626 0%, #ef4444 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
   .verify-content.success h1 { background: linear-gradient(135deg, #059669 0%, #10b981 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
   .verify-content.error .spinner, .verify-content.success .spinner { display: none; }
@@ -97,38 +99,28 @@ export const prerender = false;
     const msg = document.getElementById('message');
     const btn = document.getElementById('login-btn');
     const spinner = document.getElementById('spinner');
-    const hint = document.getElementById('hint');
 
     function fail(text) {
       root.classList.add('error');
       spinner.hidden = true;
       btn.hidden = true;
-      hint.hidden = true;
-      status.textContent = '認証失敗';
+      status.textContent = 'ログインできませんでした';
       msg.innerHTML = `${text}<br><br><a href="/login/" style="display:inline-block;background:linear-gradient(135deg,#0ea5e9,#2563eb);color:#fff;text-decoration:none;font-weight:700;padding:12px 28px;border-radius:8px;">ログインリンクを再送する</a>`;
     }
-    // セッションは **このブラウザにだけ** 保存される（ak_session は HttpOnly Cookie で、
-    // ブラウザごとに別のクッキー領域に入る）。メールアプリ内ブラウザで開いた場合、
-    // 後から Safari / Chrome を開くと未ログイン扱いになり、利用者には
-    // 「ログインが保持されない不具合」に見える。ここで必ず明示する。
-    // 自動遷移は 6 秒（3 秒では読み切れないため延長）。
-    const REDIRECT_DELAY_MS = 6000;
-    function ok(text, redirectTo) {
+    // ⚠️ 画面に出すのは「**結果**」だけ（2026-09-10 MK 確定方針）。
+    //    セッション・Cookie・ブラウザ差・トークンといった内部事情は出さない。
+    //    読ませる文章が無くなったので、自動遷移は短くする。
+    const REDIRECT_DELAY_MS = 2500;
+    function ok(redirectTo) {
       root.classList.add('success');
       spinner.hidden = true;
       btn.hidden = true;
-      hint.hidden = true;
-      status.textContent = 'ログイン成功';
-      msg.innerHTML = `${text}<br><br>`
-        + '<span style="display:block;background:rgba(16,185,129,.1);border:1px solid rgba(16,185,129,.3);'
-        + 'border-radius:8px;padding:14px 16px;color:#a7f3d0;font-size:14px;line-height:1.8;text-align:left;">'
-        + '✅ <strong>このブラウザへのログインが完了しました。</strong><br>'
-        + '次回から同じブラウザのブックマークからアクセスできます。</span>'
-        + `<br>${Math.round(REDIRECT_DELAY_MS / 1000)}秒後に <a href="${redirectTo}">${redirectTo}</a> へ移動します。`;
+      status.textContent = 'ログインしました';
+      msg.textContent = 'まもなくマイページへ移動します。';
       setTimeout(() => { window.location.replace(redirectTo); }, REDIRECT_DELAY_MS);
     }
 
-    if (!token) { fail('トークンが指定されていません。'); return; }
+    if (!token) { fail('このリンクは使用できません。'); return; }
 
     // ⚠️ ここから先（＝トークンを消費する通信）は **クリックの中でしか呼ばない**。
     //    読み込み時に自動実行してはいけない（長押しプレビュー・リンク検査で消費される）。
@@ -138,10 +130,9 @@ export const prerender = false;
       busy = true;
       btn.disabled = true;
       btn.hidden = true;
-      hint.hidden = true;
       spinner.hidden = false;
-      status.textContent = '認証中...';
-      msg.textContent = 'トークンを確認しています。しばらくお待ちください。';
+      status.textContent = 'ログインしています';
+      msg.textContent = 'そのままお待ちください。';
 
       try {
         const res = await fetch(`/.netlify/functions/verify-magic-link?token=${encodeURIComponent(token)}`, {
@@ -153,7 +144,7 @@ export const prerender = false;
         if (!res.ok) {
           fail(data.error === 'Token expired' ? `リンクの有効期限（${TTL_MIN}分）が切れています。<br>下のボタンから、もう一度ログインリンクを受け取ってください。<br><strong>届いた最新の1通</strong>を ${TTL_MIN}分以内 にお開きください。`
             : data.error === 'Token already used' ? 'このリンクは既に使用済みです。<br>お手数ですが、もう一度ログインリンクを受け取ってください（<strong>最新の1通</strong>をご利用ください）。'
-            : data.error === 'Token not found' ? '無効なトークンです。'
+            : data.error === 'Token not found' ? 'このリンクは使用できません。'
             : data.error === 'Customer not found' ? 'アカウントが見つかりません。'
             : 'エラーが発生しました。');
           return;
@@ -182,17 +173,16 @@ export const prerender = false;
             console.warn('localStorage write failed', e);
           }
         }
-        ok('ログインしました。', data.redirectTo || '/dashboard/');
+        ok(data.redirectTo || '/dashboard/');
       } catch (e) {
         console.error(e);
         // 通信エラーはトークンを消費していない可能性が高い。もう一度押せるようにする。
         busy = false;
         btn.disabled = false;
         btn.hidden = false;
-        hint.hidden = false;
         spinner.hidden = true;
-        status.textContent = 'ログインの確認';
-        msg.textContent = '通信エラーが発生しました。もう一度「ログインする」を押してください。';
+        status.textContent = 'ログイン';
+        msg.textContent = '通信できませんでした。もう一度ボタンを押してください。';
       }
     }
 

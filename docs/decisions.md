@@ -40,6 +40,7 @@
 | 34 | 未認証チェックの **2 観点は環境に関わらず必ず実行**し、**確認手段だけ替える**（Deno 有=HTTP / Deno 無=本物のハンドラ直呼び）。**CI へ Deno を勝手に足さない** | `scripts/e2e-admin-plus.mjs` / `docs/spec.md` |
 | 35 | **管理画面の数値入力欄は `type="number"` にしない**（レース番号 / 投票金額 / 払戻金額 / 払戻単価 / version）。スピナー・ホイール・上下キーで勝手に増減し、1 桁違うと実績や公開内容が狂う。`type="text" + inputmode="numeric"` で直接入力し、数字以外は入力側で落とす。読み取りも `Number()` 直呼びにしない（`Number('277,000')` = NaN）| `admin/premium-plus-results.astro` / `admin/premium-plus-images.astro` / `adminResultsUiGuard.test.mjs` / `adminImagesUiGuard.test.mjs` |
 | 36 | **マジックリンクは「押したときだけ」使う**。GET で `/auth/verify` を開いただけでは絶対に消費しない（iOS の長押しプレビューは JS まで実行するため、コピーだけで使用済みになっていた）。単回性・有効期限はサーバー側のまま | `src/pages/auth/verify.astro` / `verifyRequiresUserAction.guard.test.mjs` / `scripts/e2e-magic-link-verify.mjs` |
+| 37 | **ユーザー向け画面・メールに内部事情を書かない**（token 消費 / ブラウザ差 / 長押し / 先読み / セッション）。出すのは「**今すること**」と「**結果**」だけ。理由の説明はコメントと docs に置く | `userFacingNoInternals.guard.test.mjs` / `scripts/e2e-magic-link-verify.mjs` / `docs/spec.md` |
 
 確定仕様は `docs/spec.md`「Premium Plus 管理画面と販売停止（2026-09-09 確定）」。
 
