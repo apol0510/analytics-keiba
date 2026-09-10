@@ -62,28 +62,43 @@ test('/login は ?r= の値をそのまま画面に出さない', () => {
   assert.match(block, /textContent = notice\.body/);
 });
 
-test('別ブラウザ問題の案内が「no_session」の文面に含まれる', () => {
+// ── 2026-09-10 MK 指示で削除した「別ブラウザ」案内 ──────────────
+//
+// > 以下を削除→普段ご利用の Safari / Chrome などのブラウザでリンクを開いてください。…
+// > 理由は現在必要ない文言だと思われる
+//
+// ログインメールと `/login/` の no_session 文面から削除した。
+// 復活させないことをここで固定する（消したはずの文言が戻ると、また長い案内に戻るため）。
+test('「no_session」の文面に別ブラウザの説明を戻していない', () => {
   const start = loginPage.indexOf('no_session: {');
   const block = loginPage.slice(start, loginPage.indexOf('session_expired: {'));
-  assert.match(block, /メールアプリ内のブラウザ/, '別ブラウザ問題に触れていない');
-  assert.match(block, /普段お使いのブラウザ/);
+  assert.doesNotMatch(block, /メールアプリ内のブラウザ/);
+  assert.doesNotMatch(block, /普段お使いのブラウザ/);
+  // 本題（もう一度ログインしてほしい）は残っていること
+  assert.match(block, /もう一度ログインしてください/);
 });
 
-test('ログインメールに「普段使うブラウザで開く」案内がある', () => {
-  assert.match(sendMagicLink, /普段ご利用の Safari \/ Chrome などのブラウザでリンクを開いてください/);
-  assert.match(sendMagicLink, /メールアプリ内のブラウザで開くと、別のブラウザでは再度ログインが必要になる場合があります/);
+test('ログインメールに別ブラウザの案内を戻していない', () => {
+  assert.doesNotMatch(sendMagicLink, /普段ご利用の Safari \/ Chrome などのブラウザでリンクを開いてください/);
+  assert.doesNotMatch(sendMagicLink, /メールアプリ内のブラウザで開くと、別のブラウザでは再度ログインが必要になる場合があります/);
+  // コピー用 URL の案内自体は残す（別ブラウザで開きたい人の導線）
+  assert.match(sendMagicLink, /以下のURLをコピーしてブラウザに貼り付けてください/);
 });
 
-test('/auth/verify 成功画面が「このブラウザにログインした」と伝える', () => {
-  assert.match(verifyPage, /このブラウザへのログインが完了しました/);
-  assert.match(verifyPage, /次回から同じブラウザのブックマークからアクセスできます/);
+// 2026-09-10 MK 確定方針: 画面には「今すること」と「結果」だけを出す。
+// ブラウザ差の説明は成功画面からも外した（旧: 「このブラウザへのログインが完了しました」）。
+test('/auth/verify 成功画面は結果だけを伝える', () => {
+  assert.match(verifyPage, /status\.textContent = 'ログインしました'/);
+  assert.match(verifyPage, /msg\.textContent = 'まもなくマイページへ移動します。'/);
+  assert.doesNotMatch(verifyPage, /このブラウザへのログインが完了しました/);
+  assert.doesNotMatch(verifyPage, /次回から同じブラウザのブックマークからアクセスできます/);
 });
 
-test('成功画面の自動遷移が案内を読める長さある（3秒に戻さない）', () => {
+test('成功画面の自動遷移が短すぎず長すぎない', () => {
   const m = verifyPage.match(/const REDIRECT_DELAY_MS = (\d+);/);
   assert.ok(m, 'REDIRECT_DELAY_MS が無い');
-  assert.ok(Number(m[1]) >= 5000,
-    `自動遷移 ${m[1]}ms は案内を読み切れない（5000ms 以上にすること）`);
-  // 表示秒数は定数から出す（文言と実挙動がズレないこと）
-  assert.match(verifyPage, /Math\.round\(REDIRECT_DELAY_MS \/ 1000\)\}秒後に/);
+  const ms = Number(m[1]);
+  // 旧: 長い案内を読ませるため 5000ms 以上を強制していた。案内を外したので短くてよい。
+  // ただし「ログインしました」が見えないほど短くしない。
+  assert.ok(ms >= 1500 && ms <= 5000, `自動遷移 ${ms}ms は範囲外（1500〜5000ms）`);
 });

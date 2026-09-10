@@ -28,6 +28,22 @@ const PAGE = read('../../pages/auth/verify.astro');
 const MAIL = read('../../../netlify/functions/send-magic-link.js');
 
 /** トークンを消費する唯一の通信 */
+
+/**
+ * 画面に出る文字列だけを集める。
+ * ⚠️ ソース全体を検索すると**コメントに書いた説明**まで拾ってしまう。
+ *    仕組みの説明はコメントに残す方針なので、markup と textContent / innerHTML の
+ *    代入だけを対象にする。
+ */
+function renderedText() {
+  const markupStart = PAGE.indexOf('<section class="verify-section">');
+  const markupEnd = PAGE.indexOf('</section>', markupStart);
+  const markup = PAGE.slice(markupStart, markupEnd).replace(/<!--[\s\S]*?-->/g, '');
+  const assigned = [...PAGE.matchAll(/(?:textContent|innerHTML)\s*=\s*([`'"][\s\S]*?[`'"]);/g)]
+    .map((m) => m[1]).join('\n');
+  return markup + '\n' + assigned;
+}
+
 const CONSUME_CALL = 'fetch(`/.netlify/functions/verify-magic-link?token=';
 
 test('トークンを消費する通信は 1 か所だけ', () => {
@@ -66,11 +82,21 @@ test('「ログインする」ボタンが実在する', () => {
   assert.match(PAGE, /ログインする<\/button>/);
 });
 
-test('押すまで使われないことを画面に明示する', () => {
-  assert.match(PAGE, /押すまでリンクは使われません/);
+// 2026-09-10 MK 確定方針: 内部事情（消費 / 長押し / 先読み）は画面に書かない。
+// 「今すること」だけを出す。仕組みの説明はソースのコメントに置く。
+test('確認画面は「今すること」だけを出す', () => {
+  assert.match(PAGE, /ログインするには、下のボタンを押してください。/);
+  for (const ng of ['押すまでリンクは使われません', '長押し', '先読み', 'トークンを確認しています']) {
+    assert.ok(!renderedText().includes(ng), `画面に内部事情が出ている: ${ng}`);
+  }
 });
 
-test('ログインメールも「開いただけでは使われない」と伝える', () => {
-  assert.match(MAIL, /リンクを開いただけでは使われません/);
+test('ログインメールが「開いた画面で押す」導線を案内している', () => {
   assert.match(MAIL, /開いた画面で「ログインする」を押してください/);
+});
+
+// 2026-09-10 MK 指示で削除した補足。**必要ない文言**として消したので、戻さない。
+// 「押すまで使われない」ことは確認画面（このページ）に出ているので、メールでは繰り返さない。
+test('削除した補足をログインメールへ戻していない', () => {
+  assert.doesNotMatch(MAIL, /リンクを開いただけでは使われません/);
 });

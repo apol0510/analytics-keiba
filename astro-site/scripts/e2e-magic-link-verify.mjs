@@ -194,6 +194,21 @@ async function open(query) {
 
 const TOKEN = 'e2e-fake-token-0000-1111-2222';
 
+/**
+ * 画面に**内部事情**が出ていないか（2026-09-10 MK 確定方針）。
+ * 出ていれば最初に見つかった語を返す。出ていなければ null。
+ * ソース検査（`userFacingNoInternals.guard.test.mjs`）と同じ観点を、
+ * こちらは**実際に描画された文字**に対して見る。
+ */
+const INTERNAL_WORDS = [
+  'トークン', 'token', 'Token', 'セッション', 'Cookie', 'クッキー',
+  '長押し', '先読み', 'プレビュー', 'キャッシュ', 'メールアプリ内', '同じブラウザ',
+];
+async function internals() {
+  const text = await evaluate('document.body.innerText');
+  return INTERNAL_WORDS.find((w) => text.includes(w)) || null;
+}
+
 try {
   // ── 1. 開いただけでは消費しない ────────────────────────────
   step('開いただけで消費しないか');
@@ -201,8 +216,8 @@ try {
   await sleep(1200); // 自動実行があるなら、この間に必ず走る
   check(await evaluate('window.__calls.length') === 0,
     '開いただけではトークンを消費しない（通信 0 回）');
-  check(await evaluate(`document.getElementById('status').textContent`) === 'ログインの確認',
-    '「ログインの確認」で待っている（勝手に認証中にならない）');
+  check(await evaluate(`document.getElementById('status').textContent`) === 'ログイン',
+    '押されるまで待っている（勝手にログイン処理へ進まない）');
 
   // ── 2. プレビュー / 先読みで起きるイベントでも消費しない ──────
   step('プレビュー相当のイベントでも消費しないか');
@@ -237,8 +252,9 @@ try {
   check(!!btn && btn.text === 'ログインする', '「ログインする」ボタンが DOM にある');
   check(!!btn && !btn.disabled && !btn.hidden && btn.w > 0 && btn.h > 0, 'ボタンが表示されていて押せる状態');
   check(!!btn && btn.onTop, 'ボタンが他の要素に覆われていない（見えるのに押せない、が無い）');
-  check(/押すまでリンクは使われません/.test(await evaluate(`document.getElementById('hint').textContent`)),
-    '「押すまで使われない」ことを画面に書いている');
+  check(/ログインするには、下のボタンを押してください。/.test(await evaluate('document.body.innerText')),
+    '「今すること」だけを出している（ログインするには、下のボタンを押してください）');
+  check(await internals() === null, `確認画面に内部事情が出ていない${await internals() ? '（' + await internals() + '）' : ''}`);
 
   // ── 4. 押したときだけ消費する ──────────────────────────────
   step('押したら消費するか');
@@ -250,9 +266,10 @@ try {
     'その 1 回でトークンを送っている');
   check(calls.length === 1 && calls[0].credentials === 'include',
     'セッション Cookie を受け取る呼び方（credentials: include）を保っている');
-  const okText = await evaluate(`document.getElementById('message').textContent`);
-  check(await evaluate(`document.getElementById('status').textContent`) === 'ログイン成功', '成功表示に切り替わる');
-  check(/このブラウザへのログインが完了しました/.test(okText), '「このブラウザにログインした」と伝える');
+  check(await evaluate(`document.getElementById('status').textContent`) === 'ログインしました', '成功表示に切り替わる');
+  check(/まもなくマイページへ移動します。/.test(await evaluate('document.body.innerText')),
+    '結果だけを伝える（まもなくマイページへ移動します）');
+  check(await internals() === null, `成功画面に内部事情が出ていない${await internals() ? '（' + await internals() + '）' : ''}`);
 
   // ── 5. 連打しても二重に消費しない ──────────────────────────
   step('連打で二重に消費しないか');
@@ -273,14 +290,15 @@ try {
   check(/ログインリンクを再送する/.test(usedMsg), '再送への導線を出す');
   check(await evaluate(`document.getElementById('login-btn').hidden`) === true,
     '失敗後は押せないボタンを残さない');
+  check(await internals() === null, `失敗画面に内部事情が出ていない${await internals() ? '（' + await internals() + '）' : ''}`);
 
   // ── 7. token 無しでは通信しない ────────────────────────────
   step('token 無しの扱い');
   await open('');
   await sleep(800);
   check(await evaluate('window.__calls.length') === 0, 'token が無ければ 1 回も通信しない');
-  check(/トークンが指定されていません/.test(await evaluate(`document.getElementById('message').textContent`)),
-    'token 無しはその場で案内する');
+  check(/このリンクは使用できません。/.test(await evaluate(`document.getElementById('message').textContent`)),
+    'token 無しはその場で案内する（内部用語を出さない）');
 } catch (e) {
   check(false, 'E2E の実行中に例外: ' + (e && e.message ? e.message : String(e)));
 } finally {
