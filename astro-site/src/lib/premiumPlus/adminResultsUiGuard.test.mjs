@@ -176,8 +176,8 @@ test('プレビュー領域のカード CSS 単一源を維持', () => {
 // スクロールで数字を選択するのをやめたい」。
 // `type="number"` はスピナー / ホイール / 上下キーで**勝手に値が変わる**。
 // 払戻は 1 桁違うと実績（最高払戻・的中時平均）まで狂うので、type を戻さないよう固定する。
-test('払戻金額 / 払戻単価は type="number" ではない（勝手に増減させない）', () => {
-  for (const id of ['payout', 'unitPayout']) {
+test('レース番号 / 払戻金額 / 払戻単価は type="number" ではない（勝手に増減させない）', () => {
+  for (const id of ['raceNumber', 'payout', 'unitPayout']) {
     const m = PAGE.match(new RegExp(`<input[^>]*id="${id}"[^>]*>`));
     assert.ok(m, `入力欄が見つからない: #${id}`);
     assert.doesNotMatch(m[0], /type="number"/, `#${id} が type="number" に戻っている`);
@@ -187,7 +187,7 @@ test('払戻金額 / 払戻単価は type="number" ではない（勝手に増�
 });
 
 test('数字以外は入力側で落とす（type="text" にした分の担保）', () => {
-  assert.match(PAGE, /for \(const id of \['payout', 'unitPayout'\]\)/);
+  assert.match(PAGE, /for \(const id of \['raceNumber', 'payout', 'unitPayout'\]\)/);
   assert.match(PAGE, /el\.value\.replace\(\/\[\^\\d\]\/g, ''\)/);
 });
 

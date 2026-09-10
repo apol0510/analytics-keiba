@@ -38,7 +38,7 @@ import '../../styles/premiumPlusReceiptCard.css';
             </optgroup>
           </select>
         </div>
-        <div><label>レース番号</label><input type="number" id="raceNumber" min="1" max="12" placeholder="11" /></div>
+        <div><label>レース番号</label><input type="text" inputmode="numeric" autocomplete="off" maxlength="2" id="raceNumber" placeholder="11" /></div>
         <div class="wide"><label>レース名（任意）</label><input type="text" id="raceName" placeholder="東京スプリント など" /></div>
         <div class="wide"><label>1着（1頭・馬番をクリック）</label>
           <div class="numpick" id="pick-first" data-mode="single" data-target="first"></div>
@@ -279,14 +279,15 @@ import '../../styles/premiumPlusReceiptCard.css';
     formGrid.addEventListener('input', refreshAll);
     formGrid.addEventListener('change', refreshAll);
 
-    // ── 払戻金額 / 払戻単価 は「直接入力」──────────────────────────
+    // ── レース番号 / 払戻金額 / 払戻単価 は「直接入力」────────────────
     // ⚠️ `type="number"` にしない（2026-09-10 MK 指摘）。
     //    スピナーやホイール・上下キーで**金額が勝手に変わる**。
     //    払戻は 1 桁違うと実績（的中時平均・最高払戻）まで狂うので、
-    //    キーボードから打った値だけを受け取る。
+    //    キーボードから打った値だけを受け取る。レース番号も同じ理由で揃える
+    //    （11R のつもりが 12R で保存されると、実績が別レースのものになる）。
     // ⚠️ 代わりに数字以外はここで落とす（`type="text"` は何でも入るため）。
     //    コンマ付きで貼り付けても桁を落とさず数字だけ残す（599,000 → 599000）。
-    for (const id of ['payout', 'unitPayout']) {
+    for (const id of ['raceNumber', 'payout', 'unitPayout']) {
       const el = $(id);
       el.addEventListener('input', () => {
         const cleaned = el.value.replace(/[^\d]/g, '');
