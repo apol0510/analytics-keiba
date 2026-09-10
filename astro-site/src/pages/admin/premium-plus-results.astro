@@ -67,7 +67,7 @@ import '../../styles/premiumPlusReceiptCard.css';
         </div>
         <div class="chk"><label><input type="checkbox" id="isHit" /> 的中</label>
           <span id="ptsPreview" class="pts">点数: — / 合計: —</span></div>
-        <div><label>払戻金額（合計・的中時）<small class="hint">実際に戻ってきた総額。カードの「払戻」に表示</small></label><input type="number" id="payout" placeholder="599000" /></div>
+        <div><label>払戻金額（合計・的中時）<small class="hint">実際に戻ってきた総額。カードの「払戻」に表示</small></label><input type="text" inputmode="numeric" autocomplete="off" id="payout" placeholder="599000" /></div>
         <div class="wide"><label>的中組合せ（的中時・1着→2着→3着の馬番を選択）</label>
           <div class="combo3">
             <select id="hit1"></select><span class="arw">→</span>
@@ -75,7 +75,7 @@ import '../../styles/premiumPlusReceiptCard.css';
             <select id="hit3"></select>
           </div>
         </div>
-        <div><label>払戻単価（1組あたり配当・任意）<small class="hint">JRAカードのみ表示。南関(SPAT4)は空欄でOK</small></label><input type="number" id="unitPayout" placeholder="（通常は空欄）" /></div>
+        <div><label>払戻単価（1組あたり配当・任意）<small class="hint">JRAカードのみ表示。南関(SPAT4)は空欄でOK</small></label><input type="text" inputmode="numeric" autocomplete="off" id="unitPayout" placeholder="（通常は空欄）" /></div>
         <div class="wide"><label>実スクショ画像パス（任意・後日）</label><input type="text" id="imageFile" placeholder="/premium-plus-proof/2026-07-22.png" /></div>
         <div><label>受付番号（既定 0001・実スクショに合わせて変更可）</label><input type="text" id="receiptNo" value="0001" placeholder="0001" /></div>
         <div><label>受付時刻（任意）<small class="hint">受付日は「開催日」と同じ扱い。時刻だけ選択</small></label><input type="time" id="receiptTime" /></div>
@@ -248,7 +248,7 @@ import '../../styles/premiumPlusReceiptCard.css';
         venue: e.venue || '', raceNumber: rNum, raceName: e.raceName || '',
         first, second, third, points, unitStake: uStake, stake: points * uStake,
         isHit, payout: isHit ? pay : 0, hitCombo: e.hitCombo || '', winnerCombo: e.hitCombo || '',
-        unitPayout: isHit ? (parseInt(e.unitPayout, 10) || 0) : 0,
+        unitPayout: isHit ? Math.max(0, parseInt(String(e.unitPayout || '').replace(/[^\d]/g, ''), 10) || 0) : 0,
         receiptNo: e.receiptNo || '', receiptAt: e.receiptAt || '',
         firstPad: first.map(pad2), secondPad: second.map(pad2), thirdPad: third.map(pad2),
         raceLabel: `${e.venue || ''}${rNum ? `${rNum}R` : ''}`.trim(),
@@ -278,6 +278,25 @@ import '../../styles/premiumPlusReceiptCard.css';
     const formGrid = document.querySelector('.grid');
     formGrid.addEventListener('input', refreshAll);
     formGrid.addEventListener('change', refreshAll);
+
+    // ── 払戻金額 / 払戻単価 は「直接入力」──────────────────────────
+    // ⚠️ `type="number"` にしない（2026-09-10 MK 指摘）。
+    //    スピナーやホイール・上下キーで**金額が勝手に変わる**。
+    //    払戻は 1 桁違うと実績（的中時平均・最高払戻）まで狂うので、
+    //    キーボードから打った値だけを受け取る。
+    // ⚠️ 代わりに数字以外はここで落とす（`type="text"` は何でも入るため）。
+    //    コンマ付きで貼り付けても桁を落とさず数字だけ残す（599,000 → 599000）。
+    for (const id of ['payout', 'unitPayout']) {
+      const el = $(id);
+      el.addEventListener('input', () => {
+        const cleaned = el.value.replace(/[^\d]/g, '');
+        if (cleaned === el.value) return;
+        const removed = el.value.length - cleaned.length;
+        const pos = Math.max(0, (el.selectionStart || 0) - removed);
+        el.value = cleaned;
+        try { el.setSelectionRange(pos, pos); } catch {}
+      });
+    }
 
     function entry(){
       return {
