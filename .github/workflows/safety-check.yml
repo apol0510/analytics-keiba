@@ -33,6 +33,7 @@ on:
       - 'astro-site/public/robots.txt'
       - 'astro-site/package.json'
       - 'astro-site/scripts/e2e-admin-plus.mjs'
+      - 'astro-site/scripts/e2e-magic-link-verify.mjs'
       - 'astro-site/package-lock.json'
       - '.github/workflows/**'
       - 'astro-site/scripts/lib/workflowTransientContract.mjs'
@@ -74,6 +75,7 @@ on:
       - 'astro-site/public/robots.txt'
       - 'astro-site/package.json'
       - 'astro-site/scripts/e2e-admin-plus.mjs'
+      - 'astro-site/scripts/e2e-magic-link-verify.mjs'
       - 'astro-site/package-lock.json'
       - '.github/workflows/**'
       - 'astro-site/scripts/lib/workflowTransientContract.mjs'
@@ -165,6 +167,15 @@ jobs:
         env:
           E2E_BROWSER: /usr/bin/google-chrome
         run: npm run e2e:admin-plus
+
+      - name: E2E（ログインリンクは押したときだけ使われる・実 DOM）
+        working-directory: astro-site
+        # ⚠️ ビルド成果物は要らない（verify.astro の markup と script を直接読む）。
+        #    ローカル実測 6 秒。CI が遅くても収まるよう 10 分。
+        timeout-minutes: 10
+        env:
+          E2E_BROWSER: /usr/bin/google-chrome
+        run: npm run e2e:magic-link
 
       - name: Verify display index == raw - 1
         working-directory: astro-site

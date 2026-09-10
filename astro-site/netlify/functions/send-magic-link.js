@@ -207,7 +207,7 @@ exports.handler = async (event) => {
   <div style="background-color: #ffffff; border-radius: 12px; padding: 32px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
     <h2 style="color: #1e40af; margin-top: 0; font-size: 24px;">ログインリンク</h2>
     <p style="color: #334155; font-size: 16px; line-height: 1.6;">${customerName} 様</p>
-    <p style="color: #334155; font-size: 16px; line-height: 1.6;">以下のボタンをクリックしてログインしてください。</p>
+    <p style="color: #334155; font-size: 16px; line-height: 1.6;">以下のボタンを押し、開いた画面で「ログインする」を押してください。</p>
     <div style="text-align: center; margin: 32px 0;">
       <a href="${magicLink}" style="display: inline-block; background-color: #3b82f6; color: #ffffff !important; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; border: 2px solid #3b82f6;">
         ログインする
@@ -217,7 +217,7 @@ exports.handler = async (event) => {
       <p style="color: #1e3a8a; font-size: 14px; margin: 0; line-height: 1.7;">📱 <strong>普段ご利用の Safari / Chrome などのブラウザでリンクを開いてください。</strong><br>メールアプリ内のブラウザで開くと、別のブラウザでは再度ログインが必要になる場合があります。</p>
     </div>
     <div style="background-color: #f1f5f9; border-left: 4px solid #3b82f6; padding: 16px; margin: 24px 0; border-radius: 4px;">
-      <p style="color: #475569; font-size: 14px; margin: 0; line-height: 1.6;">ボタンが動作しない場合や、別のブラウザで開きたい場合は、以下のURLをコピーしてブラウザに貼り付けてください。</p>
+      <p style="color: #475569; font-size: 14px; margin: 0; line-height: 1.6;">ボタンが動作しない場合や、別のブラウザで開きたい場合は、以下のURLをコピーしてブラウザに貼り付けてください。<br>リンクを開いただけでは使われません（確認画面で「ログインする」を押したときに使われます）。</p>
       <p style="margin: 8px 0 0 0;"><a href="${magicLink}" style="color: #3b82f6; word-break: break-all; font-size: 13px;">${magicLink}</a></p>
     </div>
     <div style="background-color: #fef2f2; border-left: 4px solid #ef4444; padding: 16px; margin: 24px 0; border-radius: 4px;">
