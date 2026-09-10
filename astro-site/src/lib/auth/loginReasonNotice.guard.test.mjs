@@ -62,16 +62,27 @@ test('/login は ?r= の値をそのまま画面に出さない', () => {
   assert.match(block, /textContent = notice\.body/);
 });
 
-test('別ブラウザ問題の案内が「no_session」の文面に含まれる', () => {
+// ── 2026-09-10 MK 指示で削除した「別ブラウザ」案内 ──────────────
+//
+// > 以下を削除→普段ご利用の Safari / Chrome などのブラウザでリンクを開いてください。…
+// > 理由は現在必要ない文言だと思われる
+//
+// ログインメールと `/login/` の no_session 文面から削除した。
+// 復活させないことをここで固定する（消したはずの文言が戻ると、また長い案内に戻るため）。
+test('「no_session」の文面に別ブラウザの説明を戻していない', () => {
   const start = loginPage.indexOf('no_session: {');
   const block = loginPage.slice(start, loginPage.indexOf('session_expired: {'));
-  assert.match(block, /メールアプリ内のブラウザ/, '別ブラウザ問題に触れていない');
-  assert.match(block, /普段お使いのブラウザ/);
+  assert.doesNotMatch(block, /メールアプリ内のブラウザ/);
+  assert.doesNotMatch(block, /普段お使いのブラウザ/);
+  // 本題（もう一度ログインしてほしい）は残っていること
+  assert.match(block, /もう一度ログインしてください/);
 });
 
-test('ログインメールに「普段使うブラウザで開く」案内がある', () => {
-  assert.match(sendMagicLink, /普段ご利用の Safari \/ Chrome などのブラウザでリンクを開いてください/);
-  assert.match(sendMagicLink, /メールアプリ内のブラウザで開くと、別のブラウザでは再度ログインが必要になる場合があります/);
+test('ログインメールに別ブラウザの案内を戻していない', () => {
+  assert.doesNotMatch(sendMagicLink, /普段ご利用の Safari \/ Chrome などのブラウザでリンクを開いてください/);
+  assert.doesNotMatch(sendMagicLink, /メールアプリ内のブラウザで開くと、別のブラウザでは再度ログインが必要になる場合があります/);
+  // コピー用 URL の案内自体は残す（別ブラウザで開きたい人の導線）
+  assert.match(sendMagicLink, /以下のURLをコピーしてブラウザに貼り付けてください/);
 });
 
 test('/auth/verify 成功画面が「このブラウザにログインした」と伝える', () => {
