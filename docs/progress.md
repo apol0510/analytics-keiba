@@ -1,6 +1,7 @@
-# 🔢 レース番号 / 払戻金額 / 払戻単価を「直接入力」へ — **完了（2026-09-10）**
+# 🔢 管理画面の数値欄を「直接入力」へ — **完了（2026-09-10）**
 
-> `/admin/premium-plus-results/` の入力欄のみ。保存ロジック・API 契約・実績データは**変更していない**。
+> `/admin/premium-plus-results/` と `/admin/premium-plus-images/` の入力欄のみ。
+> 保存ロジック・API 契約・実績データは**変更していない**。
 
 ## MK 指摘
 
@@ -31,7 +32,22 @@
 | `build` | exit 0 |
 | ビルド成果物 | `dist` の入力欄が `type="text" inputmode="numeric"`・サニタイズが同梱されていることを確認 |
 
-> 対象範囲: `/admin/premium-plus-results/` の**この 3 欄のみ**。
+## `/admin/premium-plus-images/`（MK 依頼「同様に揃えて」）
+
+同じ画面が 4 つの `type="number"` を持っていたため揃えた。
+
+| 箇所 | 変更 |
+|---|---|
+| レース番号（`#race`）| `type="text" inputmode="numeric" maxlength="2"` |
+| 投票金額（`#stake`）| `type="text" inputmode="numeric"`（`value="16000"` は据置）|
+| 払戻金額（`#payout`）| 同上 |
+| 戻したい version（`#rollbackVer`）| 同上。**戻し先を間違えると別の日の実績が本番へ出る**ため優先度は高い |
+| 読み取り | `Number($('payout').value)` をやめ `numOf(id)`（数字だけ取り出す）へ。`Number('277,000')` = NaN 対策 |
+
+固定: `adminImagesUiGuard.test.mjs`（`test:premium-plus-media` の glob で `check:safety` に自動で入る）。
+`input[type=text]` は既存 CSS の同じルールに含まれるため**見た目は変わらない**。
+
+> 対象範囲: `/admin/premium-plus-results/` の**この 3 欄**と `/admin/premium-plus-images/` の**4 欄**。
 > `#raceNumber` の `min="1" max="12"` は spinner 用の属性で JS 側の検証には使われていなかったため、
 > 挙動は変わらない（`maxlength="2"` で 2 桁までに制限）。
 > 別画面の `/admin/premium-plus-images/`（レース番号・金額・払戻）は**今回対象外**。

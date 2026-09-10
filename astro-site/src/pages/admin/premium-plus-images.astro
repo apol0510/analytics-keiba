@@ -166,11 +166,11 @@ export const prerender = true;
       <div class="grid">
         <div>
           <label for="race">レース番号</label>
-          <input type="number" id="race" min="1" max="12" placeholder="6">
+          <input type="text" inputmode="numeric" autocomplete="off" maxlength="2" id="race" placeholder="6">
         </div>
         <div>
           <label for="stake">投票金額（合計）</label>
-          <input type="number" id="stake" value="16000" step="1000">
+          <input type="text" inputmode="numeric" autocomplete="off" id="stake" value="16000">
         </div>
       </div>
 
@@ -184,7 +184,7 @@ export const prerender = true;
 
       <div class="field" id="payoutField">
         <label for="payout">払戻金額</label>
-        <input type="number" id="payout" step="100" placeholder="277000">
+        <input type="text" inputmode="numeric" autocomplete="off" id="payout" placeholder="277000">
       </div>
 
       <button id="submit">アップロードして本番反映</button>
@@ -209,7 +209,7 @@ export const prerender = true;
       <div class="inline">
         <div>
           <label for="rollbackVer">戻したい version 番号</label>
-          <input type="number" id="rollbackVer" min="1" placeholder="42">
+          <input type="text" inputmode="numeric" autocomplete="off" id="rollbackVer" placeholder="42">
         </div>
         <button id="rollbackBtn" class="act" style="padding:12px 18px">ロールバック</button>
       </div>
@@ -231,6 +231,26 @@ export const prerender = true;
 
     const jstToday = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
     $('date').value = jstToday;
+
+    // ── 数値欄は「直接入力」──────────────────────────────────────
+    // ⚠️ `type="number"` にしない（2026-09-10 MK 指摘 / premium-plus-results と同じ扱い）。
+    //    スピナー・マウスホイール・上下キーで**値が勝手に変わる**。
+    //    払戻や version は 1 桁違うと実績や公開内容がそのまま狂う。
+    // ⚠️ `type="text"` は何でも入るので、数字以外はここで落とす
+    //    （`277,000` を貼っても桁を落とさず `277000`）。
+    for (const id of ['race', 'stake', 'payout', 'rollbackVer']) {
+      const el = $(id);
+      el.addEventListener('input', () => {
+        const cleaned = el.value.replace(/[^\d]/g, '');
+        if (cleaned === el.value) return;
+        const removed = el.value.length - cleaned.length;
+        const pos = Math.max(0, (el.selectionStart || 0) - removed);
+        el.value = cleaned;
+        try { el.setSelectionRange(pos, pos); } catch {}
+      });
+    }
+    /** 入力欄を数値として読む。数字以外は無視する（Number('277,000') = NaN 対策）*/
+    const numOf = (id) => Number(String($(id).value || '').replace(/[^\d]/g, '')) || 0;
 
     document.querySelectorAll('input[name=result]').forEach((radio) => {
       radio.addEventListener('change', () => {
@@ -286,7 +306,7 @@ export const prerender = true;
       if (!imageBase64) return show('画像を選択してください', 'ng');
       if (!$('date').value) return show('開催日を入力してください', 'ng');
       const isHit = document.querySelector('input[name=result]:checked').value === 'hit';
-      const payout = Number($('payout').value || 0);
+      const payout = numOf('payout');
       if (isHit && !payout) return show('的中なら払戻金額を入力してください', 'ng');
 
       const date = $('date').value;
@@ -300,8 +320,8 @@ export const prerender = true;
           action: 'upload',
           operationId: crypto.randomUUID(),
           expectedVersion: currentVersion,
-          date, venue: $('venue').value.trim(), raceNumber: Number($('race').value) || null,
-          stake: Number($('stake').value) || 0, isHit, payout: isHit ? payout : 0, imageBase64,
+          date, venue: $('venue').value.trim(), raceNumber: numOf('race') || null,
+          stake: numOf('stake'), isHit, payout: isHit ? payout : 0, imageBase64,
         });
         if (!r) return;
         if (r.status === 409) { show(`version 競合（current=${r.result.currentVersion}）。最新を再取得しました。もう一度お試しください。`, 'warn'); await load(); return; }
@@ -331,7 +351,7 @@ export const prerender = true;
     }
 
     $('rollbackBtn').addEventListener('click', async () => {
-      const targetVersion = Number($('rollbackVer').value);
+      const targetVersion = numOf('rollbackVer');
       if (!Number.isInteger(targetVersion) || targetVersion < 1) return show('version 番号を入力してください', 'ng');
       if (!confirm(`v${targetVersion} の内容を新 version として発行します。よろしいですか？`)) return;
       const r = await adminPost({ action: 'rollback', targetVersion, operationId: crypto.randomUUID(), expectedVersion: currentVersion });
