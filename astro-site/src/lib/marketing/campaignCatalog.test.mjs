@@ -319,7 +319,9 @@ test('【version ロック】本文を変えたら version を上げる', () => 
         1: '3ff8419c9f55b4c1',
         2: 'cabdd3a469173ae4',
         3: '748e28eedac9f3b0',
-        4: 'be80954f96ee9b3c',
+        // (B) **未送信 Step の修正**（version 据え置きで許可）。2026-09-14 MK 指示で
+        //     締めの 1 行を顧客向けの言い方へ直した（内部事情を顧客へ出さない）。
+        4: 'edc6fd472b4a5d9d',
       },
     },
     'light-trial-to-premium-sequence': {
