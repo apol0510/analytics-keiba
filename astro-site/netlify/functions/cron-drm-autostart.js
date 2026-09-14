@@ -44,6 +44,9 @@ import {
   DRM_ENTRY_CAMPAIGN_IDS, DRM_ENTRY_ENV, ENTRY_ABORT,
   isEntryCampaignAllowed, readDrmEntryGates, checkExpectedCount,
 } from '../../src/lib/drm/drmEntryGates.js';
+import {
+  buildRunId, buildDrmEntryPayload, triggerDrmEntryBackground,
+} from '../../src/lib/drm/drmEntryDispatch.js';
 import { planAutoStartEntries, AUTOSTART_SKIP_LABEL } from '../../src/lib/drm/drmAutoStart.js';
 import { FUNNEL_STAGE } from '../../src/lib/drm/drmFunnel.js';
 import { getCampaign } from '../../src/lib/marketing/campaignCatalog.js';
@@ -79,8 +82,21 @@ export const DRM_LOG_TAG = '[drm-autostart]';
  *    無関係に塞き止めてしまう（割引 3 本の tick を DRM が止めることになる）。
  */
 export const DRM_TICK_LOCK_ID = 'tick:drm-autostart';
-/** 次の定期実行（1 日 1 回）より十分短く、実行時間より十分長く */
-export const DRM_TICK_LOCK_TTL_SEC = 240;
+/** Netlify Background Function の最大実行時間（秒）。鍵はこれを**必ず覆う** */
+export const BACKGROUND_MAX_RUNTIME_SEC = 900;
+/**
+ * 入口の鍵の寿命。
+ *
+ * ⚠️ **Background の最大実行時間（15 分）より長くする。**
+ *    以前は共有 cron と同じ 240 秒だったが、重い処理は Background が担うようになったため、
+ *    **実行の途中で鍵が切れる**。切れた隙に次の実行（日次 cron / 手動）が入ると、
+ *    配信行がまだ書かれていないので両方が「未送信」と読み、**二重 enqueue** になる。
+ *    「共有 cron と同じ TTL だから安全」とは判断しない。
+ * ⚠️ 途中で落ちたときは、この時間だけ次の実行が待たされる。
+ *    日次の間隔（24 時間）に対して十分短いので、待たせるほうを選ぶ
+ *    （**二重 enqueue より待たせるほうが安全**）。
+ */
+export const DRM_TICK_LOCK_TTL_SEC = BACKGROUND_MAX_RUNTIME_SEC + 60;
 
 const auth = (key) => ({ Authorization: `Bearer ${key}` });
 const log = (payload) => {
@@ -340,32 +356,45 @@ export async function runDrmEntry({
   return body;
 }
 
-/** Netlify Functions v2 のエントリ。**1 日 1 回**（実送信は既存 dispatcher が行う） */
-export default async function handler(req) {
-  // 定期実行（スケジューラからの起動）は body を持たない
-  let body = {};
-  if (req && typeof req.json === 'function') {
-    try { body = await req.json(); } catch { body = {}; }
+/**
+ * Netlify Functions v2 のエントリ。**1 日 1 回**。
+ *
+ * ⚠️ **ここでは重い処理を完走させない。** scheduled Function は 30 秒で切られるので、
+ *    入口の live（候補の読み直し → 台帳突き合わせ → キュー登録 → 読み戻し確認）は入らない。
+ *    手動 live と**同じ Background Function** へ渡して、**起動したら終わり**にする。
+ * ⚠️ 結果はここでは分からない。**既存の台帳とログ**で確認する
+ *    （`CampaignDeliveries` / `ScheduledEmails` / `admin-marketing` の `drmProgress`）。
+ * ⚠️ ゲートが閉じているときは Background 側が何もしない（無駄打ちを避けるため、
+ *    ここでも先に見て、閉じていれば起動しない）。
+ */
+export default async function handler() {
+  const gates = readDrmEntryGates(process.env);
+  if (!gates.allOpen) {
+    const body = { ok: true, action: 'skip', reason: ENTRY_ABORT.GATE_CLOSED, missing: gates.missing, sideEffects: 'none' };
+    log(body);
+    return json(200, body);
   }
-  const manual = Object.keys(body).length > 0;
 
-  if (manual) {
-    const SECRET = process.env.MARKETING_ADMIN_SECRET || process.env.PREMIUM_PLUS_ADMIN_SECRET;
-    if (!SECRET) return json(503, { error: '管理用 secret 未設定（機能無効）' });
-    const provided = req.headers.get('x-admin-secret');
-    if (provided !== SECRET) return json(403, { error: 'Forbidden' });
-  }
-
-  const result = await runDrmEntry({
-    env: process.env,
-    now: Date.now(),
+  const runId = buildRunId({ nowMs: Date.now(), suffix: 'cron' });
+  const payload = buildDrmEntryPayload({
     campaignId: DRM_ENTRY_CAMPAIGN_IDS[0],
-    // 定期実行は**自動**（下見ではない）。上限は maxPerTick と入口の窓
-    dryRun: manual ? body.dryRun !== false : false,
-    expectedCount: manual && body.expectedCount !== undefined ? body.expectedCount : null,
-    manual,
+    // 定期実行は**自動**。上限は maxPerTick と入口の窓
+    expectedCount: null,
+    manual: false,
+    runId,
   });
-  return json(result && result.ok === false ? 200 : 200, result);
+  const fired = await triggerDrmEntryBackground({ env: process.env, payload });
+  const body = {
+    ok: fired.ok,
+    action: 'background_triggered',
+    runId,
+    status: fired.status,
+    reason: fired.reason,
+    sideEffects: 'none',
+    note: 'Background へ渡しました。結果は配信台帳とログで確認します（この応答には含まれません）。',
+  };
+  log(body);
+  return json(fired.ok ? 202 : 500, body);
 }
 
 /**

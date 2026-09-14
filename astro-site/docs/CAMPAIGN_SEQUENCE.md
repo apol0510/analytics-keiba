@@ -689,14 +689,28 @@ DRM の入口（無料登録者 15 名）を開けるには scheduler を true �
 委譲先は 1 つ）。
 
 ```bash
-# 下見（ゲートが閉じていても返る・書き込みゼロ）
+# 下見（同期・ゲートが閉じていても返る・書き込みゼロ）
 curl -X POST .../admin-marketing -H 'x-admin-secret: …' \
   -d '{"action":"drmEntryRun"}'
 
-# 実行（下見の人数と一致したときだけ。違えば queue 0 / send 0 で 409）
+# 実行（Background を 202 起動するだけ。結果はこの応答に**含まれない**）
 curl -X POST .../admin-marketing -H 'x-admin-secret: …' \
-  -d '{"action":"drmEntryRun","dryRun":false,"expectedCount":15}'
+  -d '{"action":"drmEntryRun","dryRun":false,"expectedCount":16}'
 ```
+
+#### ⚠️ 重い処理は Background だけが実行する（2026-09-14 の 504 を受けて）
+
+入口の live を同期 Function で走らせたら **HTTP 504**（書き込みは 0 だったが完走せず）。
+**scheduled Function は 30 秒**で切られるので日次経路も同じ問題を持つ。
+そこで**手動 live も日次自動も、同じ `drm-entry-background` へ委譲**する。
+
+| | |
+|---|---|
+| 実行するのは | **`drm-entry-background` だけ**（最大 15 分）。`runDrmEntry()` をそのまま呼ぶ |
+| payload | `campaignId` / `expectedCount` / `manual` / `runId` **だけ**（アドレス・recordId を持たせない）|
+| 再確認 | Background 側で**改めて** DRM gate / 土台 gate / 許可リスト / `expectedCount` / 購入・停止 / 既送信 / `DeliveryKey` |
+| 排他 | 入口の鍵 TTL **960 秒**（Background 最大 900 秒を覆う）。共有 cron の 240 秒を流用しない |
+| 結果 | **202 即返しで返らない**。`CampaignDeliveries` / `ScheduledEmails` / `action:'drmProgress'` / 関数ログで確認 |
 
 ⚠️ **手動実行は `expectedCount` が必須**（`manual: true` で強制）。
 付け忘れたら `expected_count_required` で止まり、**1 通も出ない**。

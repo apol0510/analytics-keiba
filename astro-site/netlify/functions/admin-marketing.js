@@ -229,6 +229,9 @@ import {
  */
 import { runDrmEntry } from './cron-drm-autostart.js';
 import { DRM_ENTRY_CAMPAIGN_IDS, ENTRY_ABORT } from '../../src/lib/drm/drmEntryGates.js';
+import {
+  buildRunId, buildDrmEntryPayload, triggerDrmEntryBackground,
+} from '../../src/lib/drm/drmEntryDispatch.js';
 import { resolveAutoStart } from '../../src/lib/marketing/campaignSequence.js';
 import {
   resolveScanPageSize, scanAllTouchPages, buildInlineMeasurementResult,
@@ -2054,22 +2057,62 @@ async function handleDrmEntryRun({ now, req }) {
   const campaignId = String(req.campaignId || DRM_ENTRY_CAMPAIGN_IDS[0]).trim();
   const expectedCount = req.expectedCount === undefined ? null : req.expectedCount;
 
-  const result = await runDrmEntry({
-    env: process.env,
-    now,
-    campaignId,
-    dryRun,
-    expectedCount,
-    // ⚠️ **人が起動した**＝ `expectedCount` を必須にする
-    manual: true,
-  });
-
-  // 止まった理由が分かるように status を分ける（画面が握り潰さないため）
-  if (result && result.ok === false) {
-    const status = result.abort === ENTRY_ABORT.CAMPAIGN_NOT_ALLOWED ? 400 : 409;
-    return json(status, { mode: 'drm-entry-run', ...result });
+  // ── 下見は**この場で**返す（軽いので同期のまま）────────────────
+  if (dryRun) {
+    const result = await runDrmEntry({
+      env: process.env, now, campaignId, dryRun: true, manual: true,
+    });
+    if (result && result.ok === false) {
+      const status = result.abort === ENTRY_ABORT.CAMPAIGN_NOT_ALLOWED ? 400 : 409;
+      return json(status, { mode: 'drm-entry-run', ...result });
+    }
+    return json(200, { mode: 'drm-entry-run', ...result });
   }
-  return json(200, { mode: 'drm-entry-run', ...result });
+
+  /**
+   * ── 実行は **Background へ渡すだけ**（2026-09-14 の 504 を受けて）──────
+   *
+   * 入口の live は 候補の読み直し → 台帳突き合わせ → キュー登録 → 読み戻し確認 を通り、
+   * **同期 Function の実行時間に収まらない**（本番で 504。書き込みは 0 だった）。
+   *
+   * ⚠️ ここで `runDrmEntry` を**完走させない**。202 を返して終わり。
+   * ⚠️ **人を渡さない**（payload は campaignId / expectedCount / manual / runId だけ）。
+   *    候補は Background 側が読み直すので、送信直前の再検証が短絡しない。
+   * ⚠️ ゲート・許可リスト・`expectedCount`・購入/停止/既送信/`DeliveryKey` は
+   *    **Background 側で改めて**既存の単一源が確認する。
+   * ⚠️ 結果はこの応答に**含まれない**。`CampaignDeliveries` / `ScheduledEmails` /
+   *    `action:'drmProgress'` と関数ログで確認する。
+   */
+  if (expectedCount === null || expectedCount === undefined) {
+    return json(409, {
+      mode: 'drm-entry-run',
+      ok: false,
+      abort: ENTRY_ABORT.COUNT_REQUIRED,
+      sideEffects: 'none',
+      note: '実行には expectedCount が要ります（下見の人数と一致しなければ 1 通も送りません）。',
+    });
+  }
+  const runId = buildRunId({ nowMs: now, suffix: 'admin' });
+  const payload = buildDrmEntryPayload({ campaignId, expectedCount, manual: true, runId });
+  const fired = await triggerDrmEntryBackground({ env: process.env, payload });
+  if (!fired.ok) {
+    return json(502, {
+      mode: 'drm-entry-run', ok: false, abort: fired.reason, runId,
+      sideEffects: 'none',
+      note: 'Background を起動できませんでした。**何も積んでいません。**',
+    });
+  }
+  return json(202, {
+    mode: 'drm-entry-run',
+    accepted: true,
+    runId,
+    campaignId,
+    expectedCount,
+    sideEffects: 'background_triggered',
+    note: 'Background へ渡しました（202）。**この応答に結果は含まれません。**'
+      + ' ゲート・許可リスト・人数・購入/停止/既送信/DeliveryKey は Background 側で改めて確認します。'
+      + ' 結果は配信台帳（CampaignDeliveries / ScheduledEmails）と action:"drmProgress"、関数ログで確認してください。',
+  });
 }
 
 async function handleRollout({ KEY, BASE, now, req }) {
