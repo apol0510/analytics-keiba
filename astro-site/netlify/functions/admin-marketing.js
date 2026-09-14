@@ -70,6 +70,8 @@ import {
   listCampaigns,
   getCampaign,
   renderCampaign,
+  // ⚠️ ファネル検査は **生の定義**が要る（view は stopOnPurchase / disabledReason を落とす）
+  CAMPAIGNS,
 } from '../../src/lib/marketing/campaignCatalog.js';
 import {
   validateDraft,
@@ -206,6 +208,7 @@ import { describeJourney, JOURNEY_PHASES } from '../../src/lib/marketing/journey
 import { buildHistoryByRecipient, summarizeByTouch } from '../../src/lib/marketing/touchMeasurement.js';
 import { createDeliveryEventIndex, MAX_READ_KEYS } from '../../src/lib/webhooks/deliveryEventIndex.js';
 import { loadResponseByEmail } from '../../src/lib/drm/drmResponseLoader.js';
+import { assessFunnel } from '../../src/lib/drm/drmFunnel.js';
 import {
   resolveScanPageSize, scanAllTouchPages, buildInlineMeasurementResult,
   MEASUREMENT_INLINE_MAX_PAGES,
@@ -1710,6 +1713,13 @@ async function handleDrm({ KEY, BASE, now, req }) {
     version: base.version,
     stateExists,
     funnel,
+    /**
+     * **事業目的（無料登録者 → Premium → 三連複）の実装状況**。
+     * ⚠️ この campaign の数字ではなく、**ファネル全体の宣言と実装の整合**。
+     *    `declarationsReady` は実配信の実績を含まない（完成条件は docs/spec.md）。
+     *    欠けを隠さないため、埋まっていない段は `gaps` にそのまま出す。
+     */
+    businessFunnel: assessFunnel(CAMPAIGNS),
     segments,
     /** ⚠️ 排他的な人数はこの面では出せない（重複する累積指標を層として見せない） */
     segmentCounts: null,

@@ -3373,3 +3373,51 @@ step は facts 用と突合用で **2 回**引いていたので約 340 秒か�
 名指しクエリの入力にメールを使うが、**ログ・レスポンス・正本には入れない**。
 `runChildBatch` が返す `createdEmails` はメモリ上だけで使う。
 audit は従来どおり `rowKey`（ハッシュ）のみ。
+
+## 2026-09-14 — DRM: 「基盤完成」のクローズを取り消し、実運用の完成条件を正本化する
+
+### 決定
+
+1. **2026-08-19 の「DRM 完成・残件なし・クローズ・再監査しない」を取り消す。**
+   あの判断は**基盤完成のみ**を意味していた。実 campaign による実運用の完成条件は未達だった。
+2. **DRM の完成条件の正本を `docs/spec.md`「🚧 DRM（無料登録者 → 有料転換）」に置く。**
+   完成は「無料登録した実アドレスに実 campaign が自動開始し、配信が進み、
+   opened / delivered / purchased / suppressed / unknown の実反応を取得し、
+   反応に応じて次の touch・訴求が分岐し、無料 → Light/Premium → Premium → 三連複まで
+   **実配信で確認できたとき**」とする。
+3. **ファネルの宣言を `astro-site/src/lib/drm/drmFunnel.js` に単一源として置く。**
+   段は最低 3 つ（無料登録者 → 有料 / Light → Premium / Premium → 三連複）。
+   三連複保有者は終点で、**販促を続けない**。
+4. **文書の役割を分ける**（完成条件を 2 か所に書かない）:
+   spec = 完成条件 / progress 先頭の常設ブロック = 現在地と残作業 /
+   decisions = 経緯 / `DRM_FOUNDATION.md` = 部品の技術仕様。
+
+### なぜ（取り違えの構造）
+
+「基盤がある」「テストが通る」「管理画面がある」を完成と読み替えていた。実際には:
+
+| 主張 | 実際（2026-09-14 にコードを読んで確認） |
+|---|---|
+| response-driven routing が実 sequence で動く | 実カタログで `responseRoutes` を宣言した campaign が **0 件**。宣言が無ければ `sequenceProgress` は routing を呼ばない |
+| 反応で次の訴求を変える | 実配信経路（`cron-campaign-sequence` / `admin-marketing` の `action=sequence`）が **`responseByEmail` を誰も渡していない**。渡さない＝**常に線形** |
+| 1 通単位の開封を見て分岐する | `createDeliveryEventIndex({ redisCmd })` と**引数名を誤って**呼んでおり、factory の例外を `catch` が握り潰して **open が常に「未計測」**（`admin-marketing` の drm ビューと `admin-drm-attribution` の 2 か所）。`correlated` 未観測の原因はこれである可能性が高い |
+| 分岐のテストがある | テスト専用オーバーレイ `withRoutes(...)` で合成した campaign のテストだけ。**実カタログは 1 件も通っていなかった** |
+
+つまり本番の配信は**最後まで線形**で、事業目的は 1 通も達成していなかった。
+
+### 併せて固定した不変条件（緩めない）
+
+購入後の販促停止（段ごとに `stopOnPurchase` で宣言）/ 配信停止・バウンス・苦情・
+provider suppression へは送らない / `unknown` を推測で分岐させない / `sent` と `delivered` を
+区別する / `DeliveryKey` による duplicate send 防止 / 帰属は `direct` `correlated`
+`unattributed` の既存契約のまま / 送信経路は決済フィールドへ触れない。
+
+**入口のプランを購入停止シグナルに入れない**ことを `drmFunnel` の検査項目にした
+（2026-09-08 に「宛先条件＝停止条件」で 2 通目が永久に出なくなった障害の構造的な再発防止）。
+
+### やらなかったこと（意図的）
+
+- 進行中の `campaign-discount-*` へ `responseRoutes` を宣言しない。
+  約 15,000 件の配信復旧（PR #521）と**混ぜない**（原因の切り分けが出来なくなる）
+- `light-trial-to-premium-sequence`（step1 送信済み）へも宣言しない
+- **実メール送信・queue/dispatch・本番データ書込み・production deploy は行っていない**
