@@ -295,6 +295,23 @@ read-only API は `admin-marketing` の **`action: 'drm'`**（**送信面**に�
 この文書には書かない（2 か所に置くと必ず食い違う）。
 現在地と残作業は `docs/progress.md` 先頭の常設ブロック。
 
+## 6-b. 入口を動かす 2 つの経路（**scheduled は HTTP で叩けない**）
+
+⚠️ **2026-09-14 本番実測**: `export const config = { schedule }` を持つ Netlify Function は
+**定期実行専用**で、公開 URL への POST は **403・本文 0 バイト**。
+**認証の有無に関係なく、payload も渡せない**。
+（同型の `cron-light-trial-grant` でも同じ挙動を確認。そちらの docs に残る
+「手動 dryRun できる」という記述の訂正は**別任務**。）
+
+| 経路 | 担当 | 人数の確認 |
+|---|---|---|
+| `cron-drm-autostart`（scheduled・1 日 1 回）| **自動** | `maxPerTick` と入口の窓が上限 |
+| `admin-marketing` の `action:'drmEntryRun'` | **手動**（下見 / 実行）| **`expectedCount` 必須**。違えば queue 0 / send 0 |
+
+⚠️ どちらも **同じ `runDrmEntry()`** を通る。admin 側は**薄い呼び出しだけ**で、
+判定・許可リスト・`planAutoStartEntries`・`runSequenceTick`・`DeliveryKey`・
+購入/停止/二重防止を**作り直さない**。
+
 ## 7. ファネル（`drmFunnel.js`）
 
 段（無料登録者 → Light/Premium → Premium → 三連複）の**宣言だけ**を持つ。

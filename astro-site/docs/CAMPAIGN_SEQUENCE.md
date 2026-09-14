@@ -637,12 +637,34 @@ DRM の入口（無料登録者 15 名）を開けるには scheduler を true �
 ⚠️ **共有スケジューラの env（`SCHEDULER_ENABLED` / `CAMPAIGN_ID`）は別任務の状態**。
    この Function は読まないし、運用でも変えない。
 
+#### ⚠️ scheduled Function は**本番 URL から直接起動できない**（2026-09-14 本番実測）
+
+`export const config = { schedule }` を持つ Netlify Function は**定期実行専用**で、
+公開 URL への POST は **403・本文 0 バイト**で弾かれる。**認証の有無に関係なく**、
+**payload も渡せない**（`dryRun` / `expectedCount` を外から指定できない）。
+
+したがって担当を分ける:
+
+| 経路 | 担当 |
+|---|---|
+| `cron-drm-autostart`（scheduled）| **定期実行（1 日 1 回）**。`dryRun:false` / `manual:false` |
+| `admin-marketing` の `action:'drmEntryRun'` | **手動の下見・人数を確認して撃つ**（HTTP 到達可・secret 認証済み）|
+
+どちらの経路も **同じ `runDrmEntry()`** を通る（判定・許可リスト・`expectedCount`・
+委譲先は 1 つ）。
+
 ```bash
 # 下見（ゲートが閉じていても返る・書き込みゼロ）
-curl -X POST .../cron-drm-autostart -H 'x-admin-secret: …' -d '{"dryRun":true}'
-# 実行（人数が一致したときだけ）
-curl -X POST .../cron-drm-autostart -H 'x-admin-secret: …' -d '{"dryRun":false,"expectedCount":15}'
+curl -X POST .../admin-marketing -H 'x-admin-secret: …' \
+  -d '{"action":"drmEntryRun"}'
+
+# 実行（下見の人数と一致したときだけ。違えば queue 0 / send 0 で 409）
+curl -X POST .../admin-marketing -H 'x-admin-secret: …' \
+  -d '{"action":"drmEntryRun","dryRun":false,"expectedCount":15}'
 ```
+
+⚠️ **手動実行は `expectedCount` が必須**（`manual: true` で強制）。
+付け忘れたら `expected_count_required` で止まり、**1 通も出ない**。
 
 ### 下見（送らずに数える）
 

@@ -26,11 +26,18 @@
  * ⚠️ **Customers を 1 バイトも書かない。** メールもこの Function は送らない
  *    （作るのは PENDING ジョブと queued 行だけ。実送信は既存 dispatcher）。
  *
- * ── 手動実行（下見 / 人数を確認して撃つ）──────────────────────
- *   `{"dryRun": true}`  … 既定。**ゲートが閉じていても**誰が入るかを数える（書き込みゼロ）
- *   `{"dryRun": false, "expectedCount": 15}`
- *        … 下見の人数と**1 でも違えば 1 通も送らずに止める**
- *   どちらも `x-admin-secret` が必要。
+ * ── ⚠️ この Function は **HTTP から起動できない**（2026-09-14 本番実測）──────
+ * `export const config = { schedule }` を持つ Netlify Function は**定期実行専用**で、
+ * 公開 URL への POST は **403・本文 0 バイト**で弾かれる（認証の有無に関係ない）。
+ * **payload も渡せない**ので `dryRun` / `expectedCount` を外から指定できない。
+ * 同型の `cron-light-trial-grant` でも同じ挙動を確認した。
+ *
+ * したがって:
+ *   - **定期実行（1 日 1 回）**… この Function が担当。`dryRun:false` / `manual:false`
+ *   - **手動の下見・人数を確認して撃つ**… `admin-marketing` の
+ *     `action: 'drmEntryRun'` から `runDrmEntry()` を呼ぶ（HTTP 到達可・secret 認証済み）
+ *
+ * 判定・許可リスト・`expectedCount`・委譲先はどちらの経路でも**同じこの関数**を通る。
  */
 
 import {
@@ -173,7 +180,18 @@ export async function previewEntry({ env, now, campaignId }) {
  */
 export async function runDrmEntry({
   env = process.env, now = Date.now(), campaignId = DRM_ENTRY_CAMPAIGN_IDS[0],
-  dryRun = true, expectedCount = null, deps = {},
+  dryRun = true, expectedCount = null,
+  /**
+   * **人が起動したか**（管理画面・手動 POST）。
+   *
+   * ⚠️ `true` なら `expectedCount` を**必須**にする。付けずに実行しようとしたら
+   *    `expected_count_required` で止まり、**queue 0 / send 0** で返る。
+   *    以前は `expectedCount !== null` から推測していたため、
+   *    「`dryRun:false` だけ渡す」と人数の確認を通らずに走り得た。
+   * ⚠️ 定期実行（`false`）は `maxPerTick` と入口の窓が上限になる。
+   */
+  manual = false,
+  deps = {},
 } = {}) {
   // ⚠️ **許可リスト以外は撃てない**（割引 3 本を構造的に排除する）
   if (!isEntryCampaignAllowed(campaignId)) {
@@ -214,7 +232,8 @@ export async function runDrmEntry({
   if (!seen.ok) return { ...seen, sideEffects: 'none' };
 
   const counted = checkExpectedCount({
-    planned: seen.wouldEnter, expectedCount, manual: expectedCount !== null,
+    planned: seen.wouldEnter, expectedCount,
+    manual: manual === true || expectedCount !== null,
   });
   if (!counted.ok) {
     const body = {
@@ -294,9 +313,10 @@ export default async function handler(req) {
     env: process.env,
     now: Date.now(),
     campaignId: DRM_ENTRY_CAMPAIGN_IDS[0],
-    // 定期実行は**自動**（下見ではない）。手動は既定で下見
+    // 定期実行は**自動**（下見ではない）。上限は maxPerTick と入口の窓
     dryRun: manual ? body.dryRun !== false : false,
     expectedCount: manual && body.expectedCount !== undefined ? body.expectedCount : null,
+    manual,
   });
   return json(result && result.ok === false ? 200 : 200, result);
 }
