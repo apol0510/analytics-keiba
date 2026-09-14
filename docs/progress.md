@@ -345,7 +345,7 @@ PR #525 を本番反映後、`cron-drm-autostart` へ `{"dryRun":true}` を POST
 **同期 Function の実行時間に収まらない**。
 さらに **scheduled Function は 30 秒で切られる**ため、日次経路も同じ問題を持つ。
 
-### 対処（PR #528）— 手動 live も日次自動も Background へ委譲
+### 対処（PR #529）— 手動 live も日次自動も Background へ委譲
 
 | 経路 | 役割 |
 |---|---|
