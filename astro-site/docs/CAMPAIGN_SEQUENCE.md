@@ -163,11 +163,56 @@ dispatcher がそれを読む。
 `selectNextDueStep` は出所を見ないため、母数の並び順しだいで
 **Customers ばかりが選ばれる**（初回実配信 150 通は全員 Customers 由来だった）。
 
+> ### ⚠️ env で絞ってはいけない（2026-09-14 の本番事故）
+>
+> 当初は `MARKETING_SEQUENCE_SOURCE_FILTER=prospect` という **production env** で絞っていた。
+> ところが `cron-drm-autostart` は
+>
+> ```js
+> const tickEnv = { ...env, MARKETING_SEQUENCE_SCHEDULER_ENABLED: 'true' };
+> await runSequenceTick({ env: tickEnv, campaignId });
+> ```
+>
+> と **env をまるごと引き継ぐ**ので、絞り込みが **DRM の入口にも効いて**しまい、
+> DRM の対象（Customers 由来）が黙って 0 人になる。
+> しかも DRM は `SCHEDULER_ENABLED` を自分で合成するため、
+> **`scheduler=false` にしても DRM は止まらない**＝「閉じてあるから無害」は成り立たない。
+>
+> **この env は廃止した。**絞り込みは `runSequenceTick` の**引数**でしか渡らない
+> （`sequenceAudienceFilter.js` に env を読む口はもう無い。
+> `sequenceCanaryIsolation.test.mjs` が固定している）。
+
 | 何 | どうする |
 |---|---|
-| 絞り込み | `MARKETING_SEQUENCE_SOURCE_FILTER=prospect`（既定は未設定＝全部）|
-| 人数 | `MARKETING_SEQUENCE_MAX_PER_TICK` で絞る |
+| 絞り込み | `runSequenceTick({ sourceFilter: 'prospect' })`（**引数だけ**。既定は全部）|
+| 人数 | `runSequenceTick({ maxRecipientsOverride: 50 })`（渡さなければ従来の env 由来）|
+| 件数のズレ | `runSequenceTick({ expectedCount: 50 })`（違えば **1 件も積まない**）|
 | 送る前の確認 | `admin-marketing` の `action='sequenceTickPreview'` |
+| 少数の実配信 | `admin-marketing` の `action='sequenceCanaryRun'`（下記）|
+
+#### `action='sequenceCanaryRun'`（管理用・1 回限り）
+
+共有のスケジューラ env を開け閉めせずに、**この呼び出しの中だけ**で 1 tick 回す。
+
+```json
+{ "action": "sequenceCanaryRun", "campaignId": "campaign-discount-free",
+  "sourceFilter": "prospect", "maxPerTick": 50, "expectedCount": 50,
+  "confirm": "RUN PROSPECT CANARY", "apply": true }
+```
+
+| 守っていること | どう守るか |
+|---|---|
+| 他 campaign を巻き込まない | `campaignId` は**許可リスト必須**・既定値なし（DRM は入っていない）|
+| DRM へ漏らさない | 絞り込み・上限・期待件数はすべて引数。production env は読みも書きもしない |
+| 経路を作り直さない | 既存 `runSequenceTick` にそのまま委譲（除外・`DeliveryKey`・予約・dispatcher・webhook は通常どおり）|
+| 件数がズレたら送らない | `expected_count_mismatch` で **予約より手前**に停止 |
+| 出所が混ざったら送らない | `audience_source_mixed` で **予約より手前**に停止 |
+| 二重で走らせない | 定期 tick と**同じ鍵**（`tick:campaign-sequence`）を取る。取れなければ `tick_busy` |
+| 1 回限り | ハンドラに繰り返しが無い（`confirm` + `apply=true` が要る）|
+
+⚠️ 開けるのは**スケジューラ判定 1 つだけ**。停止手段
+（`MARKETING_SEQUENCE_ENQUEUE_ENABLED` / `MARKETING_CAMPAIGN_DISPATCH_ENABLED` /
+`rolloutKill`）は**そのまま効く**（閉じていれば `gates_closed` で止まる）。
 
 下見は**本番の tick と同じ関数**（`runSequenceTick({dryRun:true})`）を通り、
 **予約より手前で返る**ので 1 バイトも書かない。応答に

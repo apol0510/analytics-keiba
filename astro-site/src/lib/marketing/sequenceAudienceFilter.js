@@ -18,7 +18,9 @@
  *
  * ⚠️ **絞るだけ**。ここを通っても、配信停止・バウンス・購入済み・反応なし・
  *    `DeliveryKey` の冪等性・送信直前再検証は**一切変わらない**（既存の単一源のまま）。
- * ⚠️ 既定は `all`（従来どおり）。**env を置かない限り挙動は変わらない**。
+ * ⚠️ 既定は `all`（従来どおり）。**呼び出し側が渡さない限り挙動は変わらない**。
+ * ⚠️ **env からは読まない**。env で持つと `cron-drm-autostart` の `tickEnv = { ...env }`
+ *    を通じて DRM の入口にも効いてしまう（2026-09-14 に本番で踏んだ）。
  */
 
 /** 出所（`deliveryKeySource.js` の `RECIPIENT_SOURCE` と同じ語） */
@@ -28,19 +30,17 @@ export const AUDIENCE_FILTER = Object.freeze({
   CUSTOMER: 'customer',
 });
 
-/** env 名（1 か所だけ） */
-export const AUDIENCE_FILTER_ENV = 'MARKETING_SEQUENCE_SOURCE_FILTER';
-
 /**
- * env から絞り込みを読む。**壊れた値は `all`**（推測で絞らない）。
+ * **引数で渡された値**を正規化する（env は見ない）。
  *
- * ⚠️ 「絞る」は送る相手を**減らす**方向にしか働かない。
- *    読めない値で勝手に prospect 限定にすると、Customers の配信が黙って止まる。
+ * ⚠️ 絞り込みを env で持つと、`cron-drm-autostart` の `tickEnv = { ...env }` を通じて
+ *    **DRM の入口にも効いてしまう**（2026-09-14 に本番で踏んだ）。
+ *    絞り込みは**呼び出しの引数だけ**で決める。
  */
-export function resolveAudienceFilter(env = process.env) {
-  const raw = String((env || {})[AUDIENCE_FILTER_ENV] ?? '').trim().toLowerCase();
-  if (raw === AUDIENCE_FILTER.PROSPECT) return AUDIENCE_FILTER.PROSPECT;
-  if (raw === AUDIENCE_FILTER.CUSTOMER) return AUDIENCE_FILTER.CUSTOMER;
+export function normalizeAudienceFilter(raw) {
+  const v = String(raw ?? '').trim().toLowerCase();
+  if (v === AUDIENCE_FILTER.PROSPECT) return AUDIENCE_FILTER.PROSPECT;
+  if (v === AUDIENCE_FILTER.CUSTOMER) return AUDIENCE_FILTER.CUSTOMER;
   return AUDIENCE_FILTER.ALL;
 }
 

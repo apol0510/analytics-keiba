@@ -68,8 +68,15 @@ test('【重要】絞り込みは「減らす」だけ。除外・冪等・再�
   }
 });
 
-test('【重要】既定（env 未設定）では従来どおり全員が対象', () => {
-  assert.match(CRON, /const audienceFilter = resolveAudienceFilter\(env\)/);
+test('【重要】既定（引数なし）では従来どおり全員が対象', () => {
+  /**
+   * ⚠️ 2026-09-14 に `resolveAudienceFilter(env)` から**引数**へ変えた。
+   *    env で持つと `cron-drm-autostart` の `tickEnv = { ...env }` を通じて
+   *    **DRM の入口にも効いてしまう**（本番で DRM の対象が 0 人になった）。
+   *    ここを env 読みへ戻さないこと（`sequenceCanaryIsolation.test.mjs` も固定している）。
+   */
+  assert.match(CRON, /const audienceFilter = normalizeAudienceFilter\(sourceFilter\)/);
+  assert.match(CRON, /sourceFilter = null,/, '引数で受け取っていない');
   const lib = readFileSync(fileURLToPath(new URL('./sequenceAudienceFilter.js', import.meta.url)), 'utf8');
   assert.match(lib, /return AUDIENCE_FILTER\.ALL;/, '既定が all でない');
 });
