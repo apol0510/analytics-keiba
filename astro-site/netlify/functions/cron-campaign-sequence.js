@@ -56,6 +56,9 @@ import {
 } from '../../src/lib/marketing/prospectDeliveryDescriptor.js';
 import { emailHash } from '../../src/lib/marketing/prospectStore.js';
 import {
+  resolveAudienceFilter, applyAudienceFilter, describeAudiencePreview,
+} from '../../src/lib/marketing/sequenceAudienceFilter.js';
+import {
   isSequenceCampaign, resolveSequenceStep, resolveAutoStart,
 } from '../../src/lib/marketing/campaignSequence.js';
 import {
@@ -79,6 +82,9 @@ import { loadBlacklistEmails } from '../../src/lib/newsletter/airtable-fetch.js'
 import { getBrandConfig } from '../../src/lib/newsletter/brand-config.js';
 import { assertFetchComplete, chunkList } from '../../src/lib/marketing/marketingTargetedLoad.js';
 import { MARKETING_EMAIL_SHELL_VERSION } from '../../src/lib/marketing/marketingEmailShell.js';
+import {
+  createDispatchLock, TICK_LOCK_ROOT, LOCK_FAIL,
+} from '../../src/lib/marketing/dispatchLock.js';
 
 const BRAND = 'analytics-keiba';
 const CUSTOMERS_TABLE = 'Customers';
@@ -303,9 +309,22 @@ async function fetchAutoStartCandidates({ KEY, BASE, withinDays }) {
  * 実処理。**テストからはここを直接呼ぶ**（HTTP の器を挟まない）。
  * @param {{env: object, now: number, deps?: object}} args
  */
-export async function runSequenceTick({ env = process.env, now = Date.now(), campaignId } = {}) {
+export async function runSequenceTick({
+  env = process.env, now = Date.now(), campaignId,
+  /**
+   * **下見**（`true` なら 1 バイトも書かない）。
+   *
+   * ⚠️ 予約（`claimDelivered`）より**手前で必ず return する**。
+   *    予約は「取った時点で送信済み扱い」なので、下見で取ると
+   *    送っていない人が二度と対象に戻らなくなる。
+   * ⚠️ 下見はゲートが閉じていても実行できる（読むだけ）。
+   *    ただし**ゲートの状態を必ず応答へ載せる**（開いていると誤解させない）。
+   */
+  dryRun = false,
+} = {}) {
+  const isDry = dryRun === true;
   const gates = readSequenceGates(env, now);
-  if (!gates.allOpen) {
+  if (!isDry && !gates.allOpen) {
     // ⚠️ ここから先へ進まない = Airtable にも SendGrid にも接続しない
     const body = { ok: false, abort: TICK_ABORT.GATES_CLOSED, missing: gates.missing, sideEffects: 'none' };
     log(body);
@@ -631,12 +650,51 @@ export async function runSequenceTick({ env = process.env, now = Date.now(), cam
     log(body);
     return body;
   }
-  const targets = allTargets.filter((t) => !activeKeys.has(keyOfTarget(t)));
-  const alreadyQueued = allTargets.length - targets.length;
+  const dueTargets = allTargets.filter((t) => !activeKeys.has(keyOfTarget(t)));
+  const alreadyQueued = allTargets.length - dueTargets.length;
+
+  /**
+   * ── 5-a-2) **出所で絞る**（既定 `all` ＝ 従来どおり）────────────────
+   *
+   * 2026-09-14 の初回実配信 150 通は**全員が Customers 由来**で、prospect が
+   * 1 人も含まれなかった（`selectNextDueStep` は出所を見ないため）。
+   * prospect 経路だけを少数で実証するために、**絞る**手段を用意する。
+   *
+   * ⚠️ 絞るのは**減らす方向だけ**。除外条件・冪等性・送信直前再検証は一切変えない。
+   * ⚠️ `MARKETING_SEQUENCE_SOURCE_FILTER` を置かない限り挙動は変わらない。
+   */
+  const audienceFilter = resolveAudienceFilter(env);
+  const filtered = applyAudienceFilter({
+    targets: dueTargets, prospectEmails, filter: audienceFilter,
+  });
+  const targets = filtered.kept;
+  const preview = describeAudiencePreview({
+    bySource: filtered.bySource, kept: targets, filter: filtered.filter,
+    step: plan.step, campaignId: base.campaignId,
+  });
+
+  /**
+   * ── 下見はここで終わる（**予約より手前**）────────────────────────
+   * 予約を取ると「送信済み扱い」になるので、下見では絶対に取らない。
+   */
+  if (isDry) {
+    const body = {
+      ok: true, dryRun: true, step: plan.step, campaignId: base.campaignId,
+      sideEffects: 'none',
+      gates: { allOpen: gates.allOpen, missing: gates.missing },
+      alreadyQueued,
+      ...preview,
+      note: '下見です。予約・キュー登録・送信はいずれも行っていません。',
+    };
+    log(body);
+    return body;
+  }
+
   if (targets.length === 0) {
     const body = {
-      ok: false, abort: TICK_ABORT.NO_DUE, reason: 'all_already_queued',
-      alreadyQueued, sideEffects: 'none',
+      ok: false, abort: TICK_ABORT.NO_DUE,
+      reason: filtered.dropped > 0 ? 'filtered_out' : 'all_already_queued',
+      alreadyQueued, ...preview, sideEffects: 'none',
     };
     log(body);
     return body;
@@ -1009,26 +1067,82 @@ export function resolveTickCampaignIds(env = process.env) {
     .map((c) => c.campaignId);
 }
 
+/** 多重起動を防ぐ tick 鍵の名前（`cron-marketing-rollout` と同じ仕組み・別の名前） */
+export const SEQUENCE_TICK_LOCK_ID = 'tick:campaign-sequence';
+/**
+ * tick 鍵の寿命。
+ * この Function の実行時間より十分長く、**次の tick（10 分）より短く**する。
+ * 長すぎると落ちたときに次の tick まで再開できない。
+ */
+export const SEQUENCE_TICK_LOCK_TTL_SEC = 240;
+
 /** Netlify Functions **v2** のエントリ（`export const config` が効くのはこの形式だけ） */
 export default async function handler() {
-  const ids = resolveTickCampaignIds(process.env);
-  const results = [];
-  for (const campaignId of ids) {
-    try {
-      results.push(await runSequenceTick({ env: process.env, now: Date.now(), campaignId }));
-    } catch (e) {
-      // 値・アドレスはログに出さない（理由コードだけ）。1 本落ちても他は続ける
-      log({ ok: false, campaignId, error: String(e && e.message ? e.message : 'unknown') });
-      results.push({ ok: false, campaignId, error: 'tick_failed', sideEffects: 'unknown' });
+  /**
+   * ── 同じ tick を重ねて走らせない（2026-09-14 の実測を受けて追加）──────
+   *
+   * ## 何が起きたか（本番実測）
+   *
+   * `MARKETING_SEQUENCE_MAX_PER_TICK=50` を置いて再開したところ、
+   * **1 つの tick 枠で 3 回起動**し、50×3 = **150 名**が積まれた。
+   *
+   *   07:10:13 / 07:10:35 / 07:10:52 に別々のジョブ（各 50 名）
+   *
+   * 上限は**1 起動あたり**に効くので、多重起動すると意図した速度制御が効かない
+   * （全開時なら 500×3 = 1,500 名/tick になる）。
+   * `cron-marketing-rollout` は同じ理由で既に tick 鍵を持っている。こちらにも入れる。
+   *
+   * ⚠️ **鍵が取れなければ 1 件も積まない**（副作用ゼロで終わる）。
+   *    「取れなかったから代わりに少しだけ積む」のような妥協をしない。
+   * ⚠️ Redis へ到達できないときも**積まない**（多重起動を防げない状態で走らせない）。
+   *
+   * ℹ️ このとき二重送信は起きなかった。積む前に配信行を名指しで突き合わせる
+   *    ガード（2026-09-14 追加）が効き、3 回の起動が別々の 50 名を選んだため。
+   *    鍵はその**手前**で多重起動そのものを止める。
+   */
+  let lock = null;
+  let token = null;
+  try {
+    lock = createDispatchLock({ cmd: makeRedisCmd(process.env), root: TICK_LOCK_ROOT });
+    const got = await lock.acquire({
+      jobId: SEQUENCE_TICK_LOCK_ID, ttlSec: SEQUENCE_TICK_LOCK_TTL_SEC,
+    });
+    if (!got.ok) {
+      const reason = got.reason === LOCK_FAIL.BUSY ? 'tick_busy' : 'tick_lock_unavailable';
+      log({ ok: true, action: 'skip', reason, sideEffects: 'none' });
+      return json(200, { ok: true, action: 'skip', reason, sideEffects: 'none' });
+    }
+    token = got.token;
+  } catch {
+    log({ ok: true, action: 'skip', reason: 'tick_lock_unavailable', sideEffects: 'none' });
+    return json(200, { ok: true, action: 'skip', reason: 'tick_lock_unavailable', sideEffects: 'none' });
+  }
+
+  try {
+    const ids = resolveTickCampaignIds(process.env);
+    const results = [];
+    for (const campaignId of ids) {
+      try {
+        // eslint-disable-next-line no-await-in-loop -- campaign ごとに順番に進める
+        results.push(await runSequenceTick({ env: process.env, now: Date.now(), campaignId }));
+      } catch (e) {
+        // 値・アドレスはログに出さない（理由コードだけ）。1 本落ちても他は続ける
+        log({ ok: false, campaignId, error: String(e && e.message ? e.message : 'unknown') });
+        results.push({ ok: false, campaignId, error: 'tick_failed', sideEffects: 'unknown' });
+      }
+    }
+    const enqueued = results.reduce((n, r) => n + (Number(r && r.enqueued) || 0), 0);
+    return json(200, {
+      ok: results.some((r) => r && r.ok === true),
+      campaigns: ids.length,
+      enqueued,
+      results,
+    });
+  } finally {
+    if (lock && token) {
+      try { await lock.release({ jobId: SEQUENCE_TICK_LOCK_ID, token }); } catch { /* TTL で切れる */ }
     }
   }
-  const enqueued = results.reduce((n, r) => n + (Number(r && r.enqueued) || 0), 0);
-  return json(200, {
-    ok: results.some((r) => r && r.ok === true),
-    campaigns: ids.length,
-    enqueued,
-    results,
-  });
 }
 
 /**

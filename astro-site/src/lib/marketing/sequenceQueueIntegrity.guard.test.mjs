@@ -63,7 +63,8 @@ test('【重要】`jobIdByEmail` には `{ jobId, recordId }` を入れる（文
 
 test('【重要】積む前に、名指しで既存の配信行を突き合わせる（窓の外を見落とさない）', () => {
   assert.match(SRC, /activeKeys = await fetchActiveDeliveryKeys\(/);
-  assert.match(SRC, /const targets = allTargets\.filter\(\(t\) => !activeKeys\.has\(keyOfTarget\(t\)\)\)/);
+  // 名前は変わってよいが、**活きている鍵を除いてから積む**ことは変えない
+  assert.match(SRC, /allTargets\.filter\(\(t\) => !activeKeys\.has\(keyOfTarget\(t\)\)\)/);
   // 読めなければ積まない
   assert.match(SRC, /if \(activeKeys === null\) \{/);
   assert.match(SRC, /abort: 'delivery_ledger_unreadable'/);
