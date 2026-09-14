@@ -17,7 +17,10 @@
  * ⚠️ **read-only**。付与・キュー登録・送信は一切しない（呼ぶのは touchMeasurementPage だけ）。
  * ⚠️ 出力は**件数と率だけ**。アドレス・recordId・secret は出さない。
  */
-import { scanAllTouchPages, TOUCH_SCAN_DEFAULT_PAGE } from '../src/lib/marketing/touchMeasurementScan.js';
+import {
+  scanAllTouchPages, scanAllStepPages, TOUCH_SCAN_DEFAULT_PAGE,
+} from '../src/lib/marketing/touchMeasurementScan.js';
+import { isJourneyCampaign } from '../src/lib/marketing/journeyModel.js';
 
 const BASE_URL = process.env.AK_BASE_URL || 'https://analytics.keiba.link';
 const SECRET = process.env.MARKETING_ADMIN_SECRET || process.env.PREMIUM_PLUS_ADMIN_SECRET || '';
@@ -59,15 +62,24 @@ async function fetchPage(cursor) {
   return body;
 }
 
-const result = await scanAllTouchPages({ fetchPage });
+/**
+ * ⚠️ **束ね方は Function 側と同じ基準で選ぶ。**
+ *   Light 無料体験（24 接点）は通し接点番号、それ以外は `campaignId` × `step`。
+ *   `journeyModel.js` に載っていない campaign を接点番号で数えると 0 件に見える。
+ */
+const journey = isJourneyCampaign(args.campaign);
+const result = journey
+  ? await scanAllTouchPages({ fetchPage })
+  : await scanAllStepPages({ fetchPage });
 
-console.log(`\n── touch 別実績 / ${args.campaign} ──`);
+console.log(`\n── ${journey ? 'touch 別実績' : 'step 別実績'} / ${args.campaign} ──`);
 console.log(`ページ数: ${result.scan.pages} / 読んだ配信行: ${result.scan.rows} / 走査完了: ${result.complete ? 'はい' : '**いいえ**'}`);
 console.log(`計測可否: ${result.measurementAvailable ? '計測できている' : '**索引を読めていない（未計測）**'}`);
-for (const t of result.touches) {
+for (const t of (journey ? result.touches : result.steps)) {
   const dr = t.deliveryRate === null ? '—' : `${(t.deliveryRate * 100).toFixed(1)}%`;
   const or = t.openRate === null ? '—' : `${(t.openRate * 100).toFixed(1)}%`;
-  console.log(`  接点 ${t.touch}: sent ${t.sent} / delivered ${t.delivered} (${dr}) / opened ${t.opened} (${or}) / 未計測 ${t.unknown}`);
+  const label = journey ? `接点 ${t.touch}` : `${t.campaignId} step${t.step}`;
+  console.log(`  ${label}: sent ${t.sent} / delivered ${t.delivered} (${dr}) / opened ${t.opened} (${or}) / 未計測 ${t.unknown}`);
 }
 const T = result.totals;
 console.log(`  合計: sent ${T.sent} / delivered ${T.delivered} / opened ${T.opened} / measured ${T.measured} / 未計測 ${T.unknown}`);
