@@ -56,9 +56,15 @@ import {
 } from '../../src/lib/marketing/prospectDeliveryDescriptor.js';
 import { emailHash } from '../../src/lib/marketing/prospectStore.js';
 import {
-  isSequenceCampaign, resolveSequenceStep,
+  isSequenceCampaign, resolveSequenceStep, resolveAutoStart,
 } from '../../src/lib/marketing/campaignSequence.js';
-import { buildSequenceProgress } from '../../src/lib/marketing/sequenceProgress.js';
+import {
+  readAutoStartGate, planAutoStartEntries, AUTOSTART_SKIP_LABEL,
+} from '../../src/lib/drm/drmAutoStart.js';
+import { FUNNEL_STAGE } from '../../src/lib/drm/drmFunnel.js';
+import { buildSequenceProgress, indexDeliveries } from '../../src/lib/marketing/sequenceProgress.js';
+import { loadResponseByEmail } from '../../src/lib/drm/drmResponseLoader.js';
+import { createDeliveryEventIndex } from '../../src/lib/webhooks/deliveryEventIndex.js';
 import {
   readSequenceGates, planSequenceTick, summarizeSequenceTick,
   MAX_RECIPIENTS_PER_TICK, resolveMaxRecipientsPerTick, TICK_ABORT,
@@ -260,6 +266,40 @@ async function fetchCustomersByEmails({ KEY, BASE, emails }) {
 }
 
 /**
+ * **入口の候補**を読む（`sequence.autoStart` を宣言した campaign だけ）。
+ *
+ * ⚠️ **全件走査をしない。** Airtable の `CREATED_TIME()` で「登録が新しい人」だけを引く。
+ *    新しい列は足していない（`auth-user` は登録日の列を書かない）。
+ * ⚠️ 読み切れなければ**例外**。部分集合を母集団として扱わない。
+ * ⚠️ ここでは**誰も選ばない**。選ぶのは純粋な `planAutoStartEntries`。
+ */
+async function fetchAutoStartCandidates({ KEY, BASE, withinDays }) {
+  const out = [];
+  const formula = `IS_AFTER(CREATED_TIME(), DATEADD(NOW(), -${Number(withinDays)}, 'days'))`;
+  let offset;
+  let pages = 0;
+  do {
+    const body = { filterByFormula: formula, pageSize: 100 };
+    if (offset) body.offset = offset;
+    // eslint-disable-next-line no-await-in-loop -- Airtable は offset 方式
+    const res = await fetch(
+      `https://api.airtable.com/v0/${BASE}/${encodeURIComponent(CUSTOMERS_TABLE)}/listRecords`,
+      { method: 'POST', headers: { ...auth(KEY), 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    );
+    if (!res.ok) throw new Error(`autostart_candidates_fetch_${res.status}`);
+    // eslint-disable-next-line no-await-in-loop
+    const data = await res.json();
+    out.push(...(data.records || []));
+    offset = data.offset;
+    pages += 1;
+    if (offset && pages >= MAX_PAGES) {
+      assertFetchComplete({ table: CUSTOMERS_TABLE, offset, pages, maxPages: MAX_PAGES });
+    }
+  } while (offset);
+  return out;
+}
+
+/**
  * 実処理。**テストからはここを直接呼ぶ**（HTTP の器を挟まない）。
  * @param {{env: object, now: number, deps?: object}} args
  */
@@ -412,16 +452,83 @@ export async function runSequenceTick({ env = process.env, now = Date.now(), cam
     };
   });
 
+  // ── 入口の自動開始（`sequence.autoStart` を宣言した campaign だけ）──────
+  //
+  // ⚠️ 既定では **step1 を自動で撃たない**（母集団が最大になるため）。
+  //    宣言があり、かつ専用ゲート（`MARKETING_DRM_AUTOSTART_ENABLED`）が開いている
+  //    ときだけ、**登録が新しい無料会員**を上限つきで入口へ入れる。
+  // ⚠️ 読めなければ**入口を開けない**（既存の配信は止めない）。
+  const autoStartDecl = resolveAutoStart(base);
+  const autoStartGate = readAutoStartGate(env);
+  let autoStartRows = [];
+  let autoStartReport = autoStartDecl
+    ? { declared: true, open: autoStartGate.open, missing: autoStartGate.missing, entered: 0, skipped: {} }
+    : { declared: false, open: false, missing: [], entered: 0, skipped: {} };
+  if (autoStartDecl && autoStartGate.open) {
+    try {
+      const candidateRecords = await fetchAutoStartCandidates({
+        KEY, BASE, withinDays: autoStartDecl.withinDays,
+      });
+      const candidates = candidateRecords.map((rec) => ({
+        recordId: rec.id,
+        fields: rec.fields || {},
+        createdTimeMs: Date.parse(rec.createdTime || '') || null,
+        marketing: resolveCustomerMarketing({
+          fields: rec.fields || {}, nowMs: now, blacklistEmails,
+        }),
+      }));
+      // 選ぶのは純粋関数。ここは I/O だけ
+      const planned = planAutoStartEntries({
+        campaign: base, candidates,
+        // ⚠️ **prospect 台帳から復元した送信済みも含めて**「もう受け取っているか」を見る
+        //    （#521 で prospect の既送信は Airtable ではなく Redis 由来になったため、
+        //      Airtable 側だけを見ると二重に入口へ入れる可能性がある）
+        deliveredIndex: indexDeliveries(
+          prospectInputs ? [...deliveries, ...prospectInputs.deliveries] : deliveries,
+        ),
+        brand: BRAND, fromEmail, nowMs: now,
+        expectedStage: FUNNEL_STAGE.FREE_TO_PAID,
+      });
+      const byId = new Map(candidates.map((c) => [c.recordId, c]));
+      autoStartRows = planned.recordIds.map((rid) => byId.get(rid)).filter(Boolean);
+      autoStartReport = {
+        declared: true, open: true, missing: [],
+        considered: planned.considered,
+        entered: autoStartRows.length,
+        capped: planned.capped === true,
+        carriedOver: planned.carriedOver || 0,
+        skipped: planned.skipped,
+        skipLabels: AUTOSTART_SKIP_LABEL,
+      };
+    } catch (e) {
+      // ⚠️ 入口が読めないだけで、**進行中の配信は止めない**
+      autoStartRows = [];
+      autoStartReport = {
+        declared: true, open: true, missing: [], entered: 0, skipped: {},
+        error: String((e && e.message) || 'autostart_unavailable'),
+      };
+      console.error(`${SEQ_LOG_TAG} 入口の候補を読めないため開けません: ${autoStartReport.error}`);
+    }
+  }
+
   const prospectRows = prospectInputs ? prospectInputs.rows : [];
   const prospectEmails = new Set(prospectRows
     .map((r) => String((r.fields || {}).Email || '').trim().toLowerCase()).filter(Boolean));
   // 同じアドレスが両方に居たら **Customers を優先**（二重送信の防止）
+  const emailOf = (r) => String((r.fields || {}).Email || '').trim().toLowerCase();
+  const knownEmails = new Set(customerRows.map(emailOf).filter(Boolean));
+  // 入口の候補は **まだ 1 通も受け取っていない人**なので台帳由来の行とは重ならないが、
+  // 念のため重複を除く（同じ人を 2 行にすると 2 通になる）
+  const entryRows = autoStartRows.filter((r) => {
+    const e = emailOf(r);
+    if (!e || knownEmails.has(e)) return false;
+    knownEmails.add(e);
+    return true;
+  });
   const selected = [
     ...customerRows,
-    ...prospectRows.filter((r) => {
-      const e = String((r.fields || {}).Email || '').trim().toLowerCase();
-      return !customerRows.some((c) => String((c.fields || {}).Email || '').trim().toLowerCase() === e);
-    }),
+    ...entryRows,
+    ...prospectRows.filter((r) => !knownEmails.has(emailOf(r))),
   ];
 
   // 3) 配信基盤の停止リスト（**確認できなければ何もしない**）
@@ -441,6 +548,23 @@ export async function runSequenceTick({ env = process.env, now = Date.now(), cam
   //    prospect の停止（bounce / 苦情 / 配信停止）も provider の集合へ合流させる。
   const suppressed = new Set(provider.emails);
   if (prospectInputs) for (const e of prospectInputs.providerSuppressed) suppressed.add(e);
+  // ── 反応別 routing（DRM）の入力 ────────────────────────────────
+  // ⚠️ `campaign.sequence.responseRoutes` を宣言した campaign でだけ索引を読む。
+  //    宣言が無ければ 1 鍵も読まない（既存のコストと挙動をそのまま維持する）。
+  // ⚠️ 索引が読めない / 予算を超えた相手は **`unknown` = 線形**（推測で分岐しない）。
+  // ⚠️ 管理画面（`admin-marketing` の `action=sequence`）と**同じ関数**で読む。
+  //    別々に読むと、画面に出る「次の 1 通」と実際に送る 1 通がズレる。
+  const response = await loadResponseByEmail({
+    campaign: base, recipients: selected, deliveries: allDeliveries,
+    brand: BRAND, fromEmail,
+    providerSuppressed: suppressed, softBounced: new Set(),
+    makeIndex: () => createDeliveryEventIndex({ cmd: makeRedisCmd(env) }),
+  });
+  if (!response.ok) {
+    // 効かなかったこと自体をログに残す（黙って線形に戻ると「効いている」と誤認する）
+    console.log(`${SEQ_LOG_TAG} response routing 不使用: ${response.reason}`);
+  }
+
   const progress = buildSequenceProgress({
     campaign: base, selected, deliveries: allDeliveries, brand: BRAND, fromEmail, nowMs: now,
     providerSuppressed: suppressed,
@@ -448,11 +572,16 @@ export async function runSequenceTick({ env = process.env, now = Date.now(), cam
     // prospect の反応は本人のレコードが持っている（Customers 側は従来どおり Map なし）
     engagementByEmail: prospectInputs && prospectInputs.engagementByEmail.size > 0
       ? prospectInputs.engagementByEmail : undefined,
+    responseByEmail: response.ok ? response.byEmail : undefined,
   });
-  const plan = planSequenceTick({ progress, gates, maxRecipients: resolveMaxRecipientsPerTick(process.env) });
+  const plan = planSequenceTick({
+    progress, gates, maxRecipients: resolveMaxRecipientsPerTick(process.env),
+    // ⚠️ step1 を自動で撃てるのは、**入口を宣言していて ゲートも開いている**ときだけ
+    allowFirstStep: autoStartDecl !== null && autoStartGate.open === true,
+  });
   if (!plan.ok) {
-    const body = { ok: false, ...plan, sideEffects: 'none' };
-    log(summarizeSequenceTick({ campaignId: base.campaignId, plan }));
+    const body = { ok: false, ...plan, autoStart: autoStartReport, sideEffects: 'none' };
+    log({ ...summarizeSequenceTick({ campaignId: base.campaignId, plan }), 入口: autoStartReport });
     return body;
   }
 
@@ -842,12 +971,15 @@ export async function runSequenceTick({ env = process.env, now = Date.now(), cam
   if (prospectBlocked > 0) summary['prospect予約不可'] = prospectBlocked;
   if (prospectClaimFailure) summary['prospect予約失敗'] = prospectClaimFailure;
   if (releaseFailed > 0) summary['予約戻し失敗'] = releaseFailed;
+  // #521（prospect 実送信 / delivered 10 通の無反応除外）の観測項目
   if (alreadyQueued > 0) summary['登録済みのため除外'] = alreadyQueued;
   if (prospectNotDispatchable > 0) summary['prospect送信不可'] = prospectNotDispatchable;
   if (descriptorFailed > 0) summary['身分証を置けず未登録'] = descriptorFailed;
+  // #522（DRM の入口）: 開けたか / 開けなかった理由（**黙って 0 にしない**）
+  if (autoStartReport.declared) summary['入口'] = autoStartReport;
   log(summary);
   return {
-    ok: true, step: plan.step, enqueued, failed,
+    ok: true, step: plan.step, enqueued, failed, autoStart: autoStartReport,
     campaignId: base.campaignId, version: base.version,
     alreadyQueued,
     prospectNotDispatchable,

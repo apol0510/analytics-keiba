@@ -103,6 +103,161 @@ rollback の根拠は **実際に剥がした鍵そのもの**でなければな
 
 ---
 
+<!-- ⚠️ 常設ブロック: DRM 実運用の**現在地と残作業**の正本。完了するまで消さない -->
+<!-- 並び順: 最上位は「反応で選別する大規模マーケティング配信基盤」（約 15,000 件 / PR #521）。
+     2026-09-14 に #521 が main へ入ったので、この DRM ブロックは**その直下**に置いている。
+     先頭を奪わないこと。 -->
+# 🔴 常設 / 未完了任務 — **DRM 実運用は未完成**（2026-09-14 固定）
+
+> **完成条件の正本は `docs/spec.md`「🚧 DRM（無料登録者 → 有料転換）」。ここには書き写さない。**
+> このブロックが持つのは**現在地と残作業だけ**。決定の経緯は `docs/decisions.md` 2026-09-14。
+> 部品の技術仕様は `astro-site/docs/DRM_FOUNDATION.md`。
+
+**2026-08-19 の「DRM 完成・残件なし・クローズ」は、基盤完成のみを意味していた。
+実 campaign による実運用の完成条件は未達だった。**（2026-09-14 にクローズを取り消し）
+
+## 現在地 — ファネル 3 段の実装状況（機械判定 `drmFunnel.assessFunnel()`）
+
+| 段 | 育成（常時稼働） | 通数 | 反応別 routing | 入口 | 判定 |
+|---|---|---|---|---|---|
+| 1 無料登録者 → 有料 | `free-signup-onboarding` | 6 | opened→5 / delivered→3 | **自動**（登録 14 日以内）| 欠けなし |
+| 2 Light → Premium | `light-to-premium-sequence` | 4 | opened→4 / delivered→3 | 段の遷移 | 欠けなし |
+| 3 Premium → 三連複 | `sanrenpuku-upsell-sequence` | 4 | opened→4 / delivered→3 | 段の遷移 | 欠けなし |
+
+`declarationsReady: true`（**宣言と実装の整合だけ**。実配信の実績は含まない）。
+
+⚠️ **「何通以上」を仕様にしていない。** 完成条件は「反応で次の訴求が分岐すること」で、
+分岐可能性は `drmFunnel.canBranch()` が構造から導く（2 通は構造的に分岐不能）。
+
+### 第 2・3 段の文面の出どころ（新規訴求を作っていない）
+
+| 段 | 出どころ | 編集 |
+|---|---|---|
+| 2 | 承認済み `postExpirySteps.js` の Step9 / 10 / 13 / 17 | **前提の 1 行 × 2 箇所だけ**（`lightToPremiumSteps.js` に対照表）。Step10 / 13 は無編集 |
+| 3 | 既存の公開ページ `/sanrenpuku-demo/` ＋ 承認済み `sanrenpuku-offer` 本文 | **草案**。価格・実績数値・お客様の声は**載せない**（`sanrenpukuUpsellSteps.js` に対照表）|
+
+### 三連複の案内先（2026-07-30 の停止理由は解消）
+
+`sanrenpuku-offer` は「三連複を説明・販売する公開ページが無い」（`ctaUrl` が空）ため
+停止していたが、**`/sanrenpuku-demo/` が公開ページとして実在**し、
+**有料予想 4 ページ（南関 / JRA / 船橋 / 浦和）が既に案内先として使っている**。
+推測で URL を作ったわけではない。CTA を確定し **version 2 → 3** で再開した。
+
+### `premium-renewal` の扱い（第 2 段には置かない）
+
+`premium-renewal` は **Premium / Premium Sanrenpuku の期限切れ・期限間近**が宛先の
+**再契約**キャンペーンで、**Light → Premium のアップセルではない**。
+第 2 段に置くと宛先条件を崩すことになるため、`resolveFunnelStage` 上で該当する
+**第 1 段のオファー**として接続した（**対象条件は 1 文字も変えていない**）。
+
+### 直した欠陥（反応層の購入判定）
+
+上位商品の段では**宛先そのものが有料会員**なので、反応層の既定
+「Light か Premium が有効なら購入済み」のままだと**宛先全員が `purchased`** に落ち、
+routing が終端として扱って**永久に線形**になる（2026-09-08 の停止判定の障害と同じ形）。
+反応層も停止判定と**同じ単一源**（`sequencePurchaseStop.js`）を使うよう修正した。
+
+## 入口の自動開始（段 1 / 2026-09-14 実装）
+
+無料登録から DRM が自動で始まる経路を**初めて**作った。
+
+| | |
+|---|---|
+| 文面 | 既存ステップメール `newsletter/step-sequences.js` の `signup-onboarding` **6 通を移送**（新規に書いていない） |
+| 移送時の修正 | ①間隔 1 日 → 2 日（`MIN_STEP_DELAY_DAYS = 2` に反するため）②「メインレース10点 / 双方向馬単」→「最大5点 / 一方向の馬単」（2026-07-09 確定の現行仕様と食い違うため）。理由は `freeSignupOnboardingSteps.js` 冒頭 |
+| 入口 | 登録から 14 日以内の無料会員・1 回の実行で最大 50 名・recordId 昇順で決定的 |
+| ゲート | 既存 4 ゲート ＋ **`MARKETING_DRM_AUTOSTART_ENABLED`**（既定 閉）|
+| 候補の読み方 | `CREATED_TIME()` で絞った bounded read。**新しい列を足していない**。読み切れなければ例外 |
+| 実配信 | **0 通**（ゲートは閉じたまま。実送信は未実施）|
+| 下見 | `/admin/drm/` の「入口の下見」= `action:'drmAutoStart'`。**ゲートが閉じていても**誰が入るか数えられる（書き込みゼロ・アドレス非返却）|
+
+⚠️ **`MARKETING_SEQUENCE_CAMPAIGN_ID` の落とし穴**: この env に値があると
+`cron-campaign-sequence` はその campaign しか進めない（本番は割引 3 本を指定）。
+**`free-signup-onboarding` を足さない限り 1 通も進まない**（`cron-marketing-rollout` は担当しない）。
+
+⚠️ **二重送信の封じ込め**: 旧ステップメール `analytics-keiba:signup-onboarding` は
+`supersededBy` を持ち、`enqueue-step-emails` の **live パスがコードで拒否**する
+（409・書き込みゼロ）。env を 1 つ開けただけでは事故にならない。dryRun は従来どおり通る。
+
+### なぜステップメールを移したか
+
+元の系統（`StepEnrollments` + `cron-email-scheduler`）は **送信が未実装**（Phase 3）で、
+`DeliveryKey` が無く**二重送信を構造的に防げず**、購入停止・配信停止・反応別 routing を
+持たなかった。配信経路を 1 本に寄せ、既存の安全条件を全部効かせるため campaign へ移した。
+**新しい配信基盤は作っていない。**
+
+⚠️ 旧 `enrollSignupOnboarding`（登録時の enroll 行作成）は**残してある**（送信しない）。
+撤去は別タスク。両方を有効化しないこと。
+
+## 反応別 routing の現在地
+
+| | |
+|---|---|
+| 実宣言のある campaign | `free-signup-onboarding`（opened → step5 / delivered → step3）／ `light-trial-post-expiry-sequence`（opened → step9 / delivered → step16）|
+| 実配線 | ✅ `cron-campaign-sequence` と管理画面の両方が `responseByEmail` を渡す（`drm/drmResponseLoader.js`） |
+| 実配信での出し分け実績 | ❌ **0 通**（ゲートは閉じたまま） |
+| 開封の 1 通単位計測 | 索引の引数名バグ（`redisCmd` → `cmd`）を修正済み。**本番実測は未了** |
+
+2026-09-14 までは、実カタログの `responseRoutes` が **0 件**・実経路が `responseByEmail` を
+**誰も渡していない**・索引の factory を誤った引数名で呼び open が**常に未計測**、の 3 点により
+**本番の配信は最後まで線形**だった。
+
+## 残作業（**これが埋まるまでクローズしない**）
+
+| # | 残件 | 埋め方 | 依存 |
+|---|---|---|---|
+| R1 | 1 通単位の開封が本番で**実際に読めている**ことの実測 | `action=sequence` の `responseRouting.measured.open` と `counts` を read-only で確認 | 引数名バグ修正の deploy |
+| R2 | **実配信で層ごとに別の 1 通が出た**（`byRoute` に `opened:9` / `delivered:16`） | ゲートを開けて `light-trial-post-expiry-sequence` を進める | **MK の明示承認**（実メール送信） |
+| R3 | 入口の自動開始を**本番で 1 名**通す（段 1） | `MARKETING_DRM_AUTOSTART_ENABLED` を開ける | **MK の明示承認**（実メール送信） |
+| ~~R4~~ | ~~第 3 段の文面を MK が確認~~ → **2026-09-14 承認済み**（Step4 の締めのみ顧客向けの言い方へ修正）| — | 完了 |
+| R5 | **購入が発生したときに**その購入が実 touch へ正しく帰属される | 既存の有料化済みレコードを名指しして `admin-drm-attribution` を実行し、`purchaseTimeReasons` と帰属の判定が正しいことを確認 | R1 |
+| R6 | **段が変わったときに**次段へ正しく遷移する（前段が停止し、次段の対象になる） | 既に段をまたいでいる実レコードで `resolveFunnelStage` / 前段の `stopReason` を read-only 確認 | R1 |
+
+⚠️ **実顧客が実際に購入すること自体は完成条件ではない**（2026-09-14 MK 確定）。
+R5 / R6 で見るのは「**購入が起きたときに処理が正しいか**」であって、売上や成約件数ではない。
+購入が起きるまで完成を保留するものではない（判定の正本は `docs/spec.md`）。
+
+⚠️ **R2 はコードのマージでは埋まらない**（実配信が要る）。
+
+## 非ブロッカー（完成条件に数えない）
+
+| 項目 | 扱い |
+|---|---|
+| **A/B（`variant`）の実運用** | **将来課題・非ブロッカー**（2026-09-14 MK 確定）。`DeliveryKey` が variant を含まないため、送り分け・帰属・重複防止の設計判断が別途要る。**DRM 完成の残件に数えない**（旧 R7 をここへ移した）|
+⚠️ 進行中の `campaign-discount-*` へ routing を足すのは **R4 で判断**。
+約 15,000 件の配信復旧（PR #521）と**混ぜない**。
+
+## この回でやったこと（2026-09-14）
+
+| 内容 | 置き場所 |
+|---|---|
+| 事業目的・ファネル・完成条件を正本へ固定 | `docs/spec.md` / `docs/decisions.md` |
+| ファネル 3 段の宣言と機械判定（育成 / オファーを区別・欠けを隠さない） | `drm/drmFunnel.js` ＋ `drmFunnel.test.mjs` |
+| **無料登録者の育成 campaign**（既存ステップメール 6 通の移送） | `marketing/freeSignupOnboardingSteps.js` / `campaignCatalog.js` |
+| **入口の自動開始**（誰を入れてよいか・次段への接続） | `drm/drmAutoStart.js` |
+| 入口の宣言（`sequence.autoStart`）と検証 | `campaignSequence.js` |
+| 入口の候補を bounded に読む（`CREATED_TIME()`） | `campaignAudienceFormula.js` / `cron-campaign-sequence.js` |
+| 実 campaign への `responseRoutes` 宣言（段 1 ＋ 体験終了後） | `campaignCatalog.js` |
+| 宣言の書き間違いを CI で落とす | `drmRouting.validateResponseRoutes` → `validateSequence` |
+| 配信の事実＋開封索引から反応を作る（bounded・fail closed） | `drm/drmResponseInputs.js` / `drm/drmResponseLoader.js` |
+| 実配信経路（cron / 管理画面）へ配線 | `cron-campaign-sequence.js` / `admin-marketing.js` |
+| 開封索引の引数名バグ修正 | `admin-marketing.js` / `admin-drm-attribution.js` |
+| 通しテスト（無料登録 → 育成 → 分岐 → 購入で停止） | `drmFreeSignupJourney.test.mjs` |
+| 実経路の配線 guard | `drmRealPathWiring.guard.test.mjs` |
+| **旧ステップメールの live 送信を拒否**（二重送信の封じ込め） | `newsletter/step-sequences.js` / `enqueue-step-emails.js` ＋ `drmStepMailSupersession.guard.test.mjs` |
+| **入口の下見**（送らずに数える・read-only） | `admin-marketing` の `action:'drmAutoStart'` ＋ `/admin/drm/` |
+| 事業ファネルの実装状況を管理画面に表示 | `/admin/drm/`（`businessFunnel`） |
+| 責務境界・シーケンス一覧・env の落とし穴を正本へ | `docs/CAMPAIGN_SEQUENCE.md` §5 / §9-2 / §9-5 / `docs/spec.md` |
+| **第 2 段の育成 4 通**（承認済み文面の流用・前提 1 行 × 2 箇所だけ編集） | `marketing/lightToPremiumSteps.js` |
+| **第 3 段の育成 4 通（草案）**（既存ページ＋承認済み本文のみが根拠） | `marketing/sanrenpukuUpsellSteps.js` |
+| `sanrenpuku-offer` の CTA 確定と再開（v2 → v3） | `campaignCatalog.js` |
+| **反応層の購入判定を campaign ごとに**（上位商品の段が永久に線形になる欠陥） | `drm/drmResponseState.js` / `drm/drmResponseInputs.js` |
+| 「4 通以上」を仕様から外し、**分岐可能性を構造から導く** | `drm/drmFunnel.js` の `canBranch()` |
+| 第 2・3 段の分岐の通しテスト | `drmUpsellStagesRouting.test.mjs` |
+
+`test:drm` 136 pass ／ `check:safety` EXIT=0 ／ `build` EXIT=0。
+**実メール送信・queue・本番書込み・production deploy・PR merge は 1 件も行っていない。**
+
 # 🚨 第 2 期 step2 が 1 通も出ていない — **原因 3 件を特定・修正（2026-09-14）/ 本番処置は未実施**
 
 > **この時点で本番へは 1 バイトも書いていない。** 実施したのは read-only の実測と、
@@ -213,6 +368,7 @@ dispatcher は `campaign_delivery_id`（Airtable の recordId）が無いと `cu
 **必ず skip する**。つまり **prospect には構造的に 1 通も送れない**。
 当面は「積む前に止める」で予約を焼かないようにした。解禁には
 `campaignCustomArgs.js` と `webhooks/emailEventLedger.js` の同時改修が要る。
+
 
 # ✉️ ログイン案内の文言を削る — **完了（2026-09-10）**
 

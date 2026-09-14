@@ -15,6 +15,7 @@ import {
   buildSalutation,
   isTemplateConfigured,
   isCampaignUsable,
+  CAMPAIGN_DEFERRED_PLACEHOLDERS,
   NAME_FALLBACK,
 } from './campaignCatalog.js';
 import { computeCampaignContentHash } from './campaignSend.js';
@@ -115,13 +116,29 @@ test('通常のキャンペーンは差し込み印を持てない（誤って�
 });
 
 // ── 使用可否（本番化前レビューの結論を固定）──────────────────────
+/**
+ * ⚠️ 守りたいのは**原則**であって特定のキャンペーンではない。
+ *    以前は `sanrenpuku-offer` を「CTA 未確定の例」として名指しで固定していたが、
+ *    2026-09-14 に案内先（`/sanrenpuku-demo/`）が確定して再開したため、
+ *    **原則そのもの**を全キャンペーンに対して検査する形へ変えた。
+ */
 test('CTA が確定していないキャンペーンは使用停止（推測 URL を作らない）', () => {
-  const c = getCampaign('sanrenpuku-offer', { includeDisabled: true });
-  assert.equal(c.enabled, false, '三連複案内が有効になっている');
-  assert.equal(c.ctaUrl, '', '確定していない URL を入れている');
-  assert.equal(isCampaignUsable(c), false);
-  assert.equal(getCampaign('sanrenpuku-offer'), null, '送信経路から取得できてしまう');
-  assert.ok(c.disabledReason, '停止理由が無い');
+  for (const c of CAMPAIGNS) {
+    const cta = String(c.ctaUrl ?? '').trim();
+    if (cta === '') {
+      assert.equal(isCampaignUsable(c), false,
+        `${c.campaignId}: CTA が空なのに使用可能になっている（推測 URL を作らせない）`);
+      assert.ok(c.disabledReason, `${c.campaignId}: 停止理由が無い`);
+      assert.equal(getCampaign(c.campaignId), null,
+        `${c.campaignId}: 送信経路から取得できてしまう`);
+      continue;
+    }
+    if (!isCampaignUsable(c)) continue;
+    // 使用可能なら、案内先は**本番 URL か差し込み印**でなければならない
+    const ok = cta.startsWith('https://analytics.keiba.link/')
+      || CAMPAIGN_DEFERRED_PLACEHOLDERS.some((ph) => cta.includes(ph));
+    assert.ok(ok, `${c.campaignId}: 案内先が本番 URL でない（${cta}）`);
+  }
 });
 
 test('初期テンプレートのままのキャンペーンは使用停止', () => {
@@ -149,7 +166,8 @@ test('listCampaigns は停止中も理由付きで返す（画面で理由を出
   //    （`campaign-discount-*` の `enabled` は毎回評価される）ので、
   //    件数を固定すると期間が終わった日に CI が落ちる。
   //    ここで守りたいのは「停止中が一覧から消えないこと」と「理由が必ず付くこと」。
-  for (const id of ['sanrenpuku-offer', 'general-announcement']) {
+  // 恒久停止の例（初期テンプレートのまま）。**停止中が一覧から消えないこと**を守る
+  for (const id of ['general-announcement']) {
     assert.ok(off.some((c) => c.campaignId === id), `${id} が停止中一覧から消えている`);
   }
   for (const c of off) assert.ok(c.disabledReason, `${c.campaignId} に停止理由が無い`);
@@ -173,7 +191,9 @@ test('【version ロック】本文を変えたら version を上げる', () => 
     'marketing-canary': { version: 3, hash: '162081596a79ea5a' },
     'expired-comeback': { version: 2, hash: 'e6077db532e76564' },
     'premium-renewal': { version: 2, hash: '1bfa299fb86a339c' },
-    'sanrenpuku-offer': { version: 2, hash: '59a115bc1933cb46' },
+    // v2 → v3（2026-09-14）: CTA を `/sanrenpuku-demo/`（既存の公開案内先）にして再開。
+    // 本文は 1 文字も変えていないが、CTA が変わるので版を上げた。
+    'sanrenpuku-offer': { version: 3, hash: '389ee30dbead8660' },
     'premium-plus-offer': { version: 3, hash: '9bdc2b32b4aa546a' },
     'dormant-reactivation': { version: 2, hash: '8bc34393b414464b' },
     'general-announcement': { version: 1, hash: '7e6dc6ed7461489d' },
@@ -251,6 +271,57 @@ test('【version ロック】本文を変えたら version を上げる', () => 
       steps: {
         1: 'd5729f8a3f74e86d',
         2: '45d4adc1cf072ab1',
+      },
+    },
+    /**
+     * 無料登録者 育成（DRM 入口 / 2026-09-14 新規）。文面は既存ステップメール
+     * `newsletter/step-sequences.js` の `signup-onboarding` からの移送で、
+     * 移送時の修正 2 点（間隔 1→2 日 / 買い目 10点→5点）は
+     * `freeSignupOnboardingSteps.js` の冒頭に理由つきで記録してある。
+     * **送信実績はまだ無い**（`delivered: []`）。
+     */
+    'free-signup-onboarding': {
+      version: 1,
+      delivered: [],
+      steps: {
+        1: 'c721e9eaa8acee80',
+        2: 'dd796949669380f7',
+        3: '6da043d5049fe47e',
+        4: 'a43655e39b8b65a2',
+        5: '20e20c621a44618a',
+        6: '6016619c3b9c84f0',
+      },
+    },
+    /**
+     * Light ご利用中 → Premium（2026-09-14 新規）。文面は承認済みの
+     * `postExpirySteps.js` からの流用で、前提の 1 行だけ差し替えた
+     * （`lightToPremiumSteps.js` 冒頭に対照表）。**送信実績はまだ無い。**
+     */
+    'light-to-premium-sequence': {
+      version: 1,
+      delivered: [],
+      steps: {
+        1: 'a8da1ae3de92eedd',
+        2: '26850cf975a39c12',
+        3: '856fa9ddfe6119ba',
+        4: '0b18b1dd6726b9a2',
+      },
+    },
+    /**
+     * Premium ご利用中 → 三連複（2026-09-14 新規・**草案**）。根拠は既存の公開ページ
+     * `/sanrenpuku-demo/` と承認済み `sanrenpuku-offer` の本文だけ
+     * （`sanrenpukuUpsellSteps.js` に対照表）。**送信実績はまだ無い。**
+     */
+    'sanrenpuku-upsell-sequence': {
+      version: 1,
+      delivered: [],
+      steps: {
+        1: '3ff8419c9f55b4c1',
+        2: 'cabdd3a469173ae4',
+        3: '748e28eedac9f3b0',
+        // (B) **未送信 Step の修正**（version 据え置きで許可）。2026-09-14 MK 指示で
+        //     締めの 1 行を顧客向けの言い方へ直した（内部事情を顧客へ出さない）。
+        4: 'edc6fd472b4a5d9d',
       },
     },
     'light-trial-to-premium-sequence': {

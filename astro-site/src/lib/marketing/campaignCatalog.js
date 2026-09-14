@@ -60,6 +60,11 @@ import { REGULAR_PRICE, resolveOffer } from '../promotions/promotionOfferCatalog
 import { LIGHT_TRIAL_EXTRA_STEPS, LIGHT_TRIAL_ANGLES } from './lightTrialSteps.js';
 import { POST_EXPIRY_STEPS, POST_EXPIRY_ANGLES } from './postExpirySteps.js';
 import {
+  FREE_SIGNUP_ONBOARDING_STEPS, FREE_SIGNUP_ANGLES,
+} from './freeSignupOnboardingSteps.js';
+import { LIGHT_TO_PREMIUM_STEPS, LIGHT_TO_PREMIUM_ANGLES } from './lightToPremiumSteps.js';
+import { SANRENPUKU_UPSELL_STEPS, SANRENPUKU_UPSELL_ANGLES } from './sanrenpukuUpsellSteps.js';
+import {
   DISCOUNT_FREE_STEPS, DISCOUNT_LIGHT_STEPS, DISCOUNT_PREMIUM_STEPS,
   discountBenefitDescription, DISCOUNT_CTA, DISCOUNT_DEADLINE,
 } from './campaignDiscountSteps.js';
@@ -299,7 +304,7 @@ export const CAMPAIGNS = Object.freeze([
     campaignId: 'sanrenpuku-offer',
     benefitType: 'discount',
     benefitDescription: '三連複プランの特別価格をご案内します',
-    version: 2,
+    version: 3,
     name: 'Premium Sanrenpuku 案内',
     description: '有効な Premium 会員へ三連複（買い切り）を案内する。',
     subject: '【KEIBA Analytics】三連複予想のご案内',
@@ -315,22 +320,30 @@ export const CAMPAIGNS = Object.freeze([
       '一度のお支払いで、以降ずっとご覧いただけます。',
     ].join('\n'),
     ctaLabel: '三連複予想の詳細',
-    ctaUrl: '',
+    /**
+     * ⚠️ **推測で作った URL ではない。** `/sanrenpuku-demo/` は
+     * 有料予想 4 ページ（南関 / JRA / 船橋 / 浦和）が既に三連複の案内先として
+     * 使っている公開ページで、仕組みの説明・申込導線まで載っている。
+     * 購入済みの方にはページ側で非表示になる。
+     */
+    ctaUrl: `${SITE}/sanrenpuku-demo/`,
     recommendedSegments: ['contract:active', 'plan:premium'],
     audienceRule: {
       contracts: [MK_CONTRACT.ACTIVE, MK_CONTRACT.EXPIRING_SOON],
       plans: [MK_PLAN.PREMIUM],
       enforce: true,
     },
-    // ⛔ 使用停止（2026-07-30）: 三連複を **説明・販売する公開ページが存在しない**。
-    //   - `/pricing/` の顧客可視領域に「三連複」の記載は 0 件（本番 HTML 実測）
-    //   - 実際の購入導線は `dashboard.astro` の「三連複を追加」ボタン → モーダル
-    //     （`showPurchaseCta = canPurchaseSanrenpuku` でゲート／ログイン必須）
-    //   - `/plan-upgrade-guide/` は旧プラン体系（三連複を会員ランクとして説明）で現行仕様と不一致だったため 2026-08-31 に削除
-    //   案内先が確定するまで有効化しない。**推測で URL を作らない。**
-    enabled: false,
-    disabledReason: CAMPAIGN_DISABLED_REASON.NO_CTA,
-    disabledDetail: '三連複を説明・販売する公開ページが未確定（/pricing/ に三連複の記載なし・購入導線は dashboard のモーダルのみ）',
+    // ── 2026-07-30 の使用停止理由は解消した（2026-09-14 再開）──────────────
+    //   停止の理由は「三連複を**説明・販売する公開ページが存在しない**」だった
+    //   （`/plan-upgrade-guide/` は 2026-08-31 に削除済み）。
+    //   その後 `/sanrenpuku-demo/` が公開ページとして整備され、
+    //   **有料予想 4 ページが既に三連複の案内先として使っている**ため、
+    //   案内先は確定している。推測で URL を作ったわけではない。
+    //
+    //   ⚠️ 対象は「Premium が有効 かつ 三連複 未保有」のまま変えていない
+    //      （三連複保有者は `MK_PLAN.PREMIUM_SANRENPUKU` に分類されるので当たらない）。
+    //   ⚠️ CTA を変えたので **version を 2 → 3 へ上げた**（カタログの版ルール）。
+    enabled: true,
   },
   {
     campaignId: 'premium-plus-offer',
@@ -393,6 +406,86 @@ export const CAMPAIGNS = Object.freeze([
       contracts: [MK_CONTRACT.NONE, MK_CONTRACT.EXPIRED],
       plans: [],
       enforce: true,
+    },
+    enabled: true,
+  },
+  {
+    /**
+     * **メルマガ無料登録者の育成（DRM の入口 / 連続配信 6 通）**
+     *
+     * ── 位置づけ ────────────────────────────────────────────
+     * ファネル第 1 段（`drm/drmFunnel.js`）の**常時稼働の育成**。
+     * 割引案内（`campaign-discount-free`）は**期間限定のオファー**で役割が違う。
+     * こちらは期間に依存せず、登録した人を順に迎える。
+     *
+     * ── 文面は新しく作っていない ────────────────────────────
+     * `newsletter/step-sequences.js` の既存ステップメール
+     * （`analytics-keiba:signup-onboarding`）から**そのまま**移した。
+     * 移送時の修正 2 点（間隔 1→2 日 / 買い目 10点→5点）は
+     * `freeSignupOnboardingSteps.js` の冒頭に理由つきで記録。
+     *
+     * ── 入口が自動で開く（この campaign だけ）──────────────────
+     * `sequence.autoStart` を宣言しているので、**登録から 14 日以内の無料会員**が
+     * step1 の対象になる。`cron-campaign-sequence` は既定では step1 を自動で撃たないが、
+     * 宣言があり かつ 専用ゲートが開いているときだけ、**上限つき**で入口を開ける。
+     *
+     * ⚠️ **付与も価格提示もしない。** 無料で見られる範囲の案内だけ。
+     * ⚠️ 購入（Light / Premium / 三連複のいずれか）で停止する。
+     *    段が進んだ人にこの入口の案内を送り続けない。
+     */
+    campaignId: 'free-signup-onboarding',
+    version: 1,
+    name: '無料登録者 育成（DRM 入口 / 連続配信 6 通）',
+    description: 'メルマガ無料登録者へ、入口 → 使い方 → 実績 → 買い目 → プランの違い → 上位プラン を 6 通で案内する。文面は既存ステップメール（signup-onboarding）の移送。付与・価格提示はしない。',
+    benefitType: 'free_content',
+    benefitDescription: '無料のままご覧いただける予想・買い目・結果のご案内です',
+    subject: FREE_SIGNUP_ONBOARDING_STEPS[0].subject,
+    body: FREE_SIGNUP_ONBOARDING_STEPS[0].body,
+    ctaLabel: FREE_SIGNUP_ONBOARDING_STEPS[0].ctaLabel,
+    ctaUrl: FREE_SIGNUP_ONBOARDING_STEPS[0].ctaUrl,
+    footerNote: 'このメールは、KEIBA Analytics へ無料登録いただいたお客様へお送りしています。',
+    recommendedSegments: ['plan:free', 'contract:none'],
+    /** 無料・契約なしのみ。**有料会員・期限切れには送らない** */
+    audienceRule: {
+      contracts: [MK_CONTRACT.NONE],
+      plans: [MK_PLAN.FREE],
+      enforce: true,
+    },
+    /**
+     * ⚠️ 入口の案内なので、**最初の有料が成立したら止める**
+     *    （Light / Premium / 三連複のどれでも目的達成）。
+     */
+    stopOnPurchase: { signals: ['light', 'premium', 'sanrenpuku'] },
+    sequencePolicy: {
+      maxSends: FREE_SIGNUP_ONBOARDING_STEPS.length,
+      minIntervalDays: 2,
+      /** 短期間の過剰配信を防ぐ（7 日で最大 2 通） */
+      frequencyCap: { windowDays: 7, maxSends: 2 },
+      /** 無反応なら間隔を空ける。**打ち切りはしない**（既存シーケンスと同じ方針） */
+      slowdownAfterNoEngagement: 3,
+      slowdownFactor: 2,
+      stopAfterNoEngagement: null,
+      angles: FREE_SIGNUP_ANGLES,
+    },
+    sequence: {
+      maxSends: FREE_SIGNUP_ONBOARDING_STEPS.length,
+      steps: FREE_SIGNUP_ONBOARDING_STEPS,
+      /**
+       * **入口の自動開始**（ファネル第 1 段）。
+       * 登録から 14 日以内の無料会員だけを候補にし、1 回の実行で最大 50 名。
+       * ⚠️ 過去に遡って一斉に撃たないための窓。広げるときは母集団を必ず数えること。
+       */
+      autoStart: { kind: 'free_signup', withinDays: 14, maxPerTick: 50 },
+      /**
+       * **反応別 routing**。
+       * - 開封している（読んでいる）→ 使い方の続きより先に**プランの違い**（step5）
+       * - 届いても開かない → 案内を積まず**実績のページ**（step3）で入口を変える
+       * ⚠️ `clicked` は provider 側 tracking が OFF で**成立しない**ので宣言しない。
+       */
+      responseRoutes: [
+        { when: 'opened', step: 5, minSent: 2, maxSent: 4, note: '開封層 → プランの違いへ前倒し' },
+        { when: 'delivered', step: 3, minSent: 2, maxSent: 4, note: '到達・未開封 → 実績で入口を変える' },
+      ],
     },
     enabled: true,
   },
@@ -714,6 +807,146 @@ export const CAMPAIGNS = Object.freeze([
     sequence: {
       maxSends: 18,
       steps: POST_EXPIRY_STEPS,
+      /**
+       * **反応別 routing（DRM）**。ここが「線形に次の 1 通」から
+       * 「**反応を見て次の訴求を変える**」へ変わる唯一の宣言。
+       *
+       * ── なぜこの campaign から始めるか ────────────────────────
+       * 送信実績がまだ 1 通も無い（`campaignCatalog.test.mjs` の `delivered: []`）ため、
+       * **進行中のコホートを乱さない**。目的も「無料で使ってもらう → 有料へ」で
+       * 反応別に出し分ける意味がいちばん強い。
+       * 進行中の `campaign-discount-*` / `light-trial-to-premium-sequence` には
+       * **宣言しない**（別途進めている大規模配信と混ぜない）。
+       *
+       * ── 効き方（安全側の作り）──────────────────────────────
+       * - 効くのは **停止判定を全部通過した後**だけ（購入・退会・停止リスト・
+       *   バウンス・対象外・engagement は `sequenceProgress` が先に止める）
+       * - **既に送った step は選ばない**（二重送信・逆戻りが構造的に起きない）
+       * - 反応が読めない（`unknown` / 索引が読めない / 予算外）なら**線形のまま**
+       * - `purchased` / `suppressed` はここに書いても行き先を作らない（`drmRouting`）
+       *
+       * ── 宣言の意味 ────────────────────────────────────────
+       * 1. **開封している人**（＝読んでいる）には、使い方の説明を続けるより
+       *    「プランで何が変わるか」を先に出す → step9『見られる範囲の違い』へ。
+       *    `minSent: 3` = 3 通目までは全員同じ導入を通す。
+       *    `maxSent: 8` = 導入期のあいだだけ。以降は線形（10, 11, …）へ戻る。
+       * 2. **届いているのに一度も開いていない人**には、案内を積み増さずに
+       *    入口を変える 1 通 → step16『しばらくご覧になっていない方へ』。
+       *    `minSent: 5` = 5 通届いてなお未開封のときだけ（早すぎる決めつけをしない）。
+       *
+       * ⚠️ `delivered` は **open 計測が効いているときだけ**成立する層
+       *    （`drmResponseState`）。計測が無ければ `unknown` = 線形。
+       * ⚠️ `clicked` は provider 側 tracking が OFF のため**常に成立しない**。
+       *    成立しない条件を書くと「効いている」と誤読させるので**書かない**。
+       */
+      responseRoutes: [
+        { when: 'opened', step: 9, minSent: 3, maxSent: 8, note: '開封層 → プランの違いへ前倒し' },
+        { when: 'delivered', step: 16, minSent: 5, maxSent: 12, note: '到達・未開封 → 入口を変える 1 通' },
+      ],
+    },
+    enabled: true,
+  },
+  {
+    /**
+     * **Light ご利用中 → Premium**（ファネル第 2 段の育成 / 連続配信 4 通）
+     *
+     * 文面は承認済みの `postExpirySteps.js` からの流用で、前提の 1 行だけ直した
+     * （`lightToPremiumSteps.js` 冒頭に対照表）。**新しい営業訴求は作っていない。**
+     *
+     * ⚠️ 宛先は **Light が有効な方**なので、既定の「Light か Premium が有効なら停止」
+     *    のままだと 1 通目の直後に全員が恒久停止して 2 通目が出ない（2026-09-08 の障害）。
+     *    目的達成は**上位商品を買ったとき**だけ。
+     * ⚠️ 入口は**段の遷移**（`drmAutoStart.resolveStageEntry`）。
+     *    無料登録のような自動開始は宣言しない（撃つかは別途判断）。
+     */
+    campaignId: 'light-to-premium-sequence',
+    version: 1,
+    name: 'Light ご利用中 → Premium（連続配信 4 通）',
+    description: 'Light が有効な方へ、プランごとの範囲 → 料金の考え方 → 直近の記録 → ご検討の材料 を 4 通で案内する。文面は終了後フェーズからの流用。価格・実績は書かない。',
+    benefitType: 'content_unlock',
+    benefitDescription: 'Premium では中央（JRA）・南関の有料予想を全会場ご覧いただけます',
+    subject: LIGHT_TO_PREMIUM_STEPS[0].subject,
+    body: LIGHT_TO_PREMIUM_STEPS[0].body,
+    ctaLabel: LIGHT_TO_PREMIUM_STEPS[0].ctaLabel,
+    ctaUrl: LIGHT_TO_PREMIUM_STEPS[0].ctaUrl,
+    footerNote: 'このメールは、Lightプランをご利用中のお客様へお送りしています。',
+    recommendedSegments: ['plan:light', 'contract:active'],
+    audienceRule: {
+      contracts: [MK_CONTRACT.ACTIVE, MK_CONTRACT.EXPIRING_SOON],
+      plans: [MK_PLAN.LIGHT],
+      enforce: true,
+    },
+    stopOnPurchase: { signals: ['premium', 'sanrenpuku'] },
+    sequencePolicy: {
+      maxSends: LIGHT_TO_PREMIUM_STEPS.length,
+      minIntervalDays: 7,
+      frequencyCap: { windowDays: 14, maxSends: 2 },
+      slowdownAfterNoEngagement: 2,
+      slowdownFactor: 2,
+      stopAfterNoEngagement: null,
+      angles: LIGHT_TO_PREMIUM_ANGLES,
+    },
+    sequence: {
+      maxSends: LIGHT_TO_PREMIUM_STEPS.length,
+      steps: LIGHT_TO_PREMIUM_STEPS,
+      /**
+       * 2 通届いた時点で分かれる。
+       * - 開封している（読んでいる）→ 検討の材料（Step4）へ前倒し
+       * - 届いても開かない → 記録（Step3）で入口を変える
+       * ⚠️ どちらの経路でも Step4 には到達する（開封層は早く、未開封層は後で）。
+       */
+      responseRoutes: [
+        { when: 'opened', step: 4, minSent: 2, maxSent: 3, note: '開封層 → 検討の材料へ前倒し' },
+        { when: 'delivered', step: 3, minSent: 2, maxSent: 3, note: '到達・未開封 → 記録で入口を変える' },
+      ],
+    },
+    enabled: true,
+  },
+  {
+    /**
+     * **Premium ご利用中 → 三連複（買い切り）**（ファネル第 3 段の育成 / 連続配信 4 通）
+     *
+     * ⚠️ 文面は**草案**。根拠は既存の公開ページ `/sanrenpuku-demo/` と
+     *    承認済み `sanrenpuku-offer` の本文だけ（`sanrenpukuUpsellSteps.js` に対照表）。
+     *    **新しい価格・実績・営業事実を足していない。**
+     * ⚠️ 宛先は **Premium が有効かつ三連複 未保有**（三連複保有者は
+     *    `MK_PLAN.PREMIUM_SANRENPUKU` に分類されるので当たらない）。
+     *    停止は三連複の購入だけ（Premium を持っていることは目的達成ではない）。
+     */
+    campaignId: 'sanrenpuku-upsell-sequence',
+    version: 1,
+    name: 'Premium ご利用中 → 三連複（連続配信 4 通）',
+    description: 'Premium が有効で三連複をお持ちでない方へ、仕組み → 戦略の自動選択 → 対象開催 → 買い切り を 4 通で案内する。価格・実績数値は書かない（ページが正本）。',
+    benefitType: 'content_unlock',
+    benefitDescription: '三連複の自動絞り込みを買い切りでご利用いただけます（毎月のお支払いはありません）',
+    subject: SANRENPUKU_UPSELL_STEPS[0].subject,
+    body: SANRENPUKU_UPSELL_STEPS[0].body,
+    ctaLabel: SANRENPUKU_UPSELL_STEPS[0].ctaLabel,
+    ctaUrl: SANRENPUKU_UPSELL_STEPS[0].ctaUrl,
+    footerNote: 'このメールは、Premium プランをご利用中のお客様へお送りしています。',
+    recommendedSegments: ['plan:premium', 'contract:active'],
+    audienceRule: {
+      contracts: [MK_CONTRACT.ACTIVE, MK_CONTRACT.EXPIRING_SOON],
+      plans: [MK_PLAN.PREMIUM],
+      enforce: true,
+    },
+    stopOnPurchase: { signals: ['sanrenpuku'] },
+    sequencePolicy: {
+      maxSends: SANRENPUKU_UPSELL_STEPS.length,
+      minIntervalDays: 7,
+      frequencyCap: { windowDays: 14, maxSends: 2 },
+      slowdownAfterNoEngagement: 2,
+      slowdownFactor: 2,
+      stopAfterNoEngagement: null,
+      angles: SANRENPUKU_UPSELL_ANGLES,
+    },
+    sequence: {
+      maxSends: SANRENPUKU_UPSELL_STEPS.length,
+      steps: SANRENPUKU_UPSELL_STEPS,
+      responseRoutes: [
+        { when: 'opened', step: 4, minSent: 2, maxSent: 3, note: '開封層 → 買い切りの説明へ前倒し' },
+        { when: 'delivered', step: 3, minSent: 2, maxSent: 3, note: '到達・未開封 → 対象開催で入口を変える' },
+      ],
     },
     enabled: true,
   },

@@ -86,9 +86,41 @@ export const STEP_SEQUENCES = Object.freeze({
     triggerType: 'signup', // 新規 free 登録で enroll
     audienceType: 'free', // 送信時に free 以外なら停止（converted）
     isActive: true,
+    /**
+     * ⛔ **後継へ移行済み（2026-09-14）。live 送信してはいけない。**
+     *
+     * この 6 通は `marketing/freeSignupOnboardingSteps.js` へ移送され、
+     * campaign `free-signup-onboarding` として **DRM の入口**になった。
+     * 移送先は `DeliveryKey`（campaign × version × step × 受信者）で冪等なのに対し、
+     * こちらの鍵は `extraKey='step:{seqId}:{stepNumber}'` で**別物**。
+     * 両方を live にすると **同じ人へ同じ 6 通が二度届く**（鍵が違うので互いに検知できない）。
+     *
+     * さらにこちらの本文は**古い**（「メインレース10点 / 双方向馬単」= 2026-07-09 に
+     * 5 点・一方向へ変更済み）。送ると事実と違う案内になる。
+     *
+     * ⚠️ `enqueue-step-emails` の live パスは `supersededBy` があるレコードを**拒否**する。
+     *    復活させたい場合は、先に campaign 側を止めること（**両方を live にしない**）。
+     */
+    supersededBy: 'campaign:free-signup-onboarding',
+    supersededAt: '2026-09-14',
     steps: FREE_ONBOARDING_STEPS,
   }),
 });
+
+/**
+ * そのシーケンスは**後継へ移行済み**か（live 送信を止めるため）。
+ * ⚠️ dryRun（計画の確認）は止めない。止めるのは**書き込み・送信の経路だけ**。
+ */
+export function isSequenceSuperseded(stepSequenceId) {
+  const seq = getSequence(stepSequenceId);
+  return Boolean(seq && seq.supersededBy);
+}
+
+/** 後継の識別子（無ければ null） */
+export function supersededBy(stepSequenceId) {
+  const seq = getSequence(stepSequenceId);
+  return (seq && seq.supersededBy) || null;
+}
 
 /** 全シーケンスID一覧 */
 export function getAllSequenceIds() {

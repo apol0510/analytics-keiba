@@ -20,7 +20,7 @@ import {
   loadBlacklistEmails,
 } from '../../src/lib/newsletter/airtable-fetch.js';
 import { resolveAudienceRecipients } from '../../src/lib/newsletter/audience-resolver.js';
-import { listSteps, getSequence } from '../../src/lib/newsletter/step-sequences.js';
+import { listSteps, getSequence, isSequenceSuperseded, supersededBy } from '../../src/lib/newsletter/step-sequences.js';
 import { computeDeliveryKey } from '../../src/lib/newsletter/delivery-key.js';
 import { getBrandConfig } from '../../src/lib/newsletter/brand-config.js';
 import { randomUUID } from 'node:crypto';
@@ -143,6 +143,29 @@ export default async function handler(request) {
   //   ※ 実際の「送信」は別途 NEWSLETTER_AUTOMATION_ENABLED（execute-scheduled-emails-background の
   //     ガード）に依存する。enqueue が作る ScheduledEmails ジョブは PENDING のまま、
   //     両フラグ true のときに初めて送信される（P3.3 二重ガード）。
+  // 🛡️ **後継へ移行済みのシーケンスは live 送信しない**（2026-09-14）。
+  //   `analytics-keiba:signup-onboarding` の 6 通は campaign `free-signup-onboarding`
+  //   へ移送済みで、鍵の体系が違う（`step:...` と DeliveryKey）ため互いに重複を検知できない。
+  //   両方を live にすると**同じ人へ同じ 6 通が二度届く**。env を開けただけで事故に
+  //   ならないよう、**コード側で fail closed** にする。dryRun（計画の確認）は従来どおり通す。
+  if (live && isSequenceSuperseded(sequenceId)) {
+    return new Response(
+      JSON.stringify({
+        success: false,
+        skipped: true,
+        reason: 'sequence superseded',
+        sequenceId,
+        supersededBy: supersededBy(sequenceId),
+        mode: 'enqueue-step-emails:live',
+        sideEffects: 'none',
+        hint: '後継 campaign へ移行済みです。両方を live にすると同じ人へ二重に届きます。'
+          + '復活させる場合は先に後継 campaign を止めてください。',
+        timestamp: new Date().toISOString(),
+      }),
+      { status: 409, headers },
+    );
+  }
+
   if (live && process.env.STEP_EMAIL_AUTOMATION_ENABLED !== 'true') {
     return new Response(
       JSON.stringify({

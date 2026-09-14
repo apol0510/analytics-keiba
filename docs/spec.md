@@ -588,16 +588,157 @@ signature に**会員ごとの再募集開始日時**を含める（`rank:plus_r
 | シーケンス | 進める Function | 間隔 | 停止の握り |
 |---|---|---|---|
 | `campaign-discount-free` / `-light` / `-premium` | `cron-campaign-sequence` | 10 分 | env 3 種 + キャンペーン期間（`enabled`）|
+| `free-signup-onboarding`（無料登録者 育成 6 通 / **DRM の入口**）| `cron-campaign-sequence` | 10 分 | 既存 4 ゲート ＋ `MARKETING_DRM_AUTOSTART_ENABLED`（入口）|
 | `light-trial-to-premium-sequence`（体験中 6 通）| `cron-marketing-rollout` | 5 分 | 展開状態（Redis）の `stage` / `killed` |
 | `light-trial-post-expiry-sequence`（終了後 18 通）| `cron-marketing-rollout` | 5 分 | 同上 |
 
 - `MARKETING_SEQUENCE_CAMPAIGN_ID` に値があると **`cron-campaign-sequence` はその campaign しか進めない**
-  （本番は割引 3 本を指定）。体験シーケンスをここへ足しても rollout と二重に進めることになるので**足さない**
+  （本番は割引 3 本を指定）。体験シーケンスをここへ足しても rollout と二重に進めることになるので**足さない**。
+  ⚠️ 一方で **`free-signup-onboarding` はこの Function が担当**するため、
+  env に値がある限り**足さないと 1 通も進まない**（`cron-marketing-rollout` は担当しない）
 - **判定は 1 か所**: 誰が次に何通目かは `sequenceProgress.js` だけが決める。
   cron・管理画面・dry-run はすべて同じ関数を通る
 - **送信経路も 1 本**: 実送信は `marketing-campaign-dispatch` のみ。
   cron はどちらも ScheduledEmails / CampaignDeliveries に積むだけ
 - 連続配信が無言で止まる 4 つの原因と、その不変条件は `CAMPAIGN_SEQUENCE.md` §11
+
+# 🚧 DRM（無料登録者 → 有料転換）— **事業目的・ファネル・完成条件（クローズ禁止・常設）**
+
+> **ここが DRM の完成条件の正本。** 他の文書は役割が違う:
+>
+> | 文書 | 役割 |
+> |---|---|
+> | **`docs/spec.md`（ここ）** | **事業目的・ファネル・完成条件**（何をもって完成とするか）|
+> | `docs/progress.md` 先頭の常設ブロック | **現在地と残作業**（いまどこまで出来ているか）|
+> | `docs/decisions.md` | **決定の経緯**（いつ誰が何を決めたか）|
+> | `astro-site/docs/DRM_FOUNDATION.md` | **部品の技術仕様**（各モジュールの契約と禁止事項）|
+>
+> 同じ内容を 2 か所に書かない。完成条件を他の文書へ写した場合は、写した側を消す。
+
+## 1. 事業目的
+
+**メルマガ無料登録者を起点に自動で育成し、段階的に有料へ転換させること。**
+
+> メルマガ無料登録者に対して自動 DRM を実運用し、反応に応じて Light または Premium への
+> 有料転換を促し、**Premium 転換後はさらに三連複への次段 DRM まで自動で進む**ことを、
+> **実配信で確認できる状態**を完成とする。（2026-09-14 MK 確定）
+
+「一斉に送る仕組みを持つこと」は目的ではない。**反応を見て次の訴求を変えること**が目的。
+
+## 2. ファネル（段は最低でもこの 3 つ）
+
+宣言の単一源は **`astro-site/src/lib/drm/drmFunnel.js`**。
+ここの表とコードが食い違ったら、**コードとこの表の両方を直す**（片方だけ直さない）。
+
+各段は **育成（常時稼働・分岐する）** と **オファー（期間限定）** を区別する。
+オファーがあるだけでは育成にならない（期間が閉じれば止まるため）。
+
+| 段 | 入口（誰が居るか） | 到達目標（卒業条件） | 育成（常時・分岐する） | オファー |
+|---|---|---|---|---|
+| 1 | 無料登録者・有料の閲覧権が無い方（`plan:free` / `contract:none` `expired`） | Light / Premium / 三連複のいずれかを購入 | **`free-signup-onboarding`**（6 通・入口自動） | `campaign-discount-free` / `premium-renewal` |
+| 2 | Light ご利用中（`plan:light` / 契約有効） | Premium または三連複を購入 | **`light-to-premium-sequence`**（4 通） | `campaign-discount-light` |
+| 3 | Premium ご利用中（`plan:premium` / 契約有効） | 三連複（買い切り）を購入 | **`sanrenpuku-upsell-sequence`**（4 通） | `sanrenpuku-offer` / `campaign-discount-premium` |
+| — | 三連複まで到達 | **終点。販促しない** | なし | なし |
+
+### 育成に求めるもの（1 つでも欠ければその段は未完成）
+
+1. **連続配信**であること
+2. **反応で次の訴求が分岐すること**（`responseRoutes` の宣言 ＋ 分岐が起こり得る構造）
+3. **常時稼働**（キャンペーン期間に依存しない）
+4. **入口が自動で開く**こと — ⚠️ **これを求めるのは第 1 段だけ**。
+   確定仕様は「メルマガ無料登録を起点に DRM が自動開始する」であり、
+   後段は**段の遷移**（`drmAutoStart.resolveStageEntry`）で入る
+
+⚠️ **「何通以上」という閾値を仕様として固定しない。** 完成条件は分岐することであって
+通数ではない。分岐が起こり得るかは `drmFunnel.canBranch()` が構造から導く
+（2 通しかない campaign は、未送信の行き先が線形の次と必ず一致するので分岐できない）。
+
+### 反応層の「購入済み」は campaign ごとに違う
+
+⚠️ 上位商品を案内する段（2・3）では、**宛先そのものが有料会員**である。
+「Light か Premium が有効なら購入済み」という既定のままだと、
+**宛先全員が反応層 `purchased` に落ちて routing が行き先を作らない**（＝永久に線形）。
+反応層の購入判定も停止判定と**同じ単一源**（`sequencePurchaseStop.js`）を使い、
+campaign の `stopOnPurchase` 宣言に従う。
+
+### 入口の自動開始（段 1）
+
+`auth-user` が作る無料会員のうち **登録から 14 日以内**の人が `free-signup-onboarding` の
+step1 の対象になる。`cron-campaign-sequence` は既定では step1 を自動で撃たないが、
+**`sequence.autoStart` を宣言した campaign かつ `MARKETING_DRM_AUTOSTART_ENABLED=true`**
+のときだけ、上限つき（1 回 50 名）で入口を開ける。
+
+- **遡って一斉に撃たない**（窓の外は `outside_window` として数える）
+- 登録時刻が読めない人は**入れない**（推測しない）
+- すでに 1 通でも受け取っている人は**入口に入れない**（二重開始を作らない）
+- 既存の 4 ゲートは**そのまま必要**。入口のゲート 1 枚では 1 通も出ない
+
+- **1 人は同時に 1 段にしか居ない**（`resolveFunnelStage` が排他に決める）
+- 段が進んだら次段の育成へ繋ぐ（`drmAutoStart.resolveStageEntry`）。
+  **期間限定のオファーを自動の入口に代用しない**
+- 入口のプランを購入停止シグナルに入れない（段 2 は `light` で止めない / 段 3 は `premium` で止めない）
+- 段が判定できない人（`contract: unknown` 等）は**どの段にも入れない**（推測しない）
+- 入口のプランを**購入停止シグナルに入れてはいけない**。入れると宛先条件と停止条件が
+  一致し、1 通目の直後に全員が恒久停止して 2 通目が永久に出ない（2026-09-08 の障害）
+
+## 3. 完成条件（**実運用**。これ以外を完成と呼ばない）
+
+**次の 6 つがすべて実配信で確認できたときに限り「完成」とする。**
+
+| # | 完成条件 |
+|---|---|
+| 1 | **無料登録した実アドレス**に対して、実 campaign が**自動で開始**する |
+| 2 | 実際にメール配信が**進む**（1 通目だけでなく次の touch まで） |
+| 3 | `opened` / `delivered` / `purchased` / `suppressed` / `unknown` 等の**実反応を取得**できる |
+| 4 | その反応に応じて**次の touch・訴求が分岐**することを実運用で確認できる |
+| 5 | **購入が発生したとき**に段が正しく進む（前段が止まり、次段の育成の対象になる）ことを実運用で確認できる |
+| 6 | 上記が**購入停止・配信停止・重複防止・帰属の契約を守ったまま**成立している |
+
+⚠️ **実顧客が実際に購入すること自体は完成条件ではない**（2026-09-14 MK 確定）。
+売上や成約件数は事業の成果であって、DRM の実装完成の判定基準にしない。
+5 と帰属で見るのは **購入が起きたときに処理が正しいか**であり、
+購入が起きるまで「未完成」として保留するものではない。
+
+### 完成条件に**含めないもの**（非ブロッカー）
+
+| 項目 | 扱い |
+|---|---|
+| **A/B（`variant`）の実運用** | **将来課題・非ブロッカー**（2026-09-14 MK 確定）。`DeliveryKey` は campaign × version × step × 受信者で variant を含まないため、送り分け・帰属・重複防止の設計判断が別途要る。**DRM 完成の残件に数えない** |
+| 実顧客の購入件数・売上 | 事業の成果であって実装完成の判定基準にしない（上記） |
+
+### 完成と呼んではいけないもの（過去に取り違えた）
+
+- ❌ 「基盤（純粋関数）がある」
+- ❌ 「テストが通る」
+- ❌ 「管理画面がある」
+- ❌ 「テスト専用のオーバーレイ（合成 campaign）で分岐する」
+- ❌ 「実 campaign に宣言を書いた」（**書いただけでは 1 通も出ない**）
+
+⚠️ **2026-08-19 の「DRM 完成・残件なし・クローズ」は、基盤完成のみを意味していた。**
+実 campaign による**実運用の完成条件は未達**だった。2026-09-14 にクローズを取り消し、
+本節の 6 条件を正本として再定義した。経緯は `docs/decisions.md` の同日分。
+
+## 4. 安全の不変条件（DRM が進んでも 1 つも緩めない）
+
+| 条件 | 単一源 |
+|---|---|
+| **購入後は販促を止める**（不要な販促を続けない） | `marketing/sequencePurchaseStop.js`（段ごとに「何を買ったら卒業か」を宣言） |
+| **配信停止 / ハードバウンス / 苦情 / provider suppression へは送らない** | `resolveSendability` / `providerSuppressed` / `softBounced` |
+| **`unknown` を推測で分岐させない** | `drm/drmResponseState.js` → 読めなければ線形（`drm/drmRouting.js`） |
+| **`sent` と `delivered` を区別する** | `crm/deliveryMeasurement.js`（3 状態）/ `webhooks/deliveryEventIndex.js` |
+| **duplicate send を作らない** | `DeliveryKey`（campaign × version × step × 受信者）＋ 既送 step へは routing しない |
+| **帰属は既存契約どおり**（`direct` / `correlated` / `unattributed`） | `drm/drmAttribution.js`・送信経路は決済フィールドへ触れない |
+
+⚠️ **click は provider 側 tracking が OFF**（有効化するとアカウント全体に掛かり
+マジックリンクが壊れる）。したがって `clicked` は**常に未計測**であり `false` ではない。
+成立しない条件を route に宣言することは禁止（`validateResponseRoutes` が落とす）。
+
+## 5. 進捗の見かた
+
+- 宣言と実装の整合は `drmFunnel.assessFunnel()` が機械的に答える
+  （管理画面 `action:'drm'` の `businessFunnel`）
+- ⚠️ `declarationsReady` は**宣言と実装の整合だけ**。本節 3 の 6 条件（実配信の実績）は含まない。
+  **`declarationsReady: true` を「完成」と読まない**
 
 # 🚧 メール配信基盤の是正 — **完了条件（クローズ禁止・常設）**
 

@@ -3,6 +3,23 @@
 「一斉に送る仕組み」ではなく、**顧客の反応を計測し、反応に応じて次の訴求を変え、購入まで辿る**ための土台。
 既存の 24-touch・CTA・購入停止・suppression・頻度 guard は**一切変えていない**。
 
+> ## ⚠️ この文書は**部品の技術仕様**であって、完成条件でも完了報告でもない
+>
+> | 知りたいこと | 正本 |
+> |---|---|
+> | **DRM の事業目的・ファネル・完成条件** | `docs/spec.md`「🚧 DRM（無料登録者 → 有料転換）」 |
+> | **いまどこまで出来ているか・残作業** | `docs/progress.md` 先頭の常設ブロック |
+> | **いつ何を決めたか** | `docs/decisions.md`（2026-09-14） |
+> | 各モジュールの契約・禁止事項 | **この文書** |
+>
+> **2026-08-19 の「DRM 基盤完成・クローズ」は 2026-09-14 に取り消された。**
+> あれは**基盤完成のみ**を意味しており、実 campaign による実運用の完成条件は未達だった。
+> 当時そろっていたのは純粋関数・管理画面・テスト専用オーバーレイ（`withRoutes`）だけで、
+> 実カタログの `responseRoutes` は **0 件**、実配信経路は `responseByEmail` を
+> **誰も渡していなかった**（＝本番は最後まで線形）。
+>
+> **この文書の項目がすべて ✅ でも「DRM 完成」とは書かない。** 完成条件は spec 側にある。
+
 ## 責務の分かれ方（二重化しない）
 
 | 問い | 単一源 |
@@ -12,7 +29,10 @@
 | **どんな反応だったか** | `drm/drmResponseState.js`（新） |
 | **その反応に何を訴求するか** | `drm/drmRouting.js`（新） |
 | **購入をどの 1 通に結ぶか** | `drm/drmAttribution.js`（新） |
-| **ファネルをどう見せるか** | `drm/drmMetrics.js`（新） |
+| **ファネルをどう見せるか** | `drm/drmMetrics.js` |
+| **どの段の人か・段の実装が揃っているか** | `drm/drmFunnel.js` |
+| **入口に入れてよいか・次段へ繋ぐか** | `drm/drmAutoStart.js` |
+| **反応を実配信の事実から組み立てる** | `drm/drmResponseInputs.js` ＋ `drm/drmResponseLoader.js` |
 
 ⚠️ `drmRouting` は**送信可否も頻度も判定しない**（テストで固定）。
 行き先を選ぶだけで、送ってよいかは `sequencePolicy` が決める。
@@ -39,30 +59,62 @@
 反応層 → 次の touch / variant / angle を**宣言で**選ぶ。
 キャンペーン固有ロジックを Function へ直書きしない。
 
-**実際の sequence へ配線済み**: `sequenceProgress.resolveRecipientProgress` が
+`sequenceProgress.resolveRecipientProgress` が
 `campaign.sequence.responseRoutes` を宣言した campaign でだけ `resolveRoutedStep` を通す。
-`responseByEmail`（任意）を渡さない / 宣言が無い場合は**従来どおり完全に線形**。
+`responseByEmail` を渡さない / 宣言が無い場合は**従来どおり完全に線形**。
+
+### 実 campaign の宣言（2026-09-14〜）
+
+**`light-trial-post-expiry-sequence`（体験終了後フェーズ / 18 通）** が最初の実宣言。
+送信実績が 0 通の campaign なので、**進行中のコホートを乱さない**。
 
 ```js
 sequence: {
+  maxSends: 18,
+  steps: POST_EXPIRY_STEPS,
   responseRoutes: [
-    { when: 'clicked',  step: 9, variant: 'close-a', angle: 'urgency' },
-    { when: 'opened',   step: 7, angle: 'social-proof' },
-    { when: 'delivered', step: 5, angle: 'benefit', minSent: 2 },
+    // 読んでいる人 → 使い方の続きより先に「プランで何が変わるか」
+    { when: 'opened',    step: 9,  minSent: 3, maxSent: 8 },
+    // 届いても開かない人 → 案内を積まず、入口を変える 1 通
+    { when: 'delivered', step: 16, minSent: 5, maxSent: 12 },
   ],
 }
 ```
 
+⚠️ **進行中の `campaign-discount-*` / `light-trial-to-premium-sequence` には宣言しない**
+（別途進めている約 15,000 件の配信復旧と混ぜない）。
+
+### 反応の作り方（**この 2 つが欠けていた**）
+
+| 追加 | 役割 |
+|---|---|
+| `drm/drmResponseInputs.js` | 配信の事実（`indexDeliveries`）＋ 開封索引 → 1 人 1 state。読み取りは**受信者単位で bounded**（`planResponseKeyReads`） |
+| `drm/drmResponseLoader.js` | 実経路が**同じやり方で**反応を得る 1 か所。読めない理由を必ず `reason` で返す |
+
+- `cron-campaign-sequence`（自動配信）と `admin-marketing` の `action=sequence`（画面）が
+  **同じ loader** を呼ぶ。別々に読むと画面の「次の 1 通」と実際に送る 1 通がズレる
+- 索引が読めない / 予算を超えた相手は `unknown` = **線形**（「開封 0 件」にしない）
+- 宣言の無い campaign では索引を **1 鍵も読まない**（既存のコストと挙動のまま）
+- 管理画面の応答に `responseRouting`（`active` / `reason` / `routed` / `byRoute`）を返す。
+  **効かなかったことが運用から見える**ようにするため
+
 - 宣言順が強さ（先に書いたものが勝つ）
 - `minSent` / `maxSent` で段階を絞れる
 - **知らない `when` は採用しない**（勝手な条件を増やさない）
+- ⚠️ 実行時に黙って捨てると**書き間違いが「静かに線形のまま」**になるため、
+  宣言の形は `validateResponseRoutes` が `validateSequence` 経由で CI で落とす。
+  `purchased` / `suppressed`（行き先を作らない層）と `clicked`（**計測していない**）は
+  **宣言そのものを禁止**する — 書けると「効いている」と誤読するため
 - **`unknown` 用の route が無ければ既定の線形へ落とす**（推測で反応前提の枝へ入れない）
 - ⚠️ **`purchased` / `suppressed` には宣言があっても行き先を作らない**（`step: null`）。
   停止は `sequencePolicy` / `sequenceProgress` が決めるが、**行き先を作らないことでも二重に塞ぐ**
 - ⚠️ **既に送った step は選ばない**（同じ人への二重送信・過去への逆戻りを構造的に防ぐ）
 - ⚠️ 停止判定を**通過した後**にしか効かない（`hasPurchased` の `stop()` より後ろに置いてある）
 
-### A/B — **まだ運用できません**
+### A/B — **まだ運用できません（非ブロッカー）**
+
+⚠️ **DRM 完成の残件に数えない**（2026-09-14 MK 確定）。将来課題として残すだけで、
+実運用の完成条件（`docs/spec.md`）には**含めない**。
 
 `variant` は**キャンペーン定義（コード）側の識別子**で、route が返せるところまで作った。
 
@@ -203,7 +255,7 @@ read-only API は `admin-marketing` の **`action: 'drm'`**（**送信面**に�
 ⚠️ click tracking は無効なので `direct` は成立しない。UI は 0 ではなく「—」で出し、
 **「direct 0 件＝効果なし」と読ませない**。
 
-## DRM の完成条件
+## 基盤の条件（11 項目・2026-08-19 時点で充足）
 
 - response-driven routing が**実 sequence** で動く
 - `responseRoutes` 未定義なら**既存挙動不変**
@@ -216,6 +268,56 @@ read-only API は `admin-marketing` の **`action: 'drm'`**（**送信面**に�
 - **送信経路の決済フィールド guard を維持したまま**である
 - duplicate send なし
 - operator UI で反応層・次訴求・conversion を確認できる
+
+⚠️ この 11 項目は**部品の条件**であって、事業目的の達成条件ではない。
+1 項目めの「実 sequence で動く」は当時 **`responseRoutes` を宣言した campaign が 1 件も
+無い状態**で満たしたと記録されており、実際には**誰にも効いていなかった**。
+事業目的の達成条件は `docs/spec.md` の 6 条件（実配信での確認）。
+
+## 実運用の完成条件は **`docs/spec.md`** にある
+
+この文書には書かない（2 か所に置くと必ず食い違う）。
+現在地と残作業は `docs/progress.md` 先頭の常設ブロック。
+
+## 7. ファネル（`drmFunnel.js`）
+
+段（無料登録者 → Light/Premium → Premium → 三連複）の**宣言だけ**を持つ。
+送信条件・停止条件はここで作らない（作ると判定が二重化する）。
+
+- `resolveFunnelStage(marketing)` … **1 人 1 段**（排他）。判定できなければ `null`（推測しない）
+- `assessFunnel(CAMPAIGNS)` … 宣言と実装の食い違いを `gaps` で返す。**欠けを省略しない**
+- 検査する食い違い: 担当 campaign が無い / 連続配信でない / `responseRoutes` 未宣言 /
+  **入口のプランで購入停止している**（2026-09-08 の障害）/ 到達目標で停止していない /
+  期間限定でしか動かない / 入口で自動開始しない
+
+⚠️ `assessFunnel().declarationsReady` は**宣言と実装の整合だけ**。
+**実配信で層ごとに別の 1 通が出た実績は含まない**（＝これを「完成」と読まない）。
+⚠️ 三連複保有者は**終点**。段の宣言を持たせない（買った人へ売り続けないため）。
+
+## 8. 入口の自動開始（`drmAutoStart.js`）
+
+`cron-campaign-sequence` は既定で **step1 を自動で撃たない**（母集団が最大になるため）。
+`sequence.autoStart` を宣言した campaign だけ、**限定した入口**を開ける。
+
+```js
+sequence: {
+  autoStart: { kind: 'free_signup', withinDays: 14, maxPerTick: 50 },
+}
+```
+
+- ゲートは既存 4 枚 ＋ **`MARKETING_DRM_AUTOSTART_ENABLED`**（既定 閉）。
+  入口の 1 枚だけでは 1 通も出ない
+- 除外は**既存の判定の結果をそのまま使う**（`resolveSendability` /
+  `hasPurchasedForCampaign` / `matchesCampaignAudience` / `resolveFunnelStage`）。
+  **新しい停止条件を作らない**
+- 入れない理由は件数で返す（`not_sendable` / `purchased` / `audience_mismatch` /
+  `already_started` / `outside_window` / `stage_mismatch` / `no_registration_time`）
+- **登録時刻が読めない人は入れない**（推測しない）
+- **すでに 1 通でも受け取っている人は入口に入れない**（`hasStarted`）
+- 並びは recordId 昇順で決定的・上限超過は `carriedOver` として次回へ（**黙って捨てない**）
+
+`resolveStageEntry()` は段が進んだ人を次段の**育成**へ繋ぐ。
+⚠️ 育成の無い段では繋がない（**期間限定のオファーを自動の入口に代用しない**）。
 
 ## 6. safety
 

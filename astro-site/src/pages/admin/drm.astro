@@ -29,6 +29,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       <div class="drm-ctl">
         <label>キャンペーン
           <select id="drm-campaign">
+            <option value="free-signup-onboarding">free-signup-onboarding（DRM の入口）</option>
             <option value="light-trial-to-premium-sequence">light-trial-to-premium-sequence</option>
             <option value="light-trial-post-expiry-sequence">light-trial-post-expiry-sequence</option>
           </select>
@@ -37,6 +38,36 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       </div>
       <p id="drm-status" class="drm-status" role="status"></p>
     </header>
+
+    <section class="drm-sec">
+      <h2>事業ファネル（無料登録 → Premium → 三連複）</h2>
+      <p class="drm-note">
+        段ごとに<strong>育成（常時稼働・反応で分岐する）</strong>が揃っているかを機械判定します。
+        期間限定のオファーは育成の代わりに数えません。
+        完成条件は <code>docs/spec.md</code>、現在地は <code>docs/progress.md</code> 先頭が正本です。
+      </p>
+      <table class="drm-table">
+        <thead>
+          <tr><th>段</th><th>育成</th><th>入口</th><th>判定</th><th>欠けているもの</th></tr>
+        </thead>
+        <tbody id="drm-stages"></tbody>
+      </table>
+      <p class="drm-note" id="drm-stage-note"></p>
+    </section>
+
+    <section class="drm-sec">
+      <h2>入口の下見（送りません）</h2>
+      <p class="drm-note">
+        いまゲートを開けたら<strong>誰が DRM に入るか</strong>を、送る前に数えます。
+        <strong>読むだけで、1 バイトも書き込みません</strong>（queue も送信もしません）。
+        ゲートが閉じていても下見できます。
+      </p>
+      <div class="drm-ctl">
+        <button id="drm-autostart" type="button">入口を数える（送りません）</button>
+      </div>
+      <div id="drm-autostart-out" class="drm-funnel"></div>
+      <p class="drm-note" id="drm-autostart-note"></p>
+    </section>
 
     <section class="drm-sec">
       <h2>ファネル</h2>
@@ -169,6 +200,28 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           ? '⚠️ 集計を読めていません（' + (body.partialReason || 'unknown') + '）。数字は表示しません。'
           : '';
 
+        // ── 事業ファネル（段ごとの実装状況）────────────────────────
+        var bf = body.businessFunnel;
+        var sb = $('drm-stages'); sb.textContent = '';
+        if (bf && bf.stages) {
+          bf.stages.forEach(function (sg) {
+            var tr = document.createElement('tr');
+            if (!sg.ready) tr.className = 'term';
+            var c1 = document.createElement('td'); c1.textContent = sg.label; tr.appendChild(c1);
+            var c2 = document.createElement('td'); c2.textContent = sg.nurtureCampaignId || '—'; tr.appendChild(c2);
+            var c3 = document.createElement('td'); c3.textContent = sg.autoStart === 'none' ? '無し' : 'あり'; tr.appendChild(c3);
+            var c4 = document.createElement('td'); c4.textContent = sg.ready ? '欠けなし' : '未完成'; tr.appendChild(c4);
+            var c5 = document.createElement('td');
+            c5.textContent = (sg.gaps || []).length === 0 ? '—'
+              : sg.gaps.map(function (g) { return (bf.gapLabels && bf.gapLabels[g]) || g; }).join(' / ');
+            tr.appendChild(c5);
+            sb.appendChild(tr);
+          });
+          $('drm-stage-note').textContent = bf.declarationsReady
+            ? '宣言と実装は揃っています。**実配信で層ごとに別の 1 通が出た実績**は別に確認してください。'
+            : '未完成の段があります（上の「欠けているもの」を参照）。埋めるには新しい文面が要る場合があります。';
+        }
+
         var f = body.funnel;
         var fw = $('drm-funnel'); fw.textContent = '';
         if (f) {
@@ -267,6 +320,39 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         });
       }
       $('drm-load').addEventListener('click', load);
+
+      // ── 入口の下見（read-only）────────────────────────────────
+      async function previewAutoStart() {
+        var st = $('drm-autostart-note');
+        var out = $('drm-autostart-out'); out.textContent = '';
+        var sec = secret();
+        if (!sec) { st.textContent = 'secret が入力されていません。'; return; }
+        st.textContent = '数えています…';
+        var res, body;
+        try {
+          res = await fetch('/.netlify/functions/admin-marketing', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-admin-secret': sec },
+            body: JSON.stringify({ action: 'drmAutoStart', campaignId: $('drm-campaign').value }),
+          });
+          body = await res.json();
+        } catch (e) { st.textContent = '通信に失敗しました。'; return; }
+        if (!res.ok) {
+          st.textContent = '数えられませんでした: ' + (body && body.error ? body.error : res.status);
+          return;
+        }
+        out.appendChild(card('読んだ候補', fmt(body.scanned)));
+        out.appendChild(card('いま入る人数', fmt(body.wouldEnter)));
+        out.appendChild(card('次回へ持ち越し', fmt(body.carriedOver)));
+        var skipped = body.skipped || {};
+        Object.keys(skipped).forEach(function (k) {
+          out.appendChild(card((body.skipLabels && body.skipLabels[k]) || k, fmt(skipped[k])));
+        });
+        st.textContent = '入口のゲート: ' + (body.gate && body.gate.open ? '開' : '閉')
+          + (body.gate && body.gate.open ? '' : '（' + ((body.gate && body.gate.missing) || []).join(', ') + ' が未設定）')
+          + ' — ' + (body.notice || '');
+      }
+      $('drm-autostart').addEventListener('click', previewAutoStart);
       $('drm-attr').addEventListener('click', loadAttribution);
     })();
   </script>
