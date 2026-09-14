@@ -77,6 +77,7 @@ import {
   createDispatchLock, TICK_LOCK_ROOT, LOCK_FAIL, isSafeJobId,
 } from '../../src/lib/marketing/dispatchLock.js';
 import { describeQueueBatch, needsMorePhases } from '../../src/lib/marketing/tickWorkload.js';
+import { readWillSend } from '../../src/lib/marketing/autoDispatchPlan.js';
 import {
   planTickReads, needsGrantPlan, needsSequenceRead, resolveSequenceDefer,
   clearSequenceDefer, countPendingHandoffs, describeCheapBlock, TICK_READ,
@@ -396,28 +397,11 @@ async function callDispatch(body) {
 }
 
 /**
- * dry-run の結果から、そのジョブの**いま送る人数**を取り出す。
- *
- * ⚠️ `RecipientCount`（ジョブ作成時の人数）から推測しない。
- *    作成後に配信停止・バウンス・購入・既送信が起きていれば実際の対象は減っており、
- *    古い数を `expectedWillSend` に使うと**送信直前ガードで 409** になって 1 通も出ない。
- *    分からないときは **null**（起動しない）。
+ * dry-run から「いま送る人数」を取り出す判定は
+ * **`autoDispatchPlan.js` が単一源**（送信起動は展開の運転手と自動 dispatcher の 2 か所にあり、
+ * 片方だけ直すと判断がズレるため）。ここは既存の import 経路を保つための再エクスポート。
  */
-export function readWillSend(dryBody, jobId) {
-  const results = (dryBody && Array.isArray(dryBody.jobResults)) ? dryBody.jobResults : null;
-  if (!results) return { ok: false, reason: 'dry_run_shape_unknown' };
-  const row = results.find((r) => r && String(r.jobId) === String(jobId));
-  if (!row) return { ok: false, reason: 'job_not_in_dry_run' };
-  const n = row.willSend;
-  if (typeof n !== 'number' || !Number.isFinite(n)) return { ok: false, reason: 'will_send_unknown' };
-  return {
-    ok: true,
-    willSend: n,
-    willSkip: typeof row.willSkip === 'number' ? row.willSkip : null,
-    alreadySent: typeof row.alreadySent === 'number' ? row.alreadySent : null,
-    skipByReason: row.skipByReason && typeof row.skipByReason === 'object' ? row.skipByReason : {},
-  };
-}
+export { readWillSend };
 
 /**
  * `startDispatch` の skip 理由のうち、**異常ではない**もの。

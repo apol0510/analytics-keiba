@@ -1,7 +1,14 @@
 # 大規模継続配信 activation runbook（100 名カナリア → 段階拡大）
 
-**状態: 未実行。** production env 変更・Redis 書込み・実付与・実送信はまだ 1 件も行っていない。
-このドキュメントは**承認後にそのまま実行できる手順**として書いてある。
+> ⚠️ **このページは「起動のしかた」の記録**。運用中の現行手順は
+> [`CAMPAIGN_SEQUENCE.md` §5](./CAMPAIGN_SEQUENCE.md) を正本とする。
+>
+> **2026-09-14 時点の本番実測**: §1 の env は **6 つとも設定済み**（`true` / `1`）。
+> 「状態: 未実行」ではない。`light-trial-to-premium-sequence` は
+> 2026-09-08 の `rolloutKill` で **`killed: true` のまま停止中**。
+>
+> ⚠️ **通常運用で env を開け閉めしない**（2026-09-14 MK 確定）。
+> 一度開けたら維持する。UNSET は**異常時の停止手段**であって、配信ごとの作法ではない。
 
 対象: `journeyId = light-trial-to-premium-v1`（体験中 6 通 + 体験終了後 18 通 = 最大 24 接点）
 実装: PR #348（squash `5cfeb22b`）本番反映済み・全ゲート OFF
@@ -247,7 +254,10 @@ curl -s -X POST "$SITE/.netlify/functions/admin-marketing" \
 | 9 | provider acceptance | 送信数 = SendGrid 受理数 | dispatcher のログ / `sentCount` |
 | 10 | **delivered は別計測** | Event Webhook の `delivered` で後追い（受理 ≠ 着弾） | `EmailEvents` |
 | 11 | Customers の課金系変更 | **0**（`プラン` / `PlanType` / `Status` / `有効期限` が変わっていない） | 実行前後で対象レコードを read-only 比較 |
-| 12 | gate 再閉鎖 / kill switch | **再閉鎖できる**か、`killed: true` で次 tick が止まる | `action=rollout` が `canProceed: false` を返す |
+| 12 | **止められること**の確認 | `killed: true` で次 tick が止まる（＝異常時に止められる）| `action=rollout` が `canProceed: false` を返す |
+
+⚠️ 12 は「**止められることを確かめる**」であって、**カナリア後に毎回閉じる手順ではない**。
+通常運用では gate を開けたまま維持する（2026-09-14 MK 確定）。
 
 ⚠️ 3 と 10 を混同しない。**`sent` は「送信基盤が受理した」**であって着弾ではない。
 

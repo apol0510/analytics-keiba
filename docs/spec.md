@@ -1,3 +1,83 @@
+# マーケティングメールは完全自動運用（2026-09-14 MK 確定 / 旧「毎回承認」運用を上書き）
+
+AK のマーケティングメールは、**一度有効化したらその状態を維持**し、cron が
+
+```
+対象判定 → due step 判定 → 除外判定 → enqueue → dispatcher → 送信
+        → 台帳記録 → 次 step 待機 → 次 step 送信
+```
+
+まで**人を挟まずに**進める。
+
+## 通常運用に要求してはいけないもの
+
+- 配信ごと / step ごと / 毎日の承認
+- 毎日の env 変更（`MARKETING_SEQUENCE_ARMED=<今日の日付>` の貼り替え）
+- 配信前の env 開放と、配信後の再閉鎖
+- 配信ごとの redeploy
+- step2 / step3 を管理画面から手で enqueue すること
+
+> **「自動送信を実装したが、env が閉じているので実際には送信されていない」は未完成とする。**
+
+## 役割（単一源）
+
+| 役割 | 単一源 | 間隔 |
+|---|---|---|
+| 積む（enqueue）| `netlify/functions/cron-campaign-sequence.js` | 10 分 |
+| 送る（dispatch 起動）| `netlify/functions/cron-marketing-dispatch.js` | 5 分 |
+| 起動するジョブの選定 | `src/lib/marketing/autoDispatchPlan.js` | — |
+| 展開（体験→Premium 24 接点）| `netlify/functions/cron-marketing-rollout.js` | 5 分 |
+| 「送れる置き場所か」の判定 | `src/lib/marketing/dispatchableLedger.js` | — |
+
+## 通常運用で開けたままにする env
+
+`MARKETING_SEQUENCE_SCHEDULER_ENABLED` / `MARKETING_CAMPAIGN_ENABLED` /
+`MARKETING_CAMPAIGN_DISPATCH_ENABLED` / `MARKETING_ROLLOUT_ENABLED`
+
+- `MARKETING_SEQUENCE_ARMED` は**置かない**（未設定＝常時武装）
+- `MARKETING_SEQUENCE_CAMPAIGN_ID` も**置かない**（未設定＝有効な連続配信を全部進める）
+- 割引 3 本（`campaign-discount-free` / `-light` / `-premium`）は**すべて自動進行**。
+  人数が少ないことを理由に手動 enqueue を残さない
+
+## 自動化しても絶対に維持するもの
+
+- `DeliveryKey` による冪等性 / 二重送信防止
+- 購入済み除外 / unsubscribe 除外 / bounce・complaint・provider suppression 除外
+- engagement による除外
+- 契約状態が分からない相手は **fail closed**
+- campaign 期間外は送らない（`getCampaign()` が null を返す）
+- 1 tick で同じ人へ複数 step を送らない
+- 上限超過ぶんは切り捨てず次 tick へ継続
+- 走査カーソル失効からの自動復帰
+- **メール送信処理は Customers / 課金 / Premium 権限を書かない**
+
+## 止め方は例外運用
+
+通常状態は「自動送信 ON」。止めるのは異常時だけで、手段は
+`rolloutPause` / `rolloutKill` / dispatch gate の停止 / `cancelJob`。
+**「安全のため毎回 OFF に戻す」は禁止。**
+
+## キュー登録は「書けたつもり」で終わらせない
+
+1. 配信行の upsert は**応答を見る**
+2. 書いたあと**読み戻して確かめる**
+3. 確かめられなければ、その tick で作ったジョブを**取り消す**（prospect の予約も戻す）
+4. 積む前に**名指しで**既存の配信行（`queued` / `sent`）を突き合わせる
+
+検証: `npm run test:marketing`
+（`fullAutoOperation.test.mjs` / `autoDispatchPlan.test.mjs` /
+`dispatchableLedger.test.mjs` / `sequenceQueueIntegrity.guard.test.mjs`）
+
+## 未解決（送信経路の設計判断が要る）
+
+**prospect（CSV 取り込み由来・11,976 名）には、いまの経路では 1 通も送れない。**
+`campaignCustomArgs.js` が `campaign_delivery_id`（Airtable の配信行 recordId）を必須にしており、
+prospect は Airtable に配信行を作らない運用（2026-08-27 確定）だから。
+当面は `dispatchableLedger.js` が**積む前に止める**（送れないのに Redis の予約だけ焼かない）。
+解禁するには `campaignCustomArgs.js` と `webhooks/emailEventLedger.js` を**同時に**直す必要がある。
+
+---
+
 # Premium Plus 管理画面と販売停止（2026-09-09 確定 / 一部は旧決定を上書き）
 
 運営者が対象会員を開いたら、**まず「今どういう状態か」**が分かり、**次に押せる操作**が

@@ -1,3 +1,114 @@
+# 🚨 第 2 期 step2 が 1 通も出ていない — **原因 3 件を特定・修正（2026-09-14）/ 本番処置は未実施**
+
+> **この時点で本番へは 1 バイトも書いていない。** 実施したのは read-only の実測と、
+> repo 側の修正・テスト・正本更新だけ。env 変更・ジョブの取消・実送信・Redis / Airtable への
+> 書き込みは**すべて未実施**。
+
+## MK 確定仕様（2026-09-14）
+
+マーケメールは**完全自動運用**。配信ごと / step ごと / 毎日の承認、毎日の env 変更、
+`ARMED` の日次更新、配信前後の env 開閉、配信ごとの redeploy、
+step2 / step3 の手動 enqueue を**通常運用に要求しない**。
+**「実装したが env が閉じていて送られていない」は未完成**とする。
+→ 正本は `docs/spec.md` 先頭章 / `docs/decisions.md` 2026-09-14。
+
+## 本番 read-only 実測（2026-09-14 01:00–01:20 UTC）
+
+### env は**すべて開いている**（「閉じているから送られていない」ではなかった）
+
+| env | 実測 |
+|---|---|
+| `MARKETING_ROLLOUT_ENABLED` | `true` |
+| `MARKETING_CAMPAIGN_ENABLED` | `true` |
+| `MARKETING_CAMPAIGN_DISPATCH_ENABLED` | `true` |
+| `MARKETING_SEQUENCE_SCHEDULER_ENABLED` | `true` |
+| `MARKETING_SEQUENCE_ARMED` | **未設定**（＝常時武装。正しい状態）|
+| `MARKETING_SEQUENCE_CAMPAIGN_ID` | `campaign-discount-free,campaign-discount-light,campaign-discount-premium`（3 本とも対象）|
+| `MARKETING_DELIVERY_STORE` | `dual` |
+
+### 積まれてはいる。送られていない
+
+| 実測 | 値 |
+|---|---|
+| マーケ系 `ScheduledEmails` | **4,745 行**（PENDING 4,308 / SENT 435 / CANCELLED 2）|
+| うち `campaign-discount-free` | 4,467 行（PENDING **4,307** / SENT 160）|
+| PENDING の宛先スロット合計 | **179,250**（ユニーク **15,480** / 重複 **163,770**）|
+| 積まれた step | **step2 のみ**（4,307 件すべて）|
+| 日別のジョブ生成 | 9/9 577 / 9/10 918 / 9/11 922 / 9/12 931 / 9/13 921 / 9/14 38 |
+| 1 人あたりの積み直し回数 | 11,686 名が **1 回** / 3,771 名が **42〜46 回** |
+| `CampaignDeliveries`（`campaign-discount-free:v1`）| 19,392 行 = step1 `sent` 15,537 + step2 `queued` **3,855** |
+| そのうち `ScheduledEmailJobId` 欠落 | **3,854 行**（＝ step2 の queued 行のほぼ全部）|
+| step2 の実送信 | **0 通** |
+
+`action=jobs` / `action=history` は **500**（`ScheduledEmails: 名指し取得が 40/40 ページで打ち切られました`）。
+ジョブ行が 4,000 行を超えたため、**管理画面から状況が読めなくなっている**。
+
+## 原因（独立した 3 件）
+
+| # | 原因 | 証拠 |
+|---|---|---|
+| **A** | `cron-campaign-sequence` が `buildDeliveryRecords` へ **`email → jobId(文字列)`** を渡していた。契約は `email → { jobId, recordId }` なので `job.jobId` が `undefined` になり、**`ScheduledEmailJobId` の無い配信行**が出来る。dispatcher は `indexDeliveriesByRecipient` で JobId 一致の行しか拾えないため、`custom_args` を作れず**全員 skip** | queued 3,855 行中 **3,854 行が JobId 欠落** |
+| **B** | 配信台帳 upsert の **`fetch` の戻り値を見ていない**。書けたかどうかを確かめずに tick が成功で終わる（`admin-marketing` 側にはある読み戻し・巻き戻しが cron 側だけ無かった）| 9/9 以降 step2 の送信 0 のまま tick は毎回成功扱い |
+| **C** | **積まれたジョブを送る自動経路が無い**。dispatcher を起動するのは `cron-marketing-rollout` だけで、しかも自分が積んだジョブ（`pendingJobIds`）しか起動しない。その rollout は 9/8 から `killed: true` | PENDING 4,307 件が 5 日間 1 度も起動されていない |
+
+さらに副次的な原因として、進行を台帳の**窓読み**（`sequenceLedgerScan` の `offset` 走査）から
+導いていたため、**窓の外にある自分の step2 行を見落として**同じ人を積み直していた
+（3,771 名 × 42〜46 回）。prospect は Redis の予約（`SADD`）が効いて**各 1 回だけ**で済んでいる。
+
+## 直したもの（repo 側・本番未反映）
+
+| 対象 | 変更 |
+|---|---|
+| `src/lib/marketing/campaignSend.js` | `jobIdByEmail` の形が違う行は**作らない**（JobId 欠落行を構造的に作れなくする）|
+| `netlify/functions/cron-campaign-sequence.js` | ① `{ jobId, recordId }` を渡す ② upsert の応答を見る ③ 書いた後に読み戻して確かめる ④ 確かめられなければ**作ったジョブを取り消し**、prospect の予約も戻す ⑤ 積む前に**名指しで**既存配信行を突き合わせる（窓依存をやめる）⑥ 送れない置き場所の受信者は積まない |
+| `netlify/functions/cron-marketing-dispatch.js`（新規）| **積まれた PENDING ジョブを 5 分ごとに起動する**（欠けていた輪）。古い順 / 1 tick 10 件 / `queue:unverified` は起動しない / tick 鍵で重複起動しない / 「送る相手 0 人」は 6 時間冷却して先頭詰まりを防ぐ |
+| `src/lib/marketing/autoDispatchPlan.js`（新規）| 起動するジョブの選定（純粋）。`readWillSend` もここへ集約し、rollout と dispatcher で**同じ判定**を使う |
+| `src/lib/marketing/dispatchableLedger.js`（新規）| 「Airtable に配信行が無い相手は現在の経路では送れない」を単一源化。**積む前に止める** |
+
+## テスト
+
+| ファイル | 固定した内容 |
+|---|---|
+| `fullAutoOperation.test.mjs`（新規 27 件）| ARMED 未設定で日をまたいで継続 / 3 campaign 自動進行 / step1 再送なし / step2・step3 自動 / 期間終了で自動停止 / kill で即停止・解除で未送信分から再開 / duplicate 0 / 同一 tick 複数 step なし / suppression 除外 / 購入済み除外 / unknown fail closed / partial 継続 / offset 復旧 / Customers を書かない |
+| `autoDispatchPlan.test.mjs`（新規 15 件）| 古い順・上限・unverified 除外・先頭詰まり回避 |
+| `dispatchableLedger.test.mjs`（新規 8 件）| prospect は送れない判定 / claim より前に判定する |
+| `sequenceQueueIntegrity.guard.test.mjs`（新規 8 件）| 応答を見る / 読み戻す / 駄目ならジョブ取消 / 文字列を渡さない |
+
+`npm run test:marketing` = **2,717 pass / 0 fail**（変更前 2,661 から 56 件増）。
+
+## Light 体験 → Premium（`light-trial-to-premium-sequence`）の現在地
+
+| 項目 | 実測（2026-09-14）|
+|---|---|
+| kill の理由 | 2026-09-08 MK 判断。`stage: paused` では**新規 queue 生成を止められない**ことが本番で確定したため（既存シーケンスの queue は paused を無視して進む仕様）|
+| 原因の解消 | ✅ PR #499 で修正済み・本番反映済み。**kill の解除だけが未実施** |
+| `killed` / `stage` | `true` / `paused`（`canProceed: false` / `blockedReason: kill_switch`）|
+| PENDING | **1 件**（`mkt-light-trial-to-premium-sequence-v1-3fa04ae6-1` / 50 名 / sent 0）|
+| orphan | その 1 件のみ。`queue:unverified` が付いたままなので dispatcher は起動しない |
+| duplicate | **0**（`jobsBrief` 相当を Airtable から直接集計。124 ジョブ / sentCount 5,528 / failed 0）|
+| 未送信者 | 体験中 `in_trial` **1,555 名** / 停止 15 名（`grant_still_active` 1,555 / `not_sendable` 2 / `provider_suppressed` 13）|
+| 次に送られる touch | **step4 の続き**（滞留していた 50 名 → その後 step4 残り、以降 step5 / step6）|
+
+⚠️ step3 `sent 29,125` / step4 `sent 72,268` は**表示用カウンタの過大値**（2026-09-08 に判明した
+二重計上バグの残骸）。実送信の正本は台帳側で、修正後は増えていない。
+
+## 本番でやること（**未実施・要承認**）
+
+1. **暴走の停止**: いまも 10 分ごとに step2 のジョブが積まれ続けている（1 日 約 920 件）
+2. **滞留の掃除**: `campaign-discount-free` の PENDING 4,307 件。JobId 欠落の配信行 3,854 行も、
+   紐付けし直すか `cancelled` にしてから積み直すかを決める必要がある
+3. **修正の反映**（merge → production deploy）
+4. **`rolloutResume`**（Light 体験→Premium の再開）
+5. **prospect 11,976 名の扱い**（上表の設計判断。決まるまで積まない）
+
+## 未解決（設計判断が要る）
+
+prospect（CSV 取り込み由来）は Airtable に配信行を作らない運用（2026-08-27 確定）だが、
+dispatcher は `campaign_delivery_id`（Airtable の recordId）が無いと `custom_args` を作れず
+**必ず skip する**。つまり **prospect には構造的に 1 通も送れない**。
+当面は「積む前に止める」で予約を焼かないようにした。解禁には
+`campaignCustomArgs.js` と `webhooks/emailEventLedger.js` の同時改修が要る。
+
 # ✉️ ログイン案内の文言を削る — **完了（2026-09-10）**
 
 > 文言のみ。認証の判定・トークンの扱い・送信経路は**変更していない**。

@@ -1,3 +1,57 @@
+# 2026-09-14 — マーケティングメールを完全自動運用にし、「毎回承認・毎回 env 開閉」を廃止する
+
+## 決定
+
+| # | 決定 | 単一源 |
+|---|---|---|
+| 1 | マーケメールは **完全自動運用**。一度有効化したら状態を維持する | `docs/spec.md`（先頭章）|
+| 2 | 通常運用で **配信ごと / step ごと / 毎日の承認を要求しない** | 同上 |
+| 3 | 通常運用で **env の開閉・redeploy・`ARMED` の日次更新を要求しない** | `sequenceAutomation.js#readSequenceGates` |
+| 4 | **「実装したが env が閉じていて送られていない」は未完成**とする | `docs/spec.md` |
+| 5 | 割引 **3 本とも自動進行**（`MARKETING_SEQUENCE_CAMPAIGN_ID` は置かない）| `cron-campaign-sequence.js#resolveTickCampaignIds` |
+| 6 | **積んだジョブを自動で送る cron を新設**（欠けていた輪）| `cron-marketing-dispatch.js` / `autoDispatchPlan.js` |
+| 7 | 停止は **例外運用**。`rolloutPause` / `rolloutKill` / dispatch gate / `cancelJob` | `rolloutOrchestrator.js` |
+| 8 | 「安全のため毎回 OFF に戻す」を**禁止**する | `docs/spec.md` |
+| 9 | キュー登録は **応答を見る → 読み戻す → 駄目ならジョブを取り消す** | `cron-campaign-sequence.js` |
+| 10 | 積む前に **名指しで**既存配信行を突き合わせる（窓読みだけに頼らない）| `fetchActiveDeliveryKeys` |
+| 11 | `buildDeliveryRecords` は **形が違う `jobIdByEmail` の行を作らない** | `campaignSend.js` |
+| 12 | **送れない置き場所の受信者は積まない**（予約だけ焼かない）| `dispatchableLedger.js` |
+| 13 | step1（初回接触）の**開始だけ**は人が押す。step2 以降は自動 | `sequenceAutomation.js` |
+
+## なぜ（2026-09-09〜09-14 の本番障害）
+
+第 2 期（09-10〜09-23）の step2 が、期間に入って 4 日経っても **1 通も出ていなかった**。
+原因は 3 つで、どれも「積まれているのに送られない」に収束する。
+
+| # | 原因 | 本番実測 |
+|---|---|---|
+| A | `cron-campaign-sequence` が `buildDeliveryRecords` へ **`email → jobId(文字列)`** を渡していた（正しくは `email → { jobId, recordId }`）。`ScheduledEmailJobId` の無い配信行が出来て、dispatcher が引けない | `campaign-discount-free:v1` の `queued` 3,855 行のうち **3,854 行が JobId 欠落** |
+| B | 配信台帳 upsert の **応答を一切見ていなかった**。書けたかどうかを確かめずに成功として終わる | 9/9 以降、行は `queued` のまま**送信 0** |
+| C | **積まれたジョブを送る自動経路が無かった**。dispatcher を起動するのは `cron-marketing-rollout` だけで、自分が積んだジョブしか起動しない（しかも `killed: true`）| PENDING **4,307 件** / 宛先スロット **179,250** / 送信 **0 通** |
+
+さらに、進行を台帳の**窓読み**から導いていたため、窓の外にある自分の行を見落として
+同じ人を積み直していた（**3,771 名 × 42〜46 回**）。
+
+## 影響範囲の切り分け
+
+- **prospect 11,686 名**は Redis の予約が効いて**各 1 回だけ**積まれている（重複なし）
+- ただし prospect は Airtable に配信行を作らない運用なので、
+  `campaignCustomArgs.js` が `campaign_delivery_id` を作れず **構造的に送れない**。
+  これは**別の設計判断**が要る（§未解決）
+- Customers / 課金 / 権限の変更は **0**（この障害でも、今回の修正でも書いていない）
+
+## 未解決（MK 判断待ち）
+
+prospect を送れるようにするには、次のどちらかを選ぶ必要がある。
+
+| 案 | 内容 | 代償 |
+|---|---|---|
+| ア | prospect にも Airtable の配信行を作る | Airtable レコード上限（2026-08-27 に避けた問題が戻る。1 step で 1.2 万行）|
+| イ | `campaign_delivery_id` 無しの配信識別を許し、`delivery_key`（Redis）で紐付ける | `campaignCustomArgs.js` と `webhooks/emailEventLedger.js` の**同時改修**が要る |
+
+決まるまでは `dispatchableLedger.js` の `AIRTABLE_ROW_REQUIRED = true` で
+**積む前に止める**（送れないまま予約だけ焼くと、直しても二度と届かなくなるため）。
+
 # 2026-09-09 — Premium Plus 管理画面を「状態 → 次の操作」型にし、販売停止の意味を拡張する
 
 ## 決定

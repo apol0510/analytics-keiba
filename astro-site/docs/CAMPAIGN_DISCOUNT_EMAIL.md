@@ -72,40 +72,46 @@
 > なり、`shownPriceMatchesCharge.test.mjs` が守っている不変条件を壊す。
 > 変えるなら MK 判断（本 MD には現状の仕様だけを書く）。
 
-## 5. 送信手順
+## 5. 送信（**完全自動運用** / 2026-09-14 MK 確定）
 
-**Step1（初回）は自動で撃たない。** 母集団が最大になるため、管理画面から明示的に開始する。
-Step2 以降は `cron-campaign-sequence` が **1 日 1 回・1 ステップだけ**進める。
+**Step1（初回）だけ管理画面から開始する。** 母集団が最大になるため、開始の意思決定は人が行う。
+**Step2 以降は人が触らない。** `cron-campaign-sequence`（10 分ごと）が積み、
+`cron-marketing-dispatch`（5 分ごと）が送る。
 
-### 5-1. 事前確認（read-only・env 変更なし）
+### 5-1. Step1 を始めるときの事前確認（read-only）
 
 1. `/admin/premium-plus-eligibility/` の連続配信パネルでキャンペーンを選ぶ
 2. 各ステップの「文面を見る（実際に届く HTML）」で 3 区分すべてを目視
 3. `dryRun` で対象人数・除外人数・除外理由・`planFingerprint` を確認
 
-### 5-2. 実配信（**毎回 MK の明示承認**）
+### 5-2. 通常運用で開けたままにする env
 
-| gate | 用途 |
+| env | 用途 |
 |---|---|
-| `MARKETING_CAMPAIGN_ENABLED=true` | live enqueue |
+| `MARKETING_CAMPAIGN_ENABLED=true` | キュー登録 |
 | `MARKETING_CAMPAIGN_DISPATCH_ENABLED=true` | 実送信 |
 | `MARKETING_SEQUENCE_SCHEDULER_ENABLED=true` | Step2 以降の自動進行 |
-| `MARKETING_SEQUENCE_ARMED=<当日の JST 日付>` | 当日武装（翌日には自動で閉じる）|
-| `MARKETING_SEQUENCE_CAMPAIGN_ID=<campaignId>` | 自動進行の対象（**1 本だけ**）|
 
-- env の反映には **redeploy が要る**（Build Hook を curl。CLI deploy は 401 regression のため使わない）
-- enqueue は 500 件 × N バッチ、ジョブは 100 件単位。**約 120 通/分**（15,000 名で約 2 時間）
+- **開けたら維持する。** 配信ごとの開閉・配信後の UNSET・配信ごとの redeploy は**行わない**
+- `MARKETING_SEQUENCE_ARMED` は**置かない**（未設定＝常時武装）。日付を置くとその日しか動かない
+- `MARKETING_SEQUENCE_CAMPAIGN_ID` も**置かない**（未設定＝有効な連続配信を全部進める）
+- enqueue は 1 tick 500 名、ジョブは 100 件単位。**約 120 通/分**（15,000 名で約 2 時間）
 - **速度のために並列化しない**（`alreadySent` は呼び出し開始時点のスナップショット。
-  同一ジョブへの並行 dispatch は二重送信を作る）
-- 送信後は gate を **UNSET + redeploy** して再閉鎖する
+  同一ジョブへの並行 dispatch は二重送信を作る）。
+  `cron-marketing-dispatch` は Redis の tick 鍵で**重ならないようにしてある**
 
-### 5-3. 自動進行は 1 本ずつ
+### 5-3. 割引 3 本は**すべて自動**
 
-`cron-campaign-sequence` は `MARKETING_SEQUENCE_CAMPAIGN_ID` の**1 キャンペーンだけ**を進める。
-3 区分すべてを自動で回すことはできないので、
+`MARKETING_SEQUENCE_CAMPAIGN_ID` を置かなければ、
+`campaign-discount-free` / `-light` / `-premium` の 3 本とも
+due 確認 → enqueue → dispatch → 次 step → 完走まで自動で進む。
+**人数が少ないことを理由に手動 enqueue を残さない。**
 
-- 母集団が最大の `campaign-discount-free` を自動進行に割り当てる
-- `-light` / `-premium` は人数が少ないので、**Step2 を管理画面から明示 enqueue** する
+> 🚫 **旧方式（廃止・現行手順として読まない）**
+> 「実送信は毎回 MK 承認」「毎回 env gate を開ける」「送信後 UNSET する」
+> 「毎回 redeploy する」「`ARMED` を毎日日付更新する」
+> 「light / premium は手動 enqueue する」「自動進行は 1 本だけ」。
+> 2026-09-14 の MK 確定で**通常運用から外した**。停止は異常時だけの例外運用。
 
 ## 6. 触ってはいけないこと
 
