@@ -6893,14 +6893,32 @@ async function handleSequenceCanaryRun({ now, req }) {
    * 定期 tick と**同じ鍵**を取る。取れなければ何もしない
    *   （定期 tick と同時に走ると、上限も期待件数も意味を失う）。
    */
-  const lock = createDispatchLock({ redisCmd: makeRedisCmd(), root: TICK_LOCK_ROOT });
-  const token = await lock.acquire({
-    jobId: SEQUENCE_TICK_LOCK_ID, ttlSec: SEQUENCE_TICK_LOCK_TTL_SEC,
-  });
-  if (!token || token === LOCK_FAIL) {
+  /**
+   * ⚠️ 配線は**定期 tick と同じ形**にする（`cron-campaign-sequence` の既定ハンドラ）。
+   *   - 鍵の引数名は **`cmd`**（`redisCmd` ではない）。違うと `createDispatchLock` が即 throw する
+   *   - `acquire` が返すのは **`{ ok, token }`**。生のトークンではない
+   *   どちらも 2026-09-15 に本番で踏んだ（500 で即死・送信 0 のまま fail closed した）。
+   */
+  let lock = null;
+  let token = null;
+  try {
+    lock = createDispatchLock({ cmd: makeRedisCmd(process.env), root: TICK_LOCK_ROOT });
+    const got = await lock.acquire({
+      jobId: SEQUENCE_TICK_LOCK_ID, ttlSec: SEQUENCE_TICK_LOCK_TTL_SEC,
+    });
+    if (!got.ok) {
+      return json(409, {
+        mode: 'sequence-canary', sideEffects: 'none',
+        abort: got.reason === LOCK_FAIL.BUSY ? 'tick_busy' : 'tick_lock_unavailable',
+        note: '定期 tick が走っているか、鍵を取れませんでした。何もしていません。',
+      });
+    }
+    token = got.token;
+  } catch {
+    // ⚠️ 鍵を取れないときは**走らせない**（多重起動を防げない状態で送らない）
     return json(409, {
       mode: 'sequence-canary', sideEffects: 'none',
-      abort: 'tick_busy', note: '定期 tick が走っています。少し待って再実行してください。',
+      abort: 'tick_lock_unavailable', note: '鍵を用意できませんでした。何もしていません。',
     });
   }
 
@@ -6923,7 +6941,9 @@ async function handleSequenceCanaryRun({ now, req }) {
       note: '例外時は途中で止まっています。件数を read-only で確かめてください。',
     });
   } finally {
-    try { await lock.release({ jobId: SEQUENCE_TICK_LOCK_ID, token }); } catch { /* TTL で切れる */ }
+    if (lock && token) {
+      try { await lock.release({ jobId: SEQUENCE_TICK_LOCK_ID, token }); } catch { /* TTL で切れる */ }
+    }
   }
 
   return json(200, {

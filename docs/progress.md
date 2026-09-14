@@ -121,6 +121,53 @@ DRM 側の guard 2 本は、字面 `resolveAudienceFilter(env)` → `normalizeAu
   deploy 後に unset したい（**MK の承認待ち**）。
 - canary の実送信は**未実施**（production env 変更・merge/deploy・実送信の手前で停止中）。
 
+## canary 初回実行は 500 で失敗（2026-09-15 / **送信 0・書き込み 0**）
+
+承認どおり `sequenceCanaryRun` を 1 回だけ本番で実行したが、**500（606ms）で即死**した。
+
+### 実害はゼロ（fail closed した）
+
+| 確認項目 | 実行前 | 実行後 | 判定 |
+|---|---|---|---|
+| SentCount 合計 | 26,848 | 26,848 | 不変 |
+| FailedCount 合計 | 4 | 4 | 不変 |
+| EmailBlacklist | 403 | 403 | 不変 |
+| PENDING ジョブ | 1（既存の `light-trial-to-premium-sequence`）| 同じ 1 件 | 不変 |
+| prospect 索引 / digest | 11,971 / `70e1390c…` | 同じ | 不変 |
+| delivered ヒストグラム | `{1:68, 2:1901, 3:31}` | 同じ | 不変 |
+| due step2 | 1,954 | 1,954 | 不変 |
+
+queue・予約・送信はいずれも **0**。
+
+### 原因は 2 つとも**鍵の配線ミス**（当方の実装不良）
+
+1. `createDispatchLock({ redisCmd: ... })` — 正しい引数名は **`cmd`**。
+   `cmd` が関数でなければ即 throw するので、tick に入る前に落ちた（これが 500 の直接原因）。
+2. `acquire` の戻り値は **`{ ok, token }`** なのに、生のトークンとして扱っていた。
+   これは 500 に隠れて発火しなかったが、放置すると
+   **取れなかったとき（`{ok:false}`）も真値なので鍵無しで走り**、
+   取れたときも `release` に渡す token が違って**鍵を返せない**（TTL 240 秒居座る）。
+
+どちらも「定期 tick と同じ鍵を取る」という設計の目的を壊す。
+`cron-campaign-sequence` の既定ハンドラと**同じ形**に揃えて解消した。
+
+### なぜ事前に気付けなかったか
+
+`sequenceCanaryIsolation.test.mjs` が**字面（ソース文字列）だけ**を見る guard だったため、
+**引数名の取り違え**も**戻り値の取り違え**も素通りした。
+本物の `createDispatchLock` を呼んで契約を固定するテストを 4 件追加した
+（壊れたコードを実際に落とすことも確認済み）。
+
+### 修正（PR #533）
+
+| 変更 | 中身 |
+|---|---|
+| `admin-marketing.js` | 鍵の生成を `cmd:` へ／`acquire` を `{ok, token}` として扱う／取れなければ 409 で何もしない／`lock && token` のときだけ release |
+| テスト 4 件追加 | 引数名は `cmd`／鍵を作る全箇所が `cmd:`／`acquire` の戻り値契約／canary が `got.ok` で判定し鍵より後に tick を回す |
+
+test:marketing 2,832 pass / test:drm 241 pass / check:safety EXIT=0 / build EXIT=0。
+**本番の再実行はまだしていない**（merge / deploy / 実送信の手前で停止）。
+
 ## 進捗（2026-09-14 / 実施順は MK 指定）
 
 | # | 作業 | 状態 |
