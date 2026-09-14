@@ -2427,7 +2427,15 @@ async function fetchDeliveryPage({ KEY, BASE, campaignType, pageSize, cursor }) 
   // Airtable の 1 リクエスト上限は 100 件。要求ページはそれを跨いで満たす
   url.searchParams.set('pageSize', '100');
   url.searchParams.set('filterByFormula', `{CampaignType}='${campaignType}'`);
-  for (const f of ['DeliveryKey', 'CampaignType', 'Status', 'SentAt', 'QueuedAt', 'RecipientEmail']) {
+  /**
+   * ⚠️ **`EmailType` を必ず取る。** `indexDeliveries()` は
+   *    `EmailType !== 'campaign'` の行を**捨てる**（取引メールを進行に混ぜないため）。
+   *    Airtable は要求しなかった項目を返さないので、ここから外すと
+   *    **全行が捨てられ、送信済みの人が「未送信」に見える**。
+   *    2026-09-14 実測: step1 を受け取った 13 名が `drmProgress` で
+   *    `sentByStep: 0` / step1 に due と表示されていた（読み取り側だけの不具合）。
+   */
+  for (const f of ['DeliveryKey', 'CampaignType', 'EmailType', 'Status', 'SentAt', 'QueuedAt', 'RecipientEmail']) {
     url.searchParams.append('fields[]', f);
   }
   const records = [];
