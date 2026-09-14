@@ -266,7 +266,7 @@ PR #525 を本番反映後、`cron-drm-autostart` へ `{"dryRun":true}` を POST
 > `export const config = { schedule }` を持つ Netlify Function は**定期実行専用**。
 > **公開 URL から直接 invoke できず、payload も渡せない。**
 
-### 対処（PR #526）
+### 対処（PR #527）
 
 `admin-marketing` に `action:'drmEntryRun'` を追加し、**既存の `runDrmEntry` を薄く呼ぶだけ**にした。
 
