@@ -175,7 +175,7 @@ routing が終端として扱って**永久に線形**になる（2026-09-08 の
 | R1 | 1 通単位の開封が本番で**実際に読めている**ことの実測 | `action=sequence` の `responseRouting.measured.open` と `counts` を read-only で確認 | 引数名バグ修正の deploy |
 | R2 | **実配信で層ごとに別の 1 通が出た**（`byRoute` に `opened:9` / `delivered:16`） | ゲートを開けて `light-trial-post-expiry-sequence` を進める | **MK の明示承認**（実メール送信） |
 | R3 | 入口の自動開始を**本番で 1 名**通す（段 1） | `MARKETING_DRM_AUTOSTART_ENABLED` を開ける | **MK の明示承認**（実メール送信） |
-| R4 | 第 3 段の文面を MK が確認（**草案**のまま送らない） | `/admin/drm/` のプレビューで 4 通を読む | MK 目視 |
+| ~~R4~~ | ~~第 3 段の文面を MK が確認~~ → **2026-09-14 承認済み**（Step4 の締めのみ顧客向けの言い方へ修正）| — | 完了 |
 | R5 | 購入を実 touch へ帰属（`correlated` 1 件以上） | `admin-drm-attribution` を名指しで実行 | R1 / R2 |
 | R6 | 段の遷移（無料 → Light/Premium → 三連複）が実運用で繋がった記録 | 実顧客 1 名の段移動を実測 | R2 / R3 |
 | R7 | A/B（`variant`）の実運用 | `DeliveryKey` に variant が入らないため設計判断が要る | 未着手 |
