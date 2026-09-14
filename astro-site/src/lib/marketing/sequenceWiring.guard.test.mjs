@@ -59,7 +59,14 @@ test('【安全】4 ゲートが揃うまで何にも接続しない', () => {
   const gateIdx = code.indexOf('readSequenceGates');
   const fetchIdx = code.indexOf('await fetch');
   assert.ok(gateIdx > 0 && fetchIdx > gateIdx, 'ゲート判定より前に通信している');
-  assert.match(code, /if \(!gates\.allOpen\)/);
+  /**
+   * ⚠️ **実送信の経路はゲートが揃うまで進まない**。
+   *    下見（`dryRun`）だけはゲートが閉じていても通すが、それは 1 バイトも書かないため
+   *    （書き込みに到達しないことは `prospectCanaryWiring.guard.test.mjs` が固定している）。
+   *    ここでは「下見でない限りゲートで止まる」形になっていることを確かめる。
+   */
+  assert.match(code, /if \(!isDry && !gates\.allOpen\)/, 'ゲートで止める分岐が消えている');
+  assert.doesNotMatch(code, /if \(gates\.allOpen \|\|/, 'ゲートを迂回する分岐が入っている');
   assert.match(AUTO, /MARKETING_SEQUENCE_SCHEDULER_ENABLED/);
   assert.match(AUTO, /MARKETING_SEQUENCE_ARMED/);
   assert.match(AUTO, /MARKETING_CAMPAIGN_ENABLED/);

@@ -146,6 +146,41 @@ dispatcher がそれを読む。
 単一源: `prospectDeliveryDescriptor.js` / `prospectDispatchContext.js`
 （判定は [`ENGAGEMENT_SUPPRESSION.md` §2-b](./ENGAGEMENT_SUPPRESSION.md)）
 
+### 多重起動を防ぐ tick 鍵（2026-09-14 追加）
+
+`cron-campaign-sequence` は **1 つの tick 枠で複数回起動されることがある**（本番実測で 3 回）。
+1 tick の上限（`MARKETING_SEQUENCE_MAX_PER_TICK`）は**1 起動あたり**に効くので、
+多重起動すると意図した速度制御が効かない（50 指定でも 150 名）。
+
+`cron-marketing-rollout` と同じ `dispatchLock` で鍵を取り、**取れなければ何も積まない**。
+
+- 鍵 `tick:campaign-sequence` / TTL 240 秒（**次の tick の 10 分より短く**）
+- Redis へ到達できないときも**積まない**（多重起動を防げない状態で走らせない）
+- 検証: `sequenceTickLock.test.mjs`
+
+### prospect だけを少数で実証する（canary / 2026-09-14 追加）
+
+`selectNextDueStep` は出所を見ないため、母数の並び順しだいで
+**Customers ばかりが選ばれる**（初回実配信 150 通は全員 Customers 由来だった）。
+
+| 何 | どうする |
+|---|---|
+| 絞り込み | `MARKETING_SEQUENCE_SOURCE_FILTER=prospect`（既定は未設定＝全部）|
+| 人数 | `MARKETING_SEQUENCE_MAX_PER_TICK` で絞る |
+| 送る前の確認 | `admin-marketing` の `action='sequenceTickPreview'` |
+
+下見は**本番の tick と同じ関数**（`runSequenceTick({dryRun:true})`）を通り、
+**予約より手前で返る**ので 1 バイトも書かない。応答に
+
+```
+うち prospect / うち Customers / 出所不明（送らない）/ 絞り込み後に送る人数
+```
+
+が出るので、**送る前に prospect が確実に入ることを数字で確認できる**。
+
+⚠️ 絞り込みは**減らす方向にしか働かない**。除外（配信停止・バウンス・購入済み・反応なし）・
+`DeliveryKey` の冪等性・送信直前再検証は**一切変わらない**（既存の単一源のまま）。
+
 ### キュー登録は「書けたつもり」で終わらせない（2026-09-14 追加）
 
 1. 配信行の upsert は**応答を見る**
