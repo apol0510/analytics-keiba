@@ -120,6 +120,29 @@ test('【重要】本番 tick は窓を渡さなければ従来どおり', () =>
   assert.match(CRON, /\? maxPagesOverride : resolvePagesPerTick\(process\.env\)/);
 });
 
+test('【重要】下見はゲートが閉じていても計画まで作れる（送る前に確かめられる）', () => {
+  /**
+   * 平常時は `scheduler=false` なので、ここを分けないと下見が `gates_closed` で止まり
+   * 「送る前に対象を確かめる」ができない（2026-09-14 に本番で踏んだ）。
+   * 下見が安全なのは**書かないから**であって、ゲートを緩めたからではない。
+   */
+  assert.match(CRON, /const planGates = isDry \? \{ \.\.\.gates, allOpen: true \} : gates/,
+    '下見が計画を作れない（gates_closed で止まる）');
+  assert.match(CRON, /progress, gates: planGates/, '計画にゲートを渡す経路が変わっている');
+});
+
+test('【重要】ゲートを開いた扱いにするのは下見のときだけ', () => {
+  // 実送信の経路は従来どおり素の gates を使う
+  assert.doesNotMatch(CRON, /gates: \{ \.\.\.gates, allOpen: true \}(?!\s*: gates)/,
+    '実送信の経路でもゲートを開いた扱いにしている');
+  assert.match(CRON, /isDry \? \{ \.\.\.gates, allOpen: true \} : gates/);
+});
+
+test('【重要】計画が作れなかった下見でも、実際のゲート状態を返す', () => {
+  assert.match(CRON, /\.\.\.\(isDry \? \{ dryRun: true, gates: \{ allOpen: gates\.allOpen, missing: gates\.missing \} \} : \{\}\)/,
+    '下見の中止応答にゲート状態が無い（開いていると誤解させる）');
+});
+
 test('下見の応答に宛先を載せない', () => {
   const iDry = CRON.indexOf('if (isDry) {');
   const seg = CRON.slice(iDry, iDry + 2000);
