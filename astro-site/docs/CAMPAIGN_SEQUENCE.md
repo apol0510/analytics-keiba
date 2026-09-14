@@ -69,35 +69,92 @@ DeliveryKey は **campaign × version × step × 受信者**。
 （`engagementGuard.js` の fail closed 条件をそのまま継承）。
 取引メール（決済・認証・サポート・期限通知）はシーケンスの対象外。
 
-## 5. 自動配信
+## 5. 自動配信（**完全自動運用** / 2026-09-14 MK 確定）
 
-`cron-campaign-sequence.js` が **1 日 1 回・1 ステップだけ**進める。
+一度有効にしたら、**人が途中で操作しないこと**を前提に回す。
 
-**4 つのゲートが全て true でなければ、Airtable にも SendGrid にも接続しない**:
+```
+対象判定 → due step 判定 → 除外判定 → enqueue → dispatch → 送信 → 台帳記録
+        → 次 step 待機 → 次 step 送信 →（期間終了 or 完走で自動停止）
+```
 
-1. `MARKETING_SEQUENCE_SCHEDULER_ENABLED=true`
-2. `MARKETING_SEQUENCE_ARMED=<今日の JST 日付>`（置きっぱなしでも翌日閉じる）
-3. `MARKETING_CAMPAIGN_ENABLED=true`（既存の live enqueue）
-4. `MARKETING_CAMPAIGN_DISPATCH_ENABLED=true`（既存の実送信）
+| 役割 | Function | 間隔 |
+|---|---|---|
+| 積む（enqueue）| `cron-campaign-sequence.js` | 10 分 |
+| 送る（dispatch 起動）| `cron-marketing-dispatch.js` | 5 分 |
 
-- **step1（初回接触）は原則として自動で撃たない。** 母集団が最大になるため、管理画面から明示的に開始する。
-  よって自動実行の走査対象は「その campaign で 1 通以上受け取った人」に限られ、
+### 通常運用で開けたままにする env
+
+| env | 役割 |
+|---|---|
+| `MARKETING_SEQUENCE_SCHEDULER_ENABLED=true` | 連続配信を進める |
+| `MARKETING_CAMPAIGN_ENABLED=true` | キュー登録 |
+| `MARKETING_CAMPAIGN_DISPATCH_ENABLED=true` | 実送信 |
+
+⚠️ **これは「配信のたびに開け閉めするスイッチ」ではない。**
+開けたら**そのまま維持する**。配信後に UNSET して再閉鎖する運用は**廃止**（旧方式）。
+
+`MARKETING_SEQUENCE_ARMED` は**置かない**のが通常運用（未設定＝常時武装）。
+日付を入れるとその日しか動かないので、**異常時に 1 日だけ動かしたいときの絞り込み**にだけ使う。
+
+`MARKETING_SEQUENCE_CAMPAIGN_ID` も**置かない**のが通常運用。
+未設定なら**カタログの有効な連続配信すべて**を 1 tick で順に進める
+（割引 3 本＝ free / light / premium も自動。人数が少ないことを理由に手動 enqueue しない）。
+値を入れると**その 1 本だけ**に絞られるので、障害時の切り分け以外では使わない。
+
+⚠️ 未設定＝**カタログへ足した連続配信は自動で tick の対象に入る**。
+ただし **step1 は自動で撃たれない**（上の「変わらない安全装置」）ので、
+まだ誰も受け取っていない campaign は `no_one_in_sequence` / `first_step_manual` で
+**1 通も出ない**。出すには管理画面から step1 を撃つか、入口のゲートを開ける。
+
+### 止め方（**例外運用**。通常状態ではない）
+
+| 手段 | 効き方 |
+|---|---|
+| `MARKETING_CAMPAIGN_DISPATCH_ENABLED` を落とす | 実送信だけ止まる（キューは積まれる）|
+| `MARKETING_SEQUENCE_SCHEDULER_ENABLED` を落とす | 新しいキュー登録が止まる |
+| `rolloutKill`（展開のみ）| 体験→Premium の 24 接点が即停止（`rolloutResume` で戻す）|
+| `cancelJob` | そのジョブだけ止める |
+
+### 変わらない安全装置
+
+- **step1（初回接触）は自動で撃たない。** 母集団が最大になるため、開始だけは管理画面から。
+  step2 以降は自動。よって自動実行の走査対象は「その campaign で 1 通以上受け取った人」に限られ、
   Customers 全件走査（14,000 件超）を構造的に回避している
-- **例外: `sequence.autoStart` を宣言した campaign だけ、入口を自動で開ける**（2026-09-14〜）。
-  母集団を「**登録が新しい無料会員**」に限り、1 回の実行の人数にも上限を置くので、
-  全件走査へは戻らない。§9-5 を参照。5 つ目のゲート
-  **`MARKETING_DRM_AUTOSTART_ENABLED=true`** が要る（既定 閉）
-- 上限（1 回 200 名）を超えたら**切り捨てずに中止**する
-- この Function は**メールを送らない**。作るのは `ScheduledEmails` の PENDING 行と
+  - **例外は `sequence.autoStart` を宣言した campaign だけ**（2026-09-14〜 / §9-5）。
+    母集団を「**登録が新しい無料会員**」に限り、1 回の人数にも上限を置くので全件走査へは戻らない。
+    さらに **`MARKETING_DRM_AUTOSTART_ENABLED=true`**（既定 閉）が要る。
+    ⚠️ この env が閉じている間は、宣言があっても step1 は**手動のまま**
+- **step1 しか居ないとき以外は、step1 の人が混ざっても tick 全体を止めない**（除外して進む）
+- 上限（1 tick 500 名）を超えたぶんは**切り捨てず次 tick へ持ち越す**
+- `cron-campaign-sequence` は**メールを送らない**。作るのは `ScheduledEmails` の PENDING 行と
   `CampaignDeliveries` の queued 行だけで、実送信は既存 dispatcher が担う
 - **`Customers` を 1 バイトも書かない**
 
-### ⚠️ `MARKETING_SEQUENCE_CAMPAIGN_ID` の落とし穴
+### prospect（CSV 取り込み）にも送る（2026-09-14 追加）
 
-この env に値があると、**`cron-campaign-sequence` はその campaign しか進めない**
-（`resolveTickCampaignIds`）。本番は割引 3 本を指定しているため、
-**新しい campaign を足しただけでは 1 通も進まない**。
-進めたい campaign を足すか、env を空にして「使える連続配信すべて」に戻すこと。
+prospect は Airtable に配信行を作らないので、送信時に `custom_args` の材料が無かった。
+そこで **積むときに `jobId` ごとの対応表**（`emailHash → DeliveryKey`）を Redis へ置き、
+dispatcher がそれを読む。
+
+- 鍵は **enqueue 時の値をそのまま**持ち回る（**送信側で作り直さない**）
+- 対応表を**置けなければそのバッチは積まない**（送れないのに予約だけ焼かない）
+- 二重送信は **job ごとの送信済み集合**で防ぐ。**送る前に記録し、記録できなければ送らない**
+- `delivered` は webhook が prospect レコードへ積む（**打ち切りの分母**）。
+  `MARKETING_PROSPECT_EVENTS_ENABLED=true` が要る
+
+単一源: `prospectDeliveryDescriptor.js` / `prospectDispatchContext.js`
+（判定は [`ENGAGEMENT_SUPPRESSION.md` §2-b](./ENGAGEMENT_SUPPRESSION.md)）
+
+### キュー登録は「書けたつもり」で終わらせない（2026-09-14 追加）
+
+1. 配信行の upsert は**応答を見る**
+2. 書いたあと**読み戻して確かめる**
+3. 確かめられなければ、その tick で作ったジョブを**取り消す**（prospect の予約も戻す）
+4. 積む前に、**名指しで**既存の配信行（`queued` / `sent`）を突き合わせる
+   （台帳の窓読みだけに頼ると、窓の外にある行を見落として同じ人を積み直す）
+
+検証: `npm run test:marketing`（`sequenceQueueIntegrity.guard.test.mjs` / `fullAutoOperation.test.mjs`）
 
 ## 6. 管理画面（`/admin/premium-plus-eligibility/`）
 
@@ -111,14 +168,30 @@ DeliveryKey は **campaign × version × step × 受信者**。
 
 判定は全部サーバー（`sequenceProgress.js`）。**画面は数字を出すだけ**で再判定しない。
 
-## 7. 送るまでの手順（本番）
+## 7. 運用手順（本番 / **通常は「何もしない」**）
 
-1. 管理画面で「状況を見る」→ 次に送れるステップと人数を確認
-2. 各ステップの「文面を見る」で**実際に届く HTML**を確認
-3. 対象を選び `dryRun`（`step` 必須）→ 除外理由・人数・fingerprint を確認
-4. `send`（`MARKETING_CAMPAIGN_ENABLED` が必要）→ ScheduledEmails / CampaignDeliveries に登録
-5. 実配信は既存 dispatcher（`MARKETING_CAMPAIGN_DISPATCH_ENABLED`）
-6. step2 以降は、上のゲートを開ければ cron が自動で進める
+**通常運用で人がやることは無い。** step2 以降の enqueue も dispatch も cron が進める。
+人が触るのは次の 2 つだけ。
+
+### 7-0. 新しい連続配信を始めるとき（step1 だけ）
+
+1. 管理画面で「状況を見る」→ 対象人数を確認
+2. 「文面を見る」で**実際に届く HTML**を確認
+3. `dryRun`（`step` 必須）→ 除外理由・人数・fingerprint を確認
+4. `send` で step1 を開始する
+
+以後の step2 / step3 … は**自動**。管理画面から手で enqueue しない。
+
+### 7-0-b. 異常が起きたとき
+
+上の「止め方」で止め、原因を直してから戻す。
+**「安全のため毎回 OFF に戻す」は禁止**（通常状態は ON）。
+
+> 🚫 **旧方式（廃止・現行手順として読まない）**
+> 配信のたびに `MARKETING_*` を開ける → 送る → `UNSET` して再閉鎖 → redeploy、
+> `MARKETING_SEQUENCE_ARMED` に当日日付を毎日入れ直す、
+> light / premium は人数が少ないので管理画面から手で enqueue する。
+> これらは 2026-09-14 の MK 確定で**通常運用から外した**。
 
 ### 7-1. Step1 の直前確認（`preflight:light-trial-step1`）
 
@@ -388,9 +461,13 @@ cron-light-trial-grant が 1 日 1 回:
 | 1 | `COMEBACK_GRANT_FIELDS_READY=1` | 既存の付与ゲート（列の実在） |
 | 2 | `COMEBACK_GRANT_ENABLED=true` | 既存の付与ゲート（実行許可） |
 | 3 | `LIGHT_TRIAL_AUTOGRANT_ENABLED=true` | 自動化の許可 |
-| 4 | `LIGHT_TRIAL_AUTOGRANT_ARMED=<当日 JST>` | 当日ぶんの武装（翌日閉じる） |
+| 4 | 当日ぶんの武装 | **env には置かない**。展開状態（Redis）の `alwaysArmed` / `armedFor` から `cron-marketing-rollout` が差し込む |
 
 1・2 は**手動付与と同じゲートを再利用**する（自動化のための抜け道を作らない）。
+
+> 🚫 **旧方式（廃止）**: `LIGHT_TRIAL_AUTOGRANT_ARMED=<当日 JST>` を env に置き、
+> **毎日書き換えて redeploy** する運用。人が毎日 env を触る運用は続かないので、
+> 武装の置き場所を env から展開状態（Redis）へ移した。redeploy 不要で管理画面から即時に変えられる。
 
 > ⚠️ **配信系ゲート（`MARKETING_CAMPAIGN_ENABLED` / `MARKETING_CAMPAIGN_DISPATCH_ENABLED`）は
 > 要求しない。** この経路は**権利を付けるだけ**でメールを 1 通も作らないため、
@@ -827,12 +904,17 @@ AND(
 
 ### 11-5. 誰がどのシーケンスを進めるか（**混同しない**）
 
-| シーケンス | 進める Function | 補足 |
+| 仕事 | 進める Function | 補足 |
 |---|---|---|
-| `campaign-discount-free` / `-light` / `-premium` | `cron-campaign-sequence`（10 分ごと） | `MARKETING_SEQUENCE_CAMPAIGN_ID` が指定されていればその分だけ |
-| `light-trial-to-premium-sequence`（体験中 6 通） | **`cron-marketing-rollout`**（5 分ごと・`FOLLOW_UP`） | 展開状態（Redis）の `stage` に従う |
+| 割引 3 本を**積む** | `cron-campaign-sequence`（10 分ごと） | `MARKETING_SEQUENCE_CAMPAIGN_ID` **未設定＝有効な連続配信を全部**。値を入れるとその分だけ |
+| **積まれたジョブを送る** | **`cron-marketing-dispatch`（5 分ごと）** | 2026-09-14 新設。マーケ系の PENDING を古い順に起動する |
+| `light-trial-to-premium-sequence`（体験中 6 通） | **`cron-marketing-rollout`**（5 分ごと・`FOLLOW_UP`） | 展開状態（Redis）の `stage` に従う。送信起動も自分で行う |
 | `light-trial-post-expiry-sequence`（体験終了後 18 通） | 同上 | `JOURNEY_PHASES` の 2 番目。`cron-campaign-sequence` は触らない |
 
 ⚠️ `MARKETING_SEQUENCE_CAMPAIGN_ID` に値を入れると、**入れた campaign しか進まない**。
-本番は割引 3 本を指定しているので、体験シーケンスは rollout 側だけが進める。
-どちらが担当かを取り違えると「動いているのに進まない」に見える。
+通常運用では**置かない**（障害時の切り分け専用）。
+
+⚠️ **2026-09-14 以前は「積む」だけで「送る」担当が居なかった**。
+`cron-marketing-rollout` は自分が積んだジョブ（`pendingJobIds`）しか起動しないため、
+割引キャンペーンのジョブは PENDING のまま 4,307 件溜まり、**step2 は 1 通も出なかった**。
+`cron-marketing-dispatch` はこの欠けていた輪を埋めるもので、**消さないこと**。

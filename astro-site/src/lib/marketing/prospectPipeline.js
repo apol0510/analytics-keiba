@@ -171,6 +171,21 @@ export function planProspectEventUpdates({ events, classify } = {}) {
     // 除外が 1 つでもあれば、その相手は除外に倒す
     if (c.kind === 'suppress') { byEmail.set(email, { email, action: 'suppress', reason: c.reason }); continue; }
     if (cur && cur.action === 'suppress') continue;
+    /**
+     * ⚠️ **`delivered` は「反応」ではない。** 打ち切り（delivered 10 で無反応）の
+     *    **分母**なので、反応（engage）に上書きされてはいけないし、
+     *    反応を上書きしてもいけない。**別の更新として両方残す**。
+     *    同じバッチに delivered と open が両方来たら、delivered を数えたうえで反応も記録する。
+     */
+    if (c.kind === 'delivered') {
+      if (!cur) byEmail.set(email, { email, action: 'delivered' });
+      else if (cur.action === 'engage') cur.alsoDelivered = true;
+      continue;
+    }
+    if (cur && cur.action === 'delivered') {
+      byEmail.set(email, { email, action: 'engage', kind: c.engagement, alsoDelivered: true });
+      continue;
+    }
     byEmail.set(email, { email, action: 'engage', kind: c.engagement });
   }
   const updates = [...byEmail.values()];
@@ -179,6 +194,7 @@ export function planProspectEventUpdates({ events, classify } = {}) {
     counts: {
       反応: updates.filter((u) => u.action === 'engage').length,
       除外: updates.filter((u) => u.action === 'suppress').length,
+      配信成功: updates.filter((u) => u.action === 'delivered' || u.alsoDelivered === true).length,
     },
   };
 }

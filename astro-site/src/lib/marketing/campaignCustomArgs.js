@@ -38,7 +38,19 @@ export const CUSTOM_ARG_KEYS = Object.freeze({
   CAMPAIGN_ID: 'campaign_id',
   CAMPAIGN_VERSION: 'campaign_version',
   PURPOSE: 'purpose',
+  /**
+   * 受信者の出所。`prospect`（CSV 取り込みプール）のときだけ値が付く。
+   *
+   * ⚠️ prospect は **Airtable に配信行を作らない**運用（2026-08-27 MK 確定）なので
+   *    `campaign_delivery_id` / `customer_record_id` が存在しない。この印が無いと、
+   *    受信側は「紐付けられなかった（不具合）」と「台帳を持たない設計（正常）」を
+   *    区別できない。**印を消さないこと。**
+   */
+  AUDIENCE: 'audience',
 });
+
+/** `audience` に入れてよい値 */
+export const AUDIENCE = Object.freeze({ PROSPECT: 'prospect' });
 
 /** 目的識別子。決済メール v2（`payment_confirmation_v2`）と**必ず別の値**にする */
 export const MARKETING_PURPOSE = 'marketing_campaign';
@@ -134,6 +146,48 @@ export function buildCampaignCustomArgs({
 
   const deliveryKey = str(delivery.deliveryKey);
   if (!DELIVERY_KEY.test(deliveryKey)) return { ok: false, reason: CUSTOM_ARGS_REJECT.DELIVERY_KEY_INVALID };
+
+  /**
+   * ── prospect（配信台帳を Airtable に持たない受信者）─────────────────
+   *
+   * CSV 取り込みプールは `CampaignDeliveries` に 1 行も作らない（レコード上限対策 /
+   * 2026-08-27 MK 確定）。冪等性と配信の同一性は **Redis の `DeliveryKey`** が担う。
+   * そのため `campaign_delivery_id` / `customer_record_id` は**存在しない**。
+   *
+   * ⚠️ ここを緩めてよいのは **`source: 'prospect'` が明示されたときだけ**。
+   *    Customers 由来で recordId が欠けているのは**不具合**なので、従来どおり弾く
+   *    （欠けたまま送ると、開封しても誰の反応か分からない配信が積み上がる）。
+   * ⚠️ `delivery_key` は**再計算しない**。enqueue 時に Redis へ予約した値をそのまま渡す
+   *    （`prospectDeliveryDescriptor.js`）。作り直すと鍵が変わり台帳と噛み合わなくなる。
+   */
+  if (str(delivery.source) === AUDIENCE.PROSPECT) {
+    const parsedProspect = parseCampaignType(delivery.campaignType);
+    if (!parsedProspect) return { ok: false, reason: CUSTOM_ARGS_REJECT.CAMPAIGN_ID_INVALID };
+    const wantIdP = str(campaignId);
+    const wantVersionP = str(campaignVersion);
+    if ((wantIdP && wantIdP !== parsedProspect.campaignId)
+      || (wantVersionP && wantVersionP !== parsedProspect.version)) {
+      return { ok: false, reason: CUSTOM_ARGS_REJECT.CAMPAIGN_MISMATCH };
+    }
+    if (!CAMPAIGN_ID.test(parsedProspect.campaignId) || !VERSION.test(parsedProspect.version)) {
+      return { ok: false, reason: CUSTOM_ARGS_REJECT.CAMPAIGN_ID_INVALID };
+    }
+    // ⚠️ Airtable の recordId は**持たせない**（`prospect:<hash>` のような別物を入れない）
+    const prospectArgs = {
+      [CUSTOM_ARG_KEYS.DELIVERY_KEY]: deliveryKey,
+      [CUSTOM_ARG_KEYS.CAMPAIGN_ID]: parsedProspect.campaignId,
+      [CUSTOM_ARG_KEYS.CAMPAIGN_VERSION]: parsedProspect.version,
+      [CUSTOM_ARG_KEYS.PURPOSE]: MARKETING_PURPOSE,
+      [CUSTOM_ARG_KEYS.AUDIENCE]: AUDIENCE.PROSPECT,
+    };
+    for (const v of Object.values(prospectArgs)) {
+      if (!isSafeCustomArgValue(v)) return { ok: false, reason: CUSTOM_ARGS_REJECT.VALUE_NOT_SAFE };
+    }
+    if (Buffer.byteLength(JSON.stringify(prospectArgs), 'utf8') > MAX_CUSTOM_ARGS_BYTES) {
+      return { ok: false, reason: CUSTOM_ARGS_REJECT.TOO_LARGE };
+    }
+    return { ok: true, customArgs: prospectArgs };
+  }
 
   const deliveryRecordId = str(delivery.recordId);
   if (!RECORD_ID.test(deliveryRecordId)) return { ok: false, reason: CUSTOM_ARGS_REJECT.CAMPAIGN_DELIVERY_ID_INVALID };

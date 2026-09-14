@@ -48,7 +48,13 @@ import {
 } from '../../src/lib/marketing/prospectAudienceSource.js';
 import {
   partitionRecipientsForLedger, resolveDeliveryStoreMode, writesRedis, RECIPIENT_SOURCE,
+  resolveRecipientLedgerPolicy,
 } from '../../src/lib/marketing/deliveryKeySource.js';
+import { canDispatchWithLedger } from '../../src/lib/marketing/dispatchableLedger.js';
+import {
+  buildDescriptorEntries, createJobDeliveryStore,
+} from '../../src/lib/marketing/prospectDeliveryDescriptor.js';
+import { emailHash } from '../../src/lib/marketing/prospectStore.js';
 import {
   isSequenceCampaign, resolveSequenceStep, resolveAutoStart,
 } from '../../src/lib/marketing/campaignSequence.js';
@@ -139,6 +145,95 @@ async function fetchCampaignDeliveries({ KEY, BASE, campaignType, startOffset = 
     pages += 1;
   } while (offset && pages < maxPages);
   return { records: out, offset: offset || null, partial: Boolean(offset), pages };
+}
+
+/**
+ * 指定した `DeliveryKey` のうち、**まだ活きている行**（`queued` / `sent`）の鍵を返す。
+ *
+ * ⚠️ **名指し取得**（窓読みではない）。窓の位置に関係なく「その人は既に積んである」を
+ *    判定できるようにするための経路。
+ * ⚠️ 1 件でも取り切れなければ**例外**（呼び出し側は fail closed で積まない）。
+ * ⚠️ `cancelled` / `failed` は含めない（巻き戻し済み＝積み直してよい。
+ *    `fetchDeliveredKeys` / `activeDeliveryKeys` と同じ判定）。
+ */
+async function fetchActiveDeliveryKeys({ KEY, BASE, keys }) {
+  const list = [...new Set((keys || []).map((k) => String(k || '').trim()).filter(Boolean))];
+  const active = new Set();
+  for (const group of chunkList(list, 20)) {
+    const safe = group.filter((k) => /^[a-f0-9]{64}$/.test(k));
+    if (safe.length !== group.length) throw new Error('delivery_key_shape_invalid');
+    if (safe.length === 0) continue;
+    const formula = `OR(${safe.map((k) => `{DeliveryKey}='${k}'`).join(',')})`;
+    let offset;
+    let pages = 0;
+    do {
+      const body = { filterByFormula: formula, pageSize: 100, fields: ['DeliveryKey', 'Status'] };
+      if (offset) body.offset = offset;
+      // eslint-disable-next-line no-await-in-loop -- 20 件ずつの名指し取得
+      const res = await fetch(
+        `https://api.airtable.com/v0/${BASE}/${encodeURIComponent(DELIVERIES_TABLE)}/listRecords`,
+        { method: 'POST', headers: { ...auth(KEY), 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+      );
+      if (!res.ok) throw new Error(`delivery_keys_fetch_${res.status}`);
+      // eslint-disable-next-line no-await-in-loop
+      const data = await res.json();
+      for (const rec of data.records || []) {
+        const f = rec.fields || {};
+        const st = String(f.Status || '').trim().toLowerCase();
+        if (st === 'queued' || st === 'sent') active.add(String(f.DeliveryKey || '').trim());
+      }
+      offset = data.offset;
+      pages += 1;
+      if (offset && pages >= MAX_PAGES) {
+        assertFetchComplete({ table: DELIVERIES_TABLE, offset, pages, maxPages: MAX_PAGES });
+      }
+    } while (offset);
+  }
+  return active;
+}
+
+/**
+ * この tick で作ったジョブを取り消す（配信行を確かめられなかったときの巻き戻し）。
+ *
+ * ⚠️ **`CANCELLED` にするだけ**。dispatcher は `PENDING` しか拾わないので、
+ *    取り消した時点で送られなくなる。Customers は 1 バイトも触らない。
+ * ⚠️ 1 件でも取り消せなければ、その事実を返す（成功へ丸めない）。
+ */
+async function cancelCreatedJobs({ KEY, BASE, jobs, reason }) {
+  const list = (jobs || []).filter((j) => j && j.recordId);
+  const report = { targeted: list.length, cancelled: 0, failed: 0 };
+  for (const j of list) {
+    // eslint-disable-next-line no-await-in-loop -- 1 件ずつ名指し
+    const res = await fetch(
+      `https://api.airtable.com/v0/${BASE}/${encodeURIComponent(SCHEDULED_TABLE)}/${j.recordId}`,
+      {
+        method: 'PATCH',
+        headers: { ...auth(KEY), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fields: { Status: 'CANCELLED', Notes: `cancelled by cron-campaign-sequence: ${String(reason || '')}` },
+          typecast: true,
+        }),
+      },
+    ).catch(() => null);
+    if (res && res.ok) report.cancelled += 1; else report.failed += 1;
+  }
+  if (report.failed > 0) {
+    console.error(`${SEQ_LOG_TAG} ジョブを取り消せませんでした: ${report.failed} 件`);
+  }
+  return report;
+}
+
+/** prospect の予約を戻す（戻さないとその人は二度と送られない） */
+async function releaseClaimedKeys(ledger, scope, keys) {
+  const list = (keys || []).filter(Boolean);
+  if (!ledger || list.length === 0) return false;
+  try {
+    await ledger.releaseClaims({ ...scope, keys: list });
+    return true;
+  } catch {
+    console.error(`${SEQ_LOG_TAG} prospect の予約を戻せませんでした: ${list.length} 件`);
+    return false;
+  }
 }
 
 /** 宛先ぶんだけ Customers を引く（名指し取得） */
@@ -313,6 +408,13 @@ export async function runSequenceTick({ env = process.env, now = Date.now(), cam
       });
     } catch { return null; }
   })();
+  /** prospect の「配信の身分証」（jobId → emailHash → DeliveryKey）の置き場所 */
+  const jobDeliveryStore = createJobDeliveryStore({
+    redisCmd: safeRedisCmd(),
+    redisPipeline: (() => {
+      try { return makeRedisPipeline(env); } catch { return null; }
+    })(),
+  });
   if (!prospectStore || !prospectLedger) prospectDegraded = 'redis_unavailable';
   if (prospectStore && prospectLedger) {
     prospectInputs = await loadProspectSequenceInputs({
@@ -378,7 +480,12 @@ export async function runSequenceTick({ env = process.env, now = Date.now(), cam
       // 選ぶのは純粋関数。ここは I/O だけ
       const planned = planAutoStartEntries({
         campaign: base, candidates,
-        deliveredIndex: indexDeliveries(deliveries),
+        // ⚠️ **prospect 台帳から復元した送信済みも含めて**「もう受け取っているか」を見る
+        //    （#521 で prospect の既送信は Airtable ではなく Redis 由来になったため、
+        //      Airtable 側だけを見ると二重に入口へ入れる可能性がある）
+        deliveredIndex: indexDeliveries(
+          prospectInputs ? [...deliveries, ...prospectInputs.deliveries] : deliveries,
+        ),
         brand: BRAND, fromEmail, nowMs: now,
         expectedStage: FUNNEL_STAGE.FREE_TO_PAID,
       });
@@ -481,7 +588,59 @@ export async function runSequenceTick({ env = process.env, now = Date.now(), cam
   // 5) 送信計画（除外・DeliveryKey は既存の単一源がそのまま担当）
   const sending = resolveSequenceStep(base, plan.step);
   const byId = new Map(selected.map((c) => [c.recordId, c]));
-  const targets = plan.recordIds.map((rid) => byId.get(rid)).filter(Boolean);
+  const allTargets = plan.recordIds.map((rid) => byId.get(rid)).filter(Boolean);
+  const scope = { brand: BRAND, campaignId: base.campaignId, version: base.version };
+  const keyOfTarget = (t) => computeCampaignDeliveryKey({
+    campaign: sending,
+    recipientEmail: String((t.fields || {}).Email || '').trim().toLowerCase(),
+    brand: BRAND, fromEmail,
+  });
+
+  /**
+   * ── 5-a) **鍵を名指しで**突き合わせてから積む（2026-09-14 恒久修正）────────
+   *
+   * ## 何が起きていたか（本番実測）
+   *
+   * 進行（誰が何通目か）は台帳の**窓読み**（`fetchCampaignDeliveries` が
+   * `offset` で少しずつ進む）から作る。窓の外に置かれた「その人の step2 の行」は
+   * **見えない**ので、既に積んだ人がもう一度 due に見える。
+   * その結果、同じ人が 10 分ごとに新しいジョブへ積み直され、
+   * 2026-09-09〜09-14 の実測で **3,771 名 × 42〜46 回**（PENDING ジョブ 4,307 件 /
+   * 宛先スロット 179,250）まで膨らんだ。
+   *
+   * ## 直し方
+   *
+   * これから積む人の `DeliveryKey` を**名指しで**引き、`queued` / `sent` の行が
+   * 既にあるなら**その人はこの tick では積まない**。窓の位置に依存しない。
+   *
+   * ⚠️ **読めなければ積まない**（fail closed）。読めないことを「未送信」と読むと
+   *    二重登録が再発する。
+   * ⚠️ `cancelled` / `failed` は既送信に数えない（巻き戻し済み＝積み直してよい）。
+   *    判定は `活きている行` の単一源 `ACTIVE_DELIVERY_STATUS` に合わせる。
+   */
+  let activeKeys = null;
+  try {
+    activeKeys = await fetchActiveDeliveryKeys({
+      KEY, BASE, keys: allTargets.map(keyOfTarget).filter(Boolean),
+    });
+  } catch {
+    activeKeys = null;
+  }
+  if (activeKeys === null) {
+    const body = { ok: false, abort: 'delivery_ledger_unreadable', sideEffects: 'none' };
+    log(body);
+    return body;
+  }
+  const targets = allTargets.filter((t) => !activeKeys.has(keyOfTarget(t)));
+  const alreadyQueued = allTargets.length - targets.length;
+  if (targets.length === 0) {
+    const body = {
+      ok: false, abort: TICK_ABORT.NO_DUE, reason: 'all_already_queued',
+      alreadyQueued, sideEffects: 'none',
+    };
+    log(body);
+    return body;
+  }
 
   // ── 5-b) prospect は **queue の前に予約する**（2026-08-27 恒久修正）────────
   //
@@ -497,18 +656,38 @@ export async function runSequenceTick({ env = process.env, now = Date.now(), cam
   // ⚠️ Redis が使えない / 予約が確定できないときは **prospect を 1 人も queue しない**。
   //    Customers 由来はこれまでどおり進む（既存挙動を変えない）。
   // ⚠️ 予約したのに queue できなかった鍵は必ず戻す（戻さないと二度と送られない）。
-  const prospectTargets = targets.filter((t) => prospectEmails.has(
+  const prospectTargetsAll = targets.filter((t) => prospectEmails.has(
     String((t.fields || {}).Email || '').trim().toLowerCase(),
   ));
   const customerTargets = targets.filter((t) => !prospectEmails.has(
     String((t.fields || {}).Email || '').trim().toLowerCase(),
   ));
-  const scope = { brand: BRAND, campaignId: base.campaignId, version: base.version };
-  const keyOfTarget = (t) => computeCampaignDeliveryKey({
-    campaign: sending,
-    recipientEmail: String((t.fields || {}).Email || '').trim().toLowerCase(),
-    brand: BRAND, fromEmail,
+
+  /**
+   * ── 5-c) **送れない置き場所の受信者は積まない**（2026-09-14 恒久修正）────────
+   *
+   * prospect は Airtable に配信行を作らない運用（2026-08-27 MK 確定）だが、
+   * dispatcher は `custom_args` を **Airtable の配信行からしか**作れない
+   * （`campaignCustomArgs.js`）。行が無い相手は必ず `delivery_not_found` で skip される。
+   *
+   * それでも積むと、**送れないのに Redis の予約だけが焼かれ**、経路を直しても
+   * その人には二度と届かない。だから**積む前に止める**（判定は `dispatchableLedger.js`）。
+   *
+   * ⚠️ これは prospect を諦める変更ではない。送信経路が Redis だけの配信識別に
+   *    対応すれば `AIRTABLE_ROW_REQUIRED` を false にするだけで解禁される。
+   */
+  const prospectPolicy = resolveRecipientLedgerPolicy({
+    mode: resolveDeliveryStoreMode(env), source: RECIPIENT_SOURCE.PROSPECT,
   });
+  const prospectDispatchable = canDispatchWithLedger(prospectPolicy);
+  const prospectTargets = prospectDispatchable.ok ? prospectTargetsAll : [];
+  const prospectNotDispatchable = prospectDispatchable.ok ? 0 : prospectTargetsAll.length;
+  if (prospectNotDispatchable > 0) {
+    console.error(
+      `${SEQ_LOG_TAG} prospect は現在の送信経路では送れないため積みません: `
+      + `${prospectNotDispatchable} 件 / 理由 ${prospectDispatchable.reason}`,
+    );
+  }
 
   let claimedKeys = new Set();
   let prospectBlocked = 0;
@@ -592,17 +771,50 @@ export async function runSequenceTick({ env = process.env, now = Date.now(), cam
   }
 
   // 7) キュー登録（ScheduledEmails PENDING + CampaignDeliveries queued）
+  //
+  // ⚠️ **出所（customer / prospect）はここで確定させる。** 以降のバッチ分割・
+  //    配信行の書き分け・prospect の身分証づくりは、すべてこの `tagged` を使う。
+  const tagged = tagRecipientSources({ recipients: built.recipients, prospectEmails });
   const contentHash = computeCampaignContentHash(sending);
   const jobIdByEmail = new Map();
+  /** この tick で作ったジョブ（配信行を確かめられなければ取り消す） */
+  const createdJobs = [];
+  /** prospect の身分証を保存できなかったバッチ数（**送れないので積まない**） */
+  let descriptorFailed = 0;
   let enqueued = 0;
   let failed = 0;
-  const batches = chunkRecipients(built.recipients);
+  const batches = chunkRecipients(tagged);
   for (let i = 0; i < batches.length; i += 1) {
     const batch = batches[i];
     const jobId = buildJobId({
       campaignId: base.campaignId, version: base.version,
       fingerprint: built.planFingerprint, index: i + 1,
     });
+    /**
+     * ── prospect の「配信の身分証」を**ジョブを作る前に**置く ─────────────
+     *
+     * prospect は Airtable に配信行を作らないので、送信時に `custom_args` の材料
+     * （`DeliveryKey`）を読む先が要る。`jobId` は fingerprint 由来で先に決まるので、
+     * **ジョブを作る前**に対応表を書ける。
+     *
+     * ⚠️ 書けなければ**そのバッチは積まない**。積むと「送れないのに予約だけ焼けた人」に戻る。
+     * ⚠️ 鍵は enqueue 時のものをそのまま置く（送信側で作り直さない）。
+     */
+    const { entries, dropped } = buildDescriptorEntries({ recipients: batch, hashFn: emailHash });
+    if (dropped > 0 || (entries.length > 0 && !jobDeliveryStore.usable)) {
+      descriptorFailed += 1;
+      failed += batch.length;
+      continue;
+    }
+    if (entries.length > 0) {
+      const saved = await jobDeliveryStore.save({ jobId, entries });
+      if (!saved) {
+        console.error(`${SEQ_LOG_TAG} prospect の配信識別子を保存できないため積みません: ${entries.length} 件`);
+        descriptorFailed += 1;
+        failed += batch.length;
+        continue;
+      }
+    }
     const fields = buildScheduledEmailFields({
       campaignId: base.campaignId,
       subject: rendered.subject,
@@ -620,7 +832,18 @@ export async function runSequenceTick({ env = process.env, now = Date.now(), cam
       body: JSON.stringify({ records: [{ fields }], typecast: false }),
     });
     if (!res.ok) { failed += batch.length; continue; }
-    for (const r of batch) jobIdByEmail.set(r.email, jobId);
+    /**
+     * ⚠️ **`{ jobId, recordId }` の形で入れる**（`buildDeliveryRecords` の契約）。
+     *    文字列を入れると `ScheduledEmailJobId` の無い配信行が出来て、
+     *    dispatcher がその行を引けず **1 通も送れない**（2026-09 の本番障害）。
+     */
+    let jobRecordId = null;
+    try {
+      const created = await res.json();
+      jobRecordId = String(((created.records || [])[0] || {}).id || '') || null;
+    } catch { jobRecordId = null; }
+    for (const r of batch) jobIdByEmail.set(r.email, { jobId, recordId: jobRecordId });
+    createdJobs.push({ jobId, recordId: jobRecordId, recipientCount: batch.length });
     enqueued += batch.length;
   }
 
@@ -629,7 +852,7 @@ export async function runSequenceTick({ env = process.env, now = Date.now(), cam
   // ── prospect は Airtable へ 1 行も書かない（2026-08-27 MK 確定）────────
   //    Airtable はレコード上限を超過中で、CSV 由来へ 1 step 配るだけで受信者数ぶん増える。
   //    prospect の冪等性は Redis の集合が担う（`DeliveryKey` の作り方は変えない）。
-  const tagged = tagRecipientSources({ recipients: built.recipients, prospectEmails });
+  //    ⚠️ `tagged` は 7) の先頭で作ってある（バッチ分割と身分証づくりが同じ出所を見るため）。
   const ledgerMode = resolveDeliveryStoreMode(env);
   const split = partitionRecipientsForLedger({ mode: ledgerMode, recipients: tagged });
   const airtableRecipients = tagged.filter((r) => r['出所'] !== RECIPIENT_SOURCE.PROSPECT);
@@ -641,13 +864,68 @@ export async function runSequenceTick({ env = process.env, now = Date.now(), cam
   for (const rec of deliveryRecords) {
     if (!assertOnlyDeliveryFields(rec.fields)) return { ok: false, abort: 'delivery_fields_rejected' };
   }
+  /**
+   * ⚠️ **組み立て段の取りこぼしを先に捕まえる。**
+   *    `buildDeliveryRecords` は形が合わない行を落とす（`jobIdByEmail` の形違いなど）。
+   *    落ちたまま進むと **JobId の無い行**や**行の無い宛先**が残り、dispatcher が
+   *    その相手を `delivery_not_found` で skip して **1 通も送れない**。
+   */
+  if (deliveryRecords.length !== airtableRecipients.length) {
+    await cancelCreatedJobs({ KEY, BASE, jobs: createdJobs, reason: 'records_dropped' });
+    await releaseClaimedKeys(prospectLedger, scope, [...claimedKeys]);
+    const body = {
+      ok: false, abort: 'delivery_records_dropped',
+      expected: airtableRecipients.length, built: deliveryRecords.length,
+      sideEffects: 'jobs_cancelled',
+    };
+    log(body);
+    return body;
+  }
+  /**
+   * ⚠️ **応答を必ず見る。** 2026-09 の本番障害では、ここの `fetch` の戻り値を
+   *    まったく確かめていなかったため、台帳が 1 行も書けていないのに tick は成功扱いで終わり、
+   *    次の tick が同じ人をまた積む——を 10 分ごとに繰り返していた。
+   */
+  let upsertFailed = null;
   for (let i = 0; i < deliveryRecords.length; i += 10) {
     const chunk = deliveryRecords.slice(i, i + 10);
-    await fetch(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(DELIVERIES_TABLE)}`, {
+    // eslint-disable-next-line no-await-in-loop -- Airtable の upsert は 10 件ずつ
+    const res = await fetch(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(DELIVERIES_TABLE)}`, {
       method: 'PATCH',
       headers: { ...auth(KEY), 'Content-Type': 'application/json' },
       body: JSON.stringify({ performUpsert: { fieldsToMergeOn: ['DeliveryKey'] }, records: chunk }),
+    }).catch(() => null);
+    if (!res || !res.ok) { upsertFailed = res ? `http_${res.status}` : 'network'; break; }
+  }
+
+  /**
+   * ⚠️ **読み戻して確かめてから成功と言う。** 例外が出なかったことは「書けた」の証拠にならない。
+   *    揃っていなければ、この tick で作ったジョブを取り消し、prospect の予約も戻す
+   *    （戻さないとその人は二度と送られない）。
+   */
+  let verifiedKeys = null;
+  try {
+    verifiedKeys = await fetchActiveDeliveryKeys({
+      KEY, BASE, keys: deliveryRecords.map((r) => String(r.fields.DeliveryKey || '')),
     });
+  } catch { verifiedKeys = null; }
+  const missingKeys = verifiedKeys === null
+    ? null
+    : deliveryRecords.filter((r) => !verifiedKeys.has(String(r.fields.DeliveryKey || ''))).length;
+  if (verifiedKeys === null || missingKeys > 0) {
+    await cancelCreatedJobs({ KEY, BASE, jobs: createdJobs, reason: 'delivery_rows_unconfirmed' });
+    await releaseClaimedKeys(prospectLedger, scope, [...claimedKeys]);
+    const body = {
+      ok: false,
+      abort: 'delivery_rows_unconfirmed',
+      upsertFailed,
+      expected: deliveryRecords.length,
+      missing: missingKeys,
+      sideEffects: 'jobs_cancelled',
+      note: '配信行を確認できないため、作ったジョブを取り消しました。次の tick が同じ人をやり直します。',
+    };
+    log(body);
+    return body;
   }
 
   // ── prospect の冪等性は **queue の前に確定済み**（5-b の予約）────────────
@@ -693,12 +971,18 @@ export async function runSequenceTick({ env = process.env, now = Date.now(), cam
   if (prospectBlocked > 0) summary['prospect予約不可'] = prospectBlocked;
   if (prospectClaimFailure) summary['prospect予約失敗'] = prospectClaimFailure;
   if (releaseFailed > 0) summary['予約戻し失敗'] = releaseFailed;
-  // 入口を開けたか / 開けなかった理由（**黙って 0 にしない**）
+  // #521（prospect 実送信 / delivered 10 通の無反応除外）の観測項目
+  if (alreadyQueued > 0) summary['登録済みのため除外'] = alreadyQueued;
+  if (prospectNotDispatchable > 0) summary['prospect送信不可'] = prospectNotDispatchable;
+  if (descriptorFailed > 0) summary['身分証を置けず未登録'] = descriptorFailed;
+  // #522（DRM の入口）: 開けたか / 開けなかった理由（**黙って 0 にしない**）
   if (autoStartReport.declared) summary['入口'] = autoStartReport;
   log(summary);
   return {
     ok: true, step: plan.step, enqueued, failed, autoStart: autoStartReport,
     campaignId: base.campaignId, version: base.version,
+    alreadyQueued,
+    prospectNotDispatchable,
     sideEffects: 'queued_only',
     note: 'キュー登録のみ。実送信は既存 dispatcher が行う（この Function はメールを送らない）。',
   };

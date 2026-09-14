@@ -140,8 +140,14 @@ test('SendGrid のイベント種別の翻訳（知らないものは無視）',
     assert.equal(classifyEvent(t).kind, 'suppress', t);
     assert.equal(classifyEvent(t).reason, r, t);
   }
-  // 配信成功は反応ではない
-  for (const t of ['delivered', 'processed', 'deferred', '', null, 'unknown']) {
+  /**
+   * 配信成功は**反応ではない**が、**打ち切りの分母**なので数える（2026-09-14）。
+   * ここを `ignore` に戻すと delivered が 1 も積まれず、
+   * 「delivered 10 通で無反応なら除外」が**永久に発火しない**。
+   */
+  assert.equal(classifyEvent('delivered').kind, 'delivered');
+  assert.equal(classifyEvent('delivered').engagement, undefined, '配信成功を反応に数えている');
+  for (const t of ['processed', 'deferred', '', null, 'unknown']) {
     assert.equal(classifyEvent(t).kind, 'ignore', String(t));
   }
 });
@@ -275,12 +281,47 @@ test('同じ相手に反応と除外が来たら除外に倒す', () => {
     ],
     classify: classifyEvent,
   });
-  assert.equal(updates.length, 2);
+  // a=除外 / b=反応 / c=配信成功（**打ち切りの分母**。落とすと除外が発火しない）
+  assert.equal(updates.length, 3);
   assert.equal(counts.除外, 1);
   assert.equal(counts.反応, 1);
+  assert.equal(counts.配信成功, 1);
   const a = updates.find((u) => u.email === 'a@example.invalid');
   assert.equal(a.action, 'suppress');
   assert.equal(a.reason, SUPPRESS_REASON.COMPLAINT);
+  const c = updates.find((u) => u.email === 'c@example.invalid');
+  assert.equal(c.action, 'delivered');
+});
+
+test('【重要】同じバッチに delivered と open が来たら、両方とも記録する', () => {
+  const { updates, counts } = planProspectEventUpdates({
+    events: [
+      { email: 'a@example.invalid', event: 'delivered' },
+      { email: 'a@example.invalid', event: 'open' },
+      { email: 'b@example.invalid', event: 'open' },
+      { email: 'b@example.invalid', event: 'delivered' },
+    ],
+    classify: classifyEvent,
+  });
+  assert.equal(updates.length, 2);
+  for (const u of updates) {
+    assert.equal(u.action, 'engage', `${u.email}: 反応が配信成功に上書きされている`);
+    assert.equal(u.alsoDelivered, true, `${u.email}: 配信成功が数えられていない`);
+  }
+  assert.equal(counts.反応, 2);
+  assert.equal(counts.配信成功, 2);
+});
+
+test('【重要】除外が来たら、配信成功より除外を優先する', () => {
+  const { updates } = planProspectEventUpdates({
+    events: [
+      { email: 'a@example.invalid', event: 'delivered' },
+      { email: 'a@example.invalid', event: 'bounce' },
+    ],
+    classify: classifyEvent,
+  });
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0].action, 'suppress');
 });
 
 // ── ストア ────────────────────────────────────────────────────
