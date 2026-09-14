@@ -114,7 +114,7 @@ function json(status, body) {
 const auth = (key) => ({ Authorization: `Bearer ${key}` });
 
 /** そのキャンペーンの配信履歴だけを引く（**全件走査しない**・打ち切りは例外） */
-async function fetchCampaignDeliveries({ KEY, BASE, campaignType, startOffset = null }) {
+async function fetchCampaignDeliveries({ KEY, BASE, campaignType, startOffset = null, maxPagesOverride = null }) {
   const out = [];
   let offset = startOffset || undefined;
   // ── tick をまたいで続きから読む（2026-08-26）────────────────────
@@ -126,7 +126,10 @@ async function fetchCampaignDeliveries({ KEY, BASE, campaignType, startOffset = 
   //    いつも同じ人しか見えず、後ろの人が永久に進まない。
   //    前回の続き（`offset`）を保存して、そこから読む。
   // ⚠️ 読み残しは `partial` で返し、次の tick へ渡す（黙って打ち切らない）。
-  const maxPages = resolvePagesPerTick(process.env);
+  // ⚠️ 下見は 1 回の呼び出しを短く切るため、窓の大きさを呼び出し側が決められる。
+  //    実運用（tick）は従来どおり env の値を使う（渡さなければ何も変わらない）。
+  const maxPages = Number.isInteger(maxPagesOverride) && maxPagesOverride > 0
+    ? maxPagesOverride : resolvePagesPerTick(process.env);
   let pages = 0;
   do {
     const body = {
@@ -321,8 +324,27 @@ export async function runSequenceTick({
    *    ただし**ゲートの状態を必ず応答へ載せる**（開いていると誤解させない）。
    */
   dryRun = false,
+  /**
+   * 下見の**窓**（`dryRun` のときだけ効く）。
+   *
+   *   scope        … 'prospect' | 'customer'（どちらの母数を見るか。既定は両方）
+   *   offset/limit … prospect 索引の窓（`prospectSequenceCheck` と同じ刻み方）
+   *   digest       … prospect 索引の指紋。**変わっていたら fail closed で中止**
+   *   ledgerOffset … 配信台帳の続き位置（Airtable の offset 文字列）
+   *   scanPages    … 台帳を 1 回で読むページ数（下見を 30 秒に収めるため）
+   *
+   * ⚠️ 下見は**保存されたカーソルを読まないし書かない**。
+   *    本番 tick の進み位置を 1 バイトも動かさない。
+   */
+  preview = null,
 } = {}) {
   const isDry = dryRun === true;
+  const win = (isDry && preview && typeof preview === 'object') ? preview : null;
+  const previewScope = win && (win.scope === 'prospect' || win.scope === 'customer') ? win.scope : null;
+  /** 下見で Customers 側（配信台帳）を見るか */
+  const wantCustomer = !win || previewScope === null || previewScope === 'customer';
+  /** 下見で prospect 側を見るか */
+  const wantProspect = !win || previewScope === null || previewScope === 'prospect';
   const gates = readSequenceGates(env, now);
   if (!isDry && !gates.allOpen) {
     // ⚠️ ここから先へ進まない = Airtable にも SendGrid にも接続しない
@@ -351,7 +373,12 @@ export async function runSequenceTick({
   //    読み残しは次の tick が続きを読む（周回すれば全員が対象になる）。
   const redisCmd = safeRedisCmd();
   const scanStore = createSequenceScanStore({ redisCmd });
-  const cursor = await scanStore.read(campaignType);
+  /**
+   * ⚠️ **下見は保存カーソルを読まない**。読んで書かないだけでも、
+   *    「どこまで進んだか」を本番 tick と共有すると解釈がややこしくなる。
+   *    下見は呼び出し側が渡した `ledgerOffset` だけで窓を決める。
+   */
+  const cursor = isDry ? { offset: (win && win.ledgerOffset) || null, pass: 0 } : await scanStore.read(campaignType);
   /**
    * ⚠️ **保存した offset が失効していても自力で復帰する**（2026-09-08 の障害）。
    *    失効した offset で落ちたまま throw すると、カーソルが更新されないので
@@ -361,19 +388,29 @@ export async function runSequenceTick({
    */
   let scan;
   let scanRecovered = null;
+  const scanPagesOverride = win && Number.isInteger(Number(win.scanPages)) && Number(win.scanPages) > 0
+    ? Math.min(10, Number(win.scanPages)) : null;
   try {
-    scan = await fetchCampaignDeliveries({ KEY, BASE, campaignType, startOffset: cursor.offset });
+    // 下見で Customers 側を見ないときは、台帳を 1 ページも読まない
+    scan = wantCustomer
+      ? await fetchCampaignDeliveries({
+        KEY, BASE, campaignType, startOffset: cursor.offset, maxPagesOverride: scanPagesOverride,
+      })
+      : { records: [], offset: null, partial: false, pages: 0 };
   } catch (e) {
     const reset = shouldResetCursorOnFailure({ hadOffset: Boolean(cursor.offset), status: e && e.status });
     if (!reset) throw e;
     scanRecovered = `offset_expired_${(e && e.status) || 'unknown'}`;
     console.error(`${SEQ_LOG_TAG} 走査カーソルが失効したため先頭から読み直します: ${scanRecovered}`);
     await scanStore.write(campaignType, cursorAfterFailure({ pass: cursor.pass }));
-    scan = await fetchCampaignDeliveries({ KEY, BASE, campaignType, startOffset: null });
+    scan = await fetchCampaignDeliveries({
+      KEY, BASE, campaignType, startOffset: null, maxPagesOverride: scanPagesOverride,
+    });
   }
   const deliveries = scan.records;
   const next = nextScanCursor({ offset: scan.offset, pass: cursor.pass });
-  await scanStore.write(campaignType, next);
+  // ⚠️ **下見はカーソルを書かない**（本番 tick の進み位置を動かさない）
+  if (!isDry) await scanStore.write(campaignType, next);
 
   // ── 実績の集計（**追加の読み取りはしない**）────────────────────────
   //
@@ -381,6 +418,8 @@ export async function runSequenceTick({
   // 管理画面はこの集計を見る（queued を送信済みとして混ぜない）。
   // 失敗しても配信は止めない（数字が出ないだけ）。
   try {
+    // ⚠️ **下見は集計も書かない**（read-only を名乗る以上、1 バイトも書かない）
+    if (isDry) throw new Error('dry_run_skip_metrics');
     const metricsStore = createSequenceMetricsStore({ redisCmd });
     const prev = (!cursor.offset ? null : await metricsStore.read(campaignType)) || null;
     const running = prev && prev.running ? prev.running : emptyMetrics();
@@ -435,11 +474,24 @@ export async function runSequenceTick({
     })(),
   });
   if (!prospectStore || !prospectLedger) prospectDegraded = 'redis_unavailable';
-  if (prospectStore && prospectLedger) {
+  // 下見で Customers 側だけを見るときは、prospect を 1 件も読まない
+  if (!wantProspect) prospectDegraded = 'preview_scope_customer';
+  if (wantProspect && prospectStore && prospectLedger) {
     prospectInputs = await loadProspectSequenceInputs({
       store: prospectStore, deliveryKeyStore: prospectLedger,
       campaign: base, brand: BRAND, fromEmail, nowMs: now,
       blacklistEmails,
+      /**
+       * ⚠️ 下見は**索引の窓**で切る（`prospectSequenceCheck` と同じ刻み方）。
+       *    `digest` を渡しているので、読んでいる最中に索引が変われば
+       *    `INDEX_CHANGED` で中止＝**取り直し**になる（fail closed）。
+       */
+      ...(win ? {
+        maxRecipients: Number.isInteger(Number(win.limit)) && Number(win.limit) > 0
+          ? Math.min(4000, Number(win.limit)) : 2000,
+        offset: Math.max(0, Number(win.offset) || 0),
+        expectDigest: String(win.digest || '').trim() || undefined,
+      } : {}),
     });
     if (!prospectInputs.ok) {
       // ⚠️ **Customers 由来の配信は止めない**（既存挙動を変えない）。
@@ -668,7 +720,7 @@ export async function runSequenceTick({
     targets: dueTargets, prospectEmails, filter: audienceFilter,
   });
   const targets = filtered.kept;
-  const preview = describeAudiencePreview({
+  const audienceView = describeAudiencePreview({
     bySource: filtered.bySource, kept: targets, filter: filtered.filter,
     step: plan.step, campaignId: base.campaignId,
   });
@@ -683,8 +735,29 @@ export async function runSequenceTick({
       sideEffects: 'none',
       gates: { allOpen: gates.allOpen, missing: gates.missing },
       alreadyQueued,
-      ...preview,
-      note: '下見です。予約・キュー登録・送信はいずれも行っていません。',
+      ...audienceView,
+      /**
+       * 窓の続き。**全部 null / 無くなるまで**呼び出し側が合算する。
+       *   台帳側: `nextLedgerOffset` が null なら読み切り
+       *   prospect 側: `nextOffset` が null なら読み切り（`digest` は全窓で同じであること）
+       */
+      window: {
+        scope: previewScope,
+        ledgerPages: scan.pages,
+        nextLedgerOffset: wantCustomer ? (scan.offset || null) : null,
+        prospect: prospectInputs ? {
+          indexSize: prospectInputs.indexSize,
+          digest: prospectInputs.digest,
+          scanned: prospectInputs.scanned,
+          offset: Math.max(0, Number((win && win.offset) || 0)),
+          nextOffset: (Math.max(0, Number((win && win.offset) || 0)) + (prospectInputs.scanned || 0))
+            < (prospectInputs.indexSize || 0)
+            ? Math.max(0, Number((win && win.offset) || 0)) + (prospectInputs.scanned || 0)
+            : null,
+        } : null,
+        prospectSkipped: prospectDegraded || null,
+      },
+      note: '下見です。予約・キュー登録・送信・カーソル更新・集計更新のいずれも行っていません。',
     };
     log(body);
     return body;
@@ -694,7 +767,7 @@ export async function runSequenceTick({
     const body = {
       ok: false, abort: TICK_ABORT.NO_DUE,
       reason: filtered.dropped > 0 ? 'filtered_out' : 'all_already_queued',
-      alreadyQueued, ...preview, sideEffects: 'none',
+      alreadyQueued, ...audienceView, sideEffects: 'none',
     };
     log(body);
     return body;
