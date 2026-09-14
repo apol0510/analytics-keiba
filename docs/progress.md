@@ -467,7 +467,10 @@ prospect は **Airtable に配信行を書かない**（#521）。`prospectSeque
 | 共有 cron の対象 | `MARKETING_SEQUENCE_CAMPAIGN_ID` = 割引 3 本のみ。**`free-signup-onboarding` を含まない** |
 | 他 campaign | `light-to-premium` / `sanrenpuku-upsell` とも `inSequence 0` 不変 / 割引 3 本のジョブ 0 |
 
-## 是正（PR #532 / **本番反映も再実行もまだしていない**）
+## 是正（PR #532 `2042ac1b` / **production 反映済み**）
+
+> ⚠️ **反映されたのはコードだけ**。`MARKETING_DRM_AUTOSTART_ENABLED` は**閉のまま**で、
+> env 変更・queue・実送信・**R3 の再実行はしていない**。
 
 ### 一次原因の修正 — 最終 recipient 集合を許可リストで縛る
 
@@ -490,8 +493,7 @@ prospect は **Airtable に配信行を書かない**（#521）。`prospectSeque
 ### 別件（原因が独立なので別コミット）— 送信済みが「未送信」に見えていた
 
 13 行は入口の `hasStarted` では `already_started` と判定されるのに、
-`drmProgress` / `touchMeasurementPage` は step へ紐付けられなかった
-（`sentByStep` 全 0 / `touches: []`）。
+`drmProgress` は step へ紐付けられなかった（`sentByStep` 全 0）。
 
 **調査結果**: 保存された `DeliveryKey` は**正しい**（実データ 13 行を取得し、
 同じ計算で step1 の鍵と **13/13 一致**することを確認。`fromEmail` は `noreply@keiba.link`）。
@@ -503,6 +505,28 @@ prospect は **Airtable に配信行を書かない**（#521）。`prospectSeque
 
 表示だけの不具合だが、**送信済みを未送信に見せる**ため、運用者が撃ち直す危険がある。
 `EmailType` を取得項目へ追加し、「索引が見る項目と取得する項目が食い違わない」ことをテストで固定した。
+
+**本番反映後の実測（read-only / 2026-09-14）**: `drmProgress` は
+`sentByStep: {1: 13}` / `byCurrentStep: {1: 13}` / `due: 0` を返すようになった。
+入口の下見も `already_started: 13` を数えるようになり、対象は **16 名 → 3 名**へ下がった。
+（＝**この修正が入る前に再実行していたら、すでに受け取った 13 名へ撃ち直していた**。）
+
+### ⚠️ 訂正 — `touchMeasurement` が空なのは **上の射影漏れとは別原因**
+
+当初この 2 つを同一原因として記録したが、**誤り**だった。
+`touchMeasurementPage` は `indexDeliveries()` を**通らない**ので、`EmailType` は関係しない。
+
+本番反映後の実測でも `touchMeasurement` は **読み取り 13 行・`touches: []` / `totals.sent: 0`** のまま。
+
+**独立した原因は `journeyModel.js` への依存**:
+`resolveDeliveryTouch()` は `toTouch(campaignId, step)` で通し接点番号を採るが、
+`JOURNEY_PHASES` は **Light 無料体験の 2 本だけ**（6 通 ＋ 終了後 18 通 = 24 接点）を持つ。
+`toTouch('free-signup-onboarding', 1)` は `null` を返し（実行して確認）、
+番号の付かない行は集計から外れるため、**13 行すべてが落ちていた**。
+
+`journeyModel.js` は **Light 無料体験 24 接点の専用 SSOT として維持する**（2026-09-14 MK 確定）。
+**DRM の 3 本をここへ登録してはいけない。**
+一般 sequence 向けに `campaignId` × `step` で数える経路を別に足す（別 PR）。
 
 ## 残作業（**これが埋まるまでクローズしない**）
 
