@@ -25,7 +25,13 @@
  *
  * **送れない置き場所の受信者は、そもそも積まない（＝予約も取らない）。**
  * 送れないまま予約だけ焼くと、あとから経路を直しても**その人には二度と届かない**。
- * 送信経路が対応したら `AIRTABLE_ROW_REQUIRED` を false にするだけで解禁できる。
+ *
+ * ## いまの状態（2026-09-14 以降）
+ *
+ * 送信側を直したので **prospect は送れる**（`AIRTABLE_ROW_REQUIRED = false`）。
+ * 鍵は enqueue 時に Redis へ予約した値を `prospectDeliveryDescriptor.js` が
+ * jobId ごとの対応表で持ち回る（**送信側で作り直さない**）。
+ * このモジュールは「また送れなくなったときに、積むのを止める」ための栓として残す。
  *
  * ⚠️ ここは**判定を写すだけ**で、除外や冪等性の既存判定を緩めない。
  */
@@ -40,12 +46,17 @@ export const LEDGER_DISPATCH_BLOCK = Object.freeze({
  * いまの送信経路が `campaign_delivery_id`（= Airtable の配信行 recordId）を
  * **必須にしている**か。
  *
- * ⚠️ `campaignCustomArgs.js` が Airtable の行だけを権威データにしている限り true。
- *    Redis だけの配信識別で送れるようにするのは**送信・計測契約の変更**なので、
- *    ここを false にするときは `campaignCustomArgs.js` と
- *    `webhooks/emailEventLedger.js` を同時に直すこと（片方だけ変えない）。
+ * ── **2026-09-14: false へ（prospect を送れるようにした）** ─────────────
+ * `campaignCustomArgs.js` に prospect 用の分岐を入れ、`delivery_key` だけで
+ * `custom_args` を組めるようにした。鍵は enqueue のときに Redis へ予約した値を
+ * `prospectDeliveryDescriptor.js`（jobId ごとの対応表）で持ち回る。**再計算しない**。
+ *
+ * ⚠️ true へ戻すと **prospect 11,976 名へ 1 通も送れなくなる**。
+ *    戻すのは「prospect へ送らない」と決めたときだけ。
+ * ⚠️ 送信側（`campaignCustomArgs.js`）と受信側（`webhooks/emailEventLedger.js`）は
+ *    **対で動く**。片方だけ変えない。
  */
-export const AIRTABLE_ROW_REQUIRED = true;
+export const AIRTABLE_ROW_REQUIRED = false;
 
 /**
  * この受信者はいまの送信経路で**実際に送れる**か。

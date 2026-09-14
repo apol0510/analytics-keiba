@@ -58,6 +58,48 @@ ak:mkt:eng:v1:meta   { schema, started_at, first_open_at, last_event_at }
   よって 1 バッチ `HSET` 1 回で書けて、provider の再送で二重に数えることも無い
 - 書き込み失敗は**致命にしない**（webhook を落とさない）。生ログは Blob 側に残る
 
+## 2-b. prospect（CSV 取り込みプール）の数え方（2026-09-14 追加）
+
+CSV 由来の受信者は **Airtable に配信行を作らない**（レコード上限対策 / 2026-08-27 確定）。
+したがって §2 の「`CampaignDeliveries` を数える」は**使えない**。
+prospect の delivered は**本人のレコードに積む**。
+
+| 指標 | 正本 | 積む場所 |
+|---|---|---|
+| delivered | prospect レコードの `delivered` | `sendgrid-webhook` → `prospectStore.recordDelivered()` |
+| open / click | prospect レコードの状態（`ENGAGED`）＋ `ak:mkt:eng:v1`（§2 と同じ）| `recordEngagement()` |
+| bounce / 苦情 / 配信停止 | `SUPPRESSED`（即時） | `recordSuppression()` |
+
+打ち切りの判定は `prospectEngagement.js` の `isProspectCutOff()`。
+**閾値は `engagementPolicy.js` と同じ 10 / 20**（数字を二重に持たない）。
+
+```
+delivered が 10 に達し、open も click も 0
+  → applyDelivered() が その場で EXHAUSTED（次の判定を待たない）
+  → 以後 buildProspectSequenceRows / buildProspectDispatchRows が送信対象から外す
+```
+
+- **反応があれば打ち切らない。** `ENGAGED` は `applyDelivered()` が触らない
+- **キャンペーン単位ではなく「その人」に積む。** 1 本 3 通のキャンペーンでは 10 通に
+  届かないので、**複数キャンペーンを通じて**初めて打ち切りが起きる（これが意図どおり）
+- 打ち切った相手は抑止台帳（`ak:prospect:blocked:*`）へ載るので、**再取り込みでも復活しない**
+
+### ⚠️ `delivered` を数えないと、除外は永久に起きない
+
+`classifyEvent('delivered')` は **2026-09-14 まで `ignore` を返していた**。
+`prospectStore.recordDelivered()` を呼ぶ実装が本番のどこにも無く、
+**分母が 0 のまま**だった（＝ prospect は 1 人も打ち切られ得なかった）。
+ここを `ignore` へ戻さないこと。
+
+### ⚠️ 記録には env が要る
+
+`MARKETING_PROSPECT_EVENTS_ENABLED=true` が無いと、webhook は prospect へ
+**delivered も open も click も 1 件も書かない**（既定 OFF）。
+**送信を再開する前に開ける。** 開けないまま送ると、その配信は選別に一切寄与しない。
+
+click を数えるには `MARKETING_CLICK_TRACKING_ENABLED=true` も要る
+（**配信基盤のアカウント全体設定は触らない**。ログインリンクが書き換わって壊れる）。
+
 ## 3. fail closed（1 つでも欠けたら誰も除外しない）
 
 判定は `src/lib/marketing/engagementGuard.js`。次のどれか 1 つでも欠ければ

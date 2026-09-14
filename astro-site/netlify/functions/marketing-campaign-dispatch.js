@@ -64,7 +64,12 @@ import {
 } from '../../src/lib/promotions/offerCampaignLink.js';
 import { OFFERS_TABLE, getOfferSecret } from '../../src/lib/promotions/promotionalOffer.js';
 import { getBrandConfig, validateBrandFromEmail } from '../../src/lib/newsletter/brand-config.js';
-import { makeRedisCmd } from '../../src/lib/marketing/deliveryKeyStore.js';
+import { makeRedisCmd, makeRedisPipeline } from '../../src/lib/marketing/deliveryKeyStore.js';
+import { createProspectStore, emailHash } from '../../src/lib/marketing/prospectStore.js';
+import { loadProspectDispatchContext } from '../../src/lib/marketing/prospectDispatchContext.js';
+import {
+  createJobDeliveryStore, toProspectDelivery,
+} from '../../src/lib/marketing/prospectDeliveryDescriptor.js';
 import { isQueueVerified } from '../../src/lib/marketing/queueJobPreparation.js';
 import { buildPreviewFingerprint } from '../../src/lib/marketing/campaignPreviewFingerprint.js';
 import {
@@ -459,6 +464,58 @@ export async function runDispatch({
     if (['suspended', 'inactive', 'banned', 'disabled'].includes(status)) suspended.add(e);
   }
 
+  /**
+   * ── prospect（Customers に居ない受信者）の材料を足す ────────────────────
+   *
+   * CSV 取り込みプールは Redis にしか居ないため、Customers から引けない。
+   * 以前はそれを `customer_record_missing` として skip していたので、
+   * **prospect には 1 通も送れなかった**（2026-09-14 実測 / 11,686 名が滞留）。
+   *
+   * ⚠️ 判定は**同じ関数**（`resolveCustomerMarketing` → `verifyBeforeSend`）を通す。
+   *    ここで送信可否を新しく決めない。
+   * ⚠️ **読めなければ止める**。0 件と混同すると「prospect が居ない」と読んで
+   *    全員 skip したまま成功扱いになる。
+   */
+  const prospectMissing = jobEmails.filter((e) => !fieldsByEmail.has(e));
+  /** 見込み客プールを読めなかった理由（読めなくても全体は止めない） */
+  let prospectContextFailure = null;
+  /** prospect 由来の宛先（配信台帳の書き分け・身分証の参照に使う） */
+  const prospectEmails = new Set();
+  /** prospect の配信識別子（jobId ごとの対応表 / 送信済み集合） */
+  const jobDeliveryStore = createJobDeliveryStore({
+    redisCmd: (() => { try { return makeRedisCmd(process.env); } catch { return null; } })(),
+    redisPipeline: (() => { try { return makeRedisPipeline(process.env); } catch { return null; } })(),
+  });
+  if (prospectMissing.length > 0) {
+    let prospectStore = null;
+    try {
+      prospectStore = createProspectStore({ cmd: makeRedisCmd(process.env) });
+    } catch { prospectStore = null; }
+    const ctx = await loadProspectDispatchContext({
+      store: prospectStore, emails: prospectMissing, nowMs: now,
+      blacklistEmails: blocked, hashFn: emailHash,
+    });
+    /**
+     * ⚠️ 読めなかったときは**全体を止めない**。材料が無い相手は、従来どおり
+     *    1 件ずつ `customer_record_missing` で skip される（＝送られない）。
+     *    ここで 500 を返すと、prospect が 1 人も居ないジョブまで道連れになる。
+     *    倒れる向きは常に「送らない」側なので、これで fail closed は保たれる。
+     */
+    if (!ctx.ok) {
+      console.error('❌ [marketing-dispatch] 見込み客プールを読めません（その相手へは送りません）:', ctx.reason);
+      prospectContextFailure = ctx.reason;
+    }
+    for (const row of ctx.rows) {
+      fieldsByEmail.set(row.email, row.fields);
+      prospectEmails.add(row.email);
+    }
+    // 状態として送ってはいけない prospect は、送信直前の再検証でも弾く
+    for (const e of ctx.suppressed) suspended.add(e);
+    if (Object.keys(ctx.skippedByReason).length > 0) {
+      console.log('📣 [marketing-dispatch] prospect 除外:', ctx.skippedByReason);
+    }
+  }
+
   // env 由来の値（テスト受信者ホワイトリスト）。判定モジュールは純粋なのでここで読む。
   const audienceContext = { testRecipients: new Set(parseTestRecipientsEnv(process.env.NEWSLETTER_TEST_RECIPIENTS).recipients) };
 
@@ -584,6 +641,34 @@ export async function runDispatch({
         .filter(Boolean),
     );
 
+    /**
+     * ── prospect の「配信の身分証」を読む ────────────────────────────
+     *
+     * prospect には Airtable の配信行が無いので、`DeliveryKey` は
+     * **積むときに Redis へ置いた対応表**から読む（送信側で作り直さない）。
+     * 同じ理由で「この job でもう送った人」も Airtable では分からないため、
+     * job ごとの集合を読む。
+     *
+     * ⚠️ **どちらも読めなければ、この job の prospect には送らない**（fail closed）。
+     *    分からないまま送ると、再起動で同じ人へもう 1 通出る。
+     */
+    const jobProspects = recipients.filter((e) => prospectEmails.has(e));
+    /** emailHash → DeliveryKey（読めなければ null） */
+    let prospectKeys = null;
+    /** この job で既に送った prospect（emailHash。読めなければ null） */
+    let prospectSent = null;
+    if (jobProspects.length > 0) {
+      prospectKeys = await jobDeliveryStore.load({ jobId });
+      prospectSent = await jobDeliveryStore.loadSent({ jobId });
+      if (prospectKeys === null || prospectSent === null) {
+        console.error('❌ [marketing-dispatch] prospect の配信識別子を読めません（この job の prospect は送りません）:', jobId);
+      } else {
+        for (const email of jobProspects) {
+          if (prospectSent.has(emailHash(email))) alreadySent.add(email);
+        }
+      }
+    }
+
     const toSend = [];
     const toSkip = [];
     for (const email of recipients.slice(0, MAX_PER_RUN)) {
@@ -672,9 +757,22 @@ export async function runDispatch({
         // 配信 1 通を一意に指す識別子を刻む（Phase 1c）。
         // 解決できない相手には**送らない**。紐付けできない配信を増やすと、
         // 台帳に unresolved が積み上がり「反応が無かった」と区別できなくなる。
+        /**
+         * ⚠️ prospect は Airtable の配信行を持たないので、**Redis の対応表**から
+         *    `DeliveryKey` を取って身分証を組む（`prospectDeliveryDescriptor.js`）。
+         *    対応表が読めない / その人の鍵が無いときは `null` のまま = **送らない**。
+         */
+        const prospectDelivery = prospectEmails.has(email) && prospectKeys
+          ? toProspectDelivery({
+            deliveryKey: prospectKeys.get(emailHash(email)),
+            campaignId: jobCampaign.campaignId,
+            campaignVersion: String(jobCampaign.version),
+          })
+          : null;
         const ca = buildCampaignCustomArgs({
-          delivery: deliveryByEmail.get(email) || null,
-          customerRecordId: recordIdByEmail.get(email) || '',
+          delivery: deliveryByEmail.get(email) || prospectDelivery || null,
+          // prospect は Customers に居ないので照合値も無い（身分証側も持たせない）
+          customerRecordId: prospectDelivery ? '' : (recordIdByEmail.get(email) || ''),
           campaignId: jobCampaign.campaignId,
           campaignVersion: String(jobCampaign.version),
         });
@@ -709,7 +807,9 @@ export async function runDispatch({
     if (queueUnverified) {
       const keyOf = (email) => {
         const d = deliveryByEmail.get(email);
-        return String((d && (d.deliveryKey || d.DeliveryKey)) || '');
+        if (d) return String(d.deliveryKey || d.DeliveryKey || '');
+        // prospect は Airtable の行を持たない。鍵は Redis の対応表が正本
+        return String((prospectKeys && prospectKeys.get(emailHash(email))) || '');
       };
       const fp = buildPreviewFingerprint({
         jobId,
@@ -770,7 +870,7 @@ export async function runDispatch({
 
     // 3-a) 送らない相手を台帳へ記録（送信前に確定させる）
     if (toSkip.length > 0) {
-      await patchDeliveriesByEmail({ KEY, BASE, jobId, entries: toSkip, now });
+      await patchDeliveriesByEmail({ KEY, BASE, jobId, entries: toSkip, now, skipEmails: prospectEmails });
     }
 
     // 🛡️ **SendGrid を叩く直前に鍵がまだ自分のものか確かめる。**
@@ -816,7 +916,7 @@ export async function runDispatch({
         html = url ? html.split(OFFER_URL_PLACEHOLDER).join(url) : html;
         if (!url || html.includes(OFFER_URL_PLACEHOLDER)) {
           await patchDeliveriesByEmail({
-            KEY, BASE, jobId, now,
+            KEY, BASE, jobId, now, skipEmails: prospectEmails,
             entries: [{ email, status: 'skipped-duplicate', reason: 'offer_url_unresolved' }],
           });
           summary.skipped += 1;
@@ -828,12 +928,27 @@ export async function runDispatch({
       const customArgs = customArgsByEmail.get(email);
       if (!customArgs) {
         await patchDeliveriesByEmail({
-          KEY, BASE, jobId, now,
+          KEY, BASE, jobId, now, skipEmails: prospectEmails,
           entries: [{ email, status: 'skipped-duplicate', reason: 'custom_args_unresolved' }],
         });
         summary.skipped += 1;
         summary.skippedByReason.custom_args_unresolved = (summary.skippedByReason.custom_args_unresolved || 0) + 1;
         continue;
+      }
+      /**
+       * ⚠️ prospect は **送る前に「送った」を記録する**（`markSent`）。
+       *    Airtable の配信行が無いので、これが唯一の「この job でもう送った」の証拠になる。
+       *    記録できないまま送ると、同じ job の再起動で**もう 1 通出る**。
+       *    記録できなければ**送らない**（fail closed）。
+       */
+      if (prospectEmails.has(email)) {
+        const marked = await jobDeliveryStore.markSent({ jobId, emailHashes: [emailHash(email)] });
+        if (!marked) {
+          summary.skipped += 1;
+          summary.skippedByReason.prospect_sent_mark_failed =
+            (summary.skippedByReason.prospect_sent_mark_failed || 0) + 1;
+          continue;
+        }
       }
       // 無料期間の終了日は**実際の権限状態**から取る（本文の固定値で断定しない）
       const cf = fieldsByEmail.get(email) || {};
@@ -849,7 +964,7 @@ export async function runDispatch({
       });
       if (ok) summary.sent += 1; else summary.failed += 1;
       await patchDeliveriesByEmail({
-        KEY, BASE, jobId, now,
+        KEY, BASE, jobId, now, skipEmails: prospectEmails,
         entries: [{ email, status: ok ? 'sent' : 'failed', reason: ok ? null : 'send_failed' }],
       });
       budget.record(Date.now());
@@ -996,10 +1111,17 @@ async function sendOne({
   }
 }
 
-/** CampaignDeliveries を JobId × RecipientEmail で引いて状態だけ更新する（Customers は触らない） */
-async function patchDeliveriesByEmail({ KEY, BASE, jobId, entries, now }) {
+/**
+ * CampaignDeliveries を JobId × RecipientEmail で引いて状態だけ更新する（Customers は触らない）。
+ *
+ * ⚠️ **prospect（Airtable に配信行が無い受信者）は渡さないこと。** 渡しても行が無いので
+ *    何も起きないが、1 件につき 1 リクエストの空振りが出る。呼び出し側で
+ *    `skipEmails`（= prospect の集合）を渡して外す。
+ */
+async function patchDeliveriesByEmail({ KEY, BASE, jobId, entries, now, skipEmails }) {
   const iso = new Date(now).toISOString();
-  for (const entry of entries) {
+  const skip = skipEmails instanceof Set ? skipEmails : null;
+  for (const entry of (entries || []).filter((e) => !(skip && skip.has(String(e.email || ''))))) {
     const formula = `AND({ScheduledEmailJobId}='${jobId}', LOWER({RecipientEmail})='${entry.email}')`;
     let recs = [];
     try {

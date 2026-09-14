@@ -40,17 +40,33 @@
   これは**別の設計判断**が要る（§未解決）
 - Customers / 課金 / 権限の変更は **0**（この障害でも、今回の修正でも書いていない）
 
-## 未解決（MK 判断待ち）
+## prospect の扱い（**案イを採用 / 2026-09-14 MK 確定**）
 
-prospect を送れるようにするには、次のどちらかを選ぶ必要がある。
+最優先の任務は「約 15,000 件へ自動配信し、delivered 10 通で無反応の宛先を以後の
+通常マーケティング配信から除外する**選別基盤**を完成させる」こと。
+prospect 11,976 名を送れないままでは任務そのものが成立しないため、**案イ**を採った。
 
-| 案 | 内容 | 代償 |
+| 案 | 判断 |
+|---|---|
+| ア. prospect にも Airtable の配信行を作る | **却下**。2026-08-27 に避けたレコード上限が戻る（1 step で約 1.2 万行）|
+| **イ. `campaign_delivery_id` 無しの配信識別を許し、`delivery_key` で紐付ける** | **採用** |
+
+| # | 決定 | 単一源 |
 |---|---|---|
-| ア | prospect にも Airtable の配信行を作る | Airtable レコード上限（2026-08-27 に避けた問題が戻る。1 step で 1.2 万行）|
-| イ | `campaign_delivery_id` 無しの配信識別を許し、`delivery_key`（Redis）で紐付ける | `campaignCustomArgs.js` と `webhooks/emailEventLedger.js` の**同時改修**が要る |
+| 14 | prospect の 1 通は **`delivery_key` だけ**で識別する（`campaign_delivery_id` を要求しない）| `campaignCustomArgs.js` |
+| 15 | 鍵は **enqueue 時の値を持ち回る**（送信側で作り直さない）| `prospectDeliveryDescriptor.js` |
+| 16 | 由来が分かる印 **`audience=prospect`** を必ず刻む（「紐付け失敗」と区別する）| 同上 |
+| 17 | prospect の二重送信は **job ごとの送信済み集合**で防ぐ。**送る前に記録し、記録できなければ送らない** | 同上 |
+| 18 | 送信直前の再検証は prospect も **同じ関数**を通す（`resolveCustomerMarketing` → `verifyBeforeSend`）| `prospectDispatchContext.js` |
+| 19 | **`delivered` を数える**（`classifyEvent` が `ignore` を返していたため分母が 0 だった）| `prospectPolicy.js` / `sendgrid-webhook.js` |
+| 20 | `AIRTABLE_ROW_REQUIRED = false`（prospect を送れる）。**栓は残す**（また送れなくなったら積むのを止められる）| `dispatchableLedger.js` |
 
-決まるまでは `dispatchableLedger.js` の `AIRTABLE_ROW_REQUIRED = true` で
-**積む前に止める**（送れないまま予約だけ焼くと、直しても二度と届かなくなるため）。
+⚠️ **Customers 経路は緩めていない。** recordId が欠けた Customers 由来は従来どおり弾く
+（欠けているのは設計ではなく不具合だから）。
+
+⚠️ prospect の配信は `EmailEvents` 上では `ResolutionStatus=unresolved` になる
+（Airtable の配信行が無いため）。反応の帰属は **prospect プールと
+`ak:mkt:eng:v1` の集計**が持つ。`audience=prospect` がその区別の印。
 
 # 2026-09-09 — Premium Plus 管理画面を「状態 → 次の操作」型にし、販売停止の意味を拡張する
 

@@ -122,6 +122,21 @@ DeliveryKey は **campaign × version × step × 受信者**。
   `CampaignDeliveries` の queued 行だけで、実送信は既存 dispatcher が担う
 - **`Customers` を 1 バイトも書かない**
 
+### prospect（CSV 取り込み）にも送る（2026-09-14 追加）
+
+prospect は Airtable に配信行を作らないので、送信時に `custom_args` の材料が無かった。
+そこで **積むときに `jobId` ごとの対応表**（`emailHash → DeliveryKey`）を Redis へ置き、
+dispatcher がそれを読む。
+
+- 鍵は **enqueue 時の値をそのまま**持ち回る（**送信側で作り直さない**）
+- 対応表を**置けなければそのバッチは積まない**（送れないのに予約だけ焼かない）
+- 二重送信は **job ごとの送信済み集合**で防ぐ。**送る前に記録し、記録できなければ送らない**
+- `delivered` は webhook が prospect レコードへ積む（**打ち切りの分母**）。
+  `MARKETING_PROSPECT_EVENTS_ENABLED=true` が要る
+
+単一源: `prospectDeliveryDescriptor.js` / `prospectDispatchContext.js`
+（判定は [`ENGAGEMENT_SUPPRESSION.md` §2-b](./ENGAGEMENT_SUPPRESSION.md)）
+
 ### キュー登録は「書けたつもり」で終わらせない（2026-09-14 追加）
 
 1. 配信行の upsert は**応答を見る**

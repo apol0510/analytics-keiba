@@ -96,6 +96,14 @@ export const normalizeEmail = (raw) => str(raw).toLowerCase();
  */
 export function classifyEvent(eventType) {
   const t = str(eventType).toLowerCase();
+  /**
+   * ⚠️ **`delivered` を数えるのがこの経路の要**（2026-09-14 追加）。
+   *    打ち切りは「delivered 10 通で無反応」なので、delivered を数えないと
+   *    **分母が永久に 0 のまま**＝誰も打ち切られない。
+   *    以前ここは `ignore` を返しており、`recordDelivered()` を呼ぶ実装が
+   *    本番のどこにも存在しなかった（実測）。
+   */
+  if (t === 'delivered') return { kind: 'delivered' };
   if (t === 'open') return { kind: 'engagement', engagement: ENGAGEMENT_KIND.OPEN };
   if (t === 'click') return { kind: 'engagement', engagement: ENGAGEMENT_KIND.CLICK };
   if (t === 'bounce' || t === 'blocked') return { kind: 'suppress', reason: SUPPRESS_REASON.BOUNCE };

@@ -22,33 +22,16 @@ import {
 } from './dispatchableLedger.js';
 import { resolveRecipientLedgerPolicy, RECIPIENT_SOURCE, DELIVERY_STORE } from './deliveryKeySource.js';
 
-test('Airtable に行を作る相手は送れる', () => {
-  const v = canDispatchWithLedger({ writeAirtable: true });
-  assert.equal(v.ok, true);
-  assert.equal(v.reason, null);
-});
-
-test('【重要】Airtable に行を作らない相手は「送れない」と判定する', () => {
-  const v = canDispatchWithLedger({ writeAirtable: false });
-  assert.equal(v.ok, false);
-  assert.equal(v.reason, LEDGER_DISPATCH_BLOCK.NO_AIRTABLE_ROW);
-});
-
-test('壊れた入力は送れない側へ倒す（fail closed）', () => {
-  for (const p of [null, undefined, {}, { writeAirtable: 'true' }, 'x']) {
-    assert.equal(canDispatchWithLedger(p).ok, false, JSON.stringify(p));
-  }
-});
-
-test('【重要】prospect は現在の送信経路では送れない（どのモードでも）', () => {
+test('【確定仕様】prospect は送れる（送信側を直したので Airtable の行は要らない）', () => {
+  assert.equal(AIRTABLE_ROW_REQUIRED, false, 'prospect へ送れない設定に戻っている');
   for (const mode of Object.values(DELIVERY_STORE)) {
     const policy = resolveRecipientLedgerPolicy({ mode, source: RECIPIENT_SOURCE.PROSPECT });
     assert.equal(policy.writeAirtable, false, `${mode}: prospect が Airtable へ書く設定になっている`);
-    assert.equal(canDispatchWithLedger(policy).ok, false, `${mode}: prospect が送れる判定になっている`);
+    assert.equal(canDispatchWithLedger(policy).ok, true, `${mode}: prospect が送れない判定になっている`);
   }
 });
 
-test('Customers 由来は従来どおり送れる（Airtable へ書くモードのとき）', () => {
+test('Customers 由来は従来どおり送れる', () => {
   const policy = resolveRecipientLedgerPolicy({
     mode: DELIVERY_STORE.DUAL, source: RECIPIENT_SOURCE.CUSTOMER,
   });
@@ -56,7 +39,7 @@ test('Customers 由来は従来どおり送れる（Airtable へ書くモード�
   assert.equal(canDispatchWithLedger(policy).ok, true);
 });
 
-test('受信者を「積んでよい人」と「積まない人」に分け、理由を数える', () => {
+test('全員が「積んでよい人」に入る（いまは誰も塞がれない）', () => {
   const items = [
     { email: 'a@example.com', 出所: RECIPIENT_SOURCE.CUSTOMER },
     { email: 'b@example.com', 出所: RECIPIENT_SOURCE.PROSPECT },
@@ -66,19 +49,29 @@ test('受信者を「積んでよい人」と「積まない人」に分け、�
     items,
     policyOf: (r) => resolveRecipientLedgerPolicy({ mode: DELIVERY_STORE.DUAL, source: r['出所'] }),
   });
-  assert.equal(out.sendable.length, 1);
-  assert.equal(out.blocked.length, 2);
-  assert.equal(out.blockedByReason[LEDGER_DISPATCH_BLOCK.NO_AIRTABLE_ROW], 2);
+  assert.equal(out.sendable.length, 3);
+  assert.equal(out.blocked.length, 0);
 });
 
-test('【重要】解禁するときは送信側と計測側を同時に直す（片方だけ変えさせない）', () => {
+// ── 栓としての性質は残す（また送れなくなったときに積むのを止められる）──────
+test('【重要】旗を立てれば、Airtable に行を作らない相手を積まないように戻せる', async () => {
+  // 旗そのものは定数なので、判定関数の契約（writeAirtable=false を塞ぐ）を直接確かめる
   const src = readFileSync(fileURLToPath(new URL('./dispatchableLedger.js', import.meta.url)), 'utf8');
-  // 旗を false にしたら、なぜ false にしてよいのかが `campaignCustomArgs` 側の変更と
-  // 対になっていることを読み手が辿れる状態にしておく
+  assert.match(src, /AIRTABLE_ROW_REQUIRED && !writesAirtable/, '旗が判定に効いていない');
+  assert.match(src, /LEDGER_DISPATCH_BLOCK\.NO_AIRTABLE_ROW/);
+  assert.ok(LEDGER_DISPATCH_BLOCK.NO_AIRTABLE_ROW);
+});
+
+test('【重要】真偽値の true 以外は「書く」と読まない（fail closed の向き）', () => {
+  const src = readFileSync(fileURLToPath(new URL('./dispatchableLedger.js', import.meta.url)), 'utf8');
+  assert.match(src, /policy\.writeAirtable === true/, '緩い真偽判定に戻っている');
+});
+
+test('【重要】送信側と計測側は対で動く（片方だけ変えさせない）', () => {
+  const src = readFileSync(fileURLToPath(new URL('./dispatchableLedger.js', import.meta.url)), 'utf8');
   assert.match(src, /campaignCustomArgs\.js/);
   assert.match(src, /emailEventLedger\.js/);
-  // いまは Airtable の行が必須（解禁されていないこと自体を固定する）
-  assert.equal(AIRTABLE_ROW_REQUIRED, true);
+  assert.match(src, /prospectDeliveryDescriptor\.js/, '鍵の持ち回し先が書かれていない');
 });
 
 test('キュー登録の cron がこの判定を実際に使っている', () => {

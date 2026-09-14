@@ -52,6 +52,10 @@ import {
 } from '../../src/lib/marketing/deliveryKeySource.js';
 import { canDispatchWithLedger } from '../../src/lib/marketing/dispatchableLedger.js';
 import {
+  buildDescriptorEntries, createJobDeliveryStore,
+} from '../../src/lib/marketing/prospectDeliveryDescriptor.js';
+import { emailHash } from '../../src/lib/marketing/prospectStore.js';
+import {
   isSequenceCampaign, resolveSequenceStep,
 } from '../../src/lib/marketing/campaignSequence.js';
 import { buildSequenceProgress } from '../../src/lib/marketing/sequenceProgress.js';
@@ -364,6 +368,13 @@ export async function runSequenceTick({ env = process.env, now = Date.now(), cam
       });
     } catch { return null; }
   })();
+  /** prospect の「配信の身分証」（jobId → emailHash → DeliveryKey）の置き場所 */
+  const jobDeliveryStore = createJobDeliveryStore({
+    redisCmd: safeRedisCmd(),
+    redisPipeline: (() => {
+      try { return makeRedisPipeline(env); } catch { return null; }
+    })(),
+  });
   if (!prospectStore || !prospectLedger) prospectDegraded = 'redis_unavailable';
   if (prospectStore && prospectLedger) {
     prospectInputs = await loadProspectSequenceInputs({
@@ -631,19 +642,50 @@ export async function runSequenceTick({ env = process.env, now = Date.now(), cam
   }
 
   // 7) キュー登録（ScheduledEmails PENDING + CampaignDeliveries queued）
+  //
+  // ⚠️ **出所（customer / prospect）はここで確定させる。** 以降のバッチ分割・
+  //    配信行の書き分け・prospect の身分証づくりは、すべてこの `tagged` を使う。
+  const tagged = tagRecipientSources({ recipients: built.recipients, prospectEmails });
   const contentHash = computeCampaignContentHash(sending);
   const jobIdByEmail = new Map();
   /** この tick で作ったジョブ（配信行を確かめられなければ取り消す） */
   const createdJobs = [];
+  /** prospect の身分証を保存できなかったバッチ数（**送れないので積まない**） */
+  let descriptorFailed = 0;
   let enqueued = 0;
   let failed = 0;
-  const batches = chunkRecipients(built.recipients);
+  const batches = chunkRecipients(tagged);
   for (let i = 0; i < batches.length; i += 1) {
     const batch = batches[i];
     const jobId = buildJobId({
       campaignId: base.campaignId, version: base.version,
       fingerprint: built.planFingerprint, index: i + 1,
     });
+    /**
+     * ── prospect の「配信の身分証」を**ジョブを作る前に**置く ─────────────
+     *
+     * prospect は Airtable に配信行を作らないので、送信時に `custom_args` の材料
+     * （`DeliveryKey`）を読む先が要る。`jobId` は fingerprint 由来で先に決まるので、
+     * **ジョブを作る前**に対応表を書ける。
+     *
+     * ⚠️ 書けなければ**そのバッチは積まない**。積むと「送れないのに予約だけ焼けた人」に戻る。
+     * ⚠️ 鍵は enqueue 時のものをそのまま置く（送信側で作り直さない）。
+     */
+    const { entries, dropped } = buildDescriptorEntries({ recipients: batch, hashFn: emailHash });
+    if (dropped > 0 || (entries.length > 0 && !jobDeliveryStore.usable)) {
+      descriptorFailed += 1;
+      failed += batch.length;
+      continue;
+    }
+    if (entries.length > 0) {
+      const saved = await jobDeliveryStore.save({ jobId, entries });
+      if (!saved) {
+        console.error(`${SEQ_LOG_TAG} prospect の配信識別子を保存できないため積みません: ${entries.length} 件`);
+        descriptorFailed += 1;
+        failed += batch.length;
+        continue;
+      }
+    }
     const fields = buildScheduledEmailFields({
       campaignId: base.campaignId,
       subject: rendered.subject,
@@ -681,7 +723,7 @@ export async function runSequenceTick({ env = process.env, now = Date.now(), cam
   // ── prospect は Airtable へ 1 行も書かない（2026-08-27 MK 確定）────────
   //    Airtable はレコード上限を超過中で、CSV 由来へ 1 step 配るだけで受信者数ぶん増える。
   //    prospect の冪等性は Redis の集合が担う（`DeliveryKey` の作り方は変えない）。
-  const tagged = tagRecipientSources({ recipients: built.recipients, prospectEmails });
+  //    ⚠️ `tagged` は 7) の先頭で作ってある（バッチ分割と身分証づくりが同じ出所を見るため）。
   const ledgerMode = resolveDeliveryStoreMode(env);
   const split = partitionRecipientsForLedger({ mode: ledgerMode, recipients: tagged });
   const airtableRecipients = tagged.filter((r) => r['出所'] !== RECIPIENT_SOURCE.PROSPECT);
@@ -802,6 +844,7 @@ export async function runSequenceTick({ env = process.env, now = Date.now(), cam
   if (releaseFailed > 0) summary['予約戻し失敗'] = releaseFailed;
   if (alreadyQueued > 0) summary['登録済みのため除外'] = alreadyQueued;
   if (prospectNotDispatchable > 0) summary['prospect送信不可'] = prospectNotDispatchable;
+  if (descriptorFailed > 0) summary['身分証を置けず未登録'] = descriptorFailed;
   log(summary);
   return {
     ok: true, step: plan.step, enqueued, failed,

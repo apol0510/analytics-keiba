@@ -68,13 +68,40 @@ AK のマーケティングメールは、**一度有効化したらその状態
 （`fullAutoOperation.test.mjs` / `autoDispatchPlan.test.mjs` /
 `dispatchableLedger.test.mjs` / `sequenceQueueIntegrity.guard.test.mjs`）
 
-## 未解決（送信経路の設計判断が要る）
+## これは 1 本のキャンペーンを配り切る話ではない（**選別基盤**）
 
-**prospect（CSV 取り込み由来・11,976 名）には、いまの経路では 1 通も送れない。**
-`campaignCustomArgs.js` が `campaign_delivery_id`（Airtable の配信行 recordId）を必須にしており、
-prospect は Airtable に配信行を作らない運用（2026-08-27 確定）だから。
-当面は `dispatchableLedger.js` が**積む前に止める**（送れないのに Redis の予約だけ焼かない）。
-解禁するには `campaignCustomArgs.js` と `webhooks/emailEventLedger.js` を**同時に**直す必要がある。
+最優先の目的は「CSV 由来を中心とする約 15,000 件へ通常マーケティングメールを自動配信し、
+**delivered 10 通で open / click / 購入 / ログインの反応が一度も無い宛先を、
+以後の通常マーケティング配信から自動で除外する**」こと。
+
+**個別キャンペーンの 2 通・3 通を完走しただけでは完成ではない。**
+複数キャンペーンを通じて選別が続く状態が完成条件（閾値・状態は
+[`ENGAGEMENT_SUPPRESSION.md`](../astro-site/docs/ENGAGEMENT_SUPPRESSION.md) が単一源）。
+
+| 受信者 | delivered の数え方 | 除外の効き方 |
+|---|---|---|
+| Customers 由来 | `CampaignDeliveries`（`Status='sent'`）を宛先ぶん名指しで数える | `engagementGuard.js` → `INACTIVE`（10 delivered 無反応）で送信対象から外す |
+| **prospect（CSV 取り込み）** | **prospect レコードの `delivered`**（webhook の `delivered` イベントで +1） | `applyDelivered()` が閾値で **EXHAUSTED** にし、以後の配信対象から構造的に外れる |
+
+どちらも **1 人あたりの累計**で、キャンペーンをまたいで積み上がる。
+
+## prospect にも実際に送る（2026-09-14 解決）
+
+prospect は Airtable に配信行を作らない（2026-08-27 確定 / レコード上限対策）。
+送信側はその前提になっておらず、`custom_args` を Airtable の行からしか作れなかったため、
+**prospect には 1 通も送れていなかった**。次の 3 つで解決した。
+
+| 何 | 単一源 |
+|---|---|
+| 1 通の `DeliveryKey` を enqueue 時の値のまま持ち回る（**再計算しない**）| `prospectDeliveryDescriptor.js`（jobId ごとの対応表 / Redis）|
+| Airtable の行が無くても `custom_args` を組む（`audience=prospect` の印を付ける）| `campaignCustomArgs.js` |
+| 送信直前の再検証に要る材料を prospect プールから復元する | `prospectDispatchContext.js` |
+
+- **二重送信の防止**: prospect には配信行が無いので、job ごとの「送信済み集合」を Redis に持つ。
+  **送る前に記録し、記録できなければ送らない**（`markSent`）
+- **delivered の計上**: `classifyEvent('delivered')` → `prospectStore.recordDelivered()`。
+  ここを `ignore` に戻すと**打ち切りの分母が 0 のまま**になり、誰も除外されない
+- 生アドレスは `ak:prospect:` の外に置かない（対応表は `emailHash → DeliveryKey`）
 
 ---
 

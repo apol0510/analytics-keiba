@@ -1,3 +1,74 @@
+# 🔝 最上位の未完了任務 — **反応で選別する大規模マーケティング配信基盤**（常設 / クローズ禁止）
+
+> **この節は完成するまで `docs/progress.md` の先頭に置く。** 個別キャンペーンの
+> 2 通・3 通を配り切っても**完了にしない**。他の作業を差し込むときも、この節を下へ動かさない。
+
+## 任務（2026-09-14 MK 確定）
+
+正本 [`ENGAGEMENT_SUPPRESSION.md`](../astro-site/docs/ENGAGEMENT_SUPPRESSION.md) /
+[`docs/spec.md`](./spec.md) / [`PROSPECT_MIGRATION_PLAN.md`](./PROSPECT_MIGRATION_PLAN.md) に従い、
+
+> **CSV 由来を中心とする約 15,000 件へ通常マーケティングメールを自動配信し、
+> delivered 10 通で open / click / 購入 / ログインの反応が一度も無い宛先を、
+> 以後の通常マーケティング配信から自動で除外する。**
+
+**複数キャンペーンを通じて選別を継続できる基盤**として完成させる。
+「送信コードが完成した」は完成ではない。**実配信が進み、反応ありを保持し、
+10 delivered 無反応を自動除外できる状態**までを完成とする。
+
+## 完成条件（チェックリスト）
+
+| # | 条件 | 状態 |
+|---|---|---|
+| 1 | 積む → 送る が人手なしで回る（`cron-campaign-sequence` → `cron-marketing-dispatch`）| ✅ 実装・テスト済み（PR #521）/ **本番未反映** |
+| 2 | prospect（11,976 名）にも**実際に送れる**（Airtable の配信行なしで送信できる）| ✅ 実装・テスト済み / **本番未実証** |
+| 3 | `delivered` を数える（打ち切りの分母） | ✅ 実装・テスト済み / **本番は env 未開放** |
+| 4 | `open` / `click` を蓄積する | ⚠️ open は稼働中。**click は `MARKETING_CLICK_TRACKING_ENABLED` 未設定で 0 のまま** |
+| 5 | 反応ありを保持する（ENGAGED は打ち切らない・Customers へ昇格できる）| ✅ 実装済み / 昇格は管理画面から |
+| 6 | **delivered 10 通・無反応で自動除外**される | ✅ 判定は実装・テスト済み / **本番で到達者 0**（実測: 最大 5 通）|
+| 7 | 除外された人が次のキャンペーンでも対象に戻らない | ✅ EXHAUSTED は送信対象の入口で落ちる |
+| 8 | 実配信が**継続**している（1 キャンペーンで止まらない）| ❌ **未達**。step2 は 2026-09-09 以降 0 通 |
+
+## いま本番で足りていないもの（**すべて未実施 / 要承認**）
+
+| # | 作業 | 種別 |
+|---|---|---|
+| A | PR #521 を merge → production deploy | deploy |
+| B | 暴走している enqueue を止める（10 分ごとに約 920 件/日 積まれ続けている）| 運用 |
+| C | 滞留の掃除（PENDING 4,300+ 件 / JobId 欠落の配信行 3,854 行）| 運用 |
+| D | `MARKETING_PROSPECT_EVENTS_ENABLED=true`（**未設定。これが無いと delivered / open / click が 1 件も prospect へ入らない**）| env |
+| E | `MARKETING_CLICK_TRACKING_ENABLED=true`（click を数えるため。**アカウント全体の click tracking は禁止**＝ログインリンクが壊れる）| env |
+| F | `rolloutResume`（Light 体験→Premium は `killed: true` のまま）| 運用 |
+
+⚠️ **D を開けないまま送ると、送った分の delivered が 1 件も記録されない。**
+分母が積まれないので、その配信は選別に一切寄与しない（送り損になる）。
+**送信を再開する前に D を開ける。**
+
+## 本番実測（2026-09-14 / read-only）
+
+| 項目 | 値 |
+|---|---|
+| prospect プール | 11,976 名（active） |
+| step2 の PENDING ジョブ | 4,319 件（宛先スロット 179,724 / ユニーク 15,480）|
+| step2 の実送信 | **0 通** |
+| 1 人あたり delivered の最大 | **5 通**（10 通到達者は 0 名。除外が起きていないのは正常）|
+| `MARKETING_PROSPECT_EVENTS_ENABLED` | **未設定** |
+| `MARKETING_CLICK_TRACKING_ENABLED` | **未設定** |
+
+## この節を閉じてよい条件
+
+上の 8 項目が**すべて ✅**になり、本番で
+
+- prospect への実送信が成立している（sent > 0 / provider 受理）
+- `delivered` が prospect レコードへ積まれている（read-only で確認）
+- `open` / `click` が `ak:mkt:eng:v1` と prospect レコードの両方へ入っている
+- delivered 10 通に到達した無反応の宛先が **EXHAUSTED になり、次の配信対象から外れている**
+
+ことを **read-only で実測**できたとき。
+**それまでは、個別キャンペーンが完走しても「完了」と書かない。**
+
+---
+
 # 🚨 第 2 期 step2 が 1 通も出ていない — **原因 3 件を特定・修正（2026-09-14）/ 本番処置は未実施**
 
 > **この時点で本番へは 1 バイトも書いていない。** 実施したのは read-only の実測と、
