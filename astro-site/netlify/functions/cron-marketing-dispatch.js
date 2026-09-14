@@ -35,14 +35,20 @@ import {
 } from '../../src/lib/marketing/autoDispatchPlan.js';
 import { isMarketingDispatchEnabled, MARKETING_JOB_ID_PREFIX } from '../../src/lib/marketing/marketingDispatchGate.js';
 import { handler as dispatchHandler, resolveDispatchSecret } from './marketing-campaign-dispatch.js';
-import { makeRedisCmd } from '../../src/lib/marketing/deliveryKeyStore.js';
+import { makeRedisCmd, makeRedisPipeline } from '../../src/lib/marketing/deliveryKeyStore.js';
 import {
   createDispatchLock, TICK_LOCK_ROOT, LOCK_FAIL, isSafeJobId,
 } from '../../src/lib/marketing/dispatchLock.js';
 
 const SCHEDULED_TABLE = 'ScheduledEmails';
-/** 1 tick で**見る**ジョブ数（起動数の上限とは別。古い順に並べて取る） */
-const CANDIDATE_LIMIT = 200;
+/**
+ * 1 tick で**見る**ジョブ数（起動数の上限とは別。古い順に並べて取る）。
+ *
+ * ⚠️ 送れないまま溜まった古いジョブが大量にあると、この窓が全部それで埋まり
+ *    **新しいジョブが起動されない**（行列の先頭詰まり）。冷却で飛ばしつつ、
+ *    窓自体も十分に広く取る。それでも足りない規模の滞留は**掃除が要る**（運用側の判断）。
+ */
+const CANDIDATE_LIMIT = 500;
 /** tick 鍵の寿命（この Function の実行時間より十分長く、次の tick より短く） */
 const TICK_LOCK_TTL_SEC = 240;
 /** 「送る相手 0 人」だったジョブを覚えておく Redis 鍵の接頭辞 */
@@ -89,17 +95,37 @@ async function fetchPendingMarketingJobs({ KEY, BASE, limit }) {
   return data.records || [];
 }
 
-/** 「送る相手が 0 人」だったジョブの再開時刻を読む（読めなければ空＝普通に見る） */
-async function readCooldowns({ cmd, jobIds }) {
+/**
+ * 「送る相手が 0 人」だったジョブの再開時刻を読む（読めなければ空＝普通に見る）。
+ *
+ * ⚠️ 候補は最大 `CANDIDATE_LIMIT` 件あるので、**1 リクエストにまとめる**（pipeline）。
+ *    1 件ずつ GET すると tick あたり数百往復になる。
+ * ⚠️ 読めないときは「冷却なし」として扱う。冷却は**順番の都合**でしかなく、
+ *    読めなくても送信可否・冪等性には影響しない（dry-run が最終判断）。
+ */
+async function readCooldowns({ pipeline, cmd, jobIds }) {
   const out = new Map();
-  if (!cmd || jobIds.length === 0) return out;
-  for (const jobId of jobIds) {
+  const ids = jobIds.filter(Boolean);
+  if (ids.length === 0) return out;
+  const take = (raw, jobId) => {
+    const until = Number(raw && typeof raw === 'object' ? raw.result : raw);
+    if (Number.isFinite(until)) out.set(jobId, until);
+  };
+  if (typeof pipeline === 'function') {
     try {
-      // eslint-disable-next-line no-await-in-loop -- 1 tick あたり最大 CANDIDATE_LIMIT 件
+      const res = await pipeline(ids.map((jobId) => ['GET', `${COOLDOWN_ROOT}${jobId}`]));
+      const rows = Array.isArray(res) ? res : [];
+      ids.forEach((jobId, i) => take(rows[i], jobId));
+      return out;
+    } catch { /* pipeline が使えなければ 1 件ずつへ落とす */ }
+  }
+  if (!cmd) return out;
+  for (const jobId of ids) {
+    try {
+      // eslint-disable-next-line no-await-in-loop -- pipeline が使えないときの退避経路
       const v = await cmd(['GET', `${COOLDOWN_ROOT}${jobId}`]);
-      const until = Number(v && (v.result ?? v));
-      if (Number.isFinite(until)) out.set(jobId, until);
-    } catch { /* 読めなければ「冷却なし」＝普通に見る（送信は増えない） */ }
+      take(v, jobId);
+    } catch { /* 読めなければ「冷却なし」 */ }
   }
   return out;
 }
@@ -152,9 +178,11 @@ export async function runAutoDispatchTick({ env = process.env, now = Date.now() 
   }
 
   let cmd = null;
+  let pipeline = null;
   try { cmd = makeRedisCmd(env); } catch { cmd = null; }
+  try { pipeline = makeRedisPipeline(env); } catch { pipeline = null; }
   const cooldownUntilByJobId = await readCooldowns({
-    cmd, jobIds: rows.map((r) => String(((r && r.fields) || {}).JobId || '')).filter(Boolean),
+    pipeline, cmd, jobIds: rows.map((r) => String(((r && r.fields) || {}).JobId || '')).filter(Boolean),
   });
 
   const plan = planAutoDispatch({
