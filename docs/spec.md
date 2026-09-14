@@ -481,11 +481,14 @@ signature に**会員ごとの再募集開始日時**を含める（`rank:plus_r
 | シーケンス | 進める Function | 間隔 | 停止の握り |
 |---|---|---|---|
 | `campaign-discount-free` / `-light` / `-premium` | `cron-campaign-sequence` | 10 分 | env 3 種 + キャンペーン期間（`enabled`）|
+| `free-signup-onboarding`（無料登録者 育成 6 通 / **DRM の入口**）| `cron-campaign-sequence` | 10 分 | 既存 4 ゲート ＋ `MARKETING_DRM_AUTOSTART_ENABLED`（入口）|
 | `light-trial-to-premium-sequence`（体験中 6 通）| `cron-marketing-rollout` | 5 分 | 展開状態（Redis）の `stage` / `killed` |
 | `light-trial-post-expiry-sequence`（終了後 18 通）| `cron-marketing-rollout` | 5 分 | 同上 |
 
 - `MARKETING_SEQUENCE_CAMPAIGN_ID` に値があると **`cron-campaign-sequence` はその campaign しか進めない**
-  （本番は割引 3 本を指定）。体験シーケンスをここへ足しても rollout と二重に進めることになるので**足さない**
+  （本番は割引 3 本を指定）。体験シーケンスをここへ足しても rollout と二重に進めることになるので**足さない**。
+  ⚠️ 一方で **`free-signup-onboarding` はこの Function が担当**するため、
+  env に値がある限り**足さないと 1 通も進まない**（`cron-marketing-rollout` は担当しない）
 - **判定は 1 か所**: 誰が次に何通目かは `sequenceProgress.js` だけが決める。
   cron・管理画面・dry-run はすべて同じ関数を通る
 - **送信経路も 1 本**: 実送信は `marketing-campaign-dispatch` のみ。

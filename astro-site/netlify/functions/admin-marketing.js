@@ -184,7 +184,7 @@ import { summarizeCohortExclusion } from '../../src/lib/marketing/importCohort.j
 import {
   isSequenceCampaign, resolveSequenceStep, describeSequence, resolveMaxSends, getSequenceSteps,} from '../../src/lib/marketing/campaignSequence.js';
 import {
-  buildSequenceProgress, selectNextDueStep, SEQ_STOP_LABEL,
+  buildSequenceProgress, selectNextDueStep, SEQ_STOP_LABEL, indexDeliveries,
 } from '../../src/lib/marketing/sequenceProgress.js';
 import { readSequenceAutoState } from '../../src/lib/marketing/sequenceAutomation.js';
 import {
@@ -208,7 +208,12 @@ import { describeJourney, JOURNEY_PHASES } from '../../src/lib/marketing/journey
 import { buildHistoryByRecipient, summarizeByTouch } from '../../src/lib/marketing/touchMeasurement.js';
 import { createDeliveryEventIndex, MAX_READ_KEYS } from '../../src/lib/webhooks/deliveryEventIndex.js';
 import { loadResponseByEmail } from '../../src/lib/drm/drmResponseLoader.js';
-import { assessFunnel } from '../../src/lib/drm/drmFunnel.js';
+import { assessFunnel, FUNNEL_STAGE } from '../../src/lib/drm/drmFunnel.js';
+import {
+  canAutoStart, planAutoStartEntries, readAutoStartGate,
+  AUTOSTART_SKIP_LABEL,
+} from '../../src/lib/drm/drmAutoStart.js';
+import { resolveAutoStart } from '../../src/lib/marketing/campaignSequence.js';
 import {
   resolveScanPageSize, scanAllTouchPages, buildInlineMeasurementResult,
   MEASUREMENT_INLINE_MAX_PAGES,
@@ -905,6 +910,7 @@ export const handler = async (event) => {
     if (action === 'rollout') return await handleRollout({ KEY, BASE, now, req });
     if (action === 'drm') return await handleDrm({ KEY, BASE, now, req });
     if (action === 'drmCohort') return await handleDrmCohort({ KEY, BASE, now, req });
+    if (action === 'drmAutoStart') return await handleDrmAutoStart({ KEY, BASE, now, req });
     // ⚠️ ここから 4 つは **read-only ではない**（Redis の展開状態だけを書き換える）。
     //    Customers・配信台帳・送信には触れない。受け付ける値は `rolloutControl.js` が絞る。
     if (action === 'rolloutStart') return await handleRolloutControl({ op: ROLLOUT_OP.START, now, req });
@@ -1731,6 +1737,89 @@ async function handleDrm({ KEY, BASE, now, req }) {
     partialReason: t ? null : (metrics.reason || 'metrics_unavailable'),
     notice: '増分集計だけを読んでいます（正本は Customers / CampaignDeliveries）。'
       + '**何も書き込んでいません。** 計測していない指標は 0 ではなく「—」です。',
+  });
+}
+
+/**
+ * **入口の下見**（`action: 'drmAutoStart'`）— 誰が DRM に入るかを**送る前に**見る。
+ *
+ * ⚠️ **1 バイトも書かない・1 通も送らない・queue も作らない。**
+ *    ゲート（`MARKETING_DRM_AUTOSTART_ENABLED`）が**閉じていても**下見できる
+ *    （閉じたまま中身を確認してから開けられるようにするため）。
+ * ⚠️ 全件走査しない。`CREATED_TIME()` で「登録が新しい人」だけを名指しで読む。
+ * ⚠️ **アドレス・氏名を返さない**（件数と recordId だけ）。
+ */
+async function handleDrmAutoStart({ KEY, BASE, now, req }) {
+  const base = getCampaign(req.campaignId, { includeDisabled: true });
+  if (!base) return json(400, { error: '未知のキャンペーンです', sideEffects: 'none' });
+  const gate = canAutoStart(base);
+  if (!gate.ok) {
+    return json(400, {
+      error: 'このキャンペーンは入口の自動開始を宣言していません',
+      reason: gate.reason, sideEffects: 'none',
+    });
+  }
+  const auto = resolveAutoStart(base);
+  const fromEmail = getBrandConfig(BRAND).defaultFromEmail;
+
+  // 入口の候補（**登録が新しい人だけ**）
+  const loaded = await fetchCustomersBounded({
+    KEY, BASE,
+    formula: `IS_AFTER(CREATED_TIME(), DATEADD(NOW(), -${auto.withinDays}, 'days'))`,
+    what: '入口の候補',
+  });
+  if (!loaded.ok) return json(500, { ...loaded.body, sideEffects: 'none' });
+
+  const { emails: blacklistEmails } = await loadBlacklistEmails({ brand: BRAND, baseId: BASE, apiKey: KEY });
+  const candidates = loaded.records.map((rec) => ({
+    recordId: rec.id,
+    fields: rec.fields || {},
+    createdTimeMs: Date.parse(rec.createdTime || '') || null,
+    marketing: resolveCustomerMarketing({ fields: rec.fields || {}, nowMs: now, blacklistEmails }),
+  }));
+
+  // すでに受け取っている人を外すため、**候補の宛先だけ**の配信履歴を引く
+  const emails = candidates.map((c) => c.marketing.email).filter(Boolean);
+  let deliveries;
+  try {
+    deliveries = await fetchDeliveriesByEmails({ KEY, BASE, emails });
+  } catch (e) {
+    return json(500, {
+      error: '配信履歴を取り切れなかったため、入口の下見を返しません（数えられない数は出しません）。',
+      code: 'deliveries_fetch_incomplete',
+      detail: String((e && e.message) || 'unknown'),
+      sideEffects: 'none',
+    });
+  }
+
+  // 選定は純粋関数（cron と同じ）
+  const planned = planAutoStartEntries({
+    campaign: base, candidates, deliveredIndex: indexDeliveries(deliveries),
+    brand: BRAND, fromEmail, nowMs: now, expectedStage: FUNNEL_STAGE.FREE_TO_PAID,
+  });
+
+  return json(200, {
+    mode: 'drm-autostart-preview',
+    sideEffects: 'none',
+    campaignId: base.campaignId,
+    version: base.version,
+    /** env ゲート。**閉じていてもこの下見は返る**（開ける前に中身を見るため） */
+    gate: readAutoStartGate(process.env),
+    autoStart: auto,
+    /** 読んだ候補（登録が新しい人）の数 */
+    scanned: candidates.length,
+    considered: planned.considered,
+    /** いま開ければ入口に入る人数 */
+    wouldEnter: planned.recordIds.length,
+    capped: planned.capped === true,
+    carriedOver: planned.carriedOver || 0,
+    /** 入らない理由の内訳（**0 件にしない・黙って落とさない**） */
+    skipped: planned.skipped,
+    skipLabels: AUTOSTART_SKIP_LABEL,
+    /** 画面がそのまま使える識別子（**アドレスは返さない**） */
+    recordIds: planned.recordIds,
+    notice: '読んだだけです。**何も書き込んでいません**（queue も送信もしていません）。'
+      + ' 実際に送るには既存 4 ゲート ＋ MARKETING_DRM_AUTOSTART_ENABLED が要ります。',
   });
 }
 

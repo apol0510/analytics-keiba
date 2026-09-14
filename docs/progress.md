@@ -45,6 +45,15 @@
 | ゲート | 既存 4 ゲート ＋ **`MARKETING_DRM_AUTOSTART_ENABLED`**（既定 閉）|
 | 候補の読み方 | `CREATED_TIME()` で絞った bounded read。**新しい列を足していない**。読み切れなければ例外 |
 | 実配信 | **0 通**（ゲートは閉じたまま。実送信は未実施）|
+| 下見 | `/admin/drm/` の「入口の下見」= `action:'drmAutoStart'`。**ゲートが閉じていても**誰が入るか数えられる（書き込みゼロ・アドレス非返却）|
+
+⚠️ **`MARKETING_SEQUENCE_CAMPAIGN_ID` の落とし穴**: この env に値があると
+`cron-campaign-sequence` はその campaign しか進めない（本番は割引 3 本を指定）。
+**`free-signup-onboarding` を足さない限り 1 通も進まない**（`cron-marketing-rollout` は担当しない）。
+
+⚠️ **二重送信の封じ込め**: 旧ステップメール `analytics-keiba:signup-onboarding` は
+`supersededBy` を持ち、`enqueue-step-emails` の **live パスがコードで拒否**する
+（409・書き込みゼロ）。env を 1 つ開けただけでは事故にならない。dryRun は従来どおり通る。
 
 ### なぜステップメールを移したか
 
@@ -102,6 +111,10 @@
 | 開封索引の引数名バグ修正 | `admin-marketing.js` / `admin-drm-attribution.js` |
 | 通しテスト（無料登録 → 育成 → 分岐 → 購入で停止） | `drmFreeSignupJourney.test.mjs` |
 | 実経路の配線 guard | `drmRealPathWiring.guard.test.mjs` |
+| **旧ステップメールの live 送信を拒否**（二重送信の封じ込め） | `newsletter/step-sequences.js` / `enqueue-step-emails.js` ＋ `drmStepMailSupersession.guard.test.mjs` |
+| **入口の下見**（送らずに数える・read-only） | `admin-marketing` の `action:'drmAutoStart'` ＋ `/admin/drm/` |
+| 事業ファネルの実装状況を管理画面に表示 | `/admin/drm/`（`businessFunnel`） |
+| 責務境界・シーケンス一覧・env の落とし穴を正本へ | `docs/CAMPAIGN_SEQUENCE.md` §5 / §9-2 / §9-5 / `docs/spec.md` |
 
 `test:drm` 136 pass ／ `check:safety` EXIT=0 ／ `build` EXIT=0。
 **実メール送信・queue・本番書込み・production deploy・PR merge は 1 件も行っていない。**

@@ -313,6 +313,8 @@ export function assessFunnel(campaigns) {
     funnelId: FUNNEL_ID,
     stages,
     blocking,
+    /** 画面がそのまま出せる説明（**欠けを英語コードのまま見せない**） */
+    gapLabels: GAP_LABEL,
     /** 宣言と実装が揃っているか（**実配信の実績は含まない**） */
     declarationsReady: blocking.length === 0,
     notice: '`declarationsReady` は宣言と実装の整合だけを見ます。'

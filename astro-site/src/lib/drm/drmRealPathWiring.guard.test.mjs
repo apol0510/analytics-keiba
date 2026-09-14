@@ -133,3 +133,45 @@ test('【安全】入口の判定を Function 側で作り直さない', () => {
     assert.equal(code.includes(bad), false, `cron が ${bad} を自前で呼んでいる（判定の二重化）`);
   }
 });
+
+// ══════════════════════════════════════════════════════════════════
+//  入口の下見（read-only）
+// ══════════════════════════════════════════════════════════════════
+
+test('【配線】管理画面から入口の下見ができる（送らずに数える）', () => {
+  const code = codeOnly(ADMIN);
+  assert.match(code, /action === 'drmAutoStart'/, '下見の経路が無い');
+  assert.match(code, /planAutoStartEntries\(\{/, '下見が cron と違う選び方をしている');
+  assert.match(code, /mode: 'drm-autostart-preview'/);
+});
+
+test('【安全】下見は書き込まない・ゲートが閉じていても返る', () => {
+  const code = codeOnly(ADMIN);
+  const start = code.indexOf('async function handleDrmAutoStart(');
+  const body = code.slice(start, code.indexOf('async function handleRollout('));
+  assert.ok(start > 0, '下見のハンドラが無い');
+  for (const bad of ["method: 'POST'", "method: 'PATCH'", 'buildDeliveryRecords(', 'buildScheduledEmailFields(']) {
+    assert.equal(body.includes(bad), false, `下見が ${bad} を含む（read-only ではない）`);
+  }
+  assert.match(body, /sideEffects: 'none'/);
+  // ゲートは**返すだけ**（閉じていても 4xx にしない）
+  assert.match(body, /gate: readAutoStartGate\(process\.env\)/);
+  assert.equal(/if \(!readAutoStartGate/.test(body), false, 'ゲートが閉じていると下見できない');
+});
+
+test('【安全】下見はアドレス・氏名を返さない', () => {
+  const code = codeOnly(ADMIN);
+  const start = code.indexOf('async function handleDrmAutoStart(');
+  const body = code.slice(start, code.indexOf('async function handleRollout('));
+  const returned = body.slice(body.indexOf('return json(200, {'));
+  for (const bad of ['emails:', 'email:', '氏名']) {
+    assert.equal(returned.includes(bad), false, `下見の応答に ${bad} が含まれる`);
+  }
+  assert.match(returned, /recordIds: planned\.recordIds/);
+});
+
+test('【配線】事業ファネルの実装状況を read-only で返す', () => {
+  const code = codeOnly(ADMIN);
+  assert.match(code, /businessFunnel: assessFunnel\(CAMPAIGNS\)/,
+    'view ではなく生の定義を渡すこと（stopOnPurchase / disabledReason が落ちる）');
+});

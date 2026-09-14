@@ -209,3 +209,49 @@ test('【配線】並び順を固定して Airtable の既定順に依存しな�
   assert.match(loader, /'Email'/);
   assert.match(loader, /'asc'/);
 });
+
+// ══════════════════════════════════════════════════════════════════
+//  入口の自動開始（`sequence.autoStart`）の絞り込み
+// ══════════════════════════════════════════════════════════════════
+
+test('【重要】入口を宣言した campaign は「登録が新しい人」に絞れる（全件走査しない）', async () => {
+  const { getCampaign } = await import('./campaignCatalog.js');
+  const c = getCampaign('free-signup-onboarding', { includeDisabled: true });
+  const built = buildCampaignAudienceFormula(c);
+  assert.ok(built && built.formula, '絞り込めない（audience_not_narrowable になる）');
+  assert.match(built.formula, /IS_AFTER\(CREATED_TIME\(\), DATEADD\(NOW\(\), -\d+, 'days'\)\)/);
+});
+
+test('【最重要】窓は超集合（進行中の人が一覧から消えない）', async () => {
+  const { getCampaign } = await import('./campaignCatalog.js');
+  const { resolveAutoStart, resolveAutoStartAudienceWindowDays, getSequenceSteps } = await import('./campaignSequence.js');
+  const c = getCampaign('free-signup-onboarding', { includeDisabled: true });
+  const auto = resolveAutoStart(c);
+  const windowDays = resolveAutoStartAudienceWindowDays(c);
+  const span = getSequenceSteps(c).reduce((a, s) => a + (Number(s.delayDays) || 0), 0);
+  // 入口の窓 ＋ シーケンス全体の所要日数 より必ず広い
+  assert.ok(windowDays > auto.withinDays + span,
+    `窓が狭い（${windowDays} 日）。進行中の人が一覧から落ちる`);
+});
+
+test('【安全】入口を宣言していない campaign の formula は変わらない', async () => {
+  const { getCampaign } = await import('./campaignCatalog.js');
+  const c = getCampaign('light-trial-post-expiry-sequence', { includeDisabled: true });
+  const built = buildCampaignAudienceFormula(c);
+  assert.equal(/CREATED_TIME/.test((built && built.formula) || ''), false,
+    '宣言の無い campaign に入口の条件が混ざっている');
+});
+
+test('【鏡】JS 側の判定も同じ窓で切る', async () => {
+  const { getCampaign } = await import('./campaignCatalog.js');
+  const { resolveAutoStartAudienceWindowDays } = await import('./campaignSequence.js');
+  const c = getCampaign('free-signup-onboarding', { includeDisabled: true });
+  const w = resolveAutoStartAudienceWindowDays(c);
+  const now = Date.UTC(2026, 8, 14);
+  const inside = { createdTimeMs: now - (w - 1) * 86400_000, nowMs: now };
+  const outside = { createdTimeMs: now - (w + 1) * 86400_000, nowMs: now };
+  assert.equal(campaignAudienceFormulaAccepts(c, inside), true);
+  assert.equal(campaignAudienceFormulaAccepts(c, outside), false);
+  // 登録時刻を渡さないときは判定しない（既存の呼び出しを壊さない）
+  assert.equal(campaignAudienceFormulaAccepts(c, {}), true);
+});

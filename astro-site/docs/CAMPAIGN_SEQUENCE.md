@@ -80,13 +80,24 @@ DeliveryKey は **campaign × version × step × 受信者**。
 3. `MARKETING_CAMPAIGN_ENABLED=true`（既存の live enqueue）
 4. `MARKETING_CAMPAIGN_DISPATCH_ENABLED=true`（既存の実送信）
 
-- **step1（初回接触）は自動で撃たない。** 母集団が最大になるため、管理画面から明示的に開始する。
+- **step1（初回接触）は原則として自動で撃たない。** 母集団が最大になるため、管理画面から明示的に開始する。
   よって自動実行の走査対象は「その campaign で 1 通以上受け取った人」に限られ、
   Customers 全件走査（14,000 件超）を構造的に回避している
+- **例外: `sequence.autoStart` を宣言した campaign だけ、入口を自動で開ける**（2026-09-14〜）。
+  母集団を「**登録が新しい無料会員**」に限り、1 回の実行の人数にも上限を置くので、
+  全件走査へは戻らない。§9-5 を参照。5 つ目のゲート
+  **`MARKETING_DRM_AUTOSTART_ENABLED=true`** が要る（既定 閉）
 - 上限（1 回 200 名）を超えたら**切り捨てずに中止**する
 - この Function は**メールを送らない**。作るのは `ScheduledEmails` の PENDING 行と
   `CampaignDeliveries` の queued 行だけで、実送信は既存 dispatcher が担う
 - **`Customers` を 1 バイトも書かない**
+
+### ⚠️ `MARKETING_SEQUENCE_CAMPAIGN_ID` の落とし穴
+
+この env に値があると、**`cron-campaign-sequence` はその campaign しか進めない**
+（`resolveTickCampaignIds`）。本番は割引 3 本を指定しているため、
+**新しい campaign を足しただけでは 1 通も進まない**。
+進めたい campaign を足すか、env を空にして「使える連続配信すべて」に戻すこと。
 
 ## 6. 管理画面（`/admin/premium-plus-eligibility/`）
 
@@ -499,9 +510,59 @@ POST /.netlify/functions/cron-light-trial-grant
 
 どちらも**ゲートが閉じていても実行でき、1 バイトも書かない**。
 
+## 9-5. 入口の自動開始（`sequence.autoStart` / 2026-09-14〜）
+
+**無料登録から DRM が自動で始まる**ための宣言。これを持つ campaign だけ step1 を自動で撃てる。
+
+```js
+sequence: {
+  autoStart: { kind: 'free_signup', withinDays: 14, maxPerTick: 50 },
+}
+```
+
+| | |
+|---|---|
+| ゲート | 既存 4 枚 ＋ **`MARKETING_DRM_AUTOSTART_ENABLED=true`**（既定 閉）|
+| 候補 | `CREATED_TIME()` で絞った bounded read。**新しい列を足していない** |
+| 窓 | 登録から `withinDays` 以内。**遡って一斉に撃たない** |
+| 上限 | 1 回 `maxPerTick` 名。超過は `carriedOver` で次回へ（**黙って捨てない**）|
+| 並び | recordId 昇順で決定的（同じ入力なら毎回同じ対象）|
+| 選定 | `drm/drmAutoStart.js`（純粋）。**新しい停止条件を作らない** |
+
+**入口に入れない条件**（既存の単一源の結果をそのまま使う）:
+配信停止・バウンス等で送れない / すでに有料 / 対象条件に合わない /
+**すでに 1 通でも受け取っている** / 窓の外 / 段が違う / **登録時刻が読めない**。
+
+### 下見（送らずに数える）
+
+管理画面 `/admin/drm/` の「入口の下見」、または
+`admin-marketing` の `action: 'drmAutoStart'`。
+**ゲートが閉じていても返る**（開ける前に中身を確認するため）。
+**1 バイトも書かない**・アドレスは返さない。
+
+⚠️ 入口の候補が読めなくても、**進行中の配信は止めない**（入口だけ開かない）。
+
 ## 9-2. 現行のシーケンス
 
-### `light-trial-to-premium-sequence`（Light 無料体験 → Premium / 全 4 通）
+### `free-signup-onboarding`（無料登録者 育成 / 全 6 通・**DRM の入口**）
+
+| step | 間隔 | 役割 | CTA |
+|---|---|---|---|
+| 1 | 開始時 | ご登録のお礼と入口 | 無料予想を見る |
+| 2 | +2 日 | 予想ページの見方 | 今日の予想で使い方を確認する |
+| 3 | +3 日 | 直近の実績 | 的中実績アーカイブを見る |
+| 4 | +7 日 | 買い目の考え方（メインレース 5 点） | 今日の買い目を見る |
+| 5 | +14 日 | プラン比較 | プランを比較する |
+| 6 | +21 日 | 上位プランの機能 | 上位プランの機能を見る |
+
+- 対象は **無料・契約なし**（`audienceRule` で enforce）。**付与も価格提示もしない**
+- **入口が自動で開く**（`sequence.autoStart` / §9-5）
+- **反応別 routing**: 開封 → step5（プランの違い）/ 到達・未開封 → step3（実績）
+- 購入（Light / Premium / 三連複のいずれか）で停止する
+- 文面は既存ステップメール `newsletter/step-sequences.js` の `signup-onboarding` を移送したもの。
+  旧側は **`supersededBy` で live 送信を拒否**する（同じ 6 通が二度届かないように）
+
+### `light-trial-to-premium-sequence`（Light 無料体験 → Premium / 全 6 通）
 
 | step | 間隔 | 役割 | 件名 | CTA |
 |---|---|---|---|---|
@@ -509,6 +570,10 @@ POST /.netlify/functions/cron-light-trial-grant
 | 2 | +3 日 | 使い方・買い目の見方 | メインレースの買い目の見方 | メインレースの買い目を見る |
 | 3 | +5 日 | 期間中に確認してほしいこと | 無料期間中にご確認いただきたいこと | 無料期間中の予想を見る |
 | 4 | +7 日 | Premium の提案 | 他のレースもご覧になりたい場合は | プランと料金を見る |
+| 5 | +4 日 | 当日の見方（レース前） | （`lightTrialSteps.js`） | — |
+| 6 | +4 日 | 中央（JRA）の予想 | （`lightTrialSteps.js`） | — |
+
+> ⚠️ Step5〜6 は**末尾への追加**（`lightTrialSteps.js`）。既存 Step の鍵を変えないので再送は起きない。
 
 対象は **CSV 取り込みの会員**のうち **期限付き Light 無料期間中**の人
 （`requiresImportCohort` + `requiresActiveGrant: { tier:'light', termedOnly:true }`）。
@@ -532,6 +597,10 @@ npm run check:safety     # 上記を含む全 safety check
 | `sequenceAutomation.test.mjs` | ゲート・1 ステップだけ・step1 手動・上限中止 |
 | `sequenceRender.test.mjs` | HTML/text 両方・モバイル・本番文面の表現・benefit guard |
 | `sequenceWiring.guard.test.mjs` | 管理 API / cron / 画面の配線と安全条件 |
+| `drm/drmAutoStart.test.mjs` | 入口のゲート・除外理由・上限・決定性・次段接続 |
+| `drm/drmFreeSignupJourney.test.mjs` | **無料登録 → 育成 → 反応別分岐 → 購入/停止**の通し |
+| `drm/drmRealPathWiring.guard.test.mjs` | cron / 管理画面が反応と入口を実際に通しているか |
+| `drm/drmStepMailSupersession.guard.test.mjs` | 旧ステップメールと後継 campaign が**二重送信しない** |
 | `marketingStatusScan.regression.test.mjs` | 台帳 **6,110 行 fixture** でも 10 名を 10 名と数える（実ハンドラ起動） |
 | `marketingStatusScan.guard.test.mjs` | 状態表示が打ち切る取得へ戻らない・fail closed の維持 |
 | `step1Preflight.test.mjs` | Step1 直前確認の判定（**確認できないものを ok にしない**／queue 済みで止まる・未 queue で通る） |
