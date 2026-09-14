@@ -142,6 +142,8 @@ import {
 import {
   planProspectClaimRelease, summarizeClaimRelease, RELEASE_CONFIRM,
 } from '../../src/lib/marketing/prospectClaimRelease.js';
+import { runSequenceTick } from './cron-campaign-sequence.js';
+import { AUDIENCE_FILTER_ENV } from '../../src/lib/marketing/sequenceAudienceFilter.js';
 import {
   createDeliveryKeyRollbackStore, DEFAULT_ROLLBACK_TTL_SEC, RUN_ID,
 } from '../../src/lib/marketing/deliveryKeyRollback.js';
@@ -911,6 +913,7 @@ export const handler = async (event) => {
     if (action === 'eventSinkHealth') return await handleEventSinkHealth({ KEY, BASE, now });
     if (action === 'prospectIntake') return await handleProspectIntake({ KEY, BASE, now, req });
     if (action === 'prospectSequenceCheck') return await handleProspectSequenceCheck({ now, req });
+    if (action === 'sequenceTickPreview') return await handleSequenceTickPreview({ now, req });
     if (action === 'prospectClaimRelease') return await handleProspectClaimRelease({ KEY, BASE, now, req });
     if (action === 'prospectClaimRestore') return await handleProspectClaimRestore({ req });
     if (action === 'prospectIndexAudit') return await handleProspectIndexAudit({ req });
@@ -4311,6 +4314,8 @@ async function handleProspectIndexRepair({ req }) {
   });
 }
 
+
+
 /**
  * prospect の **予約だけが焼けた step** を剥がして、配信対象へ戻す（C2）。
  *
@@ -4734,6 +4739,12 @@ async function handleProspectSequenceCheck({ now, req }) {
     mode: 'prospect-sequence-check',
     sideEffects: 'none',
     campaignId,
+    /**
+     * ⚠️ **母数は prospect 索引だけ**（Customers は 1 人も含まない）。
+     *    2026-09-14 に「150 通送ったのに step 分布が動かない」と誤読しかけた。
+     *    Customers 由来の進行はこの数字には出ない（配信台帳が正本）。
+     */
+    '母数の範囲': 'prospect 索引のみ（Customers は含まない）',
     /** 索引のどこを見たか（`nextOffset` が null なら読み切り） */
     window: {
       offset: from,
@@ -6649,5 +6660,55 @@ async function handleSegments({ KEY, BASE, now, req }) {
     measurement,
     notice: 'これは件数の下見です。**まだ送信対象は固定されていません**（キュー登録も送信もしていません）。',
     labels: { exclude: SEG_EXCLUDE_LABEL },
+  });
+}
+
+/**
+ * 連続配信 tick の**下見**（1 バイトも書かない）。
+ *
+ * ## 何のためか
+ *
+ * 2026-09-14 の初回実配信 150 通は**全員 Customers 由来**で、prospect が 1 人も
+ * 含まれなかった。実送信の前に「**次の tick に prospect が確実に入るか**」を
+ * 数字で確かめられるようにする。
+ *
+ * ⚠️ 判定は**本番の tick と同じ関数**（`runSequenceTick`）を `dryRun` で通す。
+ *    下見用の別ロジックを作らない（画面の数と実配信がズレる原因になる）。
+ * ⚠️ 予約（`claimDelivered`）より手前で返るので、**下見で予約を焼かない**。
+ * ⚠️ ゲートが閉じていても下見はできる。ただし応答にゲートの状態を必ず載せる。
+ */
+async function handleSequenceTickPreview({ now, req }) {
+  const campaignId = String(req.campaignId || '').trim();
+  const campaign = getCampaign(campaignId, { includeDisabled: true });
+  if (!campaign || !isSequenceCampaign(campaign)) {
+    return json(400, { error: '連続配信のキャンペーンを指定してください', sideEffects: 'none' });
+  }
+  /** 下見のあいだだけ差し替える env（**実行時の env は変えない**） */
+  const overrides = {};
+  const filter = String(req.sourceFilter || '').trim().toLowerCase();
+  if (filter) overrides[AUDIENCE_FILTER_ENV] = filter;
+  const maxPerTick = Number(req.maxPerTick);
+  if (Number.isInteger(maxPerTick) && maxPerTick > 0) {
+    overrides.MARKETING_SEQUENCE_MAX_PER_TICK = String(maxPerTick);
+  }
+
+  let out;
+  try {
+    out = await runSequenceTick({
+      env: { ...process.env, ...overrides }, now, campaignId, dryRun: true,
+    });
+  } catch (e) {
+    return json(500, {
+      mode: 'sequence-tick-preview', campaignId, sideEffects: 'none',
+      error: '下見を組み立てられませんでした', reason: String((e && e.message) || 'unknown'),
+    });
+  }
+  return json(200, {
+    mode: 'sequence-tick-preview',
+    sideEffects: 'none',
+    適用した絞り込み: overrides[AUDIENCE_FILTER_ENV] || '(既定 = 全部)',
+    '1 tick の上限': overrides.MARKETING_SEQUENCE_MAX_PER_TICK || '(既定)',
+    ...out,
+    notice: '下見です。予約・キュー登録・送信はいずれも行っていません。',
   });
 }

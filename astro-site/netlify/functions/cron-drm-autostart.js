@@ -54,6 +54,10 @@ import { loadBlacklistEmails } from '../../src/lib/newsletter/airtable-fetch.js'
 import { getBrandConfig } from '../../src/lib/newsletter/brand-config.js';
 import { assertFetchComplete } from '../../src/lib/marketing/marketingTargetedLoad.js';
 import { runSequenceTick } from './cron-campaign-sequence.js';
+import {
+  createDispatchLock, TICK_LOCK_ROOT, LOCK_FAIL,
+} from '../../src/lib/marketing/dispatchLock.js';
+import { makeRedisCmd } from '../../src/lib/marketing/deliveryKeyStore.js';
 
 const BRAND = 'analytics-keiba';
 const CUSTOMERS_TABLE = 'Customers';
@@ -61,6 +65,22 @@ const DELIVERIES_TABLE = 'CampaignDeliveries';
 const MAX_PAGES = 20;
 
 export const DRM_LOG_TAG = '[drm-autostart]';
+
+/**
+ * **入口の多重起動を止める鍵**（#526 と同じ仕組み・**別の名前**）。
+ *
+ * ⚠️ #526 が入れた `tick:campaign-sequence` の鍵は
+ *    `cron-campaign-sequence` の**定期実行エントリ**にある。
+ *    入口は `runSequenceTick` を**直接**呼ぶので、その鍵の下を通らない。
+ *    鍵なしだと、日次の定期実行と管理画面からの手動実行が重なったとき
+ *    **同じ人を 2 回 queue し得る**（配信行を書く前に両方が「未送信」と読む）。
+ *    #526 が共有 cron で塞いだのと同じ穴なので、入口にも同じ鍵を掛ける。
+ * ⚠️ **名前を分ける**こと。共有 cron と同じ鍵にすると、互いの実行を
+ *    無関係に塞き止めてしまう（割引 3 本の tick を DRM が止めることになる）。
+ */
+export const DRM_TICK_LOCK_ID = 'tick:drm-autostart';
+/** 次の定期実行（1 日 1 回）より十分短く、実行時間より十分長く */
+export const DRM_TICK_LOCK_TTL_SEC = 240;
 
 const auth = (key) => ({ Authorization: `Bearer ${key}` });
 const log = (payload) => {
@@ -267,6 +287,31 @@ export async function runDrmEntry({
     MARKETING_SEQUENCE_SCHEDULER_ENABLED: 'true',
     MARKETING_SEQUENCE_ARMED: '',
   };
+  // ── 入口の多重起動を止める（#526 と同じ仕組み・別の鍵）──────────────
+  //    ⚠️ **取れなければ 1 件も積まない**（Redis へ届かないときも積まない）。
+  const makeLock = deps.createDispatchLock || createDispatchLock;
+  let lock = null;
+  let token = null;
+  try {
+    const makeCmd = deps.makeRedisCmd || makeRedisCmd;
+    lock = makeLock({ cmd: makeCmd(env), root: TICK_LOCK_ROOT });
+    const got = await lock.acquire({ jobId: DRM_TICK_LOCK_ID, ttlSec: DRM_TICK_LOCK_TTL_SEC });
+    if (!got.ok) {
+      const body = {
+        ok: false,
+        abort: got.reason === LOCK_FAIL.BUSY ? 'entry_busy' : 'entry_lock_unavailable',
+        sideEffects: 'none',
+      };
+      log(body);
+      return body;
+    }
+    token = got.token;
+  } catch {
+    const body = { ok: false, abort: 'entry_lock_unavailable', sideEffects: 'none' };
+    log(body);
+    return body;
+  }
+
   const tick = deps.runSequenceTick || runSequenceTick;
   let result;
   try {
@@ -275,6 +320,8 @@ export async function runDrmEntry({
     const body = { ok: false, abort: 'tick_failed', detail: String((e && e.message) || 'unknown'), sideEffects: 'unknown' };
     log(body);
     return body;
+  } finally {
+    try { await lock.release({ jobId: DRM_TICK_LOCK_ID, token }); } catch { /* TTL で切れる */ }
   }
 
   const entered = (result && result.autoStart && result.autoStart.entered) || 0;

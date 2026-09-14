@@ -31,9 +31,14 @@ const PROD_LIKE = {
 };
 const OPEN = { ...PROD_LIKE, [DRM_ENTRY_ENV]: 'true' };
 
+/** 取れる鍵 / 取れない鍵（実行の経路は鍵を取るので、テストでは差し替える）*/
+const lockOk = () => ({ acquire: async () => ({ ok: true, token: 't' }), release: async () => {} });
+const lockBusy = () => ({ acquire: async () => ({ ok: false, reason: 'busy' }), release: async () => {} });
+
 /** admin の薄いハンドラと同じ呼び方（`manual: true`）*/
 const asAdmin = (over = {}) => runDrmEntry({
   env: OPEN, now: 1, manual: true, ...over,
+  deps: { createDispatchLock: lockOk, makeRedisCmd: () => async () => null, ...(over.deps || {}) },
 });
 
 // ══════════════════════════════════════════════════════════════════
@@ -139,6 +144,7 @@ test('【重要】入口のスイッチが閉じていれば実行しない', as
     deps: {
       previewEntry: async () => ({ ok: true, wouldEnter: 15 }),
       runSequenceTick: async () => { tickCalled += 1; return {}; },
+      createDispatchLock: lockOk, makeRedisCmd: () => async () => null,
     },
   });
   assert.equal(r.abort, ENTRY_ABORT.GATE_CLOSED);
@@ -166,7 +172,7 @@ test('【最重要】admin 経由でも割引 3 本は撃てない', async () =>
 test('【不変】共有の cron（#521 / #523）を変更していない', () => {
   const code = codeOnly(SEQ_CRON);
   assert.match(code, /readSequenceGates\(env, now\)/);
-  assert.match(code, /if \(!gates\.allOpen\)/);
+  assert.match(code, /!gates\.allOpen/, 'ゲート判定が外れている');
   assert.match(code, /allowFirstStep: autoStartDecl !== null && autoStartGate\.open === true/);
   assert.equal(code.includes('drmEntryRun'), false);
   assert.equal(code.includes('runDrmEntry'), false);
@@ -181,4 +187,111 @@ test('【記録】scheduled Function は HTTP から起動できないことが 
   const FN = read('../../../netlify/functions/cron-drm-autostart.js');
   assert.match(FN, /HTTP から起動できない/);
   assert.match(FN, /payload も渡せない/);
+});
+
+// ══════════════════════════════════════════════════════════════════
+//  ④ 入口の多重起動を止める（#526 と同じ穴を残さない）
+// ══════════════════════════════════════════════════════════════════
+
+test('【最重要】入口の鍵を取れなければ 1 件も積まない', async () => {
+  let tickCalled = 0;
+  const r = await asAdmin({
+    dryRun: false, expectedCount: 15,
+    deps: {
+      previewEntry: async () => ({ ok: true, wouldEnter: 15 }),
+      runSequenceTick: async () => { tickCalled += 1; return {}; },
+      createDispatchLock: lockBusy,
+    },
+  });
+  assert.equal(r.ok, false);
+  assert.equal(r.abort, 'entry_busy');
+  assert.equal(tickCalled, 0, '鍵を取れないのに積んだ');
+  assert.equal(r.sideEffects, 'none');
+});
+
+test('【安全】鍵の仕組みへ到達できないときも積まない', async () => {
+  let tickCalled = 0;
+  const r = await asAdmin({
+    dryRun: false, expectedCount: 15,
+    deps: {
+      previewEntry: async () => ({ ok: true, wouldEnter: 15 }),
+      runSequenceTick: async () => { tickCalled += 1; return {}; },
+      createDispatchLock: () => { throw new Error('redis down'); },
+      makeRedisCmd: () => async () => null,
+    },
+  });
+  assert.equal(r.abort, 'entry_lock_unavailable');
+  assert.equal(tickCalled, 0);
+  assert.equal(r.sideEffects, 'none');
+});
+
+test('【重要】鍵は共有 cron と別名（互いを塞き止めない）', async () => {
+  const { DRM_TICK_LOCK_ID } = await import('../../../netlify/functions/cron-drm-autostart.js');
+  const { SEQUENCE_TICK_LOCK_ID } = await import('../../../netlify/functions/cron-campaign-sequence.js');
+  assert.notEqual(DRM_TICK_LOCK_ID, SEQUENCE_TICK_LOCK_ID, '共有 cron と同じ鍵を使っている');
+  assert.equal(DRM_TICK_LOCK_ID, 'tick:drm-autostart');
+});
+
+test('【重要】終わったら鍵を返す（次の実行が走れる）', async () => {
+  let released = 0;
+  await asAdmin({
+    dryRun: false, expectedCount: 15,
+    deps: {
+      previewEntry: async () => ({ ok: true, wouldEnter: 15 }),
+      runSequenceTick: async () => ({ ok: true, autoStart: { entered: 15 } }),
+      createDispatchLock: () => ({
+        acquire: async () => ({ ok: true, token: 't' }),
+        release: async () => { released += 1; },
+      }),
+      makeRedisCmd: () => async () => null,
+    },
+  });
+  assert.equal(released, 1, '鍵を返していない');
+});
+
+test('【安全】下見では鍵を取らない（読むだけ）', async () => {
+  let acquired = 0;
+  await runDrmEntry({
+    env: PROD_LIKE, now: 1, manual: true, dryRun: true,
+    deps: {
+      previewEntry: async () => ({ ok: true, wouldEnter: 15 }),
+      createDispatchLock: () => ({ acquire: async () => { acquired += 1; return { ok: true, token: 't' }; }, release: async () => {} }),
+      makeRedisCmd: () => async () => null,
+    },
+  });
+  assert.equal(acquired, 0, '下見で鍵を取っている');
+});
+
+// ══════════════════════════════════════════════════════════════════
+//  ⑤ #526 の契約（tick lock / prospect canary / audience filter）
+// ══════════════════════════════════════════════════════════════════
+
+test('【不変】#526 の tick 鍵が共有 cron に残っている', () => {
+  const code = codeOnly(SEQ_CRON);
+  assert.match(code, /SEQUENCE_TICK_LOCK_ID = 'tick:campaign-sequence'/);
+  assert.match(code, /lock\.acquire\(\{/);
+  assert.match(code, /tick_busy/);
+  // 鍵を取れなければ campaign を 1 本も進めない
+  const acq = code.indexOf('lock.acquire({');
+  const run = code.indexOf('await runSequenceTick({ env: process.env');
+  assert.ok(acq > 0 && run > acq, '鍵より前に tick が走る');
+});
+
+test('【不変】#526 の出所フィルタ（prospect canary）が残っている', async () => {
+  const mod = await import('../marketing/sequenceAudienceFilter.js');
+  assert.ok(typeof mod === 'object');
+  const code = codeOnly(SEQ_CRON);
+  assert.match(SEQ_CRON, /sequenceAudienceFilter\.js/, 'cron が出所フィルタを import していない');
+  assert.match(code, /resolveAudienceFilter\(env\)/, 'cron が出所フィルタを解決していない');
+  assert.match(code, /applyAudienceFilter\(\{/, 'cron が出所フィルタを適用していない');
+});
+
+test('【不変】DRM 経路は出所フィルタを触らない（既定＝全部のまま）', () => {
+  const FN = read('../../../netlify/functions/cron-drm-autostart.js');
+  assert.equal(FN.includes('MARKETING_SEQUENCE_SOURCE_FILTER'), false,
+    'DRM 側が出所フィルタを上書きしている');
+  const code = codeOnly(ADMIN);
+  const i = code.indexOf('async function handleDrmEntryRun(');
+  const body = code.slice(i, code.indexOf('\nasync function ', i + 10));
+  assert.equal(body.includes('MARKETING_SEQUENCE_SOURCE_FILTER'), false);
 });
