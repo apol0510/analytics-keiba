@@ -202,6 +202,12 @@ export async function previewEntry({ env, now, campaignId }) {
     scanned: candidates.length,
     considered: planned.considered,
     wouldEnter: planned.recordIds.length,
+    /**
+     * ⚠️ **最終集合を縛るためだけの recordId**（`runSequenceTick` へ渡す）。
+     *    候補データ（candidate object）ではないので、渡しても再検証は短絡しない。
+     *    Background の payload にも HTTP 応答にも**載せない**。
+     */
+    recordIds: [...planned.recordIds],
     capped: planned.capped === true,
     carriedOver: planned.carriedOver || 0,
     skipped: planned.skipped,
@@ -248,7 +254,9 @@ export async function runDrmEntry({
     } catch (e) {
       return { ok: false, abort: 'preview_failed', detail: String((e && e.message) || 'unknown'), sideEffects: 'none' };
     }
-    return { ...seen, mode: 'drm-entry-preview', dryRun: true, gates, sideEffects: 'none' };
+      // ⚠️ 下見の応答から `recordIds` は落とす（外へ出す必要が無い）
+    const { recordIds: _ids, ...view } = seen;
+    return { ...view, mode: 'drm-entry-preview', dryRun: true, gates, sideEffects: 'none' };
   }
 
   // ── ここから先は実行（ゲートが全部開いていること）──────────────────
@@ -331,7 +339,18 @@ export async function runDrmEntry({
   const tick = deps.runSequenceTick || runSequenceTick;
   let result;
   try {
-    result = await tick({ env: tickEnv, now, campaignId });
+    /**
+     * ⚠️ **許可リストは「これ以外へ送らない」という上限制約**（2026-09-14 の事故対応）。
+     *    渡すのは**直前の下見が返した recordId だけ**で、候補データは渡さない。
+     *    `runSequenceTick` は従来どおり候補を取り直し、purchase / suppression /
+     *    blacklist / 既送信 / `DeliveryKey` を**自分で再検証する**（短絡させない）。
+     *    これが無いと、委譲先が 台帳由来 ＋ 入口 ＋ prospect で母集団を組み直し、
+     *    承認人数を超えて送る（実測: 承認 16 名に対し Recipients 50 / SentCount 46）。
+     */
+    result = await tick({
+      env: tickEnv, now, campaignId,
+      entryAllowlist: seen.recordIds || [],
+    });
   } catch (e) {
     const body = { ok: false, abort: 'tick_failed', detail: String((e && e.message) || 'unknown'), sideEffects: 'unknown' };
     log(body);

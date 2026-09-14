@@ -416,6 +416,94 @@ PR #525 を本番反映後、`cron-drm-autostart` へ `{"dryRun":true}` を POST
   共有 cron の 240 秒を流用すると**実行の途中で切れて二重 enqueue になる**
 - 結果は返さない（**202 即返し**）。**既存の台帳とログ**で確認する
 
+# 🚨 事故: R3 で承認範囲を超える送信（2026-09-14 / **本番再実行 禁止**）
+
+> **原因確定・是正・再検証が済むまで、R3 の再実行・env 変更・queue・実送信を禁止する。**
+> gate（`MARKETING_DRM_AUTOSTART_ENABLED`）は**閉のまま維持**する。
+
+## 確定している事実
+
+| 項目 | 値 |
+|---|---|
+| **承認対象** | **16 名**（無料登録者・`expectedCount: 16`） |
+| **実ジョブ Recipients** | **50** |
+| **SentCount** | **46** |
+| **FailedCount** | **0** |
+| **CampaignDeliveries** | **`sent` 13 行 / SentAt あり 13 行**（DeliveryKey 重複 0・JobId 1 種） |
+| gate | **再閉鎖済み**（`entryOpen: false`） |
+| R3 | **未完了** |
+
+- ジョブ: `mkt-free-signup-onboarding-v1-76d00ac6-1` / Status `SENT` /
+  ScheduledFor `2026-09-14T14:54:36Z` / CompletedAt `2026-09-14T15:00:55Z`
+- 起動: `action:'drmEntryRun'` `dryRun:false` `expectedCount:16` → HTTP 202 /
+  runId `drm-20260914145435-admin`
+- 直前の下見: wouldEnter **16** / 除外 0 / capped false / `allOpen: true`
+
+### 差分 50 − 13 の説明（推定・ログ未確認）
+
+prospect は **Airtable に配信行を書かない**（#521）。`prospectSequenceCheck` は
+`free-signup-onboarding` に対して **indexSize 11,973** を返すので、
+`runSequenceTick` はこの campaign でも prospect を母集団に含めている。
+よって差分は prospect と考えられる。**確定は Netlify 関数ログ待ち**
+（runId `drm-20260914145435-admin` の `event:'done'` に
+`previewed` / `entered` / `countDrift` / `enqueued` / `failed` / `sideEffects`）。
+
+## 一次原因（調査の出発点）
+
+**`expectedCount` は「入口 planner の人数」しか縛っておらず、
+`runSequenceTick` の最終 recipient 集合を縛っていなかった。**
+
+`runDrmEntry` は下見（`planAutoStartEntries`）の人数を `expectedCount` と突き合わせて
+から `runSequenceTick` へ委譲する。しかし委譲先は
+**台帳由来 ＋ 入口 ＋ prospect** で母集団を組み直し、
+`MARKETING_SEQUENCE_MAX_PER_TICK`（50）まで送る。
+「入口が 16 名だから 16 通」という前提が成立していなかった。
+
+## 封じ込め（以後の自動送信は起きない）
+
+| | |
+|---|---|
+| DRM 入口ゲート | **未設定（閉）** → 日次 cron は起動しない |
+| 共有 cron の対象 | `MARKETING_SEQUENCE_CAMPAIGN_ID` = 割引 3 本のみ。**`free-signup-onboarding` を含まない** |
+| 他 campaign | `light-to-premium` / `sanrenpuku-upsell` とも `inSequence 0` 不変 / 割引 3 本のジョブ 0 |
+
+## 是正（PR #532 / **本番反映も再実行もまだしていない**）
+
+### 一次原因の修正 — 最終 recipient 集合を許可リストで縛る
+
+`runSequenceTick` に **`entryAllowlist`（recordId の配列だけ）** を足した。
+
+- **「これ以外へは絶対に送らない」という上限制約**。減らす方向にしか働かない
+- **候補データ（candidate object）は渡さない**。`runSequenceTick` は従来どおり
+  候補を取り直し、purchase / suppression / blacklist / 既送信 / `DeliveryKey` を
+  **自分で再検証する**（短絡させない）
+- 掛ける位置は**すべての再検証が終わった後の最終集合**
+  （`dueTargets` → 出所フィルタ → **許可リスト**）
+- 積む直前に `assertWithinAllowlist` で**最後の確認**。外が 1 人でも混ざれば**1 件も積まない**
+- `recordId` を持たない相手（prospect 等）は**外**として扱う
+- **空配列は「誰も許可しない」**（「全部許可」に倒れない）
+- **省略時は何もしない** → 共有 tick（割引 3 本など）の挙動は**完全に不変**
+
+固定したテスト: **planner 16 名 + prospect 11,000 件 + maxPerTick 50 でも実 queue 対象が
+16 名を超えない**／母集団の先頭が全部 prospect でも 0 件になるだけ／減るのは許容・増えるのは禁止。
+
+### 別件（原因が独立なので別コミット）— 送信済みが「未送信」に見えていた
+
+13 行は入口の `hasStarted` では `already_started` と判定されるのに、
+`drmProgress` / `touchMeasurementPage` は step へ紐付けられなかった
+（`sentByStep` 全 0 / `touches: []`）。
+
+**調査結果**: 保存された `DeliveryKey` は**正しい**（実データ 13 行を取得し、
+同じ計算で step1 の鍵と **13/13 一致**することを確認。`fromEmail` は `noreply@keiba.link`）。
+
+**原因は読み取り側のフィールド射影漏れ**:
+`fetchDeliveryPage` が **`EmailType` を要求していなかった**
+→ Airtable は要求しなかった項目を返さない
+→ `indexDeliveries()` の `EmailType !== 'campaign'` で**全行が捨てられる**。
+
+表示だけの不具合だが、**送信済みを未送信に見せる**ため、運用者が撃ち直す危険がある。
+`EmailType` を取得項目へ追加し、「索引が見る項目と取得する項目が食い違わない」ことをテストで固定した。
+
 ## 残作業（**これが埋まるまでクローズしない**）
 
 | # | 残件 | 埋め方 | 依存 |
