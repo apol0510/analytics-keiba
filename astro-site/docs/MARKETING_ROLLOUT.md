@@ -1,3 +1,8 @@
+> ⚠️ **通常運用は完全自動（2026-09-14 MK 確定）。** 配信ごとの承認・env 開閉・redeploy は行わない。
+> 現行の運用手順は [`CAMPAIGN_SEQUENCE.md` §5](./CAMPAIGN_SEQUENCE.md) が正本。
+> 積まれたジョブを送るのは **`cron-marketing-dispatch`（5 分ごと / 2026-09-14 新設）**。
+> `cron-marketing-rollout` は**自分が積んだジョブしか起動しない**ので、両方が要る。
+
 ## ⚠️ 積みかけジョブの 3 段階（2026-08-27 の自動送信事故の恒久対策）
 
 **事故**: `campaignJobRepair` が不足行を補完したうえ **`queue:unverified` まで外した**ところ、

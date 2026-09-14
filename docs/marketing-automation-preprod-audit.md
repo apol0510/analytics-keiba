@@ -1,3 +1,7 @@
+> 🚫 **これは 2026-07 の監査記録**（`cron-marketing-automation` / production では常時無効）。
+> ここに出てくる「当日武装 env を毎日置き直す」方式は **2026-09-14 の MK 確定で廃止**した。
+> 現行の運用手順は [`astro-site/docs/CAMPAIGN_SEQUENCE.md` §5](../astro-site/docs/CAMPAIGN_SEQUENCE.md) が正本。
+
 # メルマガ自動化 管理 UI / API — production 導入前監査
 
 対象: PR #237 `feat/marketing-automation`（Phase A / B / B-2）。

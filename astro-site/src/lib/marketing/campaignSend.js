@@ -464,12 +464,27 @@ export function assertOnlyDeliveryFields(fields) {
 /**
  * CampaignDeliveries へ upsert する records を組み立てる（Customers は触らない）。
  * Status は 'queued'（実送信は送信基盤が行い、reconcile が sent へ進める）。
+ *
+ * ⚠️ **`jobIdByEmail` は `email → { jobId, recordId }` の Map**。
+ *    ここに**文字列（jobId そのもの）を入れてはいけない**。入れると `job.jobId` が
+ *    `undefined` になり、`ScheduledEmailJobId` の**無い**配信行が黙って出来上がる。
+ *    dispatcher は `ScheduledEmailJobId` でこの行を引く（`indexDeliveriesByRecipient`）ので、
+ *    行が在るのに引けず、**全員が `delivery_not_found` で skip されて 1 通も出ない**。
+ *    2026-09-09〜09-14 の本番障害がこれ（`cron-campaign-sequence` が文字列を渡していた。
+ *    実測: `campaign-discount-free:v1` の queued 3,855 行のうち **3,854 行が JobId 欠落**）。
+ *
+ *    そこで**形が違う値は行を作らずに落とす**。呼び出し側は必ず
+ *    `records.length === recipients.length` を確かめて、合わなければ書かないこと
+ *    （`queueDeliveryOutcome.js` の `RECORDS_DROPPED`）。
  */
 export function buildDeliveryRecords({ campaign, recipients, jobIdByEmail, nowMs }) {
   const nowIso = new Date(nowMs).toISOString();
   const out = [];
   for (const r of recipients || []) {
-    const job = (jobIdByEmail && jobIdByEmail.get(r.email)) || null;
+    const raw = (jobIdByEmail && jobIdByEmail.get(r.email)) || null;
+    // 形が違う（文字列・jobId 欠け）なら**この行は作らない**。黙って JobId 無しの行を作らせない
+    if (raw !== null && (typeof raw !== 'object' || !String(raw.jobId || '').trim())) continue;
+    const job = raw;
     const fields = {
       DeliveryKey: r.deliveryKey,
       CampaignType: `${campaign.campaignId}:v${campaign.version}`,

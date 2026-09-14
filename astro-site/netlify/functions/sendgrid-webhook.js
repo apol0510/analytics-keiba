@@ -30,7 +30,7 @@ import { emailMatchFormula } from '../../src/lib/webhooks/airtableFormula.js';
 import { applyPaymentEmailEvents } from '../../src/lib/payments/paymentEmailWebhook.js';
 import { getRecord, patchRecord } from '../../src/lib/payments/paymentEmailDeps.js';
 import { createProspectStore } from '../../src/lib/marketing/prospectStore.js';
-import { classifyEvent } from '../../src/lib/marketing/prospectPolicy.js';
+import { classifyEvent, PROSPECT_STATE } from '../../src/lib/marketing/prospectPolicy.js';
 import { planProspectEventUpdates } from '../../src/lib/marketing/prospectPipeline.js';
 
 config();
@@ -139,7 +139,7 @@ export default async (req) => {
     }
 
     // ── 6. 見込み客プールへの反映（既定 OFF）────────────────────────
-    let prospect = { enabled: false, engaged: 0, suppressed: 0, notFound: 0, errors: 0 };
+    let prospect = { enabled: false, engaged: 0, suppressed: 0, delivered: 0, exhausted: 0, notFound: 0, errors: 0 };
     try {
       prospect = await applyProspectEvents({ events, now: Date.now() });
     } catch {
@@ -183,7 +183,7 @@ export default async (req) => {
  * ⚠️ ここが失敗しても webhook 全体は 200 を返す（配信基盤の再送を招かない）。
  */
 async function applyProspectEvents({ events, now }) {
-  const out = { enabled: false, engaged: 0, suppressed: 0, notFound: 0, errors: 0 };
+  const out = { enabled: false, engaged: 0, suppressed: 0, delivered: 0, exhausted: 0, notFound: 0, errors: 0 };
   if (process.env.MARKETING_PROSPECT_EVENTS_ENABLED !== 'true') return out;
   if (!process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN) return out;
   out.enabled = true;
@@ -205,6 +205,20 @@ async function applyProspectEvents({ events, now }) {
   const { updates } = planProspectEventUpdates({ events, classify: classifyEvent });
   for (const u of updates) {
     try {
+      /**
+       * ⚠️ **`delivered` を数えるのがここ**（2026-09-14 追加）。打ち切りは
+       *    「delivered 10 通で無反応」なので、数えないと分母が 0 のままで
+       *    **誰も除外されない**。`applyDelivered()` は閾値に達して反応 0 の相手を
+       *    その場で EXHAUSTED にする（打ち切りが起きる唯一の場所）。
+       * ⚠️ 反応（open / click）と delivered は**同じバッチで両方起こりうる**。
+       *    先に delivered を数えてから反応を記録する（順序を入れ替えない）。
+       */
+      if (u.action === 'delivered' || u.alsoDelivered === true) {
+        const d = await store.recordDelivered({ email: u.email, nowMs: now, env: process.env });
+        if (d && d.ok) out.delivered += 1; else out.notFound += 1;
+        if (d && d.ok && d.prospect && d.prospect.state === PROSPECT_STATE.EXHAUSTED) out.exhausted += 1;
+      }
+      if (u.action === 'delivered') continue;
       const r = u.action === 'suppress'
         ? await store.recordSuppression({ email: u.email, nowMs: now, reason: u.reason })
         : await store.recordEngagement({ email: u.email, nowMs: now, kind: u.kind });

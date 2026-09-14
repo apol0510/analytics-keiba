@@ -64,6 +64,10 @@ test('正常: 権威データ（CampaignDeliveries）からそのまま刻む', 
 
 test('受信側 emailEventLedger.js と同じ綴りのキーを使う（片方だけ変えない）', () => {
   assert.deepEqual(Object.values(CUSTOM_ARG_KEYS).sort(), [
+    // `audience` は prospect（Airtable に配信行を持たない受信者）の印。
+    // これが無いと受信側は「紐付け失敗（不具合）」と「台帳を持たない設計（正常）」を
+    // 区別できない（2026-09-14 追加）
+    'audience',
     'campaign_delivery_id', 'campaign_id', 'campaign_version',
     'customer_record_id', 'delivery_key', 'purpose',
   ]);

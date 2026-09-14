@@ -1,6 +1,21 @@
 # CSV 取り込み分を prospect プールへ戻す 移行計画
 
-**状態: 本番可能状態まで完成。本番の write は 1 件も実行していない。**
+> ⚠️ **移行そのものは 2026-08-27 に完了している**（Redis 投入 11,976 件 /
+> Customers 削除 11,955 件 / 15,977 → 4,022）。以下の「未実行」表記は**当時の記録**。
+>
+> **2026-09-14 追記 — 移行後に分かったこと（重要）**
+>
+> 移した先の prospect へは、**送信経路が対応していなかったため 1 通も送れていなかった**。
+> `campaignCustomArgs.js` が Airtable の配信行（`campaign_delivery_id`）を必須にしており、
+> 行を作らない prospect は必ず skip されていた（実測: step2 の prospect 11,686 名が
+> 「予約済み・キュー済み・未送信」のまま滞留）。
+> さらに `delivered` を数える実装がどこにも無く、**打ち切り（delivered 10）の分母が 0**だった。
+>
+> 両方とも修正済み（`prospectDeliveryDescriptor.js` /
+> `prospectDispatchContext.js` / `classifyEvent('delivered')`）。
+> 現行の完成条件は `docs/progress.md` 先頭の「🔝 最上位の未完了任務」を正本とする。
+
+**状態（当時）: 本番可能状態まで完成。本番の write は 1 件も実行していない。**
 更新 2026-08-27 ／ 数字はすべて本番の read-only 実測。
 
 > **8/31 より前に移す。** Airtable は上限超過中で、現行経路のまま 2 通目を送ると
