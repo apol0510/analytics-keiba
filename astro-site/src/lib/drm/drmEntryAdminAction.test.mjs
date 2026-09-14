@@ -282,7 +282,13 @@ test('【不変】#526 の出所フィルタ（prospect canary）が残ってい
   assert.ok(typeof mod === 'object');
   const code = codeOnly(SEQ_CRON);
   assert.match(SEQ_CRON, /sequenceAudienceFilter\.js/, 'cron が出所フィルタを import していない');
-  assert.match(code, /resolveAudienceFilter\(env\)/, 'cron が出所フィルタを解決していない');
+  /**
+   * ⚠️ 2026-09-14 変更: `resolveAudienceFilter(env)` → 引数 `sourceFilter`。
+   *    絞り込みを env で持つと、この下の「DRM 経路は出所フィルタを触らない」が
+   *    **字面では通るのに実際は破れる**（`tickEnv = { ...env }` で DRM へ流れ、
+   *    本番で DRM の対象が 0 人になった）。**意図は不変**＝フィルタは在り、適用される。
+   */
+  assert.match(code, /normalizeAudienceFilter\(sourceFilter\)/, 'cron が出所フィルタを解決していない');
   assert.match(code, /applyAudienceFilter\(\{/, 'cron が出所フィルタを適用していない');
 });
 

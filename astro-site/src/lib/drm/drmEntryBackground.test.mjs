@@ -196,7 +196,13 @@ test('【不変】共有 cron（#521 / #523 / #526）を変更していない', 
   const code = codeOnly(SEQ_CRON);
   assert.match(code, /SEQUENCE_TICK_LOCK_ID = 'tick:campaign-sequence'/);
   assert.match(code, /readSequenceGates\(env, now\)/);
-  assert.match(code, /resolveAudienceFilter\(env\)/);
+  /**
+   * ⚠️ 2026-09-14 変更: `resolveAudienceFilter(env)` → 引数 `sourceFilter`。
+   *    絞り込みを env で持つと、この下の「DRM 経路は出所フィルタを触らない」が
+   *    **字面では通るのに実際は破れる**（`tickEnv = { ...env }` で DRM へ流れ、
+   *    本番で DRM の対象が 0 人になった）。**意図は不変**＝フィルタは在り、適用される。
+   */
+  assert.match(code, /normalizeAudienceFilter\(sourceFilter\)/);
   assert.equal(code.includes('drm-entry-background'), false);
   assert.equal(code.includes('runDrmEntry'), false);
 });

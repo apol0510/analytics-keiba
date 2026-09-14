@@ -9,7 +9,8 @@
  *
  * ## 固定すること
  *
- *   1. 既定（env 未設定）は **従来どおり全部**（挙動を変えない）
+ *   1. 既定（引数なし）は **従来どおり全部**（挙動を変えない）
+ *   1-b. **env からは読まない**（env で持つと DRM の `tickEnv = { ...env }` へ漏れる）
  *   2. `prospect` 指定で **prospect だけ**が残る
  *   3. 出所が分からない相手は**送らない側**へ倒す
  *   4. 絞り込みは**減らす方向にしか働かない**（対象を増やさない）
@@ -17,11 +18,14 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 import {
-  resolveAudienceFilter, applyAudienceFilter, describeAudiencePreview,
-  sourceOfTarget, AUDIENCE_FILTER, AUDIENCE_FILTER_ENV,
+  normalizeAudienceFilter, applyAudienceFilter, describeAudiencePreview,
+  sourceOfTarget, AUDIENCE_FILTER,
 } from './sequenceAudienceFilter.js';
+import * as AUDIENCE_MOD from './sequenceAudienceFilter.js';
 
 const t = (email) => ({ recordId: `rec-${email}`, fields: { Email: email } });
 const PROSPECTS = new Set(['p1@example.invalid', 'p2@example.invalid']);
@@ -30,15 +34,15 @@ const TARGETS = [
   t('p2@example.invalid'), t('c2@example.invalid'),
 ];
 
-test('既定は全部（env を置かない限り挙動は変わらない）', () => {
-  assert.equal(resolveAudienceFilter({}), AUDIENCE_FILTER.ALL);
-  const out = applyAudienceFilter({ targets: TARGETS, prospectEmails: PROSPECTS, filter: resolveAudienceFilter({}) });
+test('既定は全部（呼び出しが渡さない限り挙動は変わらない）', () => {
+  assert.equal(normalizeAudienceFilter(undefined), AUDIENCE_FILTER.ALL);
+  const out = applyAudienceFilter({ targets: TARGETS, prospectEmails: PROSPECTS, filter: normalizeAudienceFilter(undefined) });
   assert.equal(out.kept.length, 4);
   assert.equal(out.dropped, 0);
 });
 
 test('【重要】prospect 指定で prospect だけが残る', () => {
-  const filter = resolveAudienceFilter({ [AUDIENCE_FILTER_ENV]: 'prospect' });
+  const filter = normalizeAudienceFilter('prospect');
   assert.equal(filter, AUDIENCE_FILTER.PROSPECT);
   const out = applyAudienceFilter({ targets: TARGETS, prospectEmails: PROSPECTS, filter });
   assert.equal(out.kept.length, 2);
@@ -49,19 +53,19 @@ test('【重要】prospect 指定で prospect だけが残る', () => {
 });
 
 test('customer 指定で Customers だけが残る', () => {
-  const filter = resolveAudienceFilter({ [AUDIENCE_FILTER_ENV]: 'customer' });
+  const filter = normalizeAudienceFilter('customer');
   const out = applyAudienceFilter({ targets: TARGETS, prospectEmails: PROSPECTS, filter });
   assert.deepEqual(out.kept.map((x) => x.fields.Email).sort(), ['c1@example.invalid', 'c2@example.invalid']);
 });
 
 test('【重要】壊れた値は全部（推測で絞らない）', () => {
   for (const bad of ['', '  ', 'PROSPECTS', 'all', 'x', null, undefined, '1']) {
-    assert.equal(resolveAudienceFilter({ [AUDIENCE_FILTER_ENV]: bad }), AUDIENCE_FILTER.ALL, String(bad));
+    assert.equal(normalizeAudienceFilter(bad), AUDIENCE_FILTER.ALL, String(bad));
   }
 });
 
 test('大文字・前後の空白は吸収する', () => {
-  assert.equal(resolveAudienceFilter({ [AUDIENCE_FILTER_ENV]: ' Prospect ' }), AUDIENCE_FILTER.PROSPECT);
+  assert.equal(normalizeAudienceFilter(' Prospect '), AUDIENCE_FILTER.PROSPECT);
 });
 
 test('【重要】出所が分からない相手は送らない（どのフィルタでも残さない）', () => {
@@ -105,4 +109,18 @@ test('【重要】下見の要約にアドレスを含めない', () => {
   assert.equal(view['うち prospect'], 2);
   assert.equal(view['うち Customers'], 2);
   assert.equal(view['絞り込み後に送る人数'], 2);
+});
+
+/**
+ * ⚠️ **env から読む口を作り直さない**（2026-09-14 の本番事故）。
+ *
+ * 絞り込みを env で持つと `cron-drm-autostart` の `tickEnv = { ...env }` を通じて
+ * DRM の入口にも効き、DRM の対象が黙って 0 人になる。
+ * env を読む関数・env 名の定数は**この単一源に置かない**。
+ */
+test('【重要】env から絞り込みを読む口を持たない', () => {
+  assert.equal('resolveAudienceFilter' in AUDIENCE_MOD, false, 'env 読みの関数が復活している');
+  assert.equal('AUDIENCE_FILTER_ENV' in AUDIENCE_MOD, false, 'env 名の定数が復活している');
+  const src = readFileSync(fileURLToPath(new URL('./sequenceAudienceFilter.js', import.meta.url)), 'utf8');
+  assert.equal(src.includes('process.env'), false, '単一源が env を参照している');
 });

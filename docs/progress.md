@@ -68,6 +68,59 @@ tick 鍵が `cron-campaign-sequence` に無かった。**→ tick 鍵を追加�
 `prospectSequenceCheck` の母数は **prospect 索引だけ**（11,974 = 送信候補）。
 Customers 由来の進行はこの数字に出ない。**不具合ではない**（応答に `母数の範囲` を明記した）。
 
+## canary の env が DRM へ漏れていた（2026-09-15 / **現方式は禁止**）
+
+### 何が起きたか
+
+prospect canary のために `MARKETING_SEQUENCE_SOURCE_FILTER=prospect` を
+**production env** に置いた。ところが `cron-drm-autostart` は
+
+```js
+const tickEnv = { ...env, MARKETING_SEQUENCE_SCHEDULER_ENABLED: 'true' };
+await runSequenceTick({ env: tickEnv, campaignId });
+```
+
+と **env をまるごと引き継ぐ**。結果として
+
+| 漏れ方 | 何が起きるか |
+|---|---|
+| 絞り込みが DRM にも効く | DRM の対象（Customers 由来）が**黙って 0 人**になる |
+| DRM は `SCHEDULER_ENABLED` を自分で合成する | **`scheduler=false` にしても DRM は止まらない** |
+
+つまり「scheduler を閉じてあるから canary の env は無害」は**成り立っていなかった**。
+9/14 の canary で `free-signup-onboarding`（DRM）のジョブが現れたのは異常ではなく、
+**DRM の正常動作**だった（異常扱いして停止したのは当方の誤判定）。
+
+### 直し方（2026-09-15 MK 指示）
+
+1. **DRM は止めない**／DRM のジョブ出現を異常扱いしない
+2. **共有スケジューラ env を canary のために開け閉めしない**
+3. `campaign-discount-free` だけを**明示指定**して 1 回だけ回す管理用の入口を作る
+4. 通常の除外・`DeliveryKey`・予約・dispatcher・webhook は**迂回しない**
+5. duplicate / campaign 違い / Customers 混入 / count drift は **fail closed**
+
+### 実装（PR #531 / 実送信はまだしていない）
+
+| 変更 | 中身 |
+|---|---|
+| env を廃止 | `sequenceAudienceFilter.js` から `resolveAudienceFilter` / `AUDIENCE_FILTER_ENV` を**削除**。env を読む口が無くなったので、もう漏れようがない |
+| 引数化 | `runSequenceTick({ sourceFilter, expectedCount, maxRecipientsOverride })` |
+| fail closed | `audience_source_mixed` / `expected_count_mismatch` を**予約（`claimDelivered`）より手前**に置く＝1 件も積まない |
+| canary の入口 | `admin-marketing` の `action='sequenceCanaryRun'`。campaign は**許可リスト必須**（既定値なし・DRM は入っていない）。`confirm` + `apply=true`・1 回限り・上限 50 |
+| 二重起動の防止 | 定期 tick と**同じ鍵**（`tick:campaign-sequence`）を取る。取れなければ `tick_busy` |
+| 開けるゲート | **スケジューラ判定 1 つだけ**を呼び出しの中で。`ENQUEUE` / `DISPATCH` / `rolloutKill` はそのまま効く |
+
+固定テスト: `src/lib/marketing/sequenceCanaryIsolation.test.mjs`（8 本）。
+DRM 側の guard 2 本は、字面 `resolveAudienceFilter(env)` → `normalizeAudienceFilter(sourceFilter)`
+のみ更新した（**意図は不変**＝フィルタは在り、適用される。DRM の契約は上書きしていない）。
+
+### 残っていること
+
+- ⚠️ **production の `MARKETING_SEQUENCE_SOURCE_FILTER=prospect` はまだ設定されたまま**。
+  この PR が deploy されれば**誰も読まないので無害**になるが、混乱の元なので
+  deploy 後に unset したい（**MK の承認待ち**）。
+- canary の実送信は**未実施**（production env 変更・merge/deploy・実送信の手前で停止中）。
+
 ## 進捗（2026-09-14 / 実施順は MK 指定）
 
 | # | 作業 | 状態 |

@@ -37,6 +37,15 @@ const ADMIN = readFileSync(
   'utf8',
 );
 
+/** 下見の `if (isDry) { ... }` を**閉じ括弧まで**切り出す（固定幅で切らない） */
+function dryRunBlock() {
+  const i = CRON.indexOf('if (isDry) {');
+  assert.ok(i > 0, '下見の分岐が無い');
+  const end = CRON.indexOf('\n  }', i);
+  assert.ok(end > i, '下見の分岐の閉じ括弧が見つからない');
+  return CRON.slice(i, end + 4);
+}
+
 test('【重要】下見はカーソルを書かない', () => {
   assert.match(CRON, /if \(!isDry\) await scanStore\.write\(campaignType, next\)/,
     '下見でもカーソルを書いている');
@@ -77,8 +86,11 @@ test('【重要】ゲートを迂回する分岐を作らない', () => {
   assert.doesNotMatch(CRON, /if \(gates\.allOpen \|\|/, 'ゲートを迂回する分岐が入っている');
   assert.doesNotMatch(CRON, /gates\.allOpen = /, 'ゲートの判定結果を書き換えている');
   // 下見は「書かない」ことでゲート免除が成立している。書き込みが混ざれば免除は成り立たない
-  const iDry = CRON.indexOf('if (isDry) {');
-  const seg = CRON.slice(iDry, iDry + 2000);
+  /**
+   * ⚠️ 固定幅（旧 2000 文字）で切ると、下見ブロックの**外**まで巻き込んで誤検知する。
+   *    下見の `if (isDry) { ... }` **そのもの**を切り出して見る（こちらの方が厳しい）。
+   */
+  const seg = dryRunBlock();
   for (const banned of ['claimDelivered', 'markDelivered', "method: 'PATCH'", 'scanStore.write']) {
     assert.equal(seg.includes(banned), false, `下見の中に書き込みがある: ${banned}`);
   }

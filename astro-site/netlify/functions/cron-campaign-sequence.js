@@ -56,7 +56,7 @@ import {
 } from '../../src/lib/marketing/prospectDeliveryDescriptor.js';
 import { emailHash } from '../../src/lib/marketing/prospectStore.js';
 import {
-  resolveAudienceFilter, applyAudienceFilter, describeAudiencePreview,
+  normalizeAudienceFilter, applyAudienceFilter, describeAudiencePreview, sourceOfTarget,
 } from '../../src/lib/marketing/sequenceAudienceFilter.js';
 import {
   isSequenceCampaign, resolveSequenceStep, resolveAutoStart,
@@ -337,6 +337,23 @@ export async function runSequenceTick({
    *    本番 tick の進み位置を 1 バイトも動かさない。
    */
   preview = null,
+  /**
+   * 出所の絞り込み（`prospect` / `customer`）。**呼び出しの引数でだけ決まる。**
+   *
+   * ⚠️ **env から読んではいけない。** `cron-drm-autostart` は
+   *    `tickEnv = { ...env }` で process env をまるごと引き継ぐので、
+   *    env に置くと DRM の入口にも効いて**対象が黙って 0 人になる**
+   *    （2026-09-14 に本番で踏んだ。しかも DRM は scheduler を自分で合成するため
+   *    `scheduler=false` でも止まらない）。
+   */
+  sourceFilter = null,
+  /**
+   * 積む直前の人数の期待値。**違えば 1 件も積まない**（count drift は fail closed）。
+   * canary のように「ちょうど N 名」を約束したいときに使う。
+   */
+  expectedCount = null,
+  /** 1 tick の上限を呼び出し側で決める（渡さなければ従来どおり env 由来） */
+  maxRecipientsOverride = null,
 } = {}) {
   const isDry = dryRun === true;
   const win = (isDry && preview && typeof preview === 'object') ? preview : null;
@@ -658,7 +675,10 @@ export async function runSequenceTick({
    */
   const planGates = isDry ? { ...gates, allOpen: true } : gates;
   const plan = planSequenceTick({
-    progress, gates: planGates, maxRecipients: resolveMaxRecipientsPerTick(process.env),
+    progress, gates: planGates,
+    // 1 tick の上限。**引数が優先**（canary はここで 50 に絞る）。渡されなければ従来の env 由来
+    maxRecipients: Number.isInteger(maxRecipientsOverride) && maxRecipientsOverride > 0
+      ? maxRecipientsOverride : resolveMaxRecipientsPerTick(process.env),
     // ⚠️ step1 を自動で撃てるのは、**入口を宣言していて ゲートも開いている**ときだけ
     allowFirstStep: autoStartDecl !== null && autoStartGate.open === true,
   });
@@ -729,9 +749,13 @@ export async function runSequenceTick({
    * prospect 経路だけを少数で実証するために、**絞る**手段を用意する。
    *
    * ⚠️ 絞るのは**減らす方向だけ**。除外条件・冪等性・送信直前再検証は一切変えない。
-   * ⚠️ `MARKETING_SEQUENCE_SOURCE_FILTER` を置かない限り挙動は変わらない。
+   * ⚠️ **呼び出しが `sourceFilter` を渡さない限り**挙動は変わらない（env では切り替わらない）。
    */
-  const audienceFilter = resolveAudienceFilter(env);
+  /**
+   * ⚠️ **引数だけ**を見る（env は読まない）。壊れた値は「全部」に倒す。
+   *    env を読むと DRM へ漏れる（このファイル冒頭の注意を参照）。
+   */
+  const audienceFilter = normalizeAudienceFilter(sourceFilter);
   const filtered = applyAudienceFilter({
     targets: dueTargets, prospectEmails, filter: audienceFilter,
   });
@@ -784,6 +808,36 @@ export async function runSequenceTick({
       ok: false, abort: TICK_ABORT.NO_DUE,
       reason: filtered.dropped > 0 ? 'filtered_out' : 'all_already_queued',
       alreadyQueued, ...audienceView, sideEffects: 'none',
+    };
+    log(body);
+    return body;
+  }
+
+  /**
+   * ── 積む直前の fail closed（**予約より手前**）─────────────────────
+   *
+   * ⚠️ ここを予約より後ろへ動かさない。予約（`claimDelivered`）を取った時点で
+   *    その人は「送信済み扱い」になるので、あとから止めても対象へ戻らない。
+   */
+  // ① 出所の混入（`sourceFilter` を指定したのに別の出所が残っていたら積まない）
+  if (audienceFilter !== 'all') {
+    const mixed = targets.filter(
+      (t) => sourceOfTarget(t, prospectEmails) !== audienceFilter,
+    ).length;
+    if (mixed > 0) {
+      const body = {
+        ok: false, abort: 'audience_source_mixed',
+        filter: audienceFilter, mixed, ...audienceView, sideEffects: 'none',
+      };
+      log(body);
+      return body;
+    }
+  }
+  // ② 人数のズレ（下見と違う母集団になっていたら積まない）
+  if (Number.isInteger(expectedCount) && targets.length !== expectedCount) {
+    const body = {
+      ok: false, abort: 'expected_count_mismatch',
+      expected: expectedCount, got: targets.length, ...audienceView, sideEffects: 'none',
     };
     log(body);
     return body;
