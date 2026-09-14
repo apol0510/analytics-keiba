@@ -227,6 +227,33 @@ routing が終端として扱って**永久に線形**になる（2026-09-08 の
 Netlify で直前の production deploy **`de9d2327`**（id `6aa783e4b31161000845cd42`）を publish し直せば即時復帰。
 **env もデータも触っていないので巻き戻し作業は不要。**
 
+## R3 が実行できなかった理由と、その分離（2026-09-14）
+
+承認された「`MARKETING_DRM_AUTOSTART_ENABLED=true` で 15 名へ step1」は、**そのままでは 1 通も出ない**。
+
+| env | 本番実測 | 影響 |
+|---|---|---|
+| `MARKETING_SEQUENCE_SCHEDULER_ENABLED` | **`false`** | 4 ゲートの 1 枚が閉。cron は接続前に中止 |
+| `MARKETING_SEQUENCE_CAMPAIGN_ID` | `campaign-discount-free,-light,-premium` | cron はこの 3 本しか進めない |
+
+⚠️ scheduler を開けると**割引 3 本が即 tick**される。3 本とも `enabled=true`（第 2 期 2026-09-10〜09-23）で、
+**step2 は「本番処置は未実施」として保留中**（step1 は 15,509 通配信済み）。
+15 名のために数千通のリスクを負うため、実行せず停止した。
+
+### 分離（PR #525）
+
+**`cron-drm-autostart.js`** を別 Function として新設。
+
+- 入口のスイッチは **`MARKETING_DRM_AUTOSTART_ENABLED` だけ**（`MARKETING_SEQUENCE_*` は 1 つも読まない）
+- 対象は**固定の許可リスト**（`free-signup-onboarding` のみ）。割引 3 本は**構造的に選べない**
+- キュー登録・`DeliveryKey`・二重防止・購入/停止の除外は**作り直さず** `runSequenceTick` に委ねる
+- 送信の土台のゲートは**既存のまま尊重**（安全装置を迂回しない）
+- 定期実行は **1 日 1 回**。手動実行は `expectedCount` 必須で、**下見と 1 でも違えば 1 通も送らない**
+- **共有スケジューラの env は読まないし変えない**（別任務の状態）
+
+⚠️ 残る隙間: 下見と実行の間（数秒）に新規登録が入ると 1 名増えうる。
+`expectedCount` で止まるか、`countDrift` として必ず報告する。
+
 ## 残作業（**これが埋まるまでクローズしない**）
 
 | # | 残件 | 埋め方 | 依存 |

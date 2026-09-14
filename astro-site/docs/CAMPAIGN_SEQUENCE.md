@@ -610,6 +610,40 @@ sequence: {
 配信停止・バウンス等で送れない / すでに有料 / 対象条件に合わない /
 **すでに 1 通でも受け取っている** / 窓の外 / 段が違う / **登録時刻が読めない**。
 
+### ⚠️ 入口は**共有スケジューラから分離**した（2026-09-14）
+
+本番の実測値がこうだったため、入口を `cron-campaign-sequence` に相乗りさせられなくなった:
+
+| env | 実測 |
+|---|---|
+| `MARKETING_SEQUENCE_SCHEDULER_ENABLED` | **`false`**（4 ゲートの 1 枚が閉）|
+| `MARKETING_SEQUENCE_CAMPAIGN_ID` | `campaign-discount-free,-light,-premium` |
+
+DRM の入口（無料登録者 15 名）を開けるには scheduler を true にするしかなく、
+その瞬間に**割引 3 本が tick される**（step1 は 15,509 通配信済み・**step2 は保留中**）。
+15 名のために数千通のリスクを負う構造だった。
+
+そこで **`cron-drm-autostart.js`** を別 Function として置いた。
+
+| | |
+|---|---|
+| 入口のスイッチ | **`MARKETING_DRM_AUTOSTART_ENABLED` だけ**。`MARKETING_SEQUENCE_*` は**1 つも読まない** |
+| 対象 | **固定の許可リスト**（`DRM_ENTRY_CAMPAIGN_IDS` = `free-signup-onboarding`）。割引 3 本は**構造的に選べない** |
+| 送信の土台 | `MARKETING_CAMPAIGN_ENABLED` / `..._DISPATCH_ENABLED` は**既存のまま尊重**（安全装置を迂回しない）|
+| キュー登録 | **作り直さない**。`runSequenceTick` に委ねる（`DeliveryKey` の二重防止・購入/停止の除外・配信行の読み戻し確認・失敗時のジョブ取消をそのまま使う）|
+| 定期実行 | **1 日 1 回**（10:00 JST）。ゲートが閉じている間は何も起きない |
+| 人数の確認 | 手動実行は `expectedCount` 必須。**下見と 1 でも違えば 1 通も送らない** |
+
+⚠️ **共有スケジューラの env（`SCHEDULER_ENABLED` / `CAMPAIGN_ID`）は別任務の状態**。
+   この Function は読まないし、運用でも変えない。
+
+```bash
+# 下見（ゲートが閉じていても返る・書き込みゼロ）
+curl -X POST .../cron-drm-autostart -H 'x-admin-secret: …' -d '{"dryRun":true}'
+# 実行（人数が一致したときだけ）
+curl -X POST .../cron-drm-autostart -H 'x-admin-secret: …' -d '{"dryRun":false,"expectedCount":15}'
+```
+
 ### 下見（送らずに数える）
 
 管理画面 `/admin/drm/` の「入口の下見」、または

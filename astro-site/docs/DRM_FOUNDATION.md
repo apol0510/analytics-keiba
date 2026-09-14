@@ -326,8 +326,13 @@ sequence: {
 }
 ```
 
-- ゲートは既存 4 枚 ＋ **`MARKETING_DRM_AUTOSTART_ENABLED`**（既定 閉）。
-  入口の 1 枚だけでは 1 通も出ない
+- ⚠️ **入口は共有スケジューラから分離した**（2026-09-14 / `cron-drm-autostart.js`）。
+  本番は `MARKETING_SEQUENCE_SCHEDULER_ENABLED=false` かつ
+  `MARKETING_SEQUENCE_CAMPAIGN_ID=campaign-discount-*` なので、共有 cron に相乗りすると
+  **入口を開けた瞬間に割引 3 本（step2 保留中）が tick される**。
+  専用 Function は **`MARKETING_DRM_AUTOSTART_ENABLED` だけ**を読み、
+  対象は**固定の許可リスト**（割引 3 本は構造的に選べない）。
+  キュー登録は作り直さず `runSequenceTick` に委ねる。詳細は `CAMPAIGN_SEQUENCE.md` §9-5
 - 除外は**既存の判定の結果をそのまま使う**（`resolveSendability` /
   `hasPurchasedForCampaign` / `matchesCampaignAudience` / `resolveFunnelStage`）。
   **新しい停止条件を作らない**
