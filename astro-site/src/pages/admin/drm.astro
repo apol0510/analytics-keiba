@@ -56,6 +56,20 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     </section>
 
     <section class="drm-sec">
+      <h2>進行状況（読むだけ）</h2>
+      <p class="drm-note">
+        <strong>配信台帳から「もうこのシーケンスに入っている人」だけ</strong>を読みます
+        （受信対象の全件走査はしません）。まだ誰も入っていなければ、そう表示します。
+        判定は実配信と同じ単一源を通るので、ここの人数と実際に送る人数はズレません。
+      </p>
+      <div class="drm-ctl">
+        <button id="drm-progress" type="button">進行を読む（送りません）</button>
+      </div>
+      <div id="drm-progress-out" class="drm-funnel"></div>
+      <p class="drm-note" id="drm-progress-note"></p>
+    </section>
+
+    <section class="drm-sec">
       <h2>入口の下見（送りません）</h2>
       <p class="drm-note">
         いまゲートを開けたら<strong>誰が DRM に入るか</strong>を、送る前に数えます。
@@ -353,6 +367,50 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           + ' — ' + (body.notice || '');
       }
       $('drm-autostart').addEventListener('click', previewAutoStart);
+
+      // ── 進行状況（read-only / 台帳から読む）──────────────────────
+      async function loadProgress() {
+        var st = $('drm-progress-note');
+        var out = $('drm-progress-out'); out.textContent = '';
+        var sec = secret();
+        if (!sec) { st.textContent = 'secret が入力されていません。'; return; }
+        st.textContent = '読んでいます…';
+        var res, body;
+        try {
+          res = await fetch('/.netlify/functions/admin-marketing', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-admin-secret': sec },
+            body: JSON.stringify({ action: 'drmProgress', campaignId: $('drm-campaign').value }),
+          });
+          body = await res.json();
+        } catch (e) { st.textContent = '通信に失敗しました。'; return; }
+        if (!res.ok) {
+          // ⚠️ 数え切れなかったときは **数字を出さない**（部分を全体として見せない）
+          st.textContent = '数えられませんでした: ' + (body && body.error ? body.error : res.status);
+          return;
+        }
+        out.appendChild(card('入っている人数', fmt(body.inSequence)));
+        var s2 = body.summary;
+        if (s2) {
+          out.appendChild(card('いま送れる', fmt(s2.due)));
+          out.appendChild(card('待機中', fmt(s2.waiting)));
+          out.appendChild(card('完了', fmt(s2.completed)));
+          out.appendChild(card('停止', fmt(s2.stopped)));
+          var by = s2.byStopReason || {};
+          Object.keys(by).forEach(function (k) {
+            out.appendChild(card((body.stopLabels && body.stopLabels[k]) || k, fmt(by[k])));
+          });
+        }
+        var rr = body.responseRouting || {};
+        var routed = Object.keys(rr.byRoute || {}).map(function (k) {
+          return k + '=' + rr.byRoute[k];
+        }).join(' / ') || '—';
+        st.textContent = '反応別 routing: ' + (rr.declared ? '宣言あり' : '宣言なし')
+          + ' / ' + (rr.active ? '効いています' : '効いていません（' + (rr.reason || '—') + '）')
+          + ' / 分岐した人数: ' + fmt(rr.routed) + '（' + routed + '）'
+          + ' — ' + (body.notice || '');
+      }
+      $('drm-progress').addEventListener('click', loadProgress);
       $('drm-attr').addEventListener('click', loadAttribution);
     })();
   </script>

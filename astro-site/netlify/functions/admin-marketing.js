@@ -919,6 +919,7 @@ export const handler = async (event) => {
     if (action === 'drm') return await handleDrm({ KEY, BASE, now, req });
     if (action === 'drmCohort') return await handleDrmCohort({ KEY, BASE, now, req });
     if (action === 'drmAutoStart') return await handleDrmAutoStart({ KEY, BASE, now, req });
+    if (action === 'drmProgress') return await handleDrmProgress({ KEY, BASE, now, req });
     // ⚠️ ここから 4 つは **read-only ではない**（Redis の展開状態だけを書き換える）。
     //    Customers・配信台帳・送信には触れない。受け付ける値は `rolloutControl.js` が絞る。
     if (action === 'rolloutStart') return await handleRolloutControl({ op: ROLLOUT_OP.START, now, req });
@@ -1595,6 +1596,15 @@ async function handleDrmCohort({ KEY, BASE, now, req }) {
     });
     const state = resolveResponseState({
       marketing, touches, measured: { open: !!eventByKey, click: false },
+      /**
+       * ⚠️ **この campaign にとっての購入**で判定する（2026-09-14 修正）。
+       *    渡さないと既定の「Light か Premium が有効なら購入済み」になり、
+       *    **上位商品を案内する段では宛先全員が `purchased`** に見える。
+       *    本番実測: Premium 有効 12 名が `sanrenpuku-upsell-sequence` の cohort で
+       *    全員 `purchased`（三連複は未購入なのに）と表示されていた。
+       *    判定の単一源は `sequencePurchaseStop.js`（停止判定と同じもの）。
+       */
+      campaign: base,
     });
     states.push(state);
 
@@ -1745,6 +1755,183 @@ async function handleDrm({ KEY, BASE, now, req }) {
     partialReason: t ? null : (metrics.reason || 'metrics_unavailable'),
     notice: '増分集計だけを読んでいます（正本は Customers / CampaignDeliveries）。'
       + '**何も書き込んでいません。** 計測していない指標は 0 ではなく「—」です。',
+  });
+}
+
+/** 進行状況の下見で読む台帳の上限（**超えたら数字を出さない**） */
+const DRM_PROGRESS_MAX_ROWS = 2000;
+/** 進行状況の下見で扱う受信者の上限（**超えたら数字を出さない**） */
+const DRM_PROGRESS_MAX_RECIPIENTS = 500;
+
+/** 受信者（アドレス）を名指しで Customers から読む（40 件ずつ・全件走査しない） */
+async function fetchCustomersByEmailsBounded({ KEY, BASE, emails }) {
+  const list = [...new Set((emails || []).map((e) => String(e || '').trim().toLowerCase()))]
+    .filter(Boolean);
+  const out = [];
+  for (let i = 0; i < list.length; i += 40) {
+    const chunk = list.slice(i, i + 40);
+    const formula = `OR(${chunk.map((e) => `LOWER({Email})='${e.replace(/'/g, "\\'")}'`).join(',')})`;
+    // eslint-disable-next-line no-await-in-loop -- 40 件ずつ名指し
+    const rows = await fetchAllStrict({
+      KEY, BASE, table: CUSTOMERS_TABLE, filterByFormula: formula, maxPages: 2,
+    });
+    out.push(...(rows || []));
+  }
+  return out;
+}
+
+/**
+ * **進行状況の下見**（`action: 'drmProgress'`）— シーケンスの進みを read-only で見る。
+ *
+ * ── なぜ `action=sequence` と別にするのか ──────────────────────
+ * `handleSequence` は **受信対象（Customers）を先に読む**。そのため
+ *   - 対象を Airtable の列で絞れない campaign は `audience_not_narrowable` で **400**
+ *   - 絞れても母数が大きいと配信履歴の突き合わせで **504**
+ * になり、**新しく足した campaign の進行を画面から確認できない**（2026-09-14 本番実測）。
+ *
+ * ここは逆に **台帳（`CampaignDeliveries`）から**「もうこのシーケンスに入っている人」を読む。
+ * これは `cron-campaign-sequence` が実際に進める母集団と同じ考え方なので、
+ * **画面と実配信がズレない**。入っている人が 0 なら即座に「まだ誰も入っていない」と返る。
+ *
+ * ⚠️ **1 バイトも書かない・1 通も送らない。**
+ * ⚠️ **全件走査をしない。** 台帳は campaignType で絞って上限つきで読む。
+ * ⚠️ **読み切れなければ数字を出さない**（部分を全体として見せない）。
+ * ⚠️ 判定は既存の単一源のまま（`buildSequenceProgress` / `loadResponseByEmail`）。
+ *    ここで進行や停止条件を作り直さない。
+ */
+async function handleDrmProgress({ KEY, BASE, now, req }) {
+  const base = getCampaign(req.campaignId, { includeDisabled: true });
+  if (!base) return json(400, { error: '未知のキャンペーンです', sideEffects: 'none' });
+  if (!isSequenceCampaign(base)) {
+    return json(400, { error: 'このキャンペーンは連続配信ではありません', sideEffects: 'none' });
+  }
+  const campaignType = `${base.campaignId}:v${base.version}`;
+  const fromEmail = getBrandConfig(BRAND).defaultFromEmail;
+
+  // ── ① 台帳から「入っている人」を読む（bounded）──────────────────
+  const deliveries = [];
+  let cursor = null;
+  try {
+    do {
+      // eslint-disable-next-line no-await-in-loop -- Airtable は offset 方式
+      const page = await fetchDeliveryPage({
+        KEY, BASE, campaignType, pageSize: 500, cursor,
+      });
+      deliveries.push(...page.records);
+      cursor = page.offset;
+      if (deliveries.length > DRM_PROGRESS_MAX_ROWS) break;
+    } while (cursor);
+  } catch (e) {
+    return json(500, {
+      error: '配信台帳を読めませんでした（数えられない数は出しません）。',
+      detail: String((e && e.message) || 'unknown'), sideEffects: 'none',
+    });
+  }
+  if (cursor && deliveries.length > DRM_PROGRESS_MAX_ROWS) {
+    return json(413, {
+      mode: 'drm-progress', sideEffects: 'none', complete: false,
+      code: 'progress_requires_scan',
+      campaignId: base.campaignId, version: base.version,
+      scannedRows: deliveries.length, budgetRows: DRM_PROGRESS_MAX_ROWS,
+      error: '配信件数が多く、1 回の呼び出しでは進行を数え切れません。'
+        + '**数え切れなかったので数字は返していません**（部分を全体として扱わないため）。',
+    });
+  }
+
+  const emails = [...new Set(deliveries
+    .map((r) => String(((r && r.fields) || {}).RecipientEmail || '').trim().toLowerCase())
+    .filter(Boolean))];
+
+  // ── まだ誰も入っていない（新しい campaign の通常の状態）────────────
+  if (emails.length === 0) {
+    return json(200, {
+      mode: 'drm-progress', sideEffects: 'none', complete: true,
+      campaignId: base.campaignId, version: base.version,
+      enabled: base.enabled === true,
+      maxSends: resolveMaxSends(base),
+      inSequence: 0,
+      summary: null,
+      responseRouting: {
+        declared: Array.isArray(base.sequence && base.sequence.responseRoutes)
+          && base.sequence.responseRoutes.length > 0,
+        active: false, reason: 'nothing_sent_yet', routed: 0, byRoute: {},
+      },
+      notice: 'まだ誰もこのシーケンスに入っていません（配信台帳に 1 行もありません）。'
+        + ' 入口は step1 を撃つか、入口の自動開始（drmAutoStart）で開きます。'
+        + ' **読んだだけで、何も書き込んでいません。**',
+    });
+  }
+  if (emails.length > DRM_PROGRESS_MAX_RECIPIENTS) {
+    return json(413, {
+      mode: 'drm-progress', sideEffects: 'none', complete: false,
+      code: 'too_many_recipients',
+      campaignId: base.campaignId, version: base.version,
+      inSequence: emails.length, budget: DRM_PROGRESS_MAX_RECIPIENTS,
+      error: '受信者が多く、1 回の呼び出しでは進行を数え切れません（数字は返していません）。',
+    });
+  }
+
+  // ── ② その人たちの現在の顧客レコード（名指し）────────────────────
+  let records;
+  try {
+    records = await fetchCustomersByEmailsBounded({ KEY, BASE, emails });
+  } catch (e) {
+    return json(500, {
+      error: '受信者の顧客レコードを読み切れませんでした（数字は返していません）。',
+      detail: String((e && e.message) || 'unknown'), sideEffects: 'none',
+    });
+  }
+  const { emails: blacklistEmails } = await loadBlacklistEmails({ brand: BRAND, baseId: BASE, apiKey: KEY });
+  const list = records.map((rec) => ({
+    recordId: rec.id,
+    fields: rec.fields || {},
+    marketing: resolveCustomerMarketing({ fields: rec.fields || {}, nowMs: now, blacklistEmails }),
+  }));
+
+  // ── ③ 進行と反応（**実配信と同じ単一源**）──────────────────────
+  const provider = await fetchProviderSuppression({ apiKey: process.env.SENDGRID_API_KEY, now });
+  const response = await loadResponseByEmail({
+    campaign: base, recipients: list, deliveries, brand: BRAND, fromEmail,
+    providerSuppressed: provider.ok ? provider.emails : null,
+    softBounced: new Set(),
+    makeIndex: () => createDeliveryEventIndex({ cmd: makeRedisCmd(process.env) }),
+  });
+  const progress = buildSequenceProgress({
+    campaign: base, selected: list, deliveries,
+    brand: BRAND, fromEmail, nowMs: now,
+    providerSuppressed: provider.ok ? provider.emails : null,
+    softBounced: new Set(),
+    responseByEmail: response.ok ? response.byEmail : undefined,
+  });
+  if (!progress.ok) return json(400, { error: `進行を計算できません: ${progress.error}`, sideEffects: 'none' });
+
+  return json(200, {
+    mode: 'drm-progress', sideEffects: 'none', complete: true,
+    campaignId: base.campaignId, version: base.version,
+    enabled: base.enabled === true,
+    maxSends: resolveMaxSends(base),
+    /** 台帳に載っている＝このシーケンスに入っている人数 */
+    inSequence: emails.length,
+    /** 顧客レコードを引けた人数（差があれば退会・削除などで消えている） */
+    resolvedCustomers: list.length,
+    summary: progress.summary,
+    stopLabels: SEQ_STOP_LABEL,
+    responseRouting: {
+      declared: Array.isArray(base.sequence && base.sequence.responseRoutes)
+        && base.sequence.responseRoutes.length > 0,
+      active: response.ok === true,
+      reason: response.reason,
+      measured: response.measured,
+      counts: response.counts,
+      routed: progress.rows.filter((r) => r.routedBy).length,
+      byRoute: progress.rows.reduce((acc, r) => {
+        if (!r.routedBy) return acc;
+        acc[r.routedBy] = (acc[r.routedBy] || 0) + 1;
+        return acc;
+      }, {}),
+    },
+    notice: '配信台帳から「入っている人」だけを読みました（全件走査なし）。'
+      + ' **何も書き込んでいません**（queue も送信もしていません）。',
   });
 }
 

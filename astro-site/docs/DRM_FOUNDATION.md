@@ -234,6 +234,22 @@ read-only API は `admin-marketing` の **`action: 'drm'`**（**送信面**に�
 
 ⚠️ 全件走査はしない。⚠️ 1 件も書かない。⚠️ アドレスは返さない。
 
+### `action: 'drmProgress'`（進行の下見・bounded・read-only）
+
+シーケンスの進みを **配信台帳から**読む。`action=sequence` とは**母集団の取り方が逆**。
+
+| | `action=sequence` | `action=drmProgress` |
+|---|---|---|
+| 何から読むか | **受信対象（Customers）から** | **配信台帳（`CampaignDeliveries`）から** |
+| 絞り込めない campaign | `audience_not_narrowable` で **400** | 台帳を campaignType で絞るので**関係ない** |
+| 母数が大きいとき | 配信履歴の突き合わせで **504** | 上限を超えたら**数字を出さずに 413** |
+| まだ誰も入っていない | 400 / 504 になり得る | `inSequence: 0` と**正直に返る** |
+
+⚠️ 進行と反応は **`buildSequenceProgress` / `loadResponseByEmail`**（実配信と同じ単一源）を通る。
+画面の人数と実際に送る人数がズレない。
+⚠️ **1 バイトも書かない・1 通も送らない。** 読み切れなければ数字を出さない。
+⚠️ cron / 実送信経路はこの面を**使わない**（表示専用）。
+
 ### `admin-drm-attribution`（分析専用・bounded・read-only）
 
 `campaignId` ＋ `recordIds` ＋ 同じ順・同じ数の `emails` を渡すと、その人たちの
@@ -285,6 +301,11 @@ read-only API は `admin-marketing` の **`action: 'drm'`**（**送信面**に�
 送信条件・停止条件はここで作らない（作ると判定が二重化する）。
 
 - `resolveFunnelStage(marketing)` … **1 人 1 段**（排他）。判定できなければ `null`（推測しない）
+- ⚠️ **反応層の購入判定は campaign ごと**（`resolveResponseState({ campaign })`）。
+  渡さないと既定の「Light か Premium が有効なら購入済み」になり、
+  **上位商品を案内する段では宛先全員が `purchased`** に見える。
+  送信経路だけでなく **cohort 表示（`action:'drmCohort'`）でも渡す**
+  （2026-09-14 本番実測: Premium 有効 12 名が三連複の段で全員 `purchased` と表示されていた）
 - `assessFunnel(CAMPAIGNS)` … 宣言と実装の食い違いを `gaps` で返す。**欠けを省略しない**
 - 検査する食い違い: 担当 campaign が無い / 連続配信でない / `responseRoutes` 未宣言 /
   **入口のプランで購入停止している**（2026-09-08 の障害）/ 到達目標で停止していない /

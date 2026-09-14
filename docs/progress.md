@@ -202,6 +202,31 @@ routing が終端として扱って**永久に線形**になる（2026-09-08 の
 **誰も渡していない**・索引の factory を誤った引数名で呼び open が**常に未計測**、の 3 点により
 **本番の配信は最後まで線形**だった。
 
+## 本番実測（2026-09-14 / PR #522 反映後・read-only）
+
+| 項目 | 結果 |
+|---|---|
+| **R1** 1 通単位の開封が読めるか | ✅ `drmCohort` / `admin-drm-attribution` とも `measurement.open = enabled`（**修正前は常に unknown**）|
+| **R5** 購入の帰属 | ✅ Premium 有効 12 名で実行 → `purchases 8` / `purchaseTimeReasons {ok:8, missing:4}` / 全件 `unattributed`（**送信 0 通なので正しい**・捏造しない）|
+| **R6** 段の遷移 | ✅ 12 名は全員 段3（Premium active / 三連複 未保有）。段1・段2 の cohort では `purchased`＝前段は停止 |
+| 入口の下見 | 登録 14 日以内の無料会員 **16 名が wouldEnter・除外 0**。ゲートは**未設定（閉）** |
+| queue / 送信 | **新規ゼロ**（PENDING は 2026-09-08 の既存ジョブ 1 件のみ）|
+
+### 実測で見つかった表示の欠陥（**送信経路には影響なし** / 別 PR で修正）
+
+1. `handleDrmCohort` が `resolveResponseState` に **campaign を渡していなかった** →
+   段3 の cohort で Premium 会員が全員 `purchased`（三連複は未購入なのに）と表示されていた
+2. `action=sequence` が新 campaign で使えない（段1 は **504**、段2/3 は **`audience_not_narrowable` 400`**）
+   → 画面から進行を確認できない
+
+どちらも **read-only の表示面だけ**。送信は `drmResponseLoader` / `sequenceProgress` を通るので影響なし。
+修正は `action: 'drmProgress'`（台帳から読む bounded な進行の下見）＋ cohort の campaign 引き回し。
+
+### rollback
+
+Netlify で直前の production deploy **`de9d2327`**（id `6aa783e4b31161000845cd42`）を publish し直せば即時復帰。
+**env もデータも触っていないので巻き戻し作業は不要。**
+
 ## 残作業（**これが埋まるまでクローズしない**）
 
 | # | 残件 | 埋め方 | 依存 |
