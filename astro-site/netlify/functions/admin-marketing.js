@@ -6641,10 +6641,25 @@ async function handleSequenceTickPreview({ now, req }) {
     overrides.MARKETING_SEQUENCE_MAX_PER_TICK = String(maxPerTick);
   }
 
+  /**
+   * ⚠️ **窓で切る**。下見は本番 tick と同じ読み取りをするので、母数が 1 万件規模だと
+   *    同期 Function の 30 秒に収まらない（2026-09-14 に 504 を実測）。
+   *    `scope` / `offset` / `limit` / `digest` / `ledgerOffset` / `scanPages` で
+   *    1 回の呼び出しを短く切り、呼び出し側が全窓を合算する。
+   */
+  const preview = {
+    scope: String(req.scope || '').trim() || null,
+    offset: Number(req.offset) || 0,
+    limit: Number(req.limit) || 2000,
+    digest: String(req.digest || '').trim() || undefined,
+    ledgerOffset: String(req.ledgerOffset || '').trim() || null,
+    scanPages: Number(req.scanPages) || 2,
+  };
+
   let out;
   try {
     out = await runSequenceTick({
-      env: { ...process.env, ...overrides }, now, campaignId, dryRun: true,
+      env: { ...process.env, ...overrides }, now, campaignId, dryRun: true, preview,
     });
   } catch (e) {
     return json(500, {

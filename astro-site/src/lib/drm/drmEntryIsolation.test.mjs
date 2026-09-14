@@ -209,7 +209,15 @@ test('【不変】共有の cron を変更していない（#521 / #523 の契�
   const code = codeOnly(SEQ_CRON);
   // 既存の 4 ゲート判定と入口の配線はそのまま
   assert.match(code, /readSequenceGates\(env, now\)/);
-  assert.match(code, /if \(!gates\.allOpen\)/);
+  /**
+   * ⚠️ **実送信の経路はゲートが揃うまで進まない**、が守るべき中身。
+   *    2026-09-14 に下見（`dryRun`）を足したため、条件は
+   *    `if (!isDry && !gates.allOpen)` の形になった。
+   *    下見は 1 バイトも書かない（`sequencePreviewWindow.guard.test.mjs` が固定）。
+   *    **ゲートを迂回する分岐が入っていないこと**も併せて確かめる。
+   */
+  assert.match(code, /if \(!isDry && !gates\.allOpen\)/, 'ゲートで止める分岐が消えている');
+  assert.doesNotMatch(code, /if \(gates\.allOpen \|\|/, 'ゲートを迂回する分岐が入っている');
   assert.match(code, /allowFirstStep: autoStartDecl !== null && autoStartGate\.open === true/);
   // 新しい Function を参照していない（依存の向きは DRM → 既存 の一方向）
   assert.equal(code.includes('cron-drm-autostart'), false);

@@ -178,6 +178,25 @@ dispatcher がそれを読む。
 
 が出るので、**送る前に prospect が確実に入ることを数字で確認できる**。
 
+#### 下見は**窓で切る**（2026-09-14 追加）
+
+母数が 1 万件規模なので、下見を 1 回で終わらせると同期 Function の 30 秒を超える
+（実測 **504 / 31 秒**）。`scope` / `offset` / `limit` / `digest` / `ledgerOffset` / `scanPages`
+で 1 回の呼び出しを短く切り、**呼び出し側が全窓を合算**する。
+
+| 引数 | 意味 |
+|---|---|
+| `scope` | `prospect` / `customer`（見ない側は**1 件も読まない**）|
+| `offset` / `limit` / `digest` | prospect 索引の窓（`prospectSequenceCheck` と同じ刻み方）|
+| `ledgerOffset` / `scanPages` | 配信台帳の窓（既定 2 ページ）|
+
+応答の `window.nextOffset` / `window.nextLedgerOffset` が null になるまで繰り返す。
+**`digest` が変わったら中止**して最初から取り直す（fail closed）。
+
+⚠️ **下見は走査カーソルも集計も書かない。** 以前の実装は下見なのに
+`scanStore.write` と `sequenceMetrics` を書いており、**本番 tick の進み位置を動かしていた**。
+「read-only の下見」を名乗る以上どちらも書かない。
+
 ⚠️ 絞り込みは**減らす方向にしか働かない**。除外（配信停止・バウンス・購入済み・反応なし）・
 `DeliveryKey` の冪等性・送信直前再検証は**一切変わらない**（既存の単一源のまま）。
 
