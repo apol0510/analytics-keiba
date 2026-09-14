@@ -26,6 +26,8 @@
  */
 
 /** ステップ間隔の下限（日）。連日で追いかけない */
+import { validateResponseRoutes } from '../drm/drmRouting.js';
+
 export const MIN_STEP_DELAY_DAYS = 2;
 
 /**
@@ -252,6 +254,16 @@ export function validateSequence(campaign) {
       errors.push(`${label}: 実績数値の手書きは禁止（実データのページへ誘導する）`);
     }
   });
+
+  /**
+   * 反応別 routing の宣言（`sequence.responseRoutes`）。
+   * ⚠️ 実行時（`normalizeRoutes`）は知らない条件を黙って捨てるので、
+   *    **書き間違いが「静かに線形のまま」になる**。宣言の形はここで落とす。
+   */
+  errors.push(...validateResponseRoutes(campaign, {
+    maxSends: max,
+    stepNumbers: steps.map((s2) => s2.stepNumber),
+  }).errors);
 
   return { ok: errors.length === 0, errors };
 }

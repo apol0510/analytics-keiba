@@ -163,7 +163,9 @@ export const handler = async (event) => {
   // ── ③ 1 通単位の開封（索引が読めたときだけ）────────────────────
   let eventByKey = null;
   try {
-    const idx = createDeliveryEventIndex({ redisCmd: makeRedisCmd(process.env) });
+    // ⚠️ 引数名は `cmd`（`redisCmd` だと factory が例外 → catch で握り潰され、
+    //    open が常に「未計測」になり correlated 帰属が一度も成立しなかった）。
+    const idx = createDeliveryEventIndex({ cmd: makeRedisCmd(process.env) });
     const read = await idx.read(allKeys.slice(0, 500));
     if (read && read.ok === true) eventByKey = read.byKey || new Map();
   } catch { eventByKey = null; }

@@ -205,6 +205,7 @@ import { readStageGates, describeBlocked } from '../../src/lib/marketing/rollout
 import { describeJourney, JOURNEY_PHASES } from '../../src/lib/marketing/journeyModel.js';
 import { buildHistoryByRecipient, summarizeByTouch } from '../../src/lib/marketing/touchMeasurement.js';
 import { createDeliveryEventIndex, MAX_READ_KEYS } from '../../src/lib/webhooks/deliveryEventIndex.js';
+import { loadResponseByEmail } from '../../src/lib/drm/drmResponseLoader.js';
 import {
   resolveScanPageSize, scanAllTouchPages, buildInlineMeasurementResult,
   MEASUREMENT_INLINE_MAX_PAGES,
@@ -1539,7 +1540,9 @@ async function handleDrmCohort({ KEY, BASE, now, req }) {
   let eventByKey = null;
   try {
     const cmd = makeRedisCmd(process.env);
-    const idx = createDeliveryEventIndex({ redisCmd: cmd });
+    // ⚠️ 引数名は `cmd`。`redisCmd` を渡すと factory が例外を投げ、下の catch が
+    //    それを飲み込んで **open を常に「未計測」にしていた**（2026-09-14 修正）。
+    const idx = createDeliveryEventIndex({ cmd });
     const read = await idx.read(allKeys.slice(0, 500));
     if (read && read.ok === true) eventByKey = read.byKey || new Map();
   } catch { eventByKey = null; }
@@ -4427,6 +4430,19 @@ async function handleSequence({ KEY, BASE, now, req }) {
   const { view: engagementView } = await resolveEngagementView({ list, deliveries, now });
 
   const fromEmail = getBrandConfig(BRAND).defaultFromEmail;
+
+  // ── 反応別 routing（DRM）の入力 ────────────────────────────────
+  // ⚠️ `responseRoutes` を宣言した campaign でだけ索引を読む。読めなければ
+  //    `responseByEmail` を渡さない = **従来どおり完全に線形**（推測で分岐しない）。
+  // ⚠️ 自動配信（`cron-campaign-sequence`）と**同じ関数**を使う。別々に読むと
+  //    画面の「次の 1 通」と実際に送る 1 通がズレる。
+  const response = await loadResponseByEmail({
+    campaign: base, recipients: list, deliveries, brand: BRAND, fromEmail,
+    providerSuppressed: provider.ok ? provider.emails : null,
+    softBounced: blacklist.soft,
+    makeIndex: () => createDeliveryEventIndex({ cmd: makeRedisCmd(process.env) }),
+  });
+
   const progress = buildSequenceProgress({
     campaign: base, selected: list, deliveries,
     brand: BRAND, fromEmail, nowMs: now,
@@ -4434,6 +4450,7 @@ async function handleSequence({ KEY, BASE, now, req }) {
     softBounced: blacklist.soft,
     engagementByEmail: engagementView.engagementByEmail,
     engagementThresholds: engagementView.thresholds,
+    responseByEmail: response.ok ? response.byEmail : undefined,
   });
   if (!progress.ok) return json(400, { error: `進行を計算できません: ${progress.error}` });
 
@@ -4465,6 +4482,26 @@ async function handleSequence({ KEY, BASE, now, req }) {
       recordIds: next.recordIds,
     },
     nextScheduledAt: nextDueAt ? new Date(nextDueAt).toISOString() : null,
+    /**
+     * 反応別 routing が **実際に効いたか**（効かなかったなら理由）。
+     * ⚠️ `active: false` のときの「次の 1 通」は線形の結果であって、
+     *    DRM が動いた結果ではない。0 件と未計測を混同させない。
+     */
+    responseRouting: {
+      declared: Array.isArray(base.sequence && base.sequence.responseRoutes)
+        && base.sequence.responseRoutes.length > 0,
+      active: response.ok === true,
+      reason: response.reason,
+      measured: response.measured,
+      counts: response.counts,
+      /** 反応で行き先が変わった人数（線形と違う step を選んだ人）*/
+      routed: progress.rows.filter((r) => r.routedBy).length,
+      byRoute: progress.rows.reduce((acc, r) => {
+        if (!r.routedBy) return acc;
+        acc[r.routedBy] = (acc[r.routedBy] || 0) + 1;
+        return acc;
+      }, {}),
+    },
     summary: progress.summary,
     stopLabels: SEQ_STOP_LABEL,
     engagement: engagementResponse(engagementView, list),

@@ -1,3 +1,58 @@
+<!-- ⚠️ 常設ブロック: 未完了任務の正本。完了するまで消さない -->
+<!-- 並び順: 最上位は「反応で選別する大規模マーケティング配信基盤」（約 15,000 件 / PR #521）。
+     その節が main に入ったら、この DRM ブロックは**その直下**へ置くこと。先頭を奪わない。 -->
+# 🔴 常設 / 未完了任務 — **DRM 実運用は未完成**（2026-09-14 固定）
+
+> **2026-08-19 の「DRM 基盤完成・クローズ・再監査しない」は取り消し。**
+> 基盤の部品が揃っていることと、実配信が反応別に出し分けていることは別。
+> このブロックは**実配信で層ごとに別の 1 通が出るまで**消さない。
+
+## なぜ「完成」ではなかったか（事実）
+
+| 主張されていたこと | 実際 |
+|---|---|
+| response-driven routing が実 sequence で動く | 実カタログの campaign で `responseRoutes` を宣言したものが **0 件**。宣言が無ければ `sequenceProgress` は routing を呼ばない |
+| 反応で次の訴求を変える | 実配信の経路（`cron-campaign-sequence` / `admin-marketing` の `action=sequence`）が **`responseByEmail` を誰も渡していなかった**。渡さない＝**常に線形** |
+| 1 通単位の開封を見て分岐する | `createDeliveryEventIndex({ redisCmd })` と**引数名を間違えて**呼んでおり、factory が例外 → `catch` が握り潰し → **open は常に「未計測」**。`admin-marketing` の `drm` ビューと `admin-drm-attribution` の両方で発生 |
+| 分岐のテストがある | テスト専用オーバーレイ `withRoutes(...)` で合成した campaign のテストだけ。**実カタログは 1 件も通っていなかった** |
+
+結果として、DRM の事業目的（配信 → 反応 → 訴求変更 → 購入 / 除外）は**本番で 1 通も成立していない**。
+
+## いま出来ていること（2026-09-14 のコードで到達した範囲）
+
+| # | 内容 | 置き場所 |
+|---|---|---|
+| 1 | 実 campaign に `responseRoutes` を宣言（`opened` → step9 / `delivered` → step16） | `campaignCatalog.js` の `light-trial-post-expiry-sequence` |
+| 2 | 宣言の書き間違いを CI で落とす（成立しない `clicked`・終端層の宣言も禁止） | `drmRouting.validateResponseRoutes` → `campaignSequence.validateSequence` |
+| 3 | 配信の事実＋開封索引から反応を組み立てる（**受信者単位で bounded**） | `drm/drmResponseInputs.js` |
+| 4 | 実経路が同じやり方で反応を得る 1 か所 | `drm/drmResponseLoader.js` |
+| 5 | **自動配信（cron）と管理画面の両方**が `responseByEmail` を渡す | `cron-campaign-sequence.js` / `admin-marketing.js` |
+| 6 | 効いたか / 効かなかった理由を運用へ返す | `action=sequence` の `responseRouting` ＋ cron ログ |
+| 7 | 開封索引の引数名バグ修正（`redisCmd` → `cmd`） | `admin-marketing.js` / `admin-drm-attribution.js` |
+| 8 | **実カタログ**での通しテスト（オーバーレイ禁止）と実経路の配線 guard | `drmRealCampaignRouting.test.mjs`（16）/ `drmRealPathWiring.guard.test.mjs`（7） |
+
+安全側の性質は変えていない: 停止判定（購入 / 退会 / 停止リスト / バウンス / 対象外 /
+engagement）を**全部通過した後**にしか効かない / **既に送った step は選ばない** /
+反応が読めなければ**線形**（「開封 0 件」と読み替えない） / 宣言の無い campaign では
+索引を 1 鍵も読まない。
+
+## 残作業（**これが埋まるまでクローズしない**）
+
+| # | 残件 | 埋め方 | 依存 |
+|---|---|---|---|
+| R1 | 本番で 1 通単位の開封が**実際に読めている**ことの実測 | `action=sequence` の `responseRouting.measured.open` と `counts` を本番で確認 | 引数名バグ修正の deploy |
+| R2 | **実配信で層ごとに別の 1 通が出た**（本番実績） | ゲートを開けて `light-trial-post-expiry-sequence` を進め、`byRoute` に `opened:9` / `delivered:16` が立つことを確認 | **MK の明示承認**。現在ゲートは閉 |
+| R3 | 購入を実 touch へ帰属（`correlated` 1 件以上） | `admin-drm-attribution` を対象者名指しで実行 | R1 / R2 |
+| R4 | 反応なしの自動除外が実データで発火 | `engagementPolicy` の観測条件 3 つ（別タスク） | 配信量 |
+| R5 | 進行中の大規模配信（`campaign-discount-*`）への route 宣言 | **今は宣言しない。** 約 15,000 件の配信復旧が着地してから別途判断 | 15,000 件タスク |
+| R6 | A/B（`variant`）の実運用 | `DeliveryKey` に variant が入らないため設計判断が要る | 未着手 |
+
+⚠️ **R5 は意図的に対象外**。約 15,000 件への配信復旧は別タスクで進行中で、
+そこへ routing を足すと原因の切り分けができなくなる。**混ぜない。**
+
+⚠️ R2 は**コードのマージでは絶対に埋まらない**（実配信が要る）。
+「テストが通ったので DRM 完成」と書かない。
+
 # ✉️ ログイン案内の文言を削る — **完了（2026-09-10）**
 
 > 文言のみ。認証の判定・トークンの扱い・送信経路は**変更していない**。

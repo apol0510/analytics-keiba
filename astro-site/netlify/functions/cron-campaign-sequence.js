@@ -53,6 +53,8 @@ import {
   isSequenceCampaign, resolveSequenceStep,
 } from '../../src/lib/marketing/campaignSequence.js';
 import { buildSequenceProgress } from '../../src/lib/marketing/sequenceProgress.js';
+import { loadResponseByEmail } from '../../src/lib/drm/drmResponseLoader.js';
+import { createDeliveryEventIndex } from '../../src/lib/webhooks/deliveryEventIndex.js';
 import {
   readSequenceGates, planSequenceTick, summarizeSequenceTick,
   MAX_RECIPIENTS_PER_TICK, resolveMaxRecipientsPerTick, TICK_ABORT,
@@ -339,6 +341,23 @@ export async function runSequenceTick({ env = process.env, now = Date.now(), cam
   //    prospect の停止（bounce / 苦情 / 配信停止）も provider の集合へ合流させる。
   const suppressed = new Set(provider.emails);
   if (prospectInputs) for (const e of prospectInputs.providerSuppressed) suppressed.add(e);
+  // ── 反応別 routing（DRM）の入力 ────────────────────────────────
+  // ⚠️ `campaign.sequence.responseRoutes` を宣言した campaign でだけ索引を読む。
+  //    宣言が無ければ 1 鍵も読まない（既存のコストと挙動をそのまま維持する）。
+  // ⚠️ 索引が読めない / 予算を超えた相手は **`unknown` = 線形**（推測で分岐しない）。
+  // ⚠️ 管理画面（`admin-marketing` の `action=sequence`）と**同じ関数**で読む。
+  //    別々に読むと、画面に出る「次の 1 通」と実際に送る 1 通がズレる。
+  const response = await loadResponseByEmail({
+    campaign: base, recipients: selected, deliveries: allDeliveries,
+    brand: BRAND, fromEmail,
+    providerSuppressed: suppressed, softBounced: new Set(),
+    makeIndex: () => createDeliveryEventIndex({ cmd: makeRedisCmd(env) }),
+  });
+  if (!response.ok) {
+    // 効かなかったこと自体をログに残す（黙って線形に戻ると「効いている」と誤認する）
+    console.log(`${SEQ_LOG_TAG} response routing 不使用: ${response.reason}`);
+  }
+
   const progress = buildSequenceProgress({
     campaign: base, selected, deliveries: allDeliveries, brand: BRAND, fromEmail, nowMs: now,
     providerSuppressed: suppressed,
@@ -346,6 +365,7 @@ export async function runSequenceTick({ env = process.env, now = Date.now(), cam
     // prospect の反応は本人のレコードが持っている（Customers 側は従来どおり Map なし）
     engagementByEmail: prospectInputs && prospectInputs.engagementByEmail.size > 0
       ? prospectInputs.engagementByEmail : undefined,
+    responseByEmail: response.ok ? response.byEmail : undefined,
   });
   const plan = planSequenceTick({ progress, gates, maxRecipients: resolveMaxRecipientsPerTick(process.env) });
   if (!plan.ok) {

@@ -207,4 +207,90 @@ export function resolveRoutedStep({
   return { step, variant: decided.variant, angle: decided.angle, routeId: decided.routeId };
 }
 
+
+/**
+ * **実 campaign に宣言された `responseRoutes` を検証する**（純粋）。
+ *
+ * `normalizeRoutes` は「知らない条件を黙って捨てる」実行時の安全弁だが、
+ * それだけだと**書き間違えた宣言が静かに無効化される**（効いているつもりで線形のまま）。
+ * カタログ検証（`campaignSequence.validateSequence`）からここを呼び、CI で落とす。
+ *
+ * ⚠️ 検証するのは**宣言の形**だけ。誰に何を送るかは判定しない。
+ *
+ * @param {object} campaign  `sequence.responseRoutes` を持ちうるキャンペーン定義
+ * @param {{maxSends: number, stepNumbers: number[]}} shape  そのシーケンスの実体
+ * @returns {{ok: boolean, errors: string[]}}
+ */
+export function validateResponseRoutes(campaign, shape = {}) {
+  const errors = [];
+  const raw = campaign && campaign.sequence && campaign.sequence.responseRoutes;
+  if (raw === undefined || raw === null) return { ok: true, errors };
+
+  const id = str(campaign && campaign.campaignId) || '(no id)';
+  if (!Array.isArray(raw)) {
+    errors.push(`${id}: responseRoutes は配列で宣言すること`);
+    return { ok: false, errors };
+  }
+  if (raw.length === 0) {
+    // 空配列は「宣言したのに何も起きない」＝書き忘れと区別が付かない
+    errors.push(`${id}: responseRoutes が空。使わないなら宣言ごと消すこと`);
+    return { ok: false, errors };
+  }
+
+  const maxSends = num(shape.maxSends);
+  const stepNumbers = new Set((Array.isArray(shape.stepNumbers) ? shape.stepNumbers : []).map(num));
+  const allowed = new Set(ROUTE_WHEN);
+  const seen = [];
+
+  raw.forEach((r, i) => {
+    const label = `${id} responseRoutes[${i}]`;
+    const when = str(r && r.when);
+    if (!allowed.has(when)) {
+      errors.push(`${label}: 未知の when「${when}」（${ROUTE_WHEN.join(' / ')} のみ）`);
+      return;
+    }
+    // ⚠️ 終端層は宣言しても `routeNextTouch` が行き先を作らない。
+    //    書けてしまうと「購入者に別の訴求を送れる」と誤読させるので禁止する。
+    if (when === RESPONSE.PURCHASED || when === RESPONSE.SUPPRESSED) {
+      errors.push(`${label}: when='${when}' は行き先を作らない（停止が最優先）。宣言しないこと`);
+      return;
+    }
+    // ⚠️ click は provider 側 tracking が OFF。**成立しない条件**を書かせない
+    if (when === RESPONSE.CLICKED) {
+      errors.push(`${label}: click は計測していないため成立しない。宣言しないこと`);
+      return;
+    }
+
+    const step = num(r && r.step);
+    if (step === null) {
+      errors.push(`${label}: step が無い（線形と同じなら宣言する意味が無い）`);
+    } else {
+      if (!Number.isInteger(step) || step < 1) errors.push(`${label}: step は 1 以上の整数`);
+      else if (step === 1) errors.push(`${label}: step1 は初回接触。routing の行き先にしない`);
+      if (maxSends !== null && step > maxSends) errors.push(`${label}: step${step} は maxSends(${maxSends}) を超える`);
+      if (stepNumbers.size > 0 && !stepNumbers.has(step)) errors.push(`${label}: step${step} は定義されていない`);
+    }
+
+    const minSent = num(r && r.minSent);
+    const maxSent = num(r && r.maxSent);
+    for (const [k, v] of [['minSent', minSent], ['maxSent', maxSent]]) {
+      if (v !== null && (!Number.isInteger(v) || v < 0)) errors.push(`${label}: ${k} は 0 以上の整数`);
+    }
+    if (minSent !== null && maxSent !== null && minSent > maxSent) {
+      errors.push(`${label}: minSent(${minSent}) > maxSent(${maxSent}) で永久に当たらない`);
+    }
+
+    // 先に書いた同じ層が窓を丸ごと覆っていると、後ろは**到達不能**
+    for (const p of seen) {
+      if (p.when !== when) continue;
+      const covers = (p.minSent === null || (minSent !== null && p.minSent <= minSent))
+        && (p.maxSent === null || (maxSent !== null && p.maxSent >= maxSent));
+      if (covers) errors.push(`${label}: 同じ when が先に宣言済みで到達不能（宣言順が強さ）`);
+    }
+    seen.push({ when, minSent, maxSent });
+  });
+
+  return { ok: errors.length === 0, errors };
+}
+
 export default routeNextTouch;

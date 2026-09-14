@@ -3,6 +3,20 @@
 「一斉に送る仕組み」ではなく、**顧客の反応を計測し、反応に応じて次の訴求を変え、購入まで辿る**ための土台。
 既存の 24-touch・CTA・購入停止・suppression・頻度 guard は**一切変えていない**。
 
+> ## ⚠️ この文書は「基盤」の仕様書であって、**実運用の完了報告ではない**
+>
+> **2026-08-19 に「基盤完成・クローズ」とした判断は 2026-09-14 に取り消された。**
+> 当時そろっていたのは純粋関数・管理画面・テスト専用オーバーレイ（`withRoutes`）だけで、
+> **実カタログの campaign には `responseRoutes` が 1 件も無く**、
+> **実配信の経路（`cron-campaign-sequence` / `admin-marketing`）は `responseByEmail` を
+> 誰も渡していなかった**。つまり本番の配信は**最後まで線形**で、
+> 「反応別に次の訴求を変える」という事業目的は 1 通も達成していなかった。
+>
+> **管理画面が出来ている / 純粋関数のテストが通る / テスト用オーバーレイで分岐する、を
+> 「DRM 完成」と読み替えない。** 実 campaign の宣言と実経路の配線が揃い、
+> 実配信で層ごとに別の 1 通が出て初めて達成になる。
+> 現在地と残作業は `docs/progress.md` 先頭の常設ブロックが正本。
+
 ## 責務の分かれ方（二重化しない）
 
 | 問い | 単一源 |
@@ -39,23 +53,52 @@
 反応層 → 次の touch / variant / angle を**宣言で**選ぶ。
 キャンペーン固有ロジックを Function へ直書きしない。
 
-**実際の sequence へ配線済み**: `sequenceProgress.resolveRecipientProgress` が
+`sequenceProgress.resolveRecipientProgress` が
 `campaign.sequence.responseRoutes` を宣言した campaign でだけ `resolveRoutedStep` を通す。
-`responseByEmail`（任意）を渡さない / 宣言が無い場合は**従来どおり完全に線形**。
+`responseByEmail` を渡さない / 宣言が無い場合は**従来どおり完全に線形**。
+
+### 実 campaign の宣言（2026-09-14〜）
+
+**`light-trial-post-expiry-sequence`（体験終了後フェーズ / 18 通）** が最初の実宣言。
+送信実績が 0 通の campaign なので、**進行中のコホートを乱さない**。
 
 ```js
 sequence: {
+  maxSends: 18,
+  steps: POST_EXPIRY_STEPS,
   responseRoutes: [
-    { when: 'clicked',  step: 9, variant: 'close-a', angle: 'urgency' },
-    { when: 'opened',   step: 7, angle: 'social-proof' },
-    { when: 'delivered', step: 5, angle: 'benefit', minSent: 2 },
+    // 読んでいる人 → 使い方の続きより先に「プランで何が変わるか」
+    { when: 'opened',    step: 9,  minSent: 3, maxSent: 8 },
+    // 届いても開かない人 → 案内を積まず、入口を変える 1 通
+    { when: 'delivered', step: 16, minSent: 5, maxSent: 12 },
   ],
 }
 ```
 
+⚠️ **進行中の `campaign-discount-*` / `light-trial-to-premium-sequence` には宣言しない**
+（別途進めている約 15,000 件の配信復旧と混ぜない）。
+
+### 反応の作り方（**この 2 つが欠けていた**）
+
+| 追加 | 役割 |
+|---|---|
+| `drm/drmResponseInputs.js` | 配信の事実（`indexDeliveries`）＋ 開封索引 → 1 人 1 state。読み取りは**受信者単位で bounded**（`planResponseKeyReads`） |
+| `drm/drmResponseLoader.js` | 実経路が**同じやり方で**反応を得る 1 か所。読めない理由を必ず `reason` で返す |
+
+- `cron-campaign-sequence`（自動配信）と `admin-marketing` の `action=sequence`（画面）が
+  **同じ loader** を呼ぶ。別々に読むと画面の「次の 1 通」と実際に送る 1 通がズレる
+- 索引が読めない / 予算を超えた相手は `unknown` = **線形**（「開封 0 件」にしない）
+- 宣言の無い campaign では索引を **1 鍵も読まない**（既存のコストと挙動のまま）
+- 管理画面の応答に `responseRouting`（`active` / `reason` / `routed` / `byRoute`）を返す。
+  **効かなかったことが運用から見える**ようにするため
+
 - 宣言順が強さ（先に書いたものが勝つ）
 - `minSent` / `maxSent` で段階を絞れる
 - **知らない `when` は採用しない**（勝手な条件を増やさない）
+- ⚠️ 実行時に黙って捨てると**書き間違いが「静かに線形のまま」**になるため、
+  宣言の形は `validateResponseRoutes` が `validateSequence` 経由で CI で落とす。
+  `purchased` / `suppressed`（行き先を作らない層）と `clicked`（**計測していない**）は
+  **宣言そのものを禁止**する — 書けると「効いている」と誤読するため
 - **`unknown` 用の route が無ければ既定の線形へ落とす**（推測で反応前提の枝へ入れない）
 - ⚠️ **`purchased` / `suppressed` には宣言があっても行き先を作らない**（`step: null`）。
   停止は `sequencePolicy` / `sequenceProgress` が決めるが、**行き先を作らないことでも二重に塞ぐ**
@@ -203,7 +246,7 @@ read-only API は `admin-marketing` の **`action: 'drm'`**（**送信面**に�
 ⚠️ click tracking は無効なので `direct` は成立しない。UI は 0 ではなく「—」で出し、
 **「direct 0 件＝効果なし」と読ませない**。
 
-## DRM の完成条件
+## 基盤の条件（11 項目・2026-08-19 時点で充足）
 
 - response-driven routing が**実 sequence** で動く
 - `responseRoutes` 未定義なら**既存挙動不変**
@@ -216,6 +259,27 @@ read-only API は `admin-marketing` の **`action: 'drm'`**（**送信面**に�
 - **送信経路の決済フィールド guard を維持したまま**である
 - duplicate send なし
 - operator UI で反応層・次訴求・conversion を確認できる
+
+⚠️ この 11 項目は**部品の条件**であって、事業目的の達成条件ではない。
+1 項目めの「実 sequence で動く」は当時 **`responseRoutes` を宣言した campaign が 1 件も
+無い状態**で満たしたと記録されており、実際には**誰にも効いていなかった**。
+
+## DRM 実運用の条件（こちらが事業目的・**未達**）
+
+| # | 条件 | 2026-09-14 時点 |
+|---|---|---|
+| 1 | 実カタログの campaign が `responseRoutes` を宣言している | ✅ `light-trial-post-expiry-sequence` に 2 route |
+| 2 | 宣言の書き間違いが CI で落ちる（黙って線形に戻らない） | ✅ `validateResponseRoutes` を `validateSequence` へ |
+| 3 | 実配信の経路が `responseByEmail` を渡す | ✅ cron / 管理画面の両方（`drmResponseLoader.js`） |
+| 4 | 画面の「次の 1 通」と実配信の 1 通が同じ | ✅ 同じ loader・同じ進行モジュール |
+| 5 | 反応が読めないときは線形（推測で分岐しない） | ✅ `ok:false` + 理由コード |
+| 6 | 1 通単位の開封が**実際に読めている** | ⬜ 索引の factory 引数バグを修正済み。**本番での実測が未了** |
+| 7 | **実配信で層ごとに別の 1 通が出た**（本番実績） | ⬜ **未達**。送信はゲート閉のまま 1 通も出していない |
+| 8 | 購入を実 touch へ帰属できた（`correlated` 実測 1 件以上） | ⬜ **未達**（open 未計測のままだったため一度も成立せず） |
+| 9 | 反応なしの自動除外が実データで発火した | ⬜ 別タスク（`engagementPolicy`）。**観測条件 3 つが未達のまま** |
+
+⚠️ 6〜9 が埋まるまで「DRM 完成」と書かない。**7 は実配信が要る**ので、
+コードのマージだけでは絶対に埋まらない。
 
 ## 6. safety
 
