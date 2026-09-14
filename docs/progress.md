@@ -168,6 +168,56 @@ queue・予約・送信はいずれも **0**。
 test:marketing 2,832 pass / test:drm 241 pass / check:safety EXIT=0 / build EXIT=0。
 **本番の再実行はまだしていない**（merge / deploy / 実送信の手前で停止）。
 
+## canary 2 回目も失敗（504）／Background へ作り直し（2026-09-15）
+
+#533 反映後、承認どおり `sequenceCanaryRun` を 1 回だけ実行 → **HTTP 504（31 秒）**。
+関数の**完了ログすら出ていない**＝打ち切られた。
+
+### 実害はゼロ（3 分後まで追跡して確認）
+
+| 確認項目 | 実行前 | 実行後（+3 分）|
+|---|---|---|
+| SentCount 合計 | 26,848 | **26,848** |
+| FailedCount 合計 | 4 | **4** |
+| EmailBlacklist | 403 | **403** |
+| ジョブ数 | 1（既存）| **1（追加 0）** |
+| step2 予約（due）| 1,954 | **1,954**（焼けた予約 0）|
+| delivered ヒストグラム | `{1:68, 2:1901, 3:31}` | **同じ** |
+| prospect digest | `70e1390c…` | **一致** |
+| DRM の絞り込み | — | **`all`（副作用なし）** |
+
+queue・予約・送信・provider accepted はいずれも **0**。
+
+### 原因
+
+`runSequenceTick` は
+**配信台帳の走査 ＋ prospect 索引 11,971 件の読み込み ＋ 送信元の停止リスト照合**
+を行うため、**同期 Function の制限時間に収まらない**。
+
+⚠️ **これは #529 が DRM の入口で解決済みの問題と同型**（`drm-entry-background`）。
+既に書かれていた対処を canary へ適用していなかった。
+
+### 直し方（PR #534）
+
+| 変更 | 中身 |
+|---|---|
+| `sequence-canary-background.js`（新規）| 重い処理はここだけが実行する（Background / 最大 15 分）。`runSequenceTick` を呼ぶだけで、送信ループも安全判定も新しく作らない |
+| `sequenceCanaryPolicy.js`（新規）| 受け付け判定の**単一源**。入口と Background の**両方**が同じ関数で確かめる |
+| `admin-marketing` の `sequenceCanaryRun` | **受け付けるだけ**に縮小。判定 → Background を起動 → **202 即返し** |
+| 鍵 | Background 側が定期 tick と**同じ鍵**を取る（入口では取らない）|
+
+⚠️ **「誰に送るか」は Background へ渡さない。** payload は
+`campaignId` / `sourceFilter` / `maxPerTick` / `expectedCount` / `confirm` / `apply` / `runId` だけ。
+対象は Background 側が読み直すので、送信直前の再検証が短絡しない。
+⚠️ Background は公開 URL なので `x-admin-secret` 必須。**入口を信用せず判定をやり直す**。
+⚠️ 開けるのは**スケジューラ判定 1 つだけ**。停止用ゲートはそのまま渡す。
+
+結果は返らないので、`ScheduledEmails` / `prospectSequenceCheck` /
+`[sequence-canary-bg]` のログで確認する。
+
+test:marketing 2,836 pass / test:drm 241 pass / check:safety EXIT=0 / build EXIT=0。
+**本番の再実行はまだしていない**（merge / deploy / 実送信の手前で停止）。
+
 ## 進捗（2026-09-14 / 実施順は MK 指定）
 
 | # | 作業 | 状態 |

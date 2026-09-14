@@ -143,9 +143,12 @@ import {
   planProspectClaimRelease, summarizeClaimRelease, RELEASE_CONFIRM,
 } from '../../src/lib/marketing/prospectClaimRelease.js';
 import { runSequenceTick } from './cron-campaign-sequence.js';
-// canary は定期 tick と**同じ鍵**を取る（同時に二重で走らせない）
-import { SEQUENCE_TICK_LOCK_ID, SEQUENCE_TICK_LOCK_TTL_SEC } from './cron-campaign-sequence.js';
-import { normalizeAudienceFilter, AUDIENCE_FILTER } from '../../src/lib/marketing/sequenceAudienceFilter.js';
+// canary の受け付け判定は Background と**同じ単一源**を使う（2 か所へ書き写さない）
+import {
+  checkCanaryRequest, buildCanaryPayload,
+  CANARY_CAMPAIGNS, CANARY_CONFIRM, CANARY_MAX_PER_TICK,
+} from '../../src/lib/marketing/sequenceCanaryPolicy.js';
+import { normalizeAudienceFilter } from '../../src/lib/marketing/sequenceAudienceFilter.js';
 import {
   createDeliveryKeyRollbackStore, DEFAULT_ROLLBACK_TTL_SEC, RUN_ID,
 } from '../../src/lib/marketing/deliveryKeyRollback.js';
@@ -196,7 +199,7 @@ import {
 import {
   buildSequenceProgress, selectNextDueStep, SEQ_STOP_LABEL, indexDeliveries,
 } from '../../src/lib/marketing/sequenceProgress.js';
-import { readSequenceAutoState, SEQUENCE_ENV } from '../../src/lib/marketing/sequenceAutomation.js';
+import { readSequenceAutoState } from '../../src/lib/marketing/sequenceAutomation.js';
 import {
   AUTOGRANT_SKIP_LABEL, HARD_MAX_BATCH_SIZE,
 } from '../../src/lib/comeback/lightTrialAutoGrant.js';
@@ -280,7 +283,7 @@ import {
 } from '../../src/lib/marketing/deliveryKeySource.js';
 import { createDeliveryKeyStore, makeRedisCmd } from '../../src/lib/marketing/deliveryKeyStore.js';
 import {
-  createDispatchLock, QUEUE_LOCK_ROOT, DISPATCH_LOCK_TTL_SEC, LOCK_FAIL, isSafeJobId, TICK_LOCK_ROOT,
+  createDispatchLock, QUEUE_LOCK_ROOT, DISPATCH_LOCK_TTL_SEC, LOCK_FAIL, isSafeJobId,
 } from '../../src/lib/marketing/dispatchLock.js';
 // カムバック無料付与の成功者を引き継ぐ判定（対象の導出・期限・監査印の単一源）
 import {
@@ -6789,167 +6792,98 @@ async function handleSequenceTickPreview({ now, req }) {
 //  prospect canary（管理用・1 回限り）
 // ══════════════════════════════════════════════════════════════════
 
-/** 誤操作で走らないための合言葉 */
-const CANARY_CONFIRM = 'RUN PROSPECT CANARY';
-
 /**
- * canary を回してよい campaign の**許可リスト**。
+ * prospect 経路だけを**少数・1 回だけ**実配信して確かめる（管理用の入口）。
  *
- * ⚠️ **既定値を持たせない**。`campaignId` 未指定は 400。
- *    ここに無い campaign（とくに DRM の `free-signup-onboarding`）は絶対に走らない。
- */
-const CANARY_CAMPAIGNS = new Set(['campaign-discount-free']);
-
-/** canary の 1 回あたりの上限（これ以上は受け付けない） */
-const CANARY_MAX_PER_TICK = 50;
-
-/**
- * prospect 経路だけを**少数・1 回だけ**実配信して確かめる（管理用）。
+ * ## ここは「受け付けるだけ」（2026-09-15 に作り直し）
+ *
+ * 最初は同期でそのまま `runSequenceTick` を呼んでいたが、**HTTP 504（31 秒）**で
+ * 打ち切られた。`runSequenceTick` は配信台帳の走査と prospect 索引 11,971 件の
+ * 読み込みを行うので、同期 Function の制限時間に収まらない。
+ * 書き込みは 1 件も起きなかったが、**完走できない経路は完成ではない**。
+ *
+ * **#529 が DRM の入口で解決済みの問題と同型**なので、同じ形に揃える＝
+ * 重い処理は `sequence-canary-background` へ委譲し、ここは **202 即返し**。
  *
  * ## なぜ専用の入口が要るか（2026-09-14 の本番事故）
  *
  * 当初は canary のたびに production env を開け閉めしていた。
  *
- *   - `MARKETING_SEQUENCE_SOURCE_FILTER`（当時）は**グローバル env** なので、
- *     `cron-drm-autostart` の `tickEnv = { ...env }` を通じて **DRM にも効く**。
- *     DRM の対象（Customers 由来）が黙って 0 人になる。
- *   - `MARKETING_SEQUENCE_SCHEDULER_ENABLED` を開けると、**その時刻の全 campaign** が動く。
+ *   - 出所の絞り込みを**グローバル env** で持つと、`cron-drm-autostart` の
+ *     `tickEnv = { ...env }` を通じて **DRM にも効く**。DRM の対象が黙って 0 人になる。
+ *   - スケジューラの env を開けると、**その時刻の全 campaign** が動く。
  *     実際に DRM のジョブが混ざり、canary の判定が壊れた。
  *
- * だから canary は「共有の env を開け閉めする」のをやめ、
- * **この 1 回の呼び出しにだけ効く引数**で回す。
+ * ## 守っていること
  *
- * ## 守ること
+ *   1. `campaignId` は**許可リスト必須**（既定値なし・DRM は入っていない）
+ *   2. 絞り込み・上限・期待件数はすべて**引数**。production env は読みも書きもしない
+ *   3. 送信経路は作り直さない。既存 `runSequenceTick` へ委譲する
+ *   4. 判定は `sequenceCanaryPolicy` の**単一源**。Background 側も同じ関数で再確認する
+ *   5. **「誰に送るか」は渡さない。** 対象は Background 側で読み直す
+ *   6. **1 回限り**。`confirm` + `apply=true` が要る
  *
- *   1. `campaignId` は**許可リスト必須**（既定値なし）。他 campaign を巻き込まない
- *   2. 絞り込み・上限・期待件数は**引数**。env は読まないし書かない
- *   3. 送信経路は作り直さない。既存の `runSequenceTick` にそのまま委譲する
- *      （除外・`DeliveryKey`・予約・dispatcher・webhook は通常どおり）
- *   4. 期待件数と違えば**1 件も積まない**（`expected_count_mismatch`）
- *   5. prospect 以外が混ざれば**1 件も積まない**（`audience_source_mixed`）
- *   6. 定期 tick と同じ鍵を取る（同時に二重で走らせない）
- *   7. **1 回限り**。繰り返し送る作りにしない
- *
- * ⚠️ 実送信の停止手段は減らしていない。`MARKETING_SEQUENCE_ENQUEUE_ENABLED` /
- *    `MARKETING_CAMPAIGN_DISPATCH_ENABLED` / `rolloutKill` はそのまま効く
- *    （閉じていれば `gates_closed` で止まる）。開けるのは**この呼び出しの中でだけ**、
- *    定期 tick 用のスケジューラ判定 1 つだけ。
+ * ⚠️ 結果はここでは返らない。`ScheduledEmails` /
+ *    `action='prospectSequenceCheck'` / `[sequence-canary-bg]` のログで確認する。
  */
 async function handleSequenceCanaryRun({ now, req }) {
-  const campaignId = String(req.campaignId || '').trim();
-  if (!CANARY_CAMPAIGNS.has(campaignId)) {
+  // ① 受け付け判定（Background 側と**同じ単一源**）
+  const checked = checkCanaryRequest(req);
+  if (!checked.ok) {
     return json(400, {
       mode: 'sequence-canary', sideEffects: 'none',
-      error: 'canary を回せる campaign ではありません',
-      許可: [...CANARY_CAMPAIGNS],
-      note: 'campaignId は必ず明示してください（既定値はありません）。',
+      refuse: checked.refuse,
+      '許可している campaign': [...CANARY_CAMPAIGNS],
+      手順: `campaignId / sourceFilter='prospect' / maxPerTick(1〜${CANARY_MAX_PER_TICK}) / `
+        + `expectedCount / confirm='${CANARY_CONFIRM}' / apply=true をすべて満たしてください。`,
+      note: 'まだ何もしていません（予約・キュー登録・送信のいずれも行っていません）。',
     });
   }
-  const campaign = getCampaign(campaignId, { includeDisabled: true });
+
+  // ② campaign 定義そのものが生きているか（fail closed）
+  const campaign = getCampaign(checked.campaignId, { includeDisabled: true });
   if (!campaign || !isSequenceCampaign(campaign)) {
     return json(400, {
       mode: 'sequence-canary', sideEffects: 'none',
-      error: '連続配信のキャンペーンではありません', campaignId,
+      error: '連続配信のキャンペーンではありません', campaignId: checked.campaignId,
     });
   }
 
-  // ── 引数（env は見ない）────────────────────────────────────
-  const sourceFilter = normalizeAudienceFilter(req.sourceFilter);
-  if (sourceFilter !== AUDIENCE_FILTER.PROSPECT) {
-    return json(400, {
-      mode: 'sequence-canary', sideEffects: 'none',
-      error: 'canary は prospect 限定です', sourceFilter,
-    });
+  // ③ Background へ委譲（**アドレスも recordId も渡さない**）
+  const runId = `canary-${new Date(now).toISOString().slice(0, 19).replace(/[:T]/g, '')}`;
+  const payload = buildCanaryPayload(checked, runId);
+  const SECRET = process.env.MARKETING_ADMIN_SECRET || process.env.PREMIUM_PLUS_ADMIN_SECRET;
+  if (!SECRET) {
+    return json(503, { mode: 'sequence-canary', sideEffects: 'none', error: '管理用 secret 未設定' });
   }
-  const maxPerTick = Number(req.maxPerTick);
-  if (!Number.isInteger(maxPerTick) || maxPerTick < 1 || maxPerTick > CANARY_MAX_PER_TICK) {
-    return json(400, {
-      mode: 'sequence-canary', sideEffects: 'none',
-      error: `maxPerTick は 1〜${CANARY_MAX_PER_TICK} の整数で指定してください`,
-    });
-  }
-  const expectedCount = Number(req.expectedCount);
-  if (!Number.isInteger(expectedCount) || expectedCount < 1 || expectedCount > maxPerTick) {
-    return json(400, {
-      mode: 'sequence-canary', sideEffects: 'none',
-      error: 'expectedCount は 1〜maxPerTick の整数で指定してください',
-      note: '下見（sequenceTickPreview）で数えた人数をそのまま入れてください。違えば 1 件も積みません。',
-    });
-  }
-
-  const confirmed = String(req.confirm || '') === CANARY_CONFIRM;
-  const apply = req.apply === true;
-  if (!confirmed || apply !== true) {
-    return json(200, {
-      mode: 'sequence-canary', sideEffects: 'none',
-      campaignId, sourceFilter, maxPerTick, expectedCount,
-      実行していない理由: !confirmed ? 'confirm が違います' : 'apply が true ではありません',
-      手順: `confirm='${CANARY_CONFIRM}' と apply=true を付けると 1 回だけ実行します。`,
-      note: 'これは確認だけです。予約・キュー登録・送信はいずれも行っていません。',
-    });
-  }
-
-  /**
-   * 定期 tick と**同じ鍵**を取る。取れなければ何もしない
-   *   （定期 tick と同時に走ると、上限も期待件数も意味を失う）。
-   */
-  /**
-   * ⚠️ 配線は**定期 tick と同じ形**にする（`cron-campaign-sequence` の既定ハンドラ）。
-   *   - 鍵の引数名は **`cmd`**（`redisCmd` ではない）。違うと `createDispatchLock` が即 throw する
-   *   - `acquire` が返すのは **`{ ok, token }`**。生のトークンではない
-   *   どちらも 2026-09-15 に本番で踏んだ（500 で即死・送信 0 のまま fail closed した）。
-   */
-  let lock = null;
-  let token = null;
+  const base = String(process.env.URL || '').trim() || 'https://analytics.keiba.link';
+  let status = null;
   try {
-    lock = createDispatchLock({ cmd: makeRedisCmd(process.env), root: TICK_LOCK_ROOT });
-    const got = await lock.acquire({
-      jobId: SEQUENCE_TICK_LOCK_ID, ttlSec: SEQUENCE_TICK_LOCK_TTL_SEC,
+    const res = await fetch(`${base}/.netlify/functions/sequence-canary-background`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-admin-secret': SECRET },
+      body: JSON.stringify(payload),
     });
-    if (!got.ok) {
-      return json(409, {
-        mode: 'sequence-canary', sideEffects: 'none',
-        abort: got.reason === LOCK_FAIL.BUSY ? 'tick_busy' : 'tick_lock_unavailable',
-        note: '定期 tick が走っているか、鍵を取れませんでした。何もしていません。',
-      });
-    }
-    token = got.token;
+    status = res ? res.status : null;
   } catch {
-    // ⚠️ 鍵を取れないときは**走らせない**（多重起動を防げない状態で送らない）
-    return json(409, {
-      mode: 'sequence-canary', sideEffects: 'none',
-      abort: 'tick_lock_unavailable', note: '鍵を用意できませんでした。何もしていません。',
+    status = null;
+  }
+  // ⚠️ Background は **202 即返し**。body は返らないので読まない
+  const accepted = status === 202 || status === 200;
+  if (!accepted) {
+    return json(502, {
+      mode: 'sequence-canary', sideEffects: 'none', runId,
+      error: 'canary を起動できませんでした', status,
+      note: '起動に失敗したので何もしていません。',
     });
   }
-
-  let out;
-  try {
-    /**
-     * ⚠️ スケジューラ判定だけを**この呼び出しの中で**開ける。
-     *    production env は触らないので、DRM を含む他 campaign には一切影響しない。
-     *    停止用のゲート（enqueue / dispatch）はそのまま渡す＝閉じていれば止まる。
-     */
-    out = await runSequenceTick({
-      env: { ...process.env, [SEQUENCE_ENV.SCHEDULER]: 'true' },
-      now, campaignId,
-      sourceFilter, expectedCount, maxRecipientsOverride: maxPerTick,
-    });
-  } catch (e) {
-    return json(500, {
-      mode: 'sequence-canary', campaignId,
-      error: 'canary を実行できませんでした', reason: String((e && e.message) || 'unknown'),
-      note: '例外時は途中で止まっています。件数を read-only で確かめてください。',
-    });
-  } finally {
-    if (lock && token) {
-      try { await lock.release({ jobId: SEQUENCE_TICK_LOCK_ID, token }); } catch { /* TTL で切れる */ }
-    }
-  }
-
-  return json(200, {
+  return json(202, {
     mode: 'sequence-canary',
-    campaignId, sourceFilter, maxPerTick, expectedCount,
-    ...out,
-    note: '1 回だけ実行しました。続けて回りません（繰り返すには再度この操作が要ります）。',
+    accepted: true, runId,
+    campaignId: checked.campaignId, sourceFilter: checked.sourceFilter,
+    maxPerTick: checked.maxPerTick, expectedCount: checked.expectedCount,
+    sideEffects: 'delegated',
+    note: '受け付けました。実行は sequence-canary-background が 1 回だけ行います。'
+      + '結果は ScheduledEmails / prospectSequenceCheck / [sequence-canary-bg] のログで確認してください。',
   });
 }
