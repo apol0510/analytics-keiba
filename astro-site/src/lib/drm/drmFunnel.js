@@ -67,11 +67,10 @@ export const FUNNEL_GAP = Object.freeze({
   /** この段に**常時稼働の育成 campaign** が無い（オファーだけでは育成にならない） */
   NO_NURTURE_CAMPAIGN: 'no_nurture_campaign',
   /**
-   * 分岐できるだけの step 数が無い。
-   * ⚠️ **「宣言し忘れ」ではない。** 2 通の期限案内に分岐先は作れないので、
-   *    直すには**新しい文面**が要る（＝運営の判断が要る）。
+   * **構造的に分岐が起こり得ない**（未送信の行き先が常に線形の次と一致する）。
+   * ⚠️ 「宣言し忘れ」ではない。直すには**新しい文面**が要る（＝運営の判断）。
    */
-  SEQUENCE_TOO_SHORT_TO_BRANCH: 'sequence_too_short_to_branch',
+  BRANCH_IMPOSSIBLE: 'branch_impossible',
   /** 入口のプランを購入停止シグナルに入れている（1 通目直後に全員停止する） */
   PURCHASE_STOP_BLOCKS_ENTRY: 'purchase_stop_blocks_entry',
   /** 到達目標を購入停止シグナルに入れていない（買った人へ売り続ける） */
@@ -88,7 +87,7 @@ export const GAP_LABEL = Object.freeze({
   not_a_sequence: '1 通で終わる単発キャンペーン（育成にならない）',
   no_response_routes: '反応別 routing を宣言していない（線形配信のまま）',
   no_nurture_campaign: '常時稼働の育成シーケンスが無い（期間限定のオファーだけ）',
-  sequence_too_short_to_branch: '分岐できる step 数が無い（新しい文面が要る＝運営判断）',
+  branch_impossible: '構造的に分岐が起こり得ない（新しい文面が要る＝運営判断）',
   purchase_stop_blocks_entry: '入口のプランを購入停止に入れている（2 通目が永久に出ない）',
   purchase_stop_misses_goal: '到達目標を購入停止に入れていない（買った方へ売り続ける）',
   window_limited: 'キャンペーン期間中しか動かない（常時稼働ではない）',
@@ -134,8 +133,21 @@ export const FUNNEL_STAGES = Object.freeze([
     goal: Object.freeze([PURCHASE_SIGNAL.LIGHT, PURCHASE_SIGNAL.PREMIUM, PURCHASE_SIGNAL.SANRENPUKU]),
     /** **常時稼働の育成**（入口が自動で開く / 反応別 routing を持つ） */
     nurtureCampaignId: 'free-signup-onboarding',
-    /** 期間限定のオファー（育成の代わりにはならない） */
-    offerCampaignIds: Object.freeze(['campaign-discount-free']),
+    /**
+     * ⚠️ **入口の段だけ**自動開始を要件にする（確定仕様:
+     * 「メルマガ無料登録を起点に DRM が自動開始する」）。後段は段の遷移で入る。
+     */
+    requiresAutoStart: true,
+    /**
+     * オファー（育成の代わりにはならない）。
+     *
+     * ⚠️ `premium-renewal` は **Premium / Premium Sanrenpuku の期限切れ・期限間近**
+     *    が宛先の**再契約**キャンペーン。`resolveFunnelStage` では期限切れ＝
+     *    「有料の閲覧権が無い」＝この段に入るため、ここに置く。
+     *    **Light → Premium のアップセルではない**ので第 2 段には置かない
+     *    （置くと宛先条件を崩すことになる）。対象条件は 1 文字も変えていない。
+     */
+    offerCampaignIds: Object.freeze(['campaign-discount-free', 'premium-renewal']),
     autoStart: AUTO_START.SIGNUP_ENROLL,
     nextStage: FUNNEL_STAGE.LIGHT_TO_PREMIUM,
   }),
@@ -148,12 +160,8 @@ export const FUNNEL_STAGES = Object.freeze([
       contracts: Object.freeze([MK_CONTRACT.ACTIVE, MK_CONTRACT.EXPIRING_SOON]),
     }),
     goal: Object.freeze([PURCHASE_SIGNAL.PREMIUM, PURCHASE_SIGNAL.SANRENPUKU]),
-    /**
-     * ⚠️ **育成シーケンスが無い。** 既存の Light → Premium は
-     *    `campaign-discount-light`（2 通・期間限定の期限案内）だけで、
-     *    分岐できる step 数が無い。埋めるには**新しい文面**が要る（運営判断）。
-     */
-    nurtureCampaignId: null,
+    /** 常時稼働の育成（承認済み文面の流用 / `lightToPremiumSteps.js`）*/
+    nurtureCampaignId: 'light-to-premium-sequence',
     offerCampaignIds: Object.freeze(['campaign-discount-light']),
     autoStart: AUTO_START.NONE,
     nextStage: FUNNEL_STAGE.PREMIUM_TO_SANRENPUKU,
@@ -168,26 +176,37 @@ export const FUNNEL_STAGES = Object.freeze([
     }),
     goal: Object.freeze([PURCHASE_SIGNAL.SANRENPUKU]),
     /**
-     * ⚠️ **育成シーケンスが無い。** 常時稼働の候補 `sanrenpuku-offer` は
-     *    **三連複を説明・販売する公開ページが無い**ため使用停止（`ctaUrl` が空）。
-     *    「推測で URL を作らない」ルールがあるので、ここでは繋がない。
-     *    残るのは `campaign-discount-premium`（2 通・期間限定）だけ。
+     * 常時稼働の育成（草案 / `sanrenpukuUpsellSteps.js`）。
+     * 案内先は既存の公開ページ `/sanrenpuku-demo/`（有料予想 4 ページが既に使用）。
      */
-    nurtureCampaignId: null,
-    offerCampaignIds: Object.freeze(['campaign-discount-premium', 'sanrenpuku-offer']),
+    nurtureCampaignId: 'sanrenpuku-upsell-sequence',
+    /** 単発の案内（`sanrenpuku-offer`）と期間限定の割引 */
+    offerCampaignIds: Object.freeze(['sanrenpuku-offer', 'campaign-discount-premium']),
     autoStart: AUTO_START.NONE,
     nextStage: FUNNEL_STAGE.COMPLETED,
   }),
 ]);
 
 /**
- * 反応別 routing が**意味を持つ**ための最小 step 数。
+ * **分岐できるか**を構造から導く（通数の閾値を仕様として決めない）。
  *
- * 分岐には「入口 → 分かれ目 → 行き先が 2 つ」が要る。2〜3 通の期限案内で
- * 途中を飛ばすと、単に案内が 1 通減るだけで訴求が変わらない。
- * ⚠️ この数を下げて gap を消さないこと（**欠けを隠すことになる**）。
+ * ⚠️ 「何通以上」という数字を新しい仕様として固定しない。
+ *    完成条件は既存正本どおり「**反応に応じて次の訴求が分岐すること**」で、
+ *    通数はその結果でしかない。ここでは**分岐が起こり得るか**だけを構造から見る。
+ *
+ * 導出: routing は「線形の次（送信済みの最大 + 1）」と**違う step** を選べたときだけ
+ * 訴求を変えられる。step が 2 通しかない campaign では、1 通目を送った後に
+ * 選べる未送信の step は 2 しかなく、それは線形の次と必ず一致する。
+ * よって **step が 3 通未満なら、どんな宣言をしても分岐は起こり得ない**。
  */
-export const MIN_ROUTABLE_STEPS = 4;
+export function canBranch(campaign) {
+  if (!isSequenceCampaign(campaign)) return { ok: false, reason: 'not_a_sequence' };
+  const steps = getSequenceSteps(campaign).length;
+  // 2 通以下は、未送信の行き先が常に線形の次と一致する（構造的に分岐しない）
+  if (steps < 3) return { ok: false, reason: 'branch_impossible', steps };
+  if (!campaignDeclaresRoutes(campaign)) return { ok: false, reason: 'no_response_routes', steps };
+  return { ok: true, reason: null, steps };
+}
 
 const ACTIVE_CONTRACTS = new Set([MK_CONTRACT.ACTIVE, MK_CONTRACT.EXPIRING_SOON]);
 
@@ -247,15 +266,30 @@ export function assessFunnelStage(stageDecl, campaigns) {
     const steps = isSequenceCampaign(c) ? getSequenceSteps(c).length : 0;
 
     if (isNurture) {
-      // 育成に求めるもの: 連続配信 / 反応別 routing / 入口の自動開始 / 常時稼働
+      // 育成に求めるのは「**反応で次の訴求が分岐すること**」と「常時稼働」。
+      // 通数そのものは要件にしない（`canBranch` が構造から導く）。
       if (!isSequenceCampaign(c)) gaps.add(FUNNEL_GAP.NOT_A_SEQUENCE);
-      if (steps > 0 && steps < MIN_ROUTABLE_STEPS) gaps.add(FUNNEL_GAP.SEQUENCE_TOO_SHORT_TO_BRANCH);
-      else if (!campaignDeclaresRoutes(c)) gaps.add(FUNNEL_GAP.NO_RESPONSE_ROUTES);
-      if (!resolveAutoStart(c)) gaps.add(FUNNEL_GAP.NO_AUTO_START);
+      else {
+        const branch = canBranch(c);
+        if (!branch.ok) {
+          gaps.add(branch.reason === 'no_response_routes'
+            ? FUNNEL_GAP.NO_RESPONSE_ROUTES : FUNNEL_GAP.BRANCH_IMPOSSIBLE);
+        }
+      }
+      // ⚠️ **入口の自動開始を求めるのは、確定仕様のある入口の段だけ**
+      //    （「メルマガ無料登録を起点に DRM が自動開始する」）。
+      //    後段は段の遷移（`resolveStageEntry`）で入るので、ここでは欠けにしない。
+      if (stageDecl.requiresAutoStart === true && !resolveAutoStart(c)) {
+        gaps.add(FUNNEL_GAP.NO_AUTO_START);
+      }
       if (isWindowLimited(c)) gaps.add(FUNNEL_GAP.WINDOW_LIMITED);
-    } else if (steps > 0 && steps < MIN_ROUTABLE_STEPS) {
-      // オファーは期間限定で構わないが、**分岐できない理由は記録する**
-      notes.push(`${id}: step ${steps} 通（分岐には ${MIN_ROUTABLE_STEPS} 通以上が要る）`);
+      if (stageDecl.requiresAutoStart !== true && !resolveAutoStart(c)) {
+        notes.push(`${id}: 入口は段の遷移（resolveStageEntry）。自動で撃つかは別途判断`);
+      }
+    } else if (isSequenceCampaign(c)) {
+      const branch = canBranch(c);
+      // オファーは期間限定・単発で構わないが、**分岐できない理由は記録する**
+      if (!branch.ok) notes.push(`${id}: オファー（${branch.reason}）`);
     }
 
     // ── 購入停止シグナルの整合（2026-09-08 障害の構造的な検査）──────────

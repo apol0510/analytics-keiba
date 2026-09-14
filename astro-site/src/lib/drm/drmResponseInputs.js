@@ -193,6 +193,9 @@ export function buildResponseByEmail({
     });
     byEmail.set(email, resolveResponseState({
       marketing: (r && r.marketing) || null,
+      // ⚠️ **この campaign にとっての購入**で判定する（渡さないと上位商品の育成が
+      //    宛先全員 `purchased` になり、永久に線形になる）
+      campaign,
       touches,
       providerSuppressed,
       softBounced,

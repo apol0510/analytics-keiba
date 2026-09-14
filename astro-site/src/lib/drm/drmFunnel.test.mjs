@@ -21,7 +21,7 @@ const stageCampaignIds = (s) => [
 import { getSequenceSteps, resolveAutoStart } from '../marketing/campaignSequence.js';
 import { campaignDeclaresRoutes } from './drmResponseInputs.js';
 import {
-  FUNNEL_STAGES, FUNNEL_STAGE, FUNNEL_GAP, AUTO_START, MIN_ROUTABLE_STEPS,
+  FUNNEL_STAGES, FUNNEL_STAGE, FUNNEL_GAP, AUTO_START, canBranch,
   resolveFunnelStage, getFunnelStage, assessFunnelStage, assessFunnel,
 } from './drmFunnel.js';
 
@@ -131,39 +131,69 @@ test('【契約】ready は「欠けが 1 つも無い」と同義（緩めな�
 /**
  * ⚠️ **ラチェット（現在地の固定）**
  *
- * 2026-09-14 時点:
- *   - 第 1 段（無料登録者 → 有料）… **欠けなし**。常時稼働の育成 `free-signup-onboarding` が
- *     入口の自動開始と反応別 routing を持つ
- *   - 第 2 段 / 第 3 段 … `no_nurture_campaign`。既存のシーケンスは 2 通の期限案内だけで、
- *     分岐できる step 数が無い。**埋めるには新しい文面が要る＝運営の判断**
+ * 2026-09-14: 3 段すべてに**分岐する育成**が揃った（宣言と実装の整合は達成）。
  *
- * 埋まったら、**先に `docs/spec.md` の完成条件と `docs/progress.md` の現在地を更新してから**
- * このテストを書き換えること。テストだけ通して「完成」にしない。
+ * ⚠️ ここから先は**コードでは埋められない**。完成条件は
+ *    「**実 campaign で反応に応じて次の訴求が分岐すること**」を
+ *    **実配信で確認**すること（`docs/spec.md`）。
+ *    `declarationsReady === true` を「DRM 完成」と書かないこと。
  */
-test('【ラチェット】第 1 段は欠けなし / 第 2・3 段は育成 campaign が無いまま', () => {
+test('【ラチェット】3 段すべてに分岐する育成が宣言されている', () => {
   const f = assessFunnel(CAMPAIGNS);
-  const byStage = new Map(f.stages.map((s) => [s.stage, s]));
-
-  const first = byStage.get(FUNNEL_STAGE.FREE_TO_PAID);
-  assert.deepEqual(first.gaps, [], `第 1 段に欠けが戻っている: ${first.gaps.join(',')}`);
-  assert.equal(first.nurtureCampaignId, 'free-signup-onboarding');
-
-  for (const stage of [FUNNEL_STAGE.LIGHT_TO_PREMIUM, FUNNEL_STAGE.PREMIUM_TO_SANRENPUKU]) {
-    const s = byStage.get(stage);
-    assert.ok(s.gaps.includes(FUNNEL_GAP.NO_NURTURE_CAMPAIGN),
-      `${stage}: 育成 campaign が出来たなら spec.md / progress.md を先に更新すること`);
+  for (const s of f.stages) {
+    assert.ok(s.nurtureCampaignId, `${s.stage}: 育成 campaign が外れている`);
+    assert.deepEqual(s.gaps, [], `${s.stage}: 欠けが戻っている（${s.gaps.join(',')}）`);
   }
-  assert.equal(f.declarationsReady, false, '全段が揃った可能性がある。正本を先に更新すること');
+  assert.equal(f.declarationsReady, true, '宣言と実装の整合が崩れている');
 });
 
-test('【定義】育成 campaign は分岐できる長さと入口を持つ', () => {
+test('【重要】育成はすべて「反応で分岐できる」構造を持つ', () => {
   for (const s of FUNNEL_STAGES) {
-    if (!s.nurtureCampaignId) continue;
     const c = CAMPAIGNS.find((x) => x.campaignId === s.nurtureCampaignId);
     assert.ok(c, `${s.stage}: 育成 campaign が実在しない`);
-    assert.ok(getSequenceSteps(c).length >= MIN_ROUTABLE_STEPS,
-      `${s.stage}: 分岐できる step 数が無い`);
-    assert.ok(resolveAutoStart(c), `${s.stage}: 入口の自動開始が宣言されていない`);
+    const b = canBranch(c);
+    assert.equal(b.ok, true, `${s.stage}: 分岐できない（${b.reason}）`);
+  }
+});
+
+test('【契約】通数そのものを要件にしていない（分岐可能性だけを見る）', () => {
+  // 3 通でも宣言があれば分岐できる（「4 通以上」のような閾値を仕様にしない）
+  const three = {
+    campaignId: 'x',
+    sequence: {
+      maxSends: 3, steps: [{ stepNumber: 1 }, { stepNumber: 2 }, { stepNumber: 3 }],
+      responseRoutes: [{ when: 'opened', step: 3 }],
+    },
+  };
+  assert.equal(canBranch(three).ok, true, '通数の閾値で落としている');
+  // 2 通は**構造的に**分岐できない（行き先が線形の次と必ず一致する）
+  const two = {
+    campaignId: 'y',
+    sequence: {
+      maxSends: 2, steps: [{ stepNumber: 1 }, { stepNumber: 2 }],
+      responseRoutes: [{ when: 'opened', step: 2 }],
+    },
+  };
+  assert.equal(canBranch(two).ok, false);
+  assert.equal(canBranch(two).reason, 'branch_impossible');
+});
+
+test('【重要】入口の自動開始を要件にするのは入口の段だけ', () => {
+  const entry = FUNNEL_STAGES.find((s) => s.stage === FUNNEL_STAGE.FREE_TO_PAID);
+  assert.equal(entry.requiresAutoStart, true, '入口の段で自動開始が要件から外れている');
+  for (const s of FUNNEL_STAGES.filter((x) => x.stage !== FUNNEL_STAGE.FREE_TO_PAID)) {
+    assert.notEqual(s.requiresAutoStart, true,
+      `${s.stage}: 後段に自動開始を要件として足している（新仕様を勝手に固定しない）`);
+  }
+});
+
+test('【定義】入口の段の育成だけが自動開始を宣言する', () => {
+  for (const s of FUNNEL_STAGES) {
+    const c = CAMPAIGNS.find((x) => x.campaignId === s.nurtureCampaignId);
+    if (!c) continue;
+    const declared = Boolean(resolveAutoStart(c));
+    assert.equal(declared, s.requiresAutoStart === true,
+      `${s.stage}: 自動開始の宣言と要件が食い違っている`);
     assert.ok(campaignDeclaresRoutes(c), `${s.stage}: 反応別 routing が宣言されていない`);
   }
 });
@@ -174,11 +204,12 @@ test('【安全】オファー（期間限定）を育成の代わりに数え�
       assert.notEqual(id, s.nurtureCampaignId, `${s.stage}: 同じ campaign を両方に数えている`);
     }
   }
-  // 第 2・3 段はオファーを持つが、それでも ready にならない
-  const f = assessFunnel(CAMPAIGNS);
-  const light = f.stages.find((x) => x.stage === FUNNEL_STAGE.LIGHT_TO_PREMIUM);
-  assert.ok(light.offerCampaignIds.length > 0);
-  assert.equal(light.ready, false, 'オファーだけで ready になっている');
+  // 合成: オファーしか無い段は ready にならない
+  const offerOnly = { ...FUNNEL_STAGES[1], nurtureCampaignId: null };
+  const r = assessFunnelStage(offerOnly, CAMPAIGNS);
+  assert.ok(r.offerCampaignIds.length > 0);
+  assert.equal(r.ready, false, 'オファーだけで ready になっている');
+  assert.ok(r.gaps.includes(FUNNEL_GAP.NO_NURTURE_CAMPAIGN));
 });
 
 test('【定義】自動開始の宣言は既知の種類だけ', () => {

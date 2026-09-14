@@ -182,9 +182,11 @@ test('【重要】Premium 会員は三連複の段として解決される（段
   });
   const r = resolveStageEntry({ marketing: mk, campaigns: CAMPAIGNS, nowMs: NOW });
   assert.equal(r.stage, FUNNEL_STAGE.PREMIUM_TO_SANRENPUKU, '段が進んでいない');
-  // ⚠️ いまは育成 campaign が無い。**割引オファーを勝手に入口にしない**
-  assert.equal(r.campaignId, null);
-  assert.equal(r.reason, 'no_nurture_campaign');
+  assert.equal(r.campaignId, 'sanrenpuku-upsell-sequence', '次段の育成へ繋がっていない');
+  assert.equal(r.reason, null);
+  // ⚠️ 後段は**段の遷移で入る**。自動で撃つ宣言は持たない（入口の段だけ）
+  assert.equal(r.autoStart, false, '後段に自動開始を勝手に足している');
+  // オファー（期間限定・単発）は育成とは別に持ち回る
   assert.ok(r.offerCampaignIds.includes('campaign-discount-premium'));
 });
 

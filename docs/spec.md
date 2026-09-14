@@ -526,22 +526,33 @@ signature に**会員ごとの再募集開始日時**を含める（`rank:plus_r
 各段は **育成（常時稼働・分岐する）** と **オファー（期間限定）** を区別する。
 オファーがあるだけでは育成にならない（期間が閉じれば止まるため）。
 
-| 段 | 入口（誰が居るか） | 到達目標（卒業条件） | 育成（常時） | オファー（期間限定） |
+| 段 | 入口（誰が居るか） | 到達目標（卒業条件） | 育成（常時・分岐する） | オファー |
 |---|---|---|---|---|
-| 1 | 無料登録者・有料の閲覧権が無い方（`plan:free` / `contract:none` `expired`） | Light / Premium / 三連複のいずれかを購入 | **`free-signup-onboarding`**（6 通・入口自動・反応別分岐） | `campaign-discount-free` |
-| 2 | Light ご利用中（`plan:light` / 契約有効） | Premium または三連複を購入 | **無し**（要・新しい文面） | `campaign-discount-light` |
-| 3 | Premium ご利用中（`plan:premium` / 契約有効） | 三連複（買い切り）を購入 | **無し**（要・新しい文面） | `campaign-discount-premium` |
+| 1 | 無料登録者・有料の閲覧権が無い方（`plan:free` / `contract:none` `expired`） | Light / Premium / 三連複のいずれかを購入 | **`free-signup-onboarding`**（6 通・入口自動） | `campaign-discount-free` / `premium-renewal` |
+| 2 | Light ご利用中（`plan:light` / 契約有効） | Premium または三連複を購入 | **`light-to-premium-sequence`**（4 通） | `campaign-discount-light` |
+| 3 | Premium ご利用中（`plan:premium` / 契約有効） | 三連複（買い切り）を購入 | **`sanrenpuku-upsell-sequence`**（4 通） | `sanrenpuku-offer` / `campaign-discount-premium` |
 | — | 三連複まで到達 | **終点。販促しない** | なし | なし |
 
 ### 育成に求めるもの（1 つでも欠ければその段は未完成）
 
 1. **連続配信**であること
-2. **分岐できる長さ**（`MIN_ROUTABLE_STEPS = 4` 通以上）。2 通の期限案内に分岐先は作れない
-3. **反応別 routing** を宣言していること
-4. **入口が自動で開く**こと（`sequence.autoStart`）
-5. **常時稼働**（キャンペーン期間に依存しない）
+2. **反応で次の訴求が分岐すること**（`responseRoutes` の宣言 ＋ 分岐が起こり得る構造）
+3. **常時稼働**（キャンペーン期間に依存しない）
+4. **入口が自動で開く**こと — ⚠️ **これを求めるのは第 1 段だけ**。
+   確定仕様は「メルマガ無料登録を起点に DRM が自動開始する」であり、
+   後段は**段の遷移**（`drmAutoStart.resolveStageEntry`）で入る
 
-⚠️ 2 を下げて欠けを消さないこと。**分岐先を増やすには新しい文面が要る**＝運営の判断。
+⚠️ **「何通以上」という閾値を仕様として固定しない。** 完成条件は分岐することであって
+通数ではない。分岐が起こり得るかは `drmFunnel.canBranch()` が構造から導く
+（2 通しかない campaign は、未送信の行き先が線形の次と必ず一致するので分岐できない）。
+
+### 反応層の「購入済み」は campaign ごとに違う
+
+⚠️ 上位商品を案内する段（2・3）では、**宛先そのものが有料会員**である。
+「Light か Premium が有効なら購入済み」という既定のままだと、
+**宛先全員が反応層 `purchased` に落ちて routing が行き先を作らない**（＝永久に線形）。
+反応層の購入判定も停止判定と**同じ単一源**（`sequencePurchaseStop.js`）を使い、
+campaign の `stopOnPurchase` 宣言に従う。
 
 ### 入口の自動開始（段 1）
 
@@ -557,7 +568,8 @@ step1 の対象になる。`cron-campaign-sequence` は既定では step1 を自
 
 - **1 人は同時に 1 段にしか居ない**（`resolveFunnelStage` が排他に決める）
 - 段が進んだら次段の育成へ繋ぐ（`drmAutoStart.resolveStageEntry`）。
-  **育成が無い段では繋がない**（期間限定のオファーを自動の入口に代用しない）
+  **期間限定のオファーを自動の入口に代用しない**
+- 入口のプランを購入停止シグナルに入れない（段 2 は `light` で止めない / 段 3 は `premium` で止めない）
 - 段が判定できない人（`contract: unknown` 等）は**どの段にも入れない**（推測しない）
 - 入口のプランを**購入停止シグナルに入れてはいけない**。入れると宛先条件と停止条件が
   一致し、1 通目の直後に全員が恒久停止して 2 通目が永久に出ない（2026-09-08 の障害）

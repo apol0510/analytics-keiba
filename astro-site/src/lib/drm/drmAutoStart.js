@@ -206,12 +206,24 @@ export function resolveStageEntry({ marketing, campaigns, nowMs }) {
   }
   const c = list.find((x) => x && x.campaignId === decl.nurtureCampaignId);
   if (!c) return { stage, campaignId: null, reason: 'nurture_campaign_missing', offerCampaignIds };
-  const gate = canAutoStart(c);
-  if (!gate.ok) return { stage, campaignId: null, reason: gate.reason, offerCampaignIds };
-  if (nowMs !== undefined && nowMs !== null && !isCampaignUsable(c)) {
+  if (!isSequenceCampaign(c)) {
+    return { stage, campaignId: null, reason: AUTOSTART_ABORT.NOT_A_SEQUENCE, offerCampaignIds };
+  }
+  if (!isCampaignUsable(c)) {
     return { stage, campaignId: null, reason: AUTOSTART_ABORT.CAMPAIGN_UNUSABLE, offerCampaignIds };
   }
-  return { stage, campaignId: c.campaignId, reason: null, offerCampaignIds };
+  /**
+   * ⚠️ **入口の自動開始（`sequence.autoStart`）は要求しない。**
+   *    それを求めるのは確定仕様のある入口の段（無料登録）だけで、後段は
+   *    段の遷移で入る。ここでは「どの campaign の対象か」を返し、
+   *    **自動で撃てるかどうかは `autoStart` として別に返す**
+   *    （要件と能力を混ぜると、後段が永久に `null` になる）。
+   */
+  return {
+    stage, campaignId: c.campaignId, reason: null, offerCampaignIds,
+    /** この campaign は入口を自動で開けるか（開けるかどうかは別途ゲート次第） */
+    autoStart: canAutoStart(c).ok,
+  };
 }
 
 export default planAutoStartEntries;

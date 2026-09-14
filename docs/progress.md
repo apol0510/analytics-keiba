@@ -12,26 +12,44 @@
 
 ## 現在地 — ファネル 3 段の実装状況（機械判定 `drmFunnel.assessFunnel()`）
 
-| 段 | 育成（常時稼働） | 連続配信 | 反応別 routing | 入口の自動開始 | 判定 |
+| 段 | 育成（常時稼働） | 通数 | 反応別 routing | 入口 | 判定 |
 |---|---|---|---|---|---|
-| 1 無料登録者 → 有料 | **`free-signup-onboarding`**（6 通） | ✅ | ✅ opened→step5 / delivered→step3 | ✅ 登録 14 日以内・1 回 50 名 | **欠けなし** |
-| 2 Light → Premium | **無し** | — | — | — | `no_nurture_campaign` |
-| 3 Premium → 三連複 | **無し** | — | — | — | `no_nurture_campaign` |
+| 1 無料登録者 → 有料 | `free-signup-onboarding` | 6 | opened→5 / delivered→3 | **自動**（登録 14 日以内）| 欠けなし |
+| 2 Light → Premium | `light-to-premium-sequence` | 4 | opened→4 / delivered→3 | 段の遷移 | 欠けなし |
+| 3 Premium → 三連複 | `sanrenpuku-upsell-sequence` | 4 | opened→4 / delivered→3 | 段の遷移 | 欠けなし |
 
-オファー（期間限定）は 3 段とも存在する（`campaign-discount-free` / `-light` / `-premium`）。
-ただし **2〜3 通の期限案内で分岐先が作れない**ため、育成の代わりには数えない。
-購入停止の整合（入口のプランで止めない / 到達目標で止める）は **3 段とも ✅**。
+`declarationsReady: true`（**宣言と実装の整合だけ**。実配信の実績は含まない）。
 
-### 第 2・3 段に育成が無い理由（**実装漏れではない**）
+⚠️ **「何通以上」を仕様にしていない。** 完成条件は「反応で次の訴求が分岐すること」で、
+分岐可能性は `drmFunnel.canBranch()` が構造から導く（2 通は構造的に分岐不能）。
 
-| 段 | 使えなかった候補 | なぜ使えないか |
+### 第 2・3 段の文面の出どころ（新規訴求を作っていない）
+
+| 段 | 出どころ | 編集 |
 |---|---|---|
-| 2 | `campaign-discount-light` | **2 通**（割引案内 + 期限案内）。分岐先が作れない。期間限定 |
-| 3 | `campaign-discount-premium` | **2 通**。同上 |
-| 3 | `sanrenpuku-offer` | **使用停止**（`ctaUrl` が空）。三連複を説明・販売する公開ページが無く、「推測で URL を作らない」ルールに掛かる |
+| 2 | 承認済み `postExpirySteps.js` の Step9 / 10 / 13 / 17 | **前提の 1 行 × 2 箇所だけ**（`lightToPremiumSteps.js` に対照表）。Step10 / 13 は無編集 |
+| 3 | 既存の公開ページ `/sanrenpuku-demo/` ＋ 承認済み `sanrenpuku-offer` 本文 | **草案**。価格・実績数値・お客様の声は**載せない**（`sanrenpukuUpsellSteps.js` に対照表）|
 
-⚠️ どちらも**埋めるには新しい文面（と、三連複は公開ページ）が要る**。
-新しい営業訴求・価格・本文を勝手に作らない方針のため、ここで止めてある。
+### 三連複の案内先（2026-07-30 の停止理由は解消）
+
+`sanrenpuku-offer` は「三連複を説明・販売する公開ページが無い」（`ctaUrl` が空）ため
+停止していたが、**`/sanrenpuku-demo/` が公開ページとして実在**し、
+**有料予想 4 ページ（南関 / JRA / 船橋 / 浦和）が既に案内先として使っている**。
+推測で URL を作ったわけではない。CTA を確定し **version 2 → 3** で再開した。
+
+### `premium-renewal` の扱い（第 2 段には置かない）
+
+`premium-renewal` は **Premium / Premium Sanrenpuku の期限切れ・期限間近**が宛先の
+**再契約**キャンペーンで、**Light → Premium のアップセルではない**。
+第 2 段に置くと宛先条件を崩すことになるため、`resolveFunnelStage` 上で該当する
+**第 1 段のオファー**として接続した（**対象条件は 1 文字も変えていない**）。
+
+### 直した欠陥（反応層の購入判定）
+
+上位商品の段では**宛先そのものが有料会員**なので、反応層の既定
+「Light か Premium が有効なら購入済み」のままだと**宛先全員が `purchased`** に落ち、
+routing が終端として扱って**永久に線形**になる（2026-09-08 の停止判定の障害と同じ形）。
+反応層も停止判定と**同じ単一源**（`sequencePurchaseStop.js`）を使うよう修正した。
 
 ## 入口の自動開始（段 1 / 2026-09-14 実装）
 
@@ -85,7 +103,7 @@
 | R1 | 1 通単位の開封が本番で**実際に読めている**ことの実測 | `action=sequence` の `responseRouting.measured.open` と `counts` を read-only で確認 | 引数名バグ修正の deploy |
 | R2 | **実配信で層ごとに別の 1 通が出た**（`byRoute` に `opened:9` / `delivered:16`） | ゲートを開けて `light-trial-post-expiry-sequence` を進める | **MK の明示承認**（実メール送信） |
 | R3 | 入口の自動開始を**本番で 1 名**通す（段 1） | `MARKETING_DRM_AUTOSTART_ENABLED` を開ける | **MK の明示承認**（実メール送信） |
-| R4 | 第 2・3 段の**育成シーケンス**（各 4 通以上）と三連複の公開ページ | **新しい文面が要る＝運営の判断**。決まれば実装は同じ型で載る | MK 判断 |
+| R4 | 第 3 段の文面を MK が確認（**草案**のまま送らない） | `/admin/drm/` のプレビューで 4 通を読む | MK 目視 |
 | R5 | 購入を実 touch へ帰属（`correlated` 1 件以上） | `admin-drm-attribution` を名指しで実行 | R1 / R2 |
 | R6 | 段の遷移（無料 → Light/Premium → 三連複）が実運用で繋がった記録 | 実顧客 1 名の段移動を実測 | R2 / R3 |
 | R7 | A/B（`variant`）の実運用 | `DeliveryKey` に variant が入らないため設計判断が要る | 未着手 |
@@ -115,6 +133,12 @@
 | **入口の下見**（送らずに数える・read-only） | `admin-marketing` の `action:'drmAutoStart'` ＋ `/admin/drm/` |
 | 事業ファネルの実装状況を管理画面に表示 | `/admin/drm/`（`businessFunnel`） |
 | 責務境界・シーケンス一覧・env の落とし穴を正本へ | `docs/CAMPAIGN_SEQUENCE.md` §5 / §9-2 / §9-5 / `docs/spec.md` |
+| **第 2 段の育成 4 通**（承認済み文面の流用・前提 1 行 × 2 箇所だけ編集） | `marketing/lightToPremiumSteps.js` |
+| **第 3 段の育成 4 通（草案）**（既存ページ＋承認済み本文のみが根拠） | `marketing/sanrenpukuUpsellSteps.js` |
+| `sanrenpuku-offer` の CTA 確定と再開（v2 → v3） | `campaignCatalog.js` |
+| **反応層の購入判定を campaign ごとに**（上位商品の段が永久に線形になる欠陥） | `drm/drmResponseState.js` / `drm/drmResponseInputs.js` |
+| 「4 通以上」を仕様から外し、**分岐可能性を構造から導く** | `drm/drmFunnel.js` の `canBranch()` |
+| 第 2・3 段の分岐の通しテスト | `drmUpsellStagesRouting.test.mjs` |
 
 `test:drm` 136 pass ／ `check:safety` EXIT=0 ／ `build` EXIT=0。
 **実メール送信・queue・本番書込み・production deploy・PR merge は 1 件も行っていない。**

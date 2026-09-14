@@ -552,7 +552,9 @@ test('取引メール（step 等）は 24h ガードの対象に含めない', a
 // ── 使用停止キャンペーン ────────────────────────────────────────
 test('使用停止中のキャンペーンは理由付きで拒否される（dry-run も送信も）', async () => {
   process.env.MARKETING_CAMPAIGN_ENABLED = 'true';
-  for (const id of ['sanrenpuku-offer', 'general-announcement']) {
+  // 恒久停止の例（初期テンプレートのまま）。sanrenpuku-offer は 2026-09-14 に
+  // 案内先（/sanrenpuku-demo/）が確定して再開したので、ここでは使わない。
+  for (const id of ['general-announcement']) {
     const dry = parse(await call({ action: 'dryRun', campaignId: id, recordIds: ['rec3'] }));
     assert.equal(dry.status, 409, `${id} が dry-run できてしまう`);
     assert.ok(dry.body.error.includes('使用停止中'), dry.body.error);
@@ -568,12 +570,13 @@ test('キャンペーン一覧は停止中も理由付きで返す', async () =>
   const { body } = parse(await call({ action: 'campaigns' }));
   // 13〜15 本目 = キャンペーン割引の 3 区分（campaign-discount-*）
   // 16 本目 = Light 永久無料 再スタート案内（light-lifetime-restart）
-  // 17 本目 = 無料登録者 育成（free-signup-onboarding / DRM の入口）。増えたら数を更新する
-  assert.equal(body.campaigns.length, 17, '停止中が一覧から消えている');
+  // 17 本目 = 無料登録者 育成（free-signup-onboarding / DRM の入口）
+  // 18〜19 本目 = 段 2 / 段 3 の育成（light-to-premium / sanrenpuku-upsell）。増えたら数を更新する
+  assert.equal(body.campaigns.length, 19, '停止中が一覧から消えている');
   const off = body.campaigns.filter((c) => !c.usable);
   // ⚠️ 停止中の本数は固定しない。期間限定キャンペーンは**期間外に自動停止**するため、
-  //    固定すると期間終了日に CI が落ちる。恒久停止の 2 本が消えないことだけを守る。
-  for (const id of ['sanrenpuku-offer', 'general-announcement']) {
+  //    固定すると期間終了日に CI が落ちる。恒久停止が消えないことだけを守る。
+  for (const id of ['general-announcement']) {
     assert.ok(off.some((c) => c.campaignId === id), `${id} が停止中一覧から消えている`);
   }
   for (const c of off) assert.ok(c.disabledReason, `${c.campaignId} に理由が無い`);

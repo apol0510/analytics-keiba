@@ -20,6 +20,8 @@
  * ⚠️ `null` を偽と扱って分岐してはいけない（`drmRouting.js` が明示的に扱う）。
  */
 
+import { hasPurchasedForCampaign } from '../marketing/sequencePurchaseStop.js';
+
 /** 反応の段階（**強い順**。routing はこの順で最初に当たったものを使う） */
 export const RESPONSE = Object.freeze({
   PURCHASED: 'purchased',
@@ -62,14 +64,23 @@ const num = (v) => {
 };
 
 /**
- * その顧客が **課金契約を持っているか**（＝購入）。
+ * その顧客が **この campaign にとっての「購入済み」か**。
+ *
+ * ⚠️ **campaign ごとに「何を買ったら目的達成か」は違う。** 判定の単一源は
+ *    `marketing/sequencePurchaseStop.js`（`sequenceProgress` の停止判定と同じもの）。
+ *
+ * ⚠️ **campaign を渡さないと上位商品の育成が壊れる**（2026-09-14 に実測）。
+ *    既定の「Light か Premium が有効なら購入済み」は、無料会員を有料へ引き上げる
+ *    campaign では正しいが、**すでに有料の方へ上位商品を案内する** campaign
+ *    （Light → Premium / Premium → 三連複）では**宛先全員が常に `purchased`** になり、
+ *    routing は終端として扱って行き先を作らない＝**永久に線形**になる。
+ *    2026-09-08 の停止判定の障害と同じ形が、反応層でも起きていた。
  *
  * ⚠️ `promoPremiumActive` / `promoLightActive` は**無料特典**なので購入に数えない
- *    （`customerMarketingAudience.js` の注記どおり、無料特典で「支払済み」に見せない）。
+ *    （単一源の `sequencePurchaseStop` がそう扱う）。
  */
-export function hasPurchased(marketing) {
-  const m = marketing || {};
-  return m.premiumActive === true || m.lightActive === true;
+export function hasPurchased(marketing, campaign = null) {
+  return hasPurchasedForCampaign({ campaign, marketing });
 }
 
 /**
@@ -109,6 +120,12 @@ export function resolveSuppression({ marketing, providerSuppressed, softBounced 
  */
 export function resolveResponseState({
   marketing, touches, providerSuppressed = null, softBounced = null, measured = null,
+  /**
+   * **この campaign にとっての購入**を判定するための定義（任意）。
+   * 渡さないと既定（Light / Premium のどちらかが有効なら購入済み）になり、
+   * 上位商品を案内する campaign では宛先全員が `purchased` に落ちる。
+   */
+  campaign = null,
 } = {}) {
   const list = Array.isArray(touches) ? touches : [];
   const openMeasured = measured ? measured.open === true : false;
@@ -151,7 +168,7 @@ export function resolveResponseState({
   };
 
   // ── 強い順に 1 つ ────────────────────────────────────────────
-  if (hasPurchased(marketing)) return { state: RESPONSE.PURCHASED, suppressReason: null, ...base };
+  if (hasPurchased(marketing, campaign)) return { state: RESPONSE.PURCHASED, suppressReason: null, ...base };
   const suppress = resolveSuppression({ marketing, providerSuppressed, softBounced });
   if (suppress) return { state: RESPONSE.SUPPRESSED, suppressReason: suppress, ...base };
 
