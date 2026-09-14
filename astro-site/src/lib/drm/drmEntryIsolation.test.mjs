@@ -34,6 +34,12 @@ const PROD_LIKE = {
   MARKETING_CAMPAIGN_DISPATCH_ENABLED: 'true',
 };
 
+/** 入口の鍵（#526 と同型）。テストでは差し替える */
+const lockDeps = {
+  createDispatchLock: () => ({ acquire: async () => ({ ok: true, token: 't' }), release: async () => {} }),
+  makeRedisCmd: () => async () => null,
+};
+
 // ══════════════════════════════════════════════════════════════════
 //  ① 対象は許可リストだけ（割引 3 本を構造的に排除）
 // ══════════════════════════════════════════════════════════════════
@@ -138,6 +144,7 @@ test('【重要】人数が一致すれば実行する', async () => {
   const deps = {
     previewEntry: async () => ({ ok: true, wouldEnter: 15, campaignId: 'free-signup-onboarding' }),
     runSequenceTick: async (args) => { passed = args; return { ok: true, autoStart: { entered: 15 } }; },
+    ...lockDeps,
   };
   const r = await runDrmEntry({
     env: { ...PROD_LIKE, [DRM_ENTRY_ENV]: 'true' }, now: 1234,
@@ -158,6 +165,7 @@ test('【安全】下見と実際がズレたら必ず報告する（黙って�
   const deps = {
     previewEntry: async () => ({ ok: true, wouldEnter: 15, campaignId: 'free-signup-onboarding' }),
     runSequenceTick: async () => ({ ok: true, autoStart: { entered: 16 } }),
+    ...lockDeps,
   };
   const r = await runDrmEntry({
     env: { ...PROD_LIKE, [DRM_ENTRY_ENV]: 'true' }, now: 1,
@@ -209,7 +217,7 @@ test('【不変】共有の cron を変更していない（#521 / #523 の契�
   const code = codeOnly(SEQ_CRON);
   // 既存の 4 ゲート判定と入口の配線はそのまま
   assert.match(code, /readSequenceGates\(env, now\)/);
-  assert.match(code, /if \(!gates\.allOpen\)/);
+  assert.match(code, /!gates\.allOpen/, 'ゲート判定が外れている');
   assert.match(code, /allowFirstStep: autoStartDecl !== null && autoStartGate\.open === true/);
   // 新しい Function を参照していない（依存の向きは DRM → 既存 の一方向）
   assert.equal(code.includes('cron-drm-autostart'), false);

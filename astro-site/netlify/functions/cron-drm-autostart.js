@@ -26,11 +26,18 @@
  * ⚠️ **Customers を 1 バイトも書かない。** メールもこの Function は送らない
  *    （作るのは PENDING ジョブと queued 行だけ。実送信は既存 dispatcher）。
  *
- * ── 手動実行（下見 / 人数を確認して撃つ）──────────────────────
- *   `{"dryRun": true}`  … 既定。**ゲートが閉じていても**誰が入るかを数える（書き込みゼロ）
- *   `{"dryRun": false, "expectedCount": 15}`
- *        … 下見の人数と**1 でも違えば 1 通も送らずに止める**
- *   どちらも `x-admin-secret` が必要。
+ * ── ⚠️ この Function は **HTTP から起動できない**（2026-09-14 本番実測）──────
+ * `export const config = { schedule }` を持つ Netlify Function は**定期実行専用**で、
+ * 公開 URL への POST は **403・本文 0 バイト**で弾かれる（認証の有無に関係ない）。
+ * **payload も渡せない**ので `dryRun` / `expectedCount` を外から指定できない。
+ * 同型の `cron-light-trial-grant` でも同じ挙動を確認した。
+ *
+ * したがって:
+ *   - **定期実行（1 日 1 回）**… この Function が担当。`dryRun:false` / `manual:false`
+ *   - **手動の下見・人数を確認して撃つ**… `admin-marketing` の
+ *     `action: 'drmEntryRun'` から `runDrmEntry()` を呼ぶ（HTTP 到達可・secret 認証済み）
+ *
+ * 判定・許可リスト・`expectedCount`・委譲先はどちらの経路でも**同じこの関数**を通る。
  */
 
 import {
@@ -47,6 +54,10 @@ import { loadBlacklistEmails } from '../../src/lib/newsletter/airtable-fetch.js'
 import { getBrandConfig } from '../../src/lib/newsletter/brand-config.js';
 import { assertFetchComplete } from '../../src/lib/marketing/marketingTargetedLoad.js';
 import { runSequenceTick } from './cron-campaign-sequence.js';
+import {
+  createDispatchLock, TICK_LOCK_ROOT, LOCK_FAIL,
+} from '../../src/lib/marketing/dispatchLock.js';
+import { makeRedisCmd } from '../../src/lib/marketing/deliveryKeyStore.js';
 
 const BRAND = 'analytics-keiba';
 const CUSTOMERS_TABLE = 'Customers';
@@ -54,6 +65,22 @@ const DELIVERIES_TABLE = 'CampaignDeliveries';
 const MAX_PAGES = 20;
 
 export const DRM_LOG_TAG = '[drm-autostart]';
+
+/**
+ * **入口の多重起動を止める鍵**（#526 と同じ仕組み・**別の名前**）。
+ *
+ * ⚠️ #526 が入れた `tick:campaign-sequence` の鍵は
+ *    `cron-campaign-sequence` の**定期実行エントリ**にある。
+ *    入口は `runSequenceTick` を**直接**呼ぶので、その鍵の下を通らない。
+ *    鍵なしだと、日次の定期実行と管理画面からの手動実行が重なったとき
+ *    **同じ人を 2 回 queue し得る**（配信行を書く前に両方が「未送信」と読む）。
+ *    #526 が共有 cron で塞いだのと同じ穴なので、入口にも同じ鍵を掛ける。
+ * ⚠️ **名前を分ける**こと。共有 cron と同じ鍵にすると、互いの実行を
+ *    無関係に塞き止めてしまう（割引 3 本の tick を DRM が止めることになる）。
+ */
+export const DRM_TICK_LOCK_ID = 'tick:drm-autostart';
+/** 次の定期実行（1 日 1 回）より十分短く、実行時間より十分長く */
+export const DRM_TICK_LOCK_TTL_SEC = 240;
 
 const auth = (key) => ({ Authorization: `Bearer ${key}` });
 const log = (payload) => {
@@ -173,7 +200,18 @@ export async function previewEntry({ env, now, campaignId }) {
  */
 export async function runDrmEntry({
   env = process.env, now = Date.now(), campaignId = DRM_ENTRY_CAMPAIGN_IDS[0],
-  dryRun = true, expectedCount = null, deps = {},
+  dryRun = true, expectedCount = null,
+  /**
+   * **人が起動したか**（管理画面・手動 POST）。
+   *
+   * ⚠️ `true` なら `expectedCount` を**必須**にする。付けずに実行しようとしたら
+   *    `expected_count_required` で止まり、**queue 0 / send 0** で返る。
+   *    以前は `expectedCount !== null` から推測していたため、
+   *    「`dryRun:false` だけ渡す」と人数の確認を通らずに走り得た。
+   * ⚠️ 定期実行（`false`）は `maxPerTick` と入口の窓が上限になる。
+   */
+  manual = false,
+  deps = {},
 } = {}) {
   // ⚠️ **許可リスト以外は撃てない**（割引 3 本を構造的に排除する）
   if (!isEntryCampaignAllowed(campaignId)) {
@@ -214,7 +252,8 @@ export async function runDrmEntry({
   if (!seen.ok) return { ...seen, sideEffects: 'none' };
 
   const counted = checkExpectedCount({
-    planned: seen.wouldEnter, expectedCount, manual: expectedCount !== null,
+    planned: seen.wouldEnter, expectedCount,
+    manual: manual === true || expectedCount !== null,
   });
   if (!counted.ok) {
     const body = {
@@ -248,6 +287,31 @@ export async function runDrmEntry({
     MARKETING_SEQUENCE_SCHEDULER_ENABLED: 'true',
     MARKETING_SEQUENCE_ARMED: '',
   };
+  // ── 入口の多重起動を止める（#526 と同じ仕組み・別の鍵）──────────────
+  //    ⚠️ **取れなければ 1 件も積まない**（Redis へ届かないときも積まない）。
+  const makeLock = deps.createDispatchLock || createDispatchLock;
+  let lock = null;
+  let token = null;
+  try {
+    const makeCmd = deps.makeRedisCmd || makeRedisCmd;
+    lock = makeLock({ cmd: makeCmd(env), root: TICK_LOCK_ROOT });
+    const got = await lock.acquire({ jobId: DRM_TICK_LOCK_ID, ttlSec: DRM_TICK_LOCK_TTL_SEC });
+    if (!got.ok) {
+      const body = {
+        ok: false,
+        abort: got.reason === LOCK_FAIL.BUSY ? 'entry_busy' : 'entry_lock_unavailable',
+        sideEffects: 'none',
+      };
+      log(body);
+      return body;
+    }
+    token = got.token;
+  } catch {
+    const body = { ok: false, abort: 'entry_lock_unavailable', sideEffects: 'none' };
+    log(body);
+    return body;
+  }
+
   const tick = deps.runSequenceTick || runSequenceTick;
   let result;
   try {
@@ -256,6 +320,8 @@ export async function runDrmEntry({
     const body = { ok: false, abort: 'tick_failed', detail: String((e && e.message) || 'unknown'), sideEffects: 'unknown' };
     log(body);
     return body;
+  } finally {
+    try { await lock.release({ jobId: DRM_TICK_LOCK_ID, token }); } catch { /* TTL で切れる */ }
   }
 
   const entered = (result && result.autoStart && result.autoStart.entered) || 0;
@@ -294,9 +360,10 @@ export default async function handler(req) {
     env: process.env,
     now: Date.now(),
     campaignId: DRM_ENTRY_CAMPAIGN_IDS[0],
-    // 定期実行は**自動**（下見ではない）。手動は既定で下見
+    // 定期実行は**自動**（下見ではない）。上限は maxPerTick と入口の窓
     dryRun: manual ? body.dryRun !== false : false,
     expectedCount: manual && body.expectedCount !== undefined ? body.expectedCount : null,
+    manual,
   });
   return json(result && result.ok === false ? 200 : 200, result);
 }
