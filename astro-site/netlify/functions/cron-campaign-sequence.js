@@ -645,13 +645,29 @@ export async function runSequenceTick({
       ? prospectInputs.engagementByEmail : undefined,
     responseByEmail: response.ok ? response.byEmail : undefined,
   });
+  /**
+   * ⚠️ **ゲートの扱いは「実送信の経路」と「下見」で違う。**
+   *
+   *   実送信 … `gates` をそのまま渡す（4 つ揃うまで計画を作らない＝従来どおり）
+   *   下見   … 揃っていない前提で**計画だけ**作る（1 バイトも書かないため安全）
+   *
+   * ここを分けないと、`scheduler=false` の平常時に下見が `gates_closed` で止まり、
+   * 「送る前に対象を確かめる」ができない（2026-09-14 に本番で踏んだ）。
+   * ⚠️ 下見が安全なのは**書かないから**。下見の分岐に書き込みが混ざれば前提が壊れる
+   *    （`sequencePreviewWindow.guard.test.mjs` が書き込み不在を固定している）。
+   */
+  const planGates = isDry ? { ...gates, allOpen: true } : gates;
   const plan = planSequenceTick({
-    progress, gates, maxRecipients: resolveMaxRecipientsPerTick(process.env),
+    progress, gates: planGates, maxRecipients: resolveMaxRecipientsPerTick(process.env),
     // ⚠️ step1 を自動で撃てるのは、**入口を宣言していて ゲートも開いている**ときだけ
     allowFirstStep: autoStartDecl !== null && autoStartGate.open === true,
   });
   if (!plan.ok) {
-    const body = { ok: false, ...plan, autoStart: autoStartReport, sideEffects: 'none' };
+    const body = {
+      ok: false, ...plan, autoStart: autoStartReport, sideEffects: 'none',
+      // 下見のときは、実際のゲート状態を必ず添える（開いていると誤解させない）
+      ...(isDry ? { dryRun: true, gates: { allOpen: gates.allOpen, missing: gates.missing } } : {}),
+    };
     log({ ...summarizeSequenceTick({ campaignId: base.campaignId, plan }), 入口: autoStartReport });
     return body;
   }
