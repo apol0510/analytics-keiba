@@ -253,6 +253,25 @@ test('【version ロック】本文を変えたら version を上げる', () => 
         2: '45d4adc1cf072ab1',
       },
     },
+    /**
+     * 無料登録者 育成（DRM 入口 / 2026-09-14 新規）。文面は既存ステップメール
+     * `newsletter/step-sequences.js` の `signup-onboarding` からの移送で、
+     * 移送時の修正 2 点（間隔 1→2 日 / 買い目 10点→5点）は
+     * `freeSignupOnboardingSteps.js` の冒頭に理由つきで記録してある。
+     * **送信実績はまだ無い**（`delivered: []`）。
+     */
+    'free-signup-onboarding': {
+      version: 1,
+      delivered: [],
+      steps: {
+        1: 'c721e9eaa8acee80',
+        2: 'dd796949669380f7',
+        3: '6da043d5049fe47e',
+        4: 'a43655e39b8b65a2',
+        5: '20e20c621a44618a',
+        6: '6016619c3b9c84f0',
+      },
+    },
     'light-trial-to-premium-sequence': {
       version: 1,
       /** 本番で**実際に配信済み**の Step（変更禁止 / 下の専用テストが逐語で守る） */

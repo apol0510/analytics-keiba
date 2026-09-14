@@ -12,8 +12,16 @@ import assert from 'node:assert/strict';
 import { CAMPAIGNS } from '../marketing/campaignCatalog.js';
 import { MK_CONTRACT, MK_PLAN } from '../marketing/customerMarketingAudience.js';
 import { resolvePurchaseStopSignals, PURCHASE_SIGNAL } from '../marketing/sequencePurchaseStop.js';
+import { isSequenceCampaign } from '../marketing/campaignSequence.js';
+
+/** その段が担当する campaign（育成 ＋ オファー） */
+const stageCampaignIds = (s) => [
+  ...(s.nurtureCampaignId ? [s.nurtureCampaignId] : []), ...(s.offerCampaignIds || []),
+];
+import { getSequenceSteps, resolveAutoStart } from '../marketing/campaignSequence.js';
+import { campaignDeclaresRoutes } from './drmResponseInputs.js';
 import {
-  FUNNEL_STAGES, FUNNEL_STAGE, FUNNEL_GAP, AUTO_START,
+  FUNNEL_STAGES, FUNNEL_STAGE, FUNNEL_GAP, AUTO_START, MIN_ROUTABLE_STEPS,
   resolveFunnelStage, getFunnelStage, assessFunnelStage, assessFunnel,
 } from './drmFunnel.js';
 
@@ -63,9 +71,10 @@ test('【安全】三連複保有者は終点（もう売らない）', () => {
 
 test('【最重要】入口のプランを購入停止シグナルに入れていない（2 通目が出なくなる）', () => {
   for (const s of FUNNEL_STAGES) {
-    for (const id of s.campaignIds) {
+    for (const id of stageCampaignIds(s)) {
       const c = CAMPAIGNS.find((x) => x.campaignId === id);
       assert.ok(c, `${id} がカタログに無い`);
+      if (!isSequenceCampaign(c)) continue;   // 単発は sequenceProgress を通らない
       const signals = resolvePurchaseStopSignals(c);
       if (s.entry.plans.includes(MK_PLAN.LIGHT)) {
         assert.equal(signals.includes(PURCHASE_SIGNAL.LIGHT), false,
@@ -81,8 +90,9 @@ test('【最重要】入口のプランを購入停止シグナルに入れて�
 
 test('【最重要】到達目標を買った人には送り続けない', () => {
   for (const s of FUNNEL_STAGES) {
-    for (const id of s.campaignIds) {
+    for (const id of stageCampaignIds(s)) {
       const c = CAMPAIGNS.find((x) => x.campaignId === id);
+      if (!isSequenceCampaign(c)) continue;
       const signals = resolvePurchaseStopSignals(c);
       assert.ok(s.goal.some((g) => signals.includes(g)),
         `${id}: 到達目標（${s.goal.join('/')}）のどれも停止条件に入っていない`);
@@ -92,8 +102,8 @@ test('【最重要】到達目標を買った人には送り続けない', () =>
 
 test('【検査】宛先条件と停止条件が一致する宣言を欠けとして検出する', () => {
   // 合成: 宛先 Light なのに light で止める（＝ 2026-09-08 の形）
-  const broken = { campaignId: 'x', sequence: { maxSends: 2, steps: [{}, {}] }, stopOnPurchase: { signals: ['light'] } };
-  const r = assessFunnelStage(FUNNEL_STAGES[1], [broken].map((c) => ({ ...c, campaignId: 'campaign-discount-light' })));
+  const broken = { campaignId: 'campaign-discount-light', sequence: { maxSends: 2, steps: [{}, {}] }, stopOnPurchase: { signals: ['light'] } };
+  const r = assessFunnelStage(FUNNEL_STAGES[1], [broken]);
   assert.ok(r.gaps.includes(FUNNEL_GAP.PURCHASE_STOP_BLOCKS_ENTRY), '入口を塞ぐ宣言を見逃している');
   assert.ok(r.gaps.includes(FUNNEL_GAP.PURCHASE_STOP_MISSES_GOAL), '到達目標の欠落を見逃している');
   assert.equal(r.ready, false);
@@ -105,8 +115,8 @@ test('【検査】宛先条件と停止条件が一致する宣言を欠けと�
 
 test('【定義】全段に担当 campaign が宣言され、実在する', () => {
   for (const s of FUNNEL_STAGES) {
-    assert.ok(s.campaignIds.length > 0, `${s.stage}: 担当 campaign が無い`);
-    for (const id of s.campaignIds) {
+    assert.ok(stageCampaignIds(s).length > 0, `${s.stage}: 担当 campaign が無い`);
+    for (const id of stageCampaignIds(s)) {
       assert.ok(CAMPAIGNS.some((c) => c.campaignId === id), `${s.stage}: ${id} が実在しない`);
     }
   }
@@ -121,23 +131,54 @@ test('【契約】ready は「欠けが 1 つも無い」と同義（緩めな�
 /**
  * ⚠️ **ラチェット（現在地の固定）**
  *
- * 2026-09-14 時点で、3 段すべてに次の欠けがある:
- *   - `no_response_routes` … 反応別 routing を宣言していない（線形のまま）
- *   - `window_limited`     … キャンペーン期間中しか動かない
- *   - `no_auto_start`      … 入口で自動開始する経路が無い
+ * 2026-09-14 時点:
+ *   - 第 1 段（無料登録者 → 有料）… **欠けなし**。常時稼働の育成 `free-signup-onboarding` が
+ *     入口の自動開始と反応別 routing を持つ
+ *   - 第 2 段 / 第 3 段 … `no_nurture_campaign`。既存のシーケンスは 2 通の期限案内だけで、
+ *     分岐できる step 数が無い。**埋めるには新しい文面が要る＝運営の判断**
  *
- * これが埋まったら、**先に `docs/spec.md` の完成条件と `docs/progress.md` の
- * 現在地を更新してから**このテストを書き換えること。
- * テストだけ通して「完成」にしない。
+ * 埋まったら、**先に `docs/spec.md` の完成条件と `docs/progress.md` の現在地を更新してから**
+ * このテストを書き換えること。テストだけ通して「完成」にしない。
  */
-test('【ラチェット】実運用の欠けが残っている限り ready と言わない', () => {
+test('【ラチェット】第 1 段は欠けなし / 第 2・3 段は育成 campaign が無いまま', () => {
   const f = assessFunnel(CAMPAIGNS);
-  assert.equal(f.declarationsReady, false,
-    '欠けが埋まった可能性がある。spec.md の完成条件と progress.md を先に更新すること');
-  for (const s of f.stages) {
-    assert.ok(s.gaps.includes(FUNNEL_GAP.NO_AUTO_START),
-      `${s.stage}: 自動開始が出来たなら spec.md / progress.md を更新すること`);
+  const byStage = new Map(f.stages.map((s) => [s.stage, s]));
+
+  const first = byStage.get(FUNNEL_STAGE.FREE_TO_PAID);
+  assert.deepEqual(first.gaps, [], `第 1 段に欠けが戻っている: ${first.gaps.join(',')}`);
+  assert.equal(first.nurtureCampaignId, 'free-signup-onboarding');
+
+  for (const stage of [FUNNEL_STAGE.LIGHT_TO_PREMIUM, FUNNEL_STAGE.PREMIUM_TO_SANRENPUKU]) {
+    const s = byStage.get(stage);
+    assert.ok(s.gaps.includes(FUNNEL_GAP.NO_NURTURE_CAMPAIGN),
+      `${stage}: 育成 campaign が出来たなら spec.md / progress.md を先に更新すること`);
   }
+  assert.equal(f.declarationsReady, false, '全段が揃った可能性がある。正本を先に更新すること');
+});
+
+test('【定義】育成 campaign は分岐できる長さと入口を持つ', () => {
+  for (const s of FUNNEL_STAGES) {
+    if (!s.nurtureCampaignId) continue;
+    const c = CAMPAIGNS.find((x) => x.campaignId === s.nurtureCampaignId);
+    assert.ok(c, `${s.stage}: 育成 campaign が実在しない`);
+    assert.ok(getSequenceSteps(c).length >= MIN_ROUTABLE_STEPS,
+      `${s.stage}: 分岐できる step 数が無い`);
+    assert.ok(resolveAutoStart(c), `${s.stage}: 入口の自動開始が宣言されていない`);
+    assert.ok(campaignDeclaresRoutes(c), `${s.stage}: 反応別 routing が宣言されていない`);
+  }
+});
+
+test('【安全】オファー（期間限定）を育成の代わりに数えない', () => {
+  for (const s of FUNNEL_STAGES) {
+    for (const id of s.offerCampaignIds || []) {
+      assert.notEqual(id, s.nurtureCampaignId, `${s.stage}: 同じ campaign を両方に数えている`);
+    }
+  }
+  // 第 2・3 段はオファーを持つが、それでも ready にならない
+  const f = assessFunnel(CAMPAIGNS);
+  const light = f.stages.find((x) => x.stage === FUNNEL_STAGE.LIGHT_TO_PREMIUM);
+  assert.ok(light.offerCampaignIds.length > 0);
+  assert.equal(light.ready, false, 'オファーだけで ready になっている');
 });
 
 test('【定義】自動開始の宣言は既知の種類だけ', () => {

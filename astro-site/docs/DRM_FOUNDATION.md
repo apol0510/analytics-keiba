@@ -31,6 +31,7 @@
 | **購入をどの 1 通に結ぶか** | `drm/drmAttribution.js`（新） |
 | **ファネルをどう見せるか** | `drm/drmMetrics.js` |
 | **どの段の人か・段の実装が揃っているか** | `drm/drmFunnel.js` |
+| **入口に入れてよいか・次段へ繋ぐか** | `drm/drmAutoStart.js` |
 | **反応を実配信の事実から組み立てる** | `drm/drmResponseInputs.js` ＋ `drm/drmResponseLoader.js` |
 
 ⚠️ `drmRouting` は**送信可否も頻度も判定しない**（テストで固定）。
@@ -289,6 +290,31 @@ read-only API は `admin-marketing` の **`action: 'drm'`**（**送信面**に�
 ⚠️ `assessFunnel().declarationsReady` は**宣言と実装の整合だけ**。
 **実配信で層ごとに別の 1 通が出た実績は含まない**（＝これを「完成」と読まない）。
 ⚠️ 三連複保有者は**終点**。段の宣言を持たせない（買った人へ売り続けないため）。
+
+## 8. 入口の自動開始（`drmAutoStart.js`）
+
+`cron-campaign-sequence` は既定で **step1 を自動で撃たない**（母集団が最大になるため）。
+`sequence.autoStart` を宣言した campaign だけ、**限定した入口**を開ける。
+
+```js
+sequence: {
+  autoStart: { kind: 'free_signup', withinDays: 14, maxPerTick: 50 },
+}
+```
+
+- ゲートは既存 4 枚 ＋ **`MARKETING_DRM_AUTOSTART_ENABLED`**（既定 閉）。
+  入口の 1 枚だけでは 1 通も出ない
+- 除外は**既存の判定の結果をそのまま使う**（`resolveSendability` /
+  `hasPurchasedForCampaign` / `matchesCampaignAudience` / `resolveFunnelStage`）。
+  **新しい停止条件を作らない**
+- 入れない理由は件数で返す（`not_sendable` / `purchased` / `audience_mismatch` /
+  `already_started` / `outside_window` / `stage_mismatch` / `no_registration_time`）
+- **登録時刻が読めない人は入れない**（推測しない）
+- **すでに 1 通でも受け取っている人は入口に入れない**（`hasStarted`）
+- 並びは recordId 昇順で決定的・上限超過は `carriedOver` として次回へ（**黙って捨てない**）
+
+`resolveStageEntry()` は段が進んだ人を次段の**育成**へ繋ぐ。
+⚠️ 育成の無い段では繋がない（**期間限定のオファーを自動の入口に代用しない**）。
 
 ## 6. safety
 

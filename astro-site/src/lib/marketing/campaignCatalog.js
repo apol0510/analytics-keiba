@@ -60,6 +60,9 @@ import { REGULAR_PRICE, resolveOffer } from '../promotions/promotionOfferCatalog
 import { LIGHT_TRIAL_EXTRA_STEPS, LIGHT_TRIAL_ANGLES } from './lightTrialSteps.js';
 import { POST_EXPIRY_STEPS, POST_EXPIRY_ANGLES } from './postExpirySteps.js';
 import {
+  FREE_SIGNUP_ONBOARDING_STEPS, FREE_SIGNUP_ANGLES,
+} from './freeSignupOnboardingSteps.js';
+import {
   DISCOUNT_FREE_STEPS, DISCOUNT_LIGHT_STEPS, DISCOUNT_PREMIUM_STEPS,
   discountBenefitDescription, DISCOUNT_CTA, DISCOUNT_DEADLINE,
 } from './campaignDiscountSteps.js';
@@ -393,6 +396,86 @@ export const CAMPAIGNS = Object.freeze([
       contracts: [MK_CONTRACT.NONE, MK_CONTRACT.EXPIRED],
       plans: [],
       enforce: true,
+    },
+    enabled: true,
+  },
+  {
+    /**
+     * **メルマガ無料登録者の育成（DRM の入口 / 連続配信 6 通）**
+     *
+     * ── 位置づけ ────────────────────────────────────────────
+     * ファネル第 1 段（`drm/drmFunnel.js`）の**常時稼働の育成**。
+     * 割引案内（`campaign-discount-free`）は**期間限定のオファー**で役割が違う。
+     * こちらは期間に依存せず、登録した人を順に迎える。
+     *
+     * ── 文面は新しく作っていない ────────────────────────────
+     * `newsletter/step-sequences.js` の既存ステップメール
+     * （`analytics-keiba:signup-onboarding`）から**そのまま**移した。
+     * 移送時の修正 2 点（間隔 1→2 日 / 買い目 10点→5点）は
+     * `freeSignupOnboardingSteps.js` の冒頭に理由つきで記録。
+     *
+     * ── 入口が自動で開く（この campaign だけ）──────────────────
+     * `sequence.autoStart` を宣言しているので、**登録から 14 日以内の無料会員**が
+     * step1 の対象になる。`cron-campaign-sequence` は既定では step1 を自動で撃たないが、
+     * 宣言があり かつ 専用ゲートが開いているときだけ、**上限つき**で入口を開ける。
+     *
+     * ⚠️ **付与も価格提示もしない。** 無料で見られる範囲の案内だけ。
+     * ⚠️ 購入（Light / Premium / 三連複のいずれか）で停止する。
+     *    段が進んだ人にこの入口の案内を送り続けない。
+     */
+    campaignId: 'free-signup-onboarding',
+    version: 1,
+    name: '無料登録者 育成（DRM 入口 / 連続配信 6 通）',
+    description: 'メルマガ無料登録者へ、入口 → 使い方 → 実績 → 買い目 → プランの違い → 上位プラン を 6 通で案内する。文面は既存ステップメール（signup-onboarding）の移送。付与・価格提示はしない。',
+    benefitType: 'free_content',
+    benefitDescription: '無料のままご覧いただける予想・買い目・結果のご案内です',
+    subject: FREE_SIGNUP_ONBOARDING_STEPS[0].subject,
+    body: FREE_SIGNUP_ONBOARDING_STEPS[0].body,
+    ctaLabel: FREE_SIGNUP_ONBOARDING_STEPS[0].ctaLabel,
+    ctaUrl: FREE_SIGNUP_ONBOARDING_STEPS[0].ctaUrl,
+    footerNote: 'このメールは、KEIBA Analytics へ無料登録いただいたお客様へお送りしています。',
+    recommendedSegments: ['plan:free', 'contract:none'],
+    /** 無料・契約なしのみ。**有料会員・期限切れには送らない** */
+    audienceRule: {
+      contracts: [MK_CONTRACT.NONE],
+      plans: [MK_PLAN.FREE],
+      enforce: true,
+    },
+    /**
+     * ⚠️ 入口の案内なので、**最初の有料が成立したら止める**
+     *    （Light / Premium / 三連複のどれでも目的達成）。
+     */
+    stopOnPurchase: { signals: ['light', 'premium', 'sanrenpuku'] },
+    sequencePolicy: {
+      maxSends: FREE_SIGNUP_ONBOARDING_STEPS.length,
+      minIntervalDays: 2,
+      /** 短期間の過剰配信を防ぐ（7 日で最大 2 通） */
+      frequencyCap: { windowDays: 7, maxSends: 2 },
+      /** 無反応なら間隔を空ける。**打ち切りはしない**（既存シーケンスと同じ方針） */
+      slowdownAfterNoEngagement: 3,
+      slowdownFactor: 2,
+      stopAfterNoEngagement: null,
+      angles: FREE_SIGNUP_ANGLES,
+    },
+    sequence: {
+      maxSends: FREE_SIGNUP_ONBOARDING_STEPS.length,
+      steps: FREE_SIGNUP_ONBOARDING_STEPS,
+      /**
+       * **入口の自動開始**（ファネル第 1 段）。
+       * 登録から 14 日以内の無料会員だけを候補にし、1 回の実行で最大 50 名。
+       * ⚠️ 過去に遡って一斉に撃たないための窓。広げるときは母集団を必ず数えること。
+       */
+      autoStart: { kind: 'free_signup', withinDays: 14, maxPerTick: 50 },
+      /**
+       * **反応別 routing**。
+       * - 開封している（読んでいる）→ 使い方の続きより先に**プランの違い**（step5）
+       * - 届いても開かない → 案内を積まず**実績のページ**（step3）で入口を変える
+       * ⚠️ `clicked` は provider 側 tracking が OFF で**成立しない**ので宣言しない。
+       */
+      responseRoutes: [
+        { when: 'opened', step: 5, minSent: 2, maxSent: 4, note: '開封層 → プランの違いへ前倒し' },
+        { when: 'delivered', step: 3, minSent: 2, maxSent: 4, note: '到達・未開封 → 実績で入口を変える' },
+      ],
     },
     enabled: true,
   },

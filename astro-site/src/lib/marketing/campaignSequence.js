@@ -132,6 +132,55 @@ export function resolveSequenceStep(campaign, stepNumber) {
   return effective;
 }
 
+/**
+ * **入口の自動開始**の宣言（`sequence.autoStart`）。
+ *
+ * ⚠️ `cron-campaign-sequence` は既定では **step1 を自動で撃たない**（母集団が最大になるため）。
+ *    この宣言がある campaign だけ、**限定した入口の候補**に対して step1 を自動で送れる。
+ *    宣言が無ければ 1 ミリも挙動は変わらない。
+ *
+ * 宣言の形:
+ *   `autoStart: { kind: 'free_signup', withinDays: 14, maxPerTick: 50 }`
+ *
+ * - `kind`        … 入口の種類（**既知のものだけ**。増やすときはここに足す）
+ * - `withinDays`  … 登録から何日以内の人を入口の候補にするか（**過去に遡って撃たない**）
+ * - `maxPerTick`  … 1 回の実行で入口へ入れる上限（一気に開けない）
+ */
+export const AUTO_START_KIND = Object.freeze({
+  /** メルマガ無料登録（`auth-user` が作る Free レコード） */
+  FREE_SIGNUP: 'free_signup',
+});
+
+/** 入口候補を数えるときの既定 */
+export const AUTO_START_DEFAULTS = Object.freeze({ withinDays: 14, maxPerTick: 50 });
+
+/** 入口の宣言を取り出す（無ければ `null`） */
+export function resolveAutoStart(campaign) {
+  const raw = campaign && campaign.sequence && campaign.sequence.autoStart;
+  if (!raw || typeof raw !== 'object') return null;
+  const kind = str(raw.kind);
+  if (!Object.values(AUTO_START_KIND).includes(kind)) return null;
+  const withinDays = int(raw.withinDays) ?? AUTO_START_DEFAULTS.withinDays;
+  const maxPerTick = int(raw.maxPerTick) ?? AUTO_START_DEFAULTS.maxPerTick;
+  if (withinDays < 1 || maxPerTick < 1) return null;
+  return { kind, withinDays, maxPerTick };
+}
+
+/**
+ * 入口候補を **Airtable から絞って読むときの窓**（日数）。
+ *
+ * ⚠️ **超集合でなければならない。** 進行中の人が窓から外れると、
+ *    管理画面の一覧から消えて「送れる人数」も「止まっている理由」も嘘になる。
+ *    そこで「入口の窓 ＋ シーケンス全体の所要日数 × 無反応での間隔延長 ＋ 余白」を取る。
+ */
+export function resolveAutoStartAudienceWindowDays(campaign) {
+  const auto = resolveAutoStart(campaign);
+  if (!auto) return null;
+  const span = getSequenceSteps(campaign).reduce((a, s) => a + (int(s.delayDays) ?? 0), 0);
+  const factor = Math.max(1, int(campaign.sequencePolicy && campaign.sequencePolicy.slowdownFactor) ?? 1);
+  return auto.withinDays + span * factor + 30;
+}
+
 /** step の待機日数（step1 は 0） */
 export function stepDelayDays(campaign, stepNumber) {
   const step = getStep(campaign, stepNumber);
@@ -260,6 +309,25 @@ export function validateSequence(campaign) {
    * ⚠️ 実行時（`normalizeRoutes`）は知らない条件を黙って捨てるので、
    *    **書き間違いが「静かに線形のまま」になる**。宣言の形はここで落とす。
    */
+  // ── 入口の自動開始の宣言 ────────────────────────────────────
+  const rawAuto = campaign.sequence && campaign.sequence.autoStart;
+  if (rawAuto !== undefined && rawAuto !== null) {
+    if (typeof rawAuto !== 'object' || Array.isArray(rawAuto)) {
+      errors.push(`${id}: sequence.autoStart は object で宣言すること`);
+    } else if (!Object.values(AUTO_START_KIND).includes(str(rawAuto.kind))) {
+      errors.push(`${id}: 未知の autoStart.kind「${str(rawAuto.kind)}」`);
+    } else {
+      const w = int(rawAuto.withinDays);
+      const m = int(rawAuto.maxPerTick);
+      if (w !== null && w < 1) errors.push(`${id}: autoStart.withinDays は 1 以上`);
+      if (m !== null && m < 1) errors.push(`${id}: autoStart.maxPerTick は 1 以上`);
+      // ⚠️ 入口を自動で開けるなら、**購入・停止で降りられる**ことが前提
+      if (campaign.stopOnPurchase === false) {
+        errors.push(`${id}: autoStart を宣言するなら購入で停止すること（stopOnPurchase: false は禁止）`);
+      }
+    }
+  }
+
   errors.push(...validateResponseRoutes(campaign, {
     maxSends: max,
     stepNumbers: steps.map((s2) => s2.stepNumber),

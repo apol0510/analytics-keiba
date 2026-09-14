@@ -567,8 +567,9 @@ test('使用停止中のキャンペーンは理由付きで拒否される（dr
 test('キャンペーン一覧は停止中も理由付きで返す', async () => {
   const { body } = parse(await call({ action: 'campaigns' }));
   // 13〜15 本目 = キャンペーン割引の 3 区分（campaign-discount-*）
-  // 16 本目 = Light 永久無料 再スタート案内（light-lifetime-restart）。増えたら数を更新する
-  assert.equal(body.campaigns.length, 16, '停止中が一覧から消えている');
+  // 16 本目 = Light 永久無料 再スタート案内（light-lifetime-restart）
+  // 17 本目 = 無料登録者 育成（free-signup-onboarding / DRM の入口）。増えたら数を更新する
+  assert.equal(body.campaigns.length, 17, '停止中が一覧から消えている');
   const off = body.campaigns.filter((c) => !c.usable);
   // ⚠️ 停止中の本数は固定しない。期間限定キャンペーンは**期間外に自動停止**するため、
   //    固定すると期間終了日に CI が落ちる。恒久停止の 2 本が消えないことだけを守る。

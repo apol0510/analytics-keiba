@@ -29,7 +29,7 @@
 
 import { MK_CONTRACT, MK_PLAN } from '../marketing/customerMarketingAudience.js';
 import { resolvePurchaseStopSignals, PURCHASE_SIGNAL } from '../marketing/sequencePurchaseStop.js';
-import { isSequenceCampaign } from '../marketing/campaignSequence.js';
+import { isSequenceCampaign, getSequenceSteps, resolveAutoStart } from '../marketing/campaignSequence.js';
 import { campaignDeclaresRoutes } from './drmResponseInputs.js';
 
 /** この道のりの識別子（画面・集計で使う） */
@@ -64,6 +64,14 @@ export const FUNNEL_GAP = Object.freeze({
   NOT_A_SEQUENCE: 'not_a_sequence',
   /** 反応別 routing を宣言していない（＝線形配信のまま） */
   NO_RESPONSE_ROUTES: 'no_response_routes',
+  /** この段に**常時稼働の育成 campaign** が無い（オファーだけでは育成にならない） */
+  NO_NURTURE_CAMPAIGN: 'no_nurture_campaign',
+  /**
+   * 分岐できるだけの step 数が無い。
+   * ⚠️ **「宣言し忘れ」ではない。** 2 通の期限案内に分岐先は作れないので、
+   *    直すには**新しい文面**が要る（＝運営の判断が要る）。
+   */
+  SEQUENCE_TOO_SHORT_TO_BRANCH: 'sequence_too_short_to_branch',
   /** 入口のプランを購入停止シグナルに入れている（1 通目直後に全員停止する） */
   PURCHASE_STOP_BLOCKS_ENTRY: 'purchase_stop_blocks_entry',
   /** 到達目標を購入停止シグナルに入れていない（買った人へ売り続ける） */
@@ -79,6 +87,8 @@ export const GAP_LABEL = Object.freeze({
   campaign_missing: '宣言された campaign がカタログに存在しない',
   not_a_sequence: '1 通で終わる単発キャンペーン（育成にならない）',
   no_response_routes: '反応別 routing を宣言していない（線形配信のまま）',
+  no_nurture_campaign: '常時稼働の育成シーケンスが無い（期間限定のオファーだけ）',
+  sequence_too_short_to_branch: '分岐できる step 数が無い（新しい文面が要る＝運営判断）',
   purchase_stop_blocks_entry: '入口のプランを購入停止に入れている（2 通目が永久に出ない）',
   purchase_stop_misses_goal: '到達目標を購入停止に入れていない（買った方へ売り続ける）',
   window_limited: 'キャンペーン期間中しか動かない（常時稼働ではない）',
@@ -122,8 +132,11 @@ export const FUNNEL_STAGES = Object.freeze([
     }),
     /** 最初の有料が成立したら卒業（Light でも Premium でも三連複でもよい） */
     goal: Object.freeze([PURCHASE_SIGNAL.LIGHT, PURCHASE_SIGNAL.PREMIUM, PURCHASE_SIGNAL.SANRENPUKU]),
-    campaignIds: Object.freeze(['campaign-discount-free']),
-    autoStart: AUTO_START.NONE,
+    /** **常時稼働の育成**（入口が自動で開く / 反応別 routing を持つ） */
+    nurtureCampaignId: 'free-signup-onboarding',
+    /** 期間限定のオファー（育成の代わりにはならない） */
+    offerCampaignIds: Object.freeze(['campaign-discount-free']),
+    autoStart: AUTO_START.SIGNUP_ENROLL,
     nextStage: FUNNEL_STAGE.LIGHT_TO_PREMIUM,
   }),
   Object.freeze({
@@ -135,7 +148,13 @@ export const FUNNEL_STAGES = Object.freeze([
       contracts: Object.freeze([MK_CONTRACT.ACTIVE, MK_CONTRACT.EXPIRING_SOON]),
     }),
     goal: Object.freeze([PURCHASE_SIGNAL.PREMIUM, PURCHASE_SIGNAL.SANRENPUKU]),
-    campaignIds: Object.freeze(['campaign-discount-light']),
+    /**
+     * ⚠️ **育成シーケンスが無い。** 既存の Light → Premium は
+     *    `campaign-discount-light`（2 通・期間限定の期限案内）だけで、
+     *    分岐できる step 数が無い。埋めるには**新しい文面**が要る（運営判断）。
+     */
+    nurtureCampaignId: null,
+    offerCampaignIds: Object.freeze(['campaign-discount-light']),
     autoStart: AUTO_START.NONE,
     nextStage: FUNNEL_STAGE.PREMIUM_TO_SANRENPUKU,
   }),
@@ -148,11 +167,27 @@ export const FUNNEL_STAGES = Object.freeze([
       contracts: Object.freeze([MK_CONTRACT.ACTIVE, MK_CONTRACT.EXPIRING_SOON]),
     }),
     goal: Object.freeze([PURCHASE_SIGNAL.SANRENPUKU]),
-    campaignIds: Object.freeze(['campaign-discount-premium']),
+    /**
+     * ⚠️ **育成シーケンスが無い。** 常時稼働の候補 `sanrenpuku-offer` は
+     *    **三連複を説明・販売する公開ページが無い**ため使用停止（`ctaUrl` が空）。
+     *    「推測で URL を作らない」ルールがあるので、ここでは繋がない。
+     *    残るのは `campaign-discount-premium`（2 通・期間限定）だけ。
+     */
+    nurtureCampaignId: null,
+    offerCampaignIds: Object.freeze(['campaign-discount-premium', 'sanrenpuku-offer']),
     autoStart: AUTO_START.NONE,
     nextStage: FUNNEL_STAGE.COMPLETED,
   }),
 ]);
+
+/**
+ * 反応別 routing が**意味を持つ**ための最小 step 数。
+ *
+ * 分岐には「入口 → 分かれ目 → 行き先が 2 つ」が要る。2〜3 通の期限案内で
+ * 途中を飛ばすと、単に案内が 1 通減るだけで訴求が変わらない。
+ * ⚠️ この数を下げて gap を消さないこと（**欠けを隠すことになる**）。
+ */
+export const MIN_ROUTABLE_STEPS = 4;
 
 const ACTIVE_CONTRACTS = new Set([MK_CONTRACT.ACTIVE, MK_CONTRACT.EXPIRING_SOON]);
 
@@ -194,21 +229,41 @@ export function assessFunnelStage(stageDecl, campaigns) {
   const list = Array.isArray(campaigns) ? campaigns : [];
   const gaps = new Set();
   const found = [];
+  const notes = [];
 
-  if (!stageDecl.campaignIds || stageDecl.campaignIds.length === 0) {
-    gaps.add(FUNNEL_GAP.NO_CAMPAIGN);
-  }
-  for (const id of stageDecl.campaignIds || []) {
+  const nurtureId = stageDecl.nurtureCampaignId || null;
+  const offerIds = [...(stageDecl.offerCampaignIds || [])];
+  const allIds = [...(nurtureId ? [nurtureId] : []), ...offerIds];
+
+  if (allIds.length === 0) gaps.add(FUNNEL_GAP.NO_CAMPAIGN);
+  // ⚠️ **オファーがあるだけでは育成にならない**。常時稼働の育成が無いことを欠けとして出す
+  if (!nurtureId) gaps.add(FUNNEL_GAP.NO_NURTURE_CAMPAIGN);
+
+  for (const id of allIds) {
     const c = list.find((x) => x && x.campaignId === id);
     if (!c) { gaps.add(FUNNEL_GAP.CAMPAIGN_MISSING); continue; }
     found.push(c);
-    if (!isSequenceCampaign(c)) gaps.add(FUNNEL_GAP.NOT_A_SEQUENCE);
-    if (!campaignDeclaresRoutes(c)) gaps.add(FUNNEL_GAP.NO_RESPONSE_ROUTES);
+    const isNurture = id === nurtureId;
+    const steps = isSequenceCampaign(c) ? getSequenceSteps(c).length : 0;
 
-    // ── 購入停止シグナルの整合（2026-09-08 障害の構造的な検査）────────
+    if (isNurture) {
+      // 育成に求めるもの: 連続配信 / 反応別 routing / 入口の自動開始 / 常時稼働
+      if (!isSequenceCampaign(c)) gaps.add(FUNNEL_GAP.NOT_A_SEQUENCE);
+      if (steps > 0 && steps < MIN_ROUTABLE_STEPS) gaps.add(FUNNEL_GAP.SEQUENCE_TOO_SHORT_TO_BRANCH);
+      else if (!campaignDeclaresRoutes(c)) gaps.add(FUNNEL_GAP.NO_RESPONSE_ROUTES);
+      if (!resolveAutoStart(c)) gaps.add(FUNNEL_GAP.NO_AUTO_START);
+      if (isWindowLimited(c)) gaps.add(FUNNEL_GAP.WINDOW_LIMITED);
+    } else if (steps > 0 && steps < MIN_ROUTABLE_STEPS) {
+      // オファーは期間限定で構わないが、**分岐できない理由は記録する**
+      notes.push(`${id}: step ${steps} 通（分岐には ${MIN_ROUTABLE_STEPS} 通以上が要る）`);
+    }
+
+    // ── 購入停止シグナルの整合（2026-09-08 障害の構造的な検査）──────────
+    // ⚠️ **連続配信にだけ効く検査**。単発キャンペーンは `sequenceProgress` を
+    //    通らないので `stopOnPurchase` を読まない（読むと嘘の欠けが出る）。
+    if (!isSequenceCampaign(c)) continue;
     const signals = resolvePurchaseStopSignals(c);
     for (const p of stageDecl.entry.plans) {
-      // 入口のプランがそのまま停止条件になっていないか
       if (p === MK_PLAN.LIGHT && signals.includes(PURCHASE_SIGNAL.LIGHT)) {
         gaps.add(FUNNEL_GAP.PURCHASE_STOP_BLOCKS_ENTRY);
       }
@@ -216,31 +271,31 @@ export function assessFunnelStage(stageDecl, campaigns) {
         gaps.add(FUNNEL_GAP.PURCHASE_STOP_BLOCKS_ENTRY);
       }
     }
-    // 到達目標のどれか 1 つは停止条件に入っていること
     if (!stageDecl.goal.some((g) => signals.includes(g))) {
       gaps.add(FUNNEL_GAP.PURCHASE_STOP_MISSES_GOAL);
     }
-
-    // 期間限定（`disabledReason` が期間外を指す）＝常時稼働ではない
-    if (String(c.disabledReason ?? '').includes('キャンペーン期間外')) {
-      gaps.add(FUNNEL_GAP.WINDOW_LIMITED);
-    }
   }
-
-  if (stageDecl.autoStart === AUTO_START.NONE) gaps.add(FUNNEL_GAP.NO_AUTO_START);
 
   return {
     stage: stageDecl.stage,
     order: stageDecl.order,
     label: stageDecl.label,
-    campaignIds: [...(stageDecl.campaignIds || [])],
+    nurtureCampaignId: nurtureId,
+    offerCampaignIds: offerIds,
     resolvedCampaigns: found.map((c) => c.campaignId),
     goal: [...stageDecl.goal],
     autoStart: stageDecl.autoStart,
     gaps: [...gaps],
+    /** 欠けではないが、運営が知っておくべきこと */
+    notes,
     /** この段が**実運用として**成立しているか（1 つでも欠ければ false） */
     ready: gaps.size === 0,
   };
+}
+
+/** 期間限定でしか動かない campaign か（`disabledReason` が期間外を指す） */
+function isWindowLimited(campaign) {
+  return String((campaign && campaign.disabledReason) ?? '').includes('キャンペーン期間外');
 }
 
 /**

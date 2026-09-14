@@ -520,14 +520,41 @@ signature に**会員ごとの再募集開始日時**を含める（`rank:plus_r
 宣言の単一源は **`astro-site/src/lib/drm/drmFunnel.js`**。
 ここの表とコードが食い違ったら、**コードとこの表の両方を直す**（片方だけ直さない）。
 
-| 段 | 入口（誰が居るか） | 到達目標（卒業条件） | 担当する連続配信 |
-|---|---|---|---|
-| 1 | 無料登録者・有料の閲覧権が無い方（`plan:free` / `contract:none` `expired`） | Light / Premium / 三連複のいずれかを購入 | `campaign-discount-free` |
-| 2 | Light ご利用中（`plan:light` / 契約有効） | Premium または三連複を購入 | `campaign-discount-light` |
-| 3 | Premium ご利用中（`plan:premium` / 契約有効） | 三連複（買い切り）を購入 | `campaign-discount-premium` |
-| — | 三連複まで到達 | **終点。販促しない** | なし |
+各段は **育成（常時稼働・分岐する）** と **オファー（期間限定）** を区別する。
+オファーがあるだけでは育成にならない（期間が閉じれば止まるため）。
+
+| 段 | 入口（誰が居るか） | 到達目標（卒業条件） | 育成（常時） | オファー（期間限定） |
+|---|---|---|---|---|
+| 1 | 無料登録者・有料の閲覧権が無い方（`plan:free` / `contract:none` `expired`） | Light / Premium / 三連複のいずれかを購入 | **`free-signup-onboarding`**（6 通・入口自動・反応別分岐） | `campaign-discount-free` |
+| 2 | Light ご利用中（`plan:light` / 契約有効） | Premium または三連複を購入 | **無し**（要・新しい文面） | `campaign-discount-light` |
+| 3 | Premium ご利用中（`plan:premium` / 契約有効） | 三連複（買い切り）を購入 | **無し**（要・新しい文面） | `campaign-discount-premium` |
+| — | 三連複まで到達 | **終点。販促しない** | なし | なし |
+
+### 育成に求めるもの（1 つでも欠ければその段は未完成）
+
+1. **連続配信**であること
+2. **分岐できる長さ**（`MIN_ROUTABLE_STEPS = 4` 通以上）。2 通の期限案内に分岐先は作れない
+3. **反応別 routing** を宣言していること
+4. **入口が自動で開く**こと（`sequence.autoStart`）
+5. **常時稼働**（キャンペーン期間に依存しない）
+
+⚠️ 2 を下げて欠けを消さないこと。**分岐先を増やすには新しい文面が要る**＝運営の判断。
+
+### 入口の自動開始（段 1）
+
+`auth-user` が作る無料会員のうち **登録から 14 日以内**の人が `free-signup-onboarding` の
+step1 の対象になる。`cron-campaign-sequence` は既定では step1 を自動で撃たないが、
+**`sequence.autoStart` を宣言した campaign かつ `MARKETING_DRM_AUTOSTART_ENABLED=true`**
+のときだけ、上限つき（1 回 50 名）で入口を開ける。
+
+- **遡って一斉に撃たない**（窓の外は `outside_window` として数える）
+- 登録時刻が読めない人は**入れない**（推測しない）
+- すでに 1 通でも受け取っている人は**入口に入れない**（二重開始を作らない）
+- 既存の 4 ゲートは**そのまま必要**。入口のゲート 1 枚では 1 通も出ない
 
 - **1 人は同時に 1 段にしか居ない**（`resolveFunnelStage` が排他に決める）
+- 段が進んだら次段の育成へ繋ぐ（`drmAutoStart.resolveStageEntry`）。
+  **育成が無い段では繋がない**（期間限定のオファーを自動の入口に代用しない）
 - 段が判定できない人（`contract: unknown` 等）は**どの段にも入れない**（推測しない）
 - 入口のプランを**購入停止シグナルに入れてはいけない**。入れると宛先条件と停止条件が
   一致し、1 通目の直後に全員が恒久停止して 2 通目が永久に出ない（2026-09-08 の障害）

@@ -12,34 +12,55 @@
 
 ## 現在地 — ファネル 3 段の実装状況（機械判定 `drmFunnel.assessFunnel()`）
 
-| 段 | 担当 campaign | 連続配信 | 反応別 routing | 常時稼働 | 自動開始 |
+| 段 | 育成（常時稼働） | 連続配信 | 反応別 routing | 入口の自動開始 | 判定 |
 |---|---|---|---|---|---|
-| 1 無料登録者 → 有料 | `campaign-discount-free` | ✅ 3 通 | ❌ 未宣言 | ❌ 期間限定 | ❌ 無し |
-| 2 Light → Premium | `campaign-discount-light` | ✅ 2 通 | ❌ 未宣言 | ❌ 期間限定 | ❌ 無し |
-| 3 Premium → 三連複 | `campaign-discount-premium` | ✅ 2 通 | ❌ 未宣言 | ❌ 期間限定 | ❌ 無し |
+| 1 無料登録者 → 有料 | **`free-signup-onboarding`**（6 通） | ✅ | ✅ opened→step5 / delivered→step3 | ✅ 登録 14 日以内・1 回 50 名 | **欠けなし** |
+| 2 Light → Premium | **無し** | — | — | — | `no_nurture_campaign` |
+| 3 Premium → 三連複 | **無し** | — | — | — | `no_nurture_campaign` |
 
-購入停止の整合（入口のプランで止めない / 到達目標で止める）は **3 段とも ✅**
-（2026-09-08 の障害は解消済み・`drmFunnel.test.mjs` が再発を固定）。
+オファー（期間限定）は 3 段とも存在する（`campaign-discount-free` / `-light` / `-premium`）。
+ただし **2〜3 通の期限案内で分岐先が作れない**ため、育成の代わりには数えない。
+購入停止の整合（入口のプランで止めない / 到達目標で止める）は **3 段とも ✅**。
 
-### 何が「自動で始まらない」のか（実装を読んだ結果）
+### 第 2・3 段に育成が無い理由（**実装漏れではない**）
 
-- `cron-campaign-sequence` は **step1（初回接触）を自動で撃たない**設計
-  （母集団が最大になるため）。よって連続配信は「**すでに 1 通受け取った人**」しか進まない
-- 無料登録時に自動で始まるのは**別系統のステップメール**
-  （`auth-user.js` → `newsletter/step-enroll.js` → `StepEnrollments`・
-  `analytics-keiba:signup-onboarding` 6 通）。ただし
-  - **送信は未実装**（`step-enroll.js` の注記どおり「実際に送るのは将来の Phase 3」）
-  - **反応別 routing を持たない**（DRM ではない）
-  - 文面が**旧仕様のまま**（「メインレース10点」＝ 2026-07-09 に 5 点へ変更済み）
-- automation プリセット `free-to-light` は **`campaignId: null`**（使える campaign が無く有効化不能）
+| 段 | 使えなかった候補 | なぜ使えないか |
+|---|---|---|
+| 2 | `campaign-discount-light` | **2 通**（割引案内 + 期限案内）。分岐先が作れない。期間限定 |
+| 3 | `campaign-discount-premium` | **2 通**。同上 |
+| 3 | `sanrenpuku-offer` | **使用停止**（`ctaUrl` が空）。三連複を説明・販売する公開ページが無く、「推測で URL を作らない」ルールに掛かる |
 
-⚠️ したがって「無料登録者に自動で DRM が始まる」経路は **現時点でゼロ**。
+⚠️ どちらも**埋めるには新しい文面（と、三連複は公開ページ）が要る**。
+新しい営業訴求・価格・本文を勝手に作らない方針のため、ここで止めてある。
+
+## 入口の自動開始（段 1 / 2026-09-14 実装）
+
+無料登録から DRM が自動で始まる経路を**初めて**作った。
+
+| | |
+|---|---|
+| 文面 | 既存ステップメール `newsletter/step-sequences.js` の `signup-onboarding` **6 通を移送**（新規に書いていない） |
+| 移送時の修正 | ①間隔 1 日 → 2 日（`MIN_STEP_DELAY_DAYS = 2` に反するため）②「メインレース10点 / 双方向馬単」→「最大5点 / 一方向の馬単」（2026-07-09 確定の現行仕様と食い違うため）。理由は `freeSignupOnboardingSteps.js` 冒頭 |
+| 入口 | 登録から 14 日以内の無料会員・1 回の実行で最大 50 名・recordId 昇順で決定的 |
+| ゲート | 既存 4 ゲート ＋ **`MARKETING_DRM_AUTOSTART_ENABLED`**（既定 閉）|
+| 候補の読み方 | `CREATED_TIME()` で絞った bounded read。**新しい列を足していない**。読み切れなければ例外 |
+| 実配信 | **0 通**（ゲートは閉じたまま。実送信は未実施）|
+
+### なぜステップメールを移したか
+
+元の系統（`StepEnrollments` + `cron-email-scheduler`）は **送信が未実装**（Phase 3）で、
+`DeliveryKey` が無く**二重送信を構造的に防げず**、購入停止・配信停止・反応別 routing を
+持たなかった。配信経路を 1 本に寄せ、既存の安全条件を全部効かせるため campaign へ移した。
+**新しい配信基盤は作っていない。**
+
+⚠️ 旧 `enrollSignupOnboarding`（登録時の enroll 行作成）は**残してある**（送信しない）。
+撤去は別タスク。両方を有効化しないこと。
 
 ## 反応別 routing の現在地
 
 | | |
 |---|---|
-| 実宣言のある campaign | `light-trial-post-expiry-sequence`（opened → step9 / delivered → step16）**のみ** |
+| 実宣言のある campaign | `free-signup-onboarding`（opened → step5 / delivered → step3）／ `light-trial-post-expiry-sequence`（opened → step9 / delivered → step16）|
 | 実配線 | ✅ `cron-campaign-sequence` と管理画面の両方が `responseByEmail` を渡す（`drm/drmResponseLoader.js`） |
 | 実配信での出し分け実績 | ❌ **0 通**（ゲートは閉じたまま） |
 | 開封の 1 通単位計測 | 索引の引数名バグ（`redisCmd` → `cmd`）を修正済み。**本番実測は未了** |
@@ -54,8 +75,8 @@
 |---|---|---|---|
 | R1 | 1 通単位の開封が本番で**実際に読めている**ことの実測 | `action=sequence` の `responseRouting.measured.open` と `counts` を read-only で確認 | 引数名バグ修正の deploy |
 | R2 | **実配信で層ごとに別の 1 通が出た**（`byRoute` に `opened:9` / `delivered:16`） | ゲートを開けて `light-trial-post-expiry-sequence` を進める | **MK の明示承認**（実メール送信） |
-| R3 | 無料登録者の**自動開始**（spec 完成条件 1） | ステップメールを DRM へ寄せるか、段 1 の campaign に自動 step1 を作るか。**設計判断が先** | MK 判断 |
-| R4 | 段 1〜3 に `responseRoutes` を宣言（常時稼働版） | 期間限定の割引 campaign とは別に、常時稼働の育成 campaign が要るか判断 | R3 / 15,000 件タスク |
+| R3 | 入口の自動開始を**本番で 1 名**通す（段 1） | `MARKETING_DRM_AUTOSTART_ENABLED` を開ける | **MK の明示承認**（実メール送信） |
+| R4 | 第 2・3 段の**育成シーケンス**（各 4 通以上）と三連複の公開ページ | **新しい文面が要る＝運営の判断**。決まれば実装は同じ型で載る | MK 判断 |
 | R5 | 購入を実 touch へ帰属（`correlated` 1 件以上） | `admin-drm-attribution` を名指しで実行 | R1 / R2 |
 | R6 | 段の遷移（無料 → Light/Premium → 三連複）が実運用で繋がった記録 | 実顧客 1 名の段移動を実測 | R2 / R3 |
 | R7 | A/B（`variant`）の実運用 | `DeliveryKey` に variant が入らないため設計判断が要る | 未着手 |
@@ -69,13 +90,21 @@
 | 内容 | 置き場所 |
 |---|---|
 | 事業目的・ファネル・完成条件を正本へ固定 | `docs/spec.md` / `docs/decisions.md` |
-| ファネル 3 段の宣言と機械判定（欠けを隠さない） | `drm/drmFunnel.js` ＋ `drmFunnel.test.mjs` |
-| 実 campaign への `responseRoutes` 宣言 | `campaignCatalog.js`（`light-trial-post-expiry-sequence`）|
+| ファネル 3 段の宣言と機械判定（育成 / オファーを区別・欠けを隠さない） | `drm/drmFunnel.js` ＋ `drmFunnel.test.mjs` |
+| **無料登録者の育成 campaign**（既存ステップメール 6 通の移送） | `marketing/freeSignupOnboardingSteps.js` / `campaignCatalog.js` |
+| **入口の自動開始**（誰を入れてよいか・次段への接続） | `drm/drmAutoStart.js` |
+| 入口の宣言（`sequence.autoStart`）と検証 | `campaignSequence.js` |
+| 入口の候補を bounded に読む（`CREATED_TIME()`） | `campaignAudienceFormula.js` / `cron-campaign-sequence.js` |
+| 実 campaign への `responseRoutes` 宣言（段 1 ＋ 体験終了後） | `campaignCatalog.js` |
 | 宣言の書き間違いを CI で落とす | `drmRouting.validateResponseRoutes` → `validateSequence` |
 | 配信の事実＋開封索引から反応を作る（bounded・fail closed） | `drm/drmResponseInputs.js` / `drm/drmResponseLoader.js` |
 | 実配信経路（cron / 管理画面）へ配線 | `cron-campaign-sequence.js` / `admin-marketing.js` |
 | 開封索引の引数名バグ修正 | `admin-marketing.js` / `admin-drm-attribution.js` |
-| 実カタログ通しの統合テスト・実経路の配線 guard | `drmRealCampaignRouting.test.mjs` / `drmRealPathWiring.guard.test.mjs` |
+| 通しテスト（無料登録 → 育成 → 分岐 → 購入で停止） | `drmFreeSignupJourney.test.mjs` |
+| 実経路の配線 guard | `drmRealPathWiring.guard.test.mjs` |
+
+`test:drm` 136 pass ／ `check:safety` EXIT=0 ／ `build` EXIT=0。
+**実メール送信・queue・本番書込み・production deploy・PR merge は 1 件も行っていない。**
 
 # ✉️ ログイン案内の文言を削る — **完了（2026-09-10）**
 

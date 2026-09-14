@@ -39,6 +39,7 @@
 
 import { COHORT_SOURCE_PREFIX } from '../crm/importedCohort.js';
 import { resolveGrantRequirement, resolveExpiredGrantRequirement } from './sequenceProgress.js';
+import { resolveAutoStart, resolveAutoStartAudienceWindowDays } from './campaignSequence.js';
 
 /** tier ごとの Customers 列名（正本は promotionalGrants の運用に合わせる） */
 const GRANT_FIELDS = Object.freeze({
@@ -112,6 +113,23 @@ export function buildCampaignAudienceFormula(campaign) {
     }
   }
 
+  /**
+   * 入口が自動で開く campaign（`sequence.autoStart`）は、**登録の新しい無料会員**だけを読む。
+   *
+   * ⚠️ **超集合の原則を守る窓にする。** 入口の窓（`withinDays`）だけで絞ると、
+   *    既にシーケンスへ入っている人が一覧から消えて「送れる人数」も
+   *    「止まっている理由」も嘘になる。そこで
+   *    **入口の窓 ＋ シーケンス全体の所要日数 × 間隔延長 ＋ 余白**まで広げる
+   *    （`resolveAutoStartAudienceWindowDays`）。
+   * ⚠️ `CREATED_TIME()` は Airtable がレコード作成時刻として持つ値。
+   *    **新しい列を足していない**（`auth-user` は登録日の列を書いていない）。
+   */
+  const auto = resolveAutoStart(campaign);
+  if (auto) {
+    const windowDays = resolveAutoStartAudienceWindowDays(campaign);
+    clauses.push(`IS_AFTER(CREATED_TIME(), DATEADD(NOW(), -${windowDays}, 'days'))`);
+  }
+
   if (clauses.length === 0) return null;
   return {
     formula: clauses.length === 1 ? clauses[0] : `AND(${clauses.join(', ')})`,
@@ -137,6 +155,15 @@ export function campaignAudienceFormulaAccepts(campaign, fields) {
     if (!src.startsWith(COHORT_SOURCE_PREFIX)) return false;
     const ids = Array.isArray(cohort.batchIds) ? cohort.batchIds.filter(Boolean) : [];
     if (ids.length > 0 && !ids.some((id) => src === `${COHORT_SOURCE_PREFIX}${id}`)) return false;
+  }
+
+  // 入口が自動で開く campaign の窓（`createdTimeMs` を渡さないときは判定しない）
+  const auto = resolveAutoStart(campaign);
+  if (auto && fields && fields.createdTimeMs !== undefined && fields.createdTimeMs !== null) {
+    const windowMs = resolveAutoStartAudienceWindowDays(campaign) * 86400_000;
+    const created = Number(fields.createdTimeMs);
+    const now = Number(fields.nowMs ?? Date.now());
+    if (!Number.isFinite(created) || now - created > windowMs) return false;
   }
   return true;
 }
