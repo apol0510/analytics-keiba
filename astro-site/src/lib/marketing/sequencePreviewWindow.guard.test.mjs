@@ -61,6 +61,29 @@ test('【重要】下見は予約より手前で返る（従来どおり）', ()
   assert.ok(iDry > 0 && iClaim > iDry, '下見が予約より後ろにある');
 });
 
+/**
+ * ⚠️ **ゲートの厳密な形は marketing 側で固定する**（2026-09-14）。
+ *
+ * `drm/drmEntryIsolation.test.mjs` は DRM 入口の不変条件を守るためのもので、
+ * 共有 cron のゲート判定は `/!gates\.allOpen/` という**緩い形**で見ている。
+ * 下見（`dryRun`）を足した側の責任として、**厳密な形**はここで見る。
+ * こうしておけば、DRM 側の guard を書き換えずに済む（他セッションの契約を上書きしない）。
+ */
+test('【重要】実送信の経路はゲートが揃うまで進まない（下見だけが例外）', () => {
+  assert.match(CRON, /if \(!isDry && !gates\.allOpen\)/, 'ゲートで止める分岐が消えている');
+});
+
+test('【重要】ゲートを迂回する分岐を作らない', () => {
+  assert.doesNotMatch(CRON, /if \(gates\.allOpen \|\|/, 'ゲートを迂回する分岐が入っている');
+  assert.doesNotMatch(CRON, /gates\.allOpen = /, 'ゲートの判定結果を書き換えている');
+  // 下見は「書かない」ことでゲート免除が成立している。書き込みが混ざれば免除は成り立たない
+  const iDry = CRON.indexOf('if (isDry) {');
+  const seg = CRON.slice(iDry, iDry + 2000);
+  for (const banned of ['claimDelivered', 'markDelivered', "method: 'PATCH'", 'scanStore.write']) {
+    assert.equal(seg.includes(banned), false, `下見の中に書き込みがある: ${banned}`);
+  }
+});
+
 test('【重要】窓の指定が配線されている', () => {
   for (const k of ['scope', 'offset', 'limit', 'digest', 'ledgerOffset', 'scanPages']) {
     assert.ok(ADMIN.includes(`${k}:`), `admin 側に ${k} が無い`);

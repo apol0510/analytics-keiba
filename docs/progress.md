@@ -293,6 +293,35 @@ Netlify で直前の production deploy **`de9d2327`**（id `6aa783e4b31161000845
 ⚠️ 残る隙間: 下見と実行の間（数秒）に新規登録が入ると 1 名増えうる。
 `expectedCount` で止まるか、`countDrift` として必ず報告する。
 
+## scheduled Function は本番 URL から起動できない（2026-09-14 本番実測）
+
+PR #525 を本番反映後、`cron-drm-autostart` へ `{"dryRun":true}` を POST したところ
+**403・本文 0 バイト**。ハンドラは 403 でも JSON を返すので、これは**プラットフォーム挙動**。
+
+検証: 同型の **`cron-light-trial-grant`**（docs に「手動 dryRun 可」と書いてある）にも
+同じ呼び出しをして **403・本文 0 バイト**。認証なしでも同じで、同じ secret で
+`admin-marketing` は 200。つまり:
+
+> `export const config = { schedule }` を持つ Netlify Function は**定期実行専用**。
+> **公開 URL から直接 invoke できず、payload も渡せない。**
+
+### 対処（PR #527）
+
+`admin-marketing` に `action:'drmEntryRun'` を追加し、**既存の `runDrmEntry` を薄く呼ぶだけ**にした。
+
+- 判定・許可リスト・`expectedCount`・`planAutoStartEntries`・`runSequenceTick`・
+  `DeliveryKey`・購入/停止/二重防止は**新しく作らず既存の単一源を再利用**
+- `dryRun:true`（下見）と `dryRun:false` + `expectedCount`（実行）の両方を扱う
+- **手動実行は `expectedCount` 必須**（`manual: true`）。付け忘れ・人数のズレは
+  **queue 0 / send 0 のまま 409**（fail closed）
+- 共有スケジューラ・割引 3 本・#521/#523 の契約は**変更していない**
+- `cron-drm-autostart` は**日次自動実行の担当として維持**
+
+### 別任務として記録（このタスクでは触らない）
+
+`cron-light-trial-grant` の docs にある「手動 dryRun ができる」という記述は
+**同じ理由で到達不能**。訂正は別任務。
+
 ## 残作業（**これが埋まるまでクローズしない**）
 
 | # | 残件 | 埋め方 | 依存 |

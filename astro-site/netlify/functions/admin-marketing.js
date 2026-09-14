@@ -221,6 +221,14 @@ import {
   canAutoStart, planAutoStartEntries, readAutoStartGate,
   AUTOSTART_SKIP_LABEL,
 } from '../../src/lib/drm/drmAutoStart.js';
+/**
+ * ⚠️ **入口の実行はここで作り直さない。** 判定・許可リスト・`expectedCount`・
+ *    委譲先（`runSequenceTick`）は `cron-drm-autostart.js` の `runDrmEntry` が単一源。
+ *    この Function は **HTTP から到達できる入口**を用意するだけ
+ *    （scheduled Function は公開 URL から起動できず payload も渡せないため）。
+ */
+import { runDrmEntry } from './cron-drm-autostart.js';
+import { DRM_ENTRY_CAMPAIGN_IDS, ENTRY_ABORT } from '../../src/lib/drm/drmEntryGates.js';
 import { resolveAutoStart } from '../../src/lib/marketing/campaignSequence.js';
 import {
   resolveScanPageSize, scanAllTouchPages, buildInlineMeasurementResult,
@@ -923,6 +931,7 @@ export const handler = async (event) => {
     if (action === 'drmCohort') return await handleDrmCohort({ KEY, BASE, now, req });
     if (action === 'drmAutoStart') return await handleDrmAutoStart({ KEY, BASE, now, req });
     if (action === 'drmProgress') return await handleDrmProgress({ KEY, BASE, now, req });
+    if (action === 'drmEntryRun') return await handleDrmEntryRun({ now, req });
     // ⚠️ ここから 4 つは **read-only ではない**（Redis の展開状態だけを書き換える）。
     //    Customers・配信台帳・送信には触れない。受け付ける値は `rolloutControl.js` が絞る。
     if (action === 'rolloutStart') return await handleRolloutControl({ op: ROLLOUT_OP.START, now, req });
@@ -2019,6 +2028,48 @@ async function handleDrmAutoStart({ KEY, BASE, now, req }) {
     notice: '読んだだけです。**何も書き込んでいません**（queue も送信もしていません）。'
       + ' 実際に送るには既存 4 ゲート ＋ MARKETING_DRM_AUTOSTART_ENABLED が要ります。',
   });
+}
+
+/**
+ * **入口の実行**（`action: 'drmEntryRun'`）— DRM の入口を人が動かすための唯一の到達点。
+ *
+ * ⚠️ **薄い。** 何も判定しない・何も数え直さない。`runDrmEntry` をそのまま呼ぶ。
+ *    許可リスト（`free-signup-onboarding` のみ）/ `planAutoStartEntries` /
+ *    `runSequenceTick`（`DeliveryKey`・二重防止・購入/停止の除外）はすべて既存の単一源。
+ *
+ * ⚠️ **なぜここに要るのか**: `cron-drm-autostart` は `export const config = { schedule }`
+ *    を持つため **公開 URL から起動できない**（403・本文 0 バイト・payload も渡せない）。
+ *    2026-09-14 に本番で実測。定期実行はあちらが担当し、手動はこちらが担当する。
+ *
+ * ── 受け付ける形 ──────────────────────────────────────────
+ *   `{"action":"drmEntryRun"}`                              … 下見（既定）
+ *   `{"action":"drmEntryRun","dryRun":false,"expectedCount":15}` … 実行
+ *
+ * ⚠️ **実行には `expectedCount` が必須**。下見の人数と 1 でも違えば
+ *    **queue 0 / send 0 のまま止まる**（fail closed）。
+ * ⚠️ 共有スケジューラの env（`MARKETING_SEQUENCE_*`）は**読まないし変えない**。
+ */
+async function handleDrmEntryRun({ now, req }) {
+  const dryRun = req.dryRun !== false;
+  const campaignId = String(req.campaignId || DRM_ENTRY_CAMPAIGN_IDS[0]).trim();
+  const expectedCount = req.expectedCount === undefined ? null : req.expectedCount;
+
+  const result = await runDrmEntry({
+    env: process.env,
+    now,
+    campaignId,
+    dryRun,
+    expectedCount,
+    // ⚠️ **人が起動した**＝ `expectedCount` を必須にする
+    manual: true,
+  });
+
+  // 止まった理由が分かるように status を分ける（画面が握り潰さないため）
+  if (result && result.ok === false) {
+    const status = result.abort === ENTRY_ABORT.CAMPAIGN_NOT_ALLOWED ? 400 : 409;
+    return json(status, { mode: 'drm-entry-run', ...result });
+  }
+  return json(200, { mode: 'drm-entry-run', ...result });
 }
 
 async function handleRollout({ KEY, BASE, now, req }) {
