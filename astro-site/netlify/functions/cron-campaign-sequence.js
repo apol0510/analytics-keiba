@@ -66,6 +66,9 @@ import {
 } from '../../src/lib/drm/drmAutoStart.js';
 import { FUNNEL_STAGE } from '../../src/lib/drm/drmFunnel.js';
 import { buildSequenceProgress, indexDeliveries } from '../../src/lib/marketing/sequenceProgress.js';
+import {
+  normalizeAllowlist, applyEntryAllowlist, assertWithinAllowlist, ALLOWLIST_FAIL,
+} from '../../src/lib/drm/drmEntryAllowlist.js';
 import { loadResponseByEmail } from '../../src/lib/drm/drmResponseLoader.js';
 import { createDeliveryEventIndex } from '../../src/lib/webhooks/deliveryEventIndex.js';
 import {
@@ -314,6 +317,16 @@ async function fetchAutoStartCandidates({ KEY, BASE, withinDays }) {
  */
 export async function runSequenceTick({
   env = process.env, now = Date.now(), campaignId,
+  /**
+   * **最終 recipient 集合の上限制約**（任意 / 2026-09-14 の事故対応）。
+   *
+   * `recordId` の配列だけを受け取り、**これ以外へは絶対に送らない**。
+   * ⚠️ 候補データ（candidate object）は受け取らない。従来どおり自分で取り直し、
+   *    purchase / suppression / blacklist / 既送信 / `DeliveryKey` を**再検証する**。
+   * ⚠️ **減らす方向にしか働かない。** 省略時（`undefined` / `null`）は
+   *    **共有 tick の挙動を 1 ミリも変えない**。
+   */
+  entryAllowlist = null,
   /**
    * **下見**（`true` なら 1 バイトも書かない）。
    *
@@ -759,7 +772,29 @@ export async function runSequenceTick({
   const filtered = applyAudienceFilter({
     targets: dueTargets, prospectEmails, filter: audienceFilter,
   });
-  const targets = filtered.kept;
+  /**
+   * ── 5-a-3) **許可リストで最終集合を縛る**（2026-09-14 の事故対応）────────
+   *
+   * ## 何が起きたか（本番実測）
+   *
+   * 入口の `expectedCount` は **planner の人数しか縛っていなかった**。この tick は
+   * 台帳由来 ＋ 入口 ＋ **prospect** で母集団を組み直すので、承認が「無料登録 16 名」でも
+   * ジョブの Recipients は **50**、SentCount は **46** になった
+   * （CampaignDeliveries は 13 行。prospect は Airtable に行を書かないため）。
+   *
+   * ## 直し方
+   *
+   * 呼び出し側が**許可リスト（recordId だけ）**を渡したら、
+   * **最終 recipient 集合をその部分集合に落とす**。
+   *
+   * ⚠️ **減らす方向だけ。** 上の除外・冪等性・送信直前再検証は一切迂回しない
+   *    （ここは全部通り終わった後）。
+   * ⚠️ `recordId` を持たない相手（prospect 等）は**外**として扱う。
+   * ⚠️ 渡されなければ何もしない（**共有 tick の挙動は不変**）。
+   */
+  const allowlist = normalizeAllowlist(entryAllowlist);
+  const allowed = applyEntryAllowlist({ targets: filtered.kept, allowlist });
+  const targets = allowed.kept;
   const audienceView = describeAudiencePreview({
     bySource: filtered.bySource, kept: targets, filter: filtered.filter,
     step: plan.step, campaignId: base.campaignId,
@@ -916,6 +951,22 @@ export async function runSequenceTick({
     console.error(`${SEQ_LOG_TAG} prospect の予約を取れないため送りません: ${prospectClaimFailure} / ${prospectBlocked} 件`);
   }
   const claimedProspectTargets = prospectTargets.filter((t) => claimedKeys.has(keyOfTarget(t)));
+
+  /**
+   * ── 積む直前の最後の確認（多層防御）────────────────────────────
+   * 許可リストがあるのに外の相手が 1 人でも混ざっていたら **1 件も積まない**。
+   * 途中の処理が対象を足していないことを、予約・queue の手前で断つ。
+   */
+  const within = assertWithinAllowlist({ targets, allowlist });
+  if (!within.ok) {
+    const body = {
+      ok: false, abort: ALLOWLIST_FAIL.OUTSIDE_ALLOWLIST,
+      outside: within.outside, targets: targets.length, sideEffects: 'none',
+      note: '許可リストの外が最終集合に混ざっていたため、1 件も積まずに止めました。',
+    };
+    log(body);
+    return body;
+  }
 
   const built = buildCampaignPlan({
     campaign: sending, selected: [...customerTargets, ...claimedProspectTargets],
@@ -1172,6 +1223,8 @@ export async function runSequenceTick({
   if (prospectBlocked > 0) summary['prospect予約不可'] = prospectBlocked;
   if (prospectClaimFailure) summary['prospect予約失敗'] = prospectClaimFailure;
   if (releaseFailed > 0) summary['予約戻し失敗'] = releaseFailed;
+  // 許可リストで落とした人数（**黙って減らさない**）
+  if (allowed.constrained) summary['許可リスト外で除外'] = allowed.dropped;
   // #521（prospect 実送信 / delivered 10 通の無反応除外）の観測項目
   if (alreadyQueued > 0) summary['登録済みのため除外'] = alreadyQueued;
   if (prospectNotDispatchable > 0) summary['prospect送信不可'] = prospectNotDispatchable;
@@ -1181,6 +1234,8 @@ export async function runSequenceTick({
   log(summary);
   return {
     ok: true, step: plan.step, enqueued, failed, autoStart: autoStartReport,
+    entryAllowlist: allowed.constrained
+      ? { constrained: true, dropped: allowed.dropped, kept: targets.length } : null,
     campaignId: base.campaignId, version: base.version,
     alreadyQueued,
     prospectNotDispatchable,

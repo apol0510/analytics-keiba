@@ -204,7 +204,9 @@ test('【重要】キュー登録・DeliveryKey を作り直さず既存 tick �
   assert.match(FN, /import \{ runSequenceTick \} from '\.\/cron-campaign-sequence\.js'/,
     '既存 tick を import していない');
   assert.match(code, /deps\.runSequenceTick \|\| runSequenceTick/, '既存 tick に委ねていない');
-  assert.match(code, /await tick\(\{ env: tickEnv, now, campaignId \}\)/, 'tick を呼んでいない');
+  assert.match(code, /await tick\(\{[\s\S]{0,200}env: tickEnv, now, campaignId,/, 'tick を呼んでいない');
+  // 2026-09-14 の事故対応: **最終集合の上限制約**を渡す（候補データは渡さない）
+  assert.match(code, /entryAllowlist: seen\.recordIds \|\| \[\]/, '許可リストを渡していない');
   for (const bad of ['buildDeliveryRecords(', 'buildScheduledEmailFields(',
     'computeCampaignDeliveryKey(', 'buildCampaignPlan(', 'performUpsert']) {
     assert.equal(code.includes(bad), false, `${bad} を作り直している（安全装置のコピーになる）`);
