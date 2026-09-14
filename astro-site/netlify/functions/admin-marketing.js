@@ -142,6 +142,9 @@ import {
 import {
   planProspectClaimRelease, summarizeClaimRelease, RELEASE_CONFIRM,
 } from '../../src/lib/marketing/prospectClaimRelease.js';
+import {
+  createDeliveryKeyRollbackStore, DEFAULT_ROLLBACK_TTL_SEC, RUN_ID,
+} from '../../src/lib/marketing/deliveryKeyRollback.js';
 import { hydrateProspectSequenceInputs } from '../../src/lib/marketing/prospectSequenceHydration.js';
 import {
   auditProspectIndex, normalizeHashes, safeRecordView,
@@ -901,6 +904,7 @@ export const handler = async (event) => {
     if (action === 'prospectIntake') return await handleProspectIntake({ KEY, BASE, now, req });
     if (action === 'prospectSequenceCheck') return await handleProspectSequenceCheck({ now, req });
     if (action === 'prospectClaimRelease') return await handleProspectClaimRelease({ KEY, BASE, now, req });
+    if (action === 'prospectClaimRestore') return await handleProspectClaimRestore({ req });
     if (action === 'prospectIndexAudit') return await handleProspectIndexAudit({ req });
     if (action === 'prospectIndexRepair') return await handleProspectIndexRepair({ req });
     if (action === 'customerDeletionPlan') return await handleCustomerDeletionPlan({ KEY, BASE, req });
@@ -4069,6 +4073,279 @@ async function handleProspectIndexRepair({ req }) {
   });
 }
 
+/**
+ * prospect の **予約だけが焼けた step** を剥がして、配信対象へ戻す（C2）。
+ *
+ * ## 何のためか（2026-09-14）
+ *
+ * prospect は Airtable に配信行を持たないので、冪等性は Redis の予約だけが担う。
+ * キュー登録の瞬間に予約が入るため、**積まれたが 1 通も送られなかった**とき、
+ * その人は「送信済み」のまま**二度と対象に戻らない**。
+ * 本番実測で **11,625 名が step2 を受け取らないまま step3 へ飛ぶ**状態になっていた。
+ *
+ * ## 安全条件（1 つでも欠けたら 1 鍵も剥がさない）
+ *
+ *   - **step は 2 以上**（step1 は実送信済み。剥がすと再送）
+ *   - その step に**送信実績が 0**（ScheduledEmails を数えて確かめる）
+ *   - 予約集合を**読めている**
+ *   - 下見で確認した件数と**一致**する（`expectedCount`）
+ *   - `apply:true` ＋ 確認文字列
+ *
+ * ⚠️ 触るのは**予約集合だけ**。Customers・課金・prospect レコード本体・Airtable の
+ *    配信行には 1 バイトも書かない。
+ * ⚠️ 判定は `prospectClaimRelease.js` が単一源（ここは I/O だけ）。
+ */
+async function handleProspectClaimRelease({ KEY, BASE, now, req }) {
+  const campaignId = String(req.campaignId || '').trim();
+  const campaign = getCampaign(campaignId, { includeDisabled: true });
+  if (!campaign || !isSequenceCampaign(campaign)) {
+    return json(400, { error: '連続配信のキャンペーンを指定してください', sideEffects: 'none' });
+  }
+  const step = Number(req.step);
+  const fromEmail = getBrandConfig(BRAND).defaultFromEmail;
+  const confirmed = String(req.confirm || '') === RELEASE_CONFIRM;
+  const apply = req.apply === true && confirmed;
+  /**
+   * 実行 ID。**退避 set の名前**になる（復元はこれで指す）。
+   * ⚠️ 必須。付けずに剥がすと、どの退避から戻せばよいか決められない。
+   */
+  const runId = String(req.runId || '').trim();
+  const ttlSec = Number.isInteger(Number(req.ttlSec)) && Number(req.ttlSec) > 0
+    ? Number(req.ttlSec) : DEFAULT_ROLLBACK_TTL_SEC;
+  if (!RUN_ID.test(runId)) {
+    return json(400, {
+      error: 'runId が必要です（退避 set の名前になります）',
+      hint: '英数字と . _ - のみ / 4〜80 文字。例: c2-2026-09-14',
+      sideEffects: 'none',
+    });
+  }
+
+  // ① その step に送信実績があるか（**1 通でもあれば剥がさない**）
+  let sentEvidence = { ok: false, sentJobs: 0 };
+  try {
+    const rows = await fetchAllStrict({
+      KEY, BASE, table: SCHEDULED_TABLE,
+      filterByFormula: `AND({TargetPlan}='campaign:${campaignId}',{Status}='SENT')`,
+      fields: ['JobId', 'Notes', 'SentCount'],
+    });
+    const marker = new RegExp(`sequence step${step}\\b`);
+    const sentJobs = (rows || []).filter((r) => {
+      const f = r.fields || {};
+      return marker.test(String(f.Notes || '')) && (Number(f.SentCount) || 0) > 0;
+    }).length;
+    sentEvidence = { ok: true, sentJobs };
+  } catch {
+    sentEvidence = { ok: false, sentJobs: 0 };      // 読めない = 分からない → 剥がさない
+  }
+
+  let store; let ledger; let rollbackStore;
+  try {
+    store = createProspectStore({
+      cmd: makeRedisCmd(process.env), pipeline: makeRedisPipeline(process.env),
+    });
+    ledger = createDeliveryKeyStore({
+      redisCmd: makeRedisCmd(process.env), redisPipeline: makeRedisPipeline(process.env),
+    });
+    rollbackStore = createDeliveryKeyRollbackStore({
+      redisCmd: makeRedisCmd(process.env), redisPipeline: makeRedisPipeline(process.env),
+    });
+  } catch {
+    return json(503, { error: 'Redis へ接続できません', sideEffects: 'none' });
+  }
+
+  // ② 索引の窓で prospect を読む（1 万件超を 1 回で見ると実行時間を超える）
+  const limit = Math.min(4000, Math.max(1, Number(req.limit) || 2000));
+  const from = Math.max(0, Number(req.offset) || 0);
+  const expectDigest = String(req.digest || '').trim() || undefined;
+  const loaded = await loadActiveProspects({
+    store, maxRecipients: limit, offset: from, expectDigest,
+  });
+  if (!loaded.ok) {
+    return json(loaded.reason === AUDIENCE_FAIL.INDEX_CHANGED ? 409 : 500, {
+      error: 'prospect を読み切れませんでした', reason: loaded.reason,
+      digest: loaded.digest || null, sideEffects: 'none',
+    });
+  }
+
+  // ③ いま予約集合に入っている鍵を引く（**読めなければ剥がさない**）
+  const sending = resolveSequenceStep(campaign, step);
+  let deliveredKeys = null;
+  if (sending) {
+    const keys = loaded.prospects
+      .map((p) => computeCampaignDeliveryKey({
+        campaign: sending, recipientEmail: String(p.email || '').toLowerCase(), brand: BRAND, fromEmail,
+      }))
+      .filter(Boolean);
+    try {
+      // ⚠️ `filterDelivered` は**見つかった鍵の配列**を返す（応答の形が違えば throw する）
+      const found = await ledger.filterDelivered({
+        brand: BRAND, campaignId: campaign.campaignId, version: campaign.version, keys,
+      });
+      if (!Array.isArray(found)) throw new Error('unexpected_shape');
+      deliveredKeys = new Set(found);
+    } catch {
+      deliveredKeys = null;      // 読めない = 分からない → 1 鍵も剥がさない
+    }
+  }
+
+  const plan = planProspectClaimRelease({
+    prospects: loaded.prospects, campaign, step, brand: BRAND, fromEmail,
+    deliveredKeys, sentEvidence,
+    expectedCount: Number.isInteger(Number(req.expectedCount)) ? Number(req.expectedCount) : null,
+  });
+
+  const view = {
+    mode: 'prospect-claim-release',
+    campaignId, step,
+    window: {
+      offset: from, limit, indexSize: loaded.indexSize, digest: loaded.digest,
+      returned: loaded.prospects.length, scanned: loaded.scanned,
+      nextOffset: from + loaded.scanned < loaded.indexSize ? from + loaded.scanned : null,
+    },
+    sentEvidence,
+    ...summarizeClaimRelease({
+      campaignId, step, counts: plan.counts, released: 0, dryRun: !apply,
+    }),
+  };
+
+  if (!plan.ok) {
+    return json(409, { ...view, refuse: plan.refuse, released: 0, sideEffects: 'none' });
+  }
+  if (!apply) {
+    return json(200, {
+      ...view, released: 0, sideEffects: 'none',
+      notice: '下見です。剥がすには apply:true と確認文字列、expectedCount を渡してください。',
+    });
+  }
+
+  /**
+   * ④ **退避してから**剥がす。
+   *
+   * ⚠️ rollback の根拠は「**実際に剥がした鍵そのもの**」でなければならない。
+   *    この基盤の確定設計は「`DeliveryKey` を後から再計算しない」なので、
+   *    「材料から計算し直せるから戻せる」を復元根拠にするのは**仕様矛盾**。
+   *    `stashAndRelease` が ① 退避 → ② 確認 → ③ SREM の順で進み、
+   *    **②を通らなければ 1 件も剥がさない**（`deliveryKeyRollback.js`）。
+   */
+  let result;
+  try {
+    result = await rollbackStore.stashAndRelease({
+      brand: BRAND, campaignId: campaign.campaignId, version: campaign.version,
+      step, runId, keys: plan.keys, digest: loaded.digest, ttlSec, nowMs: now,
+    });
+  } catch (e) {
+    const reason = (e && e.reason) || 'redis_unavailable';
+    return json(500, {
+      ...view, released: 0,
+      // 退避を確認できなかった場合は **1 件も剥がしていない**
+      sideEffects: reason === 'stash_incomplete' ? 'none' : 'partial_unconfirmed',
+      error: reason === 'stash_incomplete'
+        ? '退避を確認できなかったため、1 件も剥がしていません'
+        : '予約を剥がせませんでした（途中で失敗した可能性があります）',
+      reason,
+    });
+  }
+  console.log('🔓 [admin-marketing] prospect の予約を剥がしました:', {
+    campaignId, step, runId, targeted: plan.keys.length,
+    stashed: result.stashed, released: result.released, alreadyReleased: result.alreadyReleased,
+  });
+  return json(200, {
+    ...view,
+    ...summarizeClaimRelease({
+      campaignId, step, counts: plan.counts, released: result.released, dryRun: false,
+    }),
+    released: result.released,
+    /** 退避できた件数（復元の根拠。**鍵そのものは返さない**） */
+    stashed: result.stashed,
+    /** 既に剥がしてあった件数（再実行時。異常ではない） */
+    alreadyReleased: result.alreadyReleased,
+    rollback: {
+      runId, ttlSec,
+      restore: "action='prospectClaimRestore' に同じ campaignId / step / runId を渡すと、"
+        + '退避した鍵をそのまま書き戻します（再計算しません）。',
+    },
+    sideEffects: 'delivered_set_only',
+    notice: '予約集合のみ変更しました（Customers・配信行・課金には触れていません）。',
+  });
+}
+
+/**
+ * C2 の巻き戻し — 退避 set の中身を**そのまま**予約集合へ書き戻す。
+ *
+ * ⚠️ **鍵を作り直さない。** 書き戻すのは「実際に剥がした鍵」だけ。
+ * ⚠️ `SADD` なので**何度流しても増えない**（冪等）。
+ * ⚠️ 応答に鍵を含めない（件数と監査情報だけ）。
+ */
+async function handleProspectClaimRestore({ req }) {
+  const campaignId = String(req.campaignId || '').trim();
+  const campaign = getCampaign(campaignId, { includeDisabled: true });
+  if (!campaign || !isSequenceCampaign(campaign)) {
+    return json(400, { error: '連続配信のキャンペーンを指定してください', sideEffects: 'none' });
+  }
+  const step = Number(req.step);
+  const runId = String(req.runId || '').trim();
+  const scope = {
+    brand: BRAND, campaignId: campaign.campaignId, version: campaign.version, step, runId,
+  };
+
+  let rollbackStore;
+  try {
+    rollbackStore = createDeliveryKeyRollbackStore({
+      redisCmd: makeRedisCmd(process.env), redisPipeline: makeRedisPipeline(process.env),
+    });
+  } catch {
+    return json(503, { error: 'Redis へ接続できません', sideEffects: 'none' });
+  }
+
+  let described;
+  try {
+    described = await rollbackStore.describe(scope);
+  } catch (e) {
+    return json(500, {
+      error: '退避の状態を読めません', reason: (e && e.reason) || 'unknown', sideEffects: 'none',
+    });
+  }
+  const view = {
+    mode: 'prospect-claim-restore',
+    campaignId, step, runId,
+    退避件数: described.stashSize,
+    残りTTL秒: described.ttlSec,
+    監査: described.meta,
+  };
+  if (described.stashSize === 0) {
+    return json(409, {
+      ...view, restored: 0, sideEffects: 'none',
+      error: '退避が見つかりません（runId 違い、または TTL 切れ）',
+    });
+  }
+  if (String(req.confirm || '') !== RELEASE_CONFIRM || req.apply !== true) {
+    return json(200, {
+      ...view, restored: 0, sideEffects: 'none',
+      notice: '下見です。書き戻すには apply:true と確認文字列を渡してください。',
+    });
+  }
+
+  let out;
+  try {
+    out = await rollbackStore.restore(scope);
+  } catch (e) {
+    return json(500, {
+      ...view, restored: 0, sideEffects: 'partial_unconfirmed',
+      error: '書き戻しに失敗しました', reason: (e && e.reason) || 'unknown',
+    });
+  }
+  console.log('↩️ [admin-marketing] prospect の予約を書き戻しました:', {
+    campaignId, step, runId, members: out.members, restored: out.restored,
+  });
+  return json(200, {
+    ...view,
+    restored: out.restored,
+    書き戻した母数: out.members,
+    sideEffects: 'delivered_set_only',
+    notice: '退避した鍵をそのまま書き戻しました（再計算していません）。',
+  });
+}
+
 async function handleProspectIndexAudit({ req }) {
   const expected = normalizeHashes(req.hashes);
   if (expected.length === 0) {
@@ -4142,159 +4419,6 @@ async function handleProspectIndexAudit({ req }) {
     details,
     truncated: audit.notActive.length > detailFor.length,
     notice: 'これは読み取りのみです（Redis の実状態）。アドレスは含みません。',
-  });
-}
-
-/**
- * prospect の **予約だけが焼けた step** を剥がして、配信対象へ戻す（C2）。
- *
- * ## 何のためか（2026-09-14）
- *
- * prospect は Airtable に配信行を持たないので、冪等性は Redis の予約だけが担う。
- * キュー登録の瞬間に予約が入るため、**積まれたが 1 通も送られなかった**とき、
- * その人は「送信済み」のまま**二度と対象に戻らない**。
- * 本番実測で **11,625 名が step2 を受け取らないまま step3 へ飛ぶ**状態になっていた。
- *
- * ## 安全条件（1 つでも欠けたら 1 鍵も剥がさない）
- *
- *   - **step は 2 以上**（step1 は実送信済み。剥がすと再送）
- *   - その step に**送信実績が 0**（ScheduledEmails を数えて確かめる）
- *   - 予約集合を**読めている**
- *   - 下見で確認した件数と**一致**する（`expectedCount`）
- *   - `apply:true` ＋ 確認文字列
- *
- * ⚠️ 触るのは**予約集合だけ**。Customers・課金・prospect レコード本体・Airtable の
- *    配信行には 1 バイトも書かない。
- * ⚠️ 判定は `prospectClaimRelease.js` が単一源（ここは I/O だけ）。
- */
-async function handleProspectClaimRelease({ KEY, BASE, now, req }) {
-  const campaignId = String(req.campaignId || '').trim();
-  const campaign = getCampaign(campaignId, { includeDisabled: true });
-  if (!campaign || !isSequenceCampaign(campaign)) {
-    return json(400, { error: '連続配信のキャンペーンを指定してください', sideEffects: 'none' });
-  }
-  const step = Number(req.step);
-  const fromEmail = getBrandConfig(BRAND).defaultFromEmail;
-  const confirmed = String(req.confirm || '') === RELEASE_CONFIRM;
-  const apply = req.apply === true && confirmed;
-
-  // ① その step に送信実績があるか（**1 通でもあれば剥がさない**）
-  let sentEvidence = { ok: false, sentJobs: 0 };
-  try {
-    const rows = await fetchAllStrict({
-      KEY, BASE, table: SCHEDULED_TABLE,
-      filterByFormula: `AND({TargetPlan}='campaign:${campaignId}',{Status}='SENT')`,
-      fields: ['JobId', 'Notes', 'SentCount'],
-    });
-    const marker = new RegExp(`sequence step${step}\\b`);
-    const sentJobs = (rows || []).filter((r) => {
-      const f = r.fields || {};
-      return marker.test(String(f.Notes || '')) && (Number(f.SentCount) || 0) > 0;
-    }).length;
-    sentEvidence = { ok: true, sentJobs };
-  } catch {
-    sentEvidence = { ok: false, sentJobs: 0 };      // 読めない = 分からない → 剥がさない
-  }
-
-  let store; let ledger;
-  try {
-    store = createProspectStore({
-      cmd: makeRedisCmd(process.env), pipeline: makeRedisPipeline(process.env),
-    });
-    ledger = createDeliveryKeyStore({
-      redisCmd: makeRedisCmd(process.env), redisPipeline: makeRedisPipeline(process.env),
-    });
-  } catch {
-    return json(503, { error: 'Redis へ接続できません', sideEffects: 'none' });
-  }
-
-  // ② 索引の窓で prospect を読む（1 万件超を 1 回で見ると実行時間を超える）
-  const limit = Math.min(4000, Math.max(1, Number(req.limit) || 2000));
-  const from = Math.max(0, Number(req.offset) || 0);
-  const expectDigest = String(req.digest || '').trim() || undefined;
-  const loaded = await loadActiveProspects({
-    store, maxRecipients: limit, offset: from, expectDigest,
-  });
-  if (!loaded.ok) {
-    return json(loaded.reason === AUDIENCE_FAIL.INDEX_CHANGED ? 409 : 500, {
-      error: 'prospect を読み切れませんでした', reason: loaded.reason,
-      digest: loaded.digest || null, sideEffects: 'none',
-    });
-  }
-
-  // ③ いま予約集合に入っている鍵を引く（**読めなければ剥がさない**）
-  const sending = resolveSequenceStep(campaign, step);
-  let deliveredKeys = null;
-  if (sending) {
-    const keys = loaded.prospects
-      .map((p) => computeCampaignDeliveryKey({
-        campaign: sending, recipientEmail: String(p.email || '').toLowerCase(), brand: BRAND, fromEmail,
-      }))
-      .filter(Boolean);
-    try {
-      // ⚠️ `filterDelivered` は**見つかった鍵の配列**を返す（応答の形が違えば throw する）
-      const found = await ledger.filterDelivered({
-        brand: BRAND, campaignId: campaign.campaignId, version: campaign.version, keys,
-      });
-      if (!Array.isArray(found)) throw new Error('unexpected_shape');
-      deliveredKeys = new Set(found);
-    } catch {
-      deliveredKeys = null;      // 読めない = 分からない → 1 鍵も剥がさない
-    }
-  }
-
-  const plan = planProspectClaimRelease({
-    prospects: loaded.prospects, campaign, step, brand: BRAND, fromEmail,
-    deliveredKeys, sentEvidence,
-    expectedCount: Number.isInteger(Number(req.expectedCount)) ? Number(req.expectedCount) : null,
-  });
-
-  const view = {
-    mode: 'prospect-claim-release',
-    campaignId, step,
-    window: {
-      offset: from, limit, indexSize: loaded.indexSize, digest: loaded.digest,
-      returned: loaded.prospects.length, scanned: loaded.scanned,
-      nextOffset: from + loaded.scanned < loaded.indexSize ? from + loaded.scanned : null,
-    },
-    sentEvidence,
-    ...summarizeClaimRelease({
-      campaignId, step, counts: plan.counts, released: 0, dryRun: !apply,
-    }),
-  };
-
-  if (!plan.ok) {
-    return json(409, { ...view, refuse: plan.refuse, released: 0, sideEffects: 'none' });
-  }
-  if (!apply) {
-    return json(200, {
-      ...view, released: 0, sideEffects: 'none',
-      notice: '下見です。剥がすには apply:true と確認文字列、expectedCount を渡してください。',
-    });
-  }
-
-  // ④ 剥がす（触るのは予約集合だけ）
-  let released = 0;
-  try {
-    const res = await ledger.releaseClaims({
-      brand: BRAND, campaignId: campaign.campaignId, version: campaign.version, keys: plan.keys,
-    });
-    released = Number(res && res.released) || 0;
-  } catch {
-    return json(500, {
-      ...view, released: 0, sideEffects: 'partial_unconfirmed',
-      error: '予約を剥がせませんでした（途中で失敗した可能性があります）',
-    });
-  }
-  console.log('🔓 [admin-marketing] prospect の予約を剥がしました:', {
-    campaignId, step, targeted: plan.keys.length, released,
-  });
-  return json(200, {
-    ...view,
-    ...summarizeClaimRelease({ campaignId, step, counts: plan.counts, released, dryRun: false }),
-    released,
-    sideEffects: 'delivered_set_only',
-    notice: '予約集合のみ変更しました（Customers・配信行・課金には触れていません）。',
   });
 }
 

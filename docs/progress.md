@@ -20,40 +20,74 @@
 
 | # | 条件 | 状態 |
 |---|---|---|
-| 1 | 積む → 送る が人手なしで回る（`cron-campaign-sequence` → `cron-marketing-dispatch`）| ✅ 実装・テスト済み（PR #521）/ **本番未反映** |
-| 2 | prospect（11,976 名）にも**実際に送れる**（Airtable の配信行なしで送信できる）| ✅ 実装・テスト済み / **本番未実証** |
-| 3 | `delivered` を数える（打ち切りの分母） | ✅ 実装・テスト済み / **本番は env 未開放** |
-| 4 | `open` / `click` を蓄積する | ⚠️ open は稼働中。**click は `MARKETING_CLICK_TRACKING_ENABLED` 未設定で 0 のまま** |
+| 1 | 積む → 送る が人手なしで回る（`cron-campaign-sequence` → `cron-marketing-dispatch`）| ✅ **本番反映済み**（PR #521 / `f11f9d34` / 2026-09-14 04:27Z ready）|
+| 2 | prospect（11,976 名）にも**実際に送れる**（Airtable の配信行なしで送信できる）| ✅ 実装・deploy 済み / **本番未実証**（まだ 1 通も送っていない）|
+| 3 | `delivered` を数える（打ち切りの分母） | ✅ コード deploy 済み ＋ `MARKETING_PROSPECT_EVENTS_ENABLED=true` 設定済み / **実測待ち** |
+| 4 | `open` / `click` を蓄積する | ⚠️ open は稼働中。**click は `MARKETING_CLICK_TRACKING_ENABLED` 未設定で 0 のまま**（E）|
 | 5 | 反応ありを保持する（ENGAGED は打ち切らない・Customers へ昇格できる）| ✅ 実装済み / 昇格は管理画面から |
-| 6 | **delivered 10 通・無反応で自動除外**される | ✅ 判定は実装・テスト済み / **本番で到達者 0**（実測: 最大 5 通）|
+| 6 | **delivered 10 通・無反応で自動除外**される | ✅ 判定は実装・テスト済み / **本番で到達者 0**（実測: 最大 5 通。除外 0 は正常）|
 | 7 | 除外された人が次のキャンペーンでも対象に戻らない | ✅ EXHAUSTED は送信対象の入口で落ちる |
-| 8 | 実配信が**継続**している（1 キャンペーンで止まらない）| ❌ **未達**。step2 は 2026-09-09 以降 0 通 |
+| 8 | 実配信が**継続**している（1 キャンペーンで止まらない）| ❌ **未達**。step2 は 2026-09-09 以降 **0 通** |
 
-## いま本番で足りていないもの（**すべて未実施 / 要承認**）
+## 進捗（2026-09-14 / 実施順は MK 指定）
 
-| # | 作業 | 種別 |
+| # | 作業 | 状態 |
 |---|---|---|
-| A | PR #521 を merge → production deploy | deploy |
-| B | 暴走している enqueue を止める（10 分ごとに約 920 件/日 積まれ続けている）| 運用 |
-| C | 滞留の掃除（PENDING 4,300+ 件 / JobId 欠落の配信行 3,854 行）| 運用 |
-| D | `MARKETING_PROSPECT_EVENTS_ENABLED=true`（**未設定。これが無いと delivered / open / click が 1 件も prospect へ入らない**）| env |
-| E | `MARKETING_CLICK_TRACKING_ENABLED=true`（click を数えるため。**アカウント全体の click tracking は禁止**＝ログインリンクが壊れる）| env |
-| F | `rolloutResume`（Light 体験→Premium は `killed: true` のまま）| 運用 |
+| **B** | 暴走 enqueue の停止（`MARKETING_SEQUENCE_SCHEDULER_ENABLED=false` ＋ redeploy）| ✅ **完了**。2 tick 連続で増加 0 を実測 |
+| **C1** | 壊れた記録の取消（ジョブ 4,351 / 配信行 3,854）| ✅ **完了**。`sent` 15,537 と SENT ジョブ 435 は不変 |
+| **D** | `MARKETING_PROSPECT_EVENTS_ENABLED=true` ＋ redeploy | ✅ **完了**。送信 0 / queue 追加 0 を実測 |
+| **A** | PR #521 merge → production deploy | ✅ **完了**（`f11f9d34`）。deploy 後も送信 0 / queue 追加 0 |
+| **C2** | prospect の step2 予約 **11,625 件**の解放 | 🔵 **未実行**（退避つき経路へ作り直し中）|
+| 再開 | scheduler 再開 → step2 再生成 | 🔵 **未実行** |
+| E | `MARKETING_CLICK_TRACKING_ENABLED=true` | 🔵 未実行（本線を止めない。別途判断）|
+| F | `rolloutResume`（Light 体験→Premium）| 🔵 **別任務**（この 15,000 件復旧に混ぜない）|
 
-⚠️ **D を開けないまま送ると、送った分の delivered が 1 件も記録されない。**
-分母が積まれないので、その配信は選別に一切寄与しない（送り損になる）。
-**送信を再開する前に D を開ける。**
+### C1 で触ったもの / 触っていないもの
 
-## 本番実測（2026-09-14 / read-only）
+| | |
+|---|---|
+| 取消した | ScheduledEmails **4,351**（PENDING→CANCELLED）/ CampaignDeliveries **3,854**（queued→cancelled）|
+| 触っていない | `sent` **15,537** 行（SentAt あり 15,537）／ SENT ジョブ **435**／ 全マーケ SentCount **25,612**／ 8-26 の queued 1 行／ Light 体験の PENDING 1 件／ 他キャンペーン |
+| rollback | `~/.analytics-keiba-ops/step2-recovery-2026-09-14/`（全フィールドのスナップショット）|
+
+⚠️ **C1 の途中で「ジョブだけ取消・配信行は queued のまま」という危険な中間状態を作った。**
+原因は `CampaignDeliveries.Status` に選択肢 `cancelled` が無く（PAT に schema 権限も無い）、
+配信行の PATCH が全件 422 で落ちたのに、ジョブ側の処理へ進んでしまったこと。
+**422 を検知した時点で後続を止める作りにすべきだった。** 選択肢追加後に配信行を処理して解消済み。
+
+> 副次的な発見: 選択肢 `cancelled` が無かったため、既存コードの rollback 経路
+> （`rollbackQueue` / `handleCancelJob`）は**本番で以前から黙って失敗していた**。選択肢追加で解消。
+
+## C2 の設計（**再計算を rollback 根拠にしない** / 2026-09-14 MK 確定）
+
+この基盤の確定設計は **「`DeliveryKey` を後から再計算しない」**。
+したがって「材料から計算し直せるから戻せる」を復元根拠にするのは**仕様矛盾**。
+rollback の根拠は **実際に剥がした鍵そのもの**でなければならない。
+
+```
+① 退避   SADD <退避 set> <keys...>
+② 確認   SMISMEMBER が全部 1（**通らなければ 1 件も剥がさない**）
+③ 剥がす SREM <予約 set> <keys...>
+```
+
+- 単一源 `src/lib/marketing/deliveryKeyRollback.js`
+- 復元は退避 set の中身を**そのまま** `SADD`（`action='prospectClaimRestore'`）
+- 退避 set は `ak:mkt:delivered-rollback:v1:...:s<step>:<runId>`（予約 set とは別名前空間）
+- 監査情報（件数 / digest / TTL / 実行 ID）を hash へ記録。**鍵は応答にも監査にも出さない**
+- `runId` 必須（付けずに剥がすと、どの退避から戻すか決められない）
+
+## 本番実測（2026-09-14）
 
 | 項目 | 値 |
 |---|---|
-| prospect プール | 11,976 名（active） |
-| step2 の PENDING ジョブ | 4,319 件（宛先スロット 179,724 / ユニーク 15,480）|
-| step2 の実送信 | **0 通** |
-| 1 人あたり delivered の最大 | **5 通**（10 通到達者は 0 名。除外が起きていないのは正常）|
-| `MARKETING_PROSPECT_EVENTS_ENABLED` | **未設定** |
-| `MARKETING_CLICK_TRACKING_ENABLED` | **未設定** |
+| prospect プール | 11,976 名（active）／ 反応済み 0 ／ 永久除外 0 |
+| 次に送る step | step1 **328** ／ step2 **23** ／ step3 **11,625** |
+| C2 の対象（step2 の予約あり）| **11,625**（step3 の件数と完全一致）|
+| step2 の送信実績 | **0 件**（ジョブ・配信行とも）|
+| prospect の開封 | **0 名** |
+| 予約集合サイズ（解放前）| **42,846** → 解放後の期待値 **31,221** |
+| 索引 digest | `24c340b80c798fd7cda01d5fe8900676`（全窓で同一）|
+| discount-free の PENDING | **0** ／ 全マーケ SentCount **25,612**（不変）|
 
 ## この節を閉じてよい条件
 
