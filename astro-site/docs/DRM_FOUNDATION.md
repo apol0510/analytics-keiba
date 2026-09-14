@@ -46,6 +46,13 @@
 | 材料 | 出どころ |
 |---|---|
 | delivered / opened | `webhooks/deliveryEventIndex.js`（DeliveryKey 単位）＋ `marketing/touchMeasurement.js` |
+
+⚠️ **DRM の campaign は `summarizeByCampaignStep()` で数える**（`campaignId` × `step`）。
+`summarizeByTouch()` は `journeyModel.js` に載る **Light 無料体験 24 接点の専用**で、
+DRM の 3 本はそこへ登録しない。登録されていない campaign を接点番号で数えると
+**行があるのに 0 件**になる（2026-09-14 実測）。詳細は
+[`DELIVERY_MEASUREMENT.md` §5-2](./DELIVERY_MEASUREMENT.md)。
+
 | purchased | `customerMarketingAudience.js` の `premiumActive` / `lightActive`（**課金契約のみ**） |
 | 退会・停止・バウンス | `resolveSendability` / `providerSuppressed` / `softBounced` |
 

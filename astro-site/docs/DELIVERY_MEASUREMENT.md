@@ -164,6 +164,51 @@ netlify env:set MARKETING_CLICK_TRACKING_ENABLED true --context production --for
 guard: `src/lib/crm/crmAdminUi.guard.test.mjs` / `src/lib/crm/deliveryTracking.guard.test.mjs`
 （`npm run test:crm` / `npm run check:safety` に組み込み済み）
 
+## 5-2. 何で束ねて数えるか（接点番号 / campaign × step）
+
+配信実績は **`DeliveryKey` 完全一致**で台帳とイベント索引を結び、そのうえで束ねて数える。
+束ね方は **2 つあり、campaign で選ぶ**。
+
+| 束ね方 | 対象 | 返す配列 | `measurementMode` |
+|---|---|---|---|
+| **通し接点番号** | `journeyModel.js` に載っている campaign（**Light 無料体験のみ**） | `touches` | `journey-touch` |
+| **`campaignId` × `step`** | それ以外の連続配信（**DRM の 3 本など**） | `steps` | `campaign-step` |
+
+`action=touchMeasurement` / `action=touchMeasurementPage` / `npm run scan:touch-measurement`
+のいずれも、`isJourneyCampaign(campaignId)` で**同じ基準**で選ぶ。
+
+### `journeyModel.js` は Light 無料体験 24 接点の専用 SSOT
+
+**他の campaign をここへ登録してはいけない**（2026-09-14 MK 確定）。
+`JOURNEY_PHASES` は体験中 6 通（接点 1〜6）＋ 体験終了後 18 通（接点 7〜24）＝ **24 接点**を表す。
+ここへ足すと、24 接点の表示・計測の意味が変わる。
+
+### なぜ 2 つ目が要ったか（2026-09-14 実測）
+
+`free-signup-onboarding` の配信行 13 行は**読めていた**のに、
+`touchMeasurement` は `touches: []` / `totals.sent: 0` を返していた。
+
+`resolveDeliveryTouch()` が `toTouch(campaignId, step)` で接点番号を採るが、
+`journeyModel.js` に載っていない campaign では `null` が返り、
+番号の付かない行は集計から外れる。つまり **13 行すべてが落ちていた**。
+
+> ⚠️ これは `fetchDeliveryPage` の `EmailType` 射影漏れ（`drmProgress` が 0 に見えた件）
+> とは**別の原因**。`touchMeasurementPage` は `indexDeliveries()` を通らない。
+
+### 数えかたの約束（束ね方によらず同じ）
+
+数えかたの正本は `touchMeasurement.js` の `countInto()` **1 か所**。
+
+- `Status === 'sent'` でなければ `sent` に数えない（**送ったと届いたを混同しない**）
+- 届いた証拠（`deliveredAtMs`）が無ければ `unknown`。**未開封と決めつけない**
+- `opened` は「届いたと分かっている行」の中だけで数える（`openRate` の分母は `delivered`）
+- 索引そのものを読めなければ `measurementAvailable: false`（**0 件にしない**）
+- 分母が 0 のときの率は `null`（**0% と書かない**）
+- 対応表に無い `DeliveryKey` の行は数えない（**step を推測しない**）
+
+guard: `src/lib/marketing/campaignStepMeasurement.test.mjs` /
+`campaignStepMeasurementWiring.test.mjs`（`npm run test:marketing` / `check:safety` に組み込み済み）
+
 ## 6. やってはいけないこと
 
 - アカウント全体の click tracking を有効化する（§2 の理由）
@@ -171,3 +216,5 @@ guard: `src/lib/crm/crmAdminUi.guard.test.mjs` / `src/lib/crm/deliveryTracking.g
 - `marketing-campaign-dispatch` で `click_tracking.enable` を `true` 直書きする（env ゲートを迂回する）
 - 台帳にクリック URL を**そのまま**保存する（token の保管庫になる）
 - 「開封 0」を未開封として施策の評価に使う（計測状態を必ず添える）
+- **`journeyModel.js` へ Light 無料体験以外の campaign を登録する**（§5-2）
+- 1 ページ版と全体版で**別の束ね方**を使う（読み手が `touches` / `steps` を取り違える）
