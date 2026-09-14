@@ -305,8 +305,21 @@ read-only API は `admin-marketing` の **`action: 'drm'`**（**送信面**に�
 
 | 経路 | 担当 | 人数の確認 |
 |---|---|---|
-| `cron-drm-autostart`（scheduled・1 日 1 回）| **自動** | `maxPerTick` と入口の窓が上限 |
-| `admin-marketing` の `action:'drmEntryRun'` | **手動**（下見 / 実行）| **`expectedCount` 必須**。違えば queue 0 / send 0 |
+| `cron-drm-autostart`（scheduled・1 日 1 回）| **Background を起動するだけ** | `maxPerTick` と入口の窓が上限 |
+| `admin-marketing` の `action:'drmEntryRun'`（`dryRun:true`）| **手動の下見**（同期・軽い）| — |
+| `admin-marketing` の `action:'drmEntryRun'`（`dryRun:false`）| **Background を 202 起動するだけ** | **`expectedCount` 必須** |
+| **`drm-entry-background`** | **重い処理はここだけ**（最大 15 分）| Background 側で**改めて**突き合わせ |
+
+⚠️ **重い処理を同期 Function で完走させない**（2026-09-14 に本番で **504**。
+書き込みは 0 だったが完走しなかった）。**scheduled Function は 30 秒**で切られるため、
+日次経路も Background へ委譲する。
+⚠️ **候補を Background へ注入しない。** payload は `campaignId` / `expectedCount` /
+`manual` / `runId` だけ。候補は Background が読み直すので、
+**送信直前の再検証が短絡しない**。
+⚠️ **入口の鍵 TTL は Background の最大実行時間を覆う**（960 秒 > 900 秒）。
+共有 cron の 240 秒を流用すると**途中で切れて二重 enqueue** になる。
+⚠️ Background は **202 即返し**。結果は返らないので
+**`CampaignDeliveries` / `ScheduledEmails` / `action:'drmProgress'` / 関数ログ**で確認する。
 
 ⚠️ どちらも **同じ `runDrmEntry()`** を通る。admin 側は**薄い呼び出しだけ**で、
 判定・許可リスト・`planAutoStartEntries`・`runSequenceTick`・`DeliveryKey`・

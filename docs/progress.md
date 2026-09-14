@@ -322,6 +322,47 @@ PR #525 を本番反映後、`cron-drm-autostart` へ `{"dryRun":true}` を POST
 `cron-light-trial-grant` の docs にある「手動 dryRun ができる」という記述は
 **同じ理由で到達不能**。訂正は別任務。
 
+## R3 の本番実行（2026-09-14）— **504 で未完了 / 送信 0・queue 0・gate 再閉鎖済み**
+
+承認を受けて実行したが**完走しなかった**。
+
+| 段 | 結果 |
+|---|---|
+| `MARKETING_DRM_AUTOSTART_ENABLED=true` ＋ 反映 | ✅ |
+| 反映後の dryRun | ✅ **wouldEnter 16 / 除外 0 / `allOpen: true` / capped false** |
+| live 1 回（`expectedCount: 16`） | ❌ **HTTP 504（gateway timeout）** |
+| 実害 | **queue 0 件（PENDING 1 → 1）/ 送信 0 通 / 配信行 0 / `inSequence` 3 campaign とも 0 / 割引 3 本のジョブ 0** |
+| 遅延書き込み | 504 直後と **150 秒後**（lock TTL 240 秒超）の両方で不変を確認 |
+| gate | **再閉鎖して閉を確認**（`entryOpen: false`）|
+
+⚠️ **再実行はしていない**（abort 条件どおり）。共有 env（`SCHEDULER_ENABLED=false` /
+`CAMPAIGN_ID=割引3本` / `SOURCE_FILTER` 未設定）も不変。
+
+### 真因
+
+入口の live は 候補（Customers・14 日窓）→ 配信行 → provider suppression → blacklist →
+台帳走査 → 顧客取得 → 名指しの `DeliveryKey` 突き合わせ → キュー登録 → 読み戻し確認 を通り、
+**同期 Function の実行時間に収まらない**。
+さらに **scheduled Function は 30 秒で切られる**ため、日次経路も同じ問題を持つ。
+
+### 対処（PR #529）— 手動 live も日次自動も Background へ委譲
+
+| 経路 | 役割 |
+|---|---|
+| `admin-marketing` `drmEntryRun`（`dryRun:true`）| **同期のまま**（軽い）|
+| `admin-marketing` `drmEntryRun`（`dryRun:false` + `expectedCount`）| **Background を 202 起動するだけ** |
+| `cron-drm-autostart`（日次）| **同じ Background を起動するだけ**（重い処理を完走させない）|
+| **`drm-entry-background`** | **ここだけが `runDrmEntry()` を実行**（最大 15 分）|
+
+- `runDrmEntry` → `runSequenceTick` の既存単一源は**維持**
+- **候補を注入しない**。Background が読み直すので**送信直前の再検証が短絡しない**
+- payload は `campaignId` / `expectedCount` / `manual` / `runId` **だけ**（アドレス・recordId を持たせない）
+- Background 側で**改めて**: DRM gate / 送信の土台 gate / 許可リスト / `expectedCount` /
+  購入・停止 / 既送信 / `DeliveryKey`
+- **排他**: 入口の鍵 TTL を **960 秒**（Background 最大 900 秒を覆う）へ。
+  共有 cron の 240 秒を流用すると**実行の途中で切れて二重 enqueue になる**
+- 結果は返さない（**202 即返し**）。**既存の台帳とログ**で確認する
+
 ## 残作業（**これが埋まるまでクローズしない**）
 
 | # | 残件 | 埋め方 | 依存 |
