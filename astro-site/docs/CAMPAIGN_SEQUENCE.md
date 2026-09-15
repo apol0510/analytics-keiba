@@ -762,8 +762,15 @@ curl -X POST .../admin-marketing -H 'x-admin-secret: …' \
   -d '{"action":"drmEntryRun","dryRun":false,"expectedCount":16}'
 
 # 許可リストの効きだけを確かめる（**送信 0**・ゲートが閉じていても返る）
+#   ⚠️ **窓で切る**。1 窓目は offset なし
 curl -X POST .../admin-marketing -H 'x-admin-secret: …' \
-  -d '{"action":"drmEntryAllowlistCheck"}'
+  -d '{"action":"drmEntryAllowlistCheck","limit":2000,"scanPages":2}'
+
+#   2 窓目以降は 1 窓目が返した next.* と planner* を**必ず**渡す
+curl -X POST .../admin-marketing -H 'x-admin-secret: …' \
+  -d '{"action":"drmEntryAllowlistCheck","limit":2000,"scanPages":2,
+       "offset":2000,"digest":"<next.digest>","ledgerOffset":null,
+       "plannerCount":3,"plannerDigest":"<1 窓目の plannerDigest>"}'
 ```
 
 #### `action:'drmEntryAllowlistCheck'`（read-only）
@@ -772,25 +779,51 @@ curl -X POST .../admin-marketing -H 'x-admin-secret: …' \
 **最終 recipient 集合を許可リストで縛る**こと。それが効いているかを、
 **1 通も送らずに**本番で確かめるための経路。
 
-中身は既存の 2 つを繋いだだけで、**新しい送信経路も安全判定も作っていない**。
+中身は既存の 2 つを繋いだだけで、**新しい候補選定・送信判定・queue 処理は作っていない**。
 
-1. `previewEntry` を**その場で**走らせて recordId の許可リストを作る（fresh）
-2. **同じ呼び出しの中で** `runSequenceTick({ dryRun: true, entryAllowlist })` を実行
-3. 最終 recipient 件数 / 出所内訳 / 許可リストで落とした件数を返す
+1. **その窓でも** `previewEntry` を走らせ直して recordId の許可リストを作る（fresh）
+2. 許可リストの**指紋**（`plannerDigest`）を採る。1 窓目と違えば **fail closed**
+3. **同じ呼び出しの中で** `runSequenceTick({ dryRun: true, entryAllowlist, preview })` を実行
+4. その窓の最終人数 / 出所内訳 / 許可リスト外の残り / 続きの位置を返す
 
-| 返すもの | 期待 |
+### 窓契約は `sequenceTickPreview` と同じ
+
+`scope` / `offset` / `limit` / `digest` / `ledgerOffset` / `scanPages`。
+**別の刻み方を作らない**（片方だけ直したときに意味がズレる）。
+
+窓で切らずに呼ぶと prospect 索引（約 12,000）を一度に読み、同期 Function に収まらない
+（2026-09-15 に **504** を実測。書き込みは 0 だった）。
+
+`next.offset` / `next.ledgerOffset` が**両方 `null`** になるまで続ける（`next.done: true`）。
+
+### 合否の決め方（**足さない**）
+
+⚠️ **窓ごとの `finalRecipients` を単純加算して判定しない。**
+同じ許可リスト対象は窓をまたいで何度も観測されるので、足した数には意味が無い。
+安全条件は「**固定した `plannerDigest` の集合の外へ出ていない**」こと。
+
+| 条件 | 期待 |
 |---|---|
-| `plannerCount` | 入口が「入れてよい」と数えた人数 |
-| `finalRecipients` | **`plannerCount` 以下**（超えたら `withinPlanner: false`）|
-| `最終対象の出所.prospect` | **0** |
-| `entryAllowlist.許可リスト外の残り` | **0** |
-| `sideEffects` | **`none`** |
+| `plannerCount` / `plannerDigest` | **全窓で同じ**（違えば `planner_changed` で最初からやり直し）|
+| `entryAllowlist.許可リスト外の残り` | **全窓で 0** |
+| `最終対象の出所.prospect` | **全窓で 0** |
+| `finalRecipients` | **全窓で `plannerCount` 以下**（減るのは許容・増えるのは禁止）|
+| `window.prospectSkipped` | `prospect_index_changed` なら**不合格**（読み飛ばしを合格にしない）|
+| `next.done` | **`true` になるまで「効いている」と言わない** |
+| `sideEffects` | **全窓で `none`** |
+
+判定の正本は `src/lib/drm/drmAllowlistWindow.js`
+（`digestRecordIds` / `assertPlannerStable` / `judgeWindow` / `mergeWindowRun` / `finalizeWindowRun`）。
+
+### 守っていること
 
 ⚠️ 下見は**予約（`claimDelivered`）より手前で return する**ので、
-queue / claim / `CampaignDeliveries` / `ScheduledEmails` / provider 送信は**すべて 0**。
+下見カーソル / `sequenceMetrics` / claim / queue / `CampaignDeliveries` /
+`ScheduledEmails` / provider 送信は**すべて書かない**。
 ⚠️ ゲートは**合成しない**（live 経路と違い `scheduler=true` を作らない）。
 ⚠️ `campaignId` を明示で渡すので **割引 3 本は一切 tick されない**。
 ⚠️ 排他ロックは**取らない**（確認が live の邪魔をしない）。
+⚠️ 応答に **recordId もメールアドレスも出さない**（集合の同一性は指紋だけで見る）。
 
 #### ⚠️ 重い処理は Background だけが実行する（2026-09-14 の 504 を受けて）
 

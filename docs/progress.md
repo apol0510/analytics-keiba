@@ -620,7 +620,40 @@ queue / claim / `CampaignDeliveries` / `ScheduledEmails` / provider 送信は**�
 ⚠️ ゲートは**合成しない**（live 経路と違い `scheduler=true` を作らない）。入口が閉じたままだと分かる。
 ⚠️ `campaignId` を明示で渡すので **割引 3 本は一切 tick されない**。
 
-guard: `src/lib/drm/drmEntryAllowlistCheck.test.mjs`（`npm run test:drm` / `check:safety`）
+### ⚠️ 窓で刻む（2026-09-15 に 504 を実測）
+
+窓を切らずに 1 回で呼んだところ **HTTP 504（Inactivity Timeout）**。
+下見は本番 tick と同じ読み取りをするので、prospect 索引（約 11,973）を一度に読むと
+同期 Function に収まらない。**書き込みは 0 で、前後の状態は完全に一致**していた
+（送信待ちジョブ・事故ジョブの Recipients 50 / SentCount 46・配信行 13・計測 12/1/1 すべて不変）。
+
+そこで `sequenceTickPreview` と**同じ窓契約**へ寄せた:
+`scope` / `offset` / `limit` / `digest` / `ledgerOffset` / `scanPages`。
+`next.offset` と `next.ledgerOffset` が**両方 null** になるまで read-only で続ける。
+
+#### 合否は「足し算」ではない
+
+⚠️ **窓ごとの `finalRecipients` を単純加算して判定しない。**
+同じ許可リスト対象は窓をまたいで何度も観測されるので、足した数には意味が無い。
+
+安全条件は「**固定した `plannerDigest` の集合の外へ出ていない**」こと:
+
+| 条件 | 期待 |
+|---|---|
+| `plannerCount` / `plannerDigest` | **全窓で同じ**（違えば `planner_changed` で最初からやり直し）|
+| `許可リスト外の残り` | **全窓で 0** |
+| 最終対象の `prospect` | **全窓で 0** |
+| `finalRecipients` | **全窓で `plannerCount` 以下**（減るのは許容・増えるのは禁止）|
+| `prospectSkipped` | `prospect_index_changed` なら**不合格**（読み飛ばしを合格にしない）|
+| `next.done` | **`true` になるまで「効いている」と言わない** |
+
+`plannerDigest` は **sorted recordId の sha256**。
+**recordId もアドレスも応答へ出さない**（集合の同一性は指紋だけで見る）。
+
+判定の正本は `src/lib/drm/drmAllowlistWindow.js`。
+
+guard: `src/lib/drm/drmEntryAllowlistCheck.test.mjs` / `drmAllowlistWindow.test.mjs`
+（`npm run test:drm` / `check:safety`）
 
 ## 残作業（**これが埋まるまでクローズしない**）
 

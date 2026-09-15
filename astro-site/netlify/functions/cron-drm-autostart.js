@@ -61,6 +61,9 @@ import {
   createDispatchLock, TICK_LOCK_ROOT, LOCK_FAIL,
 } from '../../src/lib/marketing/dispatchLock.js';
 import { makeRedisCmd } from '../../src/lib/marketing/deliveryKeyStore.js';
+import {
+  digestRecordIds, assertPlannerStable, judgeWindow, WINDOW_FAIL,
+} from '../../src/lib/drm/drmAllowlistWindow.js';
 
 const BRAND = 'analytics-keiba';
 const CUSTOMERS_TABLE = 'Customers';
@@ -238,8 +241,48 @@ export async function previewEntry({ env, now, campaignId }) {
  * ⚠️ `campaignId` を明示で渡すので `MARKETING_SEQUENCE_CAMPAIGN_ID` は読まれない
  *    ＝ **割引 3 本は一切 tick されない**。
  */
+/**
+ * 1 窓ぶんの既定値。**黙って全件にしない**（504 の原因がそれだった）。
+ *
+ * ⚠️ `sequenceTickPreview` と**同じ窓契約**を使う
+ *    （`scope` / `offset` / `limit` / `digest` / `ledgerOffset` / `scanPages`）。
+ *    別の刻み方を作ると、片方だけ直したときに意味がズレる。
+ */
+export const ALLOWLIST_WINDOW_DEFAULT = Object.freeze({ limit: 2000, scanPages: 2 });
+
+/**
+ * 許可リストが**最終 recipient 集合に効いているか**を、**実送信 0 のまま**
+ * **窓を刻んで**確かめる（read-only）。
+ *
+ * ── なぜ窓で刻むか ────────────────────────────────────────────
+ * 下見は本番 tick と同じ読み取りをするので、prospect 索引（約 12,000）を一度に読むと
+ * 同期 Function に収まらない（2026-09-15 に **504** を実測。書き込みは 0 だった）。
+ * `sequenceTickPreview` が同じ理由で持っている窓契約をそのまま使う。
+ *
+ * ── どう確かめるか ────────────────────────────────────────────
+ *   ① **その窓でも** `previewEntry` を走らせ直して recordId の許可リストを作る（fresh）
+ *   ② 許可リストの**指紋**（`plannerDigest`）を採る。1 窓目と違えば **fail closed**
+ *   ③ **同じ呼び出しの中で** `runSequenceTick({ dryRun: true, entryAllowlist, preview })`
+ *   ④ その窓の最終人数 / 出所内訳 / 許可リスト外の残り / 続きの位置を返す
+ *
+ * ⚠️ **窓ごとの人数を足して判定しない。** 同じ人が別の窓でも観測されるため意味が無い。
+ *    安全条件は「**固定した planner の集合の外へ出ていない**」こと（`drmAllowlistWindow.js`）。
+ * ⚠️ **新しい候補選定・送信判定・queue 処理は作らない。** 既存 `runSequenceTick` の下見だけ。
+ * ⚠️ 下見は**予約（`claimDelivered`）より手前で return する**ので、
+ *    下見カーソル / `sequenceMetrics` / claim / queue / `CampaignDeliveries` /
+ *    `ScheduledEmails` / provider 送信は**すべて書かない**。
+ * ⚠️ ゲートは**合成しない**（live 経路と違い `scheduler=true` を作らない）。
+ * ⚠️ `campaignId` を明示で渡すので `MARKETING_SEQUENCE_CAMPAIGN_ID` は読まれない
+ *    ＝ **割引 3 本は一切 tick されない**。
+ * ⚠️ 応答に **recordId もメールアドレスも出さない**（集合の同一性は指紋だけで見る）。
+ *
+ * @param {{env, now, campaignId, window, expectPlanner, deps}} args
+ *   `window`        … `{ scope, offset, limit, digest, ledgerOffset, scanPages }`
+ *   `expectPlanner` … 1 窓目が返した `{ count, digest }`。2 窓目以降は**必ず渡す**
+ */
 export async function checkEntryAllowlist({
   env = process.env, now = Date.now(), campaignId = DRM_ENTRY_CAMPAIGN_IDS[0],
+  window = null, expectPlanner = null,
   deps = {},
 } = {}) {
   // ⚠️ **許可リスト以外は触らない**（割引 3 本を構造的に排除する）
@@ -250,6 +293,7 @@ export async function checkEntryAllowlist({
     };
   }
 
+  // ── ① その窓でも下見を作り直す（古い候補を使い回さない）──────────────
   const preview = deps.previewEntry || previewEntry;
   let seen;
   try {
@@ -263,6 +307,34 @@ export async function checkEntryAllowlist({
   if (!seen.ok) return { ...seen, sideEffects: 'none' };
 
   const allowlist = [...(seen.recordIds || [])];
+  /** ⚠️ 指紋だけを外へ出す（recordId は出さない） */
+  const planner = { count: seen.wouldEnter, digest: digestRecordIds(allowlist) };
+
+  // ── ② 前提が窓の途中で動いていないか（動いていたら最初からやり直す）────
+  const stable = assertPlannerStable({ expected: expectPlanner, current: planner });
+  if (!stable.ok) {
+    const body = {
+      mode: 'drm-entry-allowlist-check', campaignId,
+      ok: false, abort: WINDOW_FAIL.PLANNER_CHANGED,
+      plannerCount: planner.count, plannerDigest: planner.digest,
+      expectedPlanner: stable.expected,
+      sideEffects: 'none',
+      note: '入口の対象が窓の途中で変わりました。**最初の窓からやり直してください**（部分を全体として扱わないため）。',
+    };
+    log(body);
+    return body;
+  }
+
+  // ── ③ 既存 tick の下見を、同じ窓契約で 1 窓だけ ──────────────────────
+  const trim = (v) => String(v ?? '').trim();
+  const win = {
+    scope: trim((window || {}).scope) || null,
+    offset: Number((window || {}).offset) || 0,
+    limit: Number((window || {}).limit) || ALLOWLIST_WINDOW_DEFAULT.limit,
+    digest: trim((window || {}).digest) || undefined,
+    ledgerOffset: trim((window || {}).ledgerOffset) || null,
+    scanPages: Number((window || {}).scanPages) || ALLOWLIST_WINDOW_DEFAULT.scanPages,
+  };
   const tick = deps.runSequenceTick || runSequenceTick;
   let result;
   try {
@@ -270,6 +342,7 @@ export async function checkEntryAllowlist({
       env, now, campaignId,
       dryRun: true,
       entryAllowlist: allowlist,
+      preview: win,
     });
   } catch (e) {
     return {
@@ -278,26 +351,54 @@ export async function checkEntryAllowlist({
     };
   }
 
+  // ── ④ その窓の数字だけを返す（足さない）────────────────────────────
   const view = result && typeof result === 'object' ? result : {};
   const sources = view['最終対象の出所'] || { prospect: 0, Customers: 0, 出所不明: 0 };
   const allow = view.entryAllowlist || null;
   const finalCount = Number(view['絞り込み後に送る人数']) || 0;
+  const w = view.window || {};
+  const prospectWin = w.prospect || null;
+  const nextOffset = prospectWin ? (prospectWin.nextOffset ?? null) : null;
+  const nextLedgerOffset = w.nextLedgerOffset ?? null;
+
+  const verdict = judgeWindow({
+    plannerCount: planner.count,
+    finalRecipients: finalCount,
+    outsideAllowlist: allow ? Number(allow['許可リスト外の残り']) || 0 : 0,
+    prospectInFinal: Number(sources.prospect) || 0,
+    prospectSkipped: w.prospectSkipped || null,
+  });
 
   const body = {
     mode: 'drm-entry-allowlist-check',
     campaignId,
-    /** ⚠️ 読むだけ。queue / claim / 配信行 / ジョブ / 送信のいずれも 0 */
+    /** ⚠️ 読むだけ。下見カーソル / metrics / claim / queue / 配信行 / ジョブ / 送信は 0 */
     sideEffects: 'none',
     dryRun: true,
+    ok: verdict.ok,
     gates: readDrmEntryGates(env),
-    /** 入口 planner が「入れてよい」と数えた人数 */
-    plannerCount: seen.wouldEnter,
-    /** 委譲先が最後に残した人数（**これが plannerCount を超えたら壊れている**） */
+    /** 固定される前提（2 窓目以降は `expectPlanner` へそのまま渡す） */
+    plannerCount: planner.count,
+    plannerDigest: planner.digest,
+    /** ⚠️ **この窓だけ**の人数。窓をまたいで足さない */
     finalRecipients: finalCount,
     最終対象の出所: sources,
     entryAllowlist: allow,
-    /** 上限として効いているか（人数が増えていないか） */
-    withinPlanner: finalCount <= Number(seen.wouldEnter || 0),
+    violations: verdict.violations,
+    /** 続きの位置。**両方 null になるまで**呼び出し側が続ける */
+    next: {
+      offset: nextOffset,
+      ledgerOffset: nextLedgerOffset,
+      digest: prospectWin ? prospectWin.digest || null : null,
+      done: nextOffset === null && nextLedgerOffset === null,
+    },
+    window: {
+      scope: win.scope, offset: win.offset, limit: win.limit,
+      ledgerOffset: win.ledgerOffset, scanPages: win.scanPages,
+      prospectSkipped: w.prospectSkipped || null,
+      indexSize: prospectWin ? prospectWin.indexSize : null,
+      scanned: prospectWin ? prospectWin.scanned : null,
+    },
     tick: {
       ok: view.ok === true,
       abort: view.abort || null,
@@ -307,7 +408,8 @@ export async function checkEntryAllowlist({
       うち_Customers: view['うち Customers'] ?? null,
       sideEffects: view.sideEffects || null,
     },
-    note: '下見だけです。予約・キュー登録・配信行・ジョブ・送信のいずれも行っていません。',
+    note: '下見だけです。予約・キュー登録・配信行・ジョブ・送信のいずれも行っていません。'
+      + ' 人数は窓ごとの観測値です。**足さずに**、許可リストの外へ出ていないかで判定してください。',
   };
   log(body);
   return body;
