@@ -68,6 +68,52 @@ tick 鍵が `cron-campaign-sequence` に無かった。**→ tick 鍵を追加�
 `prospectSequenceCheck` の母数は **prospect 索引だけ**（11,974 = 送信候補）。
 Customers 由来の進行はこの数字に出ない。**不具合ではない**（応答に `母数の範囲` を明記した）。
 
+## periodic 再開の実証と、そこで見つかった 2 つの欠陥（2026-09-15）
+
+### 再開して分かったこと
+
+MK 承認のもと `MARKETING_SEQUENCE_SCHEDULER_ENABLED=true` で再開し、
+**3 tick が自動で回り、E2E（積む → 送る → delivered）が成立した**。
+
+| tick | 登録 | 送信 | delivered |
+|---|---|---|---|
+| 04:30Z | 20（全員 prospect）| 20 | **+20** |
+| 04:40Z | 13（全員 prospect）| 13 | **+13** |
+| 04:50Z | 4（全員 prospect）| ―（rollback 前に queue のみ）| ― |
+
+duplicate 0 / Failed 増加 0 / Customers 0 / unknown 0 / lock 正常 / DRM 副作用なし。
+**#543 の修正が periodic でも効いている**（以前は prospect 0）。
+
+### ただし 2 つの欠陥が見えた（MK 指示で scheduler は false へ戻した）
+
+| # | 欠陥 | 実測 |
+|---|---|---|
+| ① | **枠が埋まらず、送るほど遅くなる** | 対象 50 に対し登録 20 → 13 → 4（除外 30 → 37 → 46）|
+| ② | **後ろの campaign が 1 度も走らない** | light / premium の要約ログが 3 tick 連続で **0 件**。tick は 60,000 / 60,340 ms で打ち切り |
+
+③ `offset_expired_422` は **04:30Z の 1 回だけ**で、以後は失効していない。
+   「毎 tick 先頭へ戻る」は**実測では成立していない**。
+
+### 恒久修正（PR #544）
+
+| 変更 | 中身 |
+|---|---|
+| `sequenceTickRefill.js`（新規）| 枠が埋まるまで**塊で見て後続から補充**。上限は超えない・安全条件は迂回しない・見る範囲は有限 |
+| `sequenceTickRotation.js`（新規）| campaign の**先頭を tick ごとに回す**（決定論）＋ 残り時間が足りなければ始めず名前を残す |
+| 観測 | 走査の**周回数と続きの有無**、補充の実績を毎 tick ログへ |
+
+`DeliveryKey`・予約・除外・送信直前の再検証・許可リスト・出所フィルタは未変更。
+
+正本は [`docs/decisions.md`](./decisions.md)
+「2026-09-15 — 1 tick の枠は「積める人」で埋め、campaign は順番に先頭へ回す」。
+
+### mission は未完（クローズしない）
+
+- periodic 継続実証 … **3 tick で中断**（欠陥発見のため rollback）
+- delivered 累積 … 進行中（最大 4 通）
+- 実在 prospect が 10 delivered 無反応 → EXHAUSTED … **未到達**
+- その後の通常 marketing から除外 … **未実証**
+
 ## canary は完走したが prospect が 0 だった（2026-09-15 / 送信 0）
 
 Background 化（#536）後、承認どおり `sequenceCanaryRun` を 1 回だけ実行。

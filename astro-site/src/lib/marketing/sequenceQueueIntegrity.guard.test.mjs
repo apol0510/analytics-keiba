@@ -62,11 +62,15 @@ test('【重要】`jobIdByEmail` には `{ jobId, recordId }` を入れる（文
 });
 
 test('【重要】積む前に、名指しで既存の配信行を突き合わせる（窓の外を見落とさない）', () => {
-  assert.match(SRC, /activeKeys = await fetchActiveDeliveryKeys\(/);
-  // 名前は変わってよいが、**活きている鍵を除いてから積む**ことは変えない
-  assert.match(SRC, /allTargets\.filter\(\(t\) => !activeKeys\.has\(keyOfTarget\(t\)\)\)/);
-  // 読めなければ積まない
-  assert.match(SRC, /if \(activeKeys === null\) \{/);
+  /**
+   * ⚠️ 2026-09-15 に**塊ごとの補充**へ変えた（枠が埋まらず 50→20→13→4 と逓減したため）。
+   *    名前と単位は変わったが、**活きている鍵を除いてから積む**ことは変えていない。
+   */
+  assert.match(SRC, /active = await fetchActiveDeliveryKeys\(\{/);
+  assert.match(SRC, /chunk\.filter\(\(t\) => !active\.has\(keyOfTarget\(t\)\)\)/);
+  // 読めなければ積まない（塊で読めなかった時点で以後 1 件も積まない）
+  assert.match(SRC, /if \(active === null\) \{ ledgerFailed = true; return \[\]; \}/);
+  assert.match(SRC, /if \(ledgerFailed\) \{/);
   assert.match(SRC, /abort: 'delivery_ledger_unreadable'/);
 });
 

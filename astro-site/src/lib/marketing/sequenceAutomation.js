@@ -131,6 +131,12 @@ export function readSequenceAutoState(env, nowMs) {
  *          maxRecipients?: number}} input
  * @returns {{ok: boolean, abort?: string, step?: number, recordIds?: string[], counts?: object}}
  */
+/**
+ * 候補を上限の何倍まで返すか。安全条件で削られるぶんの余裕。
+ * ⚠️ **送る人数の上限ではない**。上限は `maxRecipients`（`recipients`）のまま。
+ */
+export const CANDIDATE_OVERSELECT = 10;
+
 export function planSequenceTick({
   progress, gates, allowFirstStep = false, maxRecipients = MAX_RECIPIENTS_PER_TICK,
   /**
@@ -187,10 +193,26 @@ export function planSequenceTick({
   // 上限まで送り、残りは次の tick へ持ち越す
   const take = next.recordIds.slice(0, maxRecipients);
   const carriedOver = next.recordIds.length - take.length;
+  /**
+   * ⚠️ **候補は上限より多く返す**（2026-09-15 の逓減対策）。
+   *
+   * `recordIds` は「上限ぶん」だが、呼び出し側はこの後に安全条件
+   * （既に `queued` / `sent` の人を外す・出所フィルタ・許可リスト）で候補を削る。
+   * 上限ぶんしか渡さないと、削られた分だけ枠が空いたまま終わる
+   * （本番実測: 50 → 20 → 13 → 4 と逓減し、due が 1,800 人以上残っているのに
+   *  1 tick で 4 人しか進まなくなった）。
+   *
+   * `candidateIds` は**削られる前提の候補**。実際に積む人数の上限は
+   * `recipients`（= `recordIds.length`）が持ち、呼び出し側はそれを超えて積まない。
+   * ⚠️ 並び順は変えない（公平性は母集団側の責任）。
+   */
+  const candidateIds = next.recordIds.slice(0, maxRecipients * CANDIDATE_OVERSELECT);
   return {
     ok: true,
     step: next.step,
     recordIds: take,
+    /** 安全条件で削られる前提の候補（`recipients` を超えて積んではいけない）*/
+    candidateIds,
     recipients: take.length,
     /** 今回送らずに次回へ回した人数（0 なら完走） */
     carriedOver,
