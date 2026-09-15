@@ -12,6 +12,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { useFixedCouponClock } from './couponTestClock.mjs';
 
 const A = await import('./premiumPlusCouponAdmin.js');
 const {
@@ -24,6 +25,20 @@ const { RESERVATION_SOURCE } = await import('../promotions/couponReservationSour
 
 const REC = 'recCUSTOMER00001';
 const NOW = Date.parse('2026-08-19T12:00:00.000Z');
+
+/**
+ * ⚠️ **基準時刻を固定する**（2026-09-15 の CI 赤の再発防止）。
+ *
+ * このファイルは `NOW` を `nowMs` として渡していたが、
+ * `describeCouponAdminActions` には時刻の注入口が無く、内部で実時計 `Date.now()` に落ちる。
+ * fixture は固定日時なので、`RESERVATION_STALE_DAYS = 14` の境界を
+ * **カレンダーが跨いだ瞬間**に、コードを触っていないのに落ちるようになっていた。
+ *
+ * ここでは**このファイルが既に基準にしている `NOW` へ時計を合わせる**
+ * （別の値にすると、`NOW` を前提にした既存の検査とズレるため）。
+ * 詳細と原則は `couponTestClock.mjs` を参照。
+ */
+useFixedCouponClock(NOW);
 const ENV_ON = { PREMIUM_PLUS_FIELDS_READY: '1', PREMIUM_PLUS_REOPEN_COUPON_READY: '1' };
 const ACT = { actor: 'MK', reason: 'お電話でのご依頼' };
 
