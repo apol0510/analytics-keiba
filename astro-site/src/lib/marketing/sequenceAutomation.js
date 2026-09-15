@@ -65,6 +65,11 @@ export const TICK_ABORT = Object.freeze({
    *  `docs/CAMPAIGN_SEQUENCE.md` の `drmEntryAllowlistCheck` を参照）。
    */
   FIRST_STEP_OVERRIDE_IN_LIVE: 'first_step_override_in_live',
+  /**
+   * campaign が宣言している母集団と、呼び出しが求めた出所が食い違う。
+   * **広げる方へは倒さず 1 件も積まない**（宣言は狭める方向にしか効かない）。
+   */
+  AUDIENCE_SOURCE_CONFLICT: 'audience_source_conflict',
 });
 
 /**

@@ -65,6 +65,7 @@ import {
 } from '../../src/lib/marketing/sequenceAudiencePool.js';
 import {
   isSequenceCampaign, resolveSequenceStep, resolveAutoStart,
+  resolveAudienceSource,
 } from '../../src/lib/marketing/campaignSequence.js';
 import {
   readAutoStartGate, planAutoStartEntries, AUTOSTART_SKIP_LABEL,
@@ -542,7 +543,15 @@ export async function runSequenceTick({
   if (!prospectStore || !prospectLedger) prospectDegraded = 'redis_unavailable';
   // 下見で Customers 側だけを見るときは、prospect を 1 件も読まない
   if (!wantProspect) prospectDegraded = 'preview_scope_customer';
-  if (wantProspect && prospectStore && prospectLedger) {
+  /**
+   * ⚠️ **Customers だけを相手にすると宣言した campaign では、prospect を 1 件も読まない。**
+   *    後段の絞り込みでも落ちるが、**そもそも母集団に入れない**方が事故を作りにくい
+   *    （読まなければ、並べ替え・上限・再検証のどこにも紛れ込みようがない）。
+   *    宣言が無い campaign（割引 3 本など）はここを通らない＝**挙動は不変**。
+   */
+  const customerOnly = resolveAudienceSource(base) === AUDIENCE_FILTER.CUSTOMER;
+  if (customerOnly) prospectDegraded = 'campaign_is_customer_only';
+  if (wantProspect && !customerOnly && prospectStore && prospectLedger) {
     prospectInputs = await loadProspectSequenceInputs({
       store: prospectStore, deliveryKeyStore: prospectLedger,
       campaign: base, brand: BRAND, fromEmail, nowMs: now,
@@ -686,7 +695,33 @@ export async function runSequenceTick({
    *    定期配信で prospect が永久に選ばれない（正本 `docs/spec.md`「prospect にも実際に送る」）。
    * ⚠️ どちらも**減らす・並べ替えるだけ**。除外・`DeliveryKey`・予約・再検証は触らない。
    */
-  const audienceFilter = normalizeAudienceFilter(sourceFilter);
+  /**
+   * ── 母集団の宣言（campaign 側の SSOT）と、呼び出しの引数を突き合わせる ──────
+   *
+   * ⚠️ **宣言は狭める方向にしか効かない。**
+   *    引数が宣言と違う出所を要求したら、広げるのではなく**矛盾として止める**
+   *    （`all` を要求されても、宣言が `customer` なら **customer のまま**）。
+   * ⚠️ 宣言が無い campaign（割引 3 本・Light 無料体験 2 本）は `all` なので、
+   *    **従来どおり引数だけで決まる＝挙動は 1 バイトも変わらない**。
+   */
+  const declaredSource = resolveAudienceSource(base);
+  const askedSource = sourceFilter === null || sourceFilter === undefined
+    ? null : normalizeAudienceFilter(sourceFilter);
+  if (declaredSource !== AUDIENCE_FILTER.ALL
+    && askedSource !== null
+    && askedSource !== AUDIENCE_FILTER.ALL
+    && askedSource !== declaredSource) {
+    const body = {
+      ok: false, abort: TICK_ABORT.AUDIENCE_SOURCE_CONFLICT,
+      declared: declaredSource, asked: askedSource, sideEffects: 'none',
+      note: 'この campaign が宣言している母集団と違う出所を求められたため、1 件も積まずに止めました。',
+    };
+    log(body);
+    return body;
+  }
+  const audienceFilter = declaredSource !== AUDIENCE_FILTER.ALL
+    ? declaredSource
+    : normalizeAudienceFilter(sourceFilter);
   const mergedRows = [
     ...customerRows,
     ...entryRows,

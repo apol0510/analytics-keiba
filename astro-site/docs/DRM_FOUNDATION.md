@@ -379,6 +379,47 @@ sequence: {
 - **登録時刻が読めない人は入れない**（推測しない）
 - **すでに 1 通でも受け取っている人は入口に入れない**（`hasStarted`）
 
+## step2 以降は共有シーケンスの通常経路で進む（2026-09-16）
+
+入口（step1）と、その先（step2 以降）は**別の仕組み**で動く。
+
+| | 誰が進めるか | 何で開くか |
+|---|---|---|
+| **step1（入口）** | `cron-drm-autostart` / `drmEntryRun` | `MARKETING_DRM_AUTOSTART_ENABLED`（**専用**） |
+| **step2 以降** | **共有の `cron-campaign-sequence`（10 分ごと）** | `MARKETING_SEQUENCE_CAMPAIGN_ID` に campaign を載せる |
+
+入口ゲートが**閉じたままでも step2 以降は進む**。
+`planSequenceTick` の `excludeSteps = allowFirstStep ? [] : [1]` が示すとおり、
+入口ゲートが左右するのは **step1 を選べるかどうかだけ**だから。
+つまり「入口は手動承認・その先は自動」を**同時に**成立させられる。
+
+### prospect を混ぜない（campaign 側の宣言）
+
+DRM の 3 本は `sequence.audienceSource: 'customer'` を宣言している。
+共有スケジューラは出所の引数を渡さないので、宣言しないと既定の `all` になり、
+**prospect 索引（約 12,000）まで母集団に入る**（2026-09-14 の事故でも効いた要因）。
+
+宣言があると、prospect の索引を**読む処理ごと飛ばす**。
+呼び出しが違う出所を求めたら、広げるのではなく `audience_source_conflict` で
+**1 件も積まずに止める**（宣言は狭める方向にしか効かない）。
+
+### 進むときに通る判断（すべて既存の単一源）
+
+期限到来 → 反応の判定（`drmResponseState`）→ route 選択（`drmRouting`）→
+次 step 選択（`sequenceProgress`）→ 除外（購入 / 配信停止 / バウンス / 停止リスト / 対象条件）→
+`DeliveryKey` の重複防止 → `maxSends` → 予約 → enqueue → 既存 dispatcher が送る。
+
+⚠️ `unknown`（計測が無い）は**未開封扱いにしない**。反応で分岐せず**線形のまま**進む。
+⚠️ `sent` / `delivered` / `opened` を混同しない。
+
+guard: `src/lib/drm/drmStep2Automation.test.mjs` / `drmStep2Wiring.guard.test.mjs`
+
+### 本番で切り替えるときに残る操作（**未実施・未承認**）
+
+`MARKETING_SEQUENCE_CAMPAIGN_ID` へ DRM の 3 本を追加する **env 変更 1 つだけ**
+（現在は割引 3 本のみ）。コード側の準備は済んでいる。
+⚠️ この env は割引 3 本と**共有**なので、変更前に担当セッションへ一報する。
+
 > ## ⚠️ `MARKETING_DRM_AUTOSTART_ENABLED` は **step1 の入口専用**
 >
 > **step2 以降の実行 gate ではない**（2026-09-15 実装確認）。

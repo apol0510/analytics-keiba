@@ -482,6 +482,13 @@ export const CAMPAIGNS = Object.freeze([
        * - 届いても開かない → 案内を積まず**実績のページ**（step3）で入口を変える
        * ⚠️ `clicked` は provider 側 tracking が OFF で**成立しない**ので宣言しない。
        */
+      /**
+       * ⚠️ **相手は無料登録した実 Customers だけ。** prospect は混ぜない。
+       *    共有スケジューラは出所の引数を渡さないため、宣言しないと既定の `all` になり、
+       *    prospect 索引（約 12,000）まで母集団に入る（2026-09-14 の事故でも効いた要因）。
+       *    ここで宣言しておけば、**どの経路から tick されても**構造的に混ざらない。
+       */
+      audienceSource: 'customer',
       responseRoutes: [
         { when: 'opened', step: 5, minSent: 2, maxSent: 4, note: '開封層 → プランの違いへ前倒し' },
         { when: 'delivered', step: 3, minSent: 2, maxSent: 4, note: '到達・未開封 → 実績で入口を変える' },
@@ -895,6 +902,13 @@ export const CAMPAIGNS = Object.freeze([
        * - 届いても開かない → 記録（Step3）で入口を変える
        * ⚠️ どちらの経路でも Step4 には到達する（開封層は早く、未開封層は後で）。
        */
+      /**
+       * ⚠️ **相手は無料登録した実 Customers だけ。** prospect は混ぜない。
+       *    共有スケジューラは出所の引数を渡さないため、宣言しないと既定の `all` になり、
+       *    prospect 索引（約 12,000）まで母集団に入る（2026-09-14 の事故でも効いた要因）。
+       *    ここで宣言しておけば、**どの経路から tick されても**構造的に混ざらない。
+       */
+      audienceSource: 'customer',
       responseRoutes: [
         { when: 'opened', step: 4, minSent: 2, maxSent: 3, note: '開封層 → 検討の材料へ前倒し' },
         { when: 'delivered', step: 3, minSent: 2, maxSent: 3, note: '到達・未開封 → 記録で入口を変える' },
@@ -943,6 +957,13 @@ export const CAMPAIGNS = Object.freeze([
     sequence: {
       maxSends: SANRENPUKU_UPSELL_STEPS.length,
       steps: SANRENPUKU_UPSELL_STEPS,
+      /**
+       * ⚠️ **相手は無料登録した実 Customers だけ。** prospect は混ぜない。
+       *    共有スケジューラは出所の引数を渡さないため、宣言しないと既定の `all` になり、
+       *    prospect 索引（約 12,000）まで母集団に入る（2026-09-14 の事故でも効いた要因）。
+       *    ここで宣言しておけば、**どの経路から tick されても**構造的に混ざらない。
+       */
+      audienceSource: 'customer',
       responseRoutes: [
         { when: 'opened', step: 4, minSent: 2, maxSent: 3, note: '開封層 → 買い切りの説明へ前倒し' },
         { when: 'delivered', step: 3, minSent: 2, maxSent: 3, note: '到達・未開封 → 対象開催で入口を変える' },

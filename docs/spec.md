@@ -728,6 +728,8 @@ step1 の対象になる。`cron-campaign-sequence` は既定では step1 を自
 | **`sent` と `delivered` を区別する** | `crm/deliveryMeasurement.js`（3 状態）/ `webhooks/deliveryEventIndex.js` |
 | **duplicate send を作らない** | `DeliveryKey`（campaign × version × step × 受信者）＋ 既送 step へは routing しない |
 | **帰属は既存契約どおり**（`direct` / `correlated` / `unattributed`） | `drm/drmAttribution.js`・送信経路は決済フィールドへ触れない |
+| **DRM に prospect を混ぜない**（相手は無料登録した実 Customers だけ） | `campaign.sequence.audienceSource`（catalog の宣言）→ `campaignSequence.resolveAudienceSource()`。宣言は**狭める方向にしか効かない**（違う出所を求められたら `audience_source_conflict` で 1 件も積まない）|
+| **step1 の入口と step2 以降を混ぜない** | 入口は `MARKETING_DRM_AUTOSTART_ENABLED`（**step1 専用**）／step2 以降は共有シーケンスの通常経路。`allowFirstStep` が左右するのは step1 を選べるかだけ |
 
 ⚠️ **click は provider 側 tracking が OFF**（有効化するとアカウント全体に掛かり
 マジックリンクが壊れる）。したがって `clicked` は**常に未計測**であり `false` ではない。

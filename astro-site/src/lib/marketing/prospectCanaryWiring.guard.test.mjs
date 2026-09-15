@@ -75,10 +75,23 @@ test('【重要】既定（引数なし）では従来どおり全員が対象',
    *    **DRM の入口にも効いてしまう**（本番で DRM の対象が 0 人になった）。
    *    ここを env 読みへ戻さないこと（`sequenceCanaryIsolation.test.mjs` も固定している）。
    */
-  assert.match(CRON, /const audienceFilter = normalizeAudienceFilter\(sourceFilter\)/);
+  /**
+   * ⚠️ 2026-09-16 に campaign 側の宣言（`sequence.audienceSource`）を足した。
+   *    **宣言しない campaign（割引 3 本・Light 無料体験 2 本）は従来どおり**
+   *    引数だけで決まる（宣言が `all` なので `normalizeAudienceFilter(sourceFilter)` に落ちる）。
+   *    宣言は**狭める方向にしか効かない**（違う出所を求められたら広げずに止める）。
+   */
+  assert.match(CRON, /declaredSource !== AUDIENCE_FILTER\.ALL\s*\n?\s*\? declaredSource\s*\n?\s*: normalizeAudienceFilter\(sourceFilter\)/,
+    '宣言が無いときに引数だけで決まる形になっていない');
   assert.match(CRON, /sourceFilter = null,/, '引数で受け取っていない');
+  assert.match(CRON, /TICK_ABORT\.AUDIENCE_SOURCE_CONFLICT/, '宣言と引数の食い違いで止めていない');
   const lib = readFileSync(fileURLToPath(new URL('./sequenceAudienceFilter.js', import.meta.url)), 'utf8');
   assert.match(lib, /return AUDIENCE_FILTER\.ALL;/, '既定が all でない');
+
+  // 宣言が無い campaign は `all` のまま（＝挙動不変）
+  const seq = readFileSync(fileURLToPath(new URL('./campaignSequence.js', import.meta.url)), 'utf8');
+  assert.match(seq, /export function resolveAudienceSource/);
+  assert.match(seq, /return 'all';/, '宣言が無いときの既定が all でない');
 });
 
 test('下見の応答にアドレスを載せない', () => {

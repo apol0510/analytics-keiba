@@ -182,6 +182,41 @@ export function resolveAutoStartAudienceWindowDays(campaign) {
 }
 
 /** step の待機日数（step1 は 0） */
+/**
+ * この連続配信が**どの母集団を相手にするか**の宣言（campaign 側の SSOT）。
+ *
+ * ── なぜ campaign 側で宣言するのか ────────────────────────────
+ * 出所の絞り込みは長らく「呼び出しの引数」だけで決めていた。
+ * 共有スケジューラは引数を渡さないので、既定の `all` になり、
+ * **prospect 索引（約 12,000）まで母集団に入る**。
+ * DRM の 3 本は**無料登録した実 Customers を育てる**ための道のりで、
+ * prospect を混ぜてよい相手ではない（2026-09-14 の事故もこれが効いた）。
+ *
+ * env で持たせるのは**禁止**（`cron-drm-autostart` の `tickEnv = { ...env }` を通じて
+ * 入口へ漏れる。2026-09-14 に本番で踏んだ）。だから **campaign の宣言**にする。
+ *
+ * ⚠️ 既定は `'all'`（**宣言しない campaign の挙動は 1 バイトも変わらない**）。
+ * ⚠️ これは**狭める方向にしか効かない**。呼び出しが別の出所を要求したら
+ *    広げるのではなく**矛盾として止める**（`runSequenceTick` 側で fail closed）。
+ *
+ * @returns {'all'|'prospect'|'customer'}
+ */
+export function resolveAudienceSource(campaign) {
+  const raw = String(
+    ((campaign && campaign.sequence) || {}).audienceSource ?? '',
+  ).trim().toLowerCase();
+  if (raw === 'prospect') return 'prospect';
+  if (raw === 'customer') return 'customer';
+  return 'all';
+}
+
+/** 宣言された母集団が既知の語かどうか（未知語を黙って `all` に倒さないため） */
+export function isKnownAudienceSource(campaign) {
+  const raw = ((campaign && campaign.sequence) || {}).audienceSource;
+  if (raw === undefined || raw === null || raw === '') return true;
+  return ['all', 'prospect', 'customer'].includes(String(raw).trim().toLowerCase());
+}
+
 export function stepDelayDays(campaign, stepNumber) {
   const step = getStep(campaign, stepNumber);
   if (!step) return null;
@@ -241,6 +276,15 @@ const HARDCODED_STAT = /(的中率|回収率|勝率)\s*[:：]?\s*\d/;
  * @returns {{ok: boolean, errors: string[]}}
  */
 export function validateSequence(campaign) {
+  // ⚠️ 母集団の宣言が未知語なら**黙って `all` に倒さない**（広い方へ倒れると事故になる）
+  if (!isKnownAudienceSource(campaign)) {
+    return {
+      ok: false,
+      errors: [`sequence.audienceSource が不正です: ${
+        String(((campaign && campaign.sequence) || {}).audienceSource)
+      }（all / prospect / customer のいずれか）`],
+    };
+  }
   const errors = [];
   if (!isSequenceCampaign(campaign)) return { ok: true, errors };
 

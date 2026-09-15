@@ -184,11 +184,32 @@ dispatcher がそれを読む。
 
 | 何 | どうする |
 |---|---|
-| 絞り込み | `runSequenceTick({ sourceFilter: 'prospect' })`（**引数だけ**。既定は全部）|
+| 絞り込み | ① campaign の宣言 `sequence.audienceSource`（**SSOT**）② 呼び出しの引数 `sourceFilter`。**宣言が優先**で、引数は狭める方向にしか使えない |
 | 人数 | `runSequenceTick({ maxRecipientsOverride: 50 })`（渡さなければ従来の env 由来）|
 | 件数のズレ | `runSequenceTick({ expectedCount: 50 })`（違えば **1 件も積まない**）|
 | 送る前の確認 | `admin-marketing` の `action='sequenceTickPreview'` |
 | 少数の実配信 | `admin-marketing` の `action='sequenceCanaryRun'`（下記）|
+
+#### 母集団は campaign が宣言する（`sequence.audienceSource`）
+
+| 値 | 意味 |
+|---|---|
+| （宣言なし）/ `all` | **従来どおり**。引数 `sourceFilter` だけで決まる（割引 3 本・Light 無料体験 2 本） |
+| `customer` | **実 Customers だけ**。prospect は**1 件も読まない**（DRM の 3 本） |
+| `prospect` | 見込み客だけ |
+
+⚠️ **env で持たない。** env に置くと `cron-drm-autostart` の `tickEnv = { ...env }` を通じて
+入口へ漏れる（2026-09-14 に本番で踏んだ）。だから **campaign の宣言**にする。
+
+⚠️ **宣言は狭める方向にしか効かない。** 呼び出しが違う出所を求めたら、広げるのではなく
+`audience_source_conflict` で **1 件も積まずに止める**。
+
+⚠️ `customer` を宣言した campaign では、**prospect の索引を読む処理ごと飛ばす**。
+後段の絞り込みでも落ちるが、**そもそも母集団に入れない**方が事故を作りにくい。
+
+これがないと、共有スケジューラは出所の引数を渡さないため既定の `all` になり、
+DRM の campaign でも prospect 索引（約 12,000）が母集団に入る
+（2026-09-14 の「承認 16 名に対し Recipients 50」でも効いた要因）。
 
 #### `action='sequenceCanaryRun'`（管理用・1 回限り）
 

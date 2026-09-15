@@ -909,6 +909,79 @@ due が発生した後、まず既存の汎用 sequence 下見（`action='sequen
 確認できたら**実送信の直前で停止し、MK の承認を待つ**。
 **R2 の実送信・queue 登録・env 変更はいずれも未承認。**
 
+## R2 の自動運用（実装は完成 / 本番切替は未実施）— 2026-09-16
+
+### 何を作ったか
+
+**step2 以降を共有シーケンスの通常経路で進める**ための準備が揃った。
+
+| | 誰が進めるか | 何で開くか |
+|---|---|---|
+| **step1（入口）** | `cron-drm-autostart` / `drmEntryRun` | `MARKETING_DRM_AUTOSTART_ENABLED`（**専用・現在は閉**） |
+| **step2 以降** | **共有の `cron-campaign-sequence`（10 分ごと）** | `MARKETING_SEQUENCE_CAMPAIGN_ID` に campaign を載せる |
+
+入口ゲートが**閉じたままでも step2 以降は進む**
+（`excludeSteps = allowFirstStep ? [] : [1]`。入口ゲートは step1 を選べるかだけを左右する）。
+つまり「入口は手動承認・その先は自動」を同時に成立させられる。
+
+### 足りていなかったのは「母集団の宣言」だった
+
+共有スケジューラは出所の引数を渡さないので、既定の `all` になり、
+**DRM の campaign でも prospect 索引（約 12,000）が母集団に入る**
+（2026-09-14 の「承認 16 名に対し Recipients 50」でも効いた要因）。
+
+そこで **campaign 側の宣言** `sequence.audienceSource` を足し、DRM の 3 本に
+`'customer'` を宣言した。env では持たない（`tickEnv = { ...env }` で入口へ漏れるため）。
+
+- 宣言があると **prospect の索引を読む処理ごと飛ばす**（母集団に入れない）
+- 宣言は**狭める方向にしか効かない**。違う出所を求められたら
+  `audience_source_conflict` で **1 件も積まずに止める**
+- **宣言しない campaign（割引 3 本・Light 無料体験 2 本）は挙動が 1 バイトも変わらない**
+
+### 弱めていないもの
+
+step1 の安全 gate / 購入・配信停止・バウンス・停止リストの除外 / `DeliveryKey` の重複防止 /
+`maxSends` / 反応 routing / 積む直前の fail closed / tick 鍵（多重起動）— **すべて既存の単一源のまま**。
+
+### R2 の最終 recipient を副作用 0 で確認する経路 — **既存の `sequenceTickPreview` を再利用**
+
+新しい action は作っていない。窓契約（`scope` / `offset` / `limit` / `digest` /
+`ledgerOffset` / `scanPages`）ごと既存のものを使う。下見は**予約より手前で return する**ので、
+queue / claim / `CampaignDeliveries` / `ScheduledEmails` / provider 送信は**すべて 0**。
+
+⚠️ `drmEntryAllowlistCheck` は**使わない**（step1 入口の許可リストを使うため R2 対象を全除外する）。
+
+### テストで固定した分岐（`due: 0` でも確かめられる）
+
+`opened` / `delivered` / `unknown`（**未開封扱いにしない**）/ `purchased` / `suppressed` /
+`unsubscribe` / `bounce` / `duplicate`（送信済み step を選ばない）/ `maxSends` /
+**時刻境界**（待機日数ちょうどで due・1 ミリ秒手前は waiting）/
+step1 のみなら従来どおり `first_step_is_manual` /
+step1 と step2 が混ざっても選ばれるのは step2 以降だけ / 多重起動は tick 鍵で止まる。
+
+実 campaign 定義（catalog の実物）で通している。偽の campaign は使っていない。
+
+### 本番切替の前に残る操作（**未実施・未承認**）
+
+1. **`MARKETING_SEQUENCE_CAMPAIGN_ID` へ DRM の 3 本を追加する env 変更**（これだけ）
+   - 現在は割引 3 本のみ。この env は割引 3 本と**共有**なので、変更前に担当セッションへ一報する
+2. 反映のための redeploy
+
+⚠️ **この操作は未承認。** 実行すると 10 分ごとに DRM が自動で進む状態になる。
+
+### due 発生後にやる最終実証（**まだできていない**）
+
+現在 `free-signup-onboarding` は **`due: 0`**（step1 送信 14 / 2 通目の期限は未到来）。
+期限が来たら、まず **read-only** で次を確認し、**実送信の直前で停止**する。
+
+| 見るもの | どこで |
+|---|---|
+| 反応の状態 / `byRoute` / 次に選ばれる step / 対象人数 / purchase・suppression の除外 | `action='drmProgress'` |
+| 最終 recipient（duplicate 除外を含む） | `action='sequenceTickPreview'`（窓分割・書き込み 0） |
+
+そのうえで**実配信で層ごとに別の 1 通が出ること**（`byRoute` に複数層）を確認して初めて
+R2 は埋まる。**コードのマージでは埋まらない。**
+
 ## 残作業（**これが埋まるまでクローズしない**）
 
 | # | 残件 | 埋め方 | 依存 |
