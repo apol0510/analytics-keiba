@@ -278,33 +278,43 @@ test('【version ロック】本文を変えたら version を上げる', () => 
      * `newsletter/step-sequences.js` の `signup-onboarding` からの移送で、
      * 移送時の修正 2 点（間隔 1→2 日 / 買い目 10点→5点）は
      * `freeSignupOnboardingSteps.js` の冒頭に理由つきで記録してある。
-     * **送信実績はまだ無い**（`delivered: []`）。
+     * ⚠️ **step1 は 2026-09-14 に 14 通 送信済み**（`delivered: [1]`）。1 バイトも変更しない。
+     *    step2〜6 は未送信のため、2026-09-15 にコピー品質基準
+     *    （`docs/EMAIL_COPY_STANDARD.md`）へ適合させた = **(B) 未送信 Step の修正**。
+     *    version は据え置き（上げると送信済みの 14 名へ step1 が再送される）。
      */
     'free-signup-onboarding': {
       version: 1,
-      delivered: [],
+      delivered: [1],
       steps: {
+        // 🔒 送信済み。ハッシュは移送時のまま
         1: 'c721e9eaa8acee80',
-        2: 'dd796949669380f7',
-        3: '6da043d5049fe47e',
-        4: 'a43655e39b8b65a2',
-        5: '20e20c621a44618a',
-        6: '6016619c3b9c84f0',
+        // (B) 未送信 Step の修正（コピー基準の適用 / 2026-09-15）
+        2: 'fbe6f5977790842f',
+        3: '266693505f9ecaf2',
+        4: '7bf587c1b8fe07c0',
+        5: '4e37b9c1e76618da',
+        6: '804cd8bd422649aa',
       },
     },
     /**
      * Light ご利用中 → Premium（2026-09-14 新規）。文面は承認済みの
      * `postExpirySteps.js` からの流用で、前提の 1 行だけ差し替えた
      * （`lightToPremiumSteps.js` 冒頭に対照表）。**送信実績はまだ無い。**
+     *
+     * 2026-09-15: 全 4 通が未送信のため、コピー品質基準
+     * （`docs/EMAIL_COPY_STANDARD.md`）へ適合させた = **(B) 未送信 Step の修正**。
+     * Step4 の「内容と料金はプランのページが正本です。メールには書いていません。」は
+     * 顧客向けに内部運用を出していたため削除した。
      */
     'light-to-premium-sequence': {
       version: 1,
       delivered: [],
       steps: {
-        1: 'a8da1ae3de92eedd',
-        2: '26850cf975a39c12',
-        3: '856fa9ddfe6119ba',
-        4: '0b18b1dd6726b9a2',
+        1: 'be1b8eca848be23f',
+        2: 'b5c6f2a179f34d24',
+        3: '6ec09e3ffd5382fe',
+        4: 'b0fe78961b30f2f9',
       },
     },
     /**
@@ -316,12 +326,15 @@ test('【version ロック】本文を変えたら version を上げる', () => 
       version: 1,
       delivered: [],
       steps: {
-        1: '3ff8419c9f55b4c1',
-        2: 'cabdd3a469173ae4',
-        3: '748e28eedac9f3b0',
-        // (B) **未送信 Step の修正**（version 据え置きで許可）。2026-09-14 MK 指示で
-        //     締めの 1 行を顧客向けの言い方へ直した（内部事情を顧客へ出さない）。
-        4: 'edc6fd472b4a5d9d',
+        // (B) **未送信 Step の修正**（version 据え置きで許可）。
+        //     2026-09-14: Step4 の締めを顧客向けの言い方へ（内部事情を顧客へ出さない）。
+        //     2026-09-15: 全 4 通をコピー品質基準（`docs/EMAIL_COPY_STANDARD.md`）へ適合。
+        //     Premium をご利用中の方が「なぜ届いたのか / Premium はどうなるのか」を
+        //     読めるようにし、CTA を「押した先で何が見られるか」が分かる語へ直した。
+        1: '96eea4d630418b19',
+        2: '68ec63a9e4199035',
+        3: '4da5e1168e6f5440',
+        4: 'f2ffa36ce774c11c',
       },
     },
     'light-trial-to-premium-sequence': {

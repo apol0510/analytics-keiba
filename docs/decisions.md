@@ -1,3 +1,66 @@
+# 2026-09-15 — 販促メールは「通知文」で終わらせない（コピー品質基準）
+
+## 決定
+
+| # | 決定 | 単一源 |
+|---|---|---|
+| 1 | DRM・販促メールは **何の案内か → 自分に関係があるか → 何が得られるか → なぜ今検討するか → 次に何をすればよいか** が読める状態を完成条件とする | `docs/EMAIL_COPY_STANDARD.md` |
+| 2 | 機械で測れる部分（本文の厚み / 特典欄 / preheader の複製 / 漠然 CTA / 遷移先の権限 / 内部運用語）を**テストで強制**する | `emailCopyStandard.js` |
+| 3 | **送信済み Step は 1 バイトも変更しない**（ルール (C) はコピー基準に優先する）| `campaignCatalog.test.mjs` の `LOCKED` |
+| 4 | 改稿してよいのは**未送信 Step だけ**。`version` は上げない（再送 0・対象変更 0）| 同上 |
+| 5 | **稼働中の campaign は全 Step を改稿不能**として扱う（tick が 10 分ごとに回り、作業中に送信され得る）| `COPY_STANDARD_NOT_ADOPTED` |
+| 6 | 基準は **step 単位で adopt**。campaign 単位にすると凍結 step と両立しない | `COPY_STANDARD_ADOPTED` / `isCopyStandardAdopted()` |
+| 7 | 対象外には**理由を必ず書く**。「落ちるから外す」は禁止 | `COPY_STANDARD_NOT_ADOPTED`（テストが理由と網羅性を検査）|
+| 8 | **各シーケンスの最初の接点は最重要メール**。「続きを読みたくなる入口」まで基準に含める | `EMAIL_COPY_STANDARD.md` §最初の接点 |
+| 9 | 価格・割引額・期限は**メールへ書き写さない**（カタログから導出する既存方針を維持）| `campaignOffers.js` / `promotionOfferCatalog.js` |
+
+## ⚠️ 「三連複メールを直す」ではなく「直せない」が答えだった
+
+発端は三連複割引メール（`campaign-discount-premium`）が
+「9月23日まで / 10,000円OFF / マイページから申し込み」の事実列挙だけだったこと。
+
+しかし `DeliveryKey = campaignId × version × step × 受信者` で**本文ハッシュを含まない**ため:
+
+| 選択肢 | 結果 |
+|---|---|
+| 送信済み step の本文を直す | 既に受け取った 13 名へ**修正版は届かない**。ルール (C) が明文で禁止 |
+| `version` を上げる | 届くが **step1 から全員へ配り直し**（`campaign-discount-free` の 15,509 名を含む再送）|
+| **未送信 step だけ改稿**（採用）| 再送 0・配信対象 0 変更。ただし稼働中の 3 本には未送信 step が残っていない |
+
+→ **MK 判断で 3 本とも「改稿不能・送信済み」として一覧に残す**。
+無理に触らず、次期の設計時に基準へ適合させる。
+
+## 改稿の主戦場は未送信の DRM シーケンス
+
+割引 3 本が触れない代わりに、**まだ 1 通も送っていない**シーケンスを改稿した。
+
+| campaign | 通数 | ファネル上の役割 |
+|---|---|---|
+| `free-signup-onboarding` step2〜6 | 5 | **主軸の入口**（無料登録者 → Premium）|
+| `light-to-premium-sequence` | 4 | Light → Premium |
+| `sanrenpuku-upsell-sequence` | 4 | Premium → 三連複（次段アップセル）|
+
+⚠️ `free-signup-onboarding` step1 は 2026-09-14 に 14 通 送信済み。**凍結**（`delivered: [1]` へ登録）。
+
+## コピー以外に見つかった実害 4 件
+
+| # | 内容 | 判定 |
+|---|---|---|
+| 1 | `free-signup-onboarding` step5・6 の CTA が**会員限定ページ**（`/premium-prediction/`）| 無料会員は到達できない。`/pricing/` `/sanrenpuku-demo/` へ |
+| 2 | 同 step6 に「三連単の個別配信」＝ **Premium Plus の存在開示** | Premium Sanrenpuku 会員以外には知らせない規約違反。削除し専用テストで禁止 |
+| 3 | `light-to-premium-sequence` step4 に「**正本**です。メールには書いていません」 | 顧客向けに内部運用を出していた。削除 |
+| 4 | 同 step3 の「回収率」| `/archive/nankan/` に回収率は出ていない。実際の表示（月別・年別の的中実績 / 年間的中率 / 配当金額）へ |
+
+## 変えていないこと
+
+配信対象 / 配信順序 / 配信時刻 / 間隔（`delayDays`）/ `campaignId` / `version` /
+自動化条件 / eligibility / `audienceRule` / `stopOnPurchase` / `autoStart` / `responseRoutes` /
+購入条件 / 会員権限 / 価格 / 割引額 / 期限 / 商品内容 / unsubscribe 等の法務要素。
+
+**変えたのは文章（件名 / preheader / badge / headline / body / 特典欄 / CTA）だけ。**
+
+---
+
 # 2026-09-15 — prospect の選別は 2 期・合計 10 通
 
 ## 決定

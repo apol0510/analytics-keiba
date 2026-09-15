@@ -264,6 +264,92 @@ tick が step1 を許し母集団を選ばれた相手に絞る／DRM の入口 
 ⚠️ **10 delivered 到達前に状態を人工的に進めない。**
    Redis / Airtable の手動補正・追加 canary・手動 enqueue はしない（現行の運用方針）。
 
+## 販促メールのコピー品質基準を確定し、未送信 13 通を改稿（2026-09-15 / **本番未反映**）
+
+### 新たに確定した仕様（MK 確定）
+
+AK から送る DRM・販促メールは、**単なる「期限・価格・リンクの通知文」で終わらせない**。
+受信者が次の順に自然に理解できる状態を、1 通ごとの完成条件とする。
+
+> **何の案内なのか → 自分に関係があるのか → 何が得られるのか
+> → なぜ今検討するのか → 次に何をすればよいのか**
+
+正本は [`astro-site/docs/EMAIL_COPY_STANDARD.md`](../astro-site/docs/EMAIL_COPY_STANDARD.md)。
+機械判定は `src/lib/marketing/emailCopyStandard.js`、検査は `npm run test:email-copy`
+（`check:safety` に組込済み）。
+
+**各シーケンスの「最初の接点」は最重要メール**として扱い、事務通知ではなく
+「続きを読みたくなる入口」まで品質基準に含める（MK 指示）。
+
+### 🔒 送信済み Step は 1 バイトも変更しない（ルール (C) 厳守）
+
+きっかけは三連複割引メール（`campaign-discount-premium`）が
+「9月23日まで / 10,000円OFF / マイページから申し込み」の事実列挙だけだったこと。
+ただし **step1 は 13 通 送信済み・第 2 期も稼働中**（2026-09-10〜09-23、tick は 10 分ごと）。
+
+`DeliveryKey = campaignId × version × step × 受信者`（本文ハッシュを含まない）ため、
+
+- 送信済み Step の文面を直しても、**既に受け取った方へ修正版は届かない**
+- `version` を上げれば届くが、**step1 から全員へ配り直し**
+  （`campaign-discount-free` の 15,509 名を含む再送＝配信対象・配信回数の仕様変更）
+
+→ **MK 判断で「未送信 Step だけを改稿」を採用**。`version` 据え置き・再送 0・対象変更 0。
+稼働中の campaign は作業中に任意の Step が送信され得るため、**全 Step を改稿不能**として扱う。
+
+### 対象メール群（全 63 通を一覧化した結果）
+
+| 区分 | 本数 | 扱い |
+|---|---|---|
+| **改稿した（未送信）** | **13** | `free-signup-onboarding` step2〜6 / `light-to-premium-sequence` 4 通 / `sanrenpuku-upsell-sequence` 4 通 |
+| **改稿不能（送信済み・稼働中）** | 22 | 割引 3 本 7 通 / 単発 9 本 / `free-signup-onboarding` step1 / `light-trial-to-premium-sequence` step1 ほか |
+| **据え置き（基準相当 or 別任務所有）** | 28 | `light-trial-post-expiry-sequence` 18 通 / `campaign-prospect-phase2` 7 通 ほか |
+
+対象外は `COPY_STANDARD_NOT_ADOPTED` に**理由つき**で登録。理由なしには足せない
+（テストが理由の存在と網羅性を検査する）。
+
+### 改稿で直した実害（コピー以外の不具合）
+
+| # | 内容 | 影響 |
+|---|---|---|
+| 1 | `free-signup-onboarding` step5・step6 の CTA が `/premium-prediction/nankan/`（**会員限定**）| 無料会員は認可で弾かれ、押しても到達できなかった → `/pricing/` `/sanrenpuku-demo/` へ |
+| 2 | 同 step6 に「**三連単の個別配信**」の記述 | Premium Plus は **Premium Sanrenpuku 会員にのみ表示**し他には存在も知らせない規約に反していた → 削除し、専用テストで再混入を禁止 |
+| 3 | `light-to-premium-sequence` step4「内容と料金はプランのページが**正本**です。メールには書いていません。」| 顧客向けに内部運用を出していた → 削除し `INTERNAL_AFFAIRS_PHRASES` で検知 |
+| 4 | 同 step3 の「回収率」記述 | `/archive/nankan/` に回収率は出ていない（出るのは月別・年別の的中実績と年間的中率・配当金額）→ ページの実際の表示に合わせた |
+
+### 現在地
+
+- 正本・機械判定・テスト 20 件を追加。`test:marketing` 2,963 件を含め green
+- 13 通を改稿し、`LOCKED` のハッシュを更新（**送信済み step1 のハッシュは不変**を実測で確認）
+- **本番へは 1 通も送っていない。merge も deploy も env 変更もしていない**
+
+### 未完了任務
+
+1. `campaign-discount-*` 3 本（稼働中・改稿不能）を、次期の設計時に基準へ適合させる
+2. `light-trial-to-premium-sequence` step2〜6・`light-trial-post-expiry-sequence` 18 通の adopt 判断
+3. `campaign-prospect-phase2` 7 通の adopt 判断（最上位任務の完了後）
+4. 改稿した 13 通が**実配信で読まれるか**（開封・クリックの変化）の観測
+
+### 次作業
+
+Draft PR の CI 確認 → MK レビュー → merge → production deploy。
+`free-signup-onboarding` step2 は **2026-09-16 15:00Z 前後に due 化**するため、
+それまでに反映できれば改稿版が初回から出る（反映が間に合わなくても旧版が出るだけで事故ではない）。
+
+### 完成条件
+
+**adopt した全 step が基準を通り、対象外は理由つきで一覧化され、
+送信済み Step が 1 バイトも変わっていないこと。** 本数だけで完成扱いにしない。
+
+### 本番未反映 / 未実施の高リスク操作
+
+| 項目 | 状態 |
+|---|---|
+| PR merge | **未実施** |
+| production deploy | **未実施** |
+| production env 変更 | **不要・未実施** |
+| 実顧客への送信 | **未実施**（1 通も送っていない）|
+| 手動 enqueue / canary / Redis・Airtable 手動補正 | **未実施** |
+
 ## periodic 再開の実証と、そこで見つかった 2 つの欠陥（2026-09-15）
 
 ### 再開して分かったこと
