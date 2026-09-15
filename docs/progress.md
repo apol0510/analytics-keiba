@@ -1090,7 +1090,7 @@ guard: `src/lib/marketing/sequenceRunnerOwnership.test.mjs`
 | # | 残件 | 埋め方 | 依存 |
 |---|---|---|---|
 | R1 | 1 通単位の開封が本番で**実際に読めている**ことの実測 | `action=sequence` の `responseRouting.measured.open` と `counts` を read-only で確認 | 引数名バグ修正の deploy |
-| R2 | **実配信で層ごとに別の 1 通が出た**（`byRoute` に `opened:9` / `delivered:16`） | 切替後は**人手なしで**進む（step ごとの承認はしない）。埋まるのは**進んだ結果**を read-only で確かめたとき。⚠️ `MARKETING_DRM_AUTOSTART_ENABLED` は **R2 の gate ではない**ので開けない | 本番切替（上表の 1〜3）|
+| R2 | **実配信で層ごとに別の 1 通が出た**（`byRoute` に `opened:9` / `delivered:16`） | 切替後は**人手なしで**進む（step ごとの承認はしない）。埋まるのは**進んだ結果**を read-only で確かめたとき。⚠️ `MARKETING_DRM_AUTOSTART_ENABLED` は **R2 の gate ではない**ので開けない | 本番切替（上表の 1〜2）|
 | ~~R3~~ | ~~入口の自動開始を**本番で 1 名**通す（段 1）~~ → **2026-09-15 完了**（承認 4 名 → 実送信 1 名 / 超過 0 / 再送 0 / prospect 0 / gate 再閉鎖）| — | 完了 |
 | ~~R4~~ | ~~第 3 段の文面を MK が確認~~ → **2026-09-14 承認済み**（Step4 の締めのみ顧客向けの言い方へ修正）| — | 完了 |
 | R5 | **購入が発生したときに**その購入が実 touch へ正しく帰属される | 既存の有料化済みレコードを名指しして `admin-drm-attribution` を実行し、`purchaseTimeReasons` と帰属の判定が正しいことを確認 | R1 |

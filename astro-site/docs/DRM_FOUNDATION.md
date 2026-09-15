@@ -386,7 +386,7 @@ sequence: {
 | | 誰が進めるか | 何で開くか |
 |---|---|---|
 | **step1（入口）** | `cron-drm-autostart` / `drmEntryRun` | `MARKETING_DRM_AUTOSTART_ENABLED`（**専用**） |
-| **step2 以降** | **共有の `cron-campaign-sequence`（10 分ごと）** | `MARKETING_SEQUENCE_CAMPAIGN_ID` が**未設定**なら有効な連続配信を全部進める（正本の通常運用）。値があるとその campaign しか進めない |
+| **step2 以降** | **共有の `cron-campaign-sequence`（10 分ごと）** | `MARKETING_SEQUENCE_CAMPAIGN_ID` **未設定**が通常運用。このとき cron は**自分が担当する有効な連続配信を全部**進める（担当は `sequence.runner`。`rollout` 所有の Light 無料体験 2 本は拾わない）。値があると、その中で**自分の担当のものだけ**を進める |
 
 入口ゲートが**閉じたままでも step2 以降は進む**。
 `planSequenceTick` の `excludeSteps = allowFirstStep ? [] : [1]` が示すとおり、
@@ -422,7 +422,9 @@ guard: `src/lib/drm/drmStep2Automation.test.mjs` / `drmStep2Wiring.guard.test.mj
 
 ⚠️ **「DRM 3 本を env へ追加する」ではない。**
 正本 `docs/spec.md` は `MARKETING_SEQUENCE_CAMPAIGN_ID` を**置かない**
-（**未設定＝有効な連続配信を全部進める**）が通常運用と定めている。
+（**未設定＝対象の連続配信を自動進行**）が通常運用と定めている。
+この Function にとっての「対象」は**自分が担当する**有効な連続配信だけで、
+`rollout` 所有の Light 無料体験 2 本は**含まない**。
 現在 production に割引 3 本が明示設定されているのが**正本から外れた暫定状態**なので、
 切替の候補は **env を未設定へ戻す**こと。
 
