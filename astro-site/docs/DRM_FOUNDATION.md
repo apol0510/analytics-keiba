@@ -391,7 +391,11 @@ sequence: {
 入口ゲートが**閉じたままでも step2 以降は進む**。
 `planSequenceTick` の `excludeSteps = allowFirstStep ? [] : [1]` が示すとおり、
 入口ゲートが左右するのは **step1 を選べるかどうかだけ**だから。
-つまり「入口は手動承認・その先は自動」を**同時に**成立させられる。
+ここで確定しているのは次の 3 点だけ（**恒久の運用方針としてこれ以上を書かない**）:
+
+- step1 の安全 gate は**今回弱めない**
+- `MARKETING_DRM_AUTOSTART_ENABLED` は **step1 専用**
+- **R2 のためにこの env を開けない**
 
 ### prospect を混ぜない（campaign 側の宣言）
 
@@ -422,13 +426,13 @@ guard: `src/lib/drm/drmStep2Automation.test.mjs` / `drmStep2Wiring.guard.test.mj
 現在 production に割引 3 本が明示設定されているのが**正本から外れた暫定状態**なので、
 切替の候補は **env を未設定へ戻す**こと。
 
-⚠️ ただし未設定にすると `light-trial-to-premium-sequence` /
-`light-trial-post-expiry-sequence` も対象に入り、`cron-marketing-rollout`（5 分）と
-**担当が 2 つになる**（正本にも「足さない」と書いてある）。
-**未設定へ戻す前に、この 2 本の担当を 1 つに決めること。**
+担当は campaign 側の **`sequence.runner`** が単一源で、`cron-campaign-sequence` は
+**自分が担当する campaign だけ**を列挙する。
+`light-trial-*` 2 本は `runner: 'rollout'` を宣言しているので、env が未設定でも
+**この Function は拾わない**（`cron-marketing-rollout` との二重 enqueue が構造的に起きない）。
 
 ⚠️ この env は割引 3 本と**共有**なので、変更前に担当セッションへ一報する。
-⚠️ コード側の準備は済んでいる。**残るのは判断と env 変更だけ**（どちらも未承認）。
+⚠️ コード側の準備は済んでいる。**残るのは env 変更と反映だけ**（どちらも未承認）。
 
 ### 切替後は人手なしで進む（step ごとの承認はしない）
 
@@ -447,13 +451,14 @@ enqueue → 既存 dispatcher が送信。**途中で人が止めるのは異常
 >
 > **2 通目（R2）のためにこの env を開けてはいけない。**
 >
-> さらに、**開けても 2 通目は出せない**。`runDrmEntry` は入口の下見が返した recordId
+> さらに、**この env を開けても 2 通目は出ない**。`runDrmEntry` は入口の下見が返した recordId
 > （＝**まだ 1 通も受け取っていない人**）を許可リストとして渡すので、
 > step2 の対象（既に受け取っている人）は**全員が許可リストの外**になり、
-> 最終対象 0 →`no_due_recipients` で止まる。**構造的に 2 通目は出ない。**
+> 最終対象 0 →`no_due_recipients` で止まる。**入口の経路からは構造的に 2 通目が出ない。**
 >
-> 2 通目を出すには別の経路と**別の承認**が要る。現在地と手順は
-> `docs/progress.md` の「R2 の自動運用」を正本とする。
+> ⚠️ **2 通目が出ないという意味ではない。** step2 以降は
+> **共有 sequence の通常経路（`cron-campaign-sequence`・10 分ごと）で完全自動進行する**。
+> 別の承認を挟む運用は取らない。現在地は `docs/progress.md` の「R2 の自動運用」を正本とする。
 - 並びは recordId 昇順で決定的・上限超過は `carriedOver` として次回へ（**黙って捨てない**）
 
 `resolveStageEntry()` は段が進んだ人を次段の**育成**へ繋ぐ。

@@ -958,11 +958,15 @@ step2 の対象（既に受け取っている 14 名）は**全員が許可リ�
 | | 誰が進めるか | 何で開くか |
 |---|---|---|
 | **step1（入口）** | `cron-drm-autostart` / `drmEntryRun` | `MARKETING_DRM_AUTOSTART_ENABLED`（**専用・現在は閉**） |
-| **step2 以降** | **共有の `cron-campaign-sequence`（10 分ごと）** | `MARKETING_SEQUENCE_CAMPAIGN_ID` に campaign を載せる |
+| **step2 以降** | **共有の `cron-campaign-sequence`（10 分ごと）** | 通常運用は **`MARKETING_SEQUENCE_CAMPAIGN_ID` 未設定**。cron は**自分が担当する有効な連続配信を自動で選ぶ**（担当は `sequence.runner` の宣言） |
 
 入口ゲートが**閉じたままでも step2 以降は進む**
 （`excludeSteps = allowFirstStep ? [] : [1]`。入口ゲートは step1 を選べるかだけを左右する）。
-つまり「入口は手動承認・その先は自動」を同時に成立させられる。
+ここで確定しているのは次の 3 点だけ（**恒久の運用方針としてこれ以上を書かない**）:
+
+- step1 の安全 gate は**今回弱めない**
+- `MARKETING_DRM_AUTOSTART_ENABLED` は **step1 専用**
+- **R2 のためにこの env を開けない**
 
 ### 足りていなかったのは「母集団の宣言」だった
 
@@ -1029,33 +1033,42 @@ step1 と step2 が混ざっても選ばれるのは step2 以降だけ / 多重
 現在 production には割引 3 本が**明示設定**されている（＝正本から外れた暫定状態）。
 本番切替の候補は **`MARKETING_SEQUENCE_CAMPAIGN_ID` を未設定へ戻す**こと。
 
-`resolveTickCampaignIds()` は未設定なら `listCampaigns()` の有効な連続配信を**全部**返す。
-実際に返るのは次の 8 本（実行して確認）:
+#### 担当は campaign が宣言する（**二重 enqueue を構造で防ぐ**）
 
-`free-signup-onboarding` / `light-trial-to-premium-sequence` /
-`light-trial-post-expiry-sequence` / `light-to-premium-sequence` /
-`sanrenpuku-upsell-sequence` / `campaign-discount-free` / `-light` / `-premium`
+以前の `resolveTickCampaignIds()` は、未設定なら「有効な連続配信を**全部**」返していた。
+そこには `light-trial-to-premium-sequence` / `light-trial-post-expiry-sequence` が含まれる。
+この 2 本は **`cron-marketing-rollout`（5 分）の単一担当**（既存正本で確定済み）なので、
+未設定にすると**担当が 2 つ**になり、二重 enqueue・二重送信の入口になっていた。
 
-#### 未設定へ戻す前に片づける必要があるもの（**この PR では触っていない**）
+⚠️ これは**判断待ちの課題ではなく、コード側の不具合**だった。担当は既に決まっている。
 
-⚠️ **`light-trial-to-premium-sequence` / `light-trial-post-expiry-sequence` が二重に進む。**
-この 2 本は `cron-marketing-rollout`（5 分）が担当しており、正本にも
-「ここへ足すと rollout と二重に進めることになるので**足さない**」と書いてある。
-未設定にすると `cron-campaign-sequence` の対象にも入るため、**担当が 2 つになる**。
+そこで campaign 側へ **`sequence.runner`** を宣言し、`cron-campaign-sequence` は
+**自分が担当する campaign だけ**を列挙するようにした。
 
-これは env を戻すだけでは解けない（どちらが担当かを決める判断が要る）。
-**未設定へ戻す前に、この 2 本の担当を 1 つに決めること。**
+- `light-trial-*` 2 本 … `runner: 'rollout'`
+- それ以外 … 既定の `'campaign-sequence'`（**宣言しない campaign の扱いは不変**）
+- ⚠️ **Function 側に campaign 名の除外リストを書かない**（campaign が増えるたびに直し忘れる）
+- ⚠️ **env に名指しされていても、他 runner の campaign は進めない**（fail closed）
+- ⚠️ 未知の runner は catalog 検証で落ちる（黙って既定へ倒さない）
+- ⚠️ `listCampaigns()` の要約が宣言を**落とさない**ことも固定した
+  （実際に落ちていて、rollout 所有の 2 本が自分の担当に見えていた）
+
+未設定のとき実際に返るのは次の **6 本**（実行して確認）:
+
+`free-signup-onboarding` / `light-to-premium-sequence` / `sanrenpuku-upsell-sequence` /
+`campaign-discount-free` / `-light` / `-premium`
+
+guard: `src/lib/marketing/sequenceRunnerOwnership.test.mjs`
 
 ### 本番切替の承認境界（**未実施・未承認**）
 
 | # | 操作 | 種別 |
 |---|---|---|
-| 1 | `light-trial-*` 2 本の担当を 1 つに決める（設計判断） | **MK 判断** |
-| 2 | `MARKETING_SEQUENCE_CAMPAIGN_ID` を**未設定へ戻す** | **production env 変更（高リスク）** |
-| 3 | 反映のための redeploy | production deploy |
+| 1 | `MARKETING_SEQUENCE_CAMPAIGN_ID` を**未設定へ戻す** | **production env 変更（高リスク）** |
+| 2 | 反映のための redeploy | production deploy |
 
 ⚠️ この env は割引 3 本と**共有**なので、変更前に担当セッションへ一報する。
-⚠️ **この PR では 1〜3 のいずれも実施しない。**
+⚠️ **この PR では 1〜2 のいずれも実施しない。**
 
 ### 切替後の最終実証（**まだできていない**）
 

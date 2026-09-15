@@ -468,6 +468,13 @@ export const CAMPAIGNS = Object.freeze([
       angles: FREE_SIGNUP_ANGLES,
     },
     sequence: {
+      /**
+       * ⚠️ **相手は無料登録した実 Customers だけ。** prospect は混ぜない。
+       *    共有スケジューラは出所の引数を渡さないため、宣言しないと既定の `all` になり、
+       *    prospect 索引（約 12,000）まで母集団に入る（2026-09-14 の事故でも効いた要因）。
+       *    ここで宣言しておけば、**どの経路から tick されても**構造的に混ざらない。
+       */
+      audienceSource: 'customer',
       maxSends: FREE_SIGNUP_ONBOARDING_STEPS.length,
       steps: FREE_SIGNUP_ONBOARDING_STEPS,
       /**
@@ -628,6 +635,12 @@ export const CAMPAIGNS = Object.freeze([
     // 付与されていること自体が対象条件なので、契約状態・プランでは絞らない
     audienceRule: { contracts: [], plans: [], enforce: false },
     sequence: {
+      /**
+       * ⚠️ **このシーケンスを進めるのは `cron-marketing-rollout` だけ**（正本の単一担当）。
+       *    `cron-campaign-sequence` は `MARKETING_SEQUENCE_CAMPAIGN_ID` が未設定でも
+       *    ここを拾わない（拾うと rollout と**二重に enqueue** される）。
+       */
+      runner: 'rollout',
       /** Step1〜4 + `lightTrialSteps.js` の Step5〜6 = **6 通**（通し番号 1〜6） */
       maxSends: 6,
       steps: [
@@ -812,6 +825,12 @@ export const CAMPAIGNS = Object.freeze([
     // 期限切れであること自体が対象条件なので、契約状態・プランでは絞らない
     audienceRule: { contracts: [], plans: [], enforce: false },
     sequence: {
+      /**
+       * ⚠️ **このシーケンスを進めるのは `cron-marketing-rollout` だけ**（正本の単一担当）。
+       *    `cron-campaign-sequence` は `MARKETING_SEQUENCE_CAMPAIGN_ID` が未設定でも
+       *    ここを拾わない（拾うと rollout と**二重に enqueue** される）。
+       */
+      runner: 'rollout',
       maxSends: 18,
       steps: POST_EXPIRY_STEPS,
       /**
@@ -894,6 +913,13 @@ export const CAMPAIGNS = Object.freeze([
       angles: LIGHT_TO_PREMIUM_ANGLES,
     },
     sequence: {
+      /**
+       * ⚠️ **相手は無料登録した実 Customers だけ。** prospect は混ぜない。
+       *    共有スケジューラは出所の引数を渡さないため、宣言しないと既定の `all` になり、
+       *    prospect 索引（約 12,000）まで母集団に入る（2026-09-14 の事故でも効いた要因）。
+       *    ここで宣言しておけば、**どの経路から tick されても**構造的に混ざらない。
+       */
+      audienceSource: 'customer',
       maxSends: LIGHT_TO_PREMIUM_STEPS.length,
       steps: LIGHT_TO_PREMIUM_STEPS,
       /**
@@ -955,6 +981,13 @@ export const CAMPAIGNS = Object.freeze([
       angles: SANRENPUKU_UPSELL_ANGLES,
     },
     sequence: {
+      /**
+       * ⚠️ **相手は無料登録した実 Customers だけ。** prospect は混ぜない。
+       *    共有スケジューラは出所の引数を渡さないため、宣言しないと既定の `all` になり、
+       *    prospect 索引（約 12,000）まで母集団に入る（2026-09-14 の事故でも効いた要因）。
+       *    ここで宣言しておけば、**どの経路から tick されても**構造的に混ざらない。
+       */
+      audienceSource: 'customer',
       maxSends: SANRENPUKU_UPSELL_STEPS.length,
       steps: SANRENPUKU_UPSELL_STEPS,
       /**

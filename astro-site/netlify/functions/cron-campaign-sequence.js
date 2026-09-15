@@ -1,12 +1,21 @@
 /**
- * cron-campaign-sequence.js — 連続配信を**1 日 1 ステップだけ**自動で進める（既定は常時無効）
+ * cron-campaign-sequence.js — 連続配信を**1 回の tick で 1 ステップだけ**自動で進める
  *
- * ⚠️ **4 つのゲートが全て true でなければ、Airtable にも SendGrid にも接続しない。**
+ * ⚠️ **ゲートが全て true でなければ、Airtable にも SendGrid にも接続しない。**
  *      1. `MARKETING_SEQUENCE_SCHEDULER_ENABLED=true`
- *      2. `MARKETING_SEQUENCE_ARMED=<今日の JST 日付>`（置きっぱなしでも翌日閉じる）
+ *      2. `MARKETING_SEQUENCE_ARMED` … **未設定＝常時武装**（正本の通常運用）。
+ *         値を置いたときだけ「その JST 日付の当日だけ武装」に狭まる。
+ *         ⚠️ 旧仕様の「毎日書き換えないと止まる」は**廃止**（2026-08-26 MK 確定）。
+ *         人が毎日 env を書き換える運用は続かないため。判定は `readSequenceGates()` が単一源
  *      3. `MARKETING_CAMPAIGN_ENABLED=true`（既存の live enqueue）
  *      4. `MARKETING_CAMPAIGN_DISPATCH_ENABLED=true`（既存の実送信）
  *    どれか 1 つでも欠ければ**接続前に fail-closed で終了**する（副作用ゼロ）。
+ *
+ * ⚠️ **進めるのは自分が担当する campaign だけ。**
+ *    `MARKETING_SEQUENCE_CAMPAIGN_ID` は**未設定が通常運用**で、そのとき
+ *    `resolveTickCampaignIds()` が「`sequence.runner` が自分の campaign」を自動で選ぶ。
+ *    Light 無料体験の 2 本は `cron-marketing-rollout` の単一担当なので**拾わない**
+ *    （拾うと二重 enqueue になる）。
  *
  * ⚠️ この Function は **メールを送らない**。作るのは
  *      ScheduledEmails の PENDING 行 + CampaignDeliveries の queued 行
@@ -21,7 +30,8 @@
  * 同じモジュールを使うので、画面の人数と自動配信の対象がズレない。
  *
  * ── 対象は「すでにシーケンスに入っている人」だけ ──────────────
- * step1（初回接触）は母集団が最大になるため**自動では撃たない**。
+ * step1（初回接触）は母集団が最大になるため**この Function の既定では撃たない**
+ * （入口を宣言した campaign で `MARKETING_DRM_AUTOSTART_ENABLED` が開いているときだけ撃つ）。
  * よって走査対象は「その campaign で 1 通以上受け取った人」= CampaignDeliveries 由来に限られ、
  * Customers 全件走査（14,000 件超・Function がタイムアウトする）を**構造的に避ける**。
  */
@@ -69,7 +79,7 @@ import { refillSendable } from '../../src/lib/marketing/sequenceTickRefill.js';
 import { rotateCampaigns, hasTimeForAnother } from '../../src/lib/marketing/sequenceTickRotation.js';
 import {
   isSequenceCampaign, resolveSequenceStep, resolveAutoStart,
-  resolveAudienceSource,
+  resolveAudienceSource, isOwnedByRunner, SEQUENCE_RUNNER,
 } from '../../src/lib/marketing/campaignSequence.js';
 import {
   readAutoStartGate, planAutoStartEntries, AUTOSTART_SKIP_LABEL,
@@ -1439,10 +1449,32 @@ export async function runSequenceTick({
  *   - 1 本が失敗しても**他は続ける**（1 本の不調で全部止めない）
  */
 export function resolveTickCampaignIds(env = process.env) {
+  /**
+   * ⚠️ **この Function が進めてよいのは、自分が担当する campaign だけ。**
+   *
+   * 正本は 2 つを同時に求めている:
+   *   ① `MARKETING_SEQUENCE_CAMPAIGN_ID` **未設定＝対象の連続配信を自動進行**
+   *   ② Light 無料体験の 2 本は **`cron-marketing-rollout` が単一担当**
+   *
+   * 以前は未設定のとき「有効な連続配信を全部」返していたので、rollout 所有の 2 本まで
+   * 拾って**担当が 2 つ**になった（二重 enqueue・二重送信の入口）。
+   *
+   * ⚠️ 除外リストを**ここへ書かない**。campaign が増えるたびに直し忘れる。
+   *    所有者は campaign の宣言（`sequence.runner`）が単一源。
+   * ⚠️ **env に名指しされていても、他 runner の campaign は進めない**（fail closed）。
+   *    env の書き間違いで二重送信になるより、進まない方がよい。
+   */
+  const owned = (id) => {
+    const c = getCampaign(id, { includeDisabled: true });
+    return !!c && isOwnedByRunner(c, SEQUENCE_RUNNER.CAMPAIGN_SEQUENCE);
+  };
   const raw = String(env?.MARKETING_SEQUENCE_CAMPAIGN_ID ?? '').trim();
-  if (raw) return raw.split(',').map((x) => x.trim()).filter(Boolean);
+  if (raw) {
+    return raw.split(',').map((x) => x.trim()).filter(Boolean).filter(owned);
+  }
   return listCampaigns({ includeDisabled: false })
     .filter((c) => c.usable !== false && c.sequence)
+    .filter((c) => isOwnedByRunner(c, SEQUENCE_RUNNER.CAMPAIGN_SEQUENCE))
     .map((c) => c.campaignId);
 }
 

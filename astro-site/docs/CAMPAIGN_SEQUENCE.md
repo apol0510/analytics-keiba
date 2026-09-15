@@ -190,6 +190,25 @@ dispatcher がそれを読む。
 | 送る前の確認 | `admin-marketing` の `action='sequenceTickPreview'` |
 | 少数の実配信 | `admin-marketing` の `action='sequenceCanaryRun'`（下記）|
 
+#### 担当も campaign が宣言する（`sequence.runner`）
+
+| 値 | 誰が進めるか |
+|---|---|
+| （宣言なし）/ `campaign-sequence` | **この Function**（`cron-campaign-sequence`・10 分ごと） |
+| `rollout` | `cron-marketing-rollout`（5 分）— Light 無料体験の 2 本 |
+
+`MARKETING_SEQUENCE_CAMPAIGN_ID` は**未設定が通常運用**で、そのとき
+`resolveTickCampaignIds()` は「`runner` が自分の campaign」だけを自動で選ぶ。
+
+⚠️ **env に名指しされていても、他 runner の campaign は進めない**（fail closed）。
+   env の書き間違いで二重送信になるより、進まない方がよい。
+⚠️ **Function 側に campaign 名の除外リストを書かない。** campaign が増えるたびに
+   直し忘れ、そのとき二重 enqueue になる。所有者は catalog の宣言が単一源。
+⚠️ `listCampaigns()` の要約（`describeSequence`）が `runner` / `audienceSource` を
+   **落とさない**こと。落とすと読み手が既定値へ倒れる（実際に落ちていた）。
+
+guard: `src/lib/marketing/sequenceRunnerOwnership.test.mjs`
+
 #### 母集団は campaign が宣言する（`sequence.audienceSource`）
 
 | 値 | 意味 |

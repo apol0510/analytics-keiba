@@ -183,6 +183,49 @@ export function resolveAutoStartAudienceWindowDays(campaign) {
 
 /** step の待機日数（step1 は 0） */
 /**
+ * この連続配信を**誰が進めるか**（runner）の宣言。**campaign 側の SSOT**。
+ *
+ * ── なぜ要るか ────────────────────────────────────────────────
+ * 正本は 2 つを同時に求めている:
+ *   ① `MARKETING_SEQUENCE_CAMPAIGN_ID` **未設定＝対象の連続配信を自動進行**
+ *   ② Light 無料体験の 2 本は **`cron-marketing-rollout` が単一担当**
+ *      （`cron-campaign-sequence` へ足すと rollout と二重に進む）
+ *
+ * env 未設定のとき `resolveTickCampaignIds()` が「有効な連続配信を全部」返すと、
+ * rollout 所有の 2 本まで拾って**担当が 2 つ**になる。
+ * campaign 名の除外リストを Function 側へ置くと、campaign が増えるたびに
+ * 直し忘れる（そして二重送信になる）。**所有者は campaign が宣言する。**
+ *
+ * ⚠️ 既定は `'campaign-sequence'`（**宣言しない campaign の扱いは変わらない**）。
+ *
+ * @returns {'campaign-sequence'|'rollout'}
+ */
+export const SEQUENCE_RUNNER = Object.freeze({
+  /** 共有の `cron-campaign-sequence`（10 分ごと） */
+  CAMPAIGN_SEQUENCE: 'campaign-sequence',
+  /** `cron-marketing-rollout`（5 分・展開状態つき） */
+  ROLLOUT: 'rollout',
+});
+
+export function resolveSequenceRunner(campaign) {
+  const raw = String(((campaign && campaign.sequence) || {}).runner ?? '').trim().toLowerCase();
+  if (raw === SEQUENCE_RUNNER.ROLLOUT) return SEQUENCE_RUNNER.ROLLOUT;
+  return SEQUENCE_RUNNER.CAMPAIGN_SEQUENCE;
+}
+
+/** 宣言された runner が既知の語か（未知語を黙って既定へ倒さないため） */
+export function isKnownSequenceRunner(campaign) {
+  const raw = ((campaign && campaign.sequence) || {}).runner;
+  if (raw === undefined || raw === null || raw === '') return true;
+  return Object.values(SEQUENCE_RUNNER).includes(String(raw).trim().toLowerCase());
+}
+
+/** その runner が進めてよい campaign か（**所有者以外は進めない**） */
+export function isOwnedByRunner(campaign, runner) {
+  return resolveSequenceRunner(campaign) === String(runner || '').trim().toLowerCase();
+}
+
+/**
  * この連続配信が**どの母集団を相手にするか**の宣言（campaign 側の SSOT）。
  *
  * ── なぜ campaign 側で宣言するのか ────────────────────────────
@@ -243,6 +286,14 @@ export function describeSequence(campaign) {
   return {
     maxSends: max,
     stepCount: steps.length,
+    /**
+     * ⚠️ **宣言をここから落とさない。** `listCampaigns()` はこの要約を `sequence` として返すので、
+     *    落とすと読み手（`resolveTickCampaignIds` など）が既定値に倒れる。
+     *    実際に `runner` を落としていたため、rollout 所有の 2 本まで
+     *    `cron-campaign-sequence` の対象に見えていた（＝二重 enqueue の入口）。
+     */
+    runner: resolveSequenceRunner(campaign),
+    audienceSource: resolveAudienceSource(campaign),
     steps: steps.map((s) => ({
       stepNumber: s.stepNumber,
       name: str(s.name) || `ステップ${s.stepNumber}`,
@@ -276,6 +327,15 @@ const HARDCODED_STAT = /(的中率|回収率|勝率)\s*[:：]?\s*\d/;
  * @returns {{ok: boolean, errors: string[]}}
  */
 export function validateSequence(campaign) {
+  // ⚠️ runner の宣言が未知語なら**黙って既定へ倒さない**（担当が 2 つになると二重送信）
+  if (!isKnownSequenceRunner(campaign)) {
+    return {
+      ok: false,
+      errors: [`sequence.runner が不正です: ${
+        String(((campaign && campaign.sequence) || {}).runner)
+      }（campaign-sequence / rollout のいずれか）`],
+    };
+  }
   // ⚠️ 母集団の宣言が未知語なら**黙って `all` に倒さない**（広い方へ倒れると事故になる）
   if (!isKnownAudienceSource(campaign)) {
     return {
