@@ -63,13 +63,8 @@ const reservation = (status, over = {}) => ({
      *     本番コードは正しく、**テストの固定値だけが時刻に依存していた**）。
      *    ここが見たいのは「**滞留していない**通常の予約」なので、いまを基準に置く。
      */
-    /**
-     * ⚠️ **ここは固定日時のまま**。このファイルは `useFixedCouponClock()` で
-     *    基準時刻を固定しているので、カレンダーが進んでも結果は変わらない。
-     *    「今日」に追従させると境界（`RESERVATION_STALE_DAYS` = 14 日）を
-     *    1 つも検査できなくなる（正本は `couponTestClock.mjs`）。
-     */
-    StartsAt: '2026-09-01T00:00:00.000Z', ExpiresAt: '2026-09-30T00:00:00.000Z',
+    StartsAt: new Date(Date.now() - 1 * 24 * 3600 * 1000).toISOString(),
+    ExpiresAt: new Date(Date.now() + 13 * 24 * 3600 * 1000).toISOString(),
     RegularPrice: 68000, OfferPrice: 58000, ...over,
   },
 });
