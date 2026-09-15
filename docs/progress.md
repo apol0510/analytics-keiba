@@ -1264,16 +1264,74 @@ guard: `src/lib/marketing/sequenceRunnerOwnership.test.mjs`
 **実配信で層ごとに別の 1 通が出ること**（`byRoute` に複数層）を確認して初めて R2 は埋まる。
 **コードのマージでは埋まらない。**
 
+## 本番切替 実施（2026-09-15 / DRM step2 以降の自動運転を開始）
+
+**`MARKETING_SEQUENCE_CAMPAIGN_ID` を未設定へ戻し**、redeploy で反映した（正本の通常運用へ復帰）。
+
+| | 切替前 | 切替後 |
+|---|---|---|
+| `MARKETING_SEQUENCE_CAMPAIGN_ID` | 割引 3 本を明示 | **未設定** |
+| cron の対象 | 割引 3 本 | **6 本**（DRM 3 本 ＋ 割引 3 本）。`rollout` 所有の Light 無料体験 2 本は担当外 |
+| 即時 enqueue | — | **0 件**（DRM 3 本とも `no_due_recipients`） |
+
+反映後の実測: 送信待ちジョブ 0 件 → その後 `campaign-discount-free` が通常どおり tick された。
+**DRM は `due: 0` のため 1 件も積まれていない**（`inSequence 14` / `sentByStep {1: 14}` のまま）。
+
+⚠️ rollback は env へ `campaign-discount-free,campaign-discount-light,campaign-discount-premium`
+を戻して redeploy するだけ（1 件の env 変更で復帰する）。
+
+### R1 / R5 / R6 の実測（read-only・**書き込み 0**）
+
+**R1 — 1 通単位の開封が本番で読めている**
+
+`free-signup-onboarding` の `responseRouting`: `active: true` / `measured.open: true` /
+`counts {recipients 14, measured 14, skipped 0, keys 14}`。
+step1 実績は **送信 14・届いた 13・開封 2・不明 1**（`openRate` の分母は `delivered`）。
+**不明 1 を未開封へ混ぜていない。**
+
+**R5 — 購入の帰属が契約どおり**
+
+実 Premium 会員 **12 名**を名指しして `admin-drm-attribution` を実行:
+
+| | 値 |
+|---|---|
+| 購入（時刻が読めた） | **8** |
+| `purchaseTimeReasons` | **ok 8 / missing 4** |
+| 帰属 | `unattributed` **8** / `direct` 0 / `correlated` 0 |
+| 計測 | open `enabled` / delivered `enabled` / click `disabled` |
+
+⚠️ **時刻が読めない 4 名を推測で購入にしない**／**touch が無ければ `unattributed`**／
+**click 未計測なので `direct` を捏造しない** — いずれも契約どおり。
+
+**R6 — 段が変わったら前段が止まり次段の対象になる**
+
+| 実レコード | 段 2（Light→Premium） | 段 3（Premium→三連複） |
+|---|---|---|
+| Premium 会員 **12 名** | **`purchased` 12**（前段が停止） | **`not_sent` 12**（次段の対象） |
+| 三連複保有 **5 名** | — | **`purchased` 5**（終点で停止） |
+
+**新規購入を待たず、実顧客データを 1 バイトも書き換えずに**確認した。
+
+### 残るのは R2 だけ
+
+`free-signup-onboarding` の step2 は step1 送信 ＋ 2 日で期限到来する
+（step1 の送信は 2026-09-14T14:5x / 1 名は 2026-09-15T03:45 → **2026-09-16 15:00Z 前後**）。
+期限が来れば 10 分ごとの tick が**人手なしで**進める。
+
+⚠️ **切替が済んだこと自体は R2 ではない。** 埋まるのは
+`byRoute` に**複数の層**が現れ、step2 以外（`opened` → step5 / `delivered` → step3）へ
+実際に分岐したことを read-only で確認したとき。
+
 ## 残作業（**これが埋まるまでクローズしない**）
 
 | # | 残件 | 埋め方 | 依存 |
 |---|---|---|---|
-| R1 | 1 通単位の開封が本番で**実際に読めている**ことの実測 | `action=sequence` の `responseRouting.measured.open` と `counts` を read-only で確認 | 引数名バグ修正の deploy |
+| ~~R1~~ | ~~1 通単位の開封が本番で**実際に読めている**ことの実測~~ → **2026-09-15 完了**（`active: true` / `measured.open: true` / `counts {recipients 14, measured 14, skipped 0, keys 14}` / step1 実績 送信 14・届いた 13・開封 2・**不明 1**）| — | 完了 |
 | R2 | **実配信で層ごとに別の 1 通が出た**（`byRoute` に `opened:9` / `delivered:16`） | 切替後は**人手なしで**進む（step ごとの承認はしない）。埋まるのは**進んだ結果**を read-only で確かめたとき。⚠️ `MARKETING_DRM_AUTOSTART_ENABLED` は **R2 の gate ではない**ので開けない | 本番切替（上表の 1〜2）|
 | ~~R3~~ | ~~入口の自動開始を**本番で 1 名**通す（段 1）~~ → **2026-09-15 完了**（承認 4 名 → 実送信 1 名 / 超過 0 / 再送 0 / prospect 0 / gate 再閉鎖）| — | 完了 |
 | ~~R4~~ | ~~第 3 段の文面を MK が確認~~ → **2026-09-14 承認済み**（Step4 の締めのみ顧客向けの言い方へ修正）| — | 完了 |
-| R5 | **購入が発生したときに**その購入が実 touch へ正しく帰属される | 既存の有料化済みレコードを名指しして `admin-drm-attribution` を実行し、`purchaseTimeReasons` と帰属の判定が正しいことを確認 | R1 |
-| R6 | **段が変わったときに**次段へ正しく遷移する（前段が停止し、次段の対象になる） | 既に段をまたいでいる実レコードで `resolveFunnelStage` / 前段の `stopReason` を read-only 確認 | R1 |
+| ~~R5~~ | ~~**購入が発生したときに**その購入が実 touch へ正しく帰属される~~ → **2026-09-15 完了**（実 Premium 会員 12 名で `admin-drm-attribution`：購入 8 / `purchaseTimeReasons {ok 8, missing 4}` / `unattributed 8`・`direct 0`・`clickMeasured false`）| — | 完了 |
+| ~~R6~~ | ~~**段が変わったときに**次段へ正しく遷移する（前段が停止し、次段の対象になる）~~ → **2026-09-15 完了**（実 Premium 会員 12 名が段 2 で `purchased 12`＝前段停止・段 3 で `not_sent 12`＝次段対象／三連複保有 5 名が段 3 で `purchased 5`＝終点）| — | 完了 |
 
 ⚠️ **実顧客が実際に購入すること自体は完成条件ではない**（2026-09-14 MK 確定）。
 R5 / R6 で見るのは「**購入が起きたときに処理が正しいか**」であって、売上や成約件数ではない。
