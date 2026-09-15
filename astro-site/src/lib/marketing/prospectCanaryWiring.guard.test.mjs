@@ -58,9 +58,16 @@ test('【重要】ゲートが閉じていても下見はできるが、状態�
 });
 
 test('【重要】絞り込みは「減らす」だけ。除外・冪等・再検証を迂回しない', () => {
-  // 絞り込みは due が確定した後に適用される（対象を増やす経路が無い）
-  const iDue = CRON.indexOf('const dueTargets = allTargets.filter');
-  const iFilter = CRON.indexOf('applyAudienceFilter({');
+  /**
+   * 絞り込みは due が確定した後に適用される（対象を**増やす**経路が無い）。
+   * ⚠️ 2026-09-15 に塊ごとの補充へ変えたので、この順序は塊の中で保たれている:
+   *    既登録の除外 → 出所フィルタ → 許可リスト。
+   */
+  const i = CRON.indexOf('isSendable: async (chunk)');
+  assert.ok(i > 0, '補充の判定が無い');
+  const body = CRON.slice(i, i + 1600);
+  const iDue = body.indexOf('chunk.filter((t) => !active.has(keyOfTarget(t)))');
+  const iFilter = body.indexOf('applyAudienceFilter({');
   assert.ok(iDue > 0 && iFilter > iDue, '絞り込みが due 確定より前にある');
   // 既存の単一源をそのまま使っていること
   for (const keep of ['buildCampaignPlan(', 'claimDelivered(', 'fetchActiveDeliveryKeys(', 'fetchProviderSuppression(']) {
