@@ -32,7 +32,15 @@ const row = (over = {}) => ({
   fields: {
     OfferKey: 'k', CustomerRecordId: REC, Email: 'a@example.invalid', OfferId: ID,
     Source: R.RESERVATION_SOURCE, Status: OFFER_STATUS.ISSUED,
-    StartsAt: '2026-09-01T00:00:00.000Z', ExpiresAt: '2026-09-30T00:00:00.000Z',
+    /**
+     * ⚠️ **日付を固定値で書かない。** `RESERVATION_STALE_DAYS`（14 日）を跨いだ瞬間に
+     *    「滞留 → 要修復」へ変わるため、固定日付はある日から突然落ちる
+     *    （`2026-09-01` 固定が 2026-09-15 に腐り 6 件が一斉に失敗した。
+     *     本番ロジックは正常・**テストの固定日付だけ**の問題）。
+     *    ここが見たいのは「**滞留していない**通常の予約」なので、いまを基準に置く。
+     */
+    StartsAt: new Date(Date.now() - 1 * 24 * 3600 * 1000).toISOString(),
+    ExpiresAt: new Date(Date.now() + 28 * 24 * 3600 * 1000).toISOString(),
     RegularPrice: 68000, OfferPrice: 58000, ...over,
   },
 });

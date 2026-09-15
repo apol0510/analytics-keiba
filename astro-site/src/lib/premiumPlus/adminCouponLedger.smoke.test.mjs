@@ -56,7 +56,15 @@ const reservation = (status, over = {}) => ({
   fields: {
     OfferKey: 'k1', CustomerRecordId: REC, Email: EMAIL, OfferId: ID,
     Source: RESERVATION_SOURCE, Status: status,
-    StartsAt: '2026-09-01T00:00:00.000Z', ExpiresAt: '2026-09-30T00:00:00.000Z',
+    /**
+     * ⚠️ **固定日付を書かない。** `RESERVATION_STALE_DAYS`（14 日）を跨いだ瞬間に
+     *    「滞留 → 要修復」へ変わるので、固定日付だとある日から突然落ちる
+     *    （2026-09-01 固定にしていたため 2026-09-15 に 6 件が一斉に失敗した。
+     *     本番コードは正しく、**テストの固定値だけが時刻に依存していた**）。
+     *    ここが見たいのは「**滞留していない**通常の予約」なので、いまを基準に置く。
+     */
+    StartsAt: new Date(Date.now() - 1 * 24 * 3600 * 1000).toISOString(),
+    ExpiresAt: new Date(Date.now() + 13 * 24 * 3600 * 1000).toISOString(),
     RegularPrice: 68000, OfferPrice: 58000, ...over,
   },
 });
