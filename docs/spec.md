@@ -85,6 +85,27 @@ AK のマーケティングメールは、**一度有効化したらその状態
 
 どちらも **1 人あたりの累計**で、キャンペーンをまたいで積み上がる。
 
+## prospect の選別は 2 期・合計 10 通（2026-09-15 確定）
+
+打ち切りの分母は **delivered 10 通**で、**キャンペーン単位ではなく「その人」に積む**。
+prospect が 10 に届くための構成を次で固定する。
+
+| 期 | campaignId | 通数 | audience | 役割 |
+|---|---|---|---|---|
+| 第 1 期 | `campaign-discount-free` | 3 | `all` | 割引の案内（既存・変更しない）|
+| 第 2 期 | `campaign-prospect-phase2` | **7** | **`prospect`** | 無料で見られる範囲・読み方・実績・使い方・有料との違い・再訪・最終案内 |
+
+- **目的は 10 通送ることではない。** 10 通まで無反応だった prospect を `EXHAUSTED` にし、
+  以後の通常マーケティングから自動で外すこと
+- 反応があった prospect は `ENGAGED` として保持し、**それ以上の打ち切り対象にしない**
+- 第 2 期は第 1 期の**後段**。第 1 期の文面・`version`・既送 step は**変更しない**
+- 第 2 期は `sequence.audienceSource: 'prospect'` で**構造的に** prospect 限定
+- `runner` は既定（`campaign-sequence`）。**`MARKETING_SEQUENCE_CAMPAIGN_ID` は未設定が正**で、
+  `resolveTickCampaignIds()` が有効な campaign を自動選択する。env へ名指し追加する運用にしない
+
+⚠️ 第 2 期の文面で**価格・割引・商品条件を新しく決めない**。最終回だけ既存の導出値を使う。
+⚠️ `click` は現状ゼロ。有効なシグナルとして当てにせず、購入・ログインで補う（既存方針のまま）。
+
 ## prospect にも実際に送る（2026-09-14 解決）
 
 prospect は Airtable に配信行を作らない（2026-08-27 確定 / レコード上限対策）。

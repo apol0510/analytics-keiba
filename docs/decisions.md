@@ -1,3 +1,46 @@
+# 2026-09-15 — prospect の選別は 2 期・合計 10 通
+
+## 決定
+
+| # | 決定 | 単一源 |
+|---|---|---|
+| 1 | prospect 向け**第 2 期 7 通**を追加（`campaign-prospect-phase2`）| `prospectPhase2Steps.js` |
+| 2 | 第 1 期 3 通 + 第 2 期 7 通 = **delivered 10** で打ち切りに届く | `resolveProspectCutoff()` |
+| 3 | 第 2 期は **`audienceSource: 'prospect'`** で構造的に prospect 限定 | `campaignSequence.resolveAudienceSource` |
+| 4 | 第 1 期の文面・`version`・既送 step は**変更しない**（後段として足す）| `campaignCatalog.test.mjs` の version ロック |
+| 5 | `runner` は既定。**`MARKETING_SEQUENCE_CAMPAIGN_ID` は未設定が正** | `resolveTickCampaignIds()` |
+| 6 | 第 2 期の `benefitType` は **`free_content`**（新しい権利は付かない）| `campaignBenefit.js` |
+
+## なぜ
+
+打ち切りの分母は delivered 10 通で、**キャンペーン単位ではなく「その人」に積む**。
+ところが prospect が受け取れるのは `campaign-discount-free` の **3 通だけ**だった。
+
+**2026-09-15 の本番実測**: prospect 索引 11,969 件を全走査して
+`delivered` 最大 **4** / 分布 `1:469 / 2:11,305 / 3:165 / 4:30` / `withOpens` 0。
+待っても 10 に届かず、**完成条件（10 delivered 無反応 → EXHAUSTED）へ到達できない**状態だった。
+
+正本 `ENGAGEMENT_SUPPRESSION.md` も
+「1 本 3 通のキャンペーンでは 10 通に届かないので**複数キャンペーンを通じて**初めて打ち切りが起きる」
+と書いている。第 2 期はその「複数キャンペーン」の実体。
+
+## 7 通の役割（重複させない）
+
+無料で見られるもの → 予想の読み方 → 実績の見かた → 使い方 →
+有料で増えるもの → 続けて見る価値 → 最後のご案内。
+
+割引メールの 7 連投にはしない。価格に触れるのは最終回だけで、
+金額は `campaignDiscountSteps.js` の導出値を使う（**メールに数字を書き写さない**）。
+
+## 触らなかったこと
+
+第 1 期の文面・`version`・`DeliveryKey`、DRM 3 本の Customers 限定 contract、
+1 tick 上限・tick 鍵・冪等性、`click` の扱い（現状ゼロのまま当てにしない）。
+
+## 本番未反映
+
+この時点で **production へは 1 通も送っていない**。deploy も env 変更もしていない。
+
 # 2026-09-15 — 1 tick の枠は「積める人」で埋め、campaign は順番に先頭へ回す
 
 ## 決定

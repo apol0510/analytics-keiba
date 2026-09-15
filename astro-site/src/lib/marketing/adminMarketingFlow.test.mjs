@@ -571,8 +571,9 @@ test('キャンペーン一覧は停止中も理由付きで返す', async () =>
   // 13〜15 本目 = キャンペーン割引の 3 区分（campaign-discount-*）
   // 16 本目 = Light 永久無料 再スタート案内（light-lifetime-restart）
   // 17 本目 = 無料登録者 育成（free-signup-onboarding / DRM の入口）
-  // 18〜19 本目 = 段 2 / 段 3 の育成（light-to-premium / sanrenpuku-upsell）。増えたら数を更新する
-  assert.equal(body.campaigns.length, 19, '停止中が一覧から消えている');
+  // 18〜19 本目 = 段 2 / 段 3 の育成（light-to-premium / sanrenpuku-upsell）
+  // 20 本目 = prospect 第 2 期（campaign-prospect-phase2 / 第 1 期 3 通の後段 7 通）。増えたら数を更新する
+  assert.equal(body.campaigns.length, 20, '停止中が一覧から消えている');
   const off = body.campaigns.filter((c) => !c.usable);
   // ⚠️ 停止中の本数は固定しない。期間限定キャンペーンは**期間外に自動停止**するため、
   //    固定すると期間終了日に CI が落ちる。恒久停止が消えないことだけを守る。

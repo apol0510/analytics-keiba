@@ -68,6 +68,8 @@ import {
   DISCOUNT_FREE_STEPS, DISCOUNT_LIGHT_STEPS, DISCOUNT_PREMIUM_STEPS,
   discountBenefitDescription, DISCOUNT_CTA, DISCOUNT_DEADLINE,
 } from './campaignDiscountSteps.js';
+// prospect 向け第 2 期（第 1 期 3 通の後段。3 + 7 = delivered 10 で打ち切りに届く）
+import { PROSPECT_PHASE2_STEPS, PHASE2_LINKS } from './prospectPhase2Steps.js';
 import { isCampaignActive } from '../promotions/campaignOffers.js';
 import {
   isSequenceCampaign, resolveSequenceStep, describeSequence, validateAllSequences,
@@ -1051,6 +1053,65 @@ export const CAMPAIGNS = Object.freeze([
     get enabled() { return isCampaignActive(); },
     disabledReason: CAMPAIGN_DISABLED_REASON.WINDOW_CLOSED,
     disabledDetail: `お申し込み対象は${DISCOUNT_DEADLINE}。期間外は申込時に割引が適用されない`,
+  },
+  /**
+   * ── prospect 第 2 期（2026-09-15 追加）────────────────────────────
+   *
+   * ## なぜ要るか
+   *
+   * 打ち切りの分母は **delivered 10 通**（`prospectEngagement.resolveProspectCutoff()`）で、
+   * **キャンペーン単位ではなく「その人」に積む**。ところが prospect が受け取れるのは
+   * `campaign-discount-free` の **3 通だけ**で、**10 に永久に届かなかった**
+   * （2026-09-15 実測: 索引 11,969 件の delivered 最大が 4）。
+   * 正本 `ENGAGEMENT_SUPPRESSION.md` の
+   * 「1 本 3 通のキャンペーンでは 10 通に届かないので**複数キャンペーンを通じて**」
+   * を満たすのがこの campaign。**3 + 7 = 10**。
+   *
+   * ⚠️ **第 1 期を書き換えない。** `campaign-discount-free` の文面・`version`・
+   *    既送 step は 1 バイトも変えない（version を上げると `DeliveryKey` が変わり、
+   *    送信済みの人へ**もう一度**届く）。後段として別 campaign を足す。
+   * ⚠️ **prospect 専用。** `sequence.audienceSource: 'prospect'` で構造的に限定する
+   *    （Customers / DRM 対象者へは 1 通も入らない）。
+   * ⚠️ **割引・価格・商品条件をここで新しく決めない。** 最終回だけ既存の導出値
+   *    （`discountItems('free')` / `DISCOUNT_DEADLINE`）を使う。
+   * ⚠️ `runner` は既定（`campaign-sequence`）。`MARKETING_SEQUENCE_CAMPAIGN_ID` を
+   *    **未設定のまま**にすれば `resolveTickCampaignIds()` が自動で拾う。
+   *    env へ名指し追加する運用にはしない。
+   */
+  {
+    campaignId: 'campaign-prospect-phase2',
+    /**
+     * ⚠️ `free_content` = **無料で見られる範囲の案内**（新しい権利は付かない）。
+     *    `free_access`（期間限定で有料を無料開放）ではない。7 通のうち 6 通は
+     *    無料ページの案内で、最終回だけ既存の割引を導出値で添える。
+     */
+    benefitType: 'free_content',
+    benefitDescription: '無料でご覧いただける予想・印と指数の見かた・前日の買い目と結果を 7 通でご案内します',
+    version: 1,
+    name: 'prospect 第 2 期（連続配信 7 通）',
+    description: 'prospect 専用の後段 7 通。第 1 期 3 通と合わせて delivered 10 通に達し、'
+      + '無反応なら EXHAUSTED で以後の通常マーケティングから外れる。価格は最終回のみ導出値を使う。',
+    subject: PROSPECT_PHASE2_STEPS[0].subject,
+    body: PROSPECT_PHASE2_STEPS[0].body,
+    ctaLabel: PROSPECT_PHASE2_STEPS[0].ctaLabel,
+    ctaUrl: PROSPECT_PHASE2_STEPS[0].ctaUrl,
+    sequence: {
+      maxSends: PROSPECT_PHASE2_STEPS.length,
+      steps: PROSPECT_PHASE2_STEPS,
+      /** ⚠️ **prospect 以外へは構造的に入らない**（`runSequenceTick` が fail closed で守る）*/
+      audienceSource: 'prospect',
+    },
+    recommendedSegments: ['contract:none'],
+    /**
+     * ⚠️ prospect は Airtable の会員ではないので `audienceRule` は当たらないが、
+     *    **万一 Customers 経路から参照されても有料の閲覧権がある方には出さない**。
+     */
+    audienceRule: {
+      contracts: [MK_CONTRACT.NONE, MK_CONTRACT.EXPIRED],
+      plans: [MK_PLAN.FREE],
+      enforce: true,
+    },
+    enabled: true,
   },
   {
     campaignId: 'campaign-discount-light',

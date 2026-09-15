@@ -20,14 +20,14 @@
 
 | # | 条件 | 状態 |
 |---|---|---|
-| 1 | 積む → 送る が人手なしで回る（`cron-campaign-sequence` → `cron-marketing-dispatch`）| ✅ **本番反映済み**（PR #521 / `f11f9d34` / 2026-09-14 04:27Z ready）|
-| 2 | prospect（11,976 名）にも**実際に送れる**（Airtable の配信行なしで送信できる）| ✅ 実装・deploy 済み / **本番未実証**（まだ 1 通も送っていない）|
-| 3 | `delivered` を数える（打ち切りの分母） | ✅ コード deploy 済み ＋ `MARKETING_PROSPECT_EVENTS_ENABLED=true` 設定済み / **実測待ち** |
-| 4 | `open` / `click` を蓄積する | ⚠️ open は稼働中。**click は `MARKETING_CLICK_TRACKING_ENABLED` 未設定で 0 のまま**（E）|
-| 5 | 反応ありを保持する（ENGAGED は打ち切らない・Customers へ昇格できる）| ✅ 実装済み / 昇格は管理画面から |
-| 6 | **delivered 10 通・無反応で自動除外**される | ✅ 判定は実装・テスト済み / **本番で到達者 0**（実測: 最大 5 通。除外 0 は正常）|
-| 7 | 除外された人が次のキャンペーンでも対象に戻らない | ✅ EXHAUSTED は送信対象の入口で落ちる |
-| 8 | 実配信が**継続**している（1 キャンペーンで止まらない）| ❌ **未達**。step2 は 2026-09-09 以降 **0 通** |
+| 1 | 積む → 送る が人手なしで回る（`cron-campaign-sequence` → `cron-marketing-dispatch`）| ✅ **本番実証済み**（2026-09-15 / 人手介入 0 で tick → dispatch → delivered）|
+| 2 | prospect（11,969 名）にも**実際に送れる**（Airtable の配信行なしで送信できる）| ✅ **本番実証済み**（2026-09-15 / canary 49 通 ＋ periodic 65 通）|
+| 3 | `delivered` を数える（打ち切りの分母） | ✅ **本番実証済み**（webhook で prospect レコードへ加算。分布 `1:469 / 2:11,305 / 3:165 / 4:30`）|
+| 4 | `open` / `click` を蓄積する | ⚠️ open は稼働中（`withOpens` 現在 0）。**click は `MARKETING_CLICK_TRACKING_ENABLED` 未設定で 0 のまま**（正本どおり当てにしない）|
+| 5 | 反応ありを保持する（ENGAGED は打ち切らない・Customers へ昇格できる）| ✅ 実装済み ＋ **本番で ENGAGED 6 名を観測** |
+| 6 | **delivered 10 通・無反応で自動除外**される | ⚠️ 判定は実装・テスト済み。**第 2 期 7 通を追加して初めて 10 に届く**（PR 作成済み・**本番未反映**）|
+| 7 | 除外された人が次のキャンペーンでも対象に戻らない | ✅ EXHAUSTED は送信対象の入口・送信直前・再取り込みのいずれでも落ちる（テストで固定）|
+| 8 | 実配信が**継続**している（1 キャンペーンで止まらない）| ✅ **本番実証済み**（2026-09-15 / rotation で free・light・premium の 3 本が自動で進む）|
 
 ## 初回実配信の結果（2026-09-14 07:10 UTC / step2・150 通）
 
@@ -67,6 +67,86 @@ tick 鍵が `cron-campaign-sequence` に無かった。**→ tick 鍵を追加�
 
 `prospectSequenceCheck` の母数は **prospect 索引だけ**（11,974 = 送信候補）。
 Customers 由来の進行はこの数字に出ない。**不具合ではない**（応答に `母数の範囲` を明記した）。
+
+## prospect 第 2 期 7 通を追加（2026-09-15 / **本番未反映**）
+
+### 新たに確定した仕様
+
+prospect の選別を **2 期・合計 10 通**にする。
+
+| 期 | campaignId | 通数 | audience |
+|---|---|---|---|
+| 第 1 期 | `campaign-discount-free` | 3 | `all` |
+| **第 2 期** | **`campaign-prospect-phase2`** | **7** | **`prospect` 専用** |
+
+目的は「10 通送ること」ではなく、**delivered 累計 10 通まで無反応だった prospect を
+EXHAUSTED にし、その後の通常マーケティングから自動除外すること**。
+反応があった prospect は ENGAGED として保持し、打ち切り対象にしない。
+
+### なぜ要ったか（本番実測）
+
+prospect が受け取れるのは第 1 期の **3 通だけ**で、**10 に永久に届かなかった**。
+索引 11,969 件を全走査した実測:
+
+| 項目 | 値 |
+|---|---|
+| `delivered` 最大 | **4** |
+| 分布 | `1: 469 / 2: 11,305 / 3: 165 / 4: 30` |
+| `withOpens` | 0 |
+| ENGAGED | 6 |
+| EXHAUSTED | 1（**bounce 由来**。10 通到達ではない）|
+
+### 現在地
+
+- 第 2 期 7 通を定義し、catalog へ登録（`benefitType: 'free_content'` / `audienceSource: 'prospect'`）
+- 第 1 期の文面・`version`・既送 step は **1 バイトも変えていない**
+- テスト 21 件で contract を固定（下記）
+- **本番へは 1 通も送っていない。deploy も env 変更もしていない**
+
+### 未完了任務
+
+1. 実在 prospect の delivered を通常自動運用で累積
+2. 反応あり prospect が ENGAGED として保持されることを継続確認
+3. 実在 prospect が **delivered 10・無反応で EXHAUSTED へ自動遷移**
+4. EXHAUSTED の block reason / kind が正しい
+5. その prospect が次回以降の通常 marketing の candidate / enqueue / dispatch に入らない
+6. 再取り込みでも復活しないことを本番で確認
+
+### 次作業
+
+PR の merge → production deploy → 通常運用で第 2 期が自動選択されることを確認 →
+delivered が 4 → 10 へ積み上がるのを観測。
+
+### 完成条件
+
+**実在 prospect が通常運用で 10 delivered 無反応 → EXHAUSTED → 次回以降の通常 marketing から
+実際に除外**されるまで確認して初めて完成。
+
+### 本番未反映 / 未実施の高リスク操作
+
+| 項目 | 状態 |
+|---|---|
+| PR merge | **未実施** |
+| production deploy | **未実施** |
+| production env 変更 | **未実施** |
+| 第 2 期の実顧客送信 | **未実施**（1 通も送っていない）|
+| 手動 enqueue / canary / Redis・Airtable 手動補正 | **未実施** |
+
+⚠️ **正本との不一致（read-only で記録のみ）**: production の
+`MARKETING_SEQUENCE_CAMPAIGN_ID` に割引 3 本が**設定されている**。
+正本は「**未設定が正**（`resolveTickCampaignIds()` が自動選択）」なので不一致。
+設定されたままだと**第 2 期が自動選択されない**。
+env 変更は高リスク操作なので**この作業では触っていない**。
+
+### テストで固定したこと（21 件）
+
+第 2 期は 7 step・prospect 専用・共有 cron 担当／7 通の件名・本文がすべて異なる／
+金額を手書きしない／第 1 期は 3 step・version 1・文面ハッシュ不変／
+第 1 期 + 第 2 期で delivered 10 に到達できる／delivered 9 では打ち切らない／
+delivered 10・無反応で EXHAUSTED／ENGAGED は 10 delivered でも打ち切らない／
+EXHAUSTED は候補に戻らない・enqueue でも送信直前でも落ちる・再取り込みでも復活しない／
+bounce・苦情・配信停止は即 SUPPRESSED／SUPPRESSED は反応があっても戻らない／
+第 2 期を足しても rotation で他 campaign が飢えない／1 tick 上限・鍵・冪等の配線は不変。
 
 ## #545 の本番実証 完了（2026-09-15 / 本番実測）
 
