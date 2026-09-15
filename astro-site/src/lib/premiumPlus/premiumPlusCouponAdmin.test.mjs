@@ -12,6 +12,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { useFixedCouponClock } from './couponTestClock.mjs';
 
 const A = await import('./premiumPlusCouponAdmin.js');
 const {
@@ -24,6 +25,20 @@ const { RESERVATION_SOURCE } = await import('../promotions/couponReservationSour
 
 const REC = 'recCUSTOMER00001';
 const NOW = Date.parse('2026-08-19T12:00:00.000Z');
+
+/**
+ * ⚠️ **基準時刻を固定する**（2026-09-15 の CI 赤の再発防止）。
+ *
+ * このファイルは `NOW` を `nowMs` として渡していたが、
+ * `describeCouponAdminActions` には時刻の注入口が無く、内部で実時計 `Date.now()` に落ちる。
+ * fixture は固定日時なので、`RESERVATION_STALE_DAYS = 14` の境界を
+ * **カレンダーが跨いだ瞬間**に、コードを触っていないのに落ちるようになっていた。
+ *
+ * ここでは**このファイルが既に基準にしている `NOW` へ時計を合わせる**
+ * （別の値にすると、`NOW` を前提にした既存の検査とズレるため）。
+ * 詳細と原則は `couponTestClock.mjs` を参照。
+ */
+useFixedCouponClock(NOW);
 const ENV_ON = { PREMIUM_PLUS_FIELDS_READY: '1', PREMIUM_PLUS_REOPEN_COUPON_READY: '1' };
 const ACT = { actor: 'MK', reason: 'お電話でのご依頼' };
 
@@ -37,7 +52,15 @@ const resv = (status, over = {}) => ({
   fields: {
     OfferKey: 'k1', CustomerRecordId: REC, Email: 'a@example.invalid',
     OfferId: couponIdWithVersion(), Source: RESERVATION_SOURCE, Status: status,
-    StartsAt: '2026-09-01T00:00:00.000Z', ExpiresAt: '2026-09-30T00:00:00.000Z', ...over,
+    /**
+     * ⚠️ **日付を固定値で書かない。** `RESERVATION_STALE_DAYS`（14 日）を跨いだ瞬間に
+     *    「滞留 → 要修復」へ変わるため、固定日付はある日から突然落ちる
+     *    （`2026-09-01` 固定が 2026-09-15 に腐り 6 件が一斉に失敗した。
+     *     本番ロジックは正常・**テストの固定日付だけ**の問題）。
+     *    ここが見たいのは「**滞留していない**通常の予約」なので、いまを基準に置く。
+     */
+    StartsAt: new Date(Date.now() - 1 * 24 * 3600 * 1000).toISOString(),
+    ExpiresAt: new Date(Date.now() + 28 * 24 * 3600 * 1000).toISOString(), ...over,
   },
 });
 

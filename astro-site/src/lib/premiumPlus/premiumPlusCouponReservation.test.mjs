@@ -9,6 +9,18 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { useFixedCouponClock } from './couponTestClock.mjs';
+
+/**
+ * ⚠️ **基準時刻を固定する**（2026-09-15 の CI 赤の再発防止）。
+ *
+ * fixture は固定日時なのに判定側が実時計 `Date.now()` を使っていたため、
+ * `RESERVATION_STALE_DAYS = 14` の境界（`2026-09-01` + 14 日）を
+ * **カレンダーが跨いだ瞬間**に、コードを触っていないのに落ちるようになっていた。
+ * 詳細と原則は `couponTestClock.mjs` を参照。
+ */
+useFixedCouponClock();
+
 
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
 
@@ -32,7 +44,15 @@ const row = (over = {}) => ({
   fields: {
     OfferKey: 'k', CustomerRecordId: REC, Email: 'a@example.invalid', OfferId: ID,
     Source: R.RESERVATION_SOURCE, Status: OFFER_STATUS.ISSUED,
-    StartsAt: '2026-09-01T00:00:00.000Z', ExpiresAt: '2026-09-30T00:00:00.000Z',
+    /**
+     * ⚠️ **日付を固定値で書かない。** `RESERVATION_STALE_DAYS`（14 日）を跨いだ瞬間に
+     *    「滞留 → 要修復」へ変わるため、固定日付はある日から突然落ちる
+     *    （`2026-09-01` 固定が 2026-09-15 に腐り 6 件が一斉に失敗した。
+     *     本番ロジックは正常・**テストの固定日付だけ**の問題）。
+     *    ここが見たいのは「**滞留していない**通常の予約」なので、いまを基準に置く。
+     */
+    StartsAt: new Date(Date.now() - 1 * 24 * 3600 * 1000).toISOString(),
+    ExpiresAt: new Date(Date.now() + 28 * 24 * 3600 * 1000).toISOString(),
     RegularPrice: 68000, OfferPrice: 58000, ...over,
   },
 });

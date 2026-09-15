@@ -769,7 +769,37 @@ curl -X POST .../admin-marketing -H 'x-admin-secret: …' \
 # 実行（Background を 202 起動するだけ。結果はこの応答に**含まれない**）
 curl -X POST .../admin-marketing -H 'x-admin-secret: …' \
   -d '{"action":"drmEntryRun","dryRun":false,"expectedCount":16}'
+
+# 許可リストの効きだけを確かめる（**送信 0**・ゲートが閉じていても返る）
+curl -X POST .../admin-marketing -H 'x-admin-secret: …' \
+  -d '{"action":"drmEntryAllowlistCheck"}'
 ```
+
+#### `action:'drmEntryAllowlistCheck'`（read-only）
+
+2026-09-14 の事故（承認 16 名に対し Recipients 50 / SentCount 46）の直しは
+**最終 recipient 集合を許可リストで縛る**こと。それが効いているかを、
+**1 通も送らずに**本番で確かめるための経路。
+
+中身は既存の 2 つを繋いだだけで、**新しい送信経路も安全判定も作っていない**。
+
+1. `previewEntry` を**その場で**走らせて recordId の許可リストを作る（fresh）
+2. **同じ呼び出しの中で** `runSequenceTick({ dryRun: true, entryAllowlist })` を実行
+3. 最終 recipient 件数 / 出所内訳 / 許可リストで落とした件数を返す
+
+| 返すもの | 期待 |
+|---|---|
+| `plannerCount` | 入口が「入れてよい」と数えた人数 |
+| `finalRecipients` | **`plannerCount` 以下**（超えたら `withinPlanner: false`）|
+| `最終対象の出所.prospect` | **0** |
+| `entryAllowlist.許可リスト外の残り` | **0** |
+| `sideEffects` | **`none`** |
+
+⚠️ 下見は**予約（`claimDelivered`）より手前で return する**ので、
+queue / claim / `CampaignDeliveries` / `ScheduledEmails` / provider 送信は**すべて 0**。
+⚠️ ゲートは**合成しない**（live 経路と違い `scheduler=true` を作らない）。
+⚠️ `campaignId` を明示で渡すので **割引 3 本は一切 tick されない**。
+⚠️ 排他ロックは**取らない**（確認が live の邪魔をしない）。
 
 #### ⚠️ 重い処理は Background だけが実行する（2026-09-14 の 504 を受けて）
 
