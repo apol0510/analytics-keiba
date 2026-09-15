@@ -194,6 +194,15 @@ dispatcher がそれを読む。
 
 共有のスケジューラ env を開け閉めせずに、**この呼び出しの中だけ**で 1 tick 回す。
 
+> ⚠️ **重い処理は同期 Function で走らせない**（2026-09-15 本番実測）。
+> 入口から直接 `runSequenceTick` を呼んだら **504（31 秒）**で打ち切られた
+> （書き込みは 0）。`runSequenceTick` は配信台帳の走査と prospect 索引 11,971 件の
+> 読み込みを行うので同期では収まらない。**#529 が DRM で解決済みの問題と同型**。
+> いまは入口が**受け付けるだけ**で、実行は `sequence-canary-background`
+> （Background / 最大 15 分）が行う。入口は **202 即返し**で結果を返さない。
+> 結果は `ScheduledEmails` / `prospectSequenceCheck` /
+> `[sequence-canary-bg]` のログで確認する。
+
 ```json
 { "action": "sequenceCanaryRun", "campaignId": "campaign-discount-free",
   "sourceFilter": "prospect", "maxPerTick": 50, "expectedCount": 50,
