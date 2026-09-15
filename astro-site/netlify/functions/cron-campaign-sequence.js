@@ -75,10 +75,13 @@ import {
 } from '../../src/lib/marketing/sequenceAudiencePool.js';
 // 1 tick の枠を「積める人」で埋める（2026-09-15 の逓減対策）
 import { refillSendable } from '../../src/lib/marketing/sequenceTickRefill.js';
+// 第 1 期を配り終えた prospect だけを第 2 期の入口へ入れる（後段接続）
+import { planPhase2Entry } from '../../src/lib/marketing/prospectPhase2Entry.js';
+import { buildProspectDeliveryKeys } from '../../src/lib/marketing/prospectSequenceHydration.js';
 // campaign を順番に先頭へ回す（後ろの campaign が永久に進まないのを防ぐ）
 import { rotateCampaigns, hasTimeForAnother } from '../../src/lib/marketing/sequenceTickRotation.js';
 import {
-  isSequenceCampaign, resolveSequenceStep, resolveAutoStart,
+  isSequenceCampaign, resolveSequenceStep, resolveAutoStart, AUTO_START_KIND,
   resolveAudienceSource, isOwnedByRunner, SEQUENCE_RUNNER,
 } from '../../src/lib/marketing/campaignSequence.js';
 import {
@@ -619,17 +622,103 @@ export async function runSequenceTick({
   //    ときだけ、**登録が新しい無料会員**を上限つきで入口へ入れる。
   // ⚠️ 読めなければ**入口を開けない**（既存の配信は止めない）。
   const autoStartDecl = resolveAutoStart(base);
-  const autoStartGate = readAutoStartGate(env);
+  /**
+   * ── 後段接続（`prior_sequence_done`）─────────────────────────────
+   *
+   * 第 2 期は別 campaignId なので進行はまっさらで、最初の 1 通は step1 になる。
+   * 共有 cron は既定で step1 を撃たないので、これが無いと**1 通も積まれない**。
+   *
+   * ⚠️ 入口を開ける条件は **前の campaign を配り終えていること**だけ
+   *    （DRM の入口ゲート `MARKETING_DRM_AUTOSTART_ENABLED` とは無関係。
+   *     新しい相手へ配り始めるのではなく、既に 3 通受け取った人の続きだから）。
+   * ⚠️ 判定は**前 campaign 固有の `DeliveryKey`**。`delivered` の累計では判定しない。
+   * ⚠️ 候補は **prospect プールだけ**（Airtable の入口候補は読まない）。
+   */
+  const priorDecl = autoStartDecl && autoStartDecl.kind === AUTO_START_KIND.PRIOR_SEQUENCE_DONE
+    ? autoStartDecl : null;
+  let priorEntryEmails = new Set();
+  /** 後段接続のときだけ使う入口レポート（従来の入口レポートを置き換える）*/
+  let phase2Report = null;
+  if (priorDecl && !isDry) {
+    const prior = getCampaign(priorDecl.afterCampaignId, { includeDisabled: true });
+    if (!prior) {
+      phase2Report = {
+        declared: true, open: false, missing: [], entered: 0, skipped: {},
+        error: `prior_campaign_unknown:${priorDecl.afterCampaignId}`,
+      };
+      console.error(`${SEQ_LOG_TAG} 後段接続の相手が不明: ${priorDecl.afterCampaignId}`);
+    } else if (!prospectInputs || !prospectLedger) {
+      // ⚠️ prospect を読めていないなら**1 人も入口へ入れない**（0 件と混同しない）
+      phase2Report = {
+        declared: true, open: false, missing: [], entered: 0, skipped: {},
+        error: `prospect_unavailable:${prospectDegraded || 'no_inputs'}`,
+      };
+    } else {
+      try {
+        const people = prospectInputs.prospects || [];
+        // 前 campaign の配信済み鍵（**名指しで引く**・鍵の作り方は変えない）
+        const priorKeyMap = buildProspectDeliveryKeys({
+          prospects: people, campaign: prior, brand: BRAND, fromEmail,
+        });
+        const priorAll = [];
+        for (const [, byStep] of priorKeyMap) for (const [, k] of byStep) priorAll.push(k);
+        const priorFound = priorAll.length === 0 ? [] : await prospectLedger.filterDelivered({
+          brand: BRAND, campaignId: prior.campaignId, version: prior.version, keys: priorAll,
+        });
+        const planned = planPhase2Entry({
+          prospects: people, priorCampaign: prior, nextCampaign: base,
+          priorDeliveredKeys: new Set(priorFound),
+          // 第 2 期の既送信は `prospectInputs` が既に持っている（同じ台帳）
+          nextDeliveredKeys: new Set(
+            (prospectInputs.deliveries || []).map((d) => String((d.fields || {}).DeliveryKey || '')),
+          ),
+          brand: BRAND, fromEmail, maxPerTick: priorDecl.maxPerTick,
+        });
+        if (!planned.ok) {
+          phase2Report = {
+            declared: true, open: false, missing: [], entered: 0, skipped: planned.skipped || {},
+            error: planned.reason || 'phase2_entry_unavailable',
+          };
+        } else {
+          priorEntryEmails = new Set(planned.emails);
+          phase2Report = {
+            declared: true, open: true, missing: [],
+            considered: planned.considered, entered: planned.emails.length,
+            capped: planned.capped === true, carriedOver: planned.carriedOver || 0,
+            skipped: planned.skipped, 後段接続: priorDecl.afterCampaignId,
+          };
+        }
+      } catch (e) {
+        phase2Report = {
+          declared: true, open: false, missing: [], entered: 0, skipped: {},
+          error: String((e && e.message) || 'phase2_entry_failed'),
+        };
+        console.error(`${SEQ_LOG_TAG} 後段接続の候補を読めません: ${phase2Report.error}`);
+      }
+    }
+  }
+
+  const priorEntryCount = priorEntryEmails.size;
+  /**
+   * ⚠️ 後段接続の「ゲート」は**前の campaign を配り終えた人が居ること**そのもの。
+   *    新しい相手へ配り始めるのではなく、既に 3 通受け取った人の続きなので、
+   *    DRM の入口ゲート（`MARKETING_DRM_AUTOSTART_ENABLED`）とは無関係にする。
+   */
+  const autoStartGate = priorDecl
+    ? { open: priorEntryCount > 0, missing: [] }
+    : readAutoStartGate(env);
   let autoStartRows = [];
-  let autoStartReport = autoStartDecl
+  let autoStartReport = phase2Report || (autoStartDecl
     ? { declared: true, open: autoStartGate.open, missing: autoStartGate.missing, entered: 0, skipped: {} }
-    : { declared: false, open: false, missing: [], entered: 0, skipped: {} };
+    : { declared: false, open: false, missing: [], entered: 0, skipped: {} });
   /**
    * ⚠️ 入口を**実際に開ける**のは従来どおりゲートが開いているときだけ。
    *    下見のスイッチは「R3 live と同じ step1 対象を**組み立てて見る**」ためだけに通す
    *    （読むだけ・応答上のゲートは閉じたまま）。
    */
-  const buildEntryRows = autoStartDecl !== null && (autoStartGate.open || dryFirstStep);
+  // ⚠️ 後段接続は Airtable の入口候補を読まない（候補は prospect プールから作る）
+  const buildEntryRows = autoStartDecl !== null && (autoStartGate.open || dryFirstStep)
+    && priorDecl === null;
   if (buildEntryRows) {
     try {
       const candidateRecords = await fetchAutoStartCandidates({
@@ -699,6 +788,11 @@ export async function runSequenceTick({
     return true;
   });
   /**
+   * ⚠️ 後段接続で選ばれた prospect は**既に `prospectRows` に居る**ので、
+   *    行を新しく作らない（作ると同じ人が 2 行になり 2 通になる）。
+   *    「step1 を撃ってよい相手」は `priorEntryEmails` が持つ。
+   */
+  /**
    * ── 母集団を作る（**ここで出所を決める**）────────────────────────
    *
    * ⚠️ **絞り込みは計画より手前で掛ける。** 以前は `planSequenceTick` が
@@ -741,8 +835,25 @@ export async function runSequenceTick({
     ...entryRows,
     ...prospectRows.filter((r) => !knownEmails.has(emailOf(r))),
   ];
+  /**
+   * ⚠️ **後段接続のときは、まだ第 2 期を 1 通も受け取っていない人を
+   *    「選ばれた相手」だけに絞る。** 絞らないと、第 1 期が途中の人にも
+   *    第 2 期の step1 が積まれて並走する（確定仕様は「第 1 期 3 通の後段」）。
+   *    既に第 2 期が始まっている人は通常の進行に任せる（ここでは落とさない）。
+   */
+  const startedPhase2 = new Set(
+    (prospectInputs && prospectInputs.deliveries ? prospectInputs.deliveries : [])
+      .map((d) => String((d.fields || {}).Email || '').trim().toLowerCase())
+      .filter(Boolean),
+  );
+  const gatedRows = priorDecl === null ? mergedRows : mergedRows.filter((r) => {
+    const e = emailOf(r);
+    if (!e) return false;
+    if (startedPhase2.has(e)) return true;      // 進行中はそのまま
+    return priorEntryEmails.has(e);             // 未開始は選ばれた相手だけ
+  });
   const scoped = scopeAudiencePool({
-    rows: mergedRows, prospectEmails, filter: audienceFilter,
+    rows: gatedRows, prospectEmails, filter: audienceFilter,
   });
   /**
    * ⚠️ **「読めなかった」を「0 人」と読み替えない。**
@@ -823,6 +934,12 @@ export async function runSequenceTick({
       ? maxRecipientsOverride : resolveMaxRecipientsPerTick(process.env),
     /**
      * ⚠️ step1 を自動で撃てるのは、**入口を宣言していて ゲートも開いている**ときだけ。
+     *    `dryFirstStep` は**下見のときしか true にならない**（live では上で中止している）。
+     */
+    /**
+     * ⚠️ step1 を自動で撃てるのは、**入口を宣言していて ゲートも開いている**ときだけ。
+     *    後段接続（第 2 期）では「前の campaign を配り終えた人が居ること」が
+     *    そのままゲートになる（上の `autoStartGate` を参照）。
      *    `dryFirstStep` は**下見のときしか true にならない**（live では上で中止している）。
      */
     allowFirstStep: autoStartDecl !== null && (autoStartGate.open === true || dryFirstStep),
@@ -1422,6 +1539,14 @@ export async function runSequenceTick({
   if (descriptorFailed > 0) summary['身分証を置けず未登録'] = descriptorFailed;
   // #522（DRM の入口）: 開けたか / 開けなかった理由（**黙って 0 にしない**）
   if (autoStartReport.declared) summary['入口'] = autoStartReport;
+  if (priorDecl) {
+    summary['後段接続'] = {
+      相手: priorDecl.afterCampaignId,
+      入口候補: priorEntryCount,
+      進行中: startedPhase2.size,
+      母集団: gatedRows.length,
+    };
+  }
   log(summary);
   return {
     ok: true, step: plan.step, enqueued, failed, autoStart: autoStartReport,

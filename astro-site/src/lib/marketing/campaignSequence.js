@@ -149,6 +149,17 @@ export function resolveSequenceStep(campaign, stepNumber) {
 export const AUTO_START_KIND = Object.freeze({
   /** メルマガ無料登録（`auth-user` が作る Free レコード） */
   FREE_SIGNUP: 'free_signup',
+  /**
+   * **前のシーケンスを配り終えた人**だけを入口へ入れる（後段接続）。
+   *
+   * `autoStart: { kind: 'prior_sequence_done', afterCampaignId: 'campaign-discount-free' }`
+   *
+   * ⚠️ 判定は**前 campaign 固有の `DeliveryKey`**。`delivered` の累計では判定しない
+   *    （累計は過去キャンペーンぶんも含むので、前 campaign を終えた証拠にならない）。
+   * ⚠️ これは **prospect 専用**（`audienceSource: 'prospect'`）。Customers 側の
+   *    「step1 は手動」契約は 1 ミリも広げない。
+   */
+  PRIOR_SEQUENCE_DONE: 'prior_sequence_done',
 });
 
 /** 入口候補を数えるときの既定 */
@@ -163,6 +174,12 @@ export function resolveAutoStart(campaign) {
   const withinDays = int(raw.withinDays) ?? AUTO_START_DEFAULTS.withinDays;
   const maxPerTick = int(raw.maxPerTick) ?? AUTO_START_DEFAULTS.maxPerTick;
   if (withinDays < 1 || maxPerTick < 1) return null;
+  if (kind === AUTO_START_KIND.PRIOR_SEQUENCE_DONE) {
+    // ⚠️ 前 campaign の指定が無ければ**宣言として成立しない**（推測で繋がない）
+    const after = str(raw.afterCampaignId);
+    if (!after) return null;
+    return { kind, withinDays, maxPerTick, afterCampaignId: after };
+  }
   return { kind, withinDays, maxPerTick };
 }
 
@@ -425,6 +442,14 @@ export function validateSequence(campaign) {
       const m = int(rawAuto.maxPerTick);
       if (w !== null && w < 1) errors.push(`${id}: autoStart.withinDays は 1 以上`);
       if (m !== null && m < 1) errors.push(`${id}: autoStart.maxPerTick は 1 以上`);
+      if (str(rawAuto.kind) === AUTO_START_KIND.PRIOR_SEQUENCE_DONE) {
+        if (!str(rawAuto.afterCampaignId)) {
+          errors.push(`${id}: autoStart.afterCampaignId が必要です（後段接続の相手）`);
+        }
+        if (resolveAudienceSource(campaign) !== 'prospect') {
+          errors.push(`${id}: prior_sequence_done は audienceSource:'prospect' 専用です`);
+        }
+      }
       // ⚠️ 入口を自動で開けるなら、**購入・停止で降りられる**ことが前提
       if (campaign.stopOnPurchase === false) {
         errors.push(`${id}: autoStart を宣言するなら購入で停止すること（stopOnPurchase: false は禁止）`);

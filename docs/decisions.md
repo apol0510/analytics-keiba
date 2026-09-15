@@ -10,6 +10,30 @@
 | 4 | 第 1 期の文面・`version`・既送 step は**変更しない**（後段として足す）| `campaignCatalog.test.mjs` の version ロック |
 | 5 | `runner` は既定。**`MARKETING_SEQUENCE_CAMPAIGN_ID` は未設定が正** | `resolveTickCampaignIds()` |
 | 6 | 第 2 期の `benefitType` は **`free_content`**（新しい権利は付かない）| `campaignBenefit.js` |
+| 7 | **第 1 期 → 第 2 期は自動で繋ぐ**（`autoStart: { kind: 'prior_sequence_done' }`）| `prospectPhase2Entry.planPhase2Entry` |
+| 8 | 入口の判定は**第 1 期固有の `DeliveryKey`**。**`delivered` の累計では判定しない** | 同上 |
+| 9 | 後段接続のゲートは「配り終えた人が居ること」。**DRM の入口 env とは無関係** | `cron-campaign-sequence.js` |
+
+## ⚠️ 「7 通を足したので 3 + 7 = 10」では完成ではない
+
+第 2 期は別 campaignId なので進行はまっさらで、最初の 1 通は step1 になる。
+共有 cron は既定で step1 を撃たない（`first_step_is_manual`）ため、
+catalog へ足しただけでは **1 通も積まれない**。
+かといって素通しで許すと、**第 1 期が途中の人にも第 2 期が並走**する。
+
+そこで **`prior_sequence_done`** という入口の種類を足した。
+
+| 決めごと | 内容 |
+|---|---|
+| 入口の条件 | その prospect について**第 1 期の全 step が配り終わっている**こと |
+| 判定材料 | **第 1 期固有の `DeliveryKey`** |
+| 使わない判定 | **`delivered` の累計**（2026-09-15 実測で既に 4 の人が 30 名。第 1 期完了の証拠にならない）|
+| ゲート | 「配り終えた人が居ること」そのもの |
+| 台帳を読めないとき | **1 人も入れない** |
+| 上限 | `maxPerTick`（既定 50）。残りは次の tick へ |
+
+⚠️ 実装は **DRM 側の `allowFirstStep` / `buildEntryRows` の字面を 1 文字も変えていない**
+（後段接続を「入口ゲート」として表現したため）。DRM の guard は全 314 件そのまま green。
 
 ## なぜ
 

@@ -99,6 +99,28 @@ prospect が 10 に届くための構成を次で固定する。
   以後の通常マーケティングから自動で外すこと
 - 反応があった prospect は `ENGAGED` として保持し、**それ以上の打ち切り対象にしない**
 - 第 2 期は第 1 期の**後段**。第 1 期の文面・`version`・既送 step は**変更しない**
+
+### ⚠️ 「7 通を足したので 3 + 7 = 10」では完成ではない
+
+第 2 期は**別 campaignId** なので進行はまっさらで、最初の 1 通は step1 になる。
+共有 cron は既定で step1 を撃たない（`first_step_is_manual`）ため、
+catalog へ足しただけでは **第 2 期は 1 通も積まれない**。
+
+**完成条件は「自動的に第 1 期 → 第 2 期へ遷移できること」**。そのために
+`sequence.autoStart: { kind: 'prior_sequence_done', afterCampaignId: 'campaign-discount-free' }`
+を宣言する。
+
+| 決めごと | 内容 |
+|---|---|
+| 入口の条件 | **その prospect について第 1 期の全 step が配り終わっている**こと |
+| 判定材料 | **第 1 期固有の `DeliveryKey`**（`campaignId × version × step × 受信者`）|
+| 使わない判定 | **`delivered` の累計**（過去キャンペーンぶんを含むため、第 1 期完了の証拠にならない）|
+| ゲート | 「配り終えた人が居ること」そのもの。**DRM の `MARKETING_DRM_AUTOSTART_ENABLED` とは無関係** |
+| 台帳を読めないとき | **1 人も入口へ入れない**（0 件と混同しない）|
+| 対象外 | ENGAGED / SUPPRESSED / EXHAUSTED / PROMOTED / 第 2 期が既に始まっている人 |
+| 上限 | `autoStart.maxPerTick`（既定 50）。残りは次の tick へ |
+
+⚠️ 他 campaign の「step1 は手動」契約は**広げない**。第 2 期だけの明示的な後段接続。
 - 第 2 期は `sequence.audienceSource: 'prospect'` で**構造的に** prospect 限定
 - `runner` は既定（`campaign-sequence`）。**`MARKETING_SEQUENCE_CAMPAIGN_ID` は未設定が正**で、
   `resolveTickCampaignIds()` が有効な campaign を自動選択する。env へ名指し追加する運用にしない

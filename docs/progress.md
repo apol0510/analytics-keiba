@@ -96,9 +96,29 @@ prospect が受け取れるのは第 1 期の **3 通だけ**で、**10 に永�
 | ENGAGED | 6 |
 | EXHAUSTED | 1（**bounce 由来**。10 通到達ではない）|
 
+### ⚠️ 「7 通を足した」だけでは進まない（2026-09-15 のブロッカー）
+
+第 2 期は別 campaignId なので進行はまっさらで、最初の 1 通は step1。
+共有 cron は既定で step1 を撃たない（`first_step_is_manual`）ため、
+catalog へ足しただけでは **1 通も積まれなかった**。
+素通しで許すと第 1 期が途中の人にも並走するので、**後段接続**を実装した。
+
+| 決めごと | 内容 |
+|---|---|
+| 宣言 | `autoStart: { kind: 'prior_sequence_done', afterCampaignId: 'campaign-discount-free' }` |
+| 入口の条件 | その prospect について**第 1 期の全 step が配り終わっている**こと |
+| 判定材料 | **第 1 期固有の `DeliveryKey`** |
+| 使わない判定 | **`delivered` の累計**（既に 4 の人が 30 名。第 1 期完了の証拠にならない）|
+| ゲート | 「配り終えた人が居ること」そのもの（**DRM の入口 env とは無関係**）|
+| 台帳を読めないとき | **1 人も入れない** |
+
+**完成条件は「自動的に第 1 期 → 第 2 期へ遷移できること」**。件数だけで完成扱いにしない。
+
 ### 現在地
 
 - 第 2 期 7 通を定義し、catalog へ登録（`benefitType: 'free_content'` / `audienceSource: 'prospect'`）
+- **後段接続を実装**（`prospectPhase2Entry.js` / `AUTO_START_KIND.PRIOR_SEQUENCE_DONE`）
+- DRM 側の `allowFirstStep` / `buildEntryRows` の**字面は 1 文字も変えていない**（guard 314 件 green）
 - 第 1 期の文面・`version`・既送 step は **1 バイトも変えていない**
 - テスト 21 件で contract を固定（下記）
 - **本番へは 1 通も送っていない。deploy も env 変更もしていない**
@@ -147,6 +167,15 @@ delivered 10・無反応で EXHAUSTED／ENGAGED は 10 delivered でも打ち切
 EXHAUSTED は候補に戻らない・enqueue でも送信直前でも落ちる・再取り込みでも復活しない／
 bounce・苦情・配信停止は即 SUPPRESSED／SUPPRESSED は反応があっても戻らない／
 第 2 期を足しても rotation で他 campaign が飢えない／1 tick 上限・鍵・冪等の配線は不変。
+
+**後段接続（17 件）**: 第 1 期 0 / 1 / 2 通では入らない・**3 step 完了で入る**／
+global delivered 3・4・9 でも第 1 期未完なら入らない／
+ENGAGED・SUPPRESSED・EXHAUSTED・PROMOTED は入らない／第 2 期開始済みは入れない／
+前 campaign の台帳を読めないなら 1 人も入れない／1 tick 上限を超えない／
+他 campaign の step1 手動契約は不変・DRM の入口は `free_signup` のまま／
+tick が step1 を許し母集団を選ばれた相手に絞る／DRM の入口 env に依存しない／
+下見スイッチ・手動 canary 無しで成立する／prospect を読めないときは開けない／
+後段接続の実績をログへ残す。
 
 ## #545 の本番実証 完了（2026-09-15 / 本番実測）
 

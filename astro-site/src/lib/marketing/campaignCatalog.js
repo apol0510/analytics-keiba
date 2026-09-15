@@ -1100,6 +1100,23 @@ export const CAMPAIGNS = Object.freeze([
       steps: PROSPECT_PHASE2_STEPS,
       /** ⚠️ **prospect 以外へは構造的に入らない**（`runSequenceTick` が fail closed で守る）*/
       audienceSource: 'prospect',
+      /**
+       * ⚠️ **第 1 期を配り終えた人だけ**が第 2 期の step1 へ入る。
+       *
+       * 第 2 期は別 campaignId なので進行はまっさらで、最初の 1 通は step1 になる。
+       * 共有 cron は既定で step1 を自動で撃たない（`first_step_is_manual`）ため、
+       * この宣言が無いと**第 2 期は 1 通も積まれない**。
+       * かといって素通しで許すと、**第 1 期が途中の人にも第 2 期が並走**する。
+       *
+       * 判定は `campaign-discount-free` **固有の `DeliveryKey`** で行う。
+       * `delivered` の累計では判定しない（累計は過去キャンペーンぶんも含むので、
+       * 第 1 期を終えた証拠にならない。2026-09-15 実測で既に `delivered = 4` が 30 名）。
+       */
+      autoStart: {
+        kind: 'prior_sequence_done',
+        afterCampaignId: 'campaign-discount-free',
+        maxPerTick: 50,
+      },
     },
     recommendedSegments: ['contract:none'],
     /**
