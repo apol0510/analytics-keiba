@@ -18,7 +18,7 @@ import {
   evaluateCopyStandard, isCopyStandardAdopted,
   COPY_STANDARD_ADOPTED, COPY_STANDARD_NOT_ADOPTED, COPY_STANDARD_FROZEN_STEPS,
   VAGUE_CTA_LABELS, MEMBER_ONLY_CTA_PREFIXES, PUBLIC_CTA_PATHS, ctaPathOf,
-  MIN_BODY_CHARS, MIN_BENEFIT_ITEMS,
+  MIN_BODY_CHARS, MIN_BENEFIT_ITEMS, VIEWPOINTS_ONLY_CTA_PATHS,
 } from './emailCopyStandard.js';
 import { CAMPAIGNS, getCampaign } from './campaignCatalog.js';
 import { getSequenceSteps, resolveSequenceStep } from './campaignSequence.js';
@@ -254,6 +254,69 @@ test('【重要】改稿した 3 本は件名・CTA が 1 通ずつ違う（使�
     const labels = steps.map((s) => s.ctaLabel);
     assert.equal(new Set(subjects).size, subjects.length, `${campaignId}: 件名が重複している`);
     assert.equal(new Set(labels).size, labels.length, `${campaignId}: CTA ラベルが重複している`);
+  }
+});
+
+// ── `/free/` と `/free-prediction/` の取り違え防止 ─────────────────
+//
+// 2026-09-15 レビューで「`/free-prediction/` は旧 URL で canonical は `/free/`」という
+// 指摘があったが、**事実ではない**。両方とも現役の別ページで、
+// `/free/` は買い目 / pt / AI総合指数 / 役割 / 特徴量を**出さない**（当の `/free/` 自身が
+// `/free-prediction/` を「有料版プレビュー」として案内している）。
+// 取り違えると「約束したものが無いページ」に着地するので、両方向で固定する。
+
+test('【重要】/free/ と /free-prediction/ はどちらも公開導線として認める（片方を旧 URL 扱いしない）', () => {
+  for (const p of ['/free-prediction/nankan/', '/free-prediction/jra/', '/free/nankan/', '/free/jra/']) {
+    assert.ok(PUBLIC_CTA_PATHS.includes(p), `${p} が公開導線の一覧から外れている`);
+  }
+});
+
+test('【重要】買い目・指数・役割を約束した本文の CTA を /free/ へ向けると落ちる', () => {
+  // `/free/` は買い目 / AI総合指数 / 役割を出さないページ
+  const r = evaluateCopyStandard({
+    ...OK_STEP,
+    body: 'ご登録ありがとうございます。\n\n本日のメインレースの買い目をご覧いただけます。\n'
+      + '全頭の役割と AI総合指数も出しています。\n\n本日のレースでお試しください。',
+    ctaUrl: 'https://analytics.keiba.link/free/nankan/',
+  });
+  assert.ok(r.issues.some((i) => i.code === 'promise_not_on_landing_page'),
+    `落ちていない: ${JSON.stringify(r.issues)}`);
+
+  // 同じ本文でも有料版プレビューへ向けていれば通る
+  const ok = evaluateCopyStandard({
+    ...OK_STEP,
+    body: 'ご登録ありがとうございます。\n\n本日のメインレースの買い目をご覧いただけます。\n'
+      + '全頭の役割と AI総合指数も出しています。\n\n本日のレースでお試しください。',
+    ctaUrl: 'https://analytics.keiba.link/free-prediction/nankan/',
+  });
+  assert.equal(ok.issues.some((i) => i.code === 'promise_not_on_landing_page'), false);
+
+  // 買い目を約束していない「見どころ」案内なら /free/ でも通る
+  // ⚠️ preheader / CTA ラベル / 特典欄も判定対象なので、すべて見どころ側の語に揃える
+  const viewpoints = evaluateCopyStandard({
+    ...OK_STEP,
+    subject: '【KEIBA Analytics】今日のレースの見どころを無料で公開しています',
+    preheader: '出走馬の近走から、条件の替わり方を読み解いてご案内します。',
+    headline: '今日のレースの見どころ',
+    body: 'ご登録ありがとうございます。\n\n出走馬の近走から、レースごとの条件の替わり方を\n'
+      + '無料で公開しています。\n\n評価の数値は含みません。近走の比べやすさを\n'
+      + 'そのままご覧いただける作りにしています。\n\n本日のレースでご覧いただけます。',
+    benefitTitle: '見どころで分かること',
+    benefitItems: ['条件の替わり方', '近走の比べやすさ', '当日の注目点'],
+    ctaLabel: '今日のレースの見どころを見る',
+    ctaNote: 'ログインは不要です。そのままご覧いただけます。',
+    ctaUrl: 'https://analytics.keiba.link/free/nankan/',
+  });
+  assert.equal(viewpoints.issues.some((i) => i.code === 'promise_not_on_landing_page'), false,
+    `見どころ案内が落ちている: ${JSON.stringify(viewpoints.issues)}`);
+});
+
+test('【重要】買い目を案内する改稿済み step は /free-prediction/ を指している', () => {
+  const c = getCampaign('free-signup-onboarding', { includeDisabled: true });
+  for (const n of [2, 4]) {
+    const s = resolveSequenceStep(c, n);
+    assert.equal(ctaPathOf(s.ctaUrl), '/free-prediction/nankan/',
+      `step${n}: 買い目・指数・役割を案内しているので有料版プレビューを指すこと`);
   }
 });
 

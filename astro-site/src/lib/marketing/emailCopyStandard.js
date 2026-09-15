@@ -89,12 +89,43 @@ export const MEMBER_ONLY_CTA_PREFIXES = Object.freeze([
   '/light-predictions', '/premium-predictions',
 ]);
 
-/** 公開導線（未ログインでも開ける）。ここに無いパスは**推測で足さない** */
+/**
+ * 公開導線（未ログインでも開ける）。ここに無いパスは**推測で足さない**。
+ *
+ * ── ⚠️ `/free/` と `/free-prediction/` は別ページ（片方は他方の旧 URL ではない）──
+ *
+ * | パス | 中身 | 状態 |
+ * |---|---|---|
+ * | `/free-prediction/{nankan,jra}/` | **有料版プレビュー**。買い目・AI総合指数・役割・不要馬まで出る | nav 掲載・noindex なし |
+ * | `/free/{nankan,jra}/` | **無料コンテンツ第 2 層**（レースの見どころ）。**買い目 / pt / AI総合指数 / 役割 / 特徴量は出さない** | nav 掲載・noindex 解除済み（2026-08-20）。URL は**仮** |
+ *
+ * 両方とも現役で、**リダイレクトも noindex も廃止予定も無い**
+ * （`/free/{nankan,jra}.astro` の冒頭に「`/free-prediction/` の役割は変更しない。
+ * ここは別ページ」と明記され、当の `/free/` 自身が `/free-prediction/` へ誘導している）。
+ *
+ * ⚠️ したがって **`/free-prediction/` を「旧 URL」として `/free/` へ置き換えてはいけない。**
+ *    買い目や指数を約束した本文を `/free/` へ送ると、約束したものが無いページに着地する。
+ *    その取り違えは下の `VIEWPOINTS_ONLY_CTA_PATHS` の検査が落とす。
+ */
 export const PUBLIC_CTA_PATHS = Object.freeze([
   '/', '/dashboard/', '/pricing/', '/free-signup/', '/sanrenpuku-demo/',
+  // 有料版プレビュー（買い目・指数・役割あり）
   '/free-prediction/nankan/', '/free-prediction/jra/',
+  // 無料の「見どころ」（買い目・指数・役割なし）
+  '/free/nankan/', '/free/jra/',
   '/results-showcase/nankan/', '/results-showcase/jra/',
   '/archive/nankan/', '/archive/jra/',
+]);
+
+/**
+ * **買い目 / 指数 / 役割を出さない**公開ページ。
+ * これらを約束した本文の CTA をここへ向けると、着地先に約束したものが無い。
+ */
+export const VIEWPOINTS_ONLY_CTA_PATHS = Object.freeze(['/free/nankan/', '/free/jra/']);
+
+/** 「有料版プレビューにしか無いもの」を指す語（本文がこれを約束しているかを見る） */
+export const PAID_PREVIEW_PROMISE_TERMS = Object.freeze([
+  '買い目', 'AI総合指数', 'AI 総合指数', '不要馬', '本命◎', '対抗○', '単穴▲',
 ]);
 
 const SITE = 'https://analytics.keiba.link';
@@ -200,6 +231,16 @@ export function evaluateCopyStandard(step, opts = {}) {
   // 8. 内部運用の語を顧客へ出さない
   const all = [subject, preheader, body, str(s.headline), ctaLabel, str(s.ctaNote),
     items.join(' ')].join('\n');
+
+  // 9. 約束したものが着地先にある（`/free/` と `/free-prediction/` の取り違え）
+  if (VIEWPOINTS_ONLY_CTA_PATHS.includes(path)) {
+    const promised = PAID_PREVIEW_PROMISE_TERMS.filter((t) => all.includes(t));
+    if (promised.length) {
+      add('promise_not_on_landing_page',
+        `本文が「${promised.join('・')}」を案内しているのに CTA が ${path}。`
+        + 'このページは買い目 / 指数 / 役割を出さない（有料版プレビューは /free-prediction/）');
+    }
+  }
   for (const bad of INTERNAL_AFFAIRS_PHRASES) {
     if (all.includes(bad)) add('internal_affairs', `顧客向けの文面に内部運用の語「${bad}」がある`);
   }

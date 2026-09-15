@@ -100,6 +100,26 @@ AK から送る DRM・販促メールは、**単なる「期限・価格・リ�
   `ctaNote` 必須 / 会員限定ページを権限の無い相手の CTA にしない /
   公開導線の一覧（`PUBLIC_CTA_PATHS`）に無いパスを推測で作らない
 
+#### ⚠️ `/free/` と `/free-prediction/` を取り違えない（2026-09-15 レビューで論点化）
+
+**どちらも現役の別ページで、片方が他方の旧 URL ではない。**
+
+| パス | 中身 | 状態 |
+|---|---|---|
+| `/free-prediction/{nankan,jra}/` | **有料版プレビュー**。買い目・AI総合指数・役割・不要馬まで出る | nav 掲載・noindex なし・リダイレクトなし |
+| `/free/{nankan,jra}/` | **無料コンテンツ第 2 層**（レースの見どころ）。**買い目 / pt / AI総合指数 / 役割 / 特徴量は出さない** | nav 掲載・noindex 解除済み（2026-08-20）・URL は**仮** |
+
+根拠: `src/pages/free/{nankan,jra}.astro` の冒頭に
+「`/free-prediction/` の役割（有料版プレビュー）は変更しない。**ここは別ページ**」と明記され、
+`/free/` 自身が `/free-prediction/` を「有料版プレビュー」として案内している
+（`RaceViewpointsBoard` にも「買い目は有料版で」の CTA がある）。
+
+⚠️ **`/free-prediction/` を「旧 URL」として `/free/` へ置き換えてはいけない。**
+買い目や指数を約束した本文を `/free/` へ送ると、**約束したものが無いページに着地**する。
+
+機械判定: `VIEWPOINTS_ONLY_CTA_PATHS` と `PAID_PREVIEW_PROMISE_TERMS` の突き合わせ
+（`promise_not_on_landing_page`）。両方向をテストで固定している。
+
 ### 6. 文章にメリハリをつける
 
 **見出し → 2〜3 行の本文 → 商品価値 → オファー → CTA** の順で読みやすくする。

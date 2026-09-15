@@ -319,6 +319,48 @@ AK から送る DRM・販促メールは、**単なる「期限・価格・リ�
 | 3 | `light-to-premium-sequence` step4「内容と料金はプランのページが**正本**です。メールには書いていません。」| 顧客向けに内部運用を出していた → 削除し `INTERNAL_AFFAIRS_PHRASES` で検知 |
 | 4 | 同 step3 の「回収率」記述 | `/archive/nankan/` に回収率は出ていない（出るのは月別・年別の的中実績と年間的中率・配当金額）→ ページの実際の表示に合わせた |
 
+### レビュー指摘の検証（2026-09-15 / CTA の canonical）
+
+> 指摘: 「`free-signup-onboarding` step2 の CTA `/free-prediction/nankan/` は旧 URL で、
+> 現行 canonical は `/free/nankan/`。`PUBLIC_CTA_PATHS` も旧 URL を許可している」
+
+**実装を確認した結果、この指摘は成立しない。CTA は変更していない。**
+
+| 確認項目 | 実測 |
+|---|---|
+| `/free-prediction/nankan/` の noindex / 廃止表記 | **無し** |
+| `/free-prediction/` の 301・リダイレクト | **無し**（`public/_redirects` / `netlify.toml` とも）|
+| nav（`BaseLayout.astro`）の掲載 | **両方**（`/free-prediction/` 3 リンク / `/free/` 3 リンク）|
+| `/free/nankan.astro` の自己申告 | 「無料コンテンツ第 2 層（**仮 URL**）」「出さないもの: **買い目 / pt / AI総合指数 / 役割 / 特徴量**」「`/free-prediction/` の役割は変更しない。**ここは別ページ**」|
+| `/free/` から `/free-prediction/` への導線 | **有り**（`freeUrl="/free-prediction/nankan/"` ＋「買い目は有料版で」CTA）|
+
+つまり 2 つは**別ページ**で、`/free/` は買い目・指数・役割を**出さない**。
+step2 は「全頭の役割 / AI総合指数 / メインレースの買い目」を案内しているので、
+`/free/` へ向けると**約束したものが無いページに着地**する（基準 5 違反）。
+
+### 代わりに入れた恒久対策
+
+- `PUBLIC_CTA_PATHS` に `/free/{nankan,jra}/` を**追加**（置き換えではない。どちらも公開導線）
+- 新しい検査 `promise_not_on_landing_page` … 本文が買い目 / AI総合指数 / 役割 / 不要馬 /
+  本命◎ / 対抗○ / 単穴▲ を案内しているのに CTA が `/free/` なら落とす
+- 2 つの違いを `EMAIL_COPY_STANDARD.md` と `emailCopyStandard.js` に対照表で明記
+- 改稿済み 13 通の CTA を横断監査（下記）
+
+### CTA 横断監査（改稿した 13 通・全件）
+
+13 通すべてで **経路が実在し / noindex なし / 仮 URL なし / 到達不能なし**。
+
+| CTA | 通数 | 経路 |
+|---|---|---|
+| `/sanrenpuku-demo/` | 5 | `sanrenpuku-demo.astro`（`prerender: true` の公開ページ）|
+| `/pricing/` | 4 | `pricing.astro`（`data-plan-tier` は表示の出し分けのみ。認可でブロックしない）|
+| `/free-prediction/nankan/` | 2 | `free-prediction/nankan.astro`（買い目・指数・役割あり＝本文の約束と一致）|
+| `/archive/nankan/` | 1 | `archive/nankan/index.astro` |
+| `/results-showcase/nankan/` | 1 | `results-showcase/nankan.astro` |
+
+🔒 送信済み step1 は**この対応でも 1 バイトも変更していない**
+（ハッシュ `c721e9eaa8acee80` 不変。改稿済み 13 通の文面も無変更＝`LOCKED` 更新不要）。
+
 ### 現在地
 
 - 正本・機械判定・テスト 20 件を追加。`test:marketing` 2,963 件を含め green
