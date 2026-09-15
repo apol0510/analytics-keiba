@@ -291,17 +291,40 @@ test('【配線】cron が 10 分間隔で動く（1 日 1 回では配り切れ
 //    閉じた翌日からこのテストが落ちていた（配線ではなく暦で赤くなる）。
 //    見たいのは「env 未指定なら**有効な連続配信を全部**進める」という配線なので、
 //    期待値をカタログの「いま有効な連続配信」から作る。
-test('【要件】env 指定が無ければ有効な連続配信をすべて自動で進める', async () => {
+//
+// ⚠️ **2026-09-16 修正**: 「全部を **この Function が**進める」ではない。
+//    Light 無料体験の 2 本は `cron-marketing-rollout` の**単一担当**（既存正本）で、
+//    ここが拾うと**二重 enqueue** になる。担当は campaign の `sequence.runner` が単一源。
+//    見たい要件は変わらない ——「**手動送信が必要なまま残る連続配信が 1 本も無い**」。
+//    そこで「2 つの runner の担当を合わせると有効な連続配信を覆い切る」ことを検査する。
+test('【要件】env 指定が無ければ有効な連続配信が手動送信のまま残らない', async () => {
   const { resolveTickCampaignIds } = await import('../../../netlify/functions/cron-campaign-sequence.js');
   const { listCampaigns } = await import('./campaignCatalog.js');
+  const { resolveSequenceRunner, SEQUENCE_RUNNER } = await import('./campaignSequence.js');
   const usable = listCampaigns({ includeDisabled: false })
-    .filter((c) => c.usable !== false && c.sequence)
-    .map((c) => c.campaignId);
+    .filter((c) => c.usable !== false && c.sequence);
   assert.ok(usable.length > 0, '有効な連続配信が 1 本も無い（検査が素通りしている）');
+
+  const mine = resolveTickCampaignIds({}).slice().sort();
+  const expectMine = usable
+    .filter((c) => resolveSequenceRunner(c) === SEQUENCE_RUNNER.CAMPAIGN_SEQUENCE)
+    .map((c) => c.campaignId).sort();
+  assert.deepEqual(mine, expectMine,
+    '自分の担当の一部しか自動で進めていない（手動送信が必要なままになる）');
+
+  // rollout 担当も自動で進む ＝ **どこにも手動送信は残らない**
+  const byRollout = usable
+    .filter((c) => resolveSequenceRunner(c) === SEQUENCE_RUNNER.ROLLOUT)
+    .map((c) => c.campaignId);
   assert.deepEqual(
-    resolveTickCampaignIds({}).slice().sort(), usable.slice().sort(),
-    '有効な連続配信の一部しか自動で進めていない（手動送信が必要なままになる）',
+    [...new Set([...mine, ...byRollout])].sort(),
+    usable.map((c) => c.campaignId).sort(),
+    '担当の決まっていない連続配信がある（手動送信が必要なままになる）',
   );
+  // 同じ campaign を 2 つの runner が進めない
+  for (const id of byRollout) {
+    assert.equal(mine.includes(id), false, `${id} を両方の cron が進めてしまう`);
+  }
 });
 
 test('【要件】割引 3 区分は「期間内なら」自動対象（外れる理由は期間だけ）', async () => {

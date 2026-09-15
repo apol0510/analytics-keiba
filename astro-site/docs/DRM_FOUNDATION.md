@@ -379,6 +379,69 @@ sequence: {
 - **登録時刻が読めない人は入れない**（推測しない）
 - **すでに 1 通でも受け取っている人は入口に入れない**（`hasStarted`）
 
+## step2 以降は共有シーケンスの通常経路で進む（2026-09-16）
+
+入口（step1）と、その先（step2 以降）は**別の仕組み**で動く。
+
+| | 誰が進めるか | 何で開くか |
+|---|---|---|
+| **step1（入口）** | `cron-drm-autostart` / `drmEntryRun` | `MARKETING_DRM_AUTOSTART_ENABLED`（**専用**） |
+| **step2 以降** | **共有の `cron-campaign-sequence`（10 分ごと）** | `MARKETING_SEQUENCE_CAMPAIGN_ID` **未設定**が通常運用。このとき cron は**自分が担当する有効な連続配信を全部**進める（担当は `sequence.runner`。`rollout` 所有の Light 無料体験 2 本は拾わない）。値があると、その中で**自分の担当のものだけ**を進める |
+
+入口ゲートが**閉じたままでも step2 以降は進む**。
+`planSequenceTick` の `excludeSteps = allowFirstStep ? [] : [1]` が示すとおり、
+入口ゲートが左右するのは **step1 を選べるかどうかだけ**だから。
+ここで確定しているのは次の 3 点だけ（**恒久の運用方針としてこれ以上を書かない**）:
+
+- step1 の安全 gate は**今回弱めない**
+- `MARKETING_DRM_AUTOSTART_ENABLED` は **step1 専用**
+- **R2 のためにこの env を開けない**
+
+### prospect を混ぜない（campaign 側の宣言）
+
+DRM の 3 本は `sequence.audienceSource: 'customer'` を宣言している。
+共有スケジューラは出所の引数を渡さないので、宣言しないと既定の `all` になり、
+**prospect 索引（約 12,000）まで母集団に入る**（2026-09-14 の事故でも効いた要因）。
+
+宣言があると、prospect の索引を**読む処理ごと飛ばす**。
+呼び出しが違う出所を求めたら、広げるのではなく `audience_source_conflict` で
+**1 件も積まずに止める**（宣言は狭める方向にしか効かない）。
+
+### 進むときに通る判断（すべて既存の単一源）
+
+期限到来 → 反応の判定（`drmResponseState`）→ route 選択（`drmRouting`）→
+次 step 選択（`sequenceProgress`）→ 除外（購入 / 配信停止 / バウンス / 停止リスト / 対象条件）→
+`DeliveryKey` の重複防止 → `maxSends` → 予約 → enqueue → 既存 dispatcher が送る。
+
+⚠️ `unknown`（計測が無い）は**未開封扱いにしない**。反応で分岐せず**線形のまま**進む。
+⚠️ `sent` / `delivered` / `opened` を混同しない。
+
+guard: `src/lib/drm/drmStep2Automation.test.mjs` / `drmStep2Wiring.guard.test.mjs`
+
+### 本番で切り替えるときに残る操作（**未実施・未承認**）
+
+⚠️ **「DRM 3 本を env へ追加する」ではない。**
+正本 `docs/spec.md` は `MARKETING_SEQUENCE_CAMPAIGN_ID` を**置かない**
+（**未設定＝対象の連続配信を自動進行**）が通常運用と定めている。
+この Function にとっての「対象」は**自分が担当する**有効な連続配信だけで、
+`rollout` 所有の Light 無料体験 2 本は**含まない**。
+現在 production に割引 3 本が明示設定されているのが**正本から外れた暫定状態**なので、
+切替の候補は **env を未設定へ戻す**こと。
+
+担当は campaign 側の **`sequence.runner`** が単一源で、`cron-campaign-sequence` は
+**自分が担当する campaign だけ**を列挙する。
+`light-trial-*` 2 本は `runner: 'rollout'` を宣言しているので、env が未設定でも
+**この Function は拾わない**（`cron-marketing-rollout` との二重 enqueue が構造的に起きない）。
+
+⚠️ この env は割引 3 本と**共有**なので、変更前に担当セッションへ一報する。
+⚠️ コード側の準備は済んでいる。**残るのは env 変更と反映だけ**（どちらも未承認）。
+
+### 切替後は人手なしで進む（step ごとの承認はしない）
+
+期限到来 → 反応の状態 → route 選択 → 次 step 選択 →
+除外（purchase / suppression / unsubscribe / bounce / complaint / duplicate）→
+enqueue → 既存 dispatcher が送信。**途中で人が止めるのは異常時の例外運用だけ。**
+
 > ## ⚠️ `MARKETING_DRM_AUTOSTART_ENABLED` は **step1 の入口専用**
 >
 > **step2 以降の実行 gate ではない**（2026-09-15 実装確認）。
@@ -390,13 +453,14 @@ sequence: {
 >
 > **2 通目（R2）のためにこの env を開けてはいけない。**
 >
-> さらに、**開けても 2 通目は出せない**。`runDrmEntry` は入口の下見が返した recordId
+> さらに、**この env を開けても 2 通目は出ない**。`runDrmEntry` は入口の下見が返した recordId
 > （＝**まだ 1 通も受け取っていない人**）を許可リストとして渡すので、
 > step2 の対象（既に受け取っている人）は**全員が許可リストの外**になり、
-> 最終対象 0 →`no_due_recipients` で止まる。**構造的に 2 通目は出ない。**
+> 最終対象 0 →`no_due_recipients` で止まる。**入口の経路からは構造的に 2 通目が出ない。**
 >
-> 2 通目を出すには別の経路と**別の承認**が要る。現在地と手順は
-> `docs/progress.md` の「R2 の進め方」を正本とする。
+> ⚠️ **2 通目が出ないという意味ではない。** step2 以降は
+> **共有 sequence の通常経路（`cron-campaign-sequence`・10 分ごと）で完全自動進行する**。
+> 別の承認を挟む運用は取らない。現在地は `docs/progress.md` の「R2 の自動運用」を正本とする。
 - 並びは recordId 昇順で決定的・上限超過は `carriedOver` として次回へ（**黙って捨てない**）
 
 `resolveStageEntry()` は段が進んだ人を次段の**育成**へ繋ぐ。
