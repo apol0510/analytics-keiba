@@ -432,9 +432,12 @@ step2 は「全頭の役割 / AI総合指数 / メインレースの買い目」
 
 ### 次作業
 
-Draft PR の CI 確認 → MK レビュー → merge → production deploy。
-`free-signup-onboarding` step2 は **2026-09-16 15:00Z 前後に due 化**するため、
-それまでに反映できれば改稿版が初回から出る（反映が間に合わなくても旧版が出るだけで事故ではない）。
+PR #551 は **merge・production deploy まで完了**（`d612cfc6` / state=ready）。
+
+残るのは **PR #552（用語の突き合わせ / Draft・CI green・未 merge）** の判断のみ。
+`free-signup-onboarding` step2 は **2026-09-16 15:00Z（＝ 2026-09-17 00:00 JST）前後に
+due 化**するため、それまでに #552 を反映できれば用語を揃えた版が初回から出る。
+**間に合わなくても事故ではない**（#551 の版が出るだけで、公開範囲の誤りは既に解消済み）。
 
 ### 完成条件
 
