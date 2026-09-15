@@ -381,7 +381,8 @@ sequence: {
 
 > ## ⚠️ `MARKETING_DRM_AUTOSTART_ENABLED` は **step1 の入口専用**
 >
-> **step2 以降の実行 gate ではない**（2026-09-15 MK 確定）。
+> **step2 以降の実行 gate ではない**（2026-09-15 実装確認）。
+> ※ これは新しい仕様の決定ではなく、**コードがそうなっているという事実**の記録。
 > `planSequenceTick` の `excludeSteps = allowFirstStep ? [] : [1]` が示すとおり、
 > このスイッチが左右するのは **step1 を選べるかどうかだけ**。
 > step2 以降は `selectNextDueStep` が**期限の来ている最小の step** を選ぶので、

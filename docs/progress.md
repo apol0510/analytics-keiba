@@ -891,7 +891,20 @@ step2 の対象（既に受け取っている 14 名）は**全員が許可リ�
 | 次に選ばれる step | 同上 `summary.dueByStep` の**最小の step** |
 | 対象人数 | 同上 `summary.due` / `dueByStep` |
 | purchase / suppression の除外 | 同上 `summary.stopped` / `byStopReason` |
-| duplicate の除外・最終 recipient | `action='drmEntryAllowlistCheck'`（窓分割・書き込み 0） |
+
+### ⚠️ `drmEntryAllowlistCheck` は R2 の確認には**使えない**
+
+あの経路は **step1 入口の planner が返した recordId**（＝**まだ 1 通も受け取っていない人**）を
+許可リストとして渡す。R2 の対象は**すでに step1 を受け取った人**なので、
+**構造的に全員が許可リストの外**になり、最終対象 0 として落ちる。
+「0 件だから安全」と読めてしまうので、**R2 の確認根拠にしない**。
+
+### 最終 recipient（duplicate 除外を含む）をどう確認するか — **未確定**
+
+**R2 の最終 recipient を副作用 0 で確認する経路は現時点で未確定。**
+due が発生した後、まず既存の汎用 sequence 下見（`action='sequenceTickPreview'` の窓分割）で
+確認できるかを**調査する**。足りなければ **R2 専用の read-only 下見を実装する**。
+いずれの場合も**実送信の直前で停止**する。
 
 確認できたら**実送信の直前で停止し、MK の承認を待つ**。
 **R2 の実送信・queue 登録・env 変更はいずれも未承認。**
