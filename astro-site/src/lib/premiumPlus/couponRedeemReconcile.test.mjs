@@ -7,6 +7,18 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { useFixedCouponClock } from './couponTestClock.mjs';
+
+/**
+ * ⚠️ **基準時刻を固定する**（2026-09-15 の CI 赤の再発防止）。
+ *
+ * fixture は固定日時なのに判定側が実時計 `Date.now()` を使っていたため、
+ * `RESERVATION_STALE_DAYS = 14` の境界（`2026-09-01` + 14 日）を
+ * **カレンダーが跨いだ瞬間**に、コードを触っていないのに落ちるようになっていた。
+ * 詳細と原則は `couponTestClock.mjs` を参照。
+ */
+useFixedCouponClock();
+
 
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
 
@@ -363,4 +375,106 @@ test('入金確認が予約を使用済みにする（未配線だと使い放�
   // 「読めなかった」を「予約なし」に丸めない（admin の要修復表示が効かなくなる）
   assert.match(confirm, /ledger_unavailable/);
   assert.match(confirm, /findRedeemedReservation/, '再実行時に二重 redeem を見分けられない');
+});
+
+// ══════════════════════════════════════════════════════════════════
+//  滞留の境界（2026-09-15 の CI 赤の再発防止）
+// ══════════════════════════════════════════════════════════════════
+
+/**
+ * ## なぜこの 3 本が要るか
+ *
+ * 落ちた 6 件を通すだけなら基準時刻を固定すれば済む。だがそれでは
+ * **`RESERVATION_STALE_DAYS = 14` という仕様そのものを 1 度も検査していない**。
+ * 境界をまたいだときに何が起きるかを、**固定時刻**で明示的に押さえる。
+ *
+ * ⚠️ `isReservationStale` の判定は `now - StartsAt >= 14 日`（**以上**）。
+ *    ちょうど 14 日は「滞留」側に入る。
+ */
+const STALE_MS = RESERVATION_STALE_DAYS * 24 * 3600 * 1000;
+const STARTED = Date.parse('2026-09-01T00:00:00.000Z');
+/** 基準時刻を指定して `issued` の状態だけを取り出す */
+const stateAt = (nowMs) => resolveRedeemState({
+  fields: UNSETTLED, reservation: res('issued'), nowMs,
+}).state;
+
+test('【境界】14 日の 1 ミリ秒手前は「確認待ち」', () => {
+  assert.equal(stateAt(STARTED + STALE_MS - 1), REDEEM_STATE.WAITING);
+  assert.equal(
+    resolveRedeemState({ fields: UNSETTLED, reservation: res('issued'), nowMs: STARTED + STALE_MS - 1 })
+      .needsRepair,
+    false,
+  );
+});
+
+test('【境界】ちょうど 14 日から「要修復」（`>=` 判定）', () => {
+  assert.equal(stateAt(STARTED + STALE_MS), REDEEM_STATE.NEEDS_REDEEM);
+  assert.equal(
+    resolveRedeemState({ fields: UNSETTLED, reservation: res('issued'), nowMs: STARTED + STALE_MS })
+      .needsRepair,
+    true,
+  );
+});
+
+test('【境界】14 日を過ぎても「要修復」のまま', () => {
+  assert.equal(stateAt(STARTED + STALE_MS + 1), REDEEM_STATE.NEEDS_REDEEM);
+  assert.equal(stateAt(STARTED + STALE_MS + 365 * 24 * 3600 * 1000), REDEEM_STATE.NEEDS_REDEEM);
+});
+
+/**
+ * ## カレンダーが進んでも結果は変わらない
+ *
+ * 2026-09-15T00:00:00Z を跨いだ瞬間に CI が赤になったのは、
+ * 判定が**実時計に依存**していたから。判定は「`StartsAt` からの経過時間」だけで
+ * 決まるべきで、**その日が何年何月何日かには依存しない**。
+ * 遠い未来の基準時刻でも同じ答えになることを固定する。
+ */
+test('【再発防止】基準時刻を明示すれば、何年先でも同じ答えになる', () => {
+  for (const iso of [
+    '2026-09-10T00:00:00.000Z', '2027-01-01T00:00:00.000Z',
+    '2030-06-30T12:34:56.000Z', '2040-12-31T23:59:59.000Z',
+  ]) {
+    const now = Date.parse(iso);
+    // 受理したばかり（1 分前）→ いつの時代でも「確認待ち」
+    assert.equal(
+      resolveRedeemState({
+        fields: UNSETTLED, nowMs: now,
+        reservation: res('issued', { StartsAt: new Date(now - 60 * 1000).toISOString() }),
+      }).state,
+      REDEEM_STATE.WAITING, `受理直後が確認待ちでない: ${iso}`,
+    );
+    // ちょうど 14 日前 → いつの時代でも「要修復」
+    assert.equal(
+      resolveRedeemState({
+        fields: UNSETTLED, nowMs: now,
+        reservation: res('issued', { StartsAt: new Date(now - STALE_MS).toISOString() }),
+      }).state,
+      REDEEM_STATE.NEEDS_REDEEM, `14 日滞留が要修復でない: ${iso}`,
+    );
+  }
+});
+
+/**
+ * ## 時計を固定し続ける（guard）
+ *
+ * `describeCouponLifecycle` / `describeCouponAdminActions` / `planRedeemAfterConfirm` には
+ * 時刻の注入口が無く、内部で `Date.now()` に落ちる。
+ * そのため**固定日時の fixture を使うテストファイルは時計を固定していなければならない**。
+ * 外すと、また「ある日を境に、コードを触っていないのに CI が赤くなる」。
+ */
+test('【再発防止】固定日時の fixture を使うファイルは時計を固定している', () => {
+  for (const f of [
+    'adminCouponLedger.smoke.test.mjs',
+    'couponRedeemReconcile.test.mjs',
+    'premiumPlusCouponAdmin.test.mjs',
+    'premiumPlusCouponReservation.test.mjs',
+  ]) {
+    const src = read(`./${f}`);
+    assert.match(src, /useFixedCouponClock\(/, `${f} が基準時刻を固定していない`);
+  }
+});
+
+/** 14 日という仕様そのものを変えていないこと（緩めたら気付けるように） */
+test('【仕様】滞留の閾値は 14 日から変えない', () => {
+  assert.equal(RESERVATION_STALE_DAYS, 14);
 });
