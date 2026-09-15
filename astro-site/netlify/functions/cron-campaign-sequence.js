@@ -59,6 +59,10 @@ import {
   normalizeAudienceFilter, applyAudienceFilter, describeAudiencePreview, sourceOfTarget,
   AUDIENCE_FILTER,
 } from '../../src/lib/marketing/sequenceAudienceFilter.js';
+// 母集団を「計画より手前」で出所ごとに切る／公平に並べる（2026-09-15 の恒久修正）
+import {
+  scopeAudiencePool, interleaveBySource,
+} from '../../src/lib/marketing/sequenceAudiencePool.js';
 import {
   isSequenceCampaign, resolveSequenceStep, resolveAutoStart,
 } from '../../src/lib/marketing/campaignSequence.js';
@@ -671,11 +675,42 @@ export async function runSequenceTick({
     knownEmails.add(e);
     return true;
   });
-  const selected = [
+  /**
+   * ── 母集団を作る（**ここで出所を決める**）────────────────────────
+   *
+   * ⚠️ **絞り込みは計画より手前で掛ける。** 以前は `planSequenceTick` が
+   *    先頭 N 人で打ち切った**後**に絞っていたため、due な Customers が N 人以上
+   *    先に並んでいると `prospect` 指定が**構造的に 0 件**になった
+   *    （2026-09-15 実測: prospect の step2 due が 11,643 名居たのに選ばれたのは 0 名）。
+   * ⚠️ `all` のときは**出所を交互に並べる**。並べないと Customers が常に先頭を占め、
+   *    定期配信で prospect が永久に選ばれない（正本 `docs/spec.md`「prospect にも実際に送る」）。
+   * ⚠️ どちらも**減らす・並べ替えるだけ**。除外・`DeliveryKey`・予約・再検証は触らない。
+   */
+  const audienceFilter = normalizeAudienceFilter(sourceFilter);
+  const mergedRows = [
     ...customerRows,
     ...entryRows,
     ...prospectRows.filter((r) => !knownEmails.has(emailOf(r))),
   ];
+  const scoped = scopeAudiencePool({
+    rows: mergedRows, prospectEmails, filter: audienceFilter,
+  });
+  /**
+   * ⚠️ **「読めなかった」を「0 人」と読み替えない。**
+   *    prospect を読めていない状態で `prospect` 限定を求められたら、
+   *    0 件は事実ではなく**確認できていない**ということ。fail closed で止める。
+   */
+  if (audienceFilter === AUDIENCE_FILTER.PROSPECT && prospectDegraded) {
+    const body = {
+      ok: false, abort: 'prospect_source_unavailable',
+      reason: prospectDegraded, filter: audienceFilter, sideEffects: 'none',
+    };
+    log(body);
+    return body;
+  }
+  const selected = audienceFilter === AUDIENCE_FILTER.ALL
+    ? interleaveBySource({ rows: scoped.rows, prospectEmails })
+    : scoped.rows;
 
   // 3) 配信基盤の停止リスト（**確認できなければ何もしない**）
   const provider = await fetchProviderSuppression({ apiKey: env.SENDGRID_API_KEY, now });
@@ -813,10 +848,9 @@ export async function runSequenceTick({
    * ⚠️ **呼び出しが `sourceFilter` を渡さない限り**挙動は変わらない（env では切り替わらない）。
    */
   /**
-   * ⚠️ **引数だけ**を見る（env は読まない）。壊れた値は「全部」に倒す。
-   *    env を読むと DRM へ漏れる（このファイル冒頭の注意を参照）。
+   * ⚠️ ここは**念のための再確認**（母集団は既に上で切ってある）。
+   *    取りこぼしがあれば下の `audience_source_mixed` が予約より手前で止める。
    */
-  const audienceFilter = normalizeAudienceFilter(sourceFilter);
   const filtered = applyAudienceFilter({
     targets: dueTargets, prospectEmails, filter: audienceFilter,
   });
@@ -917,6 +951,14 @@ export async function runSequenceTick({
       ok: false, abort: TICK_ABORT.NO_DUE,
       reason: filtered.dropped > 0 ? 'filtered_out' : 'all_already_queued',
       alreadyQueued, ...audienceView, sideEffects: 'none',
+      /**
+       * ⚠️ **「0 人だった」と「確認できていない」を混ぜない。**
+       *    prospect を読めていないなら、その事実を必ず添える
+       *    （黙って 0 件を返すと「送る相手が居ない」と誤読される）。
+       */
+      ...(prospectDegraded ? { prospectSkipped: prospectDegraded } : {}),
+      /** 母集団を出所で切った結果（切る前に何人居たか）*/
+      pool: { 全体: mergedRows.length, 絞り込み後: scoped.rows.length, ...scoped.bySource },
     };
     log(body);
     return body;

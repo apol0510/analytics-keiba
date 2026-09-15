@@ -1,3 +1,63 @@
+# 2026-09-15 — 出所の絞り込みは**計画より手前**で掛ける
+
+## 決定
+
+| # | 決定 | 単一源 |
+|---|---|---|
+| 1 | `sourceFilter` は**母集団に掛ける**（`planSequenceTick` の打ち切りより手前）| `sequenceAudiencePool.scopeAudiencePool` |
+| 2 | `all` のときは**出所を交互に並べる**（どちらの出所も枯れない）| `sequenceAudiencePool.interleaveBySource` |
+| 3 | prospect を読めていないまま `prospect` 限定なら **`prospect_source_unavailable` で止める** | `cron-campaign-sequence.js` |
+| 4 | 0 件の応答には **`prospectSkipped` と母集団の人数**を必ず添える | 同上 |
+| 5 | 打ち切りの**後**の `applyAudienceFilter` は**残す**（fail closed の再確認）| 同上 |
+
+## なぜ（2026-09-15 本番実測）
+
+`campaign-discount-free` の canary を `sourceFilter=prospect` で 1 tick 回したところ、
+**prospect が 1 人も選ばれなかった**（送信 0 / queue 0 / 予約 0）。
+
+```
+selected = [...customerRows, ...entryRows, ...prospectRows]   ← Customers が先頭
+selectNextDueStep(progress)                                    ← 配列順のまま
+planSequenceTick → next.recordIds.slice(0, maxRecipients)      ← 先頭 N で打ち切り
+applyAudienceFilter(dueTargets, filter)                        ← ★ 打ち切りの「後」
+```
+
+絞り込みが打ち切りの**後ろ**にあるため、due な Customers が N 人以上先に並んでいると
+`prospect` 指定は**構造的に 0 件**になる。
+
+### 実測（read-only）
+
+| 確認項目 | 実測 |
+|---|---|
+| prospect 索引 | 11,971（読み込み 11,971 / 変換 11,971 / 値なし 0）|
+| Redis 台帳から復元した既送信 | 11,643 |
+| **prospect の step2 due** | **11,643 名** |
+| tick が選んだ 50 名 | **全員 Customers**（うち 47 名は既 queue）|
+| 絞り込み後に送る人数 | **0** |
+| `loadProspectSequenceInputs` | **成功**（`prospectDegraded` は null。読めなかったのではない）|
+| `offset_expired_422` | **Customers 側の台帳走査のみ**。prospect 経路とは無関係 |
+
+⚠️ **原因を走査カーソルに断定しない。** カーソル失効は「選ばれた 50 名の 47 名が既 queue」
+   という**枠の浪費**の一因ではあるが、prospect が 0 になった理由ではない。
+   台帳が完全でも、先頭 N は Customers のままになる。
+
+## 同じ理由で定期配信も壊れていた
+
+定期 cron は `runSequenceTick({ env, now, campaignId })` しか渡さない（＝`all`）。
+`all` でも母集団は Customers が先頭なので、**prospect は永久に選ばれない**。
+正本 [`docs/spec.md`](./spec.md)「prospect にも実際に送る」が成立していなかった。
+
+## DRM を壊さない根拠
+
+DRM は `runSequenceTick` へ**必ず `entryAllowlist` を渡す**（`cron-drm-autostart.js`）。
+最終集合は planner の `recordId` 部分集合に縛られ、`recordId` を持たない prospect は
+構造的に外れる。**並び順を変えても DRM の audience は変わらない。**
+
+## 触らなかったこと
+
+`DeliveryKey` の計算・予約（`claimDelivered`）・除外条件・送信直前の再検証・
+`RESERVATION` 系のいずれにも手を入れていない。母集団を**切る／並べ替える**だけ。
+
 # 2026-09-15 — PR は merge 直前に必ず最新 origin/main を取り直す
 
 ## 決定（MK 確定 / 運用ルール）

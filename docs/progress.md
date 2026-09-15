@@ -68,6 +68,49 @@ tick 鍵が `cron-campaign-sequence` に無かった。**→ tick 鍵を追加�
 `prospectSequenceCheck` の母数は **prospect 索引だけ**（11,974 = 送信候補）。
 Customers 由来の進行はこの数字に出ない。**不具合ではない**（応答に `母数の範囲` を明記した）。
 
+## canary は完走したが prospect が 0 だった（2026-09-15 / 送信 0）
+
+Background 化（#536）後、承認どおり `sequenceCanaryRun` を 1 回だけ実行。
+**47.7 秒で完走**し、`start` / `done` とも記録。**送信・queue・予約はすべて 0。**
+
+```
+03:28:00 {"ok":false,"abort":"no_due_recipients","reason":"filtered_out","alreadyQueued":47,
+          "この tick の候補":3,"うち prospect":0,"うち Customers":3,"絞り込み後に送る人数":0}
+```
+
+### 原因は走査カーソルではない
+
+| # | 問い | 確定 |
+|---|---|---|
+| 1 | `loadProspectSequenceInputs()` は呼ばれたか | **呼ばれた** |
+| 2 | `ok` / `prospectDegraded` | **ok=true / degraded=null**（読めなかったのではない）|
+| 3 | 索引 → rows | 11,971 → 読み込み 11,971 / 変換 11,971 / 値なし 0 |
+| 4 | Redis 台帳復元後の step2 due | **11,643 名** |
+| 5 | 絞り込み前後 | 3（prospect 0 / Customers 3 / unknown 0）→ 0 |
+| 6 | `offset_expired_422` | **Customers 側の台帳走査のみ** |
+| 7 | preview 50 と live 0 の差 | preview は `scope=prospect` で台帳を読まない。live は Customers が母集団の先頭 |
+| 8 | periodic が prospect-only を保証しているか | **していない**（`sourceFilter` を渡さず、渡しても下記の欠陥で 0）|
+
+**真因**: 絞り込みが `planSequenceTick` の打ち切り（先頭 N）より**後ろ**にある。
+due な Customers が N 人以上先に並んでいれば `prospect` 指定は構造的に 0 件。
+`all` の定期配信でも同じ理由で prospect は永久に選ばれない。
+
+### 恒久修正（PR #542）
+
+| 変更 | 中身 |
+|---|---|
+| `sequenceAudiencePool.js`（新規）| 母集団を出所で切る `scopeAudiencePool` / 出所を交互に並べる `interleaveBySource` |
+| 絞り込みの位置 | **計画より手前**へ移動（打ち切りが絞り込み後に効く）|
+| `all` の並び | 出所を交互に。Customers が先頭を占め続けない |
+| fail closed | prospect を読めないまま `prospect` 限定なら `prospect_source_unavailable` |
+| 0 件の説明 | `prospectSkipped` と母集団の人数を必ず添える |
+
+`DeliveryKey`・予約・除外・送信直前の再検証には触れていない。
+DRM は `entryAllowlist` が最終集合を縛るため影響なし。
+
+正本は [`docs/decisions.md`](./decisions.md)
+「2026-09-15 — 出所の絞り込みは**計画より手前**で掛ける」。
+
 ## merge 直前に main を取り直さず、main を 2 度赤くした（2026-09-15）
 
 ### 何が起きたか
