@@ -12,7 +12,6 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { useFixedCouponClock } from './couponTestClock.mjs';
 
 const A = await import('./premiumPlusCouponAdmin.js');
 const {
@@ -26,19 +25,6 @@ const { RESERVATION_SOURCE } = await import('../promotions/couponReservationSour
 const REC = 'recCUSTOMER00001';
 const NOW = Date.parse('2026-08-19T12:00:00.000Z');
 
-/**
- * ⚠️ **基準時刻を固定する**（2026-09-15 の CI 赤の再発防止）。
- *
- * このファイルは `NOW` を `nowMs` として渡していたが、
- * `describeCouponAdminActions` には時刻の注入口が無く、内部で実時計 `Date.now()` に落ちる。
- * fixture は固定日時なので、`RESERVATION_STALE_DAYS = 14` の境界を
- * **カレンダーが跨いだ瞬間**に、コードを触っていないのに落ちるようになっていた。
- *
- * ここでは**このファイルが既に基準にしている `NOW` へ時計を合わせる**
- * （別の値にすると、`NOW` を前提にした既存の検査とズレるため）。
- * 詳細と原則は `couponTestClock.mjs` を参照。
- */
-useFixedCouponClock(NOW);
 const ENV_ON = { PREMIUM_PLUS_FIELDS_READY: '1', PREMIUM_PLUS_REOPEN_COUPON_READY: '1' };
 const ACT = { actor: 'MK', reason: 'お電話でのご依頼' };
 
@@ -317,20 +303,35 @@ test('未知の操作は実行しない', () => {
 
 test('再発行のあと、古い取消は「予約取消」として残り続けない', async () => {
   const { describeCouponLifecycle, COUPON_LIFECYCLE } = await import('./premiumPlusCouponReservation.js');
-  // 取消済みの予約（2026-09-01 受理）より**後**に再発行したクーポンを持っている
+  /**
+   * ⚠️ ここが見たいのは **取得日時と予約の受理日時の前後関係**そのものなので、
+   *    `ClaimedAt` と `StartsAt` を**両方その場で明示**する。
+   *
+   *    以前は `ClaimedAt` だけ固定日付で、予約は `resv()` の既定
+   *    （＝実時計基準の「いま − 1 日」）を使っていた。そのため
+   *    **2026-10-02 になると `StartsAt` が `ClaimedAt` を追い越して**
+   *    前後関係が反転し、ある日突然落ちるようになっていた。
+   *    実時計と固定日付を混ぜず、この 2 つの差だけで閉じる。
+   */
+  const RECEIVED = '2026-09-01T00:00:00.000Z';  // 予約を受理した日
+  const revoked = resv(OFFER_STATUS.REVOKED, {
+    StartsAt: RECEIVED,
+    ExpiresAt: '2026-09-30T00:00:00.000Z',
+  });
+  // 取消済みの予約（受理 2026-09-01）より**後**に再発行したクーポンを持っている
   const reissued = {
     [PP_REOPEN_COUPON_FIELDS.CLAIMED_AT]: '2026-10-01T00:00:00.000Z',
     [PP_REOPEN_COUPON_FIELDS.SOURCE]: 'admin-reissue|by=MK|at=2026-10-01T00:00:00.000Z|why=再発行',
   };
   const life = describeCouponLifecycle({
-    fields: reissued, offerRows: [resv(OFFER_STATUS.REVOKED)],
+    fields: reissued, offerRows: [revoked],
     ledgerAvailable: true, customerRecordId: REC,
   });
   assert.equal(life.state, COUPON_LIFECYCLE.HELD, '再発行後も「予約取消」と出ている');
   // 取得より後に取り消された予約は、いまの状態として出す
   const older = { ...reissued, [PP_REOPEN_COUPON_FIELDS.CLAIMED_AT]: '2026-08-01T00:00:00.000Z' };
   assert.equal(describeCouponLifecycle({
-    fields: older, offerRows: [resv(OFFER_STATUS.REVOKED)],
+    fields: older, offerRows: [revoked],
     ledgerAvailable: true, customerRecordId: REC,
   }).state, COUPON_LIFECYCLE.REVOKED);
 });
