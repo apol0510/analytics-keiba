@@ -575,6 +575,53 @@ prospect は **Airtable に配信行を書かない**（#521）。`prospectSeque
 **DRM の 3 本をここへ登録してはいけない。**
 一般 sequence 向けに `campaignId` × `step` で数える経路を別に足す（別 PR）。
 
+## 本番実測（2026-09-15 / read-only・**送信 0**）
+
+PR #534（`b8076c46`）・PR #535（`2ec66edf`）**production 反映済み**。
+反映されたのはコードだけで、**gate は閉のまま・R3 は未実行**。
+
+### 事故の 13 行が本番で正しく見えるようになった
+
+| 見るところ | 実測 |
+|---|---|
+| `touchMeasurement`（`measurementMode: campaign-step`） | `free-signup-onboarding` **step1 / sent 13** |
+| └ 届いた | **delivered 12** |
+| └ 開かれた | **opened 1** |
+| └ 不明 | **unknown 1**（**未開封と決めつけていない**） |
+| `drmProgress` | **13**（`sentByStep: {1: 13}` / `byCurrentStep: {1: 13}` / due 0） |
+| 入口の下見 | 16 名中 **`already_started` 13** → **`wouldEnter` 3** |
+
+⚠️ **この修正が入る前に R3 を再実行していたら、すでに受け取った 13 名へ撃ち直していた。**
+
+Light 無料体験は `measurementMode: journey-touch` のままで、`touches` を返し `steps` は返さない
+（24 接点の契約は不変）。
+
+## 許可リストの効きを**送信 0 のまま**確かめる（`action='drmEntryAllowlistCheck'`）
+
+一次原因の直し（最終 recipient 集合を許可リストで縛る）が**本当に効いているか**を、
+R3 を再実行せずに本番で確かめるための read-only 経路。
+
+**中身は既存の 2 つを繋いだだけ**で、新しい送信経路も安全判定も作っていない。
+
+1. `previewEntry` を**その場で**走らせて recordId の許可リストを作る（fresh）
+2. **同じ呼び出しの中で** `runSequenceTick({ dryRun: true, entryAllowlist })` を実行
+3. 最終 recipient 件数 / 出所内訳 / 許可リストで落とした件数を返す
+
+| 見るところ | 期待 |
+|---|---|
+| `plannerCount` | 入口が「入れてよい」と数えた人数 |
+| `finalRecipients` | **`plannerCount` 以下**（超えたら `withinPlanner: false`） |
+| `最終対象の出所.prospect` | **0** |
+| `entryAllowlist.許可リスト外の残り` | **0** |
+| `sideEffects` | **`none`** |
+
+⚠️ 下見は**予約（`claimDelivered`）より手前で return する**ので、
+queue / claim / `CampaignDeliveries` / `ScheduledEmails` / provider 送信は**すべて 0**。
+⚠️ ゲートは**合成しない**（live 経路と違い `scheduler=true` を作らない）。入口が閉じたままだと分かる。
+⚠️ `campaignId` を明示で渡すので **割引 3 本は一切 tick されない**。
+
+guard: `src/lib/drm/drmEntryAllowlistCheck.test.mjs`（`npm run test:drm` / `check:safety`）
+
 ## 残作業（**これが埋まるまでクローズしない**）
 
 | # | 残件 | 埋め方 | 依存 |

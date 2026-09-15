@@ -216,6 +216,104 @@ export async function previewEntry({ env, now, campaignId }) {
 }
 
 /**
+ * 許可リストが**最終 recipient 集合に効いているか**を、**実送信 0 のまま**確かめる（read-only）。
+ *
+ * ── なぜ要るか ────────────────────────────────────────────────
+ * 2026-09-14 の事故は「入口 planner の人数」しか縛れておらず、委譲先の
+ * `runSequenceTick` が 台帳由来 ＋ 入口 ＋ prospect で母集団を組み直していた
+ * （承認 16 名に対し Recipients 50 / SentCount 46）。
+ * 直したあと「本当に効いているか」を**本番で**確かめる手段が要る。
+ * ただし R3 の再実行はまだ承認されていないので、**1 通も送らずに**確かめる。
+ *
+ * ── どう確かめるか ────────────────────────────────────────────
+ *   ① `previewEntry` を**その場で**走らせて recordId の許可リストを作る（fresh）
+ *   ② **同じ呼び出しの中で** `runSequenceTick({ dryRun: true, entryAllowlist })` を実行
+ *   ③ 最終 recipient 件数 / 出所内訳 / 許可リストで落とした件数を返す
+ *
+ * ⚠️ **新しい送信経路も安全判定も作らない。** 既存 `runSequenceTick` の下見をそのまま使う。
+ * ⚠️ 下見は**予約より手前で return する**ので、queue / claim / CampaignDeliveries /
+ *    ScheduledEmails / provider 送信は**すべて 0**。
+ * ⚠️ ゲートは**合成しない**（下見はゲートが閉じていても読むだけで走る）。
+ *    入口が閉じたままであることも応答に載せる。
+ * ⚠️ `campaignId` を明示で渡すので `MARKETING_SEQUENCE_CAMPAIGN_ID` は読まれない
+ *    ＝ **割引 3 本は一切 tick されない**。
+ */
+export async function checkEntryAllowlist({
+  env = process.env, now = Date.now(), campaignId = DRM_ENTRY_CAMPAIGN_IDS[0],
+  deps = {},
+} = {}) {
+  // ⚠️ **許可リスト以外は触らない**（割引 3 本を構造的に排除する）
+  if (!isEntryCampaignAllowed(campaignId)) {
+    return {
+      ok: false, abort: ENTRY_ABORT.CAMPAIGN_NOT_ALLOWED,
+      campaignId, allowed: [...DRM_ENTRY_CAMPAIGN_IDS], sideEffects: 'none',
+    };
+  }
+
+  const preview = deps.previewEntry || previewEntry;
+  let seen;
+  try {
+    seen = await preview({ env, now, campaignId });
+  } catch (e) {
+    return {
+      ok: false, abort: 'preview_failed',
+      detail: String((e && e.message) || 'unknown'), sideEffects: 'none',
+    };
+  }
+  if (!seen.ok) return { ...seen, sideEffects: 'none' };
+
+  const allowlist = [...(seen.recordIds || [])];
+  const tick = deps.runSequenceTick || runSequenceTick;
+  let result;
+  try {
+    result = await tick({
+      env, now, campaignId,
+      dryRun: true,
+      entryAllowlist: allowlist,
+    });
+  } catch (e) {
+    return {
+      ok: false, abort: 'tick_failed',
+      detail: String((e && e.message) || 'unknown'), sideEffects: 'none',
+    };
+  }
+
+  const view = result && typeof result === 'object' ? result : {};
+  const sources = view['最終対象の出所'] || { prospect: 0, Customers: 0, 出所不明: 0 };
+  const allow = view.entryAllowlist || null;
+  const finalCount = Number(view['絞り込み後に送る人数']) || 0;
+
+  const body = {
+    mode: 'drm-entry-allowlist-check',
+    campaignId,
+    /** ⚠️ 読むだけ。queue / claim / 配信行 / ジョブ / 送信のいずれも 0 */
+    sideEffects: 'none',
+    dryRun: true,
+    gates: readDrmEntryGates(env),
+    /** 入口 planner が「入れてよい」と数えた人数 */
+    plannerCount: seen.wouldEnter,
+    /** 委譲先が最後に残した人数（**これが plannerCount を超えたら壊れている**） */
+    finalRecipients: finalCount,
+    最終対象の出所: sources,
+    entryAllowlist: allow,
+    /** 上限として効いているか（人数が増えていないか） */
+    withinPlanner: finalCount <= Number(seen.wouldEnter || 0),
+    tick: {
+      ok: view.ok === true,
+      abort: view.abort || null,
+      step: view.step || null,
+      この_tick_の候補: view['この tick の候補'] ?? null,
+      うち_prospect: view['うち prospect'] ?? null,
+      うち_Customers: view['うち Customers'] ?? null,
+      sideEffects: view.sideEffects || null,
+    },
+    note: '下見だけです。予約・キュー登録・配信行・ジョブ・送信のいずれも行っていません。',
+  };
+  log(body);
+  return body;
+}
+
+/**
  * 実処理。**テストからはここを直接呼ぶ**（HTTP の器を挟まない）。
  *
  * @param {{env, now, campaignId, dryRun, expectedCount, deps}} args
