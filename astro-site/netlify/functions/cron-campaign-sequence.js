@@ -57,6 +57,7 @@ import {
 import { emailHash } from '../../src/lib/marketing/prospectStore.js';
 import {
   normalizeAudienceFilter, applyAudienceFilter, describeAudiencePreview, sourceOfTarget,
+  AUDIENCE_FILTER,
 } from '../../src/lib/marketing/sequenceAudienceFilter.js';
 import {
   isSequenceCampaign, resolveSequenceStep, resolveAutoStart,
@@ -805,12 +806,38 @@ export async function runSequenceTick({
    * 予約を取ると「送信済み扱い」になるので、下見では絶対に取らない。
    */
   if (isDry) {
+    /**
+     * ── 許可リストが**最終集合に効いているか**を下見で確かめられるようにする ──
+     *
+     * 2026-09-14 の事故は「入口 planner の人数」しか縛れておらず、最終 recipient は
+     * 台帳由来 ＋ 入口 ＋ prospect で組み直されていた。直したあと、
+     * **実送信 0 のまま**それを本番で確認できないと「直った」と言えない。
+     *
+     * ⚠️ ここは**数えるだけ**。判定も絞り込みも上で終わっている（新しい安全判定を作らない）。
+     * ⚠️ `outside` は 0 のはず。0 でなければ許可リストが効いていない。
+     */
+    const finalSources = applyAudienceFilter({
+      targets, prospectEmails, filter: AUDIENCE_FILTER.ALL,
+    }).bySource;
+    const dryWithin = assertWithinAllowlist({ targets, allowlist });
     const body = {
       ok: true, dryRun: true, step: plan.step, campaignId: base.campaignId,
       sideEffects: 'none',
       gates: { allOpen: gates.allOpen, missing: gates.missing },
       alreadyQueued,
       ...audienceView,
+      /** 許可リストを渡さなかったときは `null`（**共有 tick の応答は不変**） */
+      entryAllowlist: allowed.constrained ? {
+        許可人数: allowlist.size,
+        許可リスト外で除外: allowed.dropped,
+        許可リスト外の残り: dryWithin.outside || 0,
+      } : null,
+      /** 許可リストを掛けた**後**の出所内訳（prospect が 0 であることを目で確かめる） */
+      最終対象の出所: {
+        prospect: finalSources.prospect,
+        Customers: finalSources.customer,
+        出所不明: finalSources.unknown,
+      },
       /**
        * 窓の続き。**全部 null / 無くなるまで**呼び出し側が合算する。
        *   台帳側: `nextLedgerOffset` が null なら読み切り

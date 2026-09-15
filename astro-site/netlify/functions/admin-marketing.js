@@ -231,7 +231,7 @@ import {
  *    この Function は **HTTP から到達できる入口**を用意するだけ
  *    （scheduled Function は公開 URL から起動できず payload も渡せないため）。
  */
-import { runDrmEntry } from './cron-drm-autostart.js';
+import { runDrmEntry, checkEntryAllowlist } from './cron-drm-autostart.js';
 import { DRM_ENTRY_CAMPAIGN_IDS, ENTRY_ABORT } from '../../src/lib/drm/drmEntryGates.js';
 import {
   buildRunId, buildDrmEntryPayload, triggerDrmEntryBackground,
@@ -941,6 +941,7 @@ export const handler = async (event) => {
     if (action === 'drmAutoStart') return await handleDrmAutoStart({ KEY, BASE, now, req });
     if (action === 'drmProgress') return await handleDrmProgress({ KEY, BASE, now, req });
     if (action === 'drmEntryRun') return await handleDrmEntryRun({ now, req });
+    if (action === 'drmEntryAllowlistCheck') return await handleDrmEntryAllowlistCheck({ now, req });
     // ⚠️ ここから 4 つは **read-only ではない**（Redis の展開状態だけを書き換える）。
     //    Customers・配信台帳・送信には触れない。受け付ける値は `rolloutControl.js` が絞る。
     if (action === 'rolloutStart') return await handleRolloutControl({ op: ROLLOUT_OP.START, now, req });
@@ -2058,6 +2059,25 @@ async function handleDrmAutoStart({ KEY, BASE, now, req }) {
  *    **queue 0 / send 0 のまま止まる**（fail closed）。
  * ⚠️ 共有スケジューラの env（`MARKETING_SEQUENCE_*`）は**読まないし変えない**。
  */
+/**
+ * 許可リストが**最終 recipient 集合に効いているか**を read-only で確かめる
+ * （`action='drmEntryAllowlistCheck'`）。
+ *
+ * ⚠️ **薄い。** 何も判定しない・何も数え直さない。`checkEntryAllowlist` をそのまま呼ぶ。
+ * ⚠️ 中身は既存 `previewEntry` ＋ `runSequenceTick({ dryRun: true })` だけ。
+ *    新しい送信経路も安全判定も作っていない。
+ * ⚠️ `dryRun` は**受け取らない**（この action は下見しかしない）。
+ */
+async function handleDrmEntryAllowlistCheck({ now, req }) {
+  const campaignId = String(req.campaignId || DRM_ENTRY_CAMPAIGN_IDS[0]).trim();
+  const result = await checkEntryAllowlist({ env: process.env, now, campaignId });
+  if (result && result.ok === false) {
+    const status = result.abort === ENTRY_ABORT.CAMPAIGN_NOT_ALLOWED ? 400 : 409;
+    return json(status, { mode: 'drm-entry-allowlist-check', ...result });
+  }
+  return json(200, { mode: 'drm-entry-allowlist-check', ...result });
+}
+
 async function handleDrmEntryRun({ now, req }) {
   const dryRun = req.dryRun !== false;
   const campaignId = String(req.campaignId || DRM_ENTRY_CAMPAIGN_IDS[0]).trim();
