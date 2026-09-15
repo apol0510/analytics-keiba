@@ -343,6 +343,14 @@ export async function checkEntryAllowlist({
       dryRun: true,
       entryAllowlist: allowlist,
       preview: win,
+      /**
+       * ⚠️ **この確認だけが渡す。** production の入口ゲートは閉じたままなので、
+       *    そのまま下見を回すと「期限が来ているのは step1 の人だけ」になり
+       *    `first_step_is_manual` で毎回中止して窓を走査し切れない（2026-09-15 実測）。
+       *    env は偽装せず、**下見のときだけ** step1 の対象構築を R3 live と同じ形にする。
+       *    `dryRun: false` でこれを渡すと `runSequenceTick` 側が 1 件も積まずに中止する。
+       */
+      previewAllowFirstStep: true,
     });
   } catch (e) {
     return {
@@ -356,17 +364,27 @@ export async function checkEntryAllowlist({
   const sources = view['最終対象の出所'] || { prospect: 0, Customers: 0, 出所不明: 0 };
   const allow = view.entryAllowlist || null;
   const finalCount = Number(view['絞り込み後に送る人数']) || 0;
-  const w = view.window || {};
-  const prospectWin = w.prospect || null;
+  /**
+   * ⚠️ **下見が中止した窓を「読み切った」と扱わない。**
+   *    中止すると `window` ごと返らないので、続きの位置が両方 null になり
+   *    `done: true` に見えてしまう（2026-09-15 の本番走査で実際にそうなった）。
+   *    窓の情報が揃っているときだけ「続き」を信用する。
+   */
+  const tickOk = view.ok === true;
+  const w = view.window || null;
+  const windowPresent = tickOk && w !== null && Object.prototype.hasOwnProperty.call(w, 'nextLedgerOffset');
+  const prospectWin = windowPresent ? (w.prospect || null) : null;
   const nextOffset = prospectWin ? (prospectWin.nextOffset ?? null) : null;
-  const nextLedgerOffset = w.nextLedgerOffset ?? null;
+  const nextLedgerOffset = windowPresent ? (w.nextLedgerOffset ?? null) : null;
 
   const verdict = judgeWindow({
     plannerCount: planner.count,
     finalRecipients: finalCount,
     outsideAllowlist: allow ? Number(allow['許可リスト外の残り']) || 0 : 0,
     prospectInFinal: Number(sources.prospect) || 0,
-    prospectSkipped: w.prospectSkipped || null,
+    prospectSkipped: windowPresent ? (w.prospectSkipped || null) : null,
+    tickOk,
+    windowPresent,
   });
 
   const body = {
@@ -390,17 +408,19 @@ export async function checkEntryAllowlist({
       offset: nextOffset,
       ledgerOffset: nextLedgerOffset,
       digest: prospectWin ? prospectWin.digest || null : null,
-      done: nextOffset === null && nextLedgerOffset === null,
+      /** ⚠️ 窓の情報が揃っていない回は**絶対に done にしない** */
+      done: windowPresent && nextOffset === null && nextLedgerOffset === null,
     },
     window: {
       scope: win.scope, offset: win.offset, limit: win.limit,
       ledgerOffset: win.ledgerOffset, scanPages: win.scanPages,
-      prospectSkipped: w.prospectSkipped || null,
+      present: windowPresent,
+      prospectSkipped: windowPresent ? (w.prospectSkipped || null) : null,
       indexSize: prospectWin ? prospectWin.indexSize : null,
       scanned: prospectWin ? prospectWin.scanned : null,
     },
     tick: {
-      ok: view.ok === true,
+      ok: tickOk,
       abort: view.abort || null,
       step: view.step || null,
       この_tick_の候補: view['この tick の候補'] ?? null,

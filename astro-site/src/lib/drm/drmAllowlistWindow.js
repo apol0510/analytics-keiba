@@ -45,6 +45,14 @@ export const WINDOW_FAIL = Object.freeze({
   PROSPECT_IN_FINAL: 'prospect_in_final',
   /** 最終人数が planner を超えた */
   OVER_PLANNER: 'final_over_planner',
+  /**
+   * 下見そのものが途中で中止した（窓の情報が返っていない）。
+   *
+   * ⚠️ **これを「読み切った」と扱ってはいけない。** 2026-09-15 の本番走査で、
+   *    2 窓目が `first_step_is_manual` で中止したのに `done: true` と表示され、
+   *    走査が完了したように読めてしまった（部分を全体として扱う形）。
+   */
+  TICK_ABORTED: 'tick_aborted',
 });
 
 /** 指紋の区切り（recordId に現れない文字） */
@@ -99,6 +107,14 @@ export function judgeWindow(w = {}) {
   const finalRecipients = int(w.finalRecipients) ?? 0;
   const outside = int(w.outsideAllowlist) ?? 0;
   const prospect = int(w.prospectInFinal) ?? 0;
+
+  /**
+   * ⚠️ 下見が中止した / 窓の情報が欠けている窓は **fail closed**。
+   *    数字が全部 0 に見えるので、放っておくと「きれいな窓」として通ってしまう。
+   */
+  if (w.tickOk === false || w.windowPresent === false) {
+    violations.push(WINDOW_FAIL.TICK_ABORTED);
+  }
 
   // prospect 索引が変わったら**続けない**（読み飛ばした窓があるまま合格にしない）
   if (str(w.prospectSkipped) === WINDOW_FAIL.PROSPECT_INDEX_CHANGED) {

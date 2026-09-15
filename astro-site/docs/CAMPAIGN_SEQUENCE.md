@@ -824,6 +824,35 @@ curl -X POST .../admin-marketing -H 'x-admin-secret: …' \
 判定の正本は `src/lib/drm/drmAllowlistWindow.js`
 （`digestRecordIds` / `assertPlannerStable` / `judgeWindow` / `mergeWindowRun` / `finalizeWindowRun`）。
 
+### ⚠️ ゲートを閉じたまま step1 を**下見だけ**再現する
+
+step1 を自動で撃てるのは「入口の宣言があり、かつ入口ゲートが開いている」ときだけ。
+production のゲートは**閉じたまま**確認したいので、そのまま下見を回すと
+「期限が来ているのは step1 の人だけ」→ **`first_step_is_manual` で毎回中止**し、
+窓を最後まで走査できない（2026-09-15 に本番実測。2 窓目で止まった）。
+
+そこで `runSequenceTick` に **下見専用**の `previewAllowFirstStep` を足した。
+
+| | |
+|---|---|
+| 有効なのは | **`dryRun: true` のときだけ** |
+| `dryRun: false` で渡したら | **1 件も積まずに中止**（`first_step_override_in_live`）。ゲートを迂回できない |
+| 渡すのは | **`drmEntryAllowlistCheck` だけ** |
+| env | **偽装しない**。`gates` / `autoStart.open` は**閉じたまま**返す（下見で組み立てた分は `previewOnly: true`）|
+| 共有 tick / 割引 3 本 | **完全に不変**（渡さなければ何も変わらない）|
+| 書き込み | queue / claim / `CampaignDeliveries` / `ScheduledEmails` / provider 送信は**すべて 0** |
+
+⚠️ 入口の候補を組み立てるのは**読むだけ**（`planAutoStartEntries` は純粋関数）。
+入口が開いたことにはならない。
+
+### ⚠️ 中止した窓を「読み切った」と扱わない
+
+下見が中止すると `window` ごと返らないので、続きの位置が両方 `null` になり
+**`done: true` に見えてしまう**（2026-09-15 の走査で実際にそうなった）。
+
+`tick.ok === false` または窓の情報が欠けている回は **`tick_aborted` で fail closed**。
+`next.done` も `false` のままにする。中止理由は `tick.abort` にそのまま出す。
+
 ### 守っていること
 
 ⚠️ 下見は**予約（`claimDelivered`）より手前で return する**ので、

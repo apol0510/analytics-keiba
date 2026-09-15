@@ -173,7 +173,13 @@ test('【不変】共有の cron（#521 / #523）を変更していない', () =
   const code = codeOnly(SEQ_CRON);
   assert.match(code, /readSequenceGates\(env, now\)/);
   assert.match(code, /!gates\.allOpen/, 'ゲート判定が外れている');
-  assert.match(code, /allowFirstStep: autoStartDecl !== null && autoStartGate\.open === true/);
+  /**
+   * ⚠️ live の条件は不変（**入口の宣言 ＋ ゲートが開いている**）。
+   *    `dryFirstStep` は下見でしか true にならず、live で渡されたら中止する。
+   */
+  assert.match(code, /allowFirstStep: autoStartDecl !== null && \(autoStartGate\.open === true \|\| dryFirstStep\)/);
+  assert.match(code, /previewAllowFirstStep === true && !isDry/,
+    'live で下見スイッチを渡したときに中止していない');
   assert.equal(code.includes('drmEntryRun'), false);
   assert.equal(code.includes('runDrmEntry'), false);
 });
