@@ -301,8 +301,11 @@ AK から送る DRM・販促メールは、**単なる「期限・価格・リ�
 | 区分 | 本数 | 扱い |
 |---|---|---|
 | **改稿した（未送信）** | **13** | `free-signup-onboarding` step2〜6 / `light-to-premium-sequence` 4 通 / `sanrenpuku-upsell-sequence` 4 通 |
-| **改稿不能（送信済み・稼働中）** | 22 | 割引 3 本 7 通 / 単発 9 本 / `free-signup-onboarding` step1 / `light-trial-to-premium-sequence` step1 ほか |
-| **据え置き（基準相当 or 別任務所有）** | 28 | `light-trial-post-expiry-sequence` 18 通 / `campaign-prospect-phase2` 7 通 ほか |
+| **改稿不能（送信済み・稼働中）** | 17 | 稼働中の割引 3 本 7 通 / 送信済みの単発 8 本 / `free-signup-onboarding` step1 / `light-trial-to-premium-sequence` step1 |
+| **据え置き（未送信だが別途判断）** | 31 | `light-trial-post-expiry-sequence` 18 通 / `campaign-prospect-phase2` 7 通 / `light-trial-to-premium-sequence` step2〜6 / `light-lifetime-restart` |
+| **対象外（販促メールではない）** | 2 | `marketing-canary`（疎通確認）/ `general-announcement`（恒久停止の初期テンプレート）|
+
+合計 **63 通**（13 + 17 + 31 + 2）。
 
 対象外は `COPY_STANDARD_NOT_ADOPTED` に**理由つき**で登録。理由なしには足せない
 （テストが理由の存在と網羅性を検査する）。
