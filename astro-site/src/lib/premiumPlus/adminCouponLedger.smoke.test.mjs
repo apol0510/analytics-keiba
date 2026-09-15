@@ -15,18 +15,6 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
-import { useFixedCouponClock } from './couponTestClock.mjs';
-
-/**
- * ⚠️ **基準時刻を固定する**（2026-09-15 の CI 赤の再発防止）。
- *
- * fixture は固定日時なのに判定側が実時計 `Date.now()` を使っていたため、
- * `RESERVATION_STALE_DAYS = 14` の境界（`2026-09-01` + 14 日）を
- * **カレンダーが跨いだ瞬間**に、コードを触っていないのに落ちるようになっていた。
- * 詳細と原則は `couponTestClock.mjs` を参照。
- */
-useFixedCouponClock();
-
 
 const FN = fileURLToPath(new URL('../../../netlify/functions/premium-plus-eligibility.js', import.meta.url));
 const { couponIdWithVersion, PP_REOPEN_COUPON_FIELDS } = await import('./premiumPlusReopenCoupon.js');
