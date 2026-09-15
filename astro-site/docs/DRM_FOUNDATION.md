@@ -315,7 +315,7 @@ read-only API は `admin-marketing` の **`action: 'drm'`**（**送信面**に�
 | `cron-drm-autostart`（scheduled・1 日 1 回）| **Background を起動するだけ** | `maxPerTick` と入口の窓が上限 |
 | `admin-marketing` の `action:'drmEntryRun'`（`dryRun:true`）| **手動の下見**（同期・軽い）| — |
 | `admin-marketing` の `action:'drmEntryRun'`（`dryRun:false`）| **Background を 202 起動するだけ** | **`expectedCount` 必須** |
-| `admin-marketing` の `action:'drmEntryAllowlistCheck'` | **許可リストの効きを下見で確認**（read-only）| **送信 0**。最終集合の人数・出所を返す |
+| `admin-marketing` の `action:'drmEntryAllowlistCheck'` | **許可リストの効きを下見で確認**（read-only・**窓で刻む**）| **送信 0**。窓ごとの人数・出所を返す（**足さずに** `plannerDigest` の外へ出ていないかで判定）|
 | **`drm-entry-background`** | **重い処理はここだけ**（最大 15 分）| Background 側で**改めて**突き合わせ |
 
 ⚠️ **重い処理を同期 Function で完走させない**（2026-09-14 に本番で **504**。
