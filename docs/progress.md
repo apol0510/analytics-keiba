@@ -596,10 +596,11 @@ PR #525 を本番反映後、`cron-drm-autostart` へ `{"dryRun":true}` を POST
   共有 cron の 240 秒を流用すると**実行の途中で切れて二重 enqueue になる**
 - 結果は返さない（**202 即返し**）。**既存の台帳とログ**で確認する
 
-# 🚨 事故: R3 で承認範囲を超える送信（2026-09-14 / **本番再実行 禁止**）
+# 🚨 事故: R3 で承認範囲を超える送信（2026-09-14）→ **是正済み / R3 は 2026-09-15 に完了**
 
-> **原因確定・是正・再検証が済むまで、R3 の再実行・env 変更・queue・実送信を禁止する。**
-> gate（`MARKETING_DRM_AUTOSTART_ENABLED`）は**閉のまま維持**する。
+> **原因は確定し、是正と再検証も終わった。R3 は承認範囲内で完了している（下の「R3 完了」参照）。**
+> gate（`MARKETING_DRM_AUTOSTART_ENABLED`）は実行後に**再び閉じてある**。
+> ここから先（R2 = 2 通目以降）は**未承認**。
 
 ## 確定している事実
 
@@ -807,13 +808,114 @@ queue / claim / `CampaignDeliveries` / `ScheduledEmails` / provider 送信は**�
 guard: `src/lib/drm/drmEntryAllowlistCheck.test.mjs` / `drmAllowlistWindow.test.mjs`
 （`npm run test:drm` / `check:safety`）
 
+## ✅ R3 完了（2026-09-15 / 本番実測）
+
+承認は **`free-signup-onboarding` の 4 名・1 回だけ**。実行は 1 回で、超過は起きていない。
+
+| 項目 | 値 |
+|---|---|
+| 承認人数 | **4 名** |
+| 実送信 | **1 名**（`expectedCount: 4` で起動 → 送信直前の再検証で 3 名が除外） |
+| ジョブ | `mkt-free-signup-onboarding-v1-975900cd-1` / Status `SENT` / Recipients **1** / Sent **1** / Failed **0** |
+| 承認超過 | **0**（Recipients も配信行も provider 送信も 4 を超えていない） |
+| 既存 13 名への再送 | **0** |
+| `DeliveryKey` 重複 | **0** |
+| 最終対象の prospect | **0** |
+| 対象 campaign 以外への送信 | **0** |
+| 配信行 | 13 → **14**（増えたのは 1 行だけ） |
+| gate | 実行後に**再閉鎖済み**。反映後 `entryOpen: false` を実測 |
+| runId | `drm-20260915034212-admin`（202 → Background 03:45:22Z 完了） |
+
+⚠️ **4 名 → 1 名は許可リストが上限として働いた結果ではない。**
+送信直前の再検証で 3 名が落ちたもので、「安全判定で減るのは許容・増えるのは禁止」の取り決めどおり。
+
+### 事前に許可リストの効きを実送信 0 で実証済み（同日）
+
+`action='drmEntryAllowlistCheck'` を窓分割で **6 窓・prospect 索引 11,971 件を読み切り**、
+全窓で `plannerDigest` 固定 / 最終対象 ≤ planner / prospect **0** / 許可リスト外 **0** /
+`sideEffects: none`、`complete: true` / `allowlistHolds: true` を確認した（書き込み 0）。
+
+### DRM の現在地
+
+| | |
+|---|---|
+| `inSequence` | **14** |
+| step1 送信 | **14** |
+| **期限到来（due）** | **0**（2 通目はまだ期限が来ていない） |
+| 入口 gate | **未設定（閉）** |
+
+## ℹ️ 同日 03:50Z の割引 49 通は事故ではない（別セッションの承認済み canary）
+
+同じ時間帯に `campaign-discount-free` のジョブ
+（`mkt-campaign-discount-free-v1-927026a8-1` / Recipients 50 / Sent **49** / Failed 0 /
+03:50:11Z 作成・03:55:12Z 完了）が出たが、**R3 とは無関係**。
+
+- 実行者: **別セッション（`analytics-keiba-cf`）が MK 承認のうえ 1 回だけ実行した prospect canary**
+- runId: **`canary-2026-09-15035010`**
+- 条件: `campaignId=campaign-discount-free` / `sourceFilter='prospect'` / `maxPerTick=50` / `expectedCount=50`
+- 50 → 49 は**失敗ではなく**、1 名が送信直前の再検証で除外されたもの
+
+**なぜ canary だと特定できたか**: `sequence-canary-background.js` は実行時に
+`env: { ...process.env, SCHEDULER: 'true' }` を**その場で合成する**。
+`MARKETING_SEQUENCE_SCHEDULER_ENABLED=false` のまま割引 campaign へ本番 tick できる経路は**ここだけ**で、
+定期 cron は `gates_closed` で止まる。DRM の経路は `campaignId` を明示で渡すので割引を tick できない。
+
+## ⚠️ 重要な訂正 — `MARKETING_DRM_AUTOSTART_ENABLED` は **R2 の gate ではない**
+
+これは **step1 の入口専用**のスイッチで、**step2 以降の実行 gate ではない**。
+
+`planSequenceTick` は `excludeSteps = allowFirstStep ? [] : [1]` としており、
+このスイッチが左右するのは **step1 を選べるかどうかだけ**。
+step2 以降は `selectNextDueStep` が**期限の来ている最小の step** を選ぶので、
+このスイッチとは無関係に選ばれる。
+
+> **R2 のためにこの env を開けてはいけない。**
+
+⚠️ さらに、**開けても R2 は出せない**。`runDrmEntry` は入口の下見が返した
+recordId（＝**まだ 1 通も受け取っていない人**）を許可リストとして渡すため、
+step2 の対象（既に受け取っている 14 名）は**全員が許可リストの外**になり、
+最終対象 0 → `no_due_recipients` で止まる。**構造的に 2 通目は出ない。**
+
+現時点で `free-signup-onboarding` の step2 を送れる経路は**存在しない**
+（共有 cron の `MARKETING_SEQUENCE_CAMPAIGN_ID` は割引 3 本のみ／canary は
+`campaign-discount-free` 専用）。**R2 には別途の判断と承認が要る。**
+
+## R2 の進め方（**due が出てから**・実送信の直前で止まる）
+
+いまは `due: 0` なので**何もしない**。期限が来たら、まず **read-only** で次を確認する。
+
+| 見るもの | どこで |
+|---|---|
+| 反応の状態（`declared` / `active` / `reason` / `measured` / `counts`） | `action='drmProgress'` の `responseRouting` |
+| `byRoute`（層ごとに何人が振り分いたか） | 同上 `responseRouting.byRoute` / `routed` |
+| 次に選ばれる step | 同上 `summary.dueByStep` の**最小の step** |
+| 対象人数 | 同上 `summary.due` / `dueByStep` |
+| purchase / suppression の除外 | 同上 `summary.stopped` / `byStopReason` |
+
+### ⚠️ `drmEntryAllowlistCheck` は R2 の確認には**使えない**
+
+あの経路は **step1 入口の planner が返した recordId**（＝**まだ 1 通も受け取っていない人**）を
+許可リストとして渡す。R2 の対象は**すでに step1 を受け取った人**なので、
+**構造的に全員が許可リストの外**になり、最終対象 0 として落ちる。
+「0 件だから安全」と読めてしまうので、**R2 の確認根拠にしない**。
+
+### 最終 recipient（duplicate 除外を含む）をどう確認するか — **未確定**
+
+**R2 の最終 recipient を副作用 0 で確認する経路は現時点で未確定。**
+due が発生した後、まず既存の汎用 sequence 下見（`action='sequenceTickPreview'` の窓分割）で
+確認できるかを**調査する**。足りなければ **R2 専用の read-only 下見を実装する**。
+いずれの場合も**実送信の直前で停止**する。
+
+確認できたら**実送信の直前で停止し、MK の承認を待つ**。
+**R2 の実送信・queue 登録・env 変更はいずれも未承認。**
+
 ## 残作業（**これが埋まるまでクローズしない**）
 
 | # | 残件 | 埋め方 | 依存 |
 |---|---|---|---|
 | R1 | 1 通単位の開封が本番で**実際に読めている**ことの実測 | `action=sequence` の `responseRouting.measured.open` と `counts` を read-only で確認 | 引数名バグ修正の deploy |
-| R2 | **実配信で層ごとに別の 1 通が出た**（`byRoute` に `opened:9` / `delivered:16`） | ゲートを開けて `light-trial-post-expiry-sequence` を進める | **MK の明示承認**（実メール送信） |
-| R3 | 入口の自動開始を**本番で 1 名**通す（段 1） | `MARKETING_DRM_AUTOSTART_ENABLED` を開ける | **MK の明示承認**（実メール送信） |
+| R2 | **実配信で層ごとに別の 1 通が出た**（`byRoute` に `opened:9` / `delivered:16`） | **いまは `due: 0` なので未実行のまま維持**。期限が来たら read-only 確認 → 実送信の直前で停止（上の「R2 の進め方」）。⚠️ `MARKETING_DRM_AUTOSTART_ENABLED` は **R2 の gate ではない**ので開けない | **MK の明示承認**（実メール送信） |
+| ~~R3~~ | ~~入口の自動開始を**本番で 1 名**通す（段 1）~~ → **2026-09-15 完了**（承認 4 名 → 実送信 1 名 / 超過 0 / 再送 0 / prospect 0 / gate 再閉鎖）| — | 完了 |
 | ~~R4~~ | ~~第 3 段の文面を MK が確認~~ → **2026-09-14 承認済み**（Step4 の締めのみ顧客向けの言い方へ修正）| — | 完了 |
 | R5 | **購入が発生したときに**その購入が実 touch へ正しく帰属される | 既存の有料化済みレコードを名指しして `admin-drm-attribution` を実行し、`purchaseTimeReasons` と帰属の判定が正しいことを確認 | R1 |
 | R6 | **段が変わったときに**次段へ正しく遷移する（前段が停止し、次段の対象になる） | 既に段をまたいでいる実レコードで `resolveFunnelStage` / 前段の `stopReason` を read-only 確認 | R1 |
