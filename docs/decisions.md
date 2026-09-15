@@ -6,6 +6,7 @@
 |---|---|---|
 | 1 | `MAX_PER_TICK` は「**最終的に積める人の上限**」。安全条件で削られたら**後続から補充する** | `sequenceTickRefill.refillSendable` |
 | 2 | 補充で見る範囲は**有限**（既定 1,000 人・塊 100 人）。無限に探さない | 同上 |
+| 2-b | **候補の供給範囲と探索上限を一致させる**（`CANDIDATE_SUPPLY = DEFAULT_MAX_SCAN`）| `sequenceAutomation` / `sequenceTickRefill` |
 | 3 | 上限は**絶対に超えない**。安全条件は**迂回しない**（既登録除外 → 出所フィルタ → 許可リストの順を塊の中で保つ）| 同上 |
 | 4 | campaign は **tick ごとに先頭を回す**（round-robin・決定論）| `sequenceTickRotation.rotateCampaigns` |
 | 5 | 残り時間が足りなければ**新しい campaign を始めない**。始めなかった名前は必ず返す | `sequenceTickRotation.hasTimeForAnother` |
@@ -43,6 +44,15 @@ step2 の due は 1,800 人以上残っているのに 1 tick で 4 人。**進�
 ただし `sequenceLedgerScan.js` が書いているとおり Airtable の `offset` は短命で、
 tick の間隔が空くと失効する。**進んでいないことに気付けないほうが危険**なので、
 周回数と続きの有無を毎 tick ログへ出す（設計変更は、周回できていないと実測できてから）。
+
+## ⚠️ 供給と探索上限は必ず揃える
+
+最初の実装は 供給 = `maxRecipients × 10` = **500**、探索上限 = **1,000** で食い違っていた。
+「先頭 500 が全部既登録で、501 人目以降に未登録が居る」場合、
+**501 人目以降へ永久に届かない**（探索上限まで行く前に候補が尽きる）。
+
+いまは `CANDIDATE_SUPPLY = DEFAULT_MAX_SCAN`（単一源から取る）。
+**送る人数の上限は `MAX_PER_TICK` のまま**で、供給を増やしても送信数は増えない。
 
 ## 触らなかったこと
 

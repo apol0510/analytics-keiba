@@ -20,7 +20,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-import { refillSendable, DEFAULT_CHUNK } from './sequenceTickRefill.js';
+import { refillSendable, DEFAULT_CHUNK, DEFAULT_MAX_SCAN } from './sequenceTickRefill.js';
+import { CANDIDATE_SUPPLY } from './sequenceAutomation.js';
 
 const CRON = readFileSync(
   fileURLToPath(new URL('../../../netlify/functions/cron-campaign-sequence.js', import.meta.url)),
@@ -133,4 +134,75 @@ test('【重要】上限は plan.recipients（= MAX_PER_TICK）を使う', () =>
 test('【重要】枠を空けたことを黙らない（補充の実績をログへ）', () => {
   assert.match(CRON, /summary\['補充'\]/, '補充の実績を残していない');
   assert.match(CRON, /summary\['台帳走査'\]/, '走査の周回を残していない');
+});
+
+// ══════════════════════════════════════════════════════════════════
+//  候補の供給範囲と探索上限を一致させる（2026-09-15 追補）
+// ══════════════════════════════════════════════════════════════════
+
+/**
+ * ## なぜ要るか
+ *
+ * 補充は「見に行ける上限」まで探せる。ところが**候補の供給**がそれより少ないと、
+ * 上限まで探す前に候補が尽きて後続へ到達できない。
+ *
+ * 当初の実装は 供給 = `maxRecipients × 10` = **500**、探索上限 = **1,000** だった。
+ * 「先頭 500 が全部既登録で、501 人目以降に未登録が居る」場合、
+ * **501 人目以降へ永久に届かない**。
+ */
+test('【重要】候補の供給範囲は補充の探索上限と一致する', () => {
+  assert.equal(CANDIDATE_SUPPLY, DEFAULT_MAX_SCAN,
+    `供給 ${CANDIDATE_SUPPLY} と探索上限 ${DEFAULT_MAX_SCAN} が食い違っている`);
+});
+
+test('【重要】先頭 500 が全員既登録でも、501 人目以降から補充する', async () => {
+  const candidates = Array.from({ length: CANDIDATE_SUPPLY }, (_, i) => row(i));
+  const blocked = new Set(candidates.slice(0, 500).map((r) => r.recordId));
+  const out = await refillSendable({
+    candidates, maxRecipients: 50, chunkSize: DEFAULT_CHUNK,
+    isSendable: async (chunk) => chunk.filter((r) => !blocked.has(r.recordId)),
+  });
+  assert.equal(out.picked.length, 50, '501 人目以降へ到達できていない');
+  assert.equal(out.picked[0].recordId, 'rec-500', '順序が変わっている');
+  assert.equal(out.picked.some((r) => blocked.has(r.recordId)), false, '既登録を積んでいる');
+});
+
+test('【重要】探索上限に達したら有限で止まる（その先は次の tick へ）', async () => {
+  // 供給ぶん全部が既登録 → 1 人も積めないが、見た数は上限を超えない
+  const candidates = Array.from({ length: CANDIDATE_SUPPLY * 3 }, (_, i) => row(i));
+  let seen = 0;
+  const out = await refillSendable({
+    candidates, maxRecipients: 50, chunkSize: DEFAULT_CHUNK, maxScan: DEFAULT_MAX_SCAN,
+    isSendable: async (c) => { seen += c.length; return []; },
+  });
+  assert.equal(out.picked.length, 0);
+  assert.equal(seen, DEFAULT_MAX_SCAN, `探索上限どおりに止まっていない: ${seen}`);
+  assert.equal(out.exhausted, false, '見切っていないのに見切った扱い');
+});
+
+test('【重要】探索上限の中に 50 人未満しか居なければ、その人数だけ', async () => {
+  const candidates = Array.from({ length: CANDIDATE_SUPPLY }, (_, i) => row(i));
+  const sendable = new Set(candidates.slice(0, 7).map((r) => r.recordId));
+  const out = await refillSendable({
+    candidates, maxRecipients: 50, chunkSize: DEFAULT_CHUNK,
+    isSendable: async (chunk) => chunk.filter((r) => sendable.has(r.recordId)),
+  });
+  assert.equal(out.picked.length, 7, '居ない人を水増ししている');
+});
+
+test('【重要】供給が上限まであっても MAX_PER_TICK は超えない', async () => {
+  const candidates = Array.from({ length: CANDIDATE_SUPPLY }, (_, i) => row(i));
+  const out = await refillSendable({
+    candidates, maxRecipients: 50, chunkSize: DEFAULT_CHUNK, isSendable: async (c) => c,
+  });
+  assert.equal(out.picked.length, 50);
+  assert.ok(out.scanned <= DEFAULT_MAX_SCAN);
+});
+
+test('【重要】planner の供給は定数を直書きしない（単一源から取る）', () => {
+  const auto = readFileSync(fileURLToPath(new URL('./sequenceAutomation.js', import.meta.url)), 'utf8');
+  assert.match(auto, /export const CANDIDATE_SUPPLY = REFILL_MAX_SCAN;/, '供給が単一源から来ていない');
+  assert.match(auto, /const candidateIds = next\.recordIds\.slice\(0, CANDIDATE_SUPPLY\)/,
+    '供給の切り方が変わっている');
+  assert.equal(/maxRecipients \* CANDIDATE_OVERSELECT/.test(auto), false, '旧実装（倍率）に戻っている');
 });

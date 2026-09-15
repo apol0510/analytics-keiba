@@ -53,6 +53,8 @@ export const SEQUENCE_ENV = Object.freeze({
   DISPATCH: 'MARKETING_CAMPAIGN_DISPATCH_ENABLED',
 });
 
+import { DEFAULT_MAX_SCAN as REFILL_MAX_SCAN } from './sequenceTickRefill.js';
+
 export const TICK_ABORT = Object.freeze({
   GATES_CLOSED: 'gates_closed',
   NOT_A_SEQUENCE: 'not_a_sequence',
@@ -132,10 +134,14 @@ export function readSequenceAutoState(env, nowMs) {
  * @returns {{ok: boolean, abort?: string, step?: number, recordIds?: string[], counts?: object}}
  */
 /**
- * 候補を上限の何倍まで返すか。安全条件で削られるぶんの余裕。
- * ⚠️ **送る人数の上限ではない**。上限は `maxRecipients`（`recipients`）のまま。
+ * 候補を何人まで返すか（**送る人数の上限ではない**。上限は `maxRecipients`）。
+ *
+ * ⚠️ **補充側が見に行ける上限（`sequenceTickRefill.DEFAULT_MAX_SCAN`）と一致させる。**
+ *    ここが少ないと、先頭が全部既登録のときに後続へ到達できない
+ *    （供給 500 / 探索上限 1,000 だと 501 人目以降へ永久に届かない）。
+ * ⚠️ 並び順は変えない。公平性は `sequenceAudiencePool` の責任。
  */
-export const CANDIDATE_OVERSELECT = 10;
+export const CANDIDATE_SUPPLY = REFILL_MAX_SCAN;
 
 export function planSequenceTick({
   progress, gates, allowFirstStep = false, maxRecipients = MAX_RECIPIENTS_PER_TICK,
@@ -206,7 +212,7 @@ export function planSequenceTick({
    * `recipients`（= `recordIds.length`）が持ち、呼び出し側はそれを超えて積まない。
    * ⚠️ 並び順は変えない（公平性は母集団側の責任）。
    */
-  const candidateIds = next.recordIds.slice(0, maxRecipients * CANDIDATE_OVERSELECT);
+  const candidateIds = next.recordIds.slice(0, CANDIDATE_SUPPLY);
   return {
     ok: true,
     step: next.step,

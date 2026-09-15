@@ -98,7 +98,8 @@ duplicate 0 / Failed 増加 0 / Customers 0 / unknown 0 / lock 正常 / DRM 副�
 
 | 変更 | 中身 |
 |---|---|
-| `sequenceTickRefill.js`（新規）| 枠が埋まるまで**塊で見て後続から補充**。上限は超えない・安全条件は迂回しない・見る範囲は有限 |
+| `sequenceTickRefill.js`（新規）| 枠が埋まるまで**塊で見て後続から補充**。上限は超えない・安全条件は迂回しない・見る範囲は有限（1,000 人）|
+| 候補の供給 | **探索上限と一致**させる（`CANDIDATE_SUPPLY = DEFAULT_MAX_SCAN = 1,000`）。供給 500 / 探索 1,000 だと 501 人目以降へ届かなかった |
 | `sequenceTickRotation.js`（新規）| campaign の**先頭を tick ごとに回す**（決定論）＋ 残り時間が足りなければ始めず名前を残す |
 | 観測 | 走査の**周回数と続きの有無**、補充の実績を毎 tick ログへ |
 
