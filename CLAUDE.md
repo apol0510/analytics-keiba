@@ -116,6 +116,14 @@ CLAUDE.md は**毎セッション全文が読み込まれる**。詳細を戻す
 PR の merge / production deploy / 本番データ書込み / env の変更 / queue 登録 / 実送信 /
 実顧客レコードの変更。**これらは承認前に必ず止まる。**
 
+### merge 直前は必ず最新 `origin/main` を取り直す
+
+`git fetch origin` し、**PR の base 以降に同じ変更領域へ別セッションの変更が入っていないか**を
+確認する。入っていれば merge せず、通常マージで追随し**再テスト・再 CI してから** merge する。
+**自分の PR の CI が green でも、main が green のままとは限らない**（branch の CI は相手の
+変更を含まない）。手順と過去 2 件の事故は [`docs/decisions.md`](./docs/decisions.md) の
+「2026-09-15 — PR は merge 直前に必ず最新 origin/main を取り直す」が正本。
+
 ### 自律完遂の運用
 
 段取り・完了条件・報告様式は [`docs/AUTONOMOUS_DELIVERY.md`](./astro-site/docs/AUTONOMOUS_DELIVERY.md)。
