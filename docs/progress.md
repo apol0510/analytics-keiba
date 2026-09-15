@@ -16,6 +16,169 @@
 「送信コードが完成した」は完成ではない。**実配信が進み、反応ありを保持し、
 10 delivered 無反応を自動除外できる状態**までを完成とする。
 
+## 🧭 現在地（2026-09-15 / セッション終了時点の固定記録）
+
+> **次に再開した人は、この節から読む。** 人間がターミナルを開いたまま見張る運用は**禁止**。
+> 本番は既に自動で回っているので、**必要なのは定期的な read-only 確認だけ**。
+
+### 本番の状態（すべて反映済み）
+
+| 項目 | 状態 |
+|---|---|
+| PR #548 | **merge 済み**（main `c587c025`）・**production deploy ready**（2026-09-15 07:58:51Z）|
+| `campaign-prospect-phase2` | **本番で有効**（`usable: true` / 7 step / `runner: campaign-sequence` / `audienceSource: prospect`）|
+| `MARKETING_SEQUENCE_CAMPAIGN_ID` | **UNSET**（正本どおり。**今後も設定しない**）|
+| `MARKETING_SEQUENCE_SCHEDULER_ENABLED` | `true`（通常自動運用）|
+| `MARKETING_CAMPAIGN_DISPATCH_ENABLED` | `true`（通常自動運用）|
+| `MARKETING_DRM_AUTOSTART_ENABLED` | 未設定（DRM 入口は閉。**触らない**）|
+| 共有 cron の担当 | **7 本**（DRM 3 本 ＋ 割引 3 本 ＋ 第 2 期）|
+
+### 第 1 期 → 第 2 期の接続
+
+`campaign-discount-free`（3 通）を**配り終えた prospect だけ**が
+`campaign-prospect-phase2`（7 通）の step1 へ**自動で**入る。3 + 7 = **delivered 10**。
+
+- 宣言は `sequence.autoStart: { kind: 'prior_sequence_done', afterCampaignId: 'campaign-discount-free' }`
+- 判定は**第 1 期固有の `DeliveryKey`**。**`delivered` の累計では判定しない**
+  （累計は過去キャンペーンぶんを含む。実測で既に 4 の人が 30 名いる）
+- 第 2 期は **prospect 専用**（Customers / DRM へは構造的に入らない）
+- 台帳を読めないときは**1 人も入れない**
+
+### ⚠️ 構造的な制約（異常ではない / 時間がかかる理由）
+
+**1 tick で進むのは 1 campaign だけ**。理由は「重い campaign が予算を食う」からではない。
+
+2026-09-15 09:10Z の実測: `campaign-discount-light` は `no_due_recipients` で
+**送る相手が 0 人**だったのに、その tick で**残り 6 本すべてが `deferred`** になった。
+
+```
+09:10:43 {"キャンペーン":"campaign-discount-light","対象":0,"登録":0,"中止":"no_due_recipients"}
+09:10:43 {"action":"deferred","campaigns":[premium, free-signup, light-to-premium,
+                                           sanrenpuku, discount-free, prospect-phase2]}
+```
+
+⚠️ **どの campaign でも 1 tick あたり約 40 秒かかる**。
+   `runSequenceTick` は campaign によらず **prospect 索引 11,966 件を毎回読む**ため、
+   送る相手が 0 人でも時間を使う。時間予算は 55 秒・次を始める最低所要は 50 秒なので、
+   **1 本走った時点で必ず打ち切りになる**。
+
+循環シフトなので **7 tick（約 70 分）に 1 回だけ第 2 期が先頭**になり、そのとき実行される。
+
+⚠️ この「毎回 prospect 索引を全件読む」は、**prospect を持たない campaign にとっては無駄**。
+   速度を上げたいなら、ここを `audienceSource` で早期に打ち切るのが筋
+   （**別任務として提案すること**。今回は触っていない）。
+
+| 項目 | 見込み |
+|---|---|
+| 第 2 期の実行機会 | **約 70 分に 1 回** |
+| 1 回あたり | **最大 50 名** |
+| 対象 | prospect 索引 約 11,966 名 × 7 通 |
+
+**これは異常ではない**（rotation・時間予算・1 tick 上限はいずれも設計どおり）。
+ただし **mission 完了までの時間を延ばす構造的制約**なので、
+「進んでいない」と誤認しないためにここへ残す。
+
+⚠️ 速度を上げたくなっても、**手動 enqueue / canary / 人工的な `delivered` 補正はしない**。
+   必要なら catalog の並び順か時間予算の見直しを**別任務**として提案すること。
+
+### 実測の基準値（2026-09-15 08:5x 時点）
+
+| 項目 | 値 |
+|---|---|
+| SentCount 合計 | 27,447 |
+| FailedCount 合計 | **4**（増えていない）|
+| EmailBlacklist | **404** |
+| prospect 索引 | 11,966 |
+| `delivered` 最大 | **4**（第 2 期はまだ 1 通も届いていない）|
+| `delivered` 分布 | `1: 65 / 2: 1,498 / 3: 407 / 4: 30`（第 1 窓）|
+| ENGAGED | **11**（増え続けている＝反応ありの保持は機能）|
+| EXHAUSTED | **1**（**bounce 由来**。10 通到達ではない）|
+
+## 🔴 未完了 mission（クローズ禁止）
+
+| # | 条件 | 状態 |
+|---|---|---|
+| 1 | 実在 prospect で**第 2 期の自然開始**を本番確認 | **未確認**。09:00Z が初回機会だったが、**その tick のログを取得できていない**（08:51Z と 09:10Z はあるのに 09:00Z だけ欠落）。次の人はまずここを確認する |
+| 2 | `delivered` が**自然に累積**（4 → 10 へ）| 未達 |
+| 3 | 実在 prospect が **delivered=10・無反応 → EXHAUSTED** | 未達 |
+| 4 | その prospect が次回以降の通常 marketing の **candidate / enqueue / dispatch から実際に除外** | 未実証 |
+| 5 | duplicate / Failed / Blacklist / DRM 副作用に**異常なし** | 継続監視 |
+| 6 | 最終実証後に **docs 更新・CI・cleanup** | 未実施 |
+
+**6 まで終えて初めてクローズする。**
+
+## ▶️ 次に再開した人が確認すること（read-only / 順番どおり）
+
+### 手順 1 — 本番の状態が変わっていないか
+
+```
+netlify env:get MARKETING_SEQUENCE_CAMPAIGN_ID --context production   # → UNSET のはず
+netlify env:get MARKETING_SEQUENCE_SCHEDULER_ENABLED --context production  # → true
+netlify env:get MARKETING_CAMPAIGN_DISPATCH_ENABLED --context production   # → true
+```
+
+⚠️ `netlify env:get` は**主 working tree から実行する**（worktree から呼ぶと空で 403）。
+
+### 手順 2 — 第 2 期が本番で有効か
+
+`admin-marketing` の `action: 'campaigns'` を叩き、
+`campaign-prospect-phase2` が `usable: true` / `stepCount: 7` /
+`audienceSource: 'prospect'` であることを見る。
+
+### 手順 3 — 第 2 期が実際に動いたか（**最重要**）
+
+`netlify logs --source functions --function cron-campaign-sequence --since 60m`
+
+- `{"キャンペーン":"campaign-prospect-phase2", ...}` の要約行を探す
+- あれば `対象` / `登録` / `prospect対象` / `Airtable台帳`（**0 であること**）/ `入口` を見る
+- `deferred` の一覧にしか出てこないなら、**まだ順番が来ていないだけ**（異常ではない）
+
+⚠️ ログ配信は**約 10 分遅れる**。直後に見えなくても慌てない。
+
+### 手順 4 — delivered が積み上がっているか
+
+`admin-marketing` の `action: 'prospectSequenceCheck'` を
+`offset` を 0 / 2000 / 4000 … と進めて全窓走査し、
+`delivered.max` と分布を見る。**4 → 5 以上**になっていれば第 2 期が届き始めている。
+
+### 手順 5 — 打ち切りが起きたか
+
+同じ応答の `pool.永久除外` が **1 より増えていれば**、その増分を調べる。
+
+- **10 通到達によるものか**（`delivered` 分布に 10 が現れているか）
+- それとも **bounce 由来か**（`EmailBlacklist` が同時に増えているか）
+
+⚠️ 現在の 1 件は **bounce 由来**。10 通到達ではない。**混同しないこと。**
+
+### 手順 6 — 異常がないか
+
+| 見るもの | 正常値 |
+|---|---|
+| `FailedCount` 合計 | 4 から**増えていない** |
+| ジョブの宛先 | ユニーク数と一致（duplicate 0）|
+| 1 ジョブの宛先 | **50 以下** |
+| `Airtable台帳` | 第 2 期では **0**（Customers 混入なし）|
+| DRM | `free-signup-onboarding` が勝手に進んでいない |
+
+### 手順 7 — 異常だったとき
+
+| 止めたいもの | 手段 |
+|---|---|
+| 新規 enqueue | `MARKETING_SEQUENCE_SCHEDULER_ENABLED=false` ＋ redeploy |
+| 未送信ジョブの実送信 | `MARKETING_CAMPAIGN_DISPATCH_ENABLED` を外す ＋ redeploy |
+| 第 2 期だけ止める | catalog の `campaign-prospect-phase2` を `enabled: false`（PR）|
+
+⚠️ **provider accepted 済みのメールは取り消せない。**
+⚠️ `MARKETING_SEQUENCE_CAMPAIGN_ID` は**再設定しない**（未設定が正）。
+
+### やってはいけないこと
+
+- 人間がターミナルを開いたまま監視し続ける運用（**禁止**。定期の read-only 確認で足りる）
+- 手動 enqueue / 追加 canary / 人工的な `delivered` 補正
+- Redis / Airtable の手動補正
+- `MARKETING_SEQUENCE_CAMPAIGN_ID` の再設定
+- 第 1 期（`campaign-discount-free`）の文面・`version`・既送 `DeliveryKey` の変更
+
 ## 完成条件（チェックリスト）
 
 | # | 条件 | 状態 |
@@ -25,9 +188,10 @@
 | 3 | `delivered` を数える（打ち切りの分母） | ✅ **本番実証済み**（webhook で prospect レコードへ加算。分布 `1:469 / 2:11,305 / 3:165 / 4:30`）|
 | 4 | `open` / `click` を蓄積する | ⚠️ open は稼働中（`withOpens` 現在 0）。**click は `MARKETING_CLICK_TRACKING_ENABLED` 未設定で 0 のまま**（正本どおり当てにしない）|
 | 5 | 反応ありを保持する（ENGAGED は打ち切らない・Customers へ昇格できる）| ✅ 実装済み ＋ **本番で ENGAGED 6 名を観測** |
-| 6 | **delivered 10 通・無反応で自動除外**される | ⚠️ 判定は実装・テスト済み。**第 2 期 7 通を追加して初めて 10 に届く**（PR 作成済み・**本番未反映**）|
+| 6 | **delivered 10 通・無反応で自動除外**される | ⚠️ 判定は実装・テスト済み ＋ **第 2 期 7 通を本番反映済み**（#548 / `c587c025`）。**10 到達者はまだ 0**（現在の最大 4）＝**本番実証はこれから** |
 | 7 | 除外された人が次のキャンペーンでも対象に戻らない | ✅ EXHAUSTED は送信対象の入口・送信直前・再取り込みのいずれでも落ちる（テストで固定）|
-| 8 | 実配信が**継続**している（1 キャンペーンで止まらない）| ✅ **本番実証済み**（2026-09-15 / rotation で free・light・premium の 3 本が自動で進む）|
+| 8 | 実配信が**継続**している（1 キャンペーンで止まらない）| ✅ **本番実証済み**（2026-09-15 / rotation で担当 7 本が自動で回る）|
+| 9 | **第 1 期 → 第 2 期が自動で繋がる**（`prior_sequence_done`）| ⚠️ 実装・テスト済み ＋ 本番反映済み。**第 2 期の自然開始はまだ未観測**（rotation の順番待ち。約 70 分に 1 回）|
 
 ## 初回実配信の結果（2026-09-14 07:10 UTC / step2・150 通）
 
