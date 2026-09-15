@@ -53,6 +53,8 @@ export const SEQUENCE_ENV = Object.freeze({
   DISPATCH: 'MARKETING_CAMPAIGN_DISPATCH_ENABLED',
 });
 
+import { DEFAULT_MAX_SCAN as REFILL_MAX_SCAN } from './sequenceTickRefill.js';
+
 export const TICK_ABORT = Object.freeze({
   GATES_CLOSED: 'gates_closed',
   NOT_A_SEQUENCE: 'not_a_sequence',
@@ -131,6 +133,16 @@ export function readSequenceAutoState(env, nowMs) {
  *          maxRecipients?: number}} input
  * @returns {{ok: boolean, abort?: string, step?: number, recordIds?: string[], counts?: object}}
  */
+/**
+ * 候補を何人まで返すか（**送る人数の上限ではない**。上限は `maxRecipients`）。
+ *
+ * ⚠️ **補充側が見に行ける上限（`sequenceTickRefill.DEFAULT_MAX_SCAN`）と一致させる。**
+ *    ここが少ないと、先頭が全部既登録のときに後続へ到達できない
+ *    （供給 500 / 探索上限 1,000 だと 501 人目以降へ永久に届かない）。
+ * ⚠️ 並び順は変えない。公平性は `sequenceAudiencePool` の責任。
+ */
+export const CANDIDATE_SUPPLY = REFILL_MAX_SCAN;
+
 export function planSequenceTick({
   progress, gates, allowFirstStep = false, maxRecipients = MAX_RECIPIENTS_PER_TICK,
   /**
@@ -187,10 +199,26 @@ export function planSequenceTick({
   // 上限まで送り、残りは次の tick へ持ち越す
   const take = next.recordIds.slice(0, maxRecipients);
   const carriedOver = next.recordIds.length - take.length;
+  /**
+   * ⚠️ **候補は上限より多く返す**（2026-09-15 の逓減対策）。
+   *
+   * `recordIds` は「上限ぶん」だが、呼び出し側はこの後に安全条件
+   * （既に `queued` / `sent` の人を外す・出所フィルタ・許可リスト）で候補を削る。
+   * 上限ぶんしか渡さないと、削られた分だけ枠が空いたまま終わる
+   * （本番実測: 50 → 20 → 13 → 4 と逓減し、due が 1,800 人以上残っているのに
+   *  1 tick で 4 人しか進まなくなった）。
+   *
+   * `candidateIds` は**削られる前提の候補**。実際に積む人数の上限は
+   * `recipients`（= `recordIds.length`）が持ち、呼び出し側はそれを超えて積まない。
+   * ⚠️ 並び順は変えない（公平性は母集団側の責任）。
+   */
+  const candidateIds = next.recordIds.slice(0, CANDIDATE_SUPPLY);
   return {
     ok: true,
     step: next.step,
     recordIds: take,
+    /** 安全条件で削られる前提の候補（`recipients` を超えて積んではいけない）*/
+    candidateIds,
     recipients: take.length,
     /** 今回送らずに次回へ回した人数（0 なら完走） */
     carriedOver,

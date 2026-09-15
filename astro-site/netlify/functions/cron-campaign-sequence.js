@@ -63,6 +63,10 @@ import {
 import {
   scopeAudiencePool, interleaveBySource,
 } from '../../src/lib/marketing/sequenceAudiencePool.js';
+// 1 tick の枠を「積める人」で埋める（2026-09-15 の逓減対策）
+import { refillSendable } from '../../src/lib/marketing/sequenceTickRefill.js';
+// campaign を順番に先頭へ回す（後ろの campaign が永久に進まないのを防ぐ）
+import { rotateCampaigns, hasTimeForAnother } from '../../src/lib/marketing/sequenceTickRotation.js';
 import {
   isSequenceCampaign, resolveSequenceStep, resolveAutoStart,
 } from '../../src/lib/marketing/campaignSequence.js';
@@ -791,7 +795,18 @@ export async function runSequenceTick({
   // 5) 送信計画（除外・DeliveryKey は既存の単一源がそのまま担当）
   const sending = resolveSequenceStep(base, plan.step);
   const byId = new Map(selected.map((c) => [c.recordId, c]));
-  const allTargets = plan.recordIds.map((rid) => byId.get(rid)).filter(Boolean);
+  /**
+   * ⚠️ **枠は「積める人」で埋める。**
+   *
+   * `plan.recordIds` は上限ぶんしか返らないので、そのまま使うと
+   * 既登録を外したあとに枠が埋まらない（本番実測: 50 → 20 → 13 → 4 と逓減し、
+   * due が 1,800 人以上残っているのに 1 tick で 4 人しか進まなくなった）。
+   * `plan.candidateIds` は**上限より多い候補**で、この後の安全条件で削られる前提。
+   * 上限は `plan.recipients` が持ち、**絶対に超えない**。
+   */
+  const candidateIds = Array.isArray(plan.candidateIds) && plan.candidateIds.length > 0
+    ? plan.candidateIds : plan.recordIds;
+  const allTargets = candidateIds.map((rid) => byId.get(rid)).filter(Boolean);
   const scope = { brand: BRAND, campaignId: base.campaignId, version: base.version };
   const keyOfTarget = (t) => computeCampaignDeliveryKey({
     campaign: sending,
@@ -821,62 +836,62 @@ export async function runSequenceTick({
    * ⚠️ `cancelled` / `failed` は既送信に数えない（巻き戻し済み＝積み直してよい）。
    *    判定は `活きている行` の単一源 `ACTIVE_DELIVERY_STATUS` に合わせる。
    */
-  let activeKeys = null;
-  try {
-    activeKeys = await fetchActiveDeliveryKeys({
-      KEY, BASE, keys: allTargets.map(keyOfTarget).filter(Boolean),
-    });
-  } catch {
-    activeKeys = null;
-  }
-  if (activeKeys === null) {
+  /**
+   * ⚠️ **枠が埋まるまで、塊で見て後ろから補充する**（2026-09-15 の逓減対策）。
+   *
+   * 以前は候補を上限ぶんしか持たず、そこから既登録を外していたので
+   * 枠が空いたまま終わっていた（本番実測: 50 → 20 → 13 → 4）。
+   * いまは候補を多めに持ち、**積める人が上限に達するまで**前から順に確かめる。
+   *
+   * ⚠️ 上限（`plan.recipients`）は**絶対に超えない**（`refillSendable` が保証）。
+   * ⚠️ 安全条件は**迂回しない**。塊ごとに
+   *    既登録の除外 → 出所フィルタ → 許可リスト を**そのままの順で**通す。
+   * ⚠️ 並び順は変えない（公平性は `sequenceAudiencePool` の責任）。
+   */
+  const allowlist = normalizeAllowlist(entryAllowlist);
+  const cap = Number.isInteger(plan.recipients) && plan.recipients > 0 ? plan.recipients : 0;
+  let ledgerFailed = false;
+  let alreadyQueued = 0;
+  let droppedByFilter = 0;
+  let droppedByAllowlist = 0;
+  const bySource = { prospect: 0, customer: 0, unknown: 0 };
+  let lastFilter = audienceFilter;
+
+  const refill = await refillSendable({
+    candidates: allTargets,
+    maxRecipients: cap,
+    isSendable: async (chunk) => {
+      if (ledgerFailed) return [];
+      let active = null;
+      try {
+        active = await fetchActiveDeliveryKeys({
+          KEY, BASE, keys: chunk.map(keyOfTarget).filter(Boolean),
+        });
+      } catch {
+        active = null;
+      }
+      // ⚠️ **読めなければ積まない**（未送信と読むと二重登録が再発する）
+      if (active === null) { ledgerFailed = true; return []; }
+      const due = chunk.filter((t) => !active.has(keyOfTarget(t)));
+      alreadyQueued += chunk.length - due.length;
+      const f = applyAudienceFilter({ targets: due, prospectEmails, filter: audienceFilter });
+      droppedByFilter += f.dropped || 0;
+      lastFilter = f.filter;
+      for (const k of Object.keys(bySource)) bySource[k] += (f.bySource && f.bySource[k]) || 0;
+      const a = applyEntryAllowlist({ targets: f.kept, allowlist });
+      droppedByAllowlist += (f.kept.length - a.kept.length);
+      return a.kept;
+    },
+  });
+  if (ledgerFailed) {
     const body = { ok: false, abort: 'delivery_ledger_unreadable', sideEffects: 'none' };
     log(body);
     return body;
   }
-  const dueTargets = allTargets.filter((t) => !activeKeys.has(keyOfTarget(t)));
-  const alreadyQueued = allTargets.length - dueTargets.length;
+  const targets = refill.picked;
+  const filtered = { kept: targets, dropped: droppedByFilter, bySource, filter: lastFilter };
+  const allowed = { kept: targets, dropped: droppedByAllowlist, constrained: allowlist !== null };
 
-  /**
-   * ── 5-a-2) **出所で絞る**（既定 `all` ＝ 従来どおり）────────────────
-   *
-   * 2026-09-14 の初回実配信 150 通は**全員が Customers 由来**で、prospect が
-   * 1 人も含まれなかった（`selectNextDueStep` は出所を見ないため）。
-   * prospect 経路だけを少数で実証するために、**絞る**手段を用意する。
-   *
-   * ⚠️ 絞るのは**減らす方向だけ**。除外条件・冪等性・送信直前再検証は一切変えない。
-   * ⚠️ **呼び出しが `sourceFilter` を渡さない限り**挙動は変わらない（env では切り替わらない）。
-   */
-  /**
-   * ⚠️ ここは**念のための再確認**（母集団は既に上で切ってある）。
-   *    取りこぼしがあれば下の `audience_source_mixed` が予約より手前で止める。
-   */
-  const filtered = applyAudienceFilter({
-    targets: dueTargets, prospectEmails, filter: audienceFilter,
-  });
-  /**
-   * ── 5-a-3) **許可リストで最終集合を縛る**（2026-09-14 の事故対応）────────
-   *
-   * ## 何が起きたか（本番実測）
-   *
-   * 入口の `expectedCount` は **planner の人数しか縛っていなかった**。この tick は
-   * 台帳由来 ＋ 入口 ＋ **prospect** で母集団を組み直すので、承認が「無料登録 16 名」でも
-   * ジョブの Recipients は **50**、SentCount は **46** になった
-   * （CampaignDeliveries は 13 行。prospect は Airtable に行を書かないため）。
-   *
-   * ## 直し方
-   *
-   * 呼び出し側が**許可リスト（recordId だけ）**を渡したら、
-   * **最終 recipient 集合をその部分集合に落とす**。
-   *
-   * ⚠️ **減らす方向だけ。** 上の除外・冪等性・送信直前再検証は一切迂回しない
-   *    （ここは全部通り終わった後）。
-   * ⚠️ `recordId` を持たない相手（prospect 等）は**外**として扱う。
-   * ⚠️ 渡されなければ何もしない（**共有 tick の挙動は不変**）。
-   */
-  const allowlist = normalizeAllowlist(entryAllowlist);
-  const allowed = applyEntryAllowlist({ targets: filtered.kept, allowlist });
-  const targets = allowed.kept;
   const audienceView = describeAudiencePreview({
     bySource: filtered.bySource, kept: targets, filter: filtered.filter,
     step: plan.step, campaignId: base.campaignId,
@@ -951,6 +966,8 @@ export async function runSequenceTick({
       ok: false, abort: TICK_ABORT.NO_DUE,
       reason: filtered.dropped > 0 ? 'filtered_out' : 'all_already_queued',
       alreadyQueued, ...audienceView, sideEffects: 'none',
+      /** 枠を埋めるために何人まで見たか（見切っていなければ次の tick に続きがある）*/
+      補充: { 見た候補: refill.scanned, 候補総数: allTargets.length, 見切った: refill.exhausted },
       /**
        * ⚠️ **「0 人だった」と「確認できていない」を混ぜない。**
        *    prospect を読めていないなら、その事実を必ず添える
@@ -1336,6 +1353,19 @@ export async function runSequenceTick({
   summary['Airtable台帳'] = deliveryRecords.length;
   if (prospectDegraded) summary['prospect除外'] = prospectDegraded;
   if (scanRecovered) summary['走査カーソル復帰'] = scanRecovered;
+  /**
+   * ⚠️ **走査が周回できているかを毎回残す**（2026-09-15）。
+   *    正本は「周回すれば全員が必ず対象になる」。進んでいないことに気付けるよう、
+   *    周回数と「続きがあるか」をログへ出す（値そのものは出さない）。
+   */
+  summary['台帳走査'] = {
+    周回: cursor.pass, 続きあり: Boolean(next.offset), 読んだページ: scan.pages,
+    周回完了: next.completedPass === true,
+  };
+  /** 枠を埋めるために何人まで見たか（**黙って枠を空けない**）*/
+  summary['補充'] = {
+    候補: allTargets.length, 見た: refill.scanned, 見切った: refill.exhausted, 上限: cap,
+  };
   if (prospectBlocked > 0) summary['prospect予約不可'] = prospectBlocked;
   if (prospectClaimFailure) summary['prospect予約失敗'] = prospectClaimFailure;
   if (releaseFailed > 0) summary['予約戻し失敗'] = releaseFailed;
@@ -1433,9 +1463,29 @@ export default async function handler() {
   }
 
   try {
-    const ids = resolveTickCampaignIds(process.env);
+    const declared = resolveTickCampaignIds(process.env);
+    /**
+     * ⚠️ **開始位置を tick ごとにずらす**（2026-09-15 の本番実測）。
+     *
+     * 1 tick の実行時間には上限がある（実測 60,000 / 60,340 ms で打ち切り）。
+     * 「先頭から順に」だと先頭の campaign で時間を使い切り、
+     * **後ろの campaign は永久に進まない**（light / premium が 3 tick 連続で 0 回）。
+     * 順番に先頭へ回せば、どの campaign にも必ず番が来る。
+     */
+    const startedAt = Date.now();
+    const ids = rotateCampaigns({ ids: declared, nowMs: startedAt });
     const results = [];
+    const skippedForTime = [];
     for (const campaignId of ids) {
+      /**
+       * ⚠️ 残り時間が足りなければ**始めない**。途中で打ち切られると
+       *    予約だけ取れて登録されない状態を作りかねない。
+       *    始めなかった campaign は**黙って落とさず**名前を残す（次の tick で先頭に来る）。
+       */
+      if (results.length > 0 && !hasTimeForAnother({ startedAtMs: startedAt, nowMs: Date.now() })) {
+        skippedForTime.push(campaignId);
+        continue;
+      }
       try {
         // eslint-disable-next-line no-await-in-loop -- campaign ごとに順番に進める
         results.push(await runSequenceTick({ env: process.env, now: Date.now(), campaignId }));
@@ -1446,9 +1496,16 @@ export default async function handler() {
       }
     }
     const enqueued = results.reduce((n, r) => n + (Number(r && r.enqueued) || 0), 0);
+    if (skippedForTime.length > 0) {
+      // 時間切れで始めなかった campaign は必ず残す（次の tick で先頭に来る）
+      log({ ok: true, action: 'deferred', campaigns: skippedForTime, sideEffects: 'none' });
+    }
     return json(200, {
       ok: results.some((r) => r && r.ok === true),
       campaigns: ids.length,
+      /** この tick で実際に進めた campaign の順番（先頭は tick ごとに回る）*/
+      order: ids,
+      deferred: skippedForTime,
       enqueued,
       results,
     });

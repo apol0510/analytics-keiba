@@ -153,8 +153,14 @@ test('【不変】省略時は最後の確認も素通し', () => {
 // ══════════════════════════════════════════════════════════════════
 
 test('【配線】tick は最終集合に対してのみ制約を掛ける（再検証の後）', () => {
+  /**
+   * ⚠️ 2026-09-15 に**塊ごとの補充**へ変えた（枠が埋まらず 50→20→13→4 と逓減したため）。
+   *    許可リストを掛ける位置は**変えていない**: 塊の中で
+   *    既送信の突き合わせ → 出所フィルタ → 許可リスト の順、
+   *    そのあと積む直前に `assertWithinAllowlist` で最終確認する。
+   */
   const code = codeOnly(CRON);
-  const idxDue = code.indexOf('const dueTargets = allTargets.filter');
+  const idxDue = code.indexOf('chunk.filter((t) => !active.has(keyOfTarget(t)))');
   const idxFilter = code.indexOf('applyEntryAllowlist({');
   const idxAssert = code.indexOf('assertWithinAllowlist({');
   const idxPlan = code.indexOf('buildCampaignPlan({');
