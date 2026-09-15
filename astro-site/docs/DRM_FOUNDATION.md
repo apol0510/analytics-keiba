@@ -386,7 +386,7 @@ sequence: {
 | | 誰が進めるか | 何で開くか |
 |---|---|---|
 | **step1（入口）** | `cron-drm-autostart` / `drmEntryRun` | `MARKETING_DRM_AUTOSTART_ENABLED`（**専用**） |
-| **step2 以降** | **共有の `cron-campaign-sequence`（10 分ごと）** | `MARKETING_SEQUENCE_CAMPAIGN_ID` に campaign を載せる |
+| **step2 以降** | **共有の `cron-campaign-sequence`（10 分ごと）** | `MARKETING_SEQUENCE_CAMPAIGN_ID` が**未設定**なら有効な連続配信を全部進める（正本の通常運用）。値があるとその campaign しか進めない |
 
 入口ゲートが**閉じたままでも step2 以降は進む**。
 `planSequenceTick` の `excludeSteps = allowFirstStep ? [] : [1]` が示すとおり、
@@ -416,9 +416,25 @@ guard: `src/lib/drm/drmStep2Automation.test.mjs` / `drmStep2Wiring.guard.test.mj
 
 ### 本番で切り替えるときに残る操作（**未実施・未承認**）
 
-`MARKETING_SEQUENCE_CAMPAIGN_ID` へ DRM の 3 本を追加する **env 変更 1 つだけ**
-（現在は割引 3 本のみ）。コード側の準備は済んでいる。
+⚠️ **「DRM 3 本を env へ追加する」ではない。**
+正本 `docs/spec.md` は `MARKETING_SEQUENCE_CAMPAIGN_ID` を**置かない**
+（**未設定＝有効な連続配信を全部進める**）が通常運用と定めている。
+現在 production に割引 3 本が明示設定されているのが**正本から外れた暫定状態**なので、
+切替の候補は **env を未設定へ戻す**こと。
+
+⚠️ ただし未設定にすると `light-trial-to-premium-sequence` /
+`light-trial-post-expiry-sequence` も対象に入り、`cron-marketing-rollout`（5 分）と
+**担当が 2 つになる**（正本にも「足さない」と書いてある）。
+**未設定へ戻す前に、この 2 本の担当を 1 つに決めること。**
+
 ⚠️ この env は割引 3 本と**共有**なので、変更前に担当セッションへ一報する。
+⚠️ コード側の準備は済んでいる。**残るのは判断と env 変更だけ**（どちらも未承認）。
+
+### 切替後は人手なしで進む（step ごとの承認はしない）
+
+期限到来 → 反応の状態 → route 選択 → 次 step 選択 →
+除外（purchase / suppression / unsubscribe / bounce / complaint / duplicate）→
+enqueue → 既存 dispatcher が送信。**途中で人が止めるのは異常時の例外運用だけ。**
 
 > ## ⚠️ `MARKETING_DRM_AUTOSTART_ENABLED` は **step1 の入口専用**
 >
@@ -437,7 +453,7 @@ guard: `src/lib/drm/drmStep2Automation.test.mjs` / `drmStep2Wiring.guard.test.mj
 > 最終対象 0 →`no_due_recipients` で止まる。**構造的に 2 通目は出ない。**
 >
 > 2 通目を出すには別の経路と**別の承認**が要る。現在地と手順は
-> `docs/progress.md` の「R2 の進め方」を正本とする。
+> `docs/progress.md` の「R2 の自動運用」を正本とする。
 - 並びは recordId 昇順で決定的・上限超過は `carriedOver` として次回へ（**黙って捨てない**）
 
 `resolveStageEntry()` は段が進んだ人を次段の**育成**へ繋ぐ。
