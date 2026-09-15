@@ -68,7 +68,7 @@ tick 鍵が `cron-campaign-sequence` に無かった。**→ tick 鍵を追加�
 `prospectSequenceCheck` の母数は **prospect 索引だけ**（11,974 = 送信候補）。
 Customers 由来の進行はこの数字に出ない。**不具合ではない**（応答に `母数の範囲` を明記した）。
 
-## #545 の本番実証 完了（2026-09-15 / MK 確定）
+## #545 の本番実証 完了（2026-09-15 / 本番実測）
 
 `a6c09165` を production へ反映し、**scheduler=true のまま 3 tick 連続で実証**した。
 
@@ -136,7 +136,7 @@ Customers 由来の進行はこの数字に出ない。**不具合ではない**
 | その後の通常 marketing から除外 | **未実証** |
 
 ⚠️ **10 delivered 到達前に状態を人工的に進めない。**
-   Redis / Airtable の手動補正・追加 canary・手動 enqueue はしない（2026-09-15 MK 確定）。
+   Redis / Airtable の手動補正・追加 canary・手動 enqueue はしない（現行の運用方針）。
 
 ## periodic 再開の実証と、そこで見つかった 2 つの欠陥（2026-09-15）
 
