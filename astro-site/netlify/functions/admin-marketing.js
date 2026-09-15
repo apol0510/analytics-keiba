@@ -2070,7 +2070,29 @@ async function handleDrmAutoStart({ KEY, BASE, now, req }) {
  */
 async function handleDrmEntryAllowlistCheck({ now, req }) {
   const campaignId = String(req.campaignId || DRM_ENTRY_CAMPAIGN_IDS[0]).trim();
-  const result = await checkEntryAllowlist({ env: process.env, now, campaignId });
+  /**
+   * ⚠️ **窓で切る**（`sequenceTickPreview` と同じ契約）。
+   *    切らずに呼ぶと prospect 索引（約 12,000）を一度に読み、同期 Function に収まらない
+   *    （2026-09-15 に **504** を実測。書き込みは 0 だった）。
+   */
+  const window = {
+    scope: req.scope,
+    offset: req.offset,
+    limit: req.limit,
+    digest: req.digest,
+    ledgerOffset: req.ledgerOffset,
+    scanPages: req.scanPages,
+  };
+  /**
+   * 2 窓目以降は **1 窓目が返した `plannerCount` / `plannerDigest` を必ず渡す**。
+   * 途中で入口の対象が変われば fail closed で止まり、最初からやり直しになる。
+   */
+  const expectPlanner = (req.plannerCount === undefined && req.plannerDigest === undefined)
+    ? null
+    : { count: req.plannerCount, digest: req.plannerDigest };
+  const result = await checkEntryAllowlist({
+    env: process.env, now, campaignId, window, expectPlanner,
+  });
   if (result && result.ok === false) {
     const status = result.abort === ENTRY_ABORT.CAMPAIGN_NOT_ALLOWED ? 400 : 409;
     return json(status, { mode: 'drm-entry-allowlist-check', ...result });
