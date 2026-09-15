@@ -271,25 +271,43 @@ test('【重要】/free/ と /free-prediction/ はどちらも公開導線とし
   }
 });
 
-test('【重要】買い目・指数・役割を約束した本文の CTA を /free/ へ向けると落ちる', () => {
-  // `/free/` は買い目 / AI総合指数 / 役割を出さないページ
-  const r = evaluateCopyStandard({
+test('【重要】着地先に無いものを CTA 周りで約束すると落ちる', () => {
+  // 特典欄で「買い目・AI総合指数・全頭の役割」を約束 → /free/ にも /free-prediction/ にも無い
+  const promising = {
     ...OK_STEP,
-    body: 'ご登録ありがとうございます。\n\n本日のメインレースの買い目をご覧いただけます。\n'
-      + '全頭の役割と AI総合指数も出しています。\n\n本日のレースでお試しください。',
-    ctaUrl: 'https://analytics.keiba.link/free/nankan/',
-  });
-  assert.ok(r.issues.some((i) => i.code === 'promise_not_on_landing_page'),
-    `落ちていない: ${JSON.stringify(r.issues)}`);
+    benefitTitle: '無料でご覧いただけるもの',
+    benefitItems: ['メインレースの買い目', 'AI総合指数', '全頭の役割'],
+    ctaLabel: '今日の買い目と指数を見る',
+    ctaNote: 'ログインは不要です。そのままご覧いただけます。',
+  };
+  for (const path of ['/free/nankan/', '/free-prediction/nankan/']) {
+    const r = evaluateCopyStandard({ ...promising, ctaUrl: `https://analytics.keiba.link${path}` });
+    assert.ok(r.issues.some((i) => i.code === 'promise_not_on_landing_page'),
+      `${path} で落ちていない: ${JSON.stringify(r.issues)}`);
+  }
 
-  // 同じ本文でも有料版プレビューへ向けていれば通る
+  // 買い目が**実際に公開されている** results-showcase なら通る
   const ok = evaluateCopyStandard({
     ...OK_STEP,
-    body: 'ご登録ありがとうございます。\n\n本日のメインレースの買い目をご覧いただけます。\n'
-      + '全頭の役割と AI総合指数も出しています。\n\n本日のレースでお試しください。',
-    ctaUrl: 'https://analytics.keiba.link/free-prediction/nankan/',
+    benefitTitle: '前日の買い目と結果で分かること',
+    benefitItems: ['有料版でお届けしたメインレースの買い目', '的中・不的中', '払戻（的中時）'],
+    ctaLabel: '前日の買い目と結果を見る',
+    ctaNote: '有料会員へ配信した買い目を、毎日そのまま公開しています。',
+    ctaUrl: 'https://analytics.keiba.link/results-showcase/nankan/',
   });
-  assert.equal(ok.issues.some((i) => i.code === 'promise_not_on_landing_page'), false);
+  assert.equal(ok.issues.some((i) => i.code === 'promise_not_on_landing_page'), false,
+    `results-showcase が落ちている: ${JSON.stringify(ok.issues)}`);
+
+  // アーカイブは買い目を出さない（意図的に非公開）
+  const archive = evaluateCopyStandard({
+    ...OK_STEP,
+    benefitTitle: 'アーカイブで確認できること',
+    benefitItems: ['月別・年別の的中実績', '年間の的中率', '買い目'],
+    ctaLabel: '直近 1 か月の実績を確認する',
+    ctaNote: '数字はページのものが最新です。',
+    ctaUrl: 'https://analytics.keiba.link/archive/nankan/',
+  });
+  assert.ok(archive.issues.some((i) => i.code === 'promise_not_on_landing_page'));
 
   // 買い目を約束していない「見どころ」案内なら /free/ でも通る
   // ⚠️ preheader / CTA ラベル / 特典欄も判定対象なので、すべて見どころ側の語に揃える
@@ -311,13 +329,20 @@ test('【重要】買い目・指数・役割を約束した本文の CTA を /f
     `見どころ案内が落ちている: ${JSON.stringify(viewpoints.issues)}`);
 });
 
-test('【重要】買い目を案内する改稿済み step は /free-prediction/ を指している', () => {
+test('【重要】改稿済み step の CTA が、約束した中身のある着地先を指している', () => {
   const c = getCampaign('free-signup-onboarding', { includeDisabled: true });
-  for (const n of [2, 4]) {
-    const s = resolveSequenceStep(c, n);
-    assert.equal(ctaPathOf(s.ctaUrl), '/free-prediction/nankan/',
-      `step${n}: 買い目・指数・役割を案内しているので有料版プレビューを指すこと`);
-  }
+
+  // step2 は「出走馬の公開事実 + 上位 4 頭の印」の案内 → 有料版プレビュー
+  const s2 = resolveSequenceStep(c, 2);
+  assert.equal(ctaPathOf(s2.ctaUrl), '/free-prediction/nankan/');
+  assert.equal(/買い目|AI総合指数|全頭の役割/.test(
+    [s2.ctaLabel, s2.ctaNote, s2.benefitTitle, (s2.benefitItems || []).join(' ')].join(' '),
+  ), false, 'step2 が伏せてあるものを無料で見られるものとして案内している');
+
+  // step4 は「買い目そのもの」の案内 → 買い目を実際に公開している results-showcase
+  const s4 = resolveSequenceStep(c, 4);
+  assert.equal(ctaPathOf(s4.ctaUrl), '/results-showcase/nankan/',
+    'step4: 買い目は /free-prediction/ では伏せてあるので、公開している側を指すこと');
 });
 
 test('【重要】無料会員向けの本文に Premium Plus（三連単の個別配信）を書かない', () => {

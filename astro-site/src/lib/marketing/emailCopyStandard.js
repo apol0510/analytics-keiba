@@ -118,15 +118,54 @@ export const PUBLIC_CTA_PATHS = Object.freeze([
 ]);
 
 /**
- * **買い目 / 指数 / 役割を出さない**公開ページ。
- * これらを約束した本文の CTA をここへ向けると、着地先に約束したものが無い。
+ * **着地先ごとに「そこで見られないもの」**（`docs/spec.md` §無料コンテンツ 2 層 /
+ * `freePublicView.js` の公開 DTO / 各ページの表示が根拠）。
+ *
+ * ⚠️ 「URL が生きているか」だけでは不十分。**メールで約束した情報が着地先に実在するか**を見る。
+ *    2026-09-15 のレビューで、`/free-prediction/` を「買い目・AI総合指数・全頭の役割が
+ *    無料で見られるページ」として案内していた誤りが見つかった（実際は**伏せてある**）。
+ *
+ * | 着地先 | 見られる | 見られない |
+ * |---|---|---|
+ * | `/free-prediction/{nankan,jra}/` | 出走全頭の公開事実（馬番/馬名/騎手/厩舎/斤量/枠/父/性齢/過去走/通算成績）＋**上位 4 頭の印 ◎○▲△**＋レース詳細 | **買い目 / AI総合指数 / 累積スコア(pt) / 全頭の役割 / 特徴量・評価ポイント**（ダミーのモザイク表示のみ）|
+ * | `/free/{nankan,jra}/` | レースの見どころ（近走・条件の替わり方）| 買い目 / pt / AI総合指数 / 役割 / 特徴量 |
+ * | `/results-showcase/{nankan,jra}/` | **前日メインレースの買い目（5 点）**・的中/不的中・払戻 | 抑え（伏せる）/ AI総合指数 / 役割 |
+ * | `/archive/{nankan,jra}/` | 月別・年別の的中実績 / 年間的中率 / 配当金額 | **買い目**（意図的に非公開）/ AI総合指数 / 役割 |
+ * | `/sanrenpuku-demo/` | 三連複の買い目の実例と的中結果（固定デモ）| AI総合指数 / 役割 |
+ * | `/pricing/` | プランごとの範囲と料金 | 買い目 / AI総合指数 / 役割 / 過去走 |
+ *
+ * ⚠️ 根拠を確認していないものを足さない。**「たぶん無い」で禁止語を増やさない。**
  */
-export const VIEWPOINTS_ONLY_CTA_PATHS = Object.freeze(['/free/nankan/', '/free/jra/']);
+export const LANDING_PAGE_HIDDEN_TERMS = Object.freeze({
+  '/free-prediction/nankan/': FREE_PREVIEW_HIDDEN(),
+  '/free-prediction/jra/': FREE_PREVIEW_HIDDEN(),
+  '/free/nankan/': VIEWPOINTS_HIDDEN(),
+  '/free/jra/': VIEWPOINTS_HIDDEN(),
+  '/results-showcase/nankan/': Object.freeze(['AI総合指数', 'AI 総合指数', '抑え', '不要馬']),
+  '/results-showcase/jra/': Object.freeze(['AI総合指数', 'AI 総合指数', '抑え', '不要馬']),
+  '/archive/nankan/': Object.freeze(['買い目', 'AI総合指数', 'AI 総合指数', '不要馬']),
+  '/archive/jra/': Object.freeze(['買い目', 'AI総合指数', 'AI 総合指数', '不要馬']),
+  '/pricing/': Object.freeze(['AI総合指数', 'AI 総合指数', '過去走', '不要馬']),
+});
 
-/** 「有料版プレビューにしか無いもの」を指す語（本文がこれを約束しているかを見る） */
-export const PAID_PREVIEW_PROMISE_TERMS = Object.freeze([
-  '買い目', 'AI総合指数', 'AI 総合指数', '不要馬', '本命◎', '対抗○', '単穴▲',
-]);
+/** `/free-prediction/` = 有料版プレビュー。印は出るが、買い目・指数・全頭役割は伏せてある */
+function FREE_PREVIEW_HIDDEN() {
+  return Object.freeze([
+    '買い目', 'AI総合指数', 'AI 総合指数', '累積スコア', '特徴量', '評価ポイント',
+    '全頭の役割', '不要馬', '抑え',
+  ]);
+}
+
+/** `/free/` = レースの見どころ。評価に関わるものは一切出さない */
+function VIEWPOINTS_HIDDEN() {
+  return Object.freeze([
+    '買い目', 'AI総合指数', 'AI 総合指数', '累積スコア', '特徴量', '評価ポイント',
+    '全頭の役割', '不要馬', '抑え', '本命◎', '対抗○', '単穴▲',
+  ]);
+}
+
+/** 旧名（`/free/` 専用の判定）。`LANDING_PAGE_HIDDEN_TERMS` に統合済み */
+export const VIEWPOINTS_ONLY_CTA_PATHS = Object.freeze(['/free/nankan/', '/free/jra/']);
 
 const SITE = 'https://analytics.keiba.link';
 
@@ -232,13 +271,20 @@ export function evaluateCopyStandard(step, opts = {}) {
   const all = [subject, preheader, body, str(s.headline), ctaLabel, str(s.ctaNote),
     items.join(' ')].join('\n');
 
-  // 9. 約束したものが着地先にある（`/free/` と `/free-prediction/` の取り違え）
-  if (VIEWPOINTS_ONLY_CTA_PATHS.includes(path)) {
-    const promised = PAID_PREVIEW_PROMISE_TERMS.filter((t) => all.includes(t));
+  // 9. **約束したものが着地先に実在するか**
+  //
+  // ⚠️ 判定するのは「押した先で何が得られるか」を書く面
+  //    （CTA ラベル / CTA 補足 / 特典欄）だけ。本文の散文は商品の説明として
+  //    landing 先に無いものに触れることがあり（例: Light の範囲を説明しつつ /pricing/ へ送る）、
+  //    そこまで見ると誤検知になるため**あえて見ない**。
+  const hidden = LANDING_PAGE_HIDDEN_TERMS[path];
+  if (hidden) {
+    const promiseSurface = [ctaLabel, str(s.ctaNote), str(s.benefitTitle), items.join(' ')].join('\n');
+    const promised = hidden.filter((t) => promiseSurface.includes(t));
     if (promised.length) {
       add('promise_not_on_landing_page',
-        `本文が「${promised.join('・')}」を案内しているのに CTA が ${path}。`
-        + 'このページは買い目 / 指数 / 役割を出さない（有料版プレビューは /free-prediction/）');
+        `CTA 周り（ラベル / 補足 / 特典欄）が「${promised.join('・')}」を得られるものとして`
+        + `案内しているが、着地先 ${path} では見られない`);
     }
   }
   for (const bad of INTERNAL_AFFAIRS_PHRASES) {
