@@ -68,6 +68,76 @@ tick 鍵が `cron-campaign-sequence` に無かった。**→ tick 鍵を追加�
 `prospectSequenceCheck` の母数は **prospect 索引だけ**（11,974 = 送信候補）。
 Customers 由来の進行はこの数字に出ない。**不具合ではない**（応答に `母数の範囲` を明記した）。
 
+## #545 の本番実証 完了（2026-09-15 / 本番実測）
+
+`a6c09165` を production へ反映し、**scheduler=true のまま 3 tick 連続で実証**した。
+
+### ① 補充が効く（最重要）
+
+| | #545 前（04:50Z）| **#545 後（05:30Z）** |
+|---|---|---|
+| 対象 | 50 | 50 |
+| 登録済みのため除外 | 46 | **47** |
+| **登録** | **4** | **50** |
+
+除外数はほぼ同じなのに登録が **4 → 50**。本番ログ:
+
+```
+{"キャンペーン":"campaign-discount-free","ステップ":2,"対象":50,"登録":50,"失敗":0,
+ "prospect対象":35,"Airtable台帳":15,"登録済みのため除外":47,
+ "台帳走査":{"周回":59,"続きあり":true,"読んだページ":5,"周回完了":false},
+ "補充":{"候補":1000,"見た":100,"見切った":false,"上限":50}}
+```
+
+候補 1,000 を供給し、**100 人見た時点で 50 人埋まって停止**（`見切った false` ＝ まだ余力あり）。
+探索は有限のまま、上限 50 を超えていない。
+
+### ② rotation が効く（3 本すべてに番が回った）
+
+| tick | 先頭 campaign | 登録 |
+|---|---|---|
+| 05:20Z | **premium** | 10 |
+| 05:30Z | **free** | 50 |
+| 05:40Z | **light** | 2 |
+
+`light` / `premium` は #545 前に **3 tick 連続で 1 度も走らなかった**。
+時間切れの campaign は `{"action":"deferred","campaigns":["campaign-discount-free","campaign-discount-light"]}`
+として**名前が残る**（黙って落とさない）。
+
+### ③ E2E と安全条件
+
+| 項目 | 実測 |
+|---|---|
+| enqueue → provider accepted | free 50 → **SentCount +50**／premium 10 → **+10** |
+| delivered webhook 反映 | prospect delivered **+33**（第 1 窓ぶん）|
+| duplicate | **0**（宛先 = ユニーク）|
+| 上限 | 3 tick 計 **62**（上限どおり・超過なし）|
+| Failed | **4 のまま不変** |
+| bounce / suppression | EmailBlacklist 403 → **404**（50 通に対し 1 件・自然発生）|
+| Customers / prospect の混在 | free で prospect **35** / Customers **15**（交互配置が効いている）|
+| DRM 副作用 | **なし**（絞り込み `all`・DRM ジョブ 0・入口は閉のまま）|
+| lock | `tick_busy` で重複起動を正しく skip |
+
+### ④ 走査カーソル（継続観測へ）
+
+`offset_expired_422` は再発するが、**周回 59 / 続きあり true / 読んだページ 5** が記録され、
+カーソルは前進している。**停滞したら周回が固定される**ので、以後この値で検知する。
+実際に停滞したときだけ別問題として扱う。
+
+## ⚠️ mission 全体は未完（クローズしない）
+
+#545 の実証が終わっても、最上位任務は**完了ではない**。
+
+| 残件 | 現状 |
+|---|---|
+| periodic 継続実証 | 稼働中（`scheduler=true`）。継続観測へ |
+| delivered 累積 | 進行中。**現在の最大は 4 通** |
+| 実在 prospect が **delivered 10 通・無反応 → EXHAUSTED** | **未到達**（残り 6 通）|
+| その後の通常 marketing から除外 | **未実証** |
+
+⚠️ **10 delivered 到達前に状態を人工的に進めない。**
+   Redis / Airtable の手動補正・追加 canary・手動 enqueue はしない（現行の運用方針）。
+
 ## periodic 再開の実証と、そこで見つかった 2 つの欠陥（2026-09-15）
 
 ### 再開して分かったこと
