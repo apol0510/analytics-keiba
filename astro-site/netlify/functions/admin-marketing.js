@@ -217,8 +217,10 @@ import {
 import { buildFunnel, buildStepView, buildRolloutView } from '../../src/lib/marketing/rolloutView.js';
 import { createRolloutMetrics, estimateDashboardIo } from '../../src/lib/marketing/rolloutMetrics.js';
 import { readStageGates, describeBlocked } from '../../src/lib/marketing/rolloutGates.js';
-import { describeJourney, JOURNEY_PHASES } from '../../src/lib/marketing/journeyModel.js';
-import { buildHistoryByRecipient, summarizeByTouch } from '../../src/lib/marketing/touchMeasurement.js';
+import { describeJourney, JOURNEY_PHASES, isJourneyCampaign } from '../../src/lib/marketing/journeyModel.js';
+import {
+  buildHistoryByRecipient, summarizeByTouch, summarizeByCampaignStep,
+} from '../../src/lib/marketing/touchMeasurement.js';
 import { createDeliveryEventIndex, MAX_READ_KEYS } from '../../src/lib/webhooks/deliveryEventIndex.js';
 import { loadResponseByEmail } from '../../src/lib/drm/drmResponseLoader.js';
 import { assessFunnel, FUNNEL_STAGE } from '../../src/lib/drm/drmFunnel.js';
@@ -240,6 +242,7 @@ import {
 import { resolveAutoStart } from '../../src/lib/marketing/campaignSequence.js';
 import {
   resolveScanPageSize, scanAllTouchPages, buildInlineMeasurementResult,
+  scanAllStepPages, buildInlineStepResult,
   MEASUREMENT_INLINE_MAX_PAGES,
 } from '../../src/lib/marketing/touchMeasurementScan.js';
 import {
@@ -2534,13 +2537,26 @@ async function handleTouchMeasurementPage({ KEY, BASE, now, req }) {
     }
   }
 
-  const summary = summarizeByTouch({ deliveries, stepByDeliveryKey, index });
+  /**
+   * ⚠️ **束ね方を campaign で選ぶ。**
+   *   `journeyModel.js` に載っている campaign（Light 無料体験の 24 接点）だけが
+   *   通し接点番号を持つ。載っていない campaign を `summarizeByTouch()` に通すと
+   *   `toTouch()` が `null` を返し、**行があるのに 0 件**になる
+   *   （2026-09-14 実測: `free-signup-onboarding` の 13 行が読めているのに `touches: []`）。
+   *   `journeyModel.js` は Light 24 接点の専用 SSOT のまま維持し、**他をそこへ登録しない**。
+   */
+  const journey = isJourneyCampaign(base.campaignId);
+  const summary = journey
+    ? summarizeByTouch({ deliveries, stepByDeliveryKey, index })
+    : summarizeByCampaignStep({ deliveries, stepByDeliveryKey, index });
   const done = !nextCursor;
   return json(200, {
     mode: 'touch-measurement',
     sideEffects: 'none',
     campaignId: base.campaignId,
     version: base.version,
+    /** どちらの束ね方で数えたか（読み手が `touches` / `steps` を取り違えないように） */
+    measurementMode: journey ? 'journey-touch' : 'campaign-step',
     ...summary,
     /**
      * このページだけの数であることを**必ず明示する**（黙って一部を全体として出さない）。
@@ -2606,9 +2622,14 @@ async function handleTouchMeasurement({ KEY, BASE, now, req }) {
     return json(400, { error: 'このキャンペーンは連続配信ではありません', sideEffects: 'none' });
   }
 
+  /** ページ版と**同じ**基準で束ね方を選ぶ（片方だけ別の数え方になると読み手が壊れる） */
+  const journey = isJourneyCampaign(base.campaignId);
+  const scanAll = journey ? scanAllTouchPages : scanAllStepPages;
+  const buildInline = journey ? buildInlineMeasurementResult : buildInlineStepResult;
+
   let pageIndex = 0;
   let failed = null;
-  const scan = await scanAllTouchPages({
+  const scan = await scanAll({
     maxPages: MEASUREMENT_INLINE_MAX_PAGES,
     fetchPage: async (cursor) => {
       const res = await handleTouchMeasurementPage({
@@ -2623,7 +2644,7 @@ async function handleTouchMeasurement({ KEY, BASE, now, req }) {
   });
   if (failed) return json(500, { ...failed, sideEffects: 'none' });
 
-  const built = buildInlineMeasurementResult({ scan, budgetPages: MEASUREMENT_INLINE_MAX_PAGES });
+  const built = buildInline({ scan, budgetPages: MEASUREMENT_INLINE_MAX_PAGES });
   return json(built.ok ? 200 : 413, {
     mode: 'touch-measurement',
     /** 契約が変わったことを読み手が判別できるようにする */
@@ -2631,6 +2652,8 @@ async function handleTouchMeasurement({ KEY, BASE, now, req }) {
     sideEffects: 'none',
     campaignId: base.campaignId,
     version: base.version,
+    /** `journey-touch` なら `touches`、`campaign-step` なら `steps` が入る */
+    measurementMode: journey ? 'journey-touch' : 'campaign-step',
     ...built.body,
     notice: built.ok
       ? '配信イベントの索引から数えています（open は届いた通が分母）。**全ページを数え切っています**。'

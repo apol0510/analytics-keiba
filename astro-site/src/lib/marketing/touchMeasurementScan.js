@@ -42,29 +42,58 @@ export function resolveScanPageSize(requested) {
   return Math.min(Math.floor(n), TOUCH_SCAN_MAX_PAGE);
 }
 
+const EMPTY_COUNTS = { sent: 0, delivered: 0, opened: 0, measured: 0, unknown: 0 };
+
+/**
+ * 「何で束ねるか」だけを差し替える定義。**足しかた・率の出しかたは共通**にする。
+ *
+ * - `TOUCH_GROUP` … Light 無料体験の**通し接点番号**（`journeyModel.js` の 24 接点）
+ * - `STEP_GROUP`  … `campaignId` × `step`（**接点番号を使わない**。DRM など一般 sequence 用）
+ *
+ * ⚠️ 2 つ目を足したのは、`journeyModel.js` に載っていない campaign が
+ *    `touch: null` になって**行があるのに 0 件**に見えたため（2026-09-14 実測）。
+ *    `journeyModel.js` は Light 24 接点の専用 SSOT として維持し、**他をそこへ登録しない**。
+ */
+const TOUCH_GROUP = Object.freeze({
+  listKey: 'touches',
+  bucketKey: 'byTouch',
+  keyOf: (t) => String(num(t.touch)),
+  identityOf: (t) => ({
+    touch: num(t.touch),
+    campaignId: t.campaignId || null,
+    step: t.step === null || t.step === undefined ? null : num(t.step),
+  }),
+  compare: (x, y) => num(x.touch) - num(y.touch),
+});
+
+const STEP_GROUP = Object.freeze({
+  listKey: 'steps',
+  bucketKey: 'byStep',
+  keyOf: (t) => `${String(t.campaignId ?? '')}#${String(t.step ?? '')}`,
+  identityOf: (t) => ({
+    campaignId: t.campaignId || null,
+    step: t.step === null || t.step === undefined ? null : num(t.step),
+  }),
+  compare: (x, y) => (String(x.campaignId) === String(y.campaignId)
+    ? num(x.step) - num(y.step)
+    : (String(x.campaignId) < String(y.campaignId) ? -1 : 1)),
+});
+
 /** 集計の初期値（JSON でそのまま持ち回せる形） */
-export function emptyTouchScan() {
+function emptyScanFor(group) {
   return {
     /** 足したページ番号（**重複を弾くため**に持つ） */
     mergedPages: [],
-    /** touch 番号 → 件数 */
-    byTouch: {},
+    /** 束ねる単位 → 件数 */
+    [group.bucketKey]: {},
     rows: 0,
     measurementAvailable: true,
   };
 }
 
-const EMPTY_COUNTS = { sent: 0, delivered: 0, opened: 0, measured: 0, unknown: 0 };
-
-/**
- * 1 ページぶんの集計を足す。**同じ `pageIndex` を 2 回渡しても増えない**。
- *
- * @param {object} acc  `emptyTouchScan()` の戻り、または前回の戻り
- * @param {{pageIndex: number, touches: object[], measurementAvailable?: boolean,
- *          rows?: number}} page  `summarizeByTouch` の結果 + ページ番号
- */
-export function mergeTouchPage(acc, page) {
-  const a = acc && typeof acc === 'object' ? acc : emptyTouchScan();
+/** 1 ページぶんを足す（束ね方は `group` だけが決める） */
+function mergeGroupedPage(acc, page, group) {
+  const a = acc && typeof acc === 'object' ? acc : emptyScanFor(group);
   const merged = Array.isArray(a.mergedPages) ? a.mergedPages.slice() : [];
   const p = page && typeof page === 'object' ? page : null;
   const idx = p && Number.isInteger(Number(p.pageIndex)) ? Number(p.pageIndex) : null;
@@ -72,16 +101,12 @@ export function mergeTouchPage(acc, page) {
   // ⚠️ 同じページの再送は**無視**（重複集計 0）
   if (merged.includes(idx)) return a;
 
-  const byTouch = { ...(a.byTouch || {}) };
-  for (const t of Array.isArray(p.touches) ? p.touches : []) {
-    const key = String(num(t.touch));
-    const cur = byTouch[key] || {
-      touch: num(t.touch),
-      campaignId: t.campaignId || null,
-      step: t.step === null || t.step === undefined ? null : num(t.step),
-      ...EMPTY_COUNTS,
-    };
-    byTouch[key] = {
+  const bucket = { ...(a[group.bucketKey] || {}) };
+  const items = Array.isArray(p[group.listKey]) ? p[group.listKey] : [];
+  for (const t of items) {
+    const key = group.keyOf(t);
+    const cur = bucket[key] || { ...group.identityOf(t), ...EMPTY_COUNTS };
+    bucket[key] = {
       ...cur,
       sent: cur.sent + num(t.sent),
       delivered: cur.delivered + num(t.delivered),
@@ -93,21 +118,18 @@ export function mergeTouchPage(acc, page) {
   merged.push(idx);
   return {
     mergedPages: merged.sort((x, y) => x - y),
-    byTouch,
+    [group.bucketKey]: bucket,
     rows: num(a.rows) + num(p.rows),
     // 1 ページでも索引を読めていなければ「計測できていない」
     measurementAvailable: a.measurementAvailable === true && p.measurementAvailable !== false,
   };
 }
 
-/**
- * 集計を画面・報告の形へ落とす。**率はここで 1 回だけ**計算する。
- * 返す形は `summarizeByTouch` と同じ（既存の読み手をそのまま使える）。
- */
-export function finalizeTouchScan(acc) {
-  const a = acc && typeof acc === 'object' ? acc : emptyTouchScan();
-  const list = Object.values(a.byTouch || {})
-    .sort((x, y) => num(x.touch) - num(y.touch))
+/** 画面・報告の形へ落とす。**率はここで 1 回だけ**計算する */
+function finalizeGroupedScan(acc, group) {
+  const a = acc && typeof acc === 'object' ? acc : emptyScanFor(group);
+  const list = Object.values(a[group.bucketKey] || {})
+    .sort(group.compare)
     .map((x) => ({
       ...x,
       deliveryRate: x.sent > 0 ? x.delivered / x.sent : null,
@@ -125,7 +147,7 @@ export function finalizeTouchScan(acc) {
 
   return {
     measurementAvailable: a.measurementAvailable === true,
-    touches: list,
+    [group.listKey]: list,
     totals: {
       ...totals,
       deliveryRate: totals.sent > 0 ? totals.delivered / totals.sent : null,
@@ -141,17 +163,9 @@ export function finalizeTouchScan(acc) {
   };
 }
 
-/**
- * 全ページを歩いて 1 つにまとめる（呼び出し側は「1 ページ取る関数」だけ渡す）。
- *
- * @param {{fetchPage: (cursor: string|null) => Promise<object>, maxPages?: number}} input
- *   `fetchPage` は `{touches, measurementAvailable, rows, scan:{pageIndex, cursor, done}}` を返すこと。
- * @returns {Promise<object>} `finalizeTouchScan` の戻り + `complete`
- *
- * ⚠️ `maxPages` に達しても**黙って打ち切らない**（`complete: false` を返す）。
- */
-export async function scanAllTouchPages({ fetchPage, maxPages = 200 } = {}) {
-  let acc = emptyTouchScan();
+/** 全ページを歩いて 1 つにまとめる（束ね方は `group` だけが決める） */
+async function scanAllGroupedPages({ fetchPage, maxPages = 200 } = {}, group) {
+  let acc = emptyScanFor(group);
   let cursor = null;
   let pages = 0;
   let complete = false;
@@ -161,12 +175,12 @@ export async function scanAllTouchPages({ fetchPage, maxPages = 200 } = {}) {
     const page = await fetchPage(cursor);
     if (!page) break;
     const scan = page.scan || {};
-    acc = mergeTouchPage(acc, {
+    acc = mergeGroupedPage(acc, {
       pageIndex: Number(scan.pageIndex),
-      touches: page.touches,
+      [group.listKey]: page[group.listKey],
       measurementAvailable: page.measurementAvailable,
       rows: Number(scan.rows),
-    });
+    }, group);
     pages += 1;
     const next = scan.cursor ? String(scan.cursor) : null;
     // 同じ cursor が返り続ける実装事故で無限ループしない
@@ -174,7 +188,70 @@ export async function scanAllTouchPages({ fetchPage, maxPages = 200 } = {}) {
     seen.add(next);
     cursor = next;
   }
-  return { ...finalizeTouchScan(acc), complete };
+  return { ...finalizeGroupedScan(acc, group), complete };
+}
+
+/** 集計の初期値（touch 別 / 既存の呼び手の形をそのまま保つ） */
+export function emptyTouchScan() {
+  return emptyScanFor(TOUCH_GROUP);
+}
+
+/** 集計の初期値（campaign × step 別） */
+export function emptyStepScan() {
+  return emptyScanFor(STEP_GROUP);
+}
+
+/**
+ * 1 ページぶんの集計を足す。**同じ `pageIndex` を 2 回渡しても増えない**。
+ *
+ * @param {object} acc  `emptyTouchScan()` の戻り、または前回の戻り
+ * @param {{pageIndex: number, touches: object[], measurementAvailable?: boolean,
+ *          rows?: number}} page  `summarizeByTouch` の結果 + ページ番号
+ */
+export function mergeTouchPage(acc, page) {
+  return mergeGroupedPage(acc, page, TOUCH_GROUP);
+}
+
+/**
+ * 1 ページぶんの集計を足す（**campaign × step 別**）。
+ * `mergeTouchPage` と同じく、同じ `pageIndex` を 2 回渡しても増えない。
+ */
+export function mergeStepPage(acc, page) {
+  return mergeGroupedPage(acc, page, STEP_GROUP);
+}
+
+/**
+ * 集計を画面・報告の形へ落とす。**率はここで 1 回だけ**計算する。
+ * 返す形は `summarizeByTouch` と同じ（既存の読み手をそのまま使える）。
+ */
+export function finalizeTouchScan(acc) {
+  return finalizeGroupedScan(acc, TOUCH_GROUP);
+}
+
+/** 集計を画面・報告の形へ落とす（**campaign × step 別**。`steps` を返す） */
+export function finalizeStepScan(acc) {
+  return finalizeGroupedScan(acc, STEP_GROUP);
+}
+
+/**
+ * 全ページを歩いて 1 つにまとめる（呼び出し側は「1 ページ取る関数」だけ渡す）。
+ *
+ * @param {{fetchPage: (cursor: string|null) => Promise<object>, maxPages?: number}} input
+ *   `fetchPage` は `{touches, measurementAvailable, rows, scan:{pageIndex, cursor, done}}` を返すこと。
+ * @returns {Promise<object>} `finalizeTouchScan` の戻り + `complete`
+ *
+ * ⚠️ `maxPages` に達しても**黙って打ち切らない**（`complete: false` を返す）。
+ */
+export async function scanAllTouchPages(input = {}) {
+  return scanAllGroupedPages(input, TOUCH_GROUP);
+}
+
+/**
+ * 全ページを歩いて 1 つにまとめる（**campaign × step 別**）。
+ * `fetchPage` は `{steps, measurementAvailable, scan:{pageIndex, cursor, rows}}` を返すこと。
+ */
+export async function scanAllStepPages(input = {}) {
+  return scanAllGroupedPages(input, STEP_GROUP);
 }
 
 /**
@@ -206,7 +283,7 @@ export const MEASUREMENT_INCOMPLETE = 'measurement_requires_scan';
  *   `scan` … `scanAllTouchPages()` の戻り（`complete` を含む）
  * @returns {{ok: boolean, body: object}} `ok:false` なら数は入っていない
  */
-export function buildInlineMeasurementResult({ scan, budgetPages = MEASUREMENT_INLINE_MAX_PAGES } = {}) {
+function buildInlineResultFor({ scan, budgetPages = MEASUREMENT_INLINE_MAX_PAGES } = {}, group) {
   const r = scan && typeof scan === 'object' ? scan : null;
   if (!r || r.complete !== true) {
     return {
@@ -229,7 +306,7 @@ export function buildInlineMeasurementResult({ scan, budgetPages = MEASUREMENT_I
     body: {
       complete: true,
       measurementAvailable: r.measurementAvailable,
-      touches: r.touches,
+      [group.listKey]: r[group.listKey],
       totals: r.totals,
       clickMeasured: r.clickMeasured,
       scannedPages: r.scan.pages,
@@ -237,6 +314,18 @@ export function buildInlineMeasurementResult({ scan, budgetPages = MEASUREMENT_I
       budgetPages,
     },
   };
+}
+
+export function buildInlineMeasurementResult(input = {}) {
+  return buildInlineResultFor(input, TOUCH_GROUP);
+}
+
+/**
+ * `campaign × step` 版。返す本体の中身は `touches` ではなく **`steps`**。
+ * 「数え切れなければ数を返さない」約束は touch 版と**同じ**。
+ */
+export function buildInlineStepResult(input = {}) {
+  return buildInlineResultFor(input, STEP_GROUP);
 }
 
 export default mergeTouchPage;
