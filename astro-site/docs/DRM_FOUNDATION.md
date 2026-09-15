@@ -378,6 +378,25 @@ sequence: {
   `already_started` / `outside_window` / `stage_mismatch` / `no_registration_time`）
 - **登録時刻が読めない人は入れない**（推測しない）
 - **すでに 1 通でも受け取っている人は入口に入れない**（`hasStarted`）
+
+> ## ⚠️ `MARKETING_DRM_AUTOSTART_ENABLED` は **step1 の入口専用**
+>
+> **step2 以降の実行 gate ではない**（2026-09-15 実装確認）。
+> ※ これは新しい仕様の決定ではなく、**コードがそうなっているという事実**の記録。
+> `planSequenceTick` の `excludeSteps = allowFirstStep ? [] : [1]` が示すとおり、
+> このスイッチが左右するのは **step1 を選べるかどうかだけ**。
+> step2 以降は `selectNextDueStep` が**期限の来ている最小の step** を選ぶので、
+> このスイッチとは無関係に選ばれる。
+>
+> **2 通目（R2）のためにこの env を開けてはいけない。**
+>
+> さらに、**開けても 2 通目は出せない**。`runDrmEntry` は入口の下見が返した recordId
+> （＝**まだ 1 通も受け取っていない人**）を許可リストとして渡すので、
+> step2 の対象（既に受け取っている人）は**全員が許可リストの外**になり、
+> 最終対象 0 →`no_due_recipients` で止まる。**構造的に 2 通目は出ない。**
+>
+> 2 通目を出すには別の経路と**別の承認**が要る。現在地と手順は
+> `docs/progress.md` の「R2 の進め方」を正本とする。
 - 並びは recordId 昇順で決定的・上限超過は `carriedOver` として次回へ（**黙って捨てない**）
 
 `resolveStageEntry()` は段が進んだ人を次段の**育成**へ繋ぐ。
