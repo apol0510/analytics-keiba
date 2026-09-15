@@ -1,3 +1,70 @@
+# 2026-09-15 — prospect の選別は 2 期・合計 10 通
+
+## 決定
+
+| # | 決定 | 単一源 |
+|---|---|---|
+| 1 | prospect 向け**第 2 期 7 通**を追加（`campaign-prospect-phase2`）| `prospectPhase2Steps.js` |
+| 2 | 第 1 期 3 通 + 第 2 期 7 通 = **delivered 10** で打ち切りに届く | `resolveProspectCutoff()` |
+| 3 | 第 2 期は **`audienceSource: 'prospect'`** で構造的に prospect 限定 | `campaignSequence.resolveAudienceSource` |
+| 4 | 第 1 期の文面・`version`・既送 step は**変更しない**（後段として足す）| `campaignCatalog.test.mjs` の version ロック |
+| 5 | `runner` は既定。**`MARKETING_SEQUENCE_CAMPAIGN_ID` は未設定が正** | `resolveTickCampaignIds()` |
+| 6 | 第 2 期の `benefitType` は **`free_content`**（新しい権利は付かない）| `campaignBenefit.js` |
+| 7 | **第 1 期 → 第 2 期は自動で繋ぐ**（`autoStart: { kind: 'prior_sequence_done' }`）| `prospectPhase2Entry.planPhase2Entry` |
+| 8 | 入口の判定は**第 1 期固有の `DeliveryKey`**。**`delivered` の累計では判定しない** | 同上 |
+| 9 | 後段接続のゲートは「配り終えた人が居ること」。**DRM の入口 env とは無関係** | `cron-campaign-sequence.js` |
+
+## ⚠️ 「7 通を足したので 3 + 7 = 10」では完成ではない
+
+第 2 期は別 campaignId なので進行はまっさらで、最初の 1 通は step1 になる。
+共有 cron は既定で step1 を撃たない（`first_step_is_manual`）ため、
+catalog へ足しただけでは **1 通も積まれない**。
+かといって素通しで許すと、**第 1 期が途中の人にも第 2 期が並走**する。
+
+そこで **`prior_sequence_done`** という入口の種類を足した。
+
+| 決めごと | 内容 |
+|---|---|
+| 入口の条件 | その prospect について**第 1 期の全 step が配り終わっている**こと |
+| 判定材料 | **第 1 期固有の `DeliveryKey`** |
+| 使わない判定 | **`delivered` の累計**（2026-09-15 実測で既に 4 の人が 30 名。第 1 期完了の証拠にならない）|
+| ゲート | 「配り終えた人が居ること」そのもの |
+| 台帳を読めないとき | **1 人も入れない** |
+| 上限 | `maxPerTick`（既定 50）。残りは次の tick へ |
+
+⚠️ 実装は **DRM 側の `allowFirstStep` / `buildEntryRows` の字面を 1 文字も変えていない**
+（後段接続を「入口ゲート」として表現したため）。DRM の guard は全 314 件そのまま green。
+
+## なぜ
+
+打ち切りの分母は delivered 10 通で、**キャンペーン単位ではなく「その人」に積む**。
+ところが prospect が受け取れるのは `campaign-discount-free` の **3 通だけ**だった。
+
+**2026-09-15 の本番実測**: prospect 索引 11,969 件を全走査して
+`delivered` 最大 **4** / 分布 `1:469 / 2:11,305 / 3:165 / 4:30` / `withOpens` 0。
+待っても 10 に届かず、**完成条件（10 delivered 無反応 → EXHAUSTED）へ到達できない**状態だった。
+
+正本 `ENGAGEMENT_SUPPRESSION.md` も
+「1 本 3 通のキャンペーンでは 10 通に届かないので**複数キャンペーンを通じて**初めて打ち切りが起きる」
+と書いている。第 2 期はその「複数キャンペーン」の実体。
+
+## 7 通の役割（重複させない）
+
+無料で見られるもの → 予想の読み方 → 実績の見かた → 使い方 →
+有料で増えるもの → 続けて見る価値 → 最後のご案内。
+
+割引メールの 7 連投にはしない。価格に触れるのは最終回だけで、
+金額は `campaignDiscountSteps.js` の導出値を使う（**メールに数字を書き写さない**）。
+
+## 触らなかったこと
+
+第 1 期の文面・`version`・`DeliveryKey`、DRM 3 本の Customers 限定 contract、
+1 tick 上限・tick 鍵・冪等性、`click` の扱い（現状ゼロのまま当てにしない）。
+
+## 本番未反映
+
+この時点で **production へは 1 通も送っていない**。deploy も env 変更もしていない。
+
 # 2026-09-15 — 1 tick の枠は「積める人」で埋め、campaign は順番に先頭へ回す
 
 ## 決定

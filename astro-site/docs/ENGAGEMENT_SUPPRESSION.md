@@ -84,6 +84,32 @@ delivered が 10 に達し、open も click も 0
   届かないので、**複数キャンペーンを通じて**初めて打ち切りが起きる（これが意図どおり）
 - 打ち切った相手は抑止台帳（`ak:prospect:blocked:*`）へ載るので、**再取り込みでも復活しない**
 
+### prospect が 10 通に届く道筋（2026-09-15 確定）
+
+| 期 | campaign | 通数 | audience |
+|---|---|---|---|
+| 第 1 期 | `campaign-discount-free` | **3** | `all`（prospect も Customers も）|
+| 第 2 期 | **`campaign-prospect-phase2`** | **7** | **`prospect` 専用** |
+| 合計 | — | **10** | — |
+
+⚠️ **第 2 期を足すまで、prospect は 3 通までしか届かなかった**
+（2026-09-15 実測: 索引 11,969 件の `delivered` 最大が **4**。10 に永久に届かない）。
+第 2 期は第 1 期の**後段**で、第 1 期の文面・`version`・既送 step は 1 バイトも変えない
+（`version` を上げると `DeliveryKey` が変わり、送信済みの人へもう一度届く）。
+
+⚠️ **第 2 期は `sequence.audienceSource: 'prospect'` で構造的に prospect 限定**。
+   Customers / DRM 対象者へは 1 通も入らない（`runSequenceTick` が fail closed で守る）。
+
+⚠️ 第 2 期は 7 通のうち 6 通が**無料で見られる範囲の案内**（`benefitType: 'free_content'`）で、
+   価格に触れるのは最終回だけ。金額は `campaignDiscountSteps.js` の導出値を使い、
+   **メールに数字を書き写さない**。
+
+⚠️ **第 1 期 → 第 2 期は自動で繋がる**（`autoStart: { kind: 'prior_sequence_done' }`）。
+   入口の条件は「**その人について第 1 期の全 step が配り終わっている**」ことで、
+   判定は**第 1 期固有の `DeliveryKey`**。**`delivered` の累計では判定しない**
+   （累計は過去キャンペーンぶんを含むので、第 1 期完了の証拠にならない）。
+   繋がらなければ 10 通に届かないので、**件数だけで完成扱いにしない**。
+
 ### ⚠️ `delivered` を数えないと、除外は永久に起きない
 
 `classifyEvent('delivered')` は **2026-09-14 まで `ignore` を返していた**。

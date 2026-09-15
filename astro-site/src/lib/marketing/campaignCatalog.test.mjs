@@ -368,6 +368,23 @@ test('【version ロック】本文を変えたら version を上げる', () => 
         18: '6fb8b4bb6567feef',
       },
     },
+    /**
+     * prospect 第 2 期（2026-09-15 追加 / **未送信**）。
+     * 第 1 期 `campaign-discount-free` 3 通の**後段**で、3 + 7 = delivered 10。
+     * ⚠️ 第 1 期の version・文面は 1 バイトも変えていない（変えると送信済みの人へ再送になる）。
+     */
+    'campaign-prospect-phase2': {
+      version: 1,
+      steps: {
+        1: '2682fc5734473326',
+        2: '1c46e25480f67068',
+        3: '0c2950025aea9221',
+        4: '61f338de0e34712f',
+        5: '02a02e6d78bd53a8',
+        6: 'bf88a0b09e342efb',
+        7: '688241f50cc496f0',
+      },
+    },
   };
   for (const c of CAMPAIGNS) {
     const lock = LOCKED[c.campaignId];
