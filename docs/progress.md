@@ -148,15 +148,32 @@ delivered が 4 → 10 へ積み上がるのを観測。
 |---|---|
 | PR merge | **未実施** |
 | production deploy | **未実施** |
-| production env 変更 | **未実施** |
+| production env 変更 | **不要**（下記）|
 | 第 2 期の実顧客送信 | **未実施**（1 通も送っていない）|
 | 手動 enqueue / canary / Redis・Airtable 手動補正 | **未実施** |
 
-⚠️ **正本との不一致（read-only で記録のみ）**: production の
-`MARKETING_SEQUENCE_CAMPAIGN_ID` に割引 3 本が**設定されている**。
-正本は「**未設定が正**（`resolveTickCampaignIds()` が自動選択）」なので不一致。
-設定されたままだと**第 2 期が自動選択されない**。
-env 変更は高リスク操作なので**この作業では触っていない**。
+### ✅ env の追加変更は要らない（2026-09-15 / #549 で解消済み）
+
+当初この節は「production の `MARKETING_SEQUENCE_CAMPAIGN_ID` に割引 3 本が設定されており、
+正本（未設定が正）と不一致。このままだと第 2 期が自動選択されない」と記録していた。
+
+**#549（`235ea39a`）が本番の env を未設定へ戻した**ので、この不一致は解消している。
+
+read-only 実測（2026-09-15）:
+
+| 確認項目 | 実測 |
+|---|---|
+| `MARKETING_SEQUENCE_CAMPAIGN_ID` | **UNSET** |
+| 共有 cron の対象 | **6 本**（`campaign-discount-free` ＋ deferred 5 本）|
+| 実効時刻 | 07:31:21Z の tick で既に 6 本を列挙 |
+
+したがって **#548 を merge して production deploy すれば、
+`campaign-prospect-phase2` が 7 本目として自動選択される**。
+`MARKETING_SEQUENCE_CAMPAIGN_ID` は**今後も再変更しない**（未設定が正）。
+
+⚠️ `235ea39a` の deploy は `error` と表示されるが、理由は
+`Canceled build due to no content change`（docs だけの変更で内容が変わらず自動キャンセル）。
+失敗ではなく、env 反映は直近 ready の `be4900a5` で稼働している。
 
 ### テストで固定したこと（21 件）
 
