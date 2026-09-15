@@ -7,18 +7,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { useFixedCouponClock } from './couponTestClock.mjs';
-
-/**
- * ⚠️ **基準時刻を固定する**（2026-09-15 の CI 赤の再発防止）。
- *
- * fixture は固定日時なのに判定側が実時計 `Date.now()` を使っていたため、
- * `RESERVATION_STALE_DAYS = 14` の境界（`2026-09-01` + 14 日）を
- * **カレンダーが跨いだ瞬間**に、コードを触っていないのに落ちるようになっていた。
- * 詳細と原則は `couponTestClock.mjs` を参照。
- */
-useFixedCouponClock();
-
 
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
 
@@ -383,91 +371,103 @@ test('入金確認が予約を使用済みにする（未配線だと使い放�
 });
 
 // ══════════════════════════════════════════════════════════════════
-//  滞留の境界（2026-09-15 の CI 赤の再発防止）
+//  滞留の境界（14 日）
 // ══════════════════════════════════════════════════════════════════
 
 /**
- * ## なぜこの 3 本が要るか
+ * ## テストの時刻の扱い（2026-09-15 に 2 度こけた教訓）
  *
- * 落ちた 6 件を通すだけなら基準時刻を固定すれば済む。だがそれでは
- * **`RESERVATION_STALE_DAYS = 14` という仕様そのものを 1 度も検査していない**。
- * 境界をまたいだときに何が起きるかを、**固定時刻**で明示的に押さえる。
+ * 1 度目: 「滞留していない予約」の fixture が `StartsAt: '2026-09-01'` 固定だったため、
+ *         `RESERVATION_STALE_DAYS`（14 日）を**カレンダーが跨いだ瞬間**に腐って CI が赤になった。
+ *         → #537 で、その種の fixture は**実時計基準**（いま − 1 日）へ直した。
+ * 2 度目: その上からファイル全体の時計を固定したところ、
+ *         **固定日付（`ClaimedAt` など）と実時計基準の fixture が前後逆転**して別の 8 件が落ちた。
  *
- * ⚠️ `isReservationStale` の判定は `now - StartsAt >= 14 日`（**以上**）。
- *    ちょうど 14 日は「滞留」側に入る。
+ * ## だから、こう分ける
+ *
+ *   - 「滞留していない普通の予約」を見るテスト … **実時計基準の fixture のまま**（#537 の方針）。
+ *     時計を固定しない。固定すると、固定日付の値と混ざって上の 2 度目が再発する。
+ *   - **境界そのもの**を見るテスト … 下のように `StartsAt` と `nowMs` を**両方その場で明示**する。
+ *     どちらも実時計を読まないので、カレンダーが何年進んでも結果は変わらない。
+ *
+ * ⚠️ **wall clock と固定日付を混ぜない。** 混ぜるくらいなら、
+ *    そのテストの中で両方を明示して閉じる。
  */
 const STALE_MS = RESERVATION_STALE_DAYS * 24 * 3600 * 1000;
+
+/**
+ * 境界検査用の予約を、**その場で**組み立てる。
+ * `StartsAt` も `nowMs` も呼び出し側が決めるので、実時計を 1 度も読まない。
+ *
+ * @param {number} startsAtMs 受理時刻
+ * @param {number} nowMs      判定の基準時刻
+ */
+const stateFor = (startsAtMs, nowMs) => resolveRedeemState({
+  fields: UNSETTLED,
+  reservation: res('issued', {
+    StartsAt: new Date(startsAtMs).toISOString(),
+    // 期限は滞留判定に関係しないが、受理より後ろに置いて現実的な形にする
+    ExpiresAt: new Date(startsAtMs + 30 * 24 * 3600 * 1000).toISOString(),
+  }),
+  nowMs,
+});
+
+/** 境界の検査に使う受理時刻（**この 2 つの差だけ**が判定材料）*/
 const STARTED = Date.parse('2026-09-01T00:00:00.000Z');
-/** 基準時刻を指定して `issued` の状態だけを取り出す */
-const stateAt = (nowMs) => resolveRedeemState({
-  fields: UNSETTLED, reservation: res('issued'), nowMs,
-}).state;
 
 test('【境界】14 日の 1 ミリ秒手前は「確認待ち」', () => {
-  assert.equal(stateAt(STARTED + STALE_MS - 1), REDEEM_STATE.WAITING);
-  assert.equal(
-    resolveRedeemState({ fields: UNSETTLED, reservation: res('issued'), nowMs: STARTED + STALE_MS - 1 })
-      .needsRepair,
-    false,
-  );
+  const v = stateFor(STARTED, STARTED + STALE_MS - 1);
+  assert.equal(v.state, REDEEM_STATE.WAITING);
+  assert.equal(v.needsRepair, false);
 });
 
 test('【境界】ちょうど 14 日から「要修復」（`>=` 判定）', () => {
-  assert.equal(stateAt(STARTED + STALE_MS), REDEEM_STATE.NEEDS_REDEEM);
-  assert.equal(
-    resolveRedeemState({ fields: UNSETTLED, reservation: res('issued'), nowMs: STARTED + STALE_MS })
-      .needsRepair,
-    true,
-  );
+  const v = stateFor(STARTED, STARTED + STALE_MS);
+  assert.equal(v.state, REDEEM_STATE.NEEDS_REDEEM);
+  assert.equal(v.needsRepair, true);
 });
 
 test('【境界】14 日を過ぎても「要修復」のまま', () => {
-  assert.equal(stateAt(STARTED + STALE_MS + 1), REDEEM_STATE.NEEDS_REDEEM);
-  assert.equal(stateAt(STARTED + STALE_MS + 365 * 24 * 3600 * 1000), REDEEM_STATE.NEEDS_REDEEM);
+  assert.equal(stateFor(STARTED, STARTED + STALE_MS + 1).state, REDEEM_STATE.NEEDS_REDEEM);
+  assert.equal(
+    stateFor(STARTED, STARTED + STALE_MS + 365 * 24 * 3600 * 1000).state,
+    REDEEM_STATE.NEEDS_REDEEM,
+  );
 });
 
 /**
  * ## カレンダーが進んでも結果は変わらない
  *
- * 2026-09-15T00:00:00Z を跨いだ瞬間に CI が赤になったのは、
- * 判定が**実時計に依存**していたから。判定は「`StartsAt` からの経過時間」だけで
- * 決まるべきで、**その日が何年何月何日かには依存しない**。
- * 遠い未来の基準時刻でも同じ答えになることを固定する。
+ * 判定は「`StartsAt` からの経過時間」だけで決まるべきで、
+ * **その日が何年何月何日かには依存しない**。遠い未来を基準にしても同じ答えになることを固定する。
+ * （`StartsAt` と `nowMs` を両方明示しているので、このテスト自体も腐らない。）
  */
-test('【再発防止】基準時刻を明示すれば、何年先でも同じ答えになる', () => {
+test('【再発防止】受理からの経過時間だけで決まる（何年先でも同じ）', () => {
   for (const iso of [
     '2026-09-10T00:00:00.000Z', '2027-01-01T00:00:00.000Z',
     '2030-06-30T12:34:56.000Z', '2040-12-31T23:59:59.000Z',
   ]) {
     const now = Date.parse(iso);
-    // 受理したばかり（1 分前）→ いつの時代でも「確認待ち」
-    assert.equal(
-      resolveRedeemState({
-        fields: UNSETTLED, nowMs: now,
-        reservation: res('issued', { StartsAt: new Date(now - 60 * 1000).toISOString() }),
-      }).state,
-      REDEEM_STATE.WAITING, `受理直後が確認待ちでない: ${iso}`,
-    );
-    // ちょうど 14 日前 → いつの時代でも「要修復」
-    assert.equal(
-      resolveRedeemState({
-        fields: UNSETTLED, nowMs: now,
-        reservation: res('issued', { StartsAt: new Date(now - STALE_MS).toISOString() }),
-      }).state,
-      REDEEM_STATE.NEEDS_REDEEM, `14 日滞留が要修復でない: ${iso}`,
-    );
+    assert.equal(stateFor(now - 60 * 1000, now).state, REDEEM_STATE.WAITING,
+      `受理直後が確認待ちでない: ${iso}`);
+    assert.equal(stateFor(now - STALE_MS, now).state, REDEEM_STATE.NEEDS_REDEEM,
+      `14 日滞留が要修復でない: ${iso}`);
   }
 });
 
 /**
- * ## 時計を固定し続ける（guard）
+ * ## 実時計と固定日付を混ぜない（guard）
  *
- * `describeCouponLifecycle` / `describeCouponAdminActions` / `planRedeemAfterConfirm` には
- * 時刻の注入口が無く、内部で `Date.now()` に落ちる。
- * そのため**固定日時の fixture を使うテストファイルは時計を固定していなければならない**。
- * 外すと、また「ある日を境に、コードを触っていないのに CI が赤くなる」。
+ * `describeCouponLifecycle` / `describeCouponAdminActions` / `planRedeemAfterConfirm` は
+ * `nowMs` を受け取れず内部で `Date.now()` に落ちる。
+ * そこへ**ファイル全体の時計固定**を掛けると、固定日付で書かれた値
+ * （`ClaimedAt` など）との前後関係が崩れて別の失敗を生む（2026-09-15 に実際に起きた）。
+ *
+ * 時刻の制御が要るのは**境界を見るテストだけ**で、それは上のように
+ * `StartsAt` と `nowMs` をその場で明示すれば足りる。
+ * だから**この一群のファイルはファイル全体の時計固定を持たない**。
  */
-test('【再発防止】固定日時の fixture を使うファイルは時計を固定している', () => {
+test('【再発防止】ファイル全体の時計固定を持ち込まない', () => {
   for (const f of [
     'adminCouponLedger.smoke.test.mjs',
     'couponRedeemReconcile.test.mjs',
@@ -475,7 +475,8 @@ test('【再発防止】固定日時の fixture を使うファイルは時計�
     'premiumPlusCouponReservation.test.mjs',
   ]) {
     const src = read(`./${f}`);
-    assert.match(src, /useFixedCouponClock\(/, `${f} が基準時刻を固定していない`);
+    assert.equal(/mock\.timers\.enable|useFixedCouponClock\(/.test(src), false,
+      `${f} がファイル全体の時計を固定している（固定日付の値と混ざる）`);
   }
 });
 
