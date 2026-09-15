@@ -59,6 +59,12 @@ export const TICK_ABORT = Object.freeze({
   NO_DUE: 'no_due_recipients',
   FIRST_STEP_MANUAL: 'first_step_is_manual',
   OVER_MAX: 'over_max_recipients',
+  /**
+   * 下見専用の step1 スイッチが live で渡された。**1 件も積まずに中止する**
+   * （ゲートを迂回させないため。2026-09-15 の read-only 確認で必要になった経緯は
+   *  `docs/CAMPAIGN_SEQUENCE.md` の `drmEntryAllowlistCheck` を参照）。
+   */
+  FIRST_STEP_OVERRIDE_IN_LIVE: 'first_step_override_in_live',
 });
 
 /**

@@ -93,19 +93,36 @@ test('【配線】cron が入口の宣言とゲートを見て step1 を撃つ',
   assert.match(code, /resolveAutoStart\(base\)/, 'cron が入口の宣言を読んでいない');
   assert.match(code, /readAutoStartGate\(env\)/, 'cron が入口のゲートを読んでいない');
   assert.match(code, /planAutoStartEntries\(\{/, '入口の選定を純粋関数へ委ねていない');
-  assert.match(code, /allowFirstStep: autoStartDecl !== null && autoStartGate\.open === true/,
+  /**
+   * ⚠️ live で step1 を撃てるのは**入口の宣言 ＋ ゲートが開いている**ときだけ。
+   *    `dryFirstStep` は**下見でしか true にならない**（live で渡されたら
+   *    `runSequenceTick` の入口で 1 件も積まずに中止する）。
+   */
+  assert.match(code, /allowFirstStep: autoStartDecl !== null && \(autoStartGate\.open === true \|\| dryFirstStep\)/,
     'step1 を無条件に撃てる状態になっている');
+  assert.match(code, /const dryFirstStep = isDry && previewAllowFirstStep === true/,
+    '下見スイッチが live でも効く形になっている');
+  assert.match(code, /previewAllowFirstStep === true && !isDry/,
+    'live で下見スイッチを渡したときに中止していない');
 });
 
-test('【安全】入口のゲートが閉じていれば候補を 1 件も読まない', () => {
+test('【安全】入口のゲートが閉じていれば候補を 1 件も読まない（下見スイッチを除く）', () => {
   const code = codeOnly(CRON);
-  const guard = code.indexOf('if (autoStartDecl && autoStartGate.open)');
+  /**
+   * ⚠️ 例外は**下見スイッチのときだけ**（`drmEntryAllowlistCheck` の read-only 確認）。
+   *    そのときも読むだけで、入口は開かない（`autoStartReport.open` は実際の値のまま）。
+   */
+  const guard = code.indexOf('const buildEntryRows = autoStartDecl !== null && (autoStartGate.open || dryFirstStep)');
   // 定義ではなく **呼び出し** がゲートの内側にあること
   const fetchCall = code.indexOf('await fetchAutoStartCandidates({');
   assert.ok(guard > 0, '入口のゲート判定が無い');
+  assert.ok(code.indexOf('if (buildEntryRows) {') > guard, '判定を通さずに候補を読んでいる');
   assert.ok(fetchCall > guard, 'ゲート判定より前に候補を読んでいる');
   assert.equal((code.match(/await fetchAutoStartCandidates\(\{/g) || []).length, 1,
     '候補の取得が複数箇所にある');
+  // 下見で組み立てても、入口が開いたことにはしない
+  assert.match(code, /open: autoStartGate\.open/, '入口の状態を実際の値で返していない');
+  assert.match(code, /previewOnly: true/, '下見で組み立てた印が無い');
 });
 
 test('【安全】入口の候補取得は Customers を絞って読む（全件走査しない）', () => {
@@ -117,7 +134,7 @@ test('【安全】入口の候補取得は Customers を絞って読む（全件
 
 test('【安全】入口が読めなくても進行中の配信を止めない', () => {
   const code = codeOnly(CRON);
-  const block = code.slice(code.indexOf('if (autoStartDecl && autoStartGate.open)'));
+  const block = code.slice(code.indexOf('if (buildEntryRows) {'));
   assert.match(block.slice(0, 2500), /catch \(e\)/, '入口の失敗で tick 全体が落ちる');
 });
 

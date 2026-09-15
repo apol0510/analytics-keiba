@@ -652,6 +652,25 @@ queue / claim / `CampaignDeliveries` / `ScheduledEmails` / provider 送信は**�
 
 判定の正本は `src/lib/drm/drmAllowlistWindow.js`。
 
+#### 2026-09-15 の走査で分かったこと（2 窓目で停止）
+
+1 窓目は正常（planner 4 名 / 最終 0 名 / prospect 0 / 許可リスト外 0 / 索引 11,971）。
+**2 窓目で下見そのものが `first_step_is_manual` で中止**し、窓の情報が返らなかった。
+その結果、続きの位置が両方 null になって **`done: true` に見えていた**
+（＝部分を全体として扱う形。本番の送信ロジックではなく**確認経路の判定漏れ**）。
+書き込みは 0 で、前後の状態は完全に一致。
+
+**是正 2 点:**
+
+1. `tick.ok === false` / 窓の情報が欠けている回は **`tick_aborted` で fail closed**。
+   `next.done` も `false` のまま。中止理由は `tick.abort` にそのまま出す。
+2. `runSequenceTick` に**下見専用**の `previewAllowFirstStep` を足す
+   （`dryRun: true` のときだけ有効。`dryRun: false` で渡したら
+   `first_step_override_in_live` で **1 件も積まずに中止**）。
+   **env は偽装しない**ので、応答のゲートは閉じたまま
+   （下見で組み立てた入口は `previewOnly: true` と印を付ける）。
+   使うのは `drmEntryAllowlistCheck` だけで、**共有 tick と割引 3 本は完全に不変**。
+
 guard: `src/lib/drm/drmEntryAllowlistCheck.test.mjs` / `drmAllowlistWindow.test.mjs`
 （`npm run test:drm` / `check:safety`）
 

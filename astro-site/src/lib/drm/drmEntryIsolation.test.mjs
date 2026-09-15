@@ -220,7 +220,13 @@ test('【不変】共有の cron を変更していない（#521 / #523 の契�
   // 既存の 4 ゲート判定と入口の配線はそのまま
   assert.match(code, /readSequenceGates\(env, now\)/);
   assert.match(code, /!gates\.allOpen/, 'ゲート判定が外れている');
-  assert.match(code, /allowFirstStep: autoStartDecl !== null && autoStartGate\.open === true/);
+  /**
+   * ⚠️ live の条件は不変（**入口の宣言 ＋ ゲートが開いている**）。
+   *    `dryFirstStep` は下見でしか true にならず、live で渡されたら中止する。
+   */
+  assert.match(code, /allowFirstStep: autoStartDecl !== null && \(autoStartGate\.open === true \|\| dryFirstStep\)/);
+  assert.match(code, /previewAllowFirstStep === true && !isDry/,
+    'live で下見スイッチを渡したときに中止していない');
   // 新しい Function を参照していない（依存の向きは DRM → 既存 の一方向）
   assert.equal(code.includes('cron-drm-autostart'), false);
   assert.equal(code.includes('runDrmEntry'), false);

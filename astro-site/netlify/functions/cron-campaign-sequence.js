@@ -368,8 +368,39 @@ export async function runSequenceTick({
   expectedCount = null,
   /** 1 tick の上限を呼び出し側で決める（渡さなければ従来どおり env 由来） */
   maxRecipientsOverride = null,
+  /**
+   * **下見専用**の step1 再現スイッチ（`drmEntryAllowlistCheck` だけが渡す）。
+   *
+   * ── なぜ要るか ──────────────────────────────────────────────
+   * step1 を自動で撃てるのは「入口の宣言があり、かつ入口ゲートが開いている」ときだけ。
+   * production のゲートは**閉じたまま**確認したいので、その状態で下見を回すと
+   * 「期限が来ているのは step1 の人だけ」→ `first_step_is_manual` で毎回中止し、
+   * **窓を最後まで走査できない**（2026-09-15 に本番実測）。
+   *
+   * ⚠️ これは **`dryRun === true` のときだけ**効く。`dryRun: false` で渡されたら
+   *    **1 件も積まずに中止する**（live のゲート条件を迂回させない）。
+   * ⚠️ env は**偽装しない**。実際のゲート状態は応答へそのまま載せる
+   *    （`gates` / `autoStart.open` は閉じたまま）。
+   * ⚠️ 入口の候補を組み立てるのは**読むだけ**（`planAutoStartEntries` は純粋関数）。
+   *    予約・キュー登録・配信行・ジョブ・送信はこの先も一切しない。
+   */
+  previewAllowFirstStep = false,
 } = {}) {
   const isDry = dryRun === true;
+  /**
+   * ⚠️ **live では絶対に効かせない。** 渡されたら 1 件も積まずに中止する
+   *    （「無視して続ける」にすると、呼び出し側の取り違えに気づけない）。
+   */
+  if (previewAllowFirstStep === true && !isDry) {
+    const body = {
+      ok: false, abort: TICK_ABORT.FIRST_STEP_OVERRIDE_IN_LIVE, sideEffects: 'none',
+      note: 'step1 の下見用スイッチは live では使えません（ゲートを迂回させないため）。',
+    };
+    log(body);
+    return body;
+  }
+  /** 下見だけで有効な step1 再現（env は偽装しない） */
+  const dryFirstStep = isDry && previewAllowFirstStep === true;
   const win = (isDry && preview && typeof preview === 'object') ? preview : null;
   const previewScope = win && (win.scope === 'prospect' || win.scope === 'customer') ? win.scope : null;
   /** 下見で Customers 側（配信台帳）を見るか */
@@ -566,7 +597,13 @@ export async function runSequenceTick({
   let autoStartReport = autoStartDecl
     ? { declared: true, open: autoStartGate.open, missing: autoStartGate.missing, entered: 0, skipped: {} }
     : { declared: false, open: false, missing: [], entered: 0, skipped: {} };
-  if (autoStartDecl && autoStartGate.open) {
+  /**
+   * ⚠️ 入口を**実際に開ける**のは従来どおりゲートが開いているときだけ。
+   *    下見のスイッチは「R3 live と同じ step1 対象を**組み立てて見る**」ためだけに通す
+   *    （読むだけ・応答上のゲートは閉じたまま）。
+   */
+  const buildEntryRows = autoStartDecl !== null && (autoStartGate.open || dryFirstStep);
+  if (buildEntryRows) {
     try {
       const candidateRecords = await fetchAutoStartCandidates({
         KEY, BASE, withinDays: autoStartDecl.withinDays,
@@ -594,7 +631,12 @@ export async function runSequenceTick({
       const byId = new Map(candidates.map((c) => [c.recordId, c]));
       autoStartRows = planned.recordIds.map((rid) => byId.get(rid)).filter(Boolean);
       autoStartReport = {
-        declared: true, open: true, missing: [],
+        declared: true,
+        /** ⚠️ **実際のゲート状態をそのまま出す**（下見で開いていると誤解させない） */
+        open: autoStartGate.open,
+        missing: autoStartGate.missing,
+        /** 下見のスイッチで組み立てただけ（入口は開いていない） */
+        ...(dryFirstStep && !autoStartGate.open ? { previewOnly: true } : {}),
         considered: planned.considered,
         entered: autoStartRows.length,
         capped: planned.capped === true,
@@ -606,7 +648,9 @@ export async function runSequenceTick({
       // ⚠️ 入口が読めないだけで、**進行中の配信は止めない**
       autoStartRows = [];
       autoStartReport = {
-        declared: true, open: true, missing: [], entered: 0, skipped: {},
+        declared: true, open: autoStartGate.open, missing: autoStartGate.missing,
+        entered: 0, skipped: {},
+        ...(dryFirstStep && !autoStartGate.open ? { previewOnly: true } : {}),
         error: String((e && e.message) || 'autostart_unavailable'),
       };
       console.error(`${SEQ_LOG_TAG} 入口の候補を読めないため開けません: ${autoStartReport.error}`);
@@ -693,8 +737,11 @@ export async function runSequenceTick({
     // 1 tick の上限。**引数が優先**（canary はここで 50 に絞る）。渡されなければ従来の env 由来
     maxRecipients: Number.isInteger(maxRecipientsOverride) && maxRecipientsOverride > 0
       ? maxRecipientsOverride : resolveMaxRecipientsPerTick(process.env),
-    // ⚠️ step1 を自動で撃てるのは、**入口を宣言していて ゲートも開いている**ときだけ
-    allowFirstStep: autoStartDecl !== null && autoStartGate.open === true,
+    /**
+     * ⚠️ step1 を自動で撃てるのは、**入口を宣言していて ゲートも開いている**ときだけ。
+     *    `dryFirstStep` は**下見のときしか true にならない**（live では上で中止している）。
+     */
+    allowFirstStep: autoStartDecl !== null && (autoStartGate.open === true || dryFirstStep),
   });
   if (!plan.ok) {
     const body = {

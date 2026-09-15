@@ -162,5 +162,11 @@ test('【不変】cron は進行の下見を使わない（送信経路を触っ
   // cron 側の既存の入口・反応の配線はそのまま
   assert.match(code, /loadResponseByEmail\(\{/);
   assert.match(code, /planAutoStartEntries\(\{/);
-  assert.match(code, /allowFirstStep: autoStartDecl !== null && autoStartGate\.open === true/);
+  /**
+   * ⚠️ live の条件は不変（**入口の宣言 ＋ ゲートが開いている**）。
+   *    `dryFirstStep` は下見でしか true にならず、live で渡されたら中止する。
+   */
+  assert.match(code, /allowFirstStep: autoStartDecl !== null && \(autoStartGate\.open === true \|\| dryFirstStep\)/);
+  assert.match(code, /previewAllowFirstStep === true && !isDry/,
+    'live で下見スイッチを渡したときに中止していない');
 });
