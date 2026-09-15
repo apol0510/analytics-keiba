@@ -441,15 +441,53 @@ Draft PR の CI 確認 → MK レビュー → merge → production deploy。
 **adopt した全 step が基準を通り、対象外は理由つきで一覧化され、
 送信済み Step が 1 バイトも変わっていないこと。** 本数だけで完成扱いにしない。
 
-### 本番未反映 / 未実施の高リスク操作
+### ✅ merge / deploy 完了（2026-09-15）
+
+| 項目 | 実測 |
+|---|---|
+| PR #551 | **MERGED**（squash / 2026-09-15T13:49:03Z）|
+| squash commit | **`d612cfc6`**（10 ファイル / +1,565 −130）|
+| main の Safety Check | **success** |
+| Netlify production deploy | **`d612cfc6` / context=production / state=ready**（13:49・自動デプロイ。Build Hook 不要）|
+| merged main での再検証 | `test:email-copy` 23 件 / `test:marketing` 2,966 件 pass |
+| 🔒 送信済み step1 | ハッシュ **`c721e9eaa8acee80` 不変** |
+
+### 本番 read-only 反映確認（送信 0）
+
+CTA の着地先 6 本すべて **HTTP 200**
+（`/free-prediction/nankan/` `/results-showcase/nankan/` `/archive/nankan/`
+`/pricing/` `/sanrenpuku-demo/` `/free/nankan/`）。
+
+実ページで step2 の約束を突き合わせ:
+
+| 約束 | 本番の実測 |
+|---|---|
+| 上位 4 頭の印 ◎○▲△ | **実在**（◎14 / ○13 / ▲13 / △13）|
+| 騎手 / 斤量 / 父 / 性齢 | **実在** |
+| 「買い目・AI総合指数・累積スコア・役割は伏せてある」 | ページ表示と**一致** |
+
+### ⚠️ 本番確認で見つかった用語のズレ（別 PR で修正）
+
+`docs/spec.md` の語彙と**画面の表示ラベル**がずれていた。
+
+| メールの語（旧）| 画面の実際 | 対応 |
+|---|---|---|
+| 厩舎 | **調教師** | 調教師へ |
+| 過去走 | **近走**（「近走詳細データ」）| 近走へ |
+| 枠 | per-horse の表示**無し** | 書かない |
+| 通算成績 | 画面に**出ていない** | 書かない |
+
+受信者がページで探しても見つからない語を約束しないため、**画面の言い方**へ揃えた。
+`spec.md` の公開範囲そのものは正しく、ズレていたのは**語彙だけ**（公開範囲の変更ではない）。
+
+### 未実施の高リスク操作（維持）
 
 | 項目 | 状態 |
 |---|---|
-| PR merge | **未実施** |
-| production deploy | **未実施** |
-| production env 変更 | **不要・未実施** |
 | 実顧客への送信 | **未実施**（1 通も送っていない）|
-| 手動 enqueue / canary / Redis・Airtable 手動補正 | **未実施** |
+| 手動 enqueue / canary | **未実施** |
+| production env 変更 | **不要・未実施** |
+| Airtable / Redis への本番書込み | **未実施** |
 
 ## periodic 再開の実証と、そこで見つかった 2 つの欠陥（2026-09-15）
 
