@@ -1793,9 +1793,9 @@ Light 乗り換え特典 **¥44,820**）。この 20 円差をコード側で丸
 |---|---|
 | branch | `feat/admin-proxy-payment-notice`（worktree `/Users/user/Projects/analytics-keiba-proxypay`）|
 | 起点 | `origin/main` `0b244eb4` |
-| HEAD | `e0b54e0d` |
-| PR | [#553](https://github.com/apol0510/analytics-keiba/pull/553)（**Draft**）|
-| CI | **全 pass**（run `35084537928`）。新設 E2E step「代理入金連絡 管理画面・実 DOM」が CI 上（google-chrome）で実行され success |
+| HEAD | PR #553 の先端（**個別 hash は追記のたびに動くのでここに固定しない**）|
+| PR | [#553](https://github.com/apol0510/analytics-keiba/pull/553)（**Draft**・`mergeable=MERGEABLE` / `mergeStateStatus=CLEAN`）|
+| CI | **全 run green**。新設 E2E step「代理入金連絡 管理画面・実 DOM」が CI 上（google-chrome）で毎 run 実行され success |
 | Deploy Preview | ready（**Deploy Preview では会員/管理画面の本番動作は確認できない**。本番確認は merge 後）|
 
 ## 次作業（順序厳守）
