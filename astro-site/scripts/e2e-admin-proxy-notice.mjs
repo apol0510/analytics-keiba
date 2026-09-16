@@ -205,7 +205,7 @@ step('画面を開いた');
 /** 入力を埋める（運営者が画面でやる操作そのもの） */
 const fill = async (amount = '44800') => evaluate(`(() => {
   const set = (id, v) => { const el = document.getElementById(id); el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); };
-  set('email', 'soken1122@example.test');
+  set('email', 'proxy-test@example.test');
   set('amount', ${JSON.stringify(amount)});
   set('operator', 'MK');
   set('secret', 'e2e-secret');
@@ -254,7 +254,7 @@ check(s.calls.length === 1 && s.calls[0] === 'preview', `確認では preview �
 check(!s.calls.includes('apply'), '確認の時点で apply（書き込み）を呼んでいない');
 check(s.applyDisabled === false, '確認が通ると「登録する」を押せるようになる');
 check(/書き込む内容|RequestedPlan/.test(s.detail), '何が書き込まれるかを画面に出している');
-check(s.lastBody.email === 'soken1122@example.test',
+check(s.lastBody.email === 'proxy-test@example.test',
   '運営者が入力したメールアドレスがそのまま送られる（別の値へ差し替わらない）');
 check(String(s.lastBody.receivedAmount) === '44800', '実入金額 44800 がそのまま送られる（掲載価格へ丸めない）');
 

@@ -1737,7 +1737,7 @@ Airtable 直接編集を通常の解決方法にしない。
 
 ## 発端（2026-09-16 MK 報告）
 
-> soken1122@gmail.com から 44,800 円の入金があり、送信フォームからの入金連絡はないので
+> （対象顧客）から 44,800 円の入金があり、送信フォームからの入金連絡はないので
 > 代わりに送信してあげようと思ったが、ログインリンクやキャンペーン価格などの問題もあり
 > 諦めた。airtable も値を変更するのが手間なので諦めた。不便だ。
 
@@ -1745,7 +1745,7 @@ read-only で確認した当該顧客の状態（**書き込みは一切して�
 
 | 項目 | 実測 |
 |---|---|
-| 会員レコード | 登録あり（recordId は正本へ残さない。Airtable で Email 検索して特定する）|
+| 会員レコード | 登録あり（**メールアドレス・recordId とも正本へ残さない**。対象顧客の特定は入金連絡・問い合わせ履歴から行う）|
 | プラン / 有効期限 | Premium / **2026-04-06（期限切れ）** |
 | Status / PlanType | どちらも未設定 |
 | 実効権限 | `memberType=free` / `reason=expired`（無料ログインのみ）|
@@ -1820,7 +1820,7 @@ Light 乗り換え特典 **¥44,820**）。この 20 円差をコード側で丸
   作成は**本番 schema 変更＝高リスク操作**。作るまでは env gate が閉じたまま動く
 - `PROXY_NOTICE_ADMIN_SECRET`（または `PAYMENT_ADMIN_SECRET`）は**未設定**。
   未設定のままだと Function は 503 で fail closed（誤用の危険はない）
-- **soken1122@gmail.com への実代理登録は未実施**
+- **対象顧客への実代理登録は未実施**
 - PR は Draft・**未 merge / 未 deploy**
 
 ### merge 直前の最終確認（2026-09-16 / read-only ＋ ローカル再実行）
@@ -1898,7 +1898,7 @@ Light 乗り換え特典 **¥44,820**）。この 20 円差をコード側で丸
 2. `PROXY_NOTICE_ADMIN_SECRET` を production へ投入（値は記録しない）→ redeploy ← **次はここ（未承認）**
 3. `/admin/proxy-payment-notice` で **「内容を確認」まで**実施し、
    書き込み 0 のまま preview が通ることを確認
-4. MK 承認のうえ、soken1122@gmail.com へ実登録（プラン・金額は登録直前に再提示）
+4. MK 承認のうえ、対象顧客へ実登録（プラン・金額は登録直前に再提示）
 5. Airtable で `PaymentConfirmed` にチェック → 昇格とメール 1 通を確認
 6.（任意）監査列を作成して `PROXY_PAYMENT_NOTICE_FIELDS_READY=1`
 
