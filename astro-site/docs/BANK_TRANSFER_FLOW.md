@@ -134,6 +134,99 @@ Automation は `Status` の変化でしか発火しないため、再送する�
   従来の `PaymentConfirmed` 再読込認可のみへ即復帰する。
 - **secret 値そのものは CLAUDE.md / ログ / commit に絶対に記載しない。**
 
+### 🧑‍💼 運営者による代理入金連絡（2026-09-16 確定 / 応急・例外運用）
+
+**入金は確認できているのに、顧客本人が入金連絡フォームを送れていない**場合の経路。
+高齢・PC/スマホ操作が苦手・ログインできない等で、通常の入金連絡操作を本人へ
+求めることが現実的でない場合に**限って**使う。**通常の申込経路ではない。**
+
+#### なぜ要ったか（2026-09-16 / MK 報告）
+
+銀行着金は確認できているのに、運営者が代わりに申込を通す手段が無かった。
+
+| 詰まり | 実体 |
+|---|---|
+| 運営者が代理でフォーム送信できない | 申込アドレスは**ログイン中のセッションに固定**（`applicationIdentity.js`）。代理送信すると運営者のアドレスで記録される |
+| キャンペーン価格で申し込めない | 会員限定価格は**その会員のティアにしか画面へ出ない**（`data-plan-tier`）。運営者の画面には出ない |
+| Airtable の手修正が現実的でない | `プラン` / `PlanType` / `Status` / `有効期限` / `PaidAt` / `PaymentEmailSent` / 退会フラグ を人間が揃える必要があり、間違えれば権限事故になる |
+
+結果として**入金済みの顧客を昇格させる手段が事実上無い**状態だった。
+`confirm-bank-payment` も `admin-promote-customer` も入口が `RequestedPlan` なので、
+**フォーム未送信の顧客は構造的に昇格できない**（fail closed が正しく効いている）。
+
+#### 何をする機能か（範囲を誤解しないこと）
+
+**顧客としてログインし直す機能ではない（なりすましではない）。**
+本人がフォームを送ったのと**同じ申込情報**（`Requested*`）を運営者が登録するだけ。
+
+| 書く | 書かない |
+|---|---|
+| `RequestedPlan` / `RequestedPlanType` / `RequestedAmount` / `PaymentConfirmed=false` / 非 active なら `Status='pending'` | `プラン` / `PlanType` / `Status='active'` / `有効期限` / `PaidAt` / `PaymentEmailSent` / `LifetimeSanrenpuku` |
+
+登録後の昇格は**従来どおり `PaymentConfirmed` を起点にした既存の単一経路だけ**が行う。
+運営者の残作業は Airtable で `PaymentConfirmed` にチェックを入れる 1 アクション。
+
+#### 実入金額は捏造しない
+
+掲載価格と着金額はずれることがある（例: 掲載 ¥44,820 / 着金 ¥44,800）。
+**`RequestedAmount` には運営者が確認した実入金額をそのまま入れる。**
+通常フォームでもキャンペーン・クーポンが無ければ `RequestedAmount` は顧客申告の
+振込額そのものなので、意味は一致している。
+
+⚠️ ただし `RequestedAmount` は**入金確認時にクリアされる**（下の「残件」と同じ制約）。
+昇格後も実入金額を残すには Airtable に列が要るため、**本番 schema 変更は行わず**、
+`PROXY_PAYMENT_NOTICE_FIELDS_READY=1` が立っているときだけ監査列へ書く
+（`SaleTargetDate` と同じ env gate。列が無い本番では書かない＝ 422 にならない）。
+列が無い間も、代理登録の事実は Function の構造化ログ
+（`event: 'admin_proxy_payment_notice'`）に必ず 1 行残る。
+
+#### 対象外（迂回させない）
+
+- **Premium Plus**: 対象日（16:30 境界）・クーポン・会員別の販売停止をサーバーで
+  確定させる商品。代理登録から迂回させない → `premium_plus_unsupported` で拒否
+- **会員レコードの新規作成**: しない。未登録アドレスは `customer_not_found` で拒否
+  （打ち間違いで空レコードを生やさない）
+- **顧客宛メール**: 送らない。利用開始メールは昇格側の責務
+
+#### 認可（fail closed・多層）
+
+`premiumPlus/mediaAuth.js` の `decideAdminWrite` をそのまま使う。
+POST 限定 / 管理者 secret 設定済み / timing-safe 一致 / 本番 context /
+Origin 完全一致。**1 つでも欠ければ Airtable に到達しない。**
+secret は `PROXY_NOTICE_ADMIN_SECRET`（無ければ `PAYMENT_ADMIN_SECRET`、
+さらに無ければ `PREMIUM_PLUS_ADMIN_SECRET`）。管理画面は `/admin/*` の Basic 認証背後。
+
+#### 二重登録の防止
+
+未確認の申込（`RequestedPlan` が空でない）が残っているときは `already_pending` で拒否する。
+置き換えるには画面で明示的にチェックを入れる必要があり、その事実は
+`replacedPending` としてログに残る。昇格済みレコードへの再登録は**正当な更新**なので
+塞がないが、`PaymentConfirmed` は `false` へ戻るため、昇格には改めてチェックが要る。
+
+#### 運用手順
+
+1. `/admin/proxy-payment-notice` を開く（Basic 認証）
+2. 顧客メール / プラン / **実入金額** / 入金日 / 理由 / 操作者 / 管理者 secret を入力
+3. **「内容を確認」** を押す（この時点で Airtable は 1 バイトも書かれない）
+4. 書き込まれる内容を目で確認して **「この内容で登録する」**
+5. Airtable で該当会員の **`PaymentConfirmed` にチェック** → 既存経路が昇格 ＋ 利用開始メール
+
+#### rollback
+
+登録直後（`PaymentConfirmed` を押す前）なら、Airtable で `RequestedPlan` /
+`RequestedPlanType` / `RequestedAmount` を空へ戻すだけで元に戻る。
+**権限は 1 つも動いていない**ので、会員の見え方は変わらない。
+
+#### 関連ファイル
+
+| 目的 | ファイル |
+|---|---|
+| 判定・組み立ての単一源 | `astro-site/src/lib/payments/proxyPaymentNotice.js` |
+| Function | `astro-site/netlify/functions/admin-proxy-payment-notice.js` |
+| 管理画面 | `astro-site/src/pages/admin/proxy-payment-notice.astro` |
+| テスト | `proxyPaymentNotice.test.mjs` / `proxyPaymentNoticeFunction.guard.test.mjs`（`test:bank-payment`）|
+| 実 DOM E2E | `astro-site/scripts/e2e-admin-proxy-notice.mjs`（`npm run e2e:proxy-notice`・CI 必須）|
+
 ### 残件
 
 - Airtable Customers に `Amount` / `ProductName` フィールドは無い。振込金額は

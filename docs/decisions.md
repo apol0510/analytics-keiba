@@ -1,3 +1,43 @@
+# 2026-09-16 — 運営者による代理入金連絡（応急・例外運用）
+
+## 決定
+
+| # | 決定 | 単一源 |
+|---|---|---|
+| 1 | 入金は確認できているが本人がフォームを送れない場合に限り、運営者が**申込情報だけ**を代理登録できる | `payments/proxyPaymentNotice.js` |
+| 2 | **なりすましではない。** 通常フォームのセッション固定（`applicationIdentity.js`）は 1 ミリも緩めない | `applicationIdentity.js`（無改変・guard で固定）|
+| 3 | 昇格の入口は従来どおり **`PaymentConfirmed` ただ 1 つ**。代理登録用の第二の昇格処理は作らない | `bankPaymentFlow.js` の `buildConfirmationFields` |
+| 4 | 実入金額を掲載価格へ**捏造しない**（例: 掲載 ¥44,820 / 着金 ¥44,800 → 44800 を登録）| `decideProxyPaymentNotice` |
+| 5 | 昇格後も実入金額を残す列は**本番 schema 変更**なので作らず、env gate で分岐する | `PROXY_PAYMENT_NOTICE_FIELDS_READY` |
+| 6 | 認可は既存の `decideAdminWrite` を流用（POST / secret / 本番 context / Origin 完全一致）| `premiumPlus/mediaAuth.js` |
+| 7 | **Premium Plus は対象外**（対象日・クーポン・販売停止の判定を迂回させない）| `premium_plus_unsupported` |
+| 8 | **会員レコードを新規作成しない**（打ち間違いで空レコードを生やさない）| `customer_not_found` |
+| 9 | 代理登録では**顧客宛メールを一切送らない**（利用開始メールは昇格側の責務）| guard テスト |
+
+## 「Airtable を手で直す」を通常手段にしない
+
+発端は、着金済みの顧客に対して運営者が取れる手段が
+
+1. 代理でフォーム送信 → **セッションのアドレスに固定されていて不可**
+2. Airtable を手修正 → `プラン` / `Status` / `有効期限` / `PaidAt` / `PaymentEmailSent` /
+   退会フラグ を人間が揃える必要があり、間違えれば権限事故
+
+の 2 つしか無かったこと。どちらも現実的でないため MK が諦めていた。
+
+`confirm-bank-payment` / `admin-promote-customer` はどちらも入口が `RequestedPlan` で、
+**フォーム未送信の顧客は構造的に昇格できない**。これは fail closed として正しいので
+緩めず、**足りていなかった「申込を作る」側だけ**を運営者へ開放した。
+
+## 二重登録
+
+未確認の申込が残っているときは `already_pending` で拒否する。
+置き換えは画面での明示操作が要り、置き換えた事実はログに残る。
+
+## rollback
+
+`PaymentConfirmed` を押す前なら `Requested*` 3 列を空に戻すだけで元に戻る。
+権限フィールドは 1 つも動いていないので、会員の見え方は変わらない。
+
 # 2026-09-15 — 販促メールは「通知文」で終わらせない（コピー品質基準）
 
 ## 決定

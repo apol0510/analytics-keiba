@@ -168,6 +168,16 @@ jobs:
           E2E_BROWSER: /usr/bin/google-chrome
         run: npm run e2e:admin-plus
 
+      - name: E2E（代理入金連絡 管理画面・実 DOM）
+        working-directory: astro-site
+        # 段取り（確認 → 登録）が崩れていないかを実 DOM で見る。
+        # 管理 API はブラウザ側の fetch 差し替えで合成応答を返すため、
+        # Airtable / SendGrid へは 1 度も接続しない。ローカル実測 3 秒。
+        timeout-minutes: 10
+        env:
+          E2E_BROWSER: /usr/bin/google-chrome
+        run: npm run e2e:proxy-notice
+
       - name: E2E（ログインリンクは押したときだけ使われる・実 DOM）
         working-directory: astro-site
         # ⚠️ ビルド成果物は要らない（verify.astro の markup と script を直接読む）。
