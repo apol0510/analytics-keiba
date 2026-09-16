@@ -1798,9 +1798,36 @@ Light 乗り換え特典 **¥44,820**）。この 20 円差をコード側で丸
 | CI | **全 run green**。新設 E2E step「代理入金連絡 管理画面・実 DOM」が CI 上（google-chrome）で毎 run 実行され success |
 | Deploy Preview | ready（**Deploy Preview では会員/管理画面の本番動作は確認できない**。本番確認は merge 後）|
 
+## ⚠️ merge は production deploy を発火する（2026-09-16 実測 / 承認境界の訂正）
+
+**「merge だけ承認 → deploy は後で別承認」は成立しない。** Netlify は GitHub App 連携で
+`main` を自動ビルド・自動公開する設定のため、**squash merge した時点で production deploy が始まる**。
+
+| 実測（read-only） | 値 |
+|---|---|
+| provider / 連携 | `github` ／ GitHub App installation あり |
+| `repo_branch` / `allowed_branches` | `main` ／ `["main"]` |
+| `stop_builds` | **`false`**（自動ビルド有効）|
+| `published_deploy.locked` | `null`（auto publish 有効・deploy lock なし）|
+| `netlify.toml` の `ignore` | **なし**（ビルドを飛ばす条件が無い）|
+| 直近の PR merge | `d612cfc6`(#551) / `92e0bead`(#552) がいずれも **context=production / branch=main で deploy ready** |
+
+→ deploy を止めて merge だけ行うには **Netlify 側の設定変更**（stop builds / deploy lock）が要り、
+それ自体が production 設定変更なので、**「merge ＝ deploy」を 1 つの高リスク操作として承認**する。
+
+### merge 時点で本番に置かれるもの
+
+| 対象 | 実測（merge 前の現在）| merge 後 |
+|---|---|---|
+| `/.netlify/functions/admin-proxy-payment-notice` | **404**（未配置）| 配置される。ただし `PROXY_NOTICE_ADMIN_SECRET` 未設定なら **503 fail closed**（Airtable へ fetch 0 件） |
+| `/admin/proxy-payment-notice` | **401**（`/admin/*` は edge の Basic 認証。ページ不在でも 401）| 401 のまま。認証を通しても書き込みは Function が 503 で止める |
+| 既存 Function | `admin-promote-customer` は **405**（GET 拒否）＝ `astro-site/netlify/functions/` が配信元であることの裏づけ | 変更なし |
+
+**merge だけでは Airtable / 顧客レコード / メールへの write は 1 件も発生しない。**
+
 ## 次作業（順序厳守）
 
-1. PR レビュー → merge → production deploy
+1. **PR squash merge ＋ 自動 production deploy（1 つの高リスク操作として承認）**
 2. `PROXY_NOTICE_ADMIN_SECRET` を production へ投入（値は記録しない）→ redeploy
 3. `/admin/proxy-payment-notice` で **「内容を確認」まで**実施し、
    書き込み 0 のまま preview が通ることを確認
@@ -1810,8 +1837,9 @@ Light 乗り換え特典 **¥44,820**）。この 20 円差をコード側で丸
 
 ## 高リスク操作（実施直前で停止する）
 
-PR merge / production deploy / production env 変更 / Airtable 本番 schema 変更 /
-実顧客レコードの変更 / `PaymentConfirmed` の変更 / 実昇格 / 実メール送信。
+**PR merge（＝ production deploy が同時に走る）** / production env 変更 /
+Airtable 本番 schema 変更 / 実顧客レコードの変更 / `PaymentConfirmed` の変更 /
+実昇格 / 実メール送信。
 
 ## rollback
 
