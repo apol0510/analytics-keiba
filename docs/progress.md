@@ -1657,7 +1657,7 @@ R5 / R6 で見るのは「**購入が起きたときに処理が正しいか**�
 `test:drm` 136 pass ／ `check:safety` EXIT=0 ／ `build` EXIT=0。
 **実メール送信・queue・本番書込み・production deploy・PR merge は 1 件も行っていない。**
 
-# 🧑‍💼 運営者による代理入金連絡 — **PR #553 本番反映済み（2026-09-16）/ ただし専用 secret 化が未反映**
+# 🧑‍💼 運営者による代理入金連絡 — **本番反映済み・secret 未設定で不活性（2026-09-16）**
 
 ## 本番反映（2026-09-16）
 
@@ -1697,9 +1697,29 @@ PROXY_NOTICE_ADMIN_SECRET || PAYMENT_ADMIN_SECRET || PREMIUM_PLUS_ADMIN_SECRET
   **権限（プラン / 有効期限 / Status=active）は付かず、メールも出ない**
 - 実害: **現時点で write 0**（顧客レコード digest 一致で確認済み）
 - 是正: fallback を撤去し `PROXY_NOTICE_ADMIN_SECRET` 専用にする →
-  **PR #554（Draft・本番未反映）**。guard テストで再導入を禁止
+  **PR #554 を squash merge（main `0edb6994`）・production deploy ready・是正済み**。
+  guard テストで再導入を禁止
 
-**この是正が merge されるまで、本番はこの状態のままである。**
+### 是正後の本番実測（2026-09-16 / read-only・write 0）
+
+| 確認 | 実測 |
+|---|---|
+| `PROXY_NOTICE_ADMIN_SECRET` | **未設定のまま**（env に存在しない）|
+| 正規形式 POST（dummy secret）| **503** `{"ok":false,"error":"Forbidden","sideEffects":"none"}` |
+| **`PAYMENT_ADMIN_SECRET`（実値・20 文字）で POST** | **503**（通らない）|
+| **`PREMIUM_PLUS_ADMIN_SECRET`（実値・48 文字）で POST** | **503**（通らない）|
+| GET | **405** |
+| Origin 欠落 / Origin 偽装 / secret ヘッダ無し | いずれも **503** |
+| `/admin/proxy-payment-notice` | **401**（edge Basic 認証）|
+| 顧客レコード | `rec5Rl4oYfoEkf3GP` の digest が前後で**完全一致**＝変更 0 |
+| Airtable fetch / write | **0**（認可段で止まるため Airtable へ到達しない）|
+| 実メール送信 | **0** |
+| 既存経路への影響 | `bank-transfer-application` / `confirm-bank-payment` / `admin-promote-customer` / `send-payment-confirmation-auto` すべて **405**（従来どおり）／ `/pricing/` **200** |
+
+**現在の本番は「機能は配置済み・専用 secret 未設定で 503 不活性」＝安全な停止点。**
+
+> ⚠️ **#554 を安易に revert しないこと。** revert すると旧 fallback 認可が復活し、
+> 既存の管理 secret で経路が再び開く。障害時は **secret 未設定・本番 write 0 のまま停止**する。
 
 ---
 
@@ -1873,9 +1893,9 @@ Light 乗り換え特典 **¥44,820**）。この 20 円差をコード側で丸
 
 ## 次作業（順序厳守）
 
-0. ~~PR #553 squash merge ＋ 自動 production deploy~~ — **完了（2026-09-16）**
-1. **PR #554（専用 secret 化）を merge ＋ 自動 production deploy** ← これで 503 不活性になる
-2. `PROXY_NOTICE_ADMIN_SECRET` を production へ投入（値は記録しない）→ redeploy
+0. ~~PR #553 squash merge ＋ 自動 production deploy~~ — **完了（2026-09-16 / main `9a4511a9`）**
+1. ~~PR #554（専用 secret 化）を merge ＋ 自動 production deploy~~ — **完了（2026-09-16 / main `0edb6994`）**
+2. `PROXY_NOTICE_ADMIN_SECRET` を production へ投入（値は記録しない）→ redeploy ← **次はここ（未承認）**
 3. `/admin/proxy-payment-notice` で **「内容を確認」まで**実施し、
    書き込み 0 のまま preview が通ることを確認
 4. MK 承認のうえ、soken1122@gmail.com へ実登録（プラン・金額は登録直前に再提示）
