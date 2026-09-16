@@ -104,6 +104,9 @@ sequence: {
 - 宣言の無い campaign では索引を **1 鍵も読まない**（既存のコストと挙動のまま）
 - 管理画面の応答に `responseRouting`（`active` / `reason` / `routed` / `byRoute`）を返す。
   **効かなかったことが運用から見える**ようにするため
+- ⚠️ **`byRoute` は「次の 1 通」の行き先の予定**（`sequenceProgress` の `routedBy` を数えたもの）で、
+  **送った結果ではない**。`byRoute` に複数の層が出ていても、その 1 通はまだ出ていない。
+  実際に何が送られたかは `sentByStep` / `touchMeasurement` を見る（2026-09-17 に読み違えた）
 
 - 宣言順が強さ（先に書いたものが勝つ）
 - `minSent` / `maxSent` で段階を絞れる
