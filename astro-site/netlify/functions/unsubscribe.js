@@ -20,6 +20,12 @@ import { createHash } from 'node:crypto';
 import {
   parseUnsubscribeRequest, statusForResult, REQUEST_KIND,
 } from '../../src/lib/unsubscribe/parseUnsubscribeRequest.js';
+import {
+  planUnsubscribeSinks, summarizeUnsubscribeOutcome, SINK_RESULT, SINK,
+} from '../../src/lib/unsubscribe/unsubscribeOutcome.js';
+import { createProspectStore } from '../../src/lib/marketing/prospectStore.js';
+import { makeRedisCmd } from '../../src/lib/marketing/deliveryKeyStore.js';
+import { SUPPRESS_REASON } from '../../src/lib/marketing/prospectPolicy.js';
 
 /**
  * brand → 配信停止フィールド名 + Base ID env のマッピング
@@ -163,6 +169,44 @@ export async function updateUnsubscribeStatus(email, brand, action = 'unsubscrib
   return { ok: true, brand, action };
 }
 
+/**
+ * 見込み客プール（Redis）側の配信停止。
+ *
+ * ⚠️ **Customers に居ない人の受け皿**。配信の大半は見込み客宛なので、ここが無いと
+ *    「押したのに止まらない」が起き続ける（2026-09-16 に恒久対応）。
+ * ⚠️ Redis 未設定・読めない等は `unavailable` を返す。**成功と混同しない**。
+ */
+export async function suppressProspect(email, deps = {}) {
+  const make = deps.makeCmd || makeRedisCmd;
+  const create = deps.createStore || createProspectStore;
+  let store;
+  try {
+    store = create({ cmd: make(process.env) });
+  } catch {
+    return SINK_RESULT.UNAVAILABLE; // Redis 未設定など。握り潰さない
+  }
+  try {
+    const r = await store.recordSuppression({
+      email, nowMs: Date.now(), reason: SUPPRESS_REASON.UNSUBSCRIBE,
+    });
+    if (!r || r.ok !== true) return r && r.reason === 'not_found' ? SINK_RESULT.NOT_FOUND : SINK_RESULT.ERROR;
+    // 既に SUPPRESSED なら changed:false。**冪等なので成功扱い**
+    return r.changed === false ? SINK_RESULT.ALREADY : SINK_RESULT.RECORDED;
+  } catch {
+    return SINK_RESULT.ERROR;
+  }
+}
+
+/** Customers 側の結果を SINK_RESULT へ翻訳する（判定は 1 箇所にまとめる）。 */
+export function customerResultToSink(result) {
+  if (result && result.ok) return SINK_RESULT.RECORDED;
+  const reason = result && result.reason;
+  if (reason === 'email-not-found') return SINK_RESULT.NOT_FOUND;
+  if (reason === 'missing-env') return SINK_RESULT.UNAVAILABLE;
+  // brand 不正などの入力エラーは呼び出し側が先に弾く。ここへ来たら失敗扱い
+  return SINK_RESULT.ERROR;
+}
+
 /** reason コード → ユーザー向けメッセージ */
 function reasonToUserMessage(reason) {
   switch (reason) {
@@ -175,6 +219,7 @@ function reasonToUserMessage(reason) {
     case 'airtable-search-network-error':
     case 'airtable-update-failed':
     case 'airtable-update-network-error':
+    case 'unsubscribe-write-failed':
       return '処理に失敗しました。しばらく経ってから再度お試しください。';
     default: return '処理に失敗しました。';
   }
@@ -242,15 +287,37 @@ export default async function handler(request) {
       console.log(`📧 unsubscribe handler invoked: kind=${parsed.kind} brand=${brand || '<none>'}`
         + ` action=${requestedAction} trace=${trace}`);
 
+      // ── 両方の母集団へ書きにいく ────────────────────────────
+      //    Customers（会員・登録者）と 見込み客プール（Redis）。
+      //    どちらかに記録できれば「止まった」と言ってよい。
+      //    **どこにも記録できなかったのに 2xx を返さない**（fail closed）。
+      const sinks = planUnsubscribeSinks({ action: requestedAction });
       const result = await updateUnsubscribeStatus(postEmail, brand, requestedAction);
 
-      if (result.ok) {
-        console.log(`✅ unsubscribe ok: kind=${parsed.kind} brand=${result.brand} action=${result.action} trace=${trace}`);
+      // brand 不正・メール形式不正は入力エラー。母集団を探しにいかず 400 系へ返す
+      const inputError = !result.ok
+        && ['brand-required', 'unknown-brand', 'invalid-email'].includes(result.reason);
+
+      const sinkResults = {};
+      if (!inputError) {
+        sinkResults[SINK.CUSTOMER] = customerResultToSink(result);
+        if (sinks.prospect) sinkResults[SINK.PROSPECT] = await suppressProspect(postEmail);
+      }
+      const outcome = inputError
+        ? { ok: false, reason: result.reason, recorded: [], failed: [] }
+        : summarizeUnsubscribeOutcome(sinkResults);
+
+      console.log(`📮 unsubscribe sinks: ${JSON.stringify(sinkResults)} ok=${outcome.ok} trace=${trace}`);
+
+      if (outcome.ok) {
+        console.log(`✅ unsubscribe ok: kind=${parsed.kind} brand=${brand} action=${requestedAction}`
+          + ` recorded=${outcome.recorded.join('+')} trace=${trace}`);
         return new Response(
           JSON.stringify({
             success: true,
-            brand: result.brand,
-            action: result.action,
+            brand,
+            action: requestedAction,
+            recorded: outcome.recorded,
             message: requestedAction === 'resubscribe'
               ? '配信を再開しました'
               : '配信停止が完了しました',
@@ -259,20 +326,21 @@ export default async function handler(request) {
         );
       }
 
-      console.log(`⚠️ unsubscribe failed: kind=${parsed.kind} reason=${result.reason || 'unknown'}`
-        + ` brand=${brand || '<none>'} trace=${trace}`);
+      console.log(`⚠️ unsubscribe failed: kind=${parsed.kind} reason=${outcome.reason || 'unknown'}`
+        + ` brand=${brand || '<none>'} failed=${outcome.failed.join('+')} trace=${trace}`);
       // ワンクリックは**メールクライアントが見る**ので status の決め方を分ける
       // （登録が無い＝目的は達成済み、かつアドレスの存在有無を漏らさない）
-      const httpStatus = statusForResult({ kind: parsed.kind, ok: false, reason: result.reason });
+      const httpStatus = statusForResult({ kind: parsed.kind, ok: false, reason: outcome.reason });
       return new Response(
         JSON.stringify({
           success: false,
-          reason: result.reason,
+          reason: outcome.reason,
+          failedSinks: outcome.failed,
           brand: result.brand,
           supportedBrands: result.supportedBrands,
           missingEnv: result.missingEnv,
           airtableStatus: result.airtableStatus,
-          message: reasonToUserMessage(result.reason),
+          message: reasonToUserMessage(outcome.reason),
         }),
         { status: httpStatus, headers },
       );

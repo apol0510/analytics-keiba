@@ -12,6 +12,7 @@ import {
   mapLegacyTargetToAudienceType,
 } from '../../src/lib/newsletter/audience-resolver.js';
 import { emailTraceId as emailTraceIdRaw } from '../../src/lib/newsletter/test-recipients.js';
+import { listUnsubscribeHeadersFor } from '../../src/lib/unsubscribe/listUnsubscribeHeaders.js';
 
 // 旧 admin UI は brand を渡さない。AK 専用 function なので analytics-keiba を既定値とする。
 const DEFAULT_BRAND = 'analytics-keiba';
@@ -551,8 +552,9 @@ async function sendNewsletterViaSendGrid({ recipients, subject, htmlContent, inc
         // RFC 8058準拠のList-Unsubscribeヘッダー（Gmail等が要求）
         // 2026-05-19 Phase 2.5: brand クエリを付与して unsubscribe.js が brand 別フィールドを書き込めるようにする
         headers: {
-          "List-Unsubscribe": `<https://analytics.keiba.link/.netlify/functions/unsubscribe?email=${encodeURIComponent(recipient)}&brand=analytics-keiba>, <mailto:unsubscribe@keiba.link?subject=Unsubscribe>`,
-          "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"
+          // ⚠️ **mailto を併記しない**（Apple Mail が mailto を選び、受信箱へメールが
+          //    届くだけで AK の状態が変わらなくなる）。組み立ては単一源に寄せる。
+          ...listUnsubscribeHeadersFor({ email: recipient })
         }
       };
 

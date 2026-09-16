@@ -283,7 +283,11 @@ test('専用 dispatcher は送信直前に再検証し、Customers を書かな�
 });
 
 test('専用 dispatcher は配信停止リンクと List-Unsubscribe を必ず付ける', () => {
-  assert.ok(dispCode.includes('List-Unsubscribe'), 'List-Unsubscribe ヘッダが無い');
+  // 2026-09-16: ヘッダの組み立ては単一源 listUnsubscribeHeaders.js へ移した
+  //   （mailto 併記を外すため。Apple Mail が mailto を選んで人手対応が必要だった）。
+  //   ヘッダ名を直書きしなくなったので、単一源の利用で検査する。
+  assert.ok(dispCode.includes('buildListUnsubscribeHeaders('), 'List-Unsubscribe ヘッダが無い');
+  assert.ok(!/mailto:\s*unsubscribe/i.test(dispCode), 'mailto を併記している');
   assert.ok(dispCode.includes('functions/unsubscribe?email='), 'AK の配信停止経路を使っていない');
   // 配信停止はメールのフッター（共通シェル）にあり、受信者ごとに差し替える。
   // 差し替えられない本文は**送らない**（配信停止できないメールを出さない）。

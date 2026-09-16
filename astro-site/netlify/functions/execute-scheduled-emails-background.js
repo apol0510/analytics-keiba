@@ -18,6 +18,7 @@ import {
   mapLegacyTargetToAudienceType,
 } from '../../src/lib/newsletter/audience-resolver.js';
 import { canSharedExecutorSend } from '../../src/lib/marketing/marketingDispatchGate.js';
+import { buildListUnsubscribeHeaders } from '../../src/lib/unsubscribe/listUnsubscribeHeaders.js';
 
 // ScheduledEmails は AK 専用経路。LAZY_LOAD で受信者を解決する時の brand 既定値。
 const DEFAULT_BRAND = 'analytics-keiba';
@@ -255,8 +256,10 @@ export default async function handler(request, context) {
               // ボタン表示。newsletter-send-test.js D4 と同パターン）。includeUnsubscribe 時のみ付与。
               ...(unsubscribeLink ? {
                 headers: {
-                  'List-Unsubscribe': `<${unsubscribeLink}>, <mailto:unsubscribe@keiba.link?subject=Unsubscribe>`,
-                  'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+                  // ⚠️ **mailto を併記しない**（Apple Mail が mailto を選び、受信箱へ
+                  //    「配信停止希望」メールが届くだけで AK の状態が変わらなくなる）。
+                  //    組み立ては単一源 listUnsubscribeHeaders.js。
+                  ...buildListUnsubscribeHeaders(unsubscribeLink),
                 }
               } : {}),
               // 🚨 重要：SendGridトラッキング完全無効化（復活防止対策 2025-09-29）

@@ -7,6 +7,7 @@ const sgMail = require('@sendgrid/mail');
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
 import { SUPPORT_EMAIL, ADMIN_EMAIL, FROM_EMAIL } from './config/email-config.js';
+import { buildListUnsubscribeHeaders } from '../../src/lib/unsubscribe/listUnsubscribeHeaders.js';
 exports.handler = async (event, context) => {
   // 🛡️ 止血ガード（2026-05-18 追加）
   // 期限通知は NEWSLETTER_AUTOMATION_ENABLED の対象外で別系統として
@@ -86,8 +87,9 @@ exports.handler = async (event, context) => {
         },
         // RFC 8058 準拠の List-Unsubscribe ヘッダー（Gmail 等が要求）
         headers: {
-          'List-Unsubscribe': `<${unsubscribeUrl}>, <mailto:unsubscribe@keiba.link?subject=Unsubscribe>`,
-          'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click'
+          // ⚠️ **mailto を併記しない**（Apple Mail が mailto を選び、受信箱へメールが
+          //    届くだけで AK の状態が変わらなくなる）。組み立ては単一源に寄せる。
+          ...buildListUnsubscribeHeaders(unsubscribeUrl)
         }
       };
 

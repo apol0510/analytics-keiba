@@ -109,6 +109,13 @@ export function statusForResult({ kind, ok, reason }) {
   if (ok) return 200;
   const oneClick = kind === REQUEST_KIND.ONE_CLICK;
   if (reason === 'email-not-found') return oneClick ? 200 : 404;
+  /**
+   * ⚠️ **どこにも記録できなかったときは 2xx を返さない**（ワンクリックでも）。
+   *    2xx はメールクライアントにとって「止まった」の意味なので、握り潰すと
+   *    利用者は止まったと信じたまま届き続ける（2026-09-16 の恒久対応）。
+   *    502 にしておけば送信側の再送・監視で気づける。
+   */
+  if (reason === 'unsubscribe-write-failed') return 502;
   if (reason === 'invalid-email' || reason === 'brand-required' || reason === 'unknown-brand') return 400;
   if (reason === 'missing-env') return 503;
   return 502;

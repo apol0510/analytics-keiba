@@ -22,6 +22,7 @@ import { computeDeliveryKey, describeDeliveryKeyTemplate } from '../../src/lib/n
 import { renderDailyMainRace } from '../../src/lib/newsletter/render-daily-main-race.js';
 import { normalizeRenderOptions } from '../../src/lib/newsletter/render-options-validator.js';
 import { parseTestRecipientsEnv, emailTraceId as emailTraceIdRaw } from '../../src/lib/newsletter/test-recipients.js';
+import { buildListUnsubscribeHeaders } from '../../src/lib/unsubscribe/listUnsubscribeHeaders.js';
 
 const TEST_FROM_EMAIL = 'noreply@keiba.link';
 const TEST_FROM_NAME = 'KEIBA Analytics [TEST]';
@@ -110,8 +111,8 @@ async function sendOneViaSendGrid({ apiKey, recipient, subject, htmlBody }) {
     },
     // RFC 8058 準拠の List-Unsubscribe ヘッダー（Gmail 等が要求）
     headers: {
-      'List-Unsubscribe': `<${unsubscribeUrl}>, <mailto:unsubscribe@keiba.link?subject=Unsubscribe>`,
-      'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+      // ⚠️ mailto を併記しない（単一源 listUnsubscribeHeaders.js）
+      ...buildListUnsubscribeHeaders(unsubscribeUrl),
     },
   };
 

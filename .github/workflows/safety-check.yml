@@ -259,6 +259,12 @@ jobs:
         working-directory: astro-site
         run: npm run test:webhooks
 
+      - name: Verify 配信停止が無人で完結する（mailto 併記なし / 見込み客も停止 / fail closed）
+        working-directory: astro-site
+        # 2026-09-16: 配信停止のテストは check:safety にも CI にも入っておらず、
+        #   「押しても止まらない」退行を誰も検知できなかった。ここで常時実行する。
+        run: npm run test:unsubscribe
+
       - name: Verify 決済メール送信元契約（legacy 経路含め noreply へ戻らない）
         working-directory: astro-site
         run: npm run test:bank-payment

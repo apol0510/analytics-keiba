@@ -83,6 +83,7 @@ import {
   indexDeliveriesByRecipient,
   buildCampaignCustomArgs,
 } from '../../src/lib/marketing/campaignCustomArgs.js';
+import { buildListUnsubscribeHeaders } from '../../src/lib/unsubscribe/listUnsubscribeHeaders.js';
 
 const BRAND = 'analytics-keiba';
 const CUSTOMERS_TABLE = process.env.AIRTABLE_CUSTOMERS_TABLE || 'Customers';
@@ -1100,8 +1101,9 @@ async function sendOne({
           open_tracking: { enable: true },
         },
         headers: {
-          'List-Unsubscribe': `<${unsubscribeLink}>, <mailto:unsubscribe@keiba.link?subject=Unsubscribe>`,
-          'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+          // ⚠️ **mailto を併記しない**（Apple Mail が mailto を選び、受信箱へメールが
+          //    届くだけで AK の状態が変わらなくなる）。組み立ては単一源に寄せる。
+          ...buildListUnsubscribeHeaders(unsubscribeLink),
         },
       }),
     });

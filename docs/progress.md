@@ -1657,6 +1657,102 @@ R5 / R6 で見るのは「**購入が起きたときに処理が正しいか**�
 `test:drm` 136 pass ／ `check:safety` EXIT=0 ／ `build` EXIT=0。
 **実メール送信・queue・本番書込み・production deploy・PR merge は 1 件も行っていない。**
 
+# 📭 配信停止を無人化する — **実装・検証完了 / 本番未反映（2026-09-16）**
+
+> **完成条件: Unsubscribe は 1 件ごとの人手対応を要求しない。**
+> 利用者が「配信停止」を押す → AK へ自動反映 → 以後のマーケティングメールから自動除外、
+> までが無人で完結すること。**MK の日常作業は 0**。
+> 受信箱を人が見る / Airtable を手編集する / Claude へ 1 件ずつ依頼する、は**完成形ではない**。
+
+> この作業で本番へは 1 バイトも書いていない。env 変更・実顧客 write・実送信・deploy は**すべて未実施**。
+
+## 発端
+
+Apple Mail から `unsubscribe@keiba.link` 宛に件名「Unsubscribe」の自動配信停止依頼メールが届いた。
+つまり**押されたのに AK 側は何も変わっていない**。人が受信箱を見て手で止めるまで配信が続く状態だった。
+
+## 原因は 2 つ（どちらも人手を要求していた）
+
+### ① `List-Unsubscribe` に mailto を併記していた
+
+全 6 経路が `<https://…>, <mailto:unsubscribe@keiba.link?subject=Unsubscribe>` を出していた。
+**Apple Mail は mailto があるとそちらを選ぶ**ため、HTTPS ワンクリックが使われない。
+
+→ **mailto を全経路から削除**し、組み立てを単一源 `listUnsubscribeHeaders.js` に寄せた。
+主要クライアント（Gmail / Yahoo / Outlook / Apple Mail 16+）は HTTPS ワンクリック対応で、
+本文末尾の配信停止リンクも常にあるため、停止手段は失われない。
+
+### ② 見込み客（配信の大半）を記録していなかった
+
+配信停止 Function は `Customers` しか見ていなかった。Redis の見込み客プール宛が配信の大半だが、
+そこに居る人が押すと `email-not-found` → **200 を返して 1 ビットも記録しない**。
+押した本人は止めたつもりで翌週も届く。
+
+→ **両方の母集団へ書きにいく**ようにした（`Customers` の `UnsubscribedAnalyticsKeiba` ＋
+見込み客の `state=SUPPRESSED / reason=unsubscribe`）。どちらかに入れば成功。
+**どこにも記録できなければ 2xx を返さない**（ワンクリックでも 502）。
+
+## 副次的に見つかった穴
+
+配信停止のテストは `check:safety` にも CI にも**入っていなかった**。
+「押しても止まらない」退行を誰も検知できない状態だったので、`test:unsubscribe` を新設して常時実行にした。
+
+## 完成条件に対する現在地
+
+| # | 条件 | 状態 |
+|---|---|---|
+| 1 | 配信停止操作をした利用者が自動で停止状態になる | ✅ 両母集団へ記録 |
+| 2 | MK が Gmail を見る必要がない | ✅ 新規送信分は mailto を出さない |
+| 3 | Claude へ 1 件ずつ依頼する必要がない | ✅ |
+| 4 | Airtable を手編集しない | ✅ |
+| 5 | newsletter / DRM / campaign / sequence すべてから除外 | ✅ 送信直前の再検証が両母集団を見る（guard で固定）|
+| 6 | retry / re-enrollment で復活しない | ✅ 再開でも見込み客の抑止は解除しない |
+| 7 | 二重処理は冪等 | ✅ `already` も成功扱い |
+| 8 | 契約・権限・退会と混同しない | ✅ 権限フィールド不可侵を guard で固定 |
+| 9 | transactional を誤停止しない | ✅ 決済メール経路は配信停止フラグを見ない（guard）|
+| 10 | 他人を unsubscribe できない | ✅ 宛先は URL 側が正本（body を使わない）|
+| 11 | fail-open でマーケ配信を続けない | ✅ 記録できなければ 502 |
+| 12 | 重要仕様をテストで固定 | ✅ 51 件 ＋ CI step |
+
+## 実測（read-only）
+
+| 項目 | 実測 |
+|---|---|
+| `Customers` 総数 | 4,048 |
+| `UnsubscribedAnalyticsKeiba = true` | **8 件のみ**（15,000 通規模の配信に対して極端に少ない＝上記②の裏づけ）|
+| `EmailBlacklist` | 415 件 |
+| 直近 7 日の配信停止 | 1 件 |
+| 見込み客プールの state 内訳 | **取得できず**（Redis の接続情報は secret で API 経由でもマスクされる）|
+
+## 変更ファイル
+
+| 種別 | ファイル |
+|---|---|
+| ヘッダの単一源（新）| `src/lib/unsubscribe/listUnsubscribeHeaders.js` |
+| 記録先と成否の単一源（新）| `src/lib/unsubscribe/unsubscribeOutcome.js` |
+| エンドポイント | `netlify/functions/unsubscribe.js`（見込み客抑止を追加）|
+| status 判定 | `parseUnsubscribeRequest.js`（`unsubscribe-write-failed` → 502）|
+| 送信 6 経路 | `marketing-campaign-dispatch` / `execute-scheduled-emails-background` / `send-newsletter` / `newsletter-send-test` / `expiry-notification` / `expiry-warning-notification` |
+| テスト（新）| `listUnsubscribeHeaders.test.mjs` / `unsubscribeOutcome.test.mjs` / `unsubscribeCoverage.guard.test.mjs` |
+| CI | `safety-check.yml` に `test:unsubscribe` step を追加 |
+| 正本 | `astro-site/docs/UNSUBSCRIBE.md`（新）/ `docs/spec.md` / `docs/decisions.md` |
+
+`test:unsubscribe` 51 pass ／ `test:marketing` 2,966 pass ／ `check:safety` EXIT=0 ／ `build` EXIT=0。
+
+## 未完 / 承認境界
+
+- **PR 未 merge・本番未反映**
+- **今回の Apple Mail 送信者は未特定**。アドレスが分からないため read-only 確認もできていない。
+  アドレスを教えてもらえれば、現在の状態を read-only で確認したうえで、
+  **実顧客 write の直前で停止**して対象・変更内容・影響・rollback を提示する
+- **送信済みメールの mailto は残る**ため、そこからの停止依頼は当面受信箱に届く。
+  新規送信分では起きない。受信メール解析基盤は既存 HTTPS 経路の範囲を超えるので未実装
+
+## rollback
+
+この PR を revert すれば mailto 併記と `Customers` のみ記録に戻る（＝より開く方向なので通常は不要）。
+見込み客の抑止は Redis の state なので、revert しても**既に止めた人は止まったまま**。
+
 # 🧑‍💼 運営者による代理入金連絡 — **初回実運用まで完走（2026-09-16）**
 
 ## 実運用 1 件目が本番で完結した（2026-09-16）
