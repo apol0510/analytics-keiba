@@ -1672,7 +1672,7 @@ R5 / R6 で見るのは「**購入が起きたときに処理が正しいか**�
 merge 時刻ではなく **published 時刻**を採用した（その約 1 分半の間に送られたメールは
 まだ旧ヘッダのため、merge 時刻で切ると取りこぼす）。
 
-## 抽出結果（MK が Gmail を read-only で全件確認）
+## 抽出結果（Gmail を read-only で全件確認）
 
 | 項目 | 件数 |
 |---|---|
@@ -1755,7 +1755,7 @@ merge 時刻ではなく **published 時刻**を採用した（その約 1 分�
 `unsubscribe@keiba.link` の受信箱を人が見る運用へは戻さない。
 cutoff 以前のメールから今後また依頼が届いた場合のみ、同じ手順でもう一度精算する。
 
-# 📭 配信停止を無人化する — **実装・検証完了 / 本番未反映（2026-09-16）**
+# 📭 配信停止を無人化する — **本番反映済み・完了（2026-09-16）**
 
 > **完成条件: Unsubscribe は 1 件ごとの人手対応を要求しない。**
 > 利用者が「配信停止」を押す → AK へ自動反映 → 以後のマーケティングメールから自動除外、
@@ -1867,14 +1867,27 @@ Apple Mail から `unsubscribe@keiba.link` 宛に件名「Unsubscribe」の自�
 
 `test:unsubscribe` **73 pass** ／ `test:marketing` 2,966 pass ／ `check:safety` EXIT=0 ／ `build` EXIT=0。
 
-## 未完 / 承認境界
+## 本番反映（2026-09-16）
 
-- **PR 未 merge・本番未反映**
-- **今回の Apple Mail 送信者は未特定**。アドレスが分からないため read-only 確認もできていない。
-  アドレスを教えてもらえれば、現在の状態を read-only で確認したうえで、
-  **実顧客 write の直前で停止**して対象・変更内容・影響・rollback を提示する
-- **送信済みメールの mailto は残る**ため、そこからの停止依頼は当面受信箱に届く。
-  新規送信分では起きない。受信メール解析基盤は既存 HTTPS 経路の範囲を超えるので未実装
+- PR #558 を squash merge（main `a0c8b6ce`）→ **production published
+  `2026-09-16T14:56:15.220Z` / ready**。post-merge CI success
+- 本番実測（write 0）: sig 欠落 = 400 `signature-required` ／ sig 改ざん・email 流用・
+  brand 書換 = 400 `signature-invalid`（いずれも `sideEffects:none`）／ GET = 405 ／
+  正しい署名は受理され `email-not-found`（JSON 404 / one-click 200）。
+  このとき `failedSinks:[]` ＝ **Customers と見込み客の双方が到達可能**である裏づけ
+- `UNSUBSCRIBE_ALLOW_UNSIGNED` は **未設定＝strict 維持**（MK 判断で設定しない）
+
+## 当時の未完（すべて解消済み）
+
+以下は本節を書いた時点の未完事項。**現在はいずれも解決している**（経緯として残す）。
+
+- ~~PR 未 merge・本番未反映~~ → **反映済み**（上記）
+- ~~今回の Apple Mail 送信者は未特定~~ → **特定・精算済み**。
+  旧 mailto 依頼は総 1 件／未反映 1 件で、`state=SUPPRESSED` / `reason=unsubscribe` へ反映。
+  詳細は上の「✅ 旧 mailto 残件の精算 — 完了・残件 0」節
+- **送信済みメールの mailto は残る**ため、cutoff 以前のメールからの停止依頼は今後も
+  受信箱に届き得る（新規送信分では起きない）。届いた場合は同じ手順でもう一度精算する。
+  恒常的な受信メール解析基盤は作らない
 
 ## rollback
 
