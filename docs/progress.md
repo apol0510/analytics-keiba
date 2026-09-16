@@ -1657,7 +1657,62 @@ R5 / R6 で見るのは「**購入が起きたときに処理が正しいか**�
 `test:drm` 136 pass ／ `check:safety` EXIT=0 ／ `build` EXIT=0。
 **実メール送信・queue・本番書込み・production deploy・PR merge は 1 件も行っていない。**
 
-# 🧑‍💼 運営者による代理入金連絡 — **本番で利用可能（2026-09-16）/ 実登録はまだ未実施**
+# 🧑‍💼 運営者による代理入金連絡 — **初回実運用まで完走（2026-09-16）**
+
+## 実運用 1 件目が本番で完結した（2026-09-16）
+
+着金は確認できているのに本人がフォームを送れない、という当初の詰まりが
+**代理登録 → `PaymentConfirmed` 1 チェック → 自動昇格 → 利用開始メール 1 通**で解消した。
+
+### ① 代理登録（運営者が実行）
+
+| 書き込んだ値 | |
+|---|---|
+| `RequestedPlan` / `RequestedPlanType` | `Premium` / `Annual` |
+| `RequestedAmount` | **44800**（掲載価格 44,820 へ**丸めていない**）|
+| `PaymentConfirmed` | 未チェック |
+| `Status` | `pending` |
+
+登録直後の実測: `プラン` / `PlanType` / `有効期限` / `PaidAt` / `PaymentEmailSent` /
+`LifetimeSanrenpuku` は**すべて変更なし**、実メール **0 通**。
+会員判定は `pending_payment_free` で、**有料権限は付かず無料ログインは維持**された
+（＝申込だけが載った正しい状態）。
+
+### ② 昇格（MK が Airtable で `PaymentConfirmed` をチェック）
+
+| 項目 | 実測 |
+|---|---|
+| プラン / PlanType | **Premium / Annual** |
+| Status | **active** |
+| 有効期限 | **入金確認日 JST + 1 年**（手入力なし）|
+| PaidAt | 記録済み |
+| `Requested*` 3 列 | **クリア済み**（再チェックしても二重延長しない冪等性が働いた）|
+| 退会フラグ | すべて空のまま |
+| 会員判定 | `active_paid` / `premium` / `entitlementSource=paid_contract` |
+
+### ③ 利用開始メール（v2 worker）
+
+5 分毎の scheduled dispatcher（`payment-email-dispatcher`）が送信し、
+**1 通だけ delivered**（`PaymentEmailStatus=delivered` / `AttemptCount=1` / エラーなし）。
+SendGrid 側でも当該顧客宛は**この 1 通のみ**＝**二重送信 0**。
+送信元は `support@keiba.link`。
+
+> **確認できたこと**: 代理登録は「申込を作る」だけで、昇格・有効期限計算・メール送信は
+> すべて**既存の単一経路がそのまま**動いた。第二の昇格処理も、別のメール経路も発生していない。
+
+### 残件
+
+- **Airtable の監査列は未作成**（`ApplicationSource` / `ApplicationProxyBy` /
+  `ApplicationProxyAt` / `ReceivedAmount` / `ApplicationProxyReason`）。
+  現状、代理登録の痕跡は Function の構造化ログ `event:'admin_proxy_payment_notice'` にしか残らない。
+  作成して `PROXY_PAYMENT_NOTICE_FIELDS_READY=1` を立てれば次回から自動で記録される
+  （**本番 schema 変更＝高リスク操作。未承認**）。
+- **`RequestedAmount` は昇格時にクリアされる**ため、今回の実着金額 44,800 円は
+  レコード上に残っていない（上記監査列を作れば次回から残る）。
+
+---
+
+# （以下は実装・反映の経緯）
 
 ## 専用 secret を投入し、本番で「内容を確認」まで通した（2026-09-16）
 
@@ -1944,9 +1999,9 @@ Light 乗り換え特典 **¥44,820**）。この 20 円差をコード側で丸
 2. ~~`PROXY_NOTICE_ADMIN_SECRET` を production へ投入 → redeploy~~ — **完了（2026-09-16）**
 3. ~~`/admin/proxy-payment-notice` で「内容を確認」まで実施し、書き込み 0 を確認~~
    — **完了（2026-09-16 / preview 200・write 0）** ← **ここまでが承認済み**
-4. MK 承認のうえ、対象顧客へ実登録（プラン・金額は登録直前に再提示）
-5. Airtable で `PaymentConfirmed` にチェック → 昇格とメール 1 通を確認
-6.（任意）監査列を作成して `PROXY_PAYMENT_NOTICE_FIELDS_READY=1`
+4. ~~MK 承認のうえ、対象顧客へ実登録~~ — **完了（2026-09-16）**
+5. ~~Airtable で `PaymentConfirmed` にチェック → 昇格とメール 1 通を確認~~ — **完了（2026-09-16 / delivered 1 通・二重送信 0）**
+6.（任意・**未承認**）監査列を作成して `PROXY_PAYMENT_NOTICE_FIELDS_READY=1` ← 残るのはこれだけ
 
 ## 高リスク操作（実施直前で停止する）
 
