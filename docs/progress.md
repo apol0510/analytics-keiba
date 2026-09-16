@@ -1757,6 +1757,36 @@ Light 乗り換え特典 **¥44,820**）。この 20 円差をコード側で丸
 - **soken1122@gmail.com への実代理登録は未実施**
 - PR は Draft・**未 merge / 未 deploy**
 
+### merge 直前の最終確認（2026-09-16 / read-only ＋ ローカル再実行）
+
+| 確認項目 | 実測 |
+|---|---|
+| `origin/main` の前進 | **なし**（起点 `0b244eb4` のまま / behind 0）|
+| merge conflict | **なし**（`mergeable=MERGEABLE` / `mergeStateStatus=CLEAN`）|
+| PR 差分の範囲 | 14 ファイル・**1818 insertions / 1 deletion**（唯一の削除は package.json の行末カンマ）|
+| package-lock.json | **差分なし** |
+| 顧客フロー系の変更 | `bank-transfer-application.js` / `applicationIdentity.js` / `confirm-bank-payment.js` / `admin-promote-customer.js` / `promotionV2.js` / `BankApplicationEmailLock.astro` / `pricing.astro` すべて**未変更** |
+| `bankPaymentFlow.js` | **追加のみ**（削除行 0 / `jstDateString()` の追加だけ）|
+| secret 混入 | **なし** |
+| secret 未設定での POST | **503**（`{"ok":false,"error":"Forbidden","sideEffects":"none"}`）|
+| GET（URL 直打ち相当）| **405** |
+| Origin 欠落での直接 POST | **403** |
+| secret 不一致 | **403** |
+| 認可前の Airtable 接触 | **fetch 0 件** |
+| 44,800 の保持 | 商品名が `Premium Annual - Campaign (¥44,820/年)` でも `RequestedAmount=44800`（**掲載価格へ丸めない**）|
+| 権限 / メール系フィールド | 書き込み内容は `氏名 / PaymentMethod / RequestedPlan / RequestedPlanType / PaymentConfirmed=false / RequestedAmount / Status=pending` の **7 項目のみ**。`プラン` / `PlanType` / `有効期限` / `PaidAt` / `PaymentEmailSent` / `LifetimeSanrenpuku` は **0 件** |
+| 監査列 env gate | OFF で 7 項目 / ON で `ApplicationSource` 他が加わることを実測 |
+| 二重登録 | 未確認の申込が残る状態で `already_pending` 拒否 |
+| 本番 write | **Airtable / env / secret / 顧客レコード / 実メール すべて 0** |
+
+#### この確認で見つけて直したこと
+
+テスト fixture に**実顧客のメールアドレスと recordId** が入っていた
+（`soken1122@gmail.com` / `rec5Rl4oYfoEkf3GP`）。試験スクリプトへコピーされて
+本番レコードを指す事故になり得るため、合成値（`proxy-test@example.test` /
+`recE2ETESTONLY01`）へ差し替え、fixture は必ず合成値にする旨をテスト先頭へ明記した。
+**実案件がどのお客様かはこの progress.md 側にだけ残す。**
+
 ### branch / HEAD / PR / CI
 
 | 項目 | 値 |

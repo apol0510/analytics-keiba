@@ -21,15 +21,20 @@ import { buildConfirmationFields } from './bankPaymentFlow.js';
 /** 2026-09-16 12:00 JST */
 const NOW = Date.parse('2026-09-16T03:00:00Z');
 
+/**
+ * ⚠️ fixture は**必ず合成値**にすること。実顧客のメールアドレス・recordId を
+ *    テストへ書くと、試験用スクリプトへコピーされて本番レコードを指す事故になり得る。
+ *    実案件の記録（どのお客様の件か）は docs/progress.md 側に置く。
+ */
 const RECORD = Object.freeze({
-  id: 'rec5Rl4oYfoEkf3GP',
-  fields: { Email: 'soken1122@gmail.com', '氏名': 'ソウマヒデオ', 'プラン': 'Premium', '有効期限': '2026-04-06' },
+  id: 'recE2ETESTONLY01',
+  fields: { Email: 'proxy-test@example.test', '氏名': 'テスト太郎', 'プラン': 'Premium', '有効期限': '2026-04-06' },
 });
 
 /** 代表ケース: 期限切れ Premium 会員が ¥44,800 を振り込んだ（掲載は ¥44,820）*/
 const BASE_INPUT = Object.freeze({
   operator: 'MK',
-  email: 'soken1122@gmail.com',
+  email: 'proxy-test@example.test',
   productName: 'Premium Annual - Campaign (¥44,820/年)',
   receivedAmount: 44800,
   paidDate: '2026-09-16',
@@ -48,13 +53,13 @@ test('商品名からプラン・契約種別を導き、実入金額をその�
   // ⚠️ 掲載価格 44,820 へ丸めない
   assert.equal(d.amount, 44800);
   assert.equal(d.recordId, RECORD.id);
-  assert.equal(d.email, 'soken1122@gmail.com');
+  assert.equal(d.email, 'proxy-test@example.test');
 });
 
 test('運営者が指定したアドレスがそのまま採用される（セッションのアドレスへ置換されない）', () => {
   const d = decideProxyPaymentNotice(BASE_INPUT);
   assert.equal(d.ok, true);
-  assert.equal(d.email, normalizeProxyEmail('  SOKEN1122@Gmail.com '));
+  assert.equal(d.email, normalizeProxyEmail('  Proxy-Test@Example.TEST '));
 });
 
 test('書き込むのは申込情報だけ。有料権限のフィールドは 1 つも含まない', () => {
