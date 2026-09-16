@@ -1757,6 +1757,17 @@ Light 乗り換え特典 **¥44,820**）。この 20 円差をコード側で丸
 - **soken1122@gmail.com への実代理登録は未実施**
 - PR は Draft・**未 merge / 未 deploy**
 
+### branch / HEAD / PR / CI
+
+| 項目 | 値 |
+|---|---|
+| branch | `feat/admin-proxy-payment-notice`（worktree `/Users/user/Projects/analytics-keiba-proxypay`）|
+| 起点 | `origin/main` `0b244eb4` |
+| HEAD | `e0b54e0d` |
+| PR | [#553](https://github.com/apol0510/analytics-keiba/pull/553)（**Draft**）|
+| CI | **全 pass**（run `35084537928`）。新設 E2E step「代理入金連絡 管理画面・実 DOM」が CI 上（google-chrome）で実行され success |
+| Deploy Preview | ready（**Deploy Preview では会員/管理画面の本番動作は確認できない**。本番確認は merge 後）|
+
 ## 次作業（順序厳守）
 
 1. PR レビュー → merge → production deploy
