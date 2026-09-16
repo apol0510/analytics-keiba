@@ -1657,7 +1657,7 @@ R5 / R6 で見るのは「**購入が起きたときに処理が正しいか**�
 `test:drm` 136 pass ／ `check:safety` EXIT=0 ／ `build` EXIT=0。
 **実メール送信・queue・本番書込み・production deploy・PR merge は 1 件も行っていない。**
 
-# 🧑‍💼 運営者による代理入金連絡 — **PR #553 本番反映済み（2026-09-16）/ ただし専用 secret 化が未反映**
+# 🧑‍💼 運営者による代理入金連絡 — **本番反映済み・secret 未設定で不活性（2026-09-16）**
 
 ## 本番反映（2026-09-16）
 
@@ -1669,7 +1669,7 @@ R5 / R6 で見るのは「**購入が起きたときに処理が正しいか**�
 | post-merge main CI | Safety Check **success** |
 | `/admin/proxy-payment-notice` | **401**（edge Basic 認証）|
 | Function GET | **405** |
-| 顧客レコード | `rec5Rl4oYfoEkf3GP` の全フィールド digest が merge 前後で**完全一致**＝ write 0 |
+| 顧客レコード | 対象顧客レコードの全フィールド digest が merge 前後で**完全一致**＝ write 0 |
 | Airtable / メール | **write 0 / 送信 0** |
 
 ## 🚨 想定と違ったこと — 専用 secret 未設定でも 503 にならなかった
@@ -1682,13 +1682,13 @@ R5 / R6 で見るのは「**購入が起きたときに処理が正しいか**�
 PROXY_NOTICE_ADMIN_SECRET || PAYMENT_ADMIN_SECRET || PREMIUM_PLUS_ADMIN_SECRET
 ```
 
-本番 env の実測（値は出さずキーと長さのみ確認）:
+本番 env の実測（**値も長さも正本へ残さない**。キーの有無のみ）:
 
 | env | production |
 |---|---|
 | `PROXY_NOTICE_ADMIN_SECRET` | **未設定** |
-| `PAYMENT_ADMIN_SECRET` | **設定済み（20 文字）** |
-| `PREMIUM_PLUS_ADMIN_SECRET` | **設定済み（48 文字）** |
+| `PAYMENT_ADMIN_SECRET` | **設定済み** |
+| `PREMIUM_PLUS_ADMIN_SECRET` | **設定済み** |
 
 つまり **deploy した瞬間から、既存の管理 secret を持つ人はこの経路を使える状態**だった。
 「専用 secret を入れるまで不活性」という承認時の前提が崩れている。
@@ -1697,9 +1697,29 @@ PROXY_NOTICE_ADMIN_SECRET || PAYMENT_ADMIN_SECRET || PREMIUM_PLUS_ADMIN_SECRET
   **権限（プラン / 有効期限 / Status=active）は付かず、メールも出ない**
 - 実害: **現時点で write 0**（顧客レコード digest 一致で確認済み）
 - 是正: fallback を撤去し `PROXY_NOTICE_ADMIN_SECRET` 専用にする →
-  **PR #554（Draft・本番未反映）**。guard テストで再導入を禁止
+  **PR #554 を squash merge（main `0edb6994`）・production deploy ready・是正済み**。
+  guard テストで再導入を禁止
 
-**この是正が merge されるまで、本番はこの状態のままである。**
+### 是正後の本番実測（2026-09-16 / read-only・write 0）
+
+| 確認 | 実測 |
+|---|---|
+| `PROXY_NOTICE_ADMIN_SECRET` | **未設定のまま**（env に存在しない）|
+| 正規形式 POST（dummy secret）| **503** `{"ok":false,"error":"Forbidden","sideEffects":"none"}` |
+| **`PAYMENT_ADMIN_SECRET`（設定済み）で POST** | **503**（通らない）|
+| **`PREMIUM_PLUS_ADMIN_SECRET`（設定済み）で POST** | **503**（通らない）|
+| GET | **405** |
+| Origin 欠落 / Origin 偽装 / secret ヘッダ無し | いずれも **503** |
+| `/admin/proxy-payment-notice` | **401**（edge Basic 認証）|
+| 顧客レコード | 対象顧客レコードの digest が前後で**完全一致**＝変更 0 |
+| Airtable fetch / write | **0**（認可段で止まるため Airtable へ到達しない）|
+| 実メール送信 | **0** |
+| 既存経路への影響 | `bank-transfer-application` / `confirm-bank-payment` / `admin-promote-customer` / `send-payment-confirmation-auto` すべて **405**（従来どおり）／ `/pricing/` **200** |
+
+**現在の本番は「機能は配置済み・専用 secret 未設定で 503 不活性」＝安全な停止点。**
+
+> ⚠️ **#554 を安易に revert しないこと。** revert すると旧 fallback 認可が復活し、
+> 既存の管理 secret で経路が再び開く。障害時は **secret 未設定・本番 write 0 のまま停止**する。
 
 ---
 
@@ -1717,7 +1737,7 @@ Airtable 直接編集を通常の解決方法にしない。
 
 ## 発端（2026-09-16 MK 報告）
 
-> soken1122@gmail.com から 44,800 円の入金があり、送信フォームからの入金連絡はないので
+> （対象顧客）から 44,800 円の入金があり、送信フォームからの入金連絡はないので
 > 代わりに送信してあげようと思ったが、ログインリンクやキャンペーン価格などの問題もあり
 > 諦めた。airtable も値を変更するのが手間なので諦めた。不便だ。
 
@@ -1725,7 +1745,7 @@ read-only で確認した当該顧客の状態（**書き込みは一切して�
 
 | 項目 | 実測 |
 |---|---|
-| recordId / 氏名 | `rec5Rl4oYfoEkf3GP` / ソウマヒデオ |
+| 会員レコード | 登録あり（**メールアドレス・recordId とも正本へ残さない**。対象顧客の特定は入金連絡・問い合わせ履歴から行う）|
 | プラン / 有効期限 | Premium / **2026-04-06（期限切れ）** |
 | Status / PlanType | どちらも未設定 |
 | 実効権限 | `memberType=free` / `reason=expired`（無料ログインのみ）|
@@ -1800,7 +1820,7 @@ Light 乗り換え特典 **¥44,820**）。この 20 円差をコード側で丸
   作成は**本番 schema 変更＝高リスク操作**。作るまでは env gate が閉じたまま動く
 - `PROXY_NOTICE_ADMIN_SECRET`（または `PAYMENT_ADMIN_SECRET`）は**未設定**。
   未設定のままだと Function は 503 で fail closed（誤用の危険はない）
-- **soken1122@gmail.com への実代理登録は未実施**
+- **対象顧客への実代理登録は未実施**
 - PR は Draft・**未 merge / 未 deploy**
 
 ### merge 直前の最終確認（2026-09-16 / read-only ＋ ローカル再実行）
@@ -1828,7 +1848,7 @@ Light 乗り換え特典 **¥44,820**）。この 20 円差をコード側で丸
 #### この確認で見つけて直したこと
 
 テスト fixture に**実顧客のメールアドレスと recordId** が入っていた
-（`soken1122@gmail.com` / `rec5Rl4oYfoEkf3GP`）。試験スクリプトへコピーされて
+（実顧客のアドレスと recordId）。試験スクリプトへコピーされて
 本番レコードを指す事故になり得るため、合成値（`proxy-test@example.test` /
 `recE2ETESTONLY01`）へ差し替え、fixture は必ず合成値にする旨をテスト先頭へ明記した。
 **実案件がどのお客様かはこの progress.md 側にだけ残す。**
@@ -1873,12 +1893,12 @@ Light 乗り換え特典 **¥44,820**）。この 20 円差をコード側で丸
 
 ## 次作業（順序厳守）
 
-0. ~~PR #553 squash merge ＋ 自動 production deploy~~ — **完了（2026-09-16）**
-1. **PR #554（専用 secret 化）を merge ＋ 自動 production deploy** ← これで 503 不活性になる
-2. `PROXY_NOTICE_ADMIN_SECRET` を production へ投入（値は記録しない）→ redeploy
+0. ~~PR #553 squash merge ＋ 自動 production deploy~~ — **完了（2026-09-16 / main `9a4511a9`）**
+1. ~~PR #554（専用 secret 化）を merge ＋ 自動 production deploy~~ — **完了（2026-09-16 / main `0edb6994`）**
+2. `PROXY_NOTICE_ADMIN_SECRET` を production へ投入（値は記録しない）→ redeploy ← **次はここ（未承認）**
 3. `/admin/proxy-payment-notice` で **「内容を確認」まで**実施し、
    書き込み 0 のまま preview が通ることを確認
-4. MK 承認のうえ、soken1122@gmail.com へ実登録（プラン・金額は登録直前に再提示）
+4. MK 承認のうえ、対象顧客へ実登録（プラン・金額は登録直前に再提示）
 5. Airtable で `PaymentConfirmed` にチェック → 昇格とメール 1 通を確認
 6.（任意）監査列を作成して `PROXY_PAYMENT_NOTICE_FIELDS_READY=1`
 
