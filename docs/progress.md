@@ -1657,6 +1657,135 @@ R5 / R6 で見るのは「**購入が起きたときに処理が正しいか**�
 `test:drm` 136 pass ／ `check:safety` EXIT=0 ／ `build` EXIT=0。
 **実メール送信・queue・本番書込み・production deploy・PR merge は 1 件も行っていない。**
 
+# 🧑‍💼 運営者による代理入金連絡 — **実装・検証完了 / 本番書込みは未実施（2026-09-16）**
+
+> **この作業で本番へは 1 バイトも書いていない。** 実施したのは read-only の実測と、
+> repo 側の実装・テスト・正本更新だけ。Airtable の実顧客レコード変更・`PaymentConfirmed`・
+> 実昇格・実メール送信・env 変更・production deploy・PR merge は**すべて未実施**。
+
+## 目的
+
+入金済みの顧客が、高齢・操作困難・ログイン不可などの理由で入金連絡フォームを
+送れない場合に、**運営者が本人に代わって申込情報だけを登録**できるようにする。
+Airtable 直接編集を通常の解決方法にしない。
+
+## 発端（2026-09-16 MK 報告）
+
+> soken1122@gmail.com から 44,800 円の入金があり、送信フォームからの入金連絡はないので
+> 代わりに送信してあげようと思ったが、ログインリンクやキャンペーン価格などの問題もあり
+> 諦めた。airtable も値を変更するのが手間なので諦めた。不便だ。
+
+read-only で確認した当該顧客の状態（**書き込みは一切していない**）:
+
+| 項目 | 実測 |
+|---|---|
+| recordId / 氏名 | `rec5Rl4oYfoEkf3GP` / ソウマヒデオ |
+| プラン / 有効期限 | Premium / **2026-04-06（期限切れ）** |
+| Status / PlanType | どちらも未設定 |
+| 実効権限 | `memberType=free` / `reason=expired`（無料ログインのみ）|
+| Light 無料特典 | 2026-08-03 付与 → **2026-09-02 終了** |
+| 割引オファー | `premium-annual-half` ¥24,900（**2026-08-14 期限切れ**）|
+| 直近の接触 | 問い合わせフォーム自動返信が 9/14・9/16 に delivered |
+
+**¥44,800 はサイト上のどこにも存在しない価格**（最も近いのは `pricing.astro` の
+Light 乗り換え特典 **¥44,820**）。この 20 円差をコード側で丸めない設計にした。
+
+## 詰まっていた理由（仕様として正しい挙動だった）
+
+| 詰まり | 実体 |
+|---|---|
+| 代理でフォーム送信できない | 申込アドレスは**セッションに固定**（`applicationIdentity.js` / 2026-09-01 の二重付与対策）|
+| キャンペーン価格で申し込めない | 会員限定価格は `data-plan-tier` でその会員にしか出ない |
+| Airtable 手修正が現実的でない | `プラン` / `Status` / `有効期限` / `PaidAt` / `PaymentEmailSent` / 退会フラグを人間が揃える必要がある |
+
+`confirm-bank-payment` も `admin-promote-customer` も入口が `RequestedPlan` なので、
+**フォーム未送信の顧客は構造的に昇格できない**。これは fail closed として正しいので
+緩めず、足りていなかった「**申込を作る**」側だけを運営者へ開放した。
+
+## 新たに確定した仕様
+
+正本: [`docs/spec.md`](./spec.md) 冒頭 ／
+[`astro-site/docs/BANK_TRANSFER_FLOW.md`](../astro-site/docs/BANK_TRANSFER_FLOW.md) の
+「運営者による代理入金連絡」節 ／ [`docs/decisions.md`](./decisions.md) 2026-09-16。
+
+- 代理登録が書くのは `RequestedPlan` / `RequestedPlanType` / `RequestedAmount` /
+  `PaymentConfirmed=false`（＋非 active なら `Status='pending'`）**だけ**
+- 昇格の入口は従来どおり **`PaymentConfirmed` ただ 1 つ**。第二の昇格処理を作らない
+- **実入金額を掲載価格へ捏造しない**（44,800 を 44,820 にしない）
+- なりすましではない。通常フォームのセッション固定は**緩めない**
+- Premium Plus・会員の新規作成・顧客宛メールは**対象外**
+
+## 完了判定条件
+
+| # | 条件 | 状態 |
+|---|---|---|
+| 1 | 正本仕様と実装が一致 | ✅ spec / decisions / BANK_TRANSFER_FLOW に固定 |
+| 2 | 運営者代理入金連絡が実装済み | ✅ lib / Function / 管理画面 |
+| 3 | 通常顧客フローは非変更 | ✅ `bank-transfer-application.js` / `applicationIdentity.js` に差分なし（guard で固定）|
+| 4 | admin 以外は利用不能 | ✅ `decideAdminWrite`（POST / secret / 本番 context / Origin）|
+| 5 | 実入金額を適切に保持 | ✅ `RequestedAmount` にそのまま。昇格後の保持は env gate（列は未作成）|
+| 6 | 既存昇格フローを再利用 | ✅ `buildApplicationFields` → `buildConfirmationFields` の通しテストあり |
+| 7 | 本人送信と代理登録を監査上区別可能 | ⚠️ 列が無い間は**構造化ログのみ**（列追加は承認境界）|
+| 8 | 二重昇格・二重送信・URL 直打ち・fail closed のテスト | ✅ 24 + 14 件 |
+| 9 | 実 DOM E2E | ✅ 23 観点 pass ／ CI 必須化 |
+| 10 | 本番 write 未実施のまま承認境界へ到達 | ✅ |
+
+## 現在地
+
+| 種別 | ファイル |
+|---|---|
+| 判定・組み立ての単一源 | `astro-site/src/lib/payments/proxyPaymentNotice.js` |
+| JST 暦日ヘルパの共有化 | `bankPaymentFlow.js` に `jstDateString()` を追加（既存挙動は不変）|
+| Function | `astro-site/netlify/functions/admin-proxy-payment-notice.js` |
+| 管理画面 | `astro-site/src/pages/admin/proxy-payment-notice.astro` |
+| テスト | `proxyPaymentNotice.test.mjs`（24）/ `proxyPaymentNoticeFunction.guard.test.mjs`（14）|
+| 実 DOM E2E | `astro-site/scripts/e2e-admin-proxy-notice.mjs`（23 観点）|
+| CI | `.github/workflows/safety-check.yml` に E2E step を追加 |
+
+### テスト結果
+
+`test:bank-payment` 331 pass ／ `check:safety` EXIT=0 ／ `build` EXIT=0 ／
+`e2e:proxy-notice` 23 pass / 0 fail（Brave・dist 配信・合成 fetch）。
+
+## 未完了 / 本番未実施
+
+- **Airtable の監査列は未作成**（`ApplicationSource` / `ApplicationProxyBy` /
+  `ApplicationProxyAt` / `ReceivedAmount` / `ApplicationProxyReason`）。
+  作成は**本番 schema 変更＝高リスク操作**。作るまでは env gate が閉じたまま動く
+- `PROXY_NOTICE_ADMIN_SECRET`（または `PAYMENT_ADMIN_SECRET`）は**未設定**。
+  未設定のままだと Function は 503 で fail closed（誤用の危険はない）
+- **soken1122@gmail.com への実代理登録は未実施**
+- PR は Draft・**未 merge / 未 deploy**
+
+## 次作業（順序厳守）
+
+1. PR レビュー → merge → production deploy
+2. `PROXY_NOTICE_ADMIN_SECRET` を production へ投入（値は記録しない）→ redeploy
+3. `/admin/proxy-payment-notice` で **「内容を確認」まで**実施し、
+   書き込み 0 のまま preview が通ることを確認
+4. MK 承認のうえ、soken1122@gmail.com へ実登録（プラン・金額は登録直前に再提示）
+5. Airtable で `PaymentConfirmed` にチェック → 昇格とメール 1 通を確認
+6.（任意）監査列を作成して `PROXY_PAYMENT_NOTICE_FIELDS_READY=1`
+
+## 高リスク操作（実施直前で停止する）
+
+PR merge / production deploy / production env 変更 / Airtable 本番 schema 変更 /
+実顧客レコードの変更 / `PaymentConfirmed` の変更 / 実昇格 / 実メール送信。
+
+## rollback
+
+| 対象 | 戻し方 |
+|---|---|
+| 機能そのもの | PR を revert（**env は kill switch ではない**。secret を消すと 503 で止まるが、機能停止は revert）|
+| 代理登録した申込 | `PaymentConfirmed` を押す前なら `RequestedPlan` / `RequestedPlanType` / `RequestedAmount` を空へ戻すだけ。**権限は 1 つも動いていない** |
+| 監査列の書き込み | `PROXY_PAYMENT_NOTICE_FIELDS_READY` を unset → redeploy |
+
+## cleanup
+
+作業 worktree `/Users/user/Projects/analytics-keiba-proxypay`（branch
+`feat/admin-proxy-payment-notice`）は merge 後に削除する。他 worktree・他 branch・
+未コミット差分には触れていない。
+
 # 🚨 第 2 期 step2 が 1 通も出ていない — **原因 3 件を特定・修正（2026-09-14）/ 本番処置は未実施**
 
 > **この時点で本番へは 1 バイトも書いていない。** 実施したのは read-only の実測と、

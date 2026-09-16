@@ -1,0 +1,265 @@
+---
+export const prerender = true;
+// 代理入金連絡 管理画面（応急・例外運用）
+//
+// 入金は確認できているのに顧客本人が入金連絡フォームを送れていない場合に、
+// 運営者が顧客の代わりに**申込情報だけ**を登録する。
+//
+// - 有料権限（プラン / Status=active / 有効期限）はここでは付かない。
+//   登録後に Airtable で PaymentConfirmed にチェックを入れると既存の経路が昇格させる。
+// - 顧客宛メールは送らない（利用開始メールは昇格側の責務）。
+// - 認可: この画面は /admin/* の Basic-Auth 背後。POST は Function 側が
+//   x-admin-secret + Origin + production で再検証する（画面の表示だけでは何も起きない）。
+// - secret は sessionStorage 限定（localStorage には保存しない）。
+---
+
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, nofollow">
+  <title>代理入金連絡 | analytics-keiba</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0f172a; color: #e2e8f0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      padding: 2rem 1rem; line-height: 1.6;
+    }
+    .wrap { max-width: 820px; margin: 0 auto; }
+    h1 { font-size: 1.6rem; color: #fbbf24; margin-bottom: 0.5rem; }
+    .lead { color: #94a3b8; font-size: 0.9rem; margin-bottom: 1.5rem; }
+    .card {
+      background: #1e293b; border: 1px solid #334155; border-radius: 12px;
+      padding: 1.5rem; margin-bottom: 1.5rem;
+    }
+    .card h2 { font-size: 1.05rem; color: #60a5fa; margin-bottom: 1rem; }
+    label { display: block; font-size: 0.85rem; color: #cbd5e1; margin-bottom: 6px; font-weight: 600; }
+    input[type=text], input[type=date], input[type=password], select, textarea {
+      width: 100%; padding: 0.6rem 0.75rem; margin-bottom: 1rem;
+      background: #0f172a; border: 1px solid #475569; border-radius: 8px;
+      color: #e2e8f0; font-size: 0.95rem; font-family: inherit;
+    }
+    textarea { min-height: 70px; resize: vertical; }
+    button {
+      padding: 0.7rem 1.4rem; border: none; border-radius: 8px;
+      font-size: 0.95rem; font-weight: 700; cursor: pointer;
+    }
+    .btn-preview { background: #334155; color: #e2e8f0; }
+    .btn-apply { background: #f59e0b; color: #1f2937; }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    .row { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+    .note {
+      background: #0b1220; border-left: 3px solid #f59e0b; padding: 0.75rem 1rem;
+      font-size: 0.85rem; color: #cbd5e1; border-radius: 0 8px 8px 0; margin-bottom: 1.25rem;
+    }
+    .msg { margin-top: 1rem; padding: 0.75rem 1rem; border-radius: 8px; font-size: 0.9rem; white-space: pre-wrap; }
+    .msg.ok { background: #064e3b; color: #d1fae5; }
+    .msg.ng { background: #7f1d1d; color: #fee2e2; }
+    .msg.warn { background: #78350f; color: #fef3c7; }
+    pre {
+      background: #0b1220; border: 1px solid #334155; border-radius: 8px;
+      padding: 0.9rem; font-size: 0.8rem; overflow-x: auto; margin-top: 0.75rem;
+    }
+    .hint { font-size: 0.78rem; color: #94a3b8; margin: -0.75rem 0 1rem; }
+    .check { display: flex; align-items: flex-start; gap: 0.5rem; margin-bottom: 1rem; }
+    .check input { margin-top: 0.35rem; }
+    .check label { margin: 0; font-weight: 500; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>代理入金連絡</h1>
+    <p class="lead">
+      入金は確認できているのに、顧客本人が入金連絡フォームを送れていない場合の応急対応です。
+    </p>
+
+    <div class="note">
+      <strong>この画面でできるのは「申込の登録」までです。</strong><br>
+      有料プランはここでは付きません。登録後に Airtable で
+      <strong>PaymentConfirmed にチェックを入れる</strong>と、これまでどおり自動で昇格し、
+      有効期限（入金確認日 + 1年 など）と利用開始メールが確定します。<br>
+      顧客宛のメールはこの画面からは送りません。
+    </div>
+
+    <div class="card">
+      <h2>1. 顧客と入金の内容</h2>
+
+      <label for="email">顧客のメールアドレス</label>
+      <input type="text" id="email" placeholder="customer@example.com" autocomplete="off">
+      <p class="hint">会員登録済みのアドレスのみ。未登録の場合は登録されません（新規作成はしません）。</p>
+
+      <label for="product">プラン（商品）</label>
+      <select id="product">
+        <option value="Premium Annual">プレミアム 年払い（通常 ¥49,800）</option>
+        <option value="Premium Annual - Campaign">プレミアム 年払い・ライト乗り換え特典（¥44,820）</option>
+        <option value="Premium Monthly">プレミアム 月払い（¥18,000）</option>
+        <option value="Premium Lifetime">プレミアム 買い切り（¥78,000）</option>
+        <option value="Light">ライト 月払い（¥4,980）</option>
+        <option value="Premium Sanrenpuku Lifetime">三連複 買い切り（¥78,000）</option>
+      </select>
+      <p class="hint">
+        金額は目安です。実際に着金した金額は下に入力してください（掲載価格へ丸めません）。<br>
+        Premium Plus はこの画面では登録できません。
+      </p>
+
+      <label for="amount">実際に着金した金額（円）</label>
+      <input type="text" id="amount" placeholder="44800" inputmode="numeric" autocomplete="off">
+
+      <label for="paidDate">入金日</label>
+      <input type="date" id="paidDate">
+
+      <label for="reason">代理登録の理由（記録に残ります）</label>
+      <textarea id="reason" placeholder="例: ご本人が操作困難のため、メールでの入金連絡を受けて代理登録"></textarea>
+
+      <label for="operator">操作者</label>
+      <input type="text" id="operator" placeholder="MK" autocomplete="off">
+
+      <div class="check">
+        <input type="checkbox" id="replaceExisting">
+        <label for="replaceExisting">未確認の申込が残っていても置き換える（通常はチェック不要）</label>
+      </div>
+
+      <label for="secret">管理者シークレット</label>
+      <input type="password" id="secret" autocomplete="off">
+    </div>
+
+    <div class="card">
+      <h2>2. 確認してから登録</h2>
+      <p class="hint">
+        まず「内容を確認」を押してください。この時点では何も書き込みません。
+      </p>
+      <div class="row">
+        <button class="btn-preview" id="preview">内容を確認（書き込みなし）</button>
+        <button class="btn-apply" id="apply" disabled>この内容で登録する</button>
+      </div>
+      <div id="msg" class="msg" style="display:none"></div>
+      <pre id="detail" style="display:none"></pre>
+    </div>
+  </div>
+
+  <script is:inline>
+    const API = '/.netlify/functions/admin-proxy-payment-notice';
+    const $ = (id) => document.getElementById(id);
+
+    // secret は sessionStorage 限定（localStorage には保存しない）
+    $('secret').value = sessionStorage.getItem('proxy-notice-admin-secret') || '';
+    $('secret').addEventListener('input', (e) => {
+      sessionStorage.setItem('proxy-notice-admin-secret', e.target.value);
+    });
+
+    // 入金日の既定は JST の今日
+    $('paidDate').value = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+
+    // ⚠️ 金額欄は type="number" にしない（スピナー・ホイール・上下キーで値が勝手に変わる）。
+    //    type="text" は何でも入るので、ここで数字以外を落とす（"44,800" → "44800"）。
+    $('amount').addEventListener('input', () => {
+      const el = $('amount');
+      const cleaned = el.value.replace(/[^\d]/g, '');
+      if (cleaned === el.value) return;
+      const removed = el.value.length - cleaned.length;
+      const pos = Math.max(0, (el.selectionStart || 0) - removed);
+      el.value = cleaned;
+      try { el.setSelectionRange(pos, pos); } catch {}
+    });
+
+    // 入力が変わったら「登録」を必ず押し直させる（確認していない内容を登録させない）
+    let previewedPayload = null;
+    for (const id of ['email', 'product', 'amount', 'paidDate', 'reason', 'operator', 'replaceExisting']) {
+      $(id).addEventListener('input', invalidate);
+      $(id).addEventListener('change', invalidate);
+    }
+    function invalidate() {
+      previewedPayload = null;
+      $('apply').disabled = true;
+    }
+
+    function show(text, kind) {
+      const icon = kind === 'ok' ? '✅ ' : kind === 'warn' ? '⚠️ ' : '❌ ';
+      $('msg').textContent = icon + text;
+      $('msg').className = 'msg ' + kind;
+      $('msg').style.display = 'block';
+    }
+
+    function showDetail(obj) {
+      $('detail').textContent = JSON.stringify(obj, null, 2);
+      $('detail').style.display = 'block';
+    }
+
+    function buildPayload(action) {
+      return {
+        action,
+        email: $('email').value.trim(),
+        productName: $('product').value,
+        receivedAmount: $('amount').value.trim(),
+        paidDate: $('paidDate').value,
+        reason: $('reason').value.trim(),
+        operator: $('operator').value.trim(),
+        replaceExisting: $('replaceExisting').checked,
+      };
+    }
+
+    // 管理 POST（ブラウザが Origin を自動付与。secret はヘッダのみ・console に出さない）
+    async function adminPost(payload) {
+      const secret = $('secret').value.trim();
+      if (!secret) { show('管理者シークレットを入力してください', 'ng'); return null; }
+      const res = await fetch(API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
+        body: JSON.stringify(payload),
+      });
+      const result = await res.json().catch(() => ({}));
+      return { status: res.status, ok: res.ok, result };
+    }
+
+    $('preview').addEventListener('click', async () => {
+      $('preview').disabled = true;
+      try {
+        const payload = buildPayload('preview');
+        const r = await adminPost(payload);
+        if (!r) return;
+        if (!r.ok) {
+          show(r.result.error || `確認できませんでした（${r.status}）`, 'ng');
+          if (r.result.customer) showDetail({ 現在の会員情報: r.result.customer });
+          return;
+        }
+        previewedPayload = payload;
+        $('apply').disabled = false;
+        const warn = r.result.auditFieldsReady
+          ? ''
+          : '\n（監査用の列が未作成のため、代理登録の記録はログにのみ残ります）';
+        show('この内容で登録できます。内容を確認して「この内容で登録する」を押してください。' + warn,
+          r.result.auditFieldsReady ? 'ok' : 'warn');
+        showDetail({ 現在の会員情報: r.result.customer, 書き込む内容: r.result.willWrite });
+      } catch (e) {
+        show('通信に失敗しました', 'ng');
+      } finally {
+        $('preview').disabled = false;
+      }
+    });
+
+    $('apply').addEventListener('click', async () => {
+      if (!previewedPayload) { show('先に内容を確認してください', 'ng'); return; }
+      if (!window.confirm('この内容で申込を登録します。よろしいですか？')) return;
+      $('apply').disabled = true;
+      try {
+        const r = await adminPost({ ...previewedPayload, action: 'apply' });
+        if (!r) { $('apply').disabled = false; return; }
+        if (!r.ok) {
+          show(r.result.error || `登録できませんでした（${r.status}）`, 'ng');
+          $('apply').disabled = false;
+          return;
+        }
+        invalidate();
+        show('登録しました。次に Airtable で該当会員の PaymentConfirmed に'
+          + 'チェックを入れると、有料プランが有効になり利用開始メールが届きます。', 'ok');
+        showDetail({ 登録した内容: r.result.wrote, recordId: r.result.recordId });
+      } catch (e) {
+        show('通信に失敗しました。登録されたかどうか Airtable でご確認ください。', 'ng');
+        $('apply').disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

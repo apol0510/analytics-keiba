@@ -45,6 +45,19 @@ function formatYmd({ y, m, d }) {
 }
 
 /**
+ * JST の暦日を 'YYYY-MM-DD' で返す。
+ *
+ * ⚠️ `toISOString().slice(0,10)` は **UTC 基準**なので、JST 00:00〜09:00 に実行すると
+ *    前日になる。「今日」を扱う判定（入金日が未来でないか 等）は必ずこれを使う。
+ *
+ * @param {Date} date
+ * @returns {string} 'YYYY-MM-DD'（JST）
+ */
+export function jstDateString(date) {
+  return formatYmd(toJstParts(date));
+}
+
+/**
  * JST の暦日で「n ヶ月後」を返す（YYYY-MM-DD）。
  * 月末の繰り上がり（1/31 + 1ヶ月）は月末日に丸める（3/3 ではなく 2/28 or 2/29）。
  * @param {Date} baseDate 基準日時（入金確認日時）

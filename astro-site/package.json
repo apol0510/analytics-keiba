@@ -106,7 +106,8 @@
     "check:race-calendar": "node scripts/check-race-calendar-freshness.mjs",
     "test:drm": "node --test src/lib/drm/*.test.mjs",
     "check:cdn-cache": "node scripts/check-cdn-cache-safety.mjs",
-    "test:archive-redirect": "node --test src/lib/archiveRedirect.test.mjs"
+    "test:archive-redirect": "node --test src/lib/archiveRedirect.test.mjs",
+    "e2e:proxy-notice": "node scripts/e2e-admin-proxy-notice.mjs"
   },
   "dependencies": {
     "@astrojs/netlify": "^6.5.8",

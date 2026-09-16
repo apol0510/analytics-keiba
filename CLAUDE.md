@@ -309,6 +309,7 @@ CLAUDE.md 再編（2026-08-13）で旧セクションがどこへ行ったかの
 | 販売導線の選択 | `src/lib/upsell/upsellTarget.js` |
 | マーケ対象判定 | `src/lib/marketing/customerMarketingAudience.js` |
 | 銀行振込の書込みフィールド | `src/lib/payments/bankPaymentFlow.js` |
+| 代理入金連絡（運営者が本人の代わりに申込を登録）| `src/lib/payments/proxyPaymentNotice.js` |
 | メールアドレス（問い合わせ先 / 送信元） | `netlify/functions/config/email-config.js` |
 | 権限（entitlement） | `src/lib/entitlements/resolveEntitlements.js` |
 | 有料ページの入口（サーバー認可） | `src/lib/auth/paidPageGate.js` の `gatePaidPage()` |
