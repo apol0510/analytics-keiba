@@ -1669,7 +1669,7 @@ R5 / R6 で見るのは「**購入が起きたときに処理が正しいか**�
 | post-merge main CI | Safety Check **success** |
 | `/admin/proxy-payment-notice` | **401**（edge Basic 認証）|
 | Function GET | **405** |
-| 顧客レコード | `rec5Rl4oYfoEkf3GP` の全フィールド digest が merge 前後で**完全一致**＝ write 0 |
+| 顧客レコード | 対象顧客レコードの全フィールド digest が merge 前後で**完全一致**＝ write 0 |
 | Airtable / メール | **write 0 / 送信 0** |
 
 ## 🚨 想定と違ったこと — 専用 secret 未設定でも 503 にならなかった
@@ -1682,13 +1682,13 @@ R5 / R6 で見るのは「**購入が起きたときに処理が正しいか**�
 PROXY_NOTICE_ADMIN_SECRET || PAYMENT_ADMIN_SECRET || PREMIUM_PLUS_ADMIN_SECRET
 ```
 
-本番 env の実測（値は出さずキーと長さのみ確認）:
+本番 env の実測（**値も長さも正本へ残さない**。キーの有無のみ）:
 
 | env | production |
 |---|---|
 | `PROXY_NOTICE_ADMIN_SECRET` | **未設定** |
-| `PAYMENT_ADMIN_SECRET` | **設定済み（20 文字）** |
-| `PREMIUM_PLUS_ADMIN_SECRET` | **設定済み（48 文字）** |
+| `PAYMENT_ADMIN_SECRET` | **設定済み** |
+| `PREMIUM_PLUS_ADMIN_SECRET` | **設定済み** |
 
 つまり **deploy した瞬間から、既存の管理 secret を持つ人はこの経路を使える状態**だった。
 「専用 secret を入れるまで不活性」という承認時の前提が崩れている。
@@ -1706,12 +1706,12 @@ PROXY_NOTICE_ADMIN_SECRET || PAYMENT_ADMIN_SECRET || PREMIUM_PLUS_ADMIN_SECRET
 |---|---|
 | `PROXY_NOTICE_ADMIN_SECRET` | **未設定のまま**（env に存在しない）|
 | 正規形式 POST（dummy secret）| **503** `{"ok":false,"error":"Forbidden","sideEffects":"none"}` |
-| **`PAYMENT_ADMIN_SECRET`（実値・20 文字）で POST** | **503**（通らない）|
-| **`PREMIUM_PLUS_ADMIN_SECRET`（実値・48 文字）で POST** | **503**（通らない）|
+| **`PAYMENT_ADMIN_SECRET`（設定済み）で POST** | **503**（通らない）|
+| **`PREMIUM_PLUS_ADMIN_SECRET`（設定済み）で POST** | **503**（通らない）|
 | GET | **405** |
 | Origin 欠落 / Origin 偽装 / secret ヘッダ無し | いずれも **503** |
 | `/admin/proxy-payment-notice` | **401**（edge Basic 認証）|
-| 顧客レコード | `rec5Rl4oYfoEkf3GP` の digest が前後で**完全一致**＝変更 0 |
+| 顧客レコード | 対象顧客レコードの digest が前後で**完全一致**＝変更 0 |
 | Airtable fetch / write | **0**（認可段で止まるため Airtable へ到達しない）|
 | 実メール送信 | **0** |
 | 既存経路への影響 | `bank-transfer-application` / `confirm-bank-payment` / `admin-promote-customer` / `send-payment-confirmation-auto` すべて **405**（従来どおり）／ `/pricing/` **200** |
@@ -1745,7 +1745,7 @@ read-only で確認した当該顧客の状態（**書き込みは一切して�
 
 | 項目 | 実測 |
 |---|---|
-| recordId / 氏名 | `rec5Rl4oYfoEkf3GP` / ソウマヒデオ |
+| 会員レコード | 登録あり（recordId は正本へ残さない。Airtable で Email 検索して特定する）|
 | プラン / 有効期限 | Premium / **2026-04-06（期限切れ）** |
 | Status / PlanType | どちらも未設定 |
 | 実効権限 | `memberType=free` / `reason=expired`（無料ログインのみ）|
@@ -1848,7 +1848,7 @@ Light 乗り換え特典 **¥44,820**）。この 20 円差をコード側で丸
 #### この確認で見つけて直したこと
 
 テスト fixture に**実顧客のメールアドレスと recordId** が入っていた
-（`soken1122@gmail.com` / `rec5Rl4oYfoEkf3GP`）。試験スクリプトへコピーされて
+（実顧客のアドレスと recordId）。試験スクリプトへコピーされて
 本番レコードを指す事故になり得るため、合成値（`proxy-test@example.test` /
 `recE2ETESTONLY01`）へ差し替え、fixture は必ず合成値にする旨をテスト先頭へ明記した。
 **実案件がどのお客様かはこの progress.md 側にだけ残す。**
