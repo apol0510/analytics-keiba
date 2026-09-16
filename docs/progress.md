@@ -1657,7 +1657,53 @@ R5 / R6 で見るのは「**購入が起きたときに処理が正しいか**�
 `test:drm` 136 pass ／ `check:safety` EXIT=0 ／ `build` EXIT=0。
 **実メール送信・queue・本番書込み・production deploy・PR merge は 1 件も行っていない。**
 
-# 🧑‍💼 運営者による代理入金連絡 — **本番反映済み・secret 未設定で不活性（2026-09-16）**
+# 🧑‍💼 運営者による代理入金連絡 — **本番で利用可能（2026-09-16）/ 実登録はまだ未実施**
+
+## 専用 secret を投入し、本番で「内容を確認」まで通した（2026-09-16）
+
+`PROXY_NOTICE_ADMIN_SECRET` を production へ設定（**値も長さも記録しない**）→ Build Hook で
+redeploy（published commit = `d23ec13d` / ready）。以下を本番 read-only で実測。
+
+| 確認 | 実測 |
+|---|---|
+| secret ヘッダ無し / 不正 secret / Origin 欠落 / Origin 偽装 | すべて **403** |
+| GET | **405** |
+| `PAYMENT_ADMIN_SECRET`（設定済み）| **403**（通らない）|
+| `PREMIUM_PLUS_ADMIN_SECRET`（設定済み）| **403**（通らない）|
+| **正しい専用 secret で `action=preview`** | **200 / `ok:true` / `sideEffects:'none'`** |
+| preview が返した書き込み予定 | `氏名` / `PaymentMethod` / `RequestedPlan=Premium` / `RequestedPlanType=Annual` / `PaymentConfirmed=false` / **`RequestedAmount=44800`** / `Status=pending` の **7 項目のみ** |
+| 掲載価格への丸め | **なし**（商品名は `- Campaign (¥44,820/年)` でも 44800 のまま）|
+| 権限・メール系 | `プラン` / `PlanType` / `有効期限` / `PaidAt` / `PaymentEmailSent` は **0 件** |
+| Airtable write | **0**（対象顧客レコードの digest が preview 前後で完全一致）|
+| `Requested*` / `Status` / `PaymentConfirmed` | **変更 0**（すべて空のまま）|
+| 顧客権限 | **変更 0**（プラン・有効期限とも不変）|
+| 決済・利用開始メール | **0 件**（同時間帯の送信は別系統のマーケ配信のみ・対象顧客宛 0）|
+| 既存経路 | `bank-transfer-application` / `confirm-bank-payment` / `admin-promote-customer` / `send-payment-confirmation-auto` すべて **405**、`/pricing/` **200** |
+
+### 管理画面の実機確認（`/admin/proxy-payment-notice`）
+
+Basic 認証を通して HTML を取得し、入力欄 7 つ・ボタン 2 つ・プラン 6 種がすべて存在すること、
+「この画面では権限が付かない」「次は PaymentConfirmed」「顧客へメールは飛ばない」
+「実際に着金した金額を入れる」「Premium Plus は対象外」「未登録アドレスは作らない」が
+画面に書かれていること、**登録ボタンが初期 disabled** であることを確認した。
+**「この内容で登録する」は押していない。**
+
+> **現在地**: 機能は本番で使える状態。**対象顧客への実登録・`PaymentConfirmed`・昇格・
+> 実メールは未実施**（未承認）。
+
+### 管理画面 Basic 認証情報の露出（2026-09-16 / **MK 判断でクローズ**）
+
+本番確認の作業中、`curl -w '%{url_effective}'` が `-u` で渡した資格情報を URL 形式で
+出力し、**`ADMIN_BASIC_AUTH_USER` / `ADMIN_BASIC_AUTH_PASSWORD` が作業ログへ露出した**。
+
+- **対応は MK 判断でクローズ。追加のローテーション対応は行わない。**
+  （＝「ローテーション実施済み」ではない。再提起もしない）
+- 再発防止: 管理画面へ Basic 認証付きで curl するときは
+  **`-w '%{url_effective}'` を使わない**（`-w '%{http_code}'` 等に留める）。
+
+---
+
+# （以下は実装・反映の経緯）
 
 ## 本番反映（2026-09-16）
 
@@ -1895,9 +1941,9 @@ Light 乗り換え特典 **¥44,820**）。この 20 円差をコード側で丸
 
 0. ~~PR #553 squash merge ＋ 自動 production deploy~~ — **完了（2026-09-16 / main `9a4511a9`）**
 1. ~~PR #554（専用 secret 化）を merge ＋ 自動 production deploy~~ — **完了（2026-09-16 / main `0edb6994`）**
-2. `PROXY_NOTICE_ADMIN_SECRET` を production へ投入（値は記録しない）→ redeploy ← **次はここ（未承認）**
-3. `/admin/proxy-payment-notice` で **「内容を確認」まで**実施し、
-   書き込み 0 のまま preview が通ることを確認
+2. ~~`PROXY_NOTICE_ADMIN_SECRET` を production へ投入 → redeploy~~ — **完了（2026-09-16）**
+3. ~~`/admin/proxy-payment-notice` で「内容を確認」まで実施し、書き込み 0 を確認~~
+   — **完了（2026-09-16 / preview 200・write 0）** ← **ここまでが承認済み**
 4. MK 承認のうえ、対象顧客へ実登録（プラン・金額は登録直前に再提示）
 5. Airtable で `PaymentConfirmed` にチェック → 昇格とメール 1 通を確認
 6.（任意）監査列を作成して `PROXY_PAYMENT_NOTICE_FIELDS_READY=1`
