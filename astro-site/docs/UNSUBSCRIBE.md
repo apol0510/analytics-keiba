@@ -132,15 +132,65 @@ MK が明示的に開ける運用とする（既定では閉じている）。
 | ヘッダの単一源 | `src/lib/unsubscribe/listUnsubscribeHeaders.js` |
 | リクエスト解釈・status | `src/lib/unsubscribe/parseUnsubscribeRequest.js` |
 | **URL の改ざん防止（署名）** | `src/lib/unsubscribe/unsubscribeSignature.js` |
+| **旧 mailto 残件の一括精算（一度きり）** | `src/lib/unsubscribe/unsubscribeBackfill.js` / `netlify/functions/admin-unsubscribe-backfill.js` |
 | 記録先と成否の単一源 | `src/lib/unsubscribe/unsubscribeOutcome.js` |
 | エンドポイント | `netlify/functions/unsubscribe.js` |
 | 見込み客の抑止 | `src/lib/marketing/prospectStore.js` の `recordSuppression()` |
 | 送信直前の除外 | `netlify/functions/marketing-campaign-dispatch.js` / `prospectDispatchContext.js` |
 | テスト | `npm run test:unsubscribe`（`check:safety` と CI に組込済み）|
 
-## 7. 残っている穴（把握のうえ許容）
+## 7. 旧 mailto 残件の一括精算（**一度きり**・通常運用ではない）
 
-**過去に送信済みのメール**には mailto 付きのヘッダが残っているため、そこから配信停止された
-場合は `unsubscribe@keiba.link` に届く。新規送信分では起きない。
-恒久対応が要る場合は「受信メールを解析する基盤」が必要になるが、**既存 HTTPS 経路で
-解決できる範囲を超える**ため、必要になった時点で別途判断する（現時点では未実装）。
+**cutoff: `2026-09-16T14:56:15.220Z`（= PR #558 が production へ published された実測時刻）。**
+merge 時刻（14:54:44Z）ではない。
+
+この時刻より前に送ったメールには mailto 付きヘッダが残っているため、そこから配信停止された
+依頼は `unsubscribe@keiba.link` の受信箱に溜まり、**AK 側には反映されていない**。
+その積み残しを**一度だけ**まとめて反映し、旧 mailto 残件をゼロにしてクローズする。
+
+> **以後の通常運用にはしない。** 正規経路は §1〜§6（HTTPS ワンクリック）だけ。
+> 受信箱を人が見る運用へ戻さない。
+
+### 手順（`admin-unsubscribe-backfill`）
+
+1. 受信箱から旧方式の依頼アドレスを抽出（宛先が `unsubscribe@keiba.link` /
+   件名 `Unsubscribe` / 自動解除本文 / cutoff より前の送信メール由来）。
+   問い合わせ・返信・迷惑メールは混ぜない
+2. **dry-run**（既定）で件数を確定する
+3. `dryRun:false` ＋ **`expectedCount`（dry-run で出た `needsWrite` と同じ数）**で適用
+
+```
+POST /.netlify/functions/admin-unsubscribe-backfill
+  x-admin-secret: <UNSUBSCRIBE_BACKFILL_SECRET>
+  { "emails": [...], "dryRun": true, "operationId": "legacy-mailto-2026-09-17" }
+```
+
+### 安全条件
+
+| 条件 | 実装 |
+|---|---|
+| 書き込みは #558 の正本を再利用 | `updateUnsubscribeStatus` / `suppressProspect` を呼ぶだけ |
+| dry-run が既定 | `dryRun !== false` |
+| 承認した人数と違えば実行しない | `expectedCount` 不一致で 409 |
+| 二重実行しても副作用なし | 既停止者は `already` で変更なし |
+| Customers / 見込み客の**双方**に対応 | 片方にしか居ない人も停止できる |
+| **判定不能は書かない** | 片方でも読めなければ `unknown` → 書き込み 0 |
+| 契約・権限・退会・決済に触れない | guard テストで固定 |
+| メール送信 0 | guard テストで固定 |
+| 生アドレスを出さない | 戻り値・ログとも `emailTraceId` のハッシュのみ |
+| 途中失敗の追跡 | `traces[]` と `applied[]` を trace 単位で返す（207 で部分成功） |
+| 認可 | `UNSUBSCRIBE_BACKFILL_SECRET` **専用**。他の管理 secret へ fallback しない |
+
+### rollback / 再実行
+
+- **再実行**: 同じ入力をそのまま投げ直す。既に停止済みの人は変更されない（冪等）
+- **rollback**: 誤って止めた人は `Customers` の `UnsubscribedAnalyticsKeiba` を false へ戻す
+  （= 配信再開）。見込み客の抑止は意図的に解除しない仕様なので、必要なら
+  Redis の `state` を個別に戻す判断が要る
+- 部分失敗（207）は `applied[]` の trace で「どこまで成功したか」を突き合わせ、
+  同じ入力で再実行すれば残りだけが処理される
+
+### 残っている穴
+
+cutoff より前のメールは今後も mailto から依頼が届き得る。**この一括精算でゼロにした後も、
+受信箱に新しく届いたら同じ手順でもう一度精算する**（恒常的な受信メール解析基盤は作らない）。

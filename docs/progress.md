@@ -1657,6 +1657,71 @@ R5 / R6 で見るのは「**購入が起きたときに処理が正しいか**�
 `test:drm` 136 pass ／ `check:safety` EXIT=0 ／ `build` EXIT=0。
 **実メール送信・queue・本番書込み・production deploy・PR merge は 1 件も行っていない。**
 
+# 🧹 旧 mailto 残件の一括精算 — **仕組みは完成 / 対象抽出が未着手（2026-09-17）**
+
+> **一度きりの後始末**。以後の通常運用にはしない。正規経路は #558 の HTTPS ワンクリックだけ。
+> この作業で本番へは 1 バイトも書いていない（read-only 調査と repo 側の実装のみ）。
+
+## cutoff（実測で確定）
+
+| 項目 | 値 |
+|---|---|
+| PR #558 merge | 2026-09-16T14:54:44Z |
+| **production published（= cutoff）** | **2026-09-16T14:56:15.220Z**（2026-09-16 23:56:15 JST）|
+| deploy id | `6aaaadb6…` / commit `a0c8b6ce` / state ready |
+
+**merge 時刻ではなく published 時刻を cutoff にした**（その 1 分半の間に送られたメールは
+まだ旧ヘッダのため）。この時刻より前に送られたメール由来の依頼だけが今回の対象。
+
+## 🚧 Phase 1（対象抽出）は着手できていない
+
+`unsubscribe@keiba.link` の**受信履歴を読む手段が無い**。
+
+- MX は Cloudflare Email Routing（**受信転送のみ**でメールボックス API を持たない）
+- Gmail コネクタは**未認証**（`authenticate` のみ利用可能で、検索・読み取りツールが無い）
+
+したがって「旧 mailto 依頼の全件抽出・重複排除・照合・集計」は**まだ 1 件もできていない**。
+総件数 / ユニーク人数 / 既停止 / 未反映 …はすべて **未取得**（推測で埋めない）。
+
+## 代わりに作ったもの（対象リストが来れば即座に回せる状態）
+
+アドレス一覧さえ渡せば、抽出以外の全工程（照合 → 集計 → dry-run → 一括適用 → 検証）を
+無人で回せる Function を用意した。**人が Airtable / Redis を 1 件ずつ編集する運用にはしない。**
+
+| 目的 | ファイル |
+|---|---|
+| 判定・集計・実行ゲート（純粋）| `src/lib/unsubscribe/unsubscribeBackfill.js` |
+| 一括精算 Function | `netlify/functions/admin-unsubscribe-backfill.js` |
+| テスト | `unsubscribeBackfill.test.mjs`（25 件。`test:unsubscribe` は計 **98 件**）|
+
+### 安全条件
+
+- **書き込みは #558 の正本を再利用**（`updateUnsubscribeStatus` / `suppressProspect`）。
+  2 つ目の停止ロジックを作っていない
+- **dry-run が既定**。`dryRun:false` は `expectedCount` が実際の対象数と一致したときだけ通る
+  （承認後に対象が増えていても素通りしない）
+- **冪等**。既停止者は `already` で変更なし。同じ入力を 2 回投げても二重副作用なし
+- **Customers / 見込み客の双方**に対応。片方にしか居ない人も停止できる
+- **判定不能（片方でも読めない）は書かない**（fail closed）
+- 契約・権限・退会・決済フィールドに**触れない** / **メール送信 0**（guard テストで固定）
+- 生アドレスは戻り値にもログにも出さない（`emailTraceId` のハッシュのみ）
+- 認可は `UNSUBSCRIBE_BACKFILL_SECRET` **専用**。他の管理 secret へ fallback しない（#554 の教訓）
+- 部分失敗は 207 ＋ trace 単位の結果で「どこまで成功したか」を追跡できる
+
+`test:unsubscribe` 98 pass ／ `check:safety` EXIT=0 ／ `build` EXIT=0。
+
+## 未完 / 承認境界
+
+- **対象アドレスの抽出**（MK による受信箱の共有、または Gmail コネクタの認証が要る）
+- `UNSUBSCRIBE_BACKFILL_SECRET` の production 設定（**未実施・未承認**）
+- 実顧客の Customers / Redis への一括適用（**dry-run 結果を提示してから承認を得る**）
+- PR は Draft・**未 merge / 未 deploy**
+
+## この節を閉じてよい条件
+
+旧 mailto 依頼を全件照合し、未反映をゼロにしたうえで、
+**「旧 mailto 残件を一度だけ一括精算し、以後は #558 の自動経路のみ」**と記録できたとき。
+
 # 📭 配信停止を無人化する — **実装・検証完了 / 本番未反映（2026-09-16）**
 
 > **完成条件: Unsubscribe は 1 件ごとの人手対応を要求しない。**

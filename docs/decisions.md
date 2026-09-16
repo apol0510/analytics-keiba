@@ -1,3 +1,28 @@
+# 2026-09-17 — 旧 mailto 残件は一度だけ一括精算する（通常運用にしない）
+
+## 決定
+
+| # | 決定 | 単一源 |
+|---|---|---|
+| 1 | 旧 mailto 経路の積み残しは **一度きりの後始末**。恒常的な受信メール解析基盤は作らない | `docs/UNSUBSCRIBE.md` §7 |
+| 2 | cutoff は **#558 が production へ published された実測時刻**（merge 時刻ではない）| `LEGACY_CUTOFF_ISO` |
+| 3 | 人が Airtable / Redis を 1 件ずつ編集する運用にはしない | `admin-unsubscribe-backfill` |
+| 4 | 書き込みは **#558 の正本を再利用**。2 つ目の停止ロジックを作らない | `updateUnsubscribeStatus` / `suppressProspect` |
+| 5 | **dry-run が既定**。適用は `expectedCount` 一致時のみ | `decideBackfillExecution()` |
+| 6 | **判定不能は書かない**（片方でも読めなければ fail closed）| `classifyBackfillTarget()` |
+| 7 | 認可は専用 secret のみ。**他の管理 secret へ fallback しない** | `UNSUBSCRIBE_BACKFILL_SECRET` |
+
+## cutoff に published 時刻を使う理由
+
+merge（14:54:44Z）から published（14:56:15Z）までの約 1 分半に送られたメールは、
+**まだ旧ヘッダ（mailto 併記）**で配信されている。merge 時刻で切ると、その分の依頼を
+「新方式で処理済み」と誤って除外してしまう。
+
+## 受信箱を読む手段が無いことは隠さない
+
+MX は Cloudflare Email Routing（受信転送のみ）、Gmail コネクタは未認証のため、
+**Claude 側から旧依頼を抽出できない**。件数を推測で埋めず、対象抽出は未着手として記録する。
+
 # 2026-09-16 — 配信停止は無人で完結させる（mailto を出さない / 見込み客も止める）
 
 ## 決定
