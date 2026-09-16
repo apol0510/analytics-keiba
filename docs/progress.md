@@ -1601,12 +1601,102 @@ step1 実績は **送信 14・届いた 13・開封 2・不明 1**（`openRate` 
 `byRoute` に**複数の層**が現れ、step2 以外（`opened` → step5 / `delivered` → step3）へ
 実際に分岐したことを read-only で確認したとき。
 
+> ⚠️ **2026-09-17 訂正 — この節が示した「step2 の期限が来れば R2」は誤り。**
+> step2 は**構造的に線形**にしかならず、分岐が効き始めるのは **3 通目から**。
+> 正しい観測時期は次節「R2 の中間実測」を正本とする。
+
+## R2 の中間実測（2026-09-16T22:50Z / read-only・**書き込み 0**）
+
+**step2 は予定どおり自動で配信された。しかしこれは R2 ではない。**
+`byRoute` に 2 層が現れたのを「分岐した」と読み違えかけたので、根拠ごと残す。
+
+### 実測値（`drmProgress` / `touchMeasurement` / `sequenceTickPreview`）
+
+| 項目 | 実測 |
+|---|---|
+| `inSequence` | **14**（R3 から増えていない＝入口 gate は閉じたまま）|
+| `sentByStep` | **`{1: 14, 2: 12}`**（step3〜6 は **0**）|
+| `byCurrentStep` | `{1: 2, 2: 12}` / `waiting 13` / `due` **0** / `stopped` **1** |
+| `byStopReason` | `{provider_suppressed: 1}`（停止リストへは送っていない）|
+| `responseRouting` | `active true` / `measured {open: true, click: false}` / `counts {recipients 14, measured 14, skipped 0, keys 26}` |
+| **`byRoute`** | **`{"opened:5": 3, "delivered:3": 9}`** / `routed` **12** |
+| step1 実績 | 送信 14 / 届いた 13 / 開封 2 / **不明 1** |
+| step2 実績 | 送信 12 / 届いた 12 / 開封 1 / 不明 0 |
+| 合計 | 送信 26 / 届いた 25 / 開封 3 / 不明 1 / `clickMeasured false` |
+| `sequenceTickPreview` | `no_due_recipients` / `gates.allOpen true` / `autoStart.open false` / `sideEffects none` |
+| 送信待ちジョブ | **0 件**（`jobsBrief` の `jobs: []`）|
+
+**安全条件はすべて維持**: `keys 26` = 送信 26 で **duplicate 0**／`resolvedCustomers 14` =
+`inSequence 14` で **prospect 混入 0**（`audienceSource: 'customer'`）／`opened` `delivered`
+`unknown` は別々に数えており**混同なし**／停止 1 件は provider suppression で正しく止まっている／
+**対象人数の超過なし**（14 名は R3 の 14 名のまま）。
+
+### なぜ step2 は R2 ではないのか（構造的な理由）
+
+`responseRoutes` は 2 本とも **`minSent: 2`** を宣言している。
+
+```
+{ when: 'opened',    step: 5, minSent: 2, maxSent: 4 }
+{ when: 'delivered', step: 3, minSent: 2, maxSent: 4 }
+```
+
+step1 しか受け取っていない時点（`sentCount: 1`）では **どの route も当たらない**ので、
+2 通目は反応があっても**線形 step2 にしかならない**。**分岐は 3 通目から**効く。
+いま見えている `byRoute` は「**次の 1 通**の行き先」であって、**送られた結果ではない**
+（`routedBy` は `sequenceProgress` が計算する**予定**）。
+
+### さらに — 到達層は送信記録だけでは線形と区別できない
+
+`delivered → step3` は **step2 の線形の次と同じ番号**である。
+したがって到達層 9 名に step3 が届いても、**送信記録の上では線形と見分けが付かない**。
+
+**「反応で行き先が変わった」ことを送信記録だけで示せるのは開封層だけ**
+（`opened → step5`。step3・step4 を**飛ばす**）。
+
+### 観測できる時期（`delayDays` は行き先の step のもの）
+
+`computeNextSendAtMs` は **行き先 step の `delayDays`** を「最後の送信」から数える
+（`cron-campaign-sequence` は `buildSequenceProgress` だけを使う）。
+
+| 層 | 人数 | 行き先 | `delayDays` | 期限（step2 = 2026-09-16T15:0xZ 起点）|
+|---|---|---|---|---|
+| 到達・未開封 | **9** | step3 | 3 | **2026-09-19T15:0xZ 前後** |
+| 開封 | **3** | step5 | 14 | **2026-09-30T15:0xZ 前後** |
+
+- **2026-09-19 ごろ**: 到達層 9 名に step3 が出る。同時に**開封層 3 名には何も出ない**
+  （step5 の期限が来ていない）。ここで初めて「層によって扱いが違う」ことが実配信に現れる。
+- **2026-09-30 ごろ**: 開封層 3 名に **step5** が出る。step3・step4 を飛ばしているので、
+  **送信記録だけで分岐と分かる**。R2 が埋まるのはここ。
+
+⚠️ step1 だけの 1 名（2026-09-15T03:45 送信）は step2 の期限が **2026-09-17T03:45Z**。
+実測時点（09-16T22:50Z）では未到来で、`due 0` と整合している（不具合ではない）。
+
+### 欠陥ではない — 時期の問題
+
+gate は開いており（`gates.allOpen true`）、tick は 10 分ごとに自動で回り、
+`no_due_recipients` は「期限が来ていない」以外の理由ではない。
+**人手で早める操作（期限の書き換え・env の開放・手動 enqueue）は取らない。**
+
+### 再発防止（機械で固定した）
+
+観測時期を散文だけで持つと同じ読み違えが起きるので、実 catalog で固定した
+（`src/lib/drm/drmR2Observability.test.mjs`・`test:drm` → `check:safety`）:
+
+- `minSent: 2` — 1 通しか送っていない人は**分岐できない**（2 通目は線形 step2）
+- 2 通受け取って初めて `opened:5` / `delivered:3` に割れる
+- `delivered` の行き先は **step2 の線形の次と同じ番号**（記録上は区別できない）
+- `opened` の行き先は step3・step4 を**飛ばす**（記録だけで分岐と分かる唯一の層）
+- 開封層の `delayDays`(14) > 到達層(3) — **同時には届かない**
+- `maxSent: 4` — 5 通目以降は線形へ戻る
+
+⚠️ `minSent` / `maxSent` / `delayDays` を変えるときは、**この節の観測時期も併せて直す**。
+
 ## 残作業（**これが埋まるまでクローズしない**）
 
 | # | 残件 | 埋め方 | 依存 |
 |---|---|---|---|
 | ~~R1~~ | ~~1 通単位の開封が本番で**実際に読めている**ことの実測~~ → **2026-09-15 完了**（`active: true` / `measured.open: true` / `counts {recipients 14, measured 14, skipped 0, keys 14}` / step1 実績 送信 14・届いた 13・開封 2・**不明 1**）| — | 完了 |
-| R2 | **実配信で層ごとに別の 1 通が出た**（`byRoute` に `opened:9` / `delivered:16`） | 切替後は**人手なしで**進む（step ごとの承認はしない）。埋まるのは**進んだ結果**を read-only で確かめたとき。⚠️ `MARKETING_DRM_AUTOSTART_ENABLED` は **R2 の gate ではない**ので開けない | 本番切替（上表の 1〜2）|
+| R2 | **実配信で層ごとに別の 1 通が出た**（送信記録で分岐と分かること）| 切替後は**人手なしで**進む（step ごとの承認はしない）。埋まるのは**進んだ結果**を read-only で確かめたとき。⚠️ `MARKETING_DRM_AUTOSTART_ENABLED` は **R2 の gate ではない**ので開けない。⚠️ **`byRoute` に 2 層が出ただけでは埋まらない**（あれは「次の 1 通」の予定）。**開封層 3 名に step5 が出た**ことを確認する（**2026-09-30T15:0xZ 前後**）。途中経過として 2026-09-19 ごろ到達層 9 名の step3 を見る。根拠は上節「R2 の中間実測」| 期限到来（自動）|
 | ~~R3~~ | ~~入口の自動開始を**本番で 1 名**通す（段 1）~~ → **2026-09-15 完了**（承認 4 名 → 実送信 1 名 / 超過 0 / 再送 0 / prospect 0 / gate 再閉鎖）| — | 完了 |
 | ~~R4~~ | ~~第 3 段の文面を MK が確認~~ → **2026-09-14 承認済み**（Step4 の締めのみ顧客向けの言い方へ修正）| — | 完了 |
 | ~~R5~~ | ~~**購入が発生したときに**その購入が実 touch へ正しく帰属される~~ → **2026-09-15 完了**（実 Premium 会員 12 名で `admin-drm-attribution`：購入 8 / `purchaseTimeReasons {ok 8, missing 4}` / `unattributed 8`・`direct 0`・`clickMeasured false`）| — | 完了 |
