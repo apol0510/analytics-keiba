@@ -12,7 +12,7 @@ import {
   mapLegacyTargetToAudienceType,
 } from '../../src/lib/newsletter/audience-resolver.js';
 import { emailTraceId as emailTraceIdRaw } from '../../src/lib/newsletter/test-recipients.js';
-import { listUnsubscribeHeadersFor } from '../../src/lib/unsubscribe/listUnsubscribeHeaders.js';
+import { listUnsubscribeHeadersFor, buildUnsubscribeUrl } from '../../src/lib/unsubscribe/listUnsubscribeHeaders.js';
 
 // 旧 admin UI は brand を渡さない。AK 専用 function なので analytics-keiba を既定値とする。
 const DEFAULT_BRAND = 'analytics-keiba';
@@ -481,7 +481,8 @@ async function sendNewsletterViaSendGrid({ recipients, subject, htmlContent, inc
       let htmlWithUnsubscribe;
 
       if (includeUnsubscribe) {
-        const unsubscribeLink = `https://analytics.keiba.link/.netlify/functions/unsubscribe?email=${encodeURIComponent(recipient)}&brand=analytics-keiba`;
+        // ⚠️ 改ざん防止の署名付き（単一源 buildUnsubscribeUrl）。生成を自前で書かない
+        const unsubscribeLink = buildUnsubscribeUrl({ email: recipient });
         htmlWithUnsubscribe = `
           ${htmlContent}
 

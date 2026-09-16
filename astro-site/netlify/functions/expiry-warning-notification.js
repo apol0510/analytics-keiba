@@ -7,7 +7,7 @@ const sgMail = require('@sendgrid/mail');
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
 import { SUPPORT_EMAIL, ADMIN_EMAIL, FROM_EMAIL } from './config/email-config.js';
-import { buildListUnsubscribeHeaders } from '../../src/lib/unsubscribe/listUnsubscribeHeaders.js';
+import { buildListUnsubscribeHeaders, buildUnsubscribeUrl } from '../../src/lib/unsubscribe/listUnsubscribeHeaders.js';
 exports.handler = async (event, context) => {
   // 🛡️ 止血ガード（2026-05-18 追加）
   // 期限通知は NEWSLETTER_AUTOMATION_ENABLED の対象外で別系統として
@@ -70,7 +70,8 @@ exports.handler = async (event, context) => {
       console.log(`📧 1週間前通知送信: ${email} (${plan}, 期限: ${expiryDate})`);
 
       // 配信停止 URL（brand 別 unsubscribe フィールドに書き込む）
-      const unsubscribeUrl = `https://analytics.keiba.link/.netlify/functions/unsubscribe?email=${encodeURIComponent(email)}&brand=analytics-keiba`;
+      // ⚠️ 改ざん防止の署名付き（単一源 buildUnsubscribeUrl）。生成を自前で書かない
+      const unsubscribeUrl = buildUnsubscribeUrl({ email });
 
       // お客様への通知メール（D4 統一: KEIBA Analytics ブランド + RFC 8058 List-Unsubscribe）
       const customerEmail = {

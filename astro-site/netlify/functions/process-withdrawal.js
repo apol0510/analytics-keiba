@@ -5,6 +5,7 @@
 
 import { SUPPORT_EMAIL, ADMIN_EMAIL } from './config/email-config.js';
 import { formatJst } from '../../src/lib/datetime/jstTimestamp.js';
+import { buildUnsubscribeUrl } from '../../src/lib/unsubscribe/listUnsubscribeHeaders.js';
 
 export const handler = async (event, context) => {
     const headers = {
@@ -175,7 +176,7 @@ export const handler = async (event, context) => {
                         <strong>📧 メルマガについて：</strong><br>
                         メルマガは引き続き配信されます。<br>
                         配信停止をご希望の場合は、
-                        <a href="https://analytics.keiba.link/.netlify/functions/unsubscribe?email=${email}"
+                        <a href="${buildUnsubscribeUrl({ email })}"
                            style="color: #dc2626; text-decoration: underline;">
                             こちらから配信停止手続き
                         </a>

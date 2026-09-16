@@ -18,7 +18,7 @@ import {
   mapLegacyTargetToAudienceType,
 } from '../../src/lib/newsletter/audience-resolver.js';
 import { canSharedExecutorSend } from '../../src/lib/marketing/marketingDispatchGate.js';
-import { buildListUnsubscribeHeaders } from '../../src/lib/unsubscribe/listUnsubscribeHeaders.js';
+import { buildListUnsubscribeHeaders, buildUnsubscribeUrl } from '../../src/lib/unsubscribe/listUnsubscribeHeaders.js';
 
 // ScheduledEmails は AK 専用経路。LAZY_LOAD で受信者を解決する時の brand 既定値。
 const DEFAULT_BRAND = 'analytics-keiba';
@@ -212,7 +212,8 @@ export default async function handler(request, context) {
             // ブランド選択 UI に着地して 1 ステップ増える）。newsletter-send-test.js と統一。
             // List-Unsubscribe ヘッダーでも同じ URL を使うため if 外で定義する。
             const unsubscribeLink = includeUnsubscribe
-              ? `https://analytics.keiba.link/.netlify/functions/unsubscribe?email=${encodeURIComponent(email)}&brand=analytics-keiba`
+              // ⚠️ 改ざん防止の署名付き（単一源 buildUnsubscribeUrl）。生成を自前で書かない
+              ? buildUnsubscribeUrl({ email })
               : null;
             let htmlContent;
 

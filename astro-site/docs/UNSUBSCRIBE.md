@@ -75,10 +75,55 @@ mailto 併記と単一源の迂回を検出する。
 - **配信再開（resubscribe）は `Customers` だけ**。見込み客の抑止は解除しない
   （再取り込み・再登録で復活させない）
 
-## 5. 他人を止められない
+## 5. 他人を止められない（URL に署名する）
 
 ワンクリックの宛先は **URL 側**（`?email=…`）が正本。POST body の値は宛先に使わない。
-body から任意アドレスを止められると第三者による嫌がらせが成立する。
+**それだけでは足りない**: URL の `email` を書き換えて POST すれば他人を止められるため、
+受信者ごとの URL に **改ざん防止の署名**を付ける（2026-09-16 / MK 指摘）。
+
+```
+?email=…&brand=…&sig=<HMAC-SHA256 の先頭 32 hex>
+sig = HMAC(signingKey, `${brand}\n${email.toLowerCase()}`)
+```
+
+`brand` も署名対象に入れる（入れないと片方のブランドの URL を使い回せる）。
+
+### 鍵（新しい production env を増やしていない）
+
+| 優先 | 由来 |
+|---|---|
+| 1 | `UNSUBSCRIBE_LINK_SECRET`（任意。完全分離したくなったとき）|
+| 2 | `PROMO_OFFER_SECRET` から **`HMAC(secret, 'ak:unsubscribe-link:v1')` で派生**（既定・production 設定済み）|
+
+`PROMO_OFFER_SECRET` は「受信者ごとのメールリンクに署名する」同じ用途の鍵なので派生して再利用する。
+**一方向なので、この派生鍵が漏れても offer トークンは偽造できない**（用途分離）。
+admin secret のような bearer 資格情報は鍵に使わない。
+
+**署名は優先鍵 1 本、検証は設定済みの全鍵**で行うため、後から専用鍵を足しても既存リンクは生き続ける。
+
+### 判定
+
+| ケース | 結果 | 書き込み |
+|---|---|---|
+| 署名が一致 | 受理 | する |
+| **email を書き換え** | **400 `signature-invalid`** | **0** |
+| **brand を書き換え** | **400 `signature-invalid`** | **0** |
+| **sig 欠落** | **400 `signature-required`** | **0** |
+| **sig 改ざん** | **400 `signature-invalid`** | **0** |
+| 鍵が 1 本も無い | 503 `signature-key-missing` | 0 |
+
+検証は **Airtable / Redis へ触る前**に行う（guard テストで順序を固定）。
+ワンクリックでも 2xx を返さない＝「止まった」と誤解させない。
+
+### 既に送信済みのメール（署名なしリンク）
+
+既定は **strict（署名必須）**。`UNSUBSCRIBE_ALLOW_UNSIGNED=1` を立てている間だけ
+署名なしを受理する。**開いている間は改ざんも通る**ので、救済が必要なときに期間を決めて
+MK が明示的に開ける運用とする（既定では閉じている）。
+
+> 本文末尾の配信停止リンクも同じ `buildUnsubscribeUrl()` で作るため、**同じ署名を通る**。
+> 確認ページ（GET）は署名を query で引き継いで POST する。
+
 
 ## 6. 関連ファイル
 
@@ -86,6 +131,7 @@ body から任意アドレスを止められると第三者による嫌がらせ
 |---|---|
 | ヘッダの単一源 | `src/lib/unsubscribe/listUnsubscribeHeaders.js` |
 | リクエスト解釈・status | `src/lib/unsubscribe/parseUnsubscribeRequest.js` |
+| **URL の改ざん防止（署名）** | `src/lib/unsubscribe/unsubscribeSignature.js` |
 | 記録先と成否の単一源 | `src/lib/unsubscribe/unsubscribeOutcome.js` |
 | エンドポイント | `netlify/functions/unsubscribe.js` |
 | 見込み客の抑止 | `src/lib/marketing/prospectStore.js` の `recordSuppression()` |

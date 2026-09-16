@@ -288,7 +288,11 @@ test('専用 dispatcher は配信停止リンクと List-Unsubscribe を必ず�
   //   ヘッダ名を直書きしなくなったので、単一源の利用で検査する。
   assert.ok(dispCode.includes('buildListUnsubscribeHeaders('), 'List-Unsubscribe ヘッダが無い');
   assert.ok(!/mailto:\s*unsubscribe/i.test(dispCode), 'mailto を併記している');
-  assert.ok(dispCode.includes('functions/unsubscribe?email='), 'AK の配信停止経路を使っていない');
+  // 2026-09-16: URL の組み立ても単一源へ移した（改ざん防止の署名を必ず付けるため）。
+  //   自前で `functions/unsubscribe?email=` と書くと署名なしの URL になるので、
+  //   むしろ**直書きが残っていないこと**を検査する。
+  assert.ok(dispCode.includes('buildUnsubscribeUrl('), 'AK の配信停止経路を使っていない');
+  assert.ok(!/functions\/unsubscribe\?email=/.test(dispCode), '署名なしの URL を自前で組み立てている');
   // 配信停止はメールのフッター（共通シェル）にあり、受信者ごとに差し替える。
   // 差し替えられない本文は**送らない**（配信停止できないメールを出さない）。
   assert.ok(dispCode.includes('applyUnsubscribeUrl('), '単一源で差し替えていない');

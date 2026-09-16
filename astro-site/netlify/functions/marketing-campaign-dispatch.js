@@ -83,7 +83,7 @@ import {
   indexDeliveriesByRecipient,
   buildCampaignCustomArgs,
 } from '../../src/lib/marketing/campaignCustomArgs.js';
-import { buildListUnsubscribeHeaders } from '../../src/lib/unsubscribe/listUnsubscribeHeaders.js';
+import { buildListUnsubscribeHeaders, buildUnsubscribeUrl } from '../../src/lib/unsubscribe/listUnsubscribeHeaders.js';
 
 const BRAND = 'analytics-keiba';
 const CUSTOMERS_TABLE = process.env.AIRTABLE_CUSTOMERS_TABLE || 'Customers';
@@ -1061,7 +1061,8 @@ function buildRecentContactMap(deliveries, excludeJobId) {
 async function sendOne({
   SG, fromEmail, fromName, replyTo, to, subject, html, customArgs, expiryNote, clickTracking,
 }) {
-  const unsubscribeLink = `https://analytics.keiba.link/.netlify/functions/unsubscribe?email=${encodeURIComponent(to)}&brand=analytics-keiba`;
+  // ⚠️ 改ざん防止の署名付き（単一源 buildUnsubscribeUrl）。生成を自前で書かない
+  const unsubscribeLink = buildUnsubscribeUrl({ email: to });
 
   // 受信者ごとの無料期間（読めなければ印ごと消える。嘘の期限を書かない）
   const withExpiry = applyGrantExpiry(html, expiryNote);

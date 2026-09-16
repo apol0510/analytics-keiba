@@ -37,6 +37,8 @@
  *   POST body の値を宛先に使わない（第三者が他人を止められないようにするため）
  */
 
+import { resolveUnsubscribeSigningKeys, signUnsubscribe } from './unsubscribeSignature.js';
+
 /** RFC 8058 のワンクリック合図。**この値以外は受け付けない**（parse 側と対）。 */
 export const ONE_CLICK_POST_VALUE = 'List-Unsubscribe=One-Click';
 
@@ -51,10 +53,21 @@ export const DEFAULT_BRAND = 'analytics-keiba';
  * @param {{email: string, brand?: string, endpoint?: string}} input
  * @returns {string}
  */
-export function buildUnsubscribeUrl({ email, brand = DEFAULT_BRAND, endpoint = UNSUBSCRIBE_ENDPOINT } = {}) {
+export function buildUnsubscribeUrl({
+  email, brand = DEFAULT_BRAND, endpoint = UNSUBSCRIBE_ENDPOINT, env = process.env,
+} = {}) {
+  const b = String(brand || DEFAULT_BRAND);
   const e = encodeURIComponent(String(email ?? '').trim());
-  const b = encodeURIComponent(String(brand || DEFAULT_BRAND));
-  return `${endpoint}?email=${e}&brand=${b}`;
+  const base = `${endpoint}?email=${e}&brand=${encodeURIComponent(b)}`;
+  /**
+   * ⚠️ **改ざん防止の署名を必ず付ける。**
+   *    署名が無いと、第三者が URL の email を書き換えて他人を配信停止できる
+   *    （2026-09-16 に MK 指摘）。鍵は `unsubscribeSignature.js` が env から解決する。
+   *    鍵が無い環境（ローカル等）では署名なしの URL になるが、受け側は既定で拒否する。
+   */
+  const { signing } = resolveUnsubscribeSigningKeys(env || {});
+  const sig = signUnsubscribe({ email, brand: b, key: signing });
+  return sig ? `${base}&sig=${sig}` : base;
 }
 
 /**

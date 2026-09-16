@@ -54,12 +54,12 @@ export function parseUnsubscribeRequest({ contentType, rawBody, query } = {}) {
     try {
       params = new URLSearchParams(body);
     } catch {
-      return { kind: REQUEST_KIND.INVALID, email: null, brand: null, action: 'unsubscribe', reason: 'unparsable-form-body' };
+      return { kind: REQUEST_KIND.INVALID, email: null, brand: null, sig: null, action: 'unsubscribe', reason: 'unparsable-form-body' };
     }
     // `List-Unsubscribe=One-Click` が仕様上の合図。大文字小文字は緩く見る
     const signal = params.get('List-Unsubscribe') ?? params.get('list-unsubscribe');
     if (String(signal || '').trim().toLowerCase() !== 'one-click') {
-      return { kind: REQUEST_KIND.INVALID, email: null, brand: null, action: 'unsubscribe', reason: 'not-one-click' };
+      return { kind: REQUEST_KIND.INVALID, email: null, brand: null, sig: null, action: 'unsubscribe', reason: 'not-one-click' };
     }
     return {
       kind: REQUEST_KIND.ONE_CLICK,
@@ -67,6 +67,8 @@ export function parseUnsubscribeRequest({ contentType, rawBody, query } = {}) {
       //    （body から任意アドレスを止められると第三者による嫌がらせが成立する）
       email: q.email ?? null,
       brand: q.brand ?? null,
+      // ⚠️ 署名も URL 側だけを見る。body の sig は採用しない
+      sig: q.sig ?? null,
       action: 'unsubscribe', // ワンクリックは配信停止専用
       reason: null,
     };
@@ -79,20 +81,22 @@ export function parseUnsubscribeRequest({ contentType, rawBody, query } = {}) {
     try {
       parsed = JSON.parse(body);
     } catch {
-      return { kind: REQUEST_KIND.INVALID, email: null, brand: null, action: 'unsubscribe', reason: 'invalid-json-body' };
+      return { kind: REQUEST_KIND.INVALID, email: null, brand: null, sig: null, action: 'unsubscribe', reason: 'invalid-json-body' };
     }
     const o = parsed && typeof parsed === 'object' ? parsed : {};
     return {
       kind: REQUEST_KIND.JSON_API,
       email: o.email ?? q.email ?? null,
       brand: o.brand ?? q.brand ?? null,
+      // ⚠️ 署名は **URL 側のみ**。body から渡された sig は信用しない
+      sig: q.sig ?? null,
       action: o.action === 'resubscribe' ? 'resubscribe' : 'unsubscribe',
       reason: null,
     };
   }
 
   return {
-    kind: REQUEST_KIND.INVALID, email: null, brand: null, action: 'unsubscribe',
+    kind: REQUEST_KIND.INVALID, email: null, brand: null, sig: null, action: 'unsubscribe',
     reason: `unsupported-content-type`,
   };
 }
@@ -116,6 +120,13 @@ export function statusForResult({ kind, ok, reason }) {
    *    502 にしておけば送信側の再送・監視で気づける。
    */
   if (reason === 'unsubscribe-write-failed') return 502;
+  /**
+   * 署名まわりは **400**（こちらは何も書いていない）。
+   * ワンクリックでも 2xx にしない＝「止まった」と誤解させない。
+   * 鍵未設定だけは構成不備なので 503（直す機会を失わない）。
+   */
+  if (reason === 'signature-required' || reason === 'signature-invalid') return 400;
+  if (reason === 'signature-key-missing') return 503;
   if (reason === 'invalid-email' || reason === 'brand-required' || reason === 'unknown-brand') return 400;
   if (reason === 'missing-env') return 503;
   return 502;

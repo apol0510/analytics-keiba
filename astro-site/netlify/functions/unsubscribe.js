@@ -26,6 +26,10 @@ import {
 import { createProspectStore } from '../../src/lib/marketing/prospectStore.js';
 import { makeRedisCmd } from '../../src/lib/marketing/deliveryKeyStore.js';
 import { SUPPRESS_REASON } from '../../src/lib/marketing/prospectPolicy.js';
+import {
+  resolveUnsubscribeSigningKeys, verifyUnsubscribeSignature,
+  isLegacyUnsignedAllowed, decideSignatureAcceptance,
+} from '../../src/lib/unsubscribe/unsubscribeSignature.js';
 
 /**
  * brand → 配信停止フィールド名 + Base ID env のマッピング
@@ -221,6 +225,11 @@ function reasonToUserMessage(reason) {
     case 'airtable-update-network-error':
     case 'unsubscribe-write-failed':
       return '処理に失敗しました。しばらく経ってから再度お試しください。';
+    case 'signature-required':
+    case 'signature-invalid':
+      return 'この配信停止リンクは無効です。お手数ですが、最新のメール内のリンクからお試しください。';
+    case 'signature-key-missing':
+      return 'サーバー設定エラーが発生しました。サポートにご連絡ください。';
     default: return '処理に失敗しました。';
   }
 }
@@ -252,7 +261,10 @@ export default async function handler(request) {
           { status: 400, headers },
         );
       }
-      return new Response(renderConfirmationHtml({ email, brand: brandFromQuery }), {
+      // ⚠️ 署名は**確認ページの POST にも引き継ぐ**。落とすと本文リンク経由が全部弾かれる
+      return new Response(renderConfirmationHtml({
+        email, brand: brandFromQuery, sig: url.searchParams.get('sig'),
+      }), {
         status: 200,
         headers: { 'Content-Type': 'text/html; charset=utf-8' },
       });
@@ -268,7 +280,7 @@ export default async function handler(request) {
       const parsed = parseUnsubscribeRequest({
         contentType: request.headers.get('content-type'),
         rawBody: await request.text(),
-        query: { email, brand: brandFromQuery },
+        query: { email, brand: brandFromQuery, sig: url.searchParams.get('sig') },
       });
 
       if (parsed.kind === REQUEST_KIND.INVALID) {
@@ -286,6 +298,34 @@ export default async function handler(request) {
       const trace = emailTraceId(postEmail);
       console.log(`📧 unsubscribe handler invoked: kind=${parsed.kind} brand=${brand || '<none>'}`
         + ` action=${requestedAction} trace=${trace}`);
+
+      // ── 🔐 URL の改ざん検証（**書き込みへ進む前に必ず通す**）──────
+      //    URL の email は署名で束ねられている。署名が無い / 合わないリクエストでは
+      //    Airtable / Redis に 1 バイトも触らない。
+      //    （2026-09-16 MK 指摘: 署名が無いと第三者が email を書き換えて他人を止められた）
+      const sigCheck = verifyUnsubscribeSignature({
+        email: postEmail,
+        brand,
+        sig: parsed.sig,
+        keys: resolveUnsubscribeSigningKeys(process.env).accept,
+      });
+      const sigDecision = decideSignatureAcceptance({
+        check: sigCheck,
+        allowUnsigned: isLegacyUnsignedAllowed(process.env),
+      });
+      if (!sigDecision.ok) {
+        // 署名・鍵の値はログに出さない（判定結果のみ）
+        console.log(`🚫 unsubscribe signature rejected: check=${sigCheck} trace=${trace}`);
+        return new Response(
+          JSON.stringify({
+            success: false,
+            reason: sigDecision.reason,
+            sideEffects: 'none',
+            message: reasonToUserMessage(sigDecision.reason),
+          }),
+          { status: statusForResult({ kind: parsed.kind, ok: false, reason: sigDecision.reason }), headers },
+        );
+      }
 
       // ── 両方の母集団へ書きにいく ────────────────────────────
       //    Customers（会員・登録者）と 見込み客プール（Redis）。
@@ -366,8 +406,10 @@ export default async function handler(request) {
 
 // ===== HTML 確認ページレンダラ =====
 
-function renderConfirmationHtml({ email, brand }) {
+function renderConfirmationHtml({ email, brand, sig }) {
   const safeEmail = escapeHtml(email);
+  // 署名は URL の query として引き継ぐ（body には入れない＝ body の値は信用しない）
+  const sigQuery = sig ? `&sig=${encodeURIComponent(sig)}` : '';
   const akChecked = brand === 'analytics-keiba' ? 'checked' : '';
   const kiChecked = brand === 'keiba-intelligence' ? 'checked' : '';
   // どちらも指定されていなければ AK を既定（過去 URL の互換性、AK が legacy 単一 Base）
@@ -415,7 +457,9 @@ async function doUnsubscribe() {
   if (!brand) { result.innerHTML = '<div style="color:#dc2626;">ブランドを選択してください</div>'; return; }
   btn.disabled = true; btn.textContent = '処理中...';
   try {
-    const response = await fetch('/api/unsubscribe', {
+    const target = '/api/unsubscribe?email=' + encodeURIComponent(${JSON.stringify(email ?? '')})
+      + '&brand=' + encodeURIComponent(brand) + ${JSON.stringify(sigQuery)};
+    const response = await fetch(target, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: ${JSON.stringify(safeEmail)}, brand: brand })
