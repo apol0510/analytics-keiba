@@ -1,3 +1,60 @@
+# 配信停止は無人で完結する（2026-09-16 MK 確定）
+
+## 完成条件
+
+**Unsubscribe は 1 件ごとの人手対応を要求しない。**
+利用者がメールクライアントで「配信停止」を実行 → AK へ自動反映 → 以後のマーケティング
+メールから自動除外、までが**無人で完結**すること。**MK の日常作業は 0**。
+
+**完成形として認めないもの**:
+
+- `unsubscribe@keiba.link` の受信箱を人が見る
+- MK が Airtable / EmailBlacklist を手編集する
+- Claude へ 1 件ずつ依頼する
+
+## 満たすべき条件
+
+1. 配信停止操作をした利用者は**自動で**配信停止状態になる
+2. MK が Gmail を見る必要がない
+3. Claude へ 1 件ずつ依頼する必要がない
+4. Airtable を手編集しない
+5. newsletter / DRM / campaign / sequence **すべて**から除外される
+6. retry / re-enrollment でも復活しない
+7. 二重処理は冪等
+8. 会員契約・Premium/Light 権限・退会と**混同しない**
+9. transactional / 必須通知まで誤停止しない
+10. 不正リクエストで他人を unsubscribe できない
+11. **fail-open でマーケ配信を続けない**
+12. 重要仕様をテストで固定する
+
+## 経路は HTTPS ワンクリックに寄せる
+
+`List-Unsubscribe` に **mailto を併記しない**。併記すると Apple Mail が mailto を選び、
+受信箱へメールが届くだけで状態が変わらず、**人手運用が必要になる**（2026-09-16 に発生）。
+
+新しい受信メール解析基盤（Gmail 監視等）は、**既存 HTTPS 経路で解決できない場合だけ**検討する。
+
+## URL は署名する（他人を止められないようにする）
+
+受信者ごとの配信停止 URL に **HMAC 署名**を付け、`email` / `brand` の改ざんを検出する。
+署名が無い・合わないリクエストでは **Airtable / Redis へ一切触れず拒否**する。
+POST body の値（email / sig とも）は信用しない。
+
+鍵は **新しい production env を増やさず**、既存の `PROMO_OFFER_SECRET`（受信者ごとの
+メールリンク署名用・production 設定済み）から**用途分離して派生**する。
+専用鍵 `UNSUBSCRIBE_LINK_SECRET` を後から足しても既存リンクは壊れない（検証は全鍵で行う）。
+
+既に送信済みの署名なしリンクは、既定では**拒否**する。
+救済が要るときだけ `UNSUBSCRIBE_ALLOW_UNSIGNED=1` を期間限定で開ける。
+
+## 記録先は 2 つ
+
+配信対象は `Customers`（会員・登録者）と Redis の見込み客プールに分かれている。
+**両方へ書きにいき、どちらかに記録できれば成功**とする。
+**どこにも記録できなかったときに 2xx を返さない**（2xx は「止まった」の意味）。
+
+正本: [`astro-site/docs/UNSUBSCRIBE.md`](../astro-site/docs/UNSUBSCRIBE.md)
+
 # 運営者による代理入金連絡（2026-09-16 MK 確定）
 
 ## 目的

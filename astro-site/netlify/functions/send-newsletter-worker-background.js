@@ -1,3 +1,4 @@
+import { buildUnsubscribeUrl } from '../../src/lib/unsubscribe/listUnsubscribeHeaders.js';
 // Queue方式メルマガ配信システム - 送信ワーカー（Background Functions）
 // 専門家推奨修正版：10件バッチ更新 + LeaseId二重起動ガード
 // PayPal Webhook Phase 7の冪等性設計応用
@@ -169,7 +170,8 @@ export default async function handler(request, context) {
 
         try {
           // 配信停止リンク追加
-          const unsubscribeLink = `https://analytics.keiba.link/.netlify/functions/unsubscribe?email=${encodeURIComponent(email)}`;
+          // ⚠️ 改ざん防止の署名付き（単一源 buildUnsubscribeUrl）。生成を自前で書かない
+          const unsubscribeLink = buildUnsubscribeUrl({ email });
           const htmlContent = `
             ${Content}
 

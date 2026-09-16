@@ -140,7 +140,9 @@ test('guard: handler が body を無条件 JSON.parse する実装へ戻らな�
 });
 
 test('guard: ワンクリックの status 判定を単一源に委ねる', () => {
-  assert.match(FN, /statusForResult\(\{ kind: parsed\.kind, ok: false, reason: result\.reason \}\)/);
+  // 2026-09-16: 保存先が Customers だけでなく見込み客プールにも広がったため、
+  //   status の根拠は「複数保存先をまとめた結果」= outcome.reason になった。
+  assert.match(FN, /statusForResult\(\{ kind: parsed\.kind, ok: false, reason: outcome\.reason \}\)/);
 });
 
 test('guard: ログに email をそのまま出さない（trace のみ）', () => {
@@ -151,9 +153,14 @@ test('guard: ログに email をそのまま出さない（trace のみ）', () 
 });
 
 test('guard: 送信側が RFC 8058 ヘッダを出し続ける（片方だけ消さない）', () => {
+  // 2026-09-16: ヘッダの組み立ては単一源 listUnsubscribeHeaders.js へ寄せた。
+  //   （mailto 併記を全経路から外すため。詳細は listUnsubscribeHeaders.js の冒頭）
+  //   ここでは「dispatcher が単一源を使い続けていること」を固定する。
+  //   ヘッダ本体の中身と mailto 禁止は listUnsubscribeHeaders.test.mjs が検査する。
   const dispatch = readFileSync(
     new URL('../../../netlify/functions/marketing-campaign-dispatch.js', import.meta.url), 'utf8',
   );
-  assert.match(dispatch, /'List-Unsubscribe':/);
-  assert.match(dispatch, /'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click'/);
+  assert.match(dispatch, /buildListUnsubscribeHeaders/, 'dispatcher が配信停止ヘッダを出していない');
+  assert.match(dispatch, /listUnsubscribeHeaders\.js/, '単一源から import していない');
+  assert.ok(!/mailto:unsubscribe/.test(dispatch), 'mailto を併記している（Apple Mail が mailto を選ぶ）');
 });

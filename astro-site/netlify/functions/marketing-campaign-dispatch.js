@@ -83,6 +83,7 @@ import {
   indexDeliveriesByRecipient,
   buildCampaignCustomArgs,
 } from '../../src/lib/marketing/campaignCustomArgs.js';
+import { buildListUnsubscribeHeaders, buildUnsubscribeUrl } from '../../src/lib/unsubscribe/listUnsubscribeHeaders.js';
 
 const BRAND = 'analytics-keiba';
 const CUSTOMERS_TABLE = process.env.AIRTABLE_CUSTOMERS_TABLE || 'Customers';
@@ -1060,7 +1061,8 @@ function buildRecentContactMap(deliveries, excludeJobId) {
 async function sendOne({
   SG, fromEmail, fromName, replyTo, to, subject, html, customArgs, expiryNote, clickTracking,
 }) {
-  const unsubscribeLink = `https://analytics.keiba.link/.netlify/functions/unsubscribe?email=${encodeURIComponent(to)}&brand=analytics-keiba`;
+  // ⚠️ 改ざん防止の署名付き（単一源 buildUnsubscribeUrl）。生成を自前で書かない
+  const unsubscribeLink = buildUnsubscribeUrl({ email: to });
 
   // 受信者ごとの無料期間（読めなければ印ごと消える。嘘の期限を書かない）
   const withExpiry = applyGrantExpiry(html, expiryNote);
@@ -1100,8 +1102,9 @@ async function sendOne({
           open_tracking: { enable: true },
         },
         headers: {
-          'List-Unsubscribe': `<${unsubscribeLink}>, <mailto:unsubscribe@keiba.link?subject=Unsubscribe>`,
-          'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+          // ⚠️ **mailto を併記しない**（Apple Mail が mailto を選び、受信箱へメールが
+          //    届くだけで AK の状態が変わらなくなる）。組み立ては単一源に寄せる。
+          ...buildListUnsubscribeHeaders(unsubscribeLink),
         },
       }),
     });

@@ -1,3 +1,55 @@
+# 2026-09-16 — 配信停止は無人で完結させる（mailto を出さない / 見込み客も止める）
+
+## 決定
+
+| # | 決定 | 単一源 |
+|---|---|---|
+| 1 | **Unsubscribe は 1 件ごとの人手対応を要求しない**を完成条件とする | `docs/UNSUBSCRIBE.md` |
+| 2 | `List-Unsubscribe` に **mailto を併記しない**（HTTPS ワンクリックのみ）| `listUnsubscribeHeaders.js` |
+| 3 | 配信停止は **`Customers` と見込み客プールの両方**へ書く。どちらかに入れば成功 | `unsubscribeOutcome.js` |
+| 4 | **記録できなければ 2xx を返さない**（ワンクリックでも 502）| `parseUnsubscribeRequest.js` |
+| 5 | **配信再開では見込み客の抑止を解除しない**（再取り込みで復活させない）| `planUnsubscribeSinks()` |
+| 6 | 配信停止で**契約・権限・退会フラグを触らない**。transactional も止めない | guard テスト |
+| 7 | 配信停止のテストを `check:safety` と CI に**常時実行**として組み込む | `test:unsubscribe` |
+| 8 | 配信停止 URL に **HMAC 署名**を付け、`email` / `brand` の改ざんを拒否する（書き込みゼロ）| `unsubscribeSignature.js` |
+| 9 | 鍵は**新 env を増やさず** `PROMO_OFFER_SECRET` から用途分離して派生する | `HMAC(secret,'ak:unsubscribe-link:v1')` |
+| 10 | 署名なしリンク（既送信メール）は**既定で拒否**。救済は `UNSUBSCRIBE_ALLOW_UNSIGNED=1` を期間限定で開けるときだけ | `isLegacyUnsignedAllowed()` |
+
+## なぜ mailto を外したか
+
+Apple Mail は `List-Unsubscribe` に mailto があると**そちらを選ぶ**。その結果
+`unsubscribe@keiba.link` へ「配信停止希望」メールが届くだけで、AK の状態は変わらない。
+受信箱を人が見て手で止めるまで配信が続く＝**人手運用が前提の設計**になっていた。
+
+主要クライアント（Gmail / Yahoo / Outlook / Apple Mail 16+）は HTTPS ワンクリックに
+対応しているため、mailto を外しても配信停止手段は失われない（本文末尾のリンクも常にある）。
+
+## なぜ見込み客も止める必要があったか
+
+配信の大半は Redis の見込み客プール宛だが、旧実装は `Customers` しか見ていなかった。
+見込み客が配信停止を押すと `email-not-found` → **200 を返して何も記録しない**。
+押した本人は止めたつもりで翌週も届く。ワンクリックの成功件数が極端に少なかった主因。
+
+## 見つかった副次的な穴
+
+配信停止のテストは `check:safety` にも CI にも**入っていなかった**ため、
+「押しても止まらない」退行を誰も検知できなかった。`test:unsubscribe` を新設して常時実行にする。
+
+## URL 署名を足した理由（2026-09-16 追補）
+
+`?email=…&brand=…` だけでは、第三者が `email` を別アドレスへ書き換えて RFC 8058 の POST を
+投げるだけで**他人を配信停止できた**。完成条件「不正リクエストで他人を unsubscribe できない」
+を満たしていなかったため、受信者ごとの URL を HMAC で束ねた。
+
+`brand` も署名対象に含める（含めないと片方のブランドの URL を使い回せる）。
+検証は **Airtable / Redis へ触る前**に行い、失敗時は書き込みゼロで拒否する。
+
+## 残す穴（把握のうえ許容）
+
+**送信済みメール**には mailto 付きヘッダが残るため、そこからの停止依頼は受信箱に届く。
+新規送信分では起きない。受信メール解析基盤は既存 HTTPS 経路で解決できる範囲を超えるため、
+必要になった時点で別途判断する（現時点では未実装）。
+
 # 2026-09-16 — 運営者による代理入金連絡（応急・例外運用）
 
 ## 決定

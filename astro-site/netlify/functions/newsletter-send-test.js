@@ -22,6 +22,7 @@ import { computeDeliveryKey, describeDeliveryKeyTemplate } from '../../src/lib/n
 import { renderDailyMainRace } from '../../src/lib/newsletter/render-daily-main-race.js';
 import { normalizeRenderOptions } from '../../src/lib/newsletter/render-options-validator.js';
 import { parseTestRecipientsEnv, emailTraceId as emailTraceIdRaw } from '../../src/lib/newsletter/test-recipients.js';
+import { buildListUnsubscribeHeaders, buildUnsubscribeUrl } from '../../src/lib/unsubscribe/listUnsubscribeHeaders.js';
 
 const TEST_FROM_EMAIL = 'noreply@keiba.link';
 const TEST_FROM_NAME = 'KEIBA Analytics [TEST]';
@@ -78,7 +79,8 @@ async function sendOneViaSendGrid({ apiKey, recipient, subject, htmlBody }) {
   const domain = recipient.split('@')[1] || 'unknown';
 
   // 配信停止 URL（brand 別 unsubscribe フィールドに書き込む）
-  const unsubscribeUrl = `https://analytics.keiba.link/.netlify/functions/unsubscribe?email=${encodeURIComponent(recipient)}&brand=analytics-keiba`;
+  // ⚠️ 改ざん防止の署名付き（単一源 buildUnsubscribeUrl）。生成を自前で書かない
+  const unsubscribeUrl = buildUnsubscribeUrl({ email: recipient });
 
   // 本文末尾に配信停止 footer を append（recipient 固有 URL を含むため per-recipient で構築）
   const htmlBodyWithUnsubscribe = `${htmlBody}
@@ -110,8 +112,8 @@ async function sendOneViaSendGrid({ apiKey, recipient, subject, htmlBody }) {
     },
     // RFC 8058 準拠の List-Unsubscribe ヘッダー（Gmail 等が要求）
     headers: {
-      'List-Unsubscribe': `<${unsubscribeUrl}>, <mailto:unsubscribe@keiba.link?subject=Unsubscribe>`,
-      'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+      // ⚠️ mailto を併記しない（単一源 listUnsubscribeHeaders.js）
+      ...buildListUnsubscribeHeaders(unsubscribeUrl),
     },
   };
 
