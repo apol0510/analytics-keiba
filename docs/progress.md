@@ -1657,7 +1657,53 @@ R5 / R6 で見るのは「**購入が起きたときに処理が正しいか**�
 `test:drm` 136 pass ／ `check:safety` EXIT=0 ／ `build` EXIT=0。
 **実メール送信・queue・本番書込み・production deploy・PR merge は 1 件も行っていない。**
 
-# 🧑‍💼 運営者による代理入金連絡 — **実装・検証完了 / 本番書込みは未実施（2026-09-16）**
+# 🧑‍💼 運営者による代理入金連絡 — **PR #553 本番反映済み（2026-09-16）/ ただし専用 secret 化が未反映**
+
+## 本番反映（2026-09-16）
+
+| 項目 | 実測 |
+|---|---|
+| merge | PR #553 を squash merge → main `9a4511a9`（10:52:19Z）|
+| production deploy | `6aaa74e478bf2c000872573a` が **10:52:20Z に自動起動 → ready**（merge の 1 秒後。自動発火の裏づけ）|
+| published deploy | commit `9a4511a9` / context=production / branch=main |
+| post-merge main CI | Safety Check **success** |
+| `/admin/proxy-payment-notice` | **401**（edge Basic 認証）|
+| Function GET | **405** |
+| 顧客レコード | `rec5Rl4oYfoEkf3GP` の全フィールド digest が merge 前後で**完全一致**＝ write 0 |
+| Airtable / メール | **write 0 / 送信 0** |
+
+## 🚨 想定と違ったこと — 専用 secret 未設定でも 503 にならなかった
+
+本番の正規形式 POST は **503 ではなく 403** を返した。
+
+原因は Function の secret 解決に **fallback** を入れていたこと:
+
+```
+PROXY_NOTICE_ADMIN_SECRET || PAYMENT_ADMIN_SECRET || PREMIUM_PLUS_ADMIN_SECRET
+```
+
+本番 env の実測（値は出さずキーと長さのみ確認）:
+
+| env | production |
+|---|---|
+| `PROXY_NOTICE_ADMIN_SECRET` | **未設定** |
+| `PAYMENT_ADMIN_SECRET` | **設定済み（20 文字）** |
+| `PREMIUM_PLUS_ADMIN_SECRET` | **設定済み（48 文字）** |
+
+つまり **deploy した瞬間から、既存の管理 secret を持つ人はこの経路を使える状態**だった。
+「専用 secret を入れるまで不活性」という承認時の前提が崩れている。
+
+- 影響範囲: 書けるのは既存会員の `Requested*` 3 列 + `PaymentConfirmed=false` + `Status='pending'` のみ。
+  **権限（プラン / 有効期限 / Status=active）は付かず、メールも出ない**
+- 実害: **現時点で write 0**（顧客レコード digest 一致で確認済み）
+- 是正: fallback を撤去し `PROXY_NOTICE_ADMIN_SECRET` 専用にする →
+  **PR #554（Draft・本番未反映）**。guard テストで再導入を禁止
+
+**この是正が merge されるまで、本番はこの状態のままである。**
+
+---
+
+# （以下は PR #553 の実装記録）
 
 > **この作業で本番へは 1 バイトも書いていない。** 実施したのは read-only の実測と、
 > repo 側の実装・テスト・正本更新だけ。Airtable の実顧客レコード変更・`PaymentConfirmed`・
@@ -1827,7 +1873,8 @@ Light 乗り換え特典 **¥44,820**）。この 20 円差をコード側で丸
 
 ## 次作業（順序厳守）
 
-1. **PR squash merge ＋ 自動 production deploy（1 つの高リスク操作として承認）**
+0. ~~PR #553 squash merge ＋ 自動 production deploy~~ — **完了（2026-09-16）**
+1. **PR #554（専用 secret 化）を merge ＋ 自動 production deploy** ← これで 503 不活性になる
 2. `PROXY_NOTICE_ADMIN_SECRET` を production へ投入（値は記録しない）→ redeploy
 3. `/admin/proxy-payment-notice` で **「内容を確認」まで**実施し、
    書き込み 0 のまま preview が通ることを確認

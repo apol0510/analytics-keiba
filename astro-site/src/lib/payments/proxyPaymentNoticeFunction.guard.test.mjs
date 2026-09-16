@@ -37,10 +37,35 @@ test('認可より前に Airtable へ触れない（拒否時の副作用ゼロ�
 });
 
 test('secret は env からのみ読み、ヘッダ以外（body / query）からは受け取らない', () => {
-  assert.match(fn, /process\.env\.(PROXY_NOTICE_ADMIN_SECRET|PAYMENT_ADMIN_SECRET|PREMIUM_PLUS_ADMIN_SECRET)/);
+  assert.match(fn, /process\.env\.PROXY_NOTICE_ADMIN_SECRET/);
   assert.match(fn, /x-admin-secret/);
   assert.ok(!/body\.secret|body\.adminSecret|queryStringParameters/.test(fn),
     'secret を body / query から受け取ってはいけない');
+});
+
+/**
+ * 2026-09-16 の実測事故: 当初 `PAYMENT_ADMIN_SECRET` / `PREMIUM_PLUS_ADMIN_SECRET` への
+ * fallback を持たせていたが、本番には既に両方が入っていたため、**deploy した瞬間から
+ * この経路が有効**になっていた（正規形式 POST が 503 ではなく 403 を返した）。
+ * 「専用 secret を入れるまで不活性」を守るため、fallback の再導入をここで禁止する。
+ */
+test('他の管理 secret へ fallback しない（専用 secret 以外では動かない）', () => {
+  for (const other of ['PAYMENT_ADMIN_SECRET', 'PREMIUM_PLUS_ADMIN_SECRET', 'COMEBACK_ADMIN_SECRET']) {
+    assert.ok(!new RegExp(`process\\.env\\.${other}`).test(fn),
+      `${other} へ fallback してはいけない（その secret を持つだけで申込を書けてしまう）`);
+  }
+  // 代入は 1 本だけ（`a || b` の形が残っていないこと）
+  const line = fn.split('\n').find((l) => l.includes('const adminSecret'));
+  assert.ok(line && !line.includes('||'), 'adminSecret の解決に fallback が残っている');
+});
+
+test('専用 secret 未設定なら 503（機能は不活性のまま）', async () => {
+  const r = await decideAdminWrite({
+    method: 'POST', adminSecret: undefined, providedSecret: 'x'.repeat(32),
+    origin: 'https://analytics.keiba.link', context: 'production',
+  });
+  assert.equal(r.reason, ADMIN_REJECT.SECRET_UNAVAILABLE);
+  assert.equal(r.status, 503);
 });
 
 test('GET / URL 直打ちは認可段で落ちる', async () => {
