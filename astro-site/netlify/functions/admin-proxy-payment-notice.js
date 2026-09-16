@@ -22,8 +22,13 @@
  *   本番 context / Origin が本番オリジンと完全一致。
  * 1 つでも欠ければ Airtable に到達しない。**URL 直打ち・直接 POST では通らない。**
  *
- * secret は `PROXY_NOTICE_ADMIN_SECRET`（無ければ `PAYMENT_ADMIN_SECRET`、
- * さらに無ければ `PREMIUM_PLUS_ADMIN_SECRET`）。admin-comeback-grants と同じ作法。
+ * secret は **`PROXY_NOTICE_ADMIN_SECRET` 専用**。他の管理 secret へ fallback しない。
+ *
+ * ⚠️ 2026-09-16: 当初 `PAYMENT_ADMIN_SECRET` / `PREMIUM_PLUS_ADMIN_SECRET` への fallback を
+ *    持たせていたが、本番には既に両方が入っていたため、**deploy した瞬間から
+ *    この経路が有効**になっていた（本番実測: 正規形式 POST が 503 ではなく 403）。
+ *    「専用 secret を入れるまで 503 で不活性」という前提が崩れていたので fallback を外す。
+ *    他機能のために配った secret で、顧客の申込レコードを書ける状態を作らない（最小権限）。
  *
  * ## action
  *
@@ -89,9 +94,10 @@ function summarizeCustomer(record) {
 
 exports.handler = async (event) => {
   // ── 認可（Airtable へ触る前に必ず通す）─────────────────────────
-  const adminSecret = process.env.PROXY_NOTICE_ADMIN_SECRET
-    || process.env.PAYMENT_ADMIN_SECRET
-    || process.env.PREMIUM_PLUS_ADMIN_SECRET;
+  // ⚠️ **fallback を足さないこと。** 他の管理 secret を受け付けると、
+  //    その secret を持つだけで顧客の申込レコードを書けてしまう（最小権限違反）。
+  //    未設定なら decideAdminWrite が 503 を返す＝機能は不活性のまま。
+  const adminSecret = process.env.PROXY_NOTICE_ADMIN_SECRET;
 
   const auth = await decideAdminWrite({
     method: event.httpMethod,

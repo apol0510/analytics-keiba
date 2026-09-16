@@ -193,8 +193,15 @@ Automation は `Status` の変化でしか発火しないため、再送する�
 `premiumPlus/mediaAuth.js` の `decideAdminWrite` をそのまま使う。
 POST 限定 / 管理者 secret 設定済み / timing-safe 一致 / 本番 context /
 Origin 完全一致。**1 つでも欠ければ Airtable に到達しない。**
-secret は `PROXY_NOTICE_ADMIN_SECRET`（無ければ `PAYMENT_ADMIN_SECRET`、
-さらに無ければ `PREMIUM_PLUS_ADMIN_SECRET`）。管理画面は `/admin/*` の Basic 認証背後。
+secret は **`PROXY_NOTICE_ADMIN_SECRET` 専用**。**他の管理 secret へ fallback しない。**
+管理画面は `/admin/*` の Basic 認証背後。
+
+> ⚠️ **2026-09-16 の実測事故**: 当初 `PAYMENT_ADMIN_SECRET` → `PREMIUM_PLUS_ADMIN_SECRET` の
+> fallback を持たせていたが、本番には**既に両方とも設定済み**だった。そのため
+> 「専用 secret を入れるまで 503 で不活性」という前提が deploy 時点で崩れ、
+> 本番の正規形式 POST が **503 ではなく 403**（＝ secret さえ合えば通る状態）を返した。
+> 他機能のために配った secret で顧客の申込レコードを書ける状態を作らないため、
+> fallback を撤去した。**再導入は guard テストが禁止する。**
 
 #### 二重登録の防止
 

@@ -62,6 +62,11 @@ admin 以外・未認証・URL 直打ち・直接 POST のいずれでも通ら�
 判定は既存の `decideAdminWrite`（POST 限定 / secret timing-safe 一致 / 本番 context /
 Origin 完全一致）を使い、代理登録専用の認可を新しく書かない。
 
+secret は **`PROXY_NOTICE_ADMIN_SECRET` 専用とし、他の管理 secret へ fallback しない**。
+fallback があると、本番に既存の管理 secret が入っているだけで
+**deploy した瞬間からこの経路が有効**になり、「専用 secret を入れるまで不活性」という
+前提が崩れる（2026-09-16 に実際に発生）。
+
 ## 対象外
 
 - **Premium Plus**（対象日・クーポン・会員別の販売停止をサーバーで確定させる商品）

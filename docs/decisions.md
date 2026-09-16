@@ -10,6 +10,7 @@
 | 4 | 実入金額を掲載価格へ**捏造しない**（例: 掲載 ¥44,820 / 着金 ¥44,800 → 44800 を登録）| `decideProxyPaymentNotice` |
 | 5 | 昇格後も実入金額を残す列は**本番 schema 変更**なので作らず、env gate で分岐する | `PROXY_PAYMENT_NOTICE_FIELDS_READY` |
 | 6 | 認可は既存の `decideAdminWrite` を流用（POST / secret / 本番 context / Origin 完全一致）| `premiumPlus/mediaAuth.js` |
+| 6-b | secret は **`PROXY_NOTICE_ADMIN_SECRET` 専用。他の管理 secret へ fallback しない**（2026-09-16 追加）| guard テストが再導入を禁止 |
 | 7 | **Premium Plus は対象外**（対象日・クーポン・販売停止の判定を迂回させない）| `premium_plus_unsupported` |
 | 8 | **会員レコードを新規作成しない**（打ち間違いで空レコードを生やさない）| `customer_not_found` |
 | 9 | 代理登録では**顧客宛メールを一切送らない**（利用開始メールは昇格側の責務）| guard テスト |
