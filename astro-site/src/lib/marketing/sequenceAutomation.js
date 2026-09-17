@@ -41,9 +41,48 @@ import { selectNextDueStep, SEQ_STATUS } from './sequenceProgress.js';
 export const MAX_RECIPIENTS_PER_TICK = 500;
 
 /** env から 1 tick の上限を読む（壊れた値は既定へ。0 や負数で止めない） */
-export function resolveMaxRecipientsPerTick(env = process.env) {
+/**
+ * **同期 tick（`cron-campaign-sequence`）で 1 campaign が積める上限**（安全の要）。
+ *
+ * ## なぜ上限が要るか（2026-09-17 実測・構造解析）
+ *
+ * 同期の scheduled function は **60 秒**で打ち切られ、#563 の契約は
+ * **1 campaign 30 秒**（`MAX_CAMPAIGN_MS`）。一方キュー登録は**逐次**で、
+ * 往復回数が人数にほぼ比例する:
+ *
+ * | 人数 | ジョブ POST | 配信行 PATCH | 読み戻し | 逐次往復 | 予測所要 |
+ * |---|---|---|---|---|---|
+ * | 50  | 1  | 5  | 3  | 9  | **23 秒** ✅ |
+ * | 75  | 2  | 8  | 4  | 14 | **29 秒** ✅（契約ぎりぎり）|
+ * | 100 | 2  | 10 | 5  | 17 | **32 秒** ❌ 契約超過 |
+ * | 500 | 10 | 50 | 25 | 85 | **107 秒** ❌❌ 打ち切り超過 |
+ *
+ * ⚠️ **打ち切りは「遅くなる」では済まない。** 予約（`claimDelivered`）は
+ *    キュー登録の**前**に取るので、登録の途中で殺されると鍵だけが配信済み集合に残り
+ *    **その人へは二度と送られない**（送信漏れ）。人数を上げるほどこの窓が広がる。
+ *
+ * ## 500 にしたいなら
+ *
+ * `MAX_RECIPIENTS_PER_TICK`（= 500）は**正本の設計値**だが、
+ * **同期 tick では物理的に入らない**。500 を使うなら一括登録を
+ * Background function（15 分）へ移すこと（既存パターン:
+ * `drm-entry-background` / `marketing-campaign-dispatch-background`）。
+ * **env だけ上げてはいけない。**
+ */
+export const SYNC_TICK_MAX_RECIPIENTS = 75;
+
+/**
+ * env から 1 tick の上限を読む（壊れた値は既定へ。0 や負数で止めない）。
+ *
+ * ⚠️ **同期 tick の安全上限で頭打ちにする。** env に 500 を入れても
+ *    `SYNC_TICK_MAX_RECIPIENTS` を超えない（超えると打ち切り → 送信漏れ）。
+ *    上限を上げたいときは `cap` を明示的に渡す経路（Background）を使う。
+ */
+export function resolveMaxRecipientsPerTick(env = process.env, { cap = SYNC_TICK_MAX_RECIPIENTS } = {}) {
   const n = Number(env?.MARKETING_SEQUENCE_MAX_PER_TICK);
-  return Number.isInteger(n) && n > 0 && n <= 5000 ? n : MAX_RECIPIENTS_PER_TICK;
+  const wanted = Number.isInteger(n) && n > 0 && n <= 5000 ? n : MAX_RECIPIENTS_PER_TICK;
+  const limit = Number.isInteger(cap) && cap > 0 ? cap : SYNC_TICK_MAX_RECIPIENTS;
+  return Math.min(wanted, limit);
 }
 
 export const SEQUENCE_ENV = Object.freeze({
