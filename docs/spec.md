@@ -1,3 +1,104 @@
+# prospect 選別配信の実行は SendGrid Marketing Campaigns へ移す（2026-09-18 MK 確定）
+
+**AK 自作の cron / queue / rotation を主配信エンジンとして完成させ続ける方針は終了する。**
+約 15,000 件の選別配信の**実行**は
+**Twilio SendGrid Marketing Campaigns Advanced / Custom Automation** が担う。
+
+> ⚠️ これは「マーケティングメールは完全自動運用（2026-09-14）」を**部分的に上書き**する。
+> 上書きするのは **prospect 宛の実行エンジン**だけで、選別の目的・反応の定義・
+> 打ち切りの閾値・DRM 接続・二重送信防止は**1 つも変えない**。
+> Customers 宛の連続配信（割引 3 本 / DRM 3 本 / rollout 2 本）は**従来どおり AK が送る**。
+
+手順・停止境界・rollback は [`SENDGRID_MC_MIGRATION.md`](./SENDGRID_MC_MIGRATION.md) が正本。
+
+## 役割
+
+| AK | SendGrid Marketing Campaigns |
+|---|---|
+| 元データの所在・状態管理 | 1 日 1 通のスケジュール |
+| 各受信者の現在位置と**次に送るメール番号**の確定 | 最大 10 通の Automation |
+| contact / segment 情報の受け渡し | contact / list / segment |
+| Event Webhook の受領（delivered / open / click / bounce / unsubscribe）| unsubscribe / suppression |
+| 反応者を DRM へ接続 | Automation の entry / exit |
+| 選別済み・抑止済みの監査 | **実際の大量送信** |
+
+## 選別仕様（変えない）
+
+約 15,000 件 → **原則 1 日 1 通** → **最大 10 通** → 反応したら選別 Automation から退出して DRM へ →
+**delivered 累計 10 通まで無反応なら通常マーケティング選別対象から除外**。
+
+- **既存 repo の「反応」の定義を勝手に変更しない**（単一源は
+  `prospectPolicy.js` / `prospectEngagement.js` / `engagementPolicy.js`）
+- SendGrid で直接取得できない反応（購入・ログイン等）は、**AK が custom field / list を更新して退出**させる
+
+## 最重要：再送禁止
+
+**既存の prospect を全員 step1 から開始しない。**
+現行の `DeliveryKey` / prospect の `delivered` / sequence 進行を正本として、
+受信者ごとに「**次に送るべき通し番号 1〜10**」を確定する。
+
+| 通し番号 | campaignId | step |
+|---|---|---|
+| 1〜3 | `campaign-discount-free` | 1〜3 |
+| 4〜10 | `campaign-prospect-phase2` | 1〜7 |
+
+- 判定は **`highestSent + 1`**（通数ではなく**最大の通し番号**）
+- **穴は埋めない**（1 と 3 が届いていれば次は 4。2 を送り直さない）
+- **台帳を引けなければ送らない**（「読めない」を「未送信」と読み替えない）
+- SendGrid の Automation は 1 通目から始まるので、**開始番号ごとに list と Automation を分ける**
+- 文面・`version`・step 定義を**1 バイトも変えない**（変えると鍵が変わり再送になる）
+- **メールアドレス / PII を docs・ログ・repo へ出さない**
+
+単一源: `sendgridMessagePlan.js` / `sendgridNextMessage.js` / `sendgridContactExport.js` /
+`sendgridAutomationPlan.js` / `sendgridContentExport.js` / `sendgridCutover.js`
+
+## 二重稼働を作らない
+
+**旧 AK prospect 配信と SendGrid Automation を同時に live にしない。**
+`ak_live → frozen → sendgrid_live` の順にしか進めず、**`frozen` を必ず挟む**。
+
+| `MARKETING_PROSPECT_ENGINE` | AK の挙動 |
+|---|---|
+| 未設定 / `ak` | 従来どおり（1 バイトも変わらない）|
+| `sendgrid` | prospect を母集団に入れない / prospect 専用 campaign は 1 件も積まない |
+
+rollback は「Automation を Disable → 送られた通を台帳へ反映 → **進みが合ってから** AK 再開」。
+**同じメールを二重送信する rollback は禁止。**
+
+## 費用は最小プランで（2026-09-18 MK 確定）
+
+必要要件を満たす範囲で**常に最小プラン**を選ぶ。上位プランを先回り契約しない。
+超過料金込みで上位より高くなる場合だけ比較して判断する。
+
+| 局面 | 想定 | 第一候補 |
+|---|---|---|
+| 初回 約 15,000 件の選別期間 | 既送信を引き継ぐ（全員 1 通目から送り直さない）| **Advanced 20K** |
+| 選別終了後（例 約 5,000 件）| 週 2 回 × 月約 8 回 ≒ 40,000 通/月 | **Advanced 10K（月 50,000 通枠）** |
+
+- 選別が終わったら**要件を満たす最小の Advanced へダウングレード**する（惰性で維持しない）
+- 毎月確認する: active contact 数 / 月間予定送信数 / Automation 利用の有無 / 超過料金 /
+  1 段階下げられるか
+- 判定の単一源は `sendgridPlanSizing.js`。**コードに金額を持たない**（料金表を書き写さない）
+
+⚠️ **コスト削減のために配信安全性を落とさない。** 二重送信防止 / unsubscribe /
+bounce・suppression / 1 日 1 通 / 最大 10 通 / delivered 10 無反応で除外 / 反応者を DRM へ /
+既送 step の再送禁止は**どれも削らない**。送信頻度や必要な選別処理を減らして費用を下げない。
+
+## 停止境界（**この手前で必ず止まる**）
+
+- **課金変更のすべて**（契約 / アップグレード / ダウングレード）
+- production contact の一括 import
+- 本番 Automation の Set Live
+- 旧 AK 本番配信の停止（`MARKETING_PROSPECT_ENGINE` の設定）
+- production env の変更
+- 本番データの補正
+
+## 完成条件
+
+SendGrid 上で実 prospect が **1 日 1 通 → 最大 10 通 → 反応者は退出 → DRM 接続 →
+delivered 10 無反応で除外**を本番で満たし、かつ**旧 AK prospect 配信が二重稼働していない**ことを
+確認するまで未完とする。
+
 # 配信停止は無人で完結する（2026-09-16 MK 確定）
 
 ## 完成条件

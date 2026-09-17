@@ -1,5 +1,10 @@
 # CSV 取り込み分を prospect プールへ戻す 移行計画
 
+> 🚚 **2026-09-18 追記 — 配信の実行は SendGrid Marketing Campaigns へ移す。**
+> prospect プール（Redis）と反応・打ち切りの判定は**そのまま正本**だが、
+> **送るのは SendGrid の Automation** になる。移行の手順・停止境界は
+> [`SENDGRID_MC_MIGRATION.md`](./SENDGRID_MC_MIGRATION.md) が正本。
+
 > ⚠️ **移行そのものは 2026-08-27 に完了している**（Redis 投入 11,976 件 /
 > Customers 削除 11,955 件 / 15,977 → 4,022）。以下の「未実行」表記は**当時の記録**。
 >

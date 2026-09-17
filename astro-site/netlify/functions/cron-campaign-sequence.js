@@ -87,6 +87,9 @@ import {
   resolveAudienceSource, isOwnedByRunner, SEQUENCE_RUNNER, resolveMaxSends,
 } from '../../src/lib/marketing/campaignSequence.js';
 import {
+  resolveProspectEngine, decideProspectSending,
+} from '../../src/lib/marketing/sendgridCutover.js';
+import {
   readAutoStartGate, planAutoStartEntries, AUTOSTART_SKIP_LABEL,
 } from '../../src/lib/drm/drmAutoStart.js';
 import {
@@ -455,6 +458,31 @@ export async function runSequenceTick({
     return body;
   }
 
+  /**
+   * ── prospect の配信エンジン（2026-09-18 MK 確定の移行）────────────────
+   *
+   * 選別配信の**実行**を SendGrid Marketing Campaigns へ移したあとは、
+   * **AK と SendGrid を同時に live にしない**（同じ人へ同じ通が 2 回届く）。
+   * 切替は env 1 つで、**未設定なら従来どおり**（1 バイトも挙動が変わらない）。
+   *
+   *   - prospect 専用 campaign（第 2 期）→ **1 件も積まずに終わる**
+   *   - `all` / `customer` の campaign → Customers 向けは続け、**prospect だけ読まない**
+   *
+   * ⚠️ ここで止めるのは **prospect 宛だけ**。Customers 向けの配信は止めない。
+   */
+  const prospectEngine = resolveProspectEngine(env);
+  const engineDecision = decideProspectSending({
+    engine: prospectEngine, declaredSource: resolveAudienceSource(base),
+  });
+  if (engineDecision.skip) {
+    const body = {
+      ok: true, action: 'skip', reason: engineDecision.reason,
+      campaignId: id, engine: prospectEngine, sideEffects: 'none',
+    };
+    log(body);
+    return body;
+  }
+
   const KEY = env.AIRTABLE_API_KEY;
   const BASE = env.AIRTABLE_BASE_ID;
   if (!KEY || !BASE) return { ok: false, abort: 'airtable_not_configured', sideEffects: 'none' };
@@ -576,8 +604,16 @@ export async function runSequenceTick({
    *    （読まなければ、並べ替え・上限・再検証のどこにも紛れ込みようがない）。
    *    宣言が無い campaign（割引 3 本など）はここを通らない＝**挙動は不変**。
    */
-  const customerOnly = resolveAudienceSource(base) === AUDIENCE_FILTER.CUSTOMER;
-  if (customerOnly) prospectDegraded = 'campaign_is_customer_only';
+  /**
+   * ⚠️ SendGrid へ移したあと（`MARKETING_PROSPECT_ENGINE=sendgrid`）も
+   *    **prospect を 1 件も読まない**。読まなければ母集団にも予約にも入りようがない。
+   */
+  const customerOnly = resolveAudienceSource(base) === AUDIENCE_FILTER.CUSTOMER
+    || !engineDecision.readProspects;
+  if (customerOnly) {
+    prospectDegraded = engineDecision.readProspects
+      ? 'campaign_is_customer_only' : engineDecision.reason;
+  }
   /**
    * live の窓（下見は自分の窓を持つので使わない）。
    * ⚠️ カーソルが読めなくても**止めない**。先頭から読むだけ（従来挙動）。

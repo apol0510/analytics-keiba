@@ -1,0 +1,259 @@
+# prospect 選別配信を SendGrid Marketing Campaigns へ移す（2026-09-18 MK 確定）
+
+> **確定仕様。** 約 15,000 件の選別配信の**実行**は、AK 自作の cron / queue / rotation ではなく
+> **SendGrid Marketing Campaigns Advanced / Custom Automation** が担う。
+> AK 自作の配信エンジンを主経路として完成させ続ける方針は**終了**する。
+>
+> ⚠️ **本番切替は未実施。** このドキュメントは設計・手順・停止境界の正本であり、
+> 「やった記録」ではない。実施済みかどうかは `docs/progress.md` 先頭の常設ブロックが正本。
+
+関連: [`docs/spec.md`](./spec.md)（確定仕様）/ [`docs/decisions.md`](./decisions.md)（判断の記録）/
+[`docs/progress.md`](./progress.md)（現在地）/
+[`ENGAGEMENT_SUPPRESSION.md`](../astro-site/docs/ENGAGEMENT_SUPPRESSION.md)（反応・打ち切りの単一源）
+
+---
+
+## 1. 役割分担（ここが変わる / 変わらない）
+
+| 担当 | 中身 |
+|---|---|
+| **AK** | 元データの所在・状態管理 / 各受信者の現在位置と**次に送るメール番号** / SendGrid へ渡す contact・segment / Event Webhook の受領（delivered・open・click・bounce・unsubscribe）/ 反応者を DRM へ接続 / 選別済み・抑止済みの監査 |
+| **SendGrid Marketing Campaigns** | 1 日 1 通のスケジュール / 最大 10 通の Automation / contact・list・segment / unsubscribe・suppression / Automation の entry と exit / **実際の大量送信** |
+
+**変わらないもの（1 つも緩めない）**
+
+- 二重送信防止（`DeliveryKey` は**引き続き AK 側の正本**）
+- unsubscribe / bounce / complaint / provider suppression による除外
+- 1 日 1 通・最大 10 通
+- **delivered 累計 10 通で無反応なら通常マーケティングから除外**
+- 反応者は DRM へ
+- **既送信 step の再送禁止**
+
+**「反応」の定義は変えない。** 単一源は `prospectPolicy.js` / `prospectEngagement.js` /
+`engagementPolicy.js`。SendGrid で直接取れない反応（購入・ログインなど）は、
+**AK が contact を list から外す**ことで Automation から退出させる。
+
+---
+
+## 2. 通し番号 1〜10（移行の背骨）
+
+| 通し番号 | campaignId | step |
+|---|---|---|
+| 1〜3 | `campaign-discount-free`（第 1 期）| 1〜3 |
+| 4〜10 | `campaign-prospect-phase2`（第 2 期）| 1〜7 |
+
+単一源は `src/lib/marketing/sendgridMessagePlan.js`。
+
+- **文面・`version`・step 定義は 1 バイトも変えない**（変えると `DeliveryKey` が変わり再送になる）
+- campaign が**期間外でも対応表は変わらない**（`includeDisabled: true` で解決する）
+- 3 + 7 ≠ 10 になったら **plan を作らない**（fail closed）
+
+### 次に送る番号の決め方（**再送禁止の中核**）
+
+`src/lib/marketing/sendgridNextMessage.js`
+
+1. **`highestSent + 1`**。受け取った通数ではなく**最大の通し番号**で決める
+2. **穴は埋めない**（1 と 3 が届いていれば次は 4。2 を送り直さない）
+3. **台帳を引けなければ `unresolved`**（未送信と見なさない＝全員再送を防ぐ）
+4. ENGAGED / PROMOTED / EXHAUSTED / SUPPRESSED は**移行対象にしない**
+5. 10 通配り終えていれば `completed`（入れる Automation が無い）
+
+---
+
+## 3. なぜ Automation を 10 本に分けるのか
+
+SendGrid の Automation は**入った contact を 1 通目から順に**送る。「4 通目から始める」入り方は無い。
+したがって **4 通目から始めたい人は「4 通目始まりの Automation」へ入れる**以外に再送を避ける方法が無い。
+
+| 開始番号 | list 名 | Automation 名 | 通数 |
+|---|---|---|---|
+| 1 | `ak-prospect-select-start-1` | `AK Prospect Selection start 1` | 10 |
+| … | … | … | … |
+| 10 | `ak-prospect-select-start-10` | `AK Prospect Selection start 10` | 1 |
+
+- 各 Automation の n 番目は **entry から (n-1) 日後**（1 日 1 通）
+- **対象が 0 人の入口は作らない**
+- ⚠️ AK 側の `delayDays`（2〜6 日）とは別物。**AK の step 定義を書き換えて合わせない**
+  （書き換えると `contentHash` → `DeliveryKey` が変わり再送の入口になる）
+
+単一源: `src/lib/marketing/sendgridAutomationPlan.js`
+
+---
+
+## 4. contact の作り方（変換層）
+
+`src/lib/marketing/sendgridContactExport.js`
+
+| custom field | 型 | 中身 |
+|---|---|---|
+| `ak_next_message` | Number | 次に送る通し番号（1〜10）|
+| `ak_prospect_hash` | Text | `sha256(email)`。AK 側の照合鍵 |
+| `ak_delivered` | Number | 移行時点の delivered 累計（打ち切りの分母）|
+| `ak_migrated_at` | Text | 移行日時（ISO8601 / UTC）|
+
+- **`ready` 以外は 1 件も出さない**
+- **custom field の id が 1 つでも解決できなければ何も作らない**
+- **list id が解決できない通し番号は出さない**
+- 変換の時点でも `assertNoResend` を通す（判定と変換のどちらが壊れても止まる）
+- 生成物（アドレスを含む配列 / CSV）は **repo・docs・ログへ保存しない**
+
+---
+
+## 5. 文面の移植
+
+`src/lib/marketing/sendgridContentExport.js` が既存 catalog の `renderCampaign` 出力をそのまま返す。
+**SendGrid 用に置き換えるのは 2 つだけ**:
+
+| AK | SendGrid |
+|---|---|
+| `{{unsubscribeUrl}}` | `<%asm_group_unsubscribe_raw_url%>` |
+| 宛名 | 固定（prospect は氏名を持たないので**推測で名前を作らない**）|
+
+⚠️ 配信停止タグは **描画後に差し替える**。`renderCampaign` に直接渡すと href が HTML escape され
+（`&lt;%…%&gt;`）、SendGrid が置換できず**配信停止リンクが壊れる**。
+タグが消えていたら**その文面は出さない**（停止できないメールを配らない）。
+
+---
+
+## 6. 反応の受領と退出
+
+| 反応 | 誰が検知 | SendGrid をどう抜けるか |
+|---|---|---|
+| open / click | SendGrid → Event Webhook → AK（`ENGAGED`）| **AK が list から contact を外す** |
+| 購入・ログイン等 | AK（既存の反応判定）| 同上 |
+| bounce / 苦情 / 配信停止 | SendGrid（suppression）| SendGrid 側で自動停止 ＋ AK が `SUPPRESSED` |
+| delivered 10・無反応 | AK（`applyDelivered` の打ち切り）| 10 通目で Automation は終端。AK が `EXHAUSTED` |
+
+- Event Webhook は **`custom_args` を要求しない**（`planProspectEventUpdates` は
+  `email` + `event` だけで判定する）。**Automation 送信でもそのまま動く**
+- `MARKETING_PROSPECT_EVENTS_ENABLED=true` が要る（設定済み・変更しない）
+- 署名検証は既存のまま（`SENDGRID_WEBHOOK_VERIFICATION_KEY` / fail closed）
+
+---
+
+## 7. 本番切替（**二重稼働 0**）
+
+`src/lib/marketing/sendgridCutover.js`
+
+```
+  ak_live ──停止──▶ frozen ──live──▶ sendgrid_live
+     ▲                 │                   │
+     └──状態確認のうえ再開──┘◀──Automation を Disable──┘
+```
+
+**`ak_live` から `sendgrid_live` へ直接は進めない。** 必ず `frozen`（どちらも送らない）を挟む。
+
+| # | 段 | 承認 | 中身 |
+|---|---|---|---|
+| 1 | `stop_ak_prospect` | **要** | production の `MARKETING_PROSPECT_ENGINE=sendgrid` ＋ redeploy |
+| 2 | `verify_stopped` | — | prospect 宛 enqueue 0 件・送信待ちジョブ 0 件を read-only で確認 |
+| 3 | `snapshot` | — | 索引 / 台帳 / 通し番号別件数を控える（`digest` つき）|
+| 4 | `import_contacts` | **要** | 通し番号別 list へ upsert（**Automation はまだ live にしない**）|
+| 5 | `verify_import` | — | list ごとの contact 数が通し番号別件数と一致するか |
+| 6 | `set_live` | **要** | 対象が居る Automation だけ live |
+| 7 | `verify_single_engine` | — | AK 側 0 件 ＋ SendGrid 側が動いていることを両方確認 |
+
+### AK 側の停止は env 1 つ
+
+| `MARKETING_PROSPECT_ENGINE` | AK の挙動 |
+|---|---|
+| 未設定 / `ak` | **従来どおり**（1 バイトも変わらない）|
+| `sendgrid` | prospect を母集団に入れない。prospect 専用 campaign は 1 件も積まない |
+
+- 未知の値は `ak` へ倒す（勝手に新経路へ行かせない）
+- **Customers 向けの配信は止めない**（止まるのは prospect 宛だけ）
+- 配線は `cron-campaign-sequence.js`（guard テストで固定）
+
+### rollback（**同じメールを二重送信する rollback は禁止**）
+
+1. SendGrid Automation を**すべて Disable**
+2. SendGrid で送られた通を AK 側の台帳へ**反映**（Event Webhook の delivered を数え直す）
+3. **通し番号の進みが合っていることを確認してから** `MARKETING_PROSPECT_ENGINE` を外して再開
+
+---
+
+## 8. 費用最小化（2026-09-18 MK 確定）
+
+> **必要要件を満たす範囲で、常に最小プランを選ぶ。上位プランを先回り契約しない。**
+> 超過料金込みで上位プランより高くなる場合だけ、比較したうえで判断する。
+
+⚠️ **コスト削減のために配信安全性を落とさない。** 送信頻度・選別処理・二重送信防止・
+unsubscribe・suppression・10 通・打ち切り・DRM 接続は**削らない**。
+「費用を抑える」は**必要以上の contact 枠・email 枠を契約しない**ことだけで実現する。
+
+| 局面 | 想定 | 第一候補 |
+|---|---|---|
+| 初回の約 15,000 件 選別期間 | 既送信を引き継ぎ、全員 1 通目から送り直さない | **Advanced 20K** |
+| 選別終了後（例: 約 5,000 件）| 週 2 回 × 月約 8 回 = 約 40,000 通/月 | **Advanced 10K（月 50,000 通枠）** |
+
+- 選別が終わったら**要件を満たす最小の Advanced へダウングレード**する。20K / 50K を惰性で維持しない
+- 判定の単一源: `src/lib/marketing/sendgridPlanSizing.js`
+  - `estimateSelectionVolume()` — 残送信総数 = Σ(人数 × 残り通数)
+  - `estimateSteadyVolume()` — 選別後 = contact 数 × 月 8 回
+  - `recommendPlan()` — **枠に収まるいちばん小さいプラン**。未確認の枠は「収まる」と言わない
+  - `canDowngrade()` — 1 段階下げられるか
+- ⚠️ **コードに金額を持たない**（料金表を書き写すと請求額とズレる）。金額の比較が要る場面では
+  そのとき公表値を確認する（`requiresQuote: true` が出る）
+
+### 毎月確認する（`MONTHLY_REVIEW_ITEMS`）
+
+active contact 数 / 月間予定送信数 / Automation 利用の有無 / 超過料金 / 1 段階下げられるか
+
+### 停止境界
+
+**契約・アップグレード・ダウングレードを含むすべての課金変更は、実行直前で停止して MK 承認を取る。**
+
+---
+
+## 9. 管理 API（`admin-sendgrid-migration`）
+
+| action | 副作用 | 中身 |
+|---|---|---|
+| `scan` | **なし** | 索引を窓で読み、通し番号別の件数（アドレスなし）|
+| `plan` | **なし** | 通し番号別件数 → list / Automation 計画 |
+| `content` | **なし** | 10 通の件名（`full:true` で本文も）|
+| `preflight` | **なし** | SendGrid の custom field / list / contact 数 / unsubscribe group |
+| `import` | 書き込み | contact の upsert |
+| `exit` | 書き込み | 反応・抑止した人を list から外す |
+
+**write は三重の条件**（`SENDGRID_MIGRATION_WRITE_ENABLED=true` ＋ 合言葉 ＋ `apply: true`）。
+どれか 1 つでも欠ければ **SendGrid へ 1 リクエストも出さない**。
+`import` は AK 側がまだ prospect を送る設定なら **409（二重稼働の防止）**。
+
+### 走査の窓
+
+10 通ぶんの鍵を引くので、既存の下見（`prospectSequenceCheck`）より**窓を小さく**する（既定 500）。
+`nextOffset` で続きから読み、**`missing` の合計が 0 のときだけ「確定」**と呼ぶ。
+
+---
+
+## 10. 本番切替までに必要な確認（**未完了**）
+
+| # | 確認項目 | 状態 |
+|---|---|---|
+| 1 | Marketing Campaigns Advanced の契約プラン（公表値と枠）| **未確認** |
+| 2 | 元 15,509 件の突合（AK 側の所在・状態）| **未実施** |
+| 3 | 通し番号別の件数（`scan` の全窓走査）| **未測定**（deploy 後に実施）|
+| 4 | 残送信総数と月間 email 枠 | 3 に依存 |
+| 5 | 現在の sender / domain authentication を再利用できるか | **未確認** |
+| 6 | unsubscribe group（`AK Marketing`）| **未作成** |
+| 7 | Event Webhook（既存経路がそのまま使えるか）| 設計上は可（`custom_args` 非依存）・**未検証** |
+| 8 | Automation へ移植する 10 通の文面 | `content` で生成可・**未投入** |
+| 9 | seed contact だけの E2E | **ローカルで完了**（`sendgridMigrationE2E.test.mjs`）|
+| 10 | 二重送信 0 | 設計・テストで担保・**本番未検証** |
+
+---
+
+## 11. 検証
+
+```bash
+cd astro-site
+npm run test:marketing   # 本移行のテストを含む（sendgrid*.test.mjs）
+npm run check:fn-no-undef
+```
+
+固定している契約: 通し番号 3+7=10 / 鍵が既存と一致 / 再送禁止（`highestSent+1`・穴を埋めない・
+読めなければ送らない）/ ready 以外を出さない / 通し番号ごとに別 list / 1 日 1 通 /
+0 人の入口を作らない / 退出は全 list から外す / 配信停止タグが消えたら出さない /
+ゲートが閉じていれば 1 リクエストも出さない / 二重稼働を拒否する / 最小プランを選ぶ /
+コードに金額を持たない。

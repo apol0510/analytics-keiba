@@ -1,3 +1,57 @@
+# 2026-09-18 — 選別配信の実行を SendGrid Marketing Campaigns へ移す（自作エンジンの完成方針を終了）
+
+## 決定
+
+| # | 決定 | 単一源 |
+|---|---|---|
+| 1 | 約 15,000 件の選別配信の**実行**は **SendGrid Marketing Campaigns Advanced / Custom Automation** が担う。AK 自作 cron / queue / rotation を主配信エンジンとして完成させ続ける方針は**終了** | `docs/SENDGRID_MC_MIGRATION.md` |
+| 2 | AK が担うのは「所在・状態管理 / **次に送るメール番号** / contact・segment / Event Webhook 受領 / DRM 接続 / 監査」 | 同上 |
+| 3 | **既存 prospect を全員 step1 から開始しない。** 受信者ごとに通し番号 1〜10 を確定する | `sendgridNextMessage.js` |
+| 4 | 次の番号は **`highestSent + 1`**。通数で数えない・**穴は埋めない**・**台帳を読めなければ送らない** | 同上（テストで固定）|
+| 5 | 通し番号は 第 1 期 3 通（`campaign-discount-free`）＋ 第 2 期 7 通（`campaign-prospect-phase2`）＝ **10** | `sendgridMessagePlan.js` |
+| 6 | SendGrid の Automation は 1 通目から始まるので、**開始番号ごとに list / Automation を分ける**（0 人の入口は作らない）| `sendgridAutomationPlan.js` |
+| 7 | 文面は**作り直さない**。既存 catalog の描画結果を使い、置き換えるのは配信停止リンクと宛名だけ | `sendgridContentExport.js` |
+| 8 | **旧 AK 配信と SendGrid Automation を同時に live にしない**。`ak_live → frozen → sendgrid_live` の順のみ | `sendgridCutover.js` |
+| 9 | AK 側の停止は `MARKETING_PROSPECT_ENGINE=sendgrid` の 1 つ。**未設定なら挙動は 1 バイトも変わらない** | `cron-campaign-sequence.js`（guard あり）|
+| 10 | **rollback で同じメールを二重送信しない**（Disable → 台帳へ反映 → 進みが合ってから再開）| `ROLLBACK_STEPS` |
+| 11 | 「反応」の定義・打ち切りの閾値（delivered 10）・DRM 接続は**変えない** | `prospectEngagement.js` / `engagementPolicy.js` |
+| 12 | **常に最小プラン**を契約する。選別中は Advanced 20K、選別終了後は要件を満たす最小（第一候補 Advanced 10K）へダウングレード | `sendgridPlanSizing.js` |
+| 13 | **課金変更（契約 / アップグレード / ダウングレード）はすべて実行直前で停止し MK 承認**を取る | 停止境界 |
+| 14 | 費用削減のために**送信頻度や選別処理を減らさない**。削るのは余った contact 枠・email 枠だけ | `docs/spec.md` |
+
+## なぜ自作エンジンの完成を目指さないのか
+
+AK 側の cron / queue / rotation は、2026-09 に入ってからも
+「窓 0 だけを見た誤診」「0 人 step で tick が終わる」「tick 鍵が無く 3 重起動」
+「prospect に custom_args が作れず 1 通も送れていなかった」など、**配信の実行そのものの不具合**を
+繰り返し踏んでいる。選別の価値は「誰に何通届いたか」の管理と反応の判定にあり、
+**大量送信のスケジューラを自前で持つこと自体には無い**。
+実行を Marketing Campaigns に寄せ、AK は状態管理へ集中する。
+
+## 再送禁止をどう保証するか
+
+移行で最大の事故は「既に受け取った通がもう一度届く」こと。二重送信防止は
+**AK の `DeliveryKey`（campaign × version × step × 受信者）**が正本で、SendGrid はそれを知らない。
+よって**投入する時点で番号が正しいこと**だけが防波堤になる。
+
+- 判定は最大の通し番号 + 1（通数で数えると穴があるときに再送する）
+- 変換層でも `assertNoResend` を通す（判定と変換のどちらが壊れても止まる）
+- 台帳が読めないときは `unresolved` にして**出さない**
+- ready 以外（反応済み・昇格済み・打ち切り・抑止・完走）は 1 件も出さない
+
+## 「1 日 1 通」は SendGrid 側の設定にする
+
+AK の step 定義は 2〜6 日間隔（`MIN_STEP_DELAY_DAYS = 2`）だが、**送るのは SendGrid** なので
+その定数は効かない。間隔は Automation 側で 1 日にする。
+⚠️ **AK の step 定義を 1 日へ書き換えて合わせない。** 書き換えると `contentHash` → `DeliveryKey`
+が変わり、**既送信者への再送**になる。
+
+## 未確定のまま進めないこと
+
+- Advanced の**公表値**（contact 枠・email 枠・超過料金）は未確認。`recommendPlan()` は
+  未確認の枠を「収まる」と言わない（`requiresQuote: true` を返して人に判断を戻す）
+- 元 15,509 件の突合、通し番号別の件数は**本番 read-only の実測が要る**（このセッションでは未実施）
+
 # 2026-09-16 — 配信停止は無人で完結させる（mailto を出さない / 見込み客も止める）
 
 ## 決定
