@@ -82,7 +82,7 @@ import { buildProspectDeliveryKeys } from '../../src/lib/marketing/prospectSeque
 import { rotateCampaigns, hasTimeForAnother } from '../../src/lib/marketing/sequenceTickRotation.js';
 import {
   isSequenceCampaign, resolveSequenceStep, resolveAutoStart, AUTO_START_KIND,
-  resolveAudienceSource, isOwnedByRunner, SEQUENCE_RUNNER,
+  resolveAudienceSource, isOwnedByRunner, SEQUENCE_RUNNER, resolveMaxSends,
 } from '../../src/lib/marketing/campaignSequence.js';
 import {
   readAutoStartGate, planAutoStartEntries, AUTOSTART_SKIP_LABEL,
@@ -639,7 +639,21 @@ export async function runSequenceTick({
   let priorEntryEmails = new Set();
   /** 後段接続のときだけ使う入口レポート（従来の入口レポートを置き換える）*/
   let phase2Report = null;
-  if (priorDecl && !isDry) {
+  /**
+   * ⚠️ **下見でも組み立てる**（2026-09-17）。
+   *
+   * 以前は `!isDry` を条件に入れていたので、下見では後段接続を**一度も評価しなかった**。
+   * その結果 `priorEntryEmails` が必ず空になり、`autoStartGate.open` は常に false、
+   * 下見は「入口は閉じている」と答える。**live なら開くかどうかを送る前に確かめられない。**
+   *
+   * ここで行うのは読み取りだけ:
+   *   - `filterDelivered` … `SMISMEMBER`（**読み取り専用**）
+   *   - `planPhase2Entry` / `buildProspectDeliveryKeys` … 純粋関数
+   *
+   * 予約（`claimDelivered`）・queue・配信行・送信は**この先も下見では行わない**
+   * （下見の return は予約より手前にある）。
+   */
+  if (priorDecl) {
     const prior = getCampaign(priorDecl.afterCampaignId, { includeDisabled: true });
     if (!prior) {
       phase2Report = {
@@ -927,8 +941,59 @@ export async function runSequenceTick({
    *    （`sequencePreviewWindow.guard.test.mjs` が書き込み不在を固定している）。
    */
   const planGates = isDry ? { ...gates, allOpen: true } : gates;
-  const plan = planSequenceTick({
+  /**
+   * ── 0 人だった step を外して**次の due step** を選び直す（2026-09-17）────────
+   *
+   * ## 何が起きていたか（本番実測 / `campaign-discount-free`）
+   *
+   * `selectNextDueStep` は**いちばん小さい due step** だけを返す。その step の候補が
+   * 後段の安全条件（既に `queued` / `sent`・出所フィルタ・許可リスト）で**全部落ちる**と、
+   * tick は 0 人で終わり、**次の tick もまったく同じ step を選ぶ**。
+   * 結果、後ろの step が永久に進まない。
+   *
+   * 実測（2026-09-16）: step2 に残った **36 件が `queued` のまま動かず**、
+   * tick は毎回 step2 を選んで `候補 0` で終了。
+   * その裏で **step3 の due 5,465 名へ 1 通も出ていなかった**（`sentByStep {3: 0}`）。
+   * 第 1 期が誰も完了しないので、後段接続の第 2 期は**1 行も作られなかった**。
+   *
+   * ## 直し方
+   *
+   * その step が 0 人なら、**その step だけを外して**選び直す。step 数ぶんで打ち切る。
+   *
+   * ⚠️ **安全条件は 1 つも迂回しない。** 選び直しても
+   *    既登録の除外 → 出所フィルタ → 許可リスト を同じ順で通す。
+   * ⚠️ **上限は据え置き**（1 tick で送る人数は増えない。送る step が変わるだけ）。
+   * ⚠️ **許可リスト / `expectedCount` が渡されたときは選び直さない。**
+   *    canary と DRM 入口は「この step のこの人数」を約束しているので、
+   *    step がずれると約束が変わる。**共有 cron（どちらも渡さない）だけが選び直す。**
+   * ⚠️ 下見（`dryRun`）も同じ選び直しをする。**下見と live がズレたら下見の意味が無い。**
+   */
+  const mayAdvanceStep = entryAllowlist === null && !Number.isInteger(expectedCount);
+  const maxStepAttempts = mayAdvanceStep
+    ? Math.max(1, Number(resolveMaxSends(base)) || 1)
+    : 1;
+  const emptySteps = [];
+  let plan = null;
+  let sending = null;
+  let keyOfTarget = null;
+  let allTargets = [];
+  let targets = [];
+  let refill = { picked: [], scanned: 0, exhausted: true };
+  let alreadyQueued = 0;
+  let filtered = null;
+  let allowed = null;
+  let audienceView = null;
+  /** ログ用（ループの外から参照するので `cap` とは別に持つ） */
+  let capUsed = 0;
+  const byId = new Map(selected.map((c) => [c.recordId, c]));
+  const allowlist = normalizeAllowlist(entryAllowlist);
+  const scope = { brand: BRAND, campaignId: base.campaignId, version: base.version };
+
+  for (let attempt = 0; attempt < maxStepAttempts; attempt += 1) {
+  plan = planSequenceTick({
     progress, gates: planGates,
+    /** この tick で 0 人だった step は外して選び直す（既定は空＝従来どおり） */
+    skipSteps: emptySteps,
     // 1 tick の上限。**引数が優先**（canary はここで 50 に絞る）。渡されなければ従来の env 由来
     maxRecipients: Number.isInteger(maxRecipientsOverride) && maxRecipientsOverride > 0
       ? maxRecipientsOverride : resolveMaxRecipientsPerTick(process.env),
@@ -955,8 +1020,7 @@ export async function runSequenceTick({
   }
 
   // 5) 送信計画（除外・DeliveryKey は既存の単一源がそのまま担当）
-  const sending = resolveSequenceStep(base, plan.step);
-  const byId = new Map(selected.map((c) => [c.recordId, c]));
+  sending = resolveSequenceStep(base, plan.step);
   /**
    * ⚠️ **枠は「積める人」で埋める。**
    *
@@ -968,9 +1032,8 @@ export async function runSequenceTick({
    */
   const candidateIds = Array.isArray(plan.candidateIds) && plan.candidateIds.length > 0
     ? plan.candidateIds : plan.recordIds;
-  const allTargets = candidateIds.map((rid) => byId.get(rid)).filter(Boolean);
-  const scope = { brand: BRAND, campaignId: base.campaignId, version: base.version };
-  const keyOfTarget = (t) => computeCampaignDeliveryKey({
+  allTargets = candidateIds.map((rid) => byId.get(rid)).filter(Boolean);
+  keyOfTarget = (t) => computeCampaignDeliveryKey({
     campaign: sending,
     recipientEmail: String((t.fields || {}).Email || '').trim().toLowerCase(),
     brand: BRAND, fromEmail,
@@ -1010,16 +1073,17 @@ export async function runSequenceTick({
    *    既登録の除外 → 出所フィルタ → 許可リスト を**そのままの順で**通す。
    * ⚠️ 並び順は変えない（公平性は `sequenceAudiencePool` の責任）。
    */
-  const allowlist = normalizeAllowlist(entryAllowlist);
   const cap = Number.isInteger(plan.recipients) && plan.recipients > 0 ? plan.recipients : 0;
+  capUsed = cap;
   let ledgerFailed = false;
-  let alreadyQueued = 0;
+  /** ⚠️ 選び直しのたびに数え直す（前の step の除外数を持ち越さない） */
+  alreadyQueued = 0;
   let droppedByFilter = 0;
   let droppedByAllowlist = 0;
   const bySource = { prospect: 0, customer: 0, unknown: 0 };
   let lastFilter = audienceFilter;
 
-  const refill = await refillSendable({
+  refill = await refillSendable({
     candidates: allTargets,
     maxRecipients: cap,
     isSendable: async (chunk) => {
@@ -1050,14 +1114,28 @@ export async function runSequenceTick({
     log(body);
     return body;
   }
-  const targets = refill.picked;
-  const filtered = { kept: targets, dropped: droppedByFilter, bySource, filter: lastFilter };
-  const allowed = { kept: targets, dropped: droppedByAllowlist, constrained: allowlist !== null };
+  targets = refill.picked;
+  filtered = { kept: targets, dropped: droppedByFilter, bySource, filter: lastFilter };
+  allowed = { kept: targets, dropped: droppedByAllowlist, constrained: allowlist !== null };
 
-  const audienceView = describeAudiencePreview({
+  audienceView = describeAudiencePreview({
     bySource: filtered.bySource, kept: targets, filter: filtered.filter,
     step: plan.step, campaignId: base.campaignId,
   });
+
+  /**
+   * ── この step は 0 人だった → **次の due step** を試す ────────────────
+   *
+   * ⚠️ 打ち切りは step 数ぶん。`emptySteps` に積んだ step は選び直しから外れるので、
+   *    同じ step を 2 回試すことはない（無限ループにならない）。
+   * ⚠️ 1 人でも積めたらここで抜ける（**選び直しは 0 人のときだけ**）。
+   */
+  if (targets.length === 0 && mayAdvanceStep && attempt + 1 < maxStepAttempts) {
+    emptySteps.push(plan.step);
+    continue;
+  }
+  break;
+  } // ← step 選び直しループの終わり
 
   /**
    * ── 下見はここで終わる（**予約より手前**）────────────────────────
@@ -1526,7 +1604,7 @@ export async function runSequenceTick({
   };
   /** 枠を埋めるために何人まで見たか（**黙って枠を空けない**）*/
   summary['補充'] = {
-    候補: allTargets.length, 見た: refill.scanned, 見切った: refill.exhausted, 上限: cap,
+    候補: allTargets.length, 見た: refill.scanned, 見切った: refill.exhausted, 上限: capUsed,
   };
   if (prospectBlocked > 0) summary['prospect予約不可'] = prospectBlocked;
   if (prospectClaimFailure) summary['prospect予約失敗'] = prospectClaimFailure;

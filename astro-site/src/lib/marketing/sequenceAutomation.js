@@ -155,6 +155,21 @@ export function planSequenceTick({
    * false にすると従来どおり中止する（`over_max_recipients`）。
    */
   allowPartial = true,
+  /**
+   * **この tick で既に試して 0 人だった step**（任意 / 2026-09-17 の停滞対応）。
+   *
+   * `selectNextDueStep` は「いちばん小さい due step」だけを返すので、その step の
+   * 候補が**後段の安全条件で全部落ちる**と、tick は毎回同じ step を選んで 0 人で終わり、
+   * **後ろの step が永久に進まない**（本番実測: step2 の残り 36 件が `queued` のまま
+   * 動かず、step3 の due 5,465 名が 1 通も出なかった）。
+   *
+   * 呼び出し側が「この step は 0 人だった」と伝えてきたら、その step を外して
+   * **次に小さい due step** を選び直す。
+   *
+   * ⚠️ **省略時（既定の空配列）は挙動が 1 ミリも変わらない。**
+   * ⚠️ 除外は**選ぶ step を後ろへずらすだけ**。安全条件・上限・並び順は一切触らない。
+   */
+  skipSteps = [],
 } = {}) {
   if (!gates || gates.allOpen !== true) {
     return { ok: false, abort: TICK_ABORT.GATES_CLOSED, missing: (gates && gates.missing) || [] };
@@ -172,8 +187,26 @@ export function planSequenceTick({
   //    いまは **step1 の人だけを候補から外し**、残りの最小 due step を進める。
   //    step1 しか居なければ従来どおり `first_step_manual` で止まる（既存挙動）。
   const excludeSteps = allowFirstStep === true ? [] : [1];
+  /**
+   * この tick で既に 0 人だった step も外す（既定は空＝従来どおり）。
+   * ⚠️ step1 の扱いには**足すだけ**で、上書きしない。
+   */
+  const skip = (Array.isArray(skipSteps) ? skipSteps : [])
+    .map((n) => Number(n))
+    .filter((n) => Number.isInteger(n));
+  for (const n of skip) if (!excludeSteps.includes(n)) excludeSteps.push(n);
   const next = selectNextDueStep(progress, { excludeSteps });
   if (!next.step || next.recordIds.length === 0) {
+    /**
+     * ⚠️ 選び直しの途中でゼロになったときは `first_step_manual` と言わない。
+     *    「step1 の人しか居ない」のではなく「**試せる step を使い切った**」ため。
+     */
+    if (skip.length > 0) {
+      return {
+        ok: false, abort: TICK_ABORT.NO_DUE, counts: progress.summary.dueByStep,
+        skippedSteps: skip,
+      };
+    }
     // 除外した結果ゼロ = 「step1 の人しか居ない」。理由を区別して返す
     if (next.excludedOnly === true) {
       return {
