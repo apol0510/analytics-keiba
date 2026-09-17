@@ -27,6 +27,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 import { getCampaign, matchesCampaignAudience } from './campaignCatalog.js';
 import { resolveAudienceSource, isKnownAudienceSource } from './campaignSequence.js';
@@ -105,6 +107,34 @@ for (const id of ['campaign-discount-light', 'campaign-discount-premium']) {
     assert.deepEqual(steps.map((s) => s.delayDays), [0, 6], 'delayDays が変わった');
   });
 }
+
+/* ── ⑤ どの campaign が止まったかをログから追える ───────────────── */
+
+/**
+ * ⚠️ 2026-09-17 の調査で、`window_needs_full_reload` / `no_due_recipients` の本文に
+ *    campaign 名が入っておらず、**どの campaign がどの理由で止まったのかを
+ *    後から突き合わせられなかった**（1 tick で複数 campaign が動くため）。
+ *    中止の本文には必ず `campaignId` を載せる。
+ */
+test('【重要】中止の本文に campaignId が載っている（1 tick で複数 campaign が動くため）', () => {
+  const src = readFileSync(
+    fileURLToPath(new URL('../../../netlify/functions/cron-campaign-sequence.js', import.meta.url)),
+    'utf8',
+  );
+  const needles = [
+    "abort: 'prospect_full_reload_failed', campaignId: base.campaignId",
+    "abort: 'window_needs_full_reload',",
+    "abort: TICK_ABORT.NO_DUE, campaignId: base.campaignId",
+    "abort: 'delivery_ledger_unreadable', campaignId: base.campaignId",
+  ];
+  for (const n of needles) assert.ok(src.includes(n), `中止の本文に campaignId が無い: ${n}`);
+  // `window_needs_full_reload` は 2 箇所（事前判定と 0 人）。どちらにも載せる
+  const wnfr = src.split("abort: 'window_needs_full_reload',");
+  assert.equal(wnfr.length - 1, 2, 'window_needs_full_reload の箇所数が変わった');
+  for (const seg of wnfr.slice(1)) {
+    assert.match(seg.slice(0, 260), /campaignId: base\.campaignId/, 'window の中止に campaignId が無い');
+  }
+});
 
 test('Customers 側の対象（Light 有効な方）は従来どおり当たる', () => {
   const mk = resolveCustomerMarketing({
