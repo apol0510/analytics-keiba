@@ -806,10 +806,25 @@ live だけ `maxRecipients` を渡しておらず、索引を**無制限に**読
 
 **規則**: **窓のときは、最小 step が 0 人になったことを理由に次 step へ進まない。**
 
+> ### ⚠️ 同じ tick で「窓 → 全件」と 2 度走査してはいけない（2026-09-17 追加訂正）
+>
+> 当初は同じ tick 内で `runSequenceTick` を再入して全件を読み直す実装にしたが、**危険だった**。
+> `now` を引き継ぐので `MAX_CAMPAIGN_MS` の締切自体はリセットされないものの、
+> **窓で時間を使ったあとに全件を読む**と、`claimDelivered`（予約）のあと
+> queue / upsert の途中で締切・hard timeout に達し得る。
+> そうなると**巻き戻しが走らず予約だけ残り、その人へは二度と送られない**
+> （このリポジトリが繰り返し塞いできた重大事故）。
+>
+> **同一 tick での二重走査は採用しない。**
+
 1. 窓で最小 step が 0 sendable になったら
-2. `emptySteps` へ入れて次へ進む前に
-3. **全件で読み直して最初からやり直す**（`forceFullProspect`・再入は 1 回だけ）
-4. `emptySteps` による次 step 選択を許すのは**全件を読んだときだけ**
+2. **その tick は 1 件も積まずに終わる**（`window_needs_full_reload` / `sideEffects: none`）
+3. campaign 単位で「**次回は全件で始める**」印を保存（`fullRequired`）
+4. 次の scheduled tick は**窓を一切読まず、最初から全件だけ**を 1 回実行
+5. **印の保存に失敗しても後段 step へ進まない**（そのまま 0 件で終わる＝fail closed）
+6. **全件の tick ではカーソルを進めない**
+7. 全件の読み込みに失敗したら**送信 0**（`prospect_full_reload_failed`）
+8. 全件を正常に読めたら印を外す
 
 ⚠️ 0 人になった**理由で分岐しない**（既 queued / 出所 / 許可リストのどれでも同じ扱い）。
 ⚠️ **全件の読み直しに失敗したら 1 件も送らない**（`prospect_full_reload_failed`・fail closed）。

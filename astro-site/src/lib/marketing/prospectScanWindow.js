@@ -91,23 +91,35 @@ export function nextProspectCursor({ offset, scanned, indexSize, pass } = {}) {
  *
  * ⚠️ カーソルが読めないことを理由に**送信を止めない**。
  *    位置が分からなければ先頭から読む（＝従来の挙動に戻るだけ）。
+ *
+ * ## `fullRequired` — 次の tick を全件で始める印（2026-09-17）
+ *
+ * 窓では全体の最小 due step を保証できないと分かったとき、**同じ tick の中で
+ * 全件をもう一度読んではいけない**。窓の読み込みで時間を使ったあとに全件を読むと、
+ * `claimDelivered`（予約）のあと queue / upsert の途中で締切に達し、
+ * **予約だけ残って二度と送られない**（既知の重大事故）を開く。
+ *
+ * そこで**そのtickは 1 件も積まずに終わり**、印だけ残す。
+ * 次の scheduled tick は**窓を一切読まず、最初から全件だけ**を 1 回実行する。
  */
 export function createProspectScanStore({ redisCmd } = {}) {
   const usable = typeof redisCmd === 'function';
   return {
     usable,
     async read(campaignType) {
-      if (!usable) return { offset: 0, pass: 0 };
+      if (!usable) return { offset: 0, pass: 0, fullRequired: false };
       try {
         const raw = await redisCmd(['GET', prospectCursorKey(campaignType)]);
-        if (!raw) return { offset: 0, pass: 0 };
+        if (!raw) return { offset: 0, pass: 0, fullRequired: false };
         const v = JSON.parse(String(raw));
         return {
           offset: Number.isInteger(v.offset) && v.offset > 0 ? v.offset : 0,
           pass: Number.isInteger(v.pass) && v.pass > 0 ? v.pass : 0,
+          /** 次の tick を全件で始めるか（読めなければ false＝通常運用） */
+          fullRequired: v.fullRequired === true,
         };
       } catch {
-        return { offset: 0, pass: 0 };
+        return { offset: 0, pass: 0, fullRequired: false };
       }
     },
     async write(campaignType, cursor) {
@@ -118,6 +130,7 @@ export function createProspectScanStore({ redisCmd } = {}) {
           JSON.stringify({
             offset: Number.isInteger(cursor?.offset) && cursor.offset > 0 ? cursor.offset : 0,
             pass: Number.isInteger(cursor?.pass) && cursor.pass > 0 ? cursor.pass : 0,
+            fullRequired: cursor?.fullRequired === true,
           }),
         ]);
         return { ok: true };
@@ -126,6 +139,23 @@ export function createProspectScanStore({ redisCmd } = {}) {
         //    （`DeliveryKey` が二重送信を防ぐので、重なっても害はない）
         return { ok: false, reason: 'write_failed' };
       }
+    },
+    /**
+     * 「次の tick は全件で始める」印を立てる。
+     *
+     * ⚠️ 書けなかったことを**成功と混同しない**。呼び出し側は書けなくても
+     *    **そのtickでは後段 step へ進まず 0 件で終わる**（fail closed）。
+     */
+    async setFullRequired(campaignType, cursor) {
+      return this.write(campaignType, { ...(cursor || {}), fullRequired: true });
+    },
+    /** 全件を正常に読めたので印を外す（位置は先頭へ戻して次の周回から） */
+    async clearFullRequired(campaignType, cursor) {
+      return this.write(campaignType, {
+        offset: Number.isInteger(cursor?.offset) && cursor.offset > 0 ? cursor.offset : 0,
+        pass: Number.isInteger(cursor?.pass) && cursor.pass > 0 ? cursor.pass : 0,
+        fullRequired: false,
+      });
     },
   };
 }

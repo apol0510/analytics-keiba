@@ -111,13 +111,13 @@ test('【最重要】窓は live だけに掛ける（下見は自分の窓を�
 test('【最重要】Redis が無ければ先頭から読む（従来挙動・止めない）', async () => {
   const store = createProspectScanStore({});
   assert.equal(store.usable, false);
-  assert.deepEqual(await store.read('c:v1'), { offset: 0, pass: 0 });
+  assert.deepEqual(await store.read('c:v1'), { offset: 0, pass: 0, fullRequired: false });
   assert.equal((await store.write('c:v1', { offset: 10 })).ok, false);
 });
 
 test('【最重要】カーソルが壊れていても先頭から読む', async () => {
   const store = createProspectScanStore({ redisCmd: async () => 'not-json' });
-  assert.deepEqual(await store.read('c:v1'), { offset: 0, pass: 0 });
+  assert.deepEqual(await store.read('c:v1'), { offset: 0, pass: 0, fullRequired: false });
 });
 
 test('【重要】書き込みに失敗しても例外を投げない（送信は済んでいる）', async () => {
@@ -136,7 +136,28 @@ test('【重要】カーソルを往復できる', async () => {
     },
   });
   await store.write('c:v1', { offset: 4000, pass: 2 });
-  assert.deepEqual(await store.read('c:v1'), { offset: 4000, pass: 2 });
+  assert.deepEqual(await store.read('c:v1'), { offset: 4000, pass: 2, fullRequired: false });
+});
+
+test('【最重要】「次は全件で始める」印を往復できる', async () => {
+  let stored = null;
+  const store = createProspectScanStore({
+    redisCmd: async (cmd) => {
+      if (cmd[0] === 'SET') { [, , stored] = cmd; return 'OK'; }
+      return stored;
+    },
+  });
+  await store.setFullRequired('c:v1', { offset: 2000, pass: 1 });
+  assert.deepEqual(await store.read('c:v1'), { offset: 2000, pass: 1, fullRequired: true });
+  // 全件を読めたら外す
+  await store.clearFullRequired('c:v1', { offset: 0, pass: 2 });
+  assert.deepEqual(await store.read('c:v1'), { offset: 0, pass: 2, fullRequired: false });
+});
+
+test('【最重要】印の保存に失敗しても「成功」と混同しない', async () => {
+  const store = createProspectScanStore({ redisCmd: async () => { throw new Error('down'); } });
+  const r = await store.setFullRequired('c:v1', { offset: 0, pass: 0 });
+  assert.equal(r.ok, false, '書けていないのに成功扱いしている');
 });
 
 test('【重要】キーは campaign ごとに分かれる', () => {

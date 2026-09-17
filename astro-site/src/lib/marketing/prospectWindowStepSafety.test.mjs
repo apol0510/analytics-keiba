@@ -121,20 +121,19 @@ test('【最重要】cron は窓を使ったとき必ず安全性を確かめる
   assert.match(CRON, /prospectWindowed/, '窓を使ったかどうかを持っていない');
 });
 
-test('【最重要】証明できないときは全件でやり直す（窓のまま送らない）', () => {
+test('【最重要】証明できないときは、そのtickで 1 件も積まずに終わる', () => {
   assert.match(CRON, /if \(!verdict\.safe\)/, '危ないときの分岐が無い');
   const i = CRON.indexOf('if (!verdict.safe)');
-  const body = CRON.slice(i, i + 700);
-  // 全件でのやり直し（「後段条件で 0 人」のときと同じ 1 本の経路）
-  assert.match(body, /return runSequenceTick\(\{/, '全件でやり直していない');
-  assert.match(body, /forceFullProspect: true/, '窓を外してやり直していない');
-  assert.equal(/maxRecipients: prospectWindowSize/.test(body), false, 'やり直しでも窓を掛けている');
+  const body = CRON.slice(i, i + 1200);
+  assert.match(body, /abort: 'window_needs_full_reload'/, '中止していない');
+  assert.match(body, /sideEffects: 'none'/, '副作用ゼロと言い切れていない');
+  assert.match(body, /setFullRequired\(/, '次の tick を全件で始める印を残していない');
 });
 
-test('【最重要】全件の周回では窓を掛けない（やり直しが無限に続かない）', () => {
-  assert.match(CRON, /\} : \(forceFullProspect \? \{/, '全件の周回でも窓を掛けている');
-  assert.match(CRON, /if \(!win && !forceFullProspect\) prospectWindowed = true;/,
-    '全件の周回でも窓扱いのままになっている');
+test('【最重要】全件の周回では窓を掛けない（印が立っている tick は窓を読まない）', () => {
+  assert.match(CRON, /\} : \(prospectFullRequired \? \{/, '印が立っていても窓を掛けている');
+  assert.match(CRON, /if \(!win && !prospectFullRequired\) prospectWindowed = true;/,
+    '印が立っている tick でも窓扱いのままになっている');
 });
 
 test('【最重要】カーソルを進めるのは窓を使ったときだけ', () => {
@@ -165,13 +164,46 @@ test('【重要】性能のために順序を変えない、と明記されて�
  *
  * → **窓のときは次 step へ進まず、全件で読み直してやり直す。**
  */
-test('【最重要】窓で最小 step が後段条件 0 人になったら、次 step へ進まず全件へ落ちる', () => {
+test('【最重要】窓で最小 step が後段条件 0 人になったら、そのtickは 0 件で終わる', () => {
   const i = CRON.indexOf('targets.length === 0 && mayAdvanceStep && prospectWindowed');
   assert.ok(i > 0, '窓のときに次 step へ進めない分岐が無い');
-  const body = CRON.slice(i, i + 700);
-  // 全件で読み直す（再入は 1 回だけ）
-  assert.match(body, /forceFullProspect: true/, '全件で読み直していない');
-  assert.match(body, /return runSequenceTick\(\{/, 'やり直していない');
+  const body = CRON.slice(i, i + 1200);
+  assert.match(body, /abort: 'window_needs_full_reload'/, '中止していない');
+  assert.match(body, /reason: 'zero_sendable_in_window'/, '理由を残していない');
+  assert.match(body, /sideEffects: 'none'/, '副作用ゼロと言い切れていない');
+  assert.match(body, /setFullRequired\(/, '次の tick を全件で始める印を残していない');
+});
+
+/**
+ * ⚠️ **同じ tick で「窓 → 全件」と 2 度走査してはいけない。**
+ *    窓で時間を使ったあとに全件を読むと、`claimDelivered`（予約）のあと
+ *    queue / upsert の途中で締切に達し、**予約だけ残って二度と送られない**。
+ */
+test('【最重要】同一 tick 内で window+full を二重走査しない（再入しない）', () => {
+  assert.equal(/return runSequenceTick\(/.test(CRON), false,
+    '同じ tick の中で自分を呼び直している（窓+全件の二重走査）');
+  assert.equal(/forceFullProspect/.test(CRON), false, '同一 tick 再入のフラグが残っている');
+});
+
+test('【最重要】印を書けなくても後段 step へ進まない（fail closed）', () => {
+  const i = CRON.indexOf("reason: 'zero_sendable_in_window'");
+  const body = CRON.slice(Math.max(0, i - 900), i + 600);
+  // 書けたかどうかに関わらず return している（分岐で送信側へ戻らない）
+  assert.match(body, /markedForFullReload: marked\.ok === true/, '書けたかを記録していない');
+  assert.equal(/if \(marked\.ok\)/.test(body), false, '印が書けたときだけ止める形になっている');
+});
+
+test('【最重要】全件を正常に読めたら印を外す', () => {
+  assert.match(CRON, /clearFullRequired\(/, '印を外していない');
+  const i = CRON.indexOf('clearFullRequired(');
+  const body = CRON.slice(Math.max(0, i - 400), i + 200);
+  assert.match(body, /prospectFullRequired && prospectInputs/, '全件を読めたときだけ外す形になっていない');
+});
+
+test('【最重要】全件の tick ではカーソルを進めない', () => {
+  // カーソル前進は prospectWindowed のときだけ（印が立った tick は windowed=false）
+  assert.match(CRON, /prospectInputs && prospectWindowed && prospectScanStore\.usable/,
+    '全件の tick でもカーソルを進めている');
 });
 
 test('【最重要】次 step の選び直し（emptySteps）は全件を読んだときだけ許す', () => {
@@ -181,37 +213,39 @@ test('【最重要】次 step の選び直し（emptySteps）は全件を読ん�
     '窓のガードより先に emptySteps へ進んでいる（step が飛ぶ）');
 });
 
-test('【最重要】再入は 1 回だけ（全件の周回では窓を使わない）', () => {
-  assert.match(CRON, /if \(!win && !forceFullProspect\) prospectWindowed = true;/,
-    '全件の周回でも窓扱いになり、再帰が止まらなくなる');
-  assert.match(CRON, /if \(!win && !forceFullProspect && wantProspect/,
-    '全件の周回でもカーソルを読んでいる');
+test('【最重要】印が立った tick は窓を読まず、全件だけを 1 回実行する', () => {
+  assert.match(CRON, /prospectFullRequired = prospectCursor\.fullRequired === true/,
+    '印を読んでいない');
+  assert.match(CRON, /if \(!win && !prospectFullRequired\) prospectWindowed = true;/,
+    '印が立った tick でも窓扱いになっている');
 });
 
-test('【最重要】全件の読み直しに失敗したら 1 件も送らない（fail closed）', () => {
-  assert.match(CRON, /abort: 'prospect_full_reload_failed'/, '読み直し失敗の fail closed が無い');
+test('【最重要】全件の読み込みに失敗したら 1 件も送らない（fail closed）', () => {
+  assert.match(CRON, /abort: 'prospect_full_reload_failed'/, '読み込み失敗の fail closed が無い');
   const i = CRON.indexOf("abort: 'prospect_full_reload_failed'");
-  const body = CRON.slice(Math.max(0, i - 400), i + 200);
-  assert.match(body, /if \(forceFullProspect\)/, '全件の周回でだけ止める形になっていない');
+  const body = CRON.slice(Math.max(0, i - 500), i + 200);
+  assert.match(body, /if \(prospectFullRequired\)/, '全件の tick でだけ止める形になっていない');
 });
 
-test('【最重要】窓の事前判定も同じ全件フォールバックへ寄せている（経路は 1 本）', () => {
+test('【最重要】窓の事前判定も同じ「印を残して 0 件で終わる」経路（1 本）', () => {
   const i = CRON.indexOf('if (!verdict.safe) {');
-  const body = CRON.slice(i, i + 700);
-  assert.match(body, /forceFullProspect: true/, '事前判定が別経路で読み直している');
-  assert.match(body, /return runSequenceTick\(\{/, '事前判定がやり直していない');
+  const body = CRON.slice(i, i + 1200);
+  assert.match(body, /setFullRequired\(/, '事前判定が別経路になっている');
+  assert.match(body, /abort: 'window_needs_full_reload'/, '事前判定が中止していない');
+  assert.match(body, /sideEffects: 'none'/, '副作用ゼロと言い切れていない');
 });
 
 /**
  * ⚠️ 出所フィルタ・suppression で 0 人になった場合も同じ扱い。
  *    理由を問わず「窓で 0 人 → 次 step」を禁じているので、経路は 1 本で足りる。
  */
-test('【最重要】0 人の理由（既queued / 出所 / 許可リスト）を問わず同じガードが効く', () => {
+test('【最重要】0 人の理由（既queued / 出所 / 許可リスト）で分岐しない', () => {
   const guard = CRON.indexOf('targets.length === 0 && mayAdvanceStep && prospectWindowed');
-  const body = CRON.slice(guard, guard + 700);
-  // 理由で分岐していない＝どの理由でも全件へ落ちる
-  assert.equal(/droppedByFilter|droppedByAllowlist|alreadyQueued/.test(body), false,
+  const body = CRON.slice(guard, guard + 1200);
+  // 条件は targets.length === 0 だけ。理由ごとの分岐（if）を作らない
+  assert.equal(/if \(droppedByFilter|if \(droppedByAllowlist|if \(alreadyQueued/.test(body), false,
     '0 人の理由ごとに扱いを変えている（漏れる理由が出る）');
+  assert.match(body, /targets\.length === 0/, '0 人という一点で判定していない');
 });
 
 test('【最重要】第 2 期の step2〜7 でも、窓の中だけで後段 step へ進まない', () => {

@@ -417,16 +417,6 @@ export async function runSequenceTick({
    *    予約・キュー登録・配信行・ジョブ・送信はこの先も一切しない。
    */
   previewAllowFirstStep = false,
-  /**
-   * **窓をやめて全件で読み直す**（この関数が自分で 1 回だけ立てる / 外から渡さない）。
-   *
-   * ⚠️ 窓で切ると「全体で最小の due step」を保証できない場面がある。
-   *    最小 step の候補が**後段の安全条件（既 queued / 出所 / 許可リスト）で 0 人**になったとき、
-   *    窓の中だけで次の step へ進むと、**全体にはまだ残っている step を飛ばす**。
-   *    そのときは窓を捨てて全件で最初からやり直す（`emptySteps` もやり直す）。
-   * ⚠️ **再入は 1 回だけ**（このフラグが立っていたら二度と入らない）。
-   */
-  forceFullProspect = false,
 } = {}) {
   const isDry = dryRun === true;
   /**
@@ -597,8 +587,15 @@ export async function runSequenceTick({
   let prospectCursor = { offset: 0, pass: 0 };
   /** live で窓を掛けたか（掛けたときだけ「全体と一致するか」を確かめる） */
   let prospectWindowed = false;
-  if (!win && !forceFullProspect && wantProspect && !customerOnly) {
+  /**
+   * ⚠️ **前の tick が「全件で始めろ」と印を残していたら、この tick は窓を一切読まない。**
+   *    同じ tick で「窓 → 全件」と 2 度走査すると、締切ぎりぎりで `claimDelivered` に達し、
+   *    予約だけ残って二度と送られない（既知の重大事故）を開く。
+   */
+  let prospectFullRequired = false;
+  if (!win && wantProspect && !customerOnly) {
     prospectCursor = await prospectScanStore.read(campaignType);
+    prospectFullRequired = prospectCursor.fullRequired === true;
   }
   if (wantProspect && !customerOnly && prospectStore && prospectLedger) {
     prospectInputs = await loadProspectSequenceInputs({
@@ -615,8 +612,8 @@ export async function runSequenceTick({
           ? Math.min(4000, Number(win.limit)) : 2000,
         offset: Math.max(0, Number(win.offset) || 0),
         expectDigest: String(win.digest || '').trim() || undefined,
-      } : (forceFullProspect ? {
-        /** ⚠️ 全件で読み直す周回。**窓を掛けない**（全体の最小 due step を保証するため） */
+      } : (prospectFullRequired ? {
+        /** ⚠️ 前 tick の印により**この tick は全件だけ**（窓を掛けない・カーソルも進めない） */
       } : {
         /**
          * ── live も窓で切る（2026-09-17）────────────────────────────
@@ -638,7 +635,7 @@ export async function runSequenceTick({
         offset: prospectCursor.offset,
       })),
     });
-    if (!win && !forceFullProspect) prospectWindowed = true;
+    if (!win && !prospectFullRequired) prospectWindowed = true;
     if (!prospectInputs.ok) {
       // ⚠️ **Customers 由来の配信は止めない**（既存挙動を変えない）。
       //    prospect だけを 1 人も対象にせず、理由を残して続ける。
@@ -651,7 +648,7 @@ export async function runSequenceTick({
        *    窓で判断できないから全件に来たのに、その全件も読めていない。
        *    ここで Customers だけ進めると「全体の最小 due step」を保証できないまま送ることになる。
        */
-      if (forceFullProspect) {
+      if (prospectFullRequired) {
         const body = {
           ok: false, abort: 'prospect_full_reload_failed',
           reason: prospectDegraded, sideEffects: 'none',
@@ -662,6 +659,14 @@ export async function runSequenceTick({
       }
     }
   }
+  /**
+   * ── 全件を正常に読めたので「全件で始めろ」の印を外す ────────────────
+   * ⚠️ 印を外せなくても送信は続けてよい（次の tick がもう一度全件を読むだけ）。
+   */
+  if (!isDry && prospectFullRequired && prospectInputs) {
+    await prospectScanStore.clearFullRequired(campaignType, { offset: 0, pass: prospectCursor.pass + 1 });
+  }
+
   /**
    * ── 窓の判断が「全体の判断」と一致するか確かめる（2026-09-17）──────
    *
@@ -691,18 +696,29 @@ export async function runSequenceTick({
     });
     if (!verdict.safe) {
       /**
-       * ⚠️ 窓のままでは全体の最小 due step を保証できない。**全件で読み直す。**
-       *    コストは従来どおりに戻るだけで、順序は必ず守られる。
-       *    読み直しの経路は「後段条件で 0 人だった」ときと**同じ 1 本**にする。
+       * ⚠️ 窓のままでは全体の最小 due step を保証できない。
+       *    **この tick は 1 件も積まずに終わり**、次の tick を全件で始める印だけ残す。
+       *
+       * ⚠️ **同じ tick で全件を読み直さない。** 窓で時間を使ったあとに全件を読むと、
+       *    `claimDelivered`（予約）のあと queue / upsert の途中で締切に達し、
+       *    **予約だけ残って二度と送られない**（既知の重大事故）を開く。
+       * ⚠️ 印を書けなくても**後段 step へは進まない**（このまま 0 件で終わる＝fail closed）。
        */
-      console.warn(
-        `${SEQ_LOG_TAG} 窓の判断を採用できないため全件で読み直します: ${verdict.reason}`,
-      );
-      return runSequenceTick({
-        env, now, campaignId, entryAllowlist, dryRun, preview,
-        sourceFilter, expectedCount, maxRecipientsOverride, previewAllowFirstStep,
-        forceFullProspect: true,
+      const marked = await prospectScanStore.setFullRequired(campaignType, {
+        offset: prospectCursor.offset, pass: prospectCursor.pass,
       });
+      const body = {
+        ok: false,
+        abort: 'window_needs_full_reload',
+        reason: verdict.reason,
+        windowMinStep: verdict.windowMinStep,
+        markedForFullReload: marked.ok === true,
+        sideEffects: 'none',
+        note: '窓では全体の最小 due step を保証できないため 1 件も積んでいません。'
+          + '次の tick を全件で始めます（印の保存に失敗しても、この tick では後段 step へ進みません）。',
+      };
+      log(body);
+      return body;
     }
   }
 
@@ -1302,17 +1318,29 @@ export async function runSequenceTick({
    * だから窓のときは**次 step へ進まず、全件で読み直して最初からやり直す**。
    * 次 step の選び直し（`emptySteps`）を許すのは**全件を読んだときだけ**。
    */
-  if (targets.length === 0 && mayAdvanceStep && prospectWindowed && !forceFullProspect) {
-    console.warn(
-      `${SEQ_LOG_TAG} 窓では次の step へ進めないため全件で読み直します`
-      + `（step${plan.step} が後段条件で 0 人）`,
-    );
-    return runSequenceTick({
-      env, now, campaignId, entryAllowlist, dryRun, preview,
-      sourceFilter, expectedCount, maxRecipientsOverride, previewAllowFirstStep,
-      /** ⚠️ 再入は 1 回だけ。全件で読み直した周回では窓を使わない */
-      forceFullProspect: true,
+  if (targets.length === 0 && mayAdvanceStep && prospectWindowed && !isDry) {
+    /**
+     * ⚠️ **この tick は 1 件も積まずに終わる。** 次の tick を全件で始める印だけ残す。
+     *    同じ tick で全件を読み直すと、窓で時間を使ったあとに `claimDelivered` へ達し、
+     *    queue / upsert の途中で締切に掛かって**予約だけ残る**（既知の重大事故）。
+     * ⚠️ 印を書けなくても**後段 step へは進まない**（fail closed）。
+     */
+    const marked = await prospectScanStore.setFullRequired(campaignType, {
+      offset: prospectCursor.offset, pass: prospectCursor.pass,
     });
+    const body = {
+      ok: false,
+      abort: 'window_needs_full_reload',
+      reason: 'zero_sendable_in_window',
+      step: plan.step,
+      alreadyQueued,
+      markedForFullReload: marked.ok === true,
+      sideEffects: 'none',
+      note: `窓の最小 step（step${plan.step}）が後段条件で 0 人になりました。`
+        + '窓の中だけで次の step へ進むと全体の順序が崩れるため、1 件も積んでいません。',
+    };
+    log(body);
+    return body;
   }
   if (targets.length === 0 && mayAdvanceStep && attempt + 1 < maxStepAttempts) {
     emptySteps.push(plan.step);
