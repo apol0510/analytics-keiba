@@ -38,9 +38,16 @@ export const MIN_MS_FOR_NEXT_CAMPAIGN = 50 * 1000;
 export const TICK_TIME_BUDGET_MS = 55 * 1000;
 /**
  * scheduled function が打ち切られる実測値（ミリ秒）。
- * 予算はここから 5 秒手前に置いてある。**予算より緩い判定は絶対にしない。**
+ * 予算はここから手前に置いてある。**予算より緩い判定は絶対にしない。**
  */
 export const TICK_HARD_LIMIT_MS = 60 * 1000;
+/**
+ * 打ち切りまでに必ず残す余裕（ミリ秒）。**ぎりぎりを安全と呼ばない。**
+ *
+ * ⚠️ 打ち切りの実測は 60,000 / 60,340 ms とブレる。後始末（鍵の解放・ログ）にも時間が要る。
+ *    **「ちょうど 60 秒で終わる」計画は安全ではない。**
+ */
+export const HARD_LIMIT_SAFETY_MARGIN_MS = 5 * 1000;
 /**
  * 実測の最大値に掛ける安全率。
  *
@@ -57,31 +64,45 @@ export const NEXT_CAMPAIGN_SAFETY_FACTOR = 1.5;
  *    下限を置かないと、**軽い campaign が続いた直後に重い campaign を残り数秒で始めて**
  *    打ち切りに突っ込む（＝予約だけ取れて送信漏れ）。
  *
- * ## この値の決め方（2026-09-17 本番実測）
+ * ## この値の位置づけ
  *
- * 下限を `F` にすると、新しい campaign を始められる最も遅い時点は `予算 - F`。
- * そこから最も重い campaign が走ると、終了は **`(予算 - F) + 最遅`**。
- * これが**打ち切り（60 秒）以内**でなければならない:
+ * ⚠️ **安全の保証はここではなく `LATEST_START_MS` が持つ。**
+ *    下限は「見積りが小さくなりすぎないようにする」ためのもので、
+ *    打ち切りに対する余裕は**契約値だけで決めた絶対条件**（`LATEST_START_MS`）で担保する。
  *
- * ```
- * (TICK_TIME_BUDGET_MS - MIN_NEXT_CAMPAIGN_ESTIMATE_MS) + MAX_CAMPAIGN_MS <= TICK_HARD_LIMIT_MS
- * (55 - 25) + 23 = 53 秒 <= 60 秒   ✅
- * ```
- *
- * 実測（2026-09-17 / 7 本）: 2 / 3 / 7 / 8 / 11 / 13 / 21 秒。live の送信ぶんを足した
- * 想定でも最遅は **23 秒**。下限 25 秒なら **7 秒の余裕**が残る。
- *
- * ⚠️ 20 秒でも本数は同じだが理論最悪が 58 秒（余裕 2 秒）まで詰まる。
- *    **本数が変わらないなら余裕の大きい 25 秒を採る。**
+ * 実測（2026-09-17 / 7 本）: 2 / 3 / 7 / 8 / 11 / 13 / 21 秒。
+ * live の送信ぶんを足した想定でも最遅は 23 秒。**ただしこの実測を安全条件に使わない**
+ * （契約は `MAX_CAMPAIGN_MS` = 30 秒）。
  */
 export const MIN_NEXT_CAMPAIGN_ESTIMATE_MS = 25 * 1000;
 /**
- * どの campaign もこれを超えてはいけない上限（ミリ秒・**不変条件**）。
+ * **契約として**どの campaign もこれを超えてはいけない上限（ミリ秒）。
  *
- * 上の式が成り立つ前提。超える campaign が出たら下限か予算を見直すこと
- * （`sequenceTickBudget.test.mjs` が式を固定している）。
+ * ⚠️ **実測値（最遅 23 秒）と混同しない。** 安全余裕は「いま何秒か」ではなく
+ *    「**契約上どこまで許すか**」で計算する。実測だけを根拠に安全上限を狭めると、
+ *    次に重い campaign が増えた瞬間に前提が崩れる。
  */
 export const MAX_CAMPAIGN_MS = 30 * 1000;
+
+/**
+ * **新しい campaign を始めてよい最も遅い時点**（ミリ秒・安全の要）。
+ *
+ * ## 導出（契約値だけで決める）
+ *
+ * 最も遅く始めた campaign が**契約上の最大**まで掛かっても、
+ * 打ち切りまでに**余裕を残して**終わっていなければならない:
+ *
+ * ```
+ * LATEST_START_MS + MAX_CAMPAIGN_MS + HARD_LIMIT_SAFETY_MARGIN_MS <= TICK_HARD_LIMIT_MS
+ *          25     +       30        +            5                 =        60      ✅
+ * ```
+ *
+ * ⚠️ **これを実測（23 秒）で計算してはいけない。** 契約が 30 秒なら 30 秒で計算する。
+ * ⚠️ これは見積り（`estimateNextCampaignMs`）とは**独立の絶対条件**。
+ *    見積りが外れても、この時刻を過ぎたら新しい campaign は始めない。
+ */
+export const LATEST_START_MS = TICK_HARD_LIMIT_MS
+  - MAX_CAMPAIGN_MS - HARD_LIMIT_SAFETY_MARGIN_MS;
 
 /**
  * 開始位置をずらした campaign の並びを返す（純粋）。
@@ -133,29 +154,44 @@ export function estimateNextCampaignMs({
 /**
  * 残り時間で新しい campaign を始めてよいか（純粋）。
  *
- * ── 判定 ────────────────────────────────────────────────────
- *   1. **予算内に終わる見込みがある**こと … `elapsed + 見積り <= budgetMs`
- *   2. **打ち切りまでに終わる見込みがある**こと … `elapsed + 見積り <= hardLimitMs`
+ * ── 判定（**3 つすべて**を満たしたときだけ true）─────────────────
+ *   1. **契約上の絶対条件** … `elapsed <= LATEST_START_MS`
+ *      契約上の最大（`MAX_CAMPAIGN_MS`）まで掛かっても、余裕を残して打ち切り前に終わる
+ *   2. **予算内に終わる見込み** … `elapsed + 見積り <= budgetMs`
+ *   3. **打ち切りまでに余裕を残して終わる見込み**
+ *      … `elapsed + 見積り <= hardLimitMs - HARD_LIMIT_SAFETY_MARGIN_MS`
+ *
+ * ⚠️ 1 は**見積りと独立**。見積りが外れても、この時刻を過ぎたら新しい campaign を始めない。
+ *    これが「timeout 直前に予約だけ残る（＝送信漏れ）」を防ぐ最後の歯止め。
+ * ⚠️ 3 は**ぎりぎりを許さない**ための条件。`<= hardLimitMs` では余裕 0 秒を許してしまう。
  *
  * 見積りは同じ tick で実際に掛かった時間の**最大 × 安全率**（`estimateNextCampaignMs`）。
  * `observedMs` を渡さなければ `minMs` 固定＝**従来と同じ挙動**。
  *
  * @param {{startedAtMs: number, nowMs: number, budgetMs?: number, minMs?: number,
- *          observedMs?: number[]|null, hardLimitMs?: number}} input
+ *          observedMs?: number[]|null, hardLimitMs?: number,
+ *          latestStartMs?: number, marginMs?: number}} input
  */
 export function hasTimeForAnother({
   startedAtMs, nowMs, budgetMs = TICK_TIME_BUDGET_MS, minMs = MIN_MS_FOR_NEXT_CAMPAIGN,
   observedMs = null, hardLimitMs = TICK_HARD_LIMIT_MS,
+  latestStartMs = LATEST_START_MS, marginMs = HARD_LIMIT_SAFETY_MARGIN_MS,
 } = {}) {
   if (!Number.isFinite(startedAtMs) || !Number.isFinite(nowMs)) return true;
   const elapsed = nowMs - startedAtMs;
+  /**
+   * ① 契約上の絶対条件。**見積りより先に効かせる**（見積りが外れても守られる）。
+   */
+  if (Number.isFinite(latestStartMs) && elapsed > latestStartMs) return false;
   /** ⚠️ 渡されなければ従来どおり（`minMs` 固定） */
   const estimate = observedMs === null
     ? minMs
     : estimateNextCampaignMs({ observedMs, fallbackMs: minMs });
+  // ② 予算内に終わる見込み
   if ((budgetMs - elapsed) < estimate) return false;
-  /** 予算が打ち切りより手前にある限り冗長だが、**予算を緩めたときの歯止め**として残す */
-  return (elapsed + estimate) <= hardLimitMs;
+  // ③ 打ち切りまでに**余裕を残して**終わる見込み（ぎりぎりを安全と呼ばない）
+  const margin = Number.isFinite(marginMs) && marginMs >= 0 ? marginMs : 0;
+  return (elapsed + estimate) <= (hardLimitMs - margin);
 }
 
 export default rotateCampaigns;
