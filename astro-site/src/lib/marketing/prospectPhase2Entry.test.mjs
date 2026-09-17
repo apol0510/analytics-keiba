@@ -26,6 +26,10 @@ import { getCampaign } from './campaignCatalog.js';
 import { getSequenceSteps, resolveAutoStart, AUTO_START_KIND } from './campaignSequence.js';
 import { PROSPECT_STATE } from './prospectPolicy.js';
 
+/** コメントを落として**コードだけ**を見る（説明文の語で guard が誤爆しないため） */
+const codeOnly = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '')
+  .split('\n').filter((l) => !/^\s*(\/\/|\*)/.test(l)).join('\n');
+
 const CRON = readFileSync(
   fileURLToPath(new URL('../../../netlify/functions/cron-campaign-sequence.js', import.meta.url)),
   'utf8',
@@ -209,9 +213,42 @@ test('【最重要】DRM の入口ゲートに依存しない（別 env を要�
 test('【重要】手動 canary / 下見スイッチ無しで成立する', () => {
   const i = CRON.indexOf('const priorDecl =');
   const body = CRON.slice(i, CRON.indexOf('const priorEntryCount', i));
-  // live でのみ動く（下見は従来どおり書かない）
-  assert.match(body, /priorDecl && !isDry/, '下見でも入口を作ってしまう');
   assert.equal(body.includes('previewAllowFirstStep'), false, '下見スイッチに依存している');
+});
+
+/**
+ * ⚠️ **2026-09-17 に条件を強めた。**
+ *
+ * 以前はここで `priorDecl && !isDry` を固定し、「下見では入口を組み立てない」ことを
+ * 安全条件としていた。しかしそれだと `priorEntryEmails` が下見で必ず空になり、
+ * `autoStartGate.open` は常に false。**live なら開くかどうかを、送る前に確かめられない**
+ * （本番で実際に「入口は閉じている」としか読めなかった）。
+ *
+ * 組み立てに使うのは読み取りだけなので、固定する条件を
+ * 「**評価しないこと**」から「**書き込まないこと**」へ移した。
+ */
+test('【最重要】後段接続は下見でも組み立てる（送る前に確かめられる）', () => {
+  const CODE = codeOnly(CRON);
+  const i = CODE.indexOf('const priorDecl =');
+  const body = CODE.slice(i, CODE.indexOf('const priorEntryCount', i));
+  assert.match(body, /if \(priorDecl\) \{/, '下見で入口を評価しない（確かめられない）');
+  assert.equal(/!isDry/.test(body), false, '下見を除外する条件が残っている');
+});
+
+test('【最重要】後段接続の組み立ては 1 バイトも書かない（読み取りだけ）', () => {
+  const CODE = codeOnly(CRON);
+  const i = CODE.indexOf('const priorDecl =');
+  const body = CODE.slice(i, CODE.indexOf('const priorEntryCount', i));
+  // 予約・キュー登録・配信行・ジョブ・送信のいずれも呼ばない
+  for (const write of [
+    'claimDelivered', 'releaseClaims', 'markDelivered',
+    'createRecords', 'updateRecords', 'enqueue', 'sendCampaign',
+  ]) {
+    assert.equal(body.includes(write), false, `下見の経路に書き込み（${write}）が入っている`);
+  }
+  // 使ってよいのは読み取りと純粋関数だけ
+  assert.match(body, /filterDelivered/, '既送信の判定が消えている');
+  assert.match(body, /planPhase2Entry/, '入口の判定が消えている');
 });
 
 test('【重要】prospect を読めないときは入口を開けない', () => {
