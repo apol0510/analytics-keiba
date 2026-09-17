@@ -41,7 +41,26 @@ test('【重要】配信台帳の upsert は応答を見る（投げっぱなし
   assert.ok(i > 0, 'upsert の呼び出しが見つからない');
   const around = SRC.slice(Math.max(0, i - 600), i + 400);
   assert.match(around, /const res = await fetch\(/, '戻り値を受け取っていない');
-  assert.match(SRC, /if \(!res \|\| !res\.ok\) \{ upsertFailed = /, '応答の失敗を拾っていない');
+  // ⚠️ 2026-09-17: 逐次ループ → 上限つき並行（`runBoundedBatches`）へ変更。
+  //    **応答を見て失敗を拾う**という条件は変えず、拾い方だけが変わった。
+  assert.match(around, /ok: res\.ok/, '応答の ok を見ていない');
+  assert.match(around, /status: res\.status/, '応答の status を見ていない');
+  assert.match(SRC, /const upsertFailed = writeResult\.ok/, '応答の失敗を拾っていない');
+});
+
+/**
+ * ⚠️ 並行化で**安全条件を落としていない**ことを固定する。
+ *    予約（`claimDelivered`）はキュー登録の前なので、途中で打ち切られると
+ *    鍵だけが残り「二度と送られない人」ができる。
+ */
+test('【最重要】upsert の並行化は締め切りと再試行を伴う（予約だけ残る事故を増やさない）', () => {
+  assert.match(SRC, /runBoundedBatches\(\{/, '上限つき並行を使っていない');
+  assert.match(SRC, /deadlineMs: Number\(now\) \+ MAX_CAMPAIGN_MS/,
+    '締め切りが campaign の契約になっていない');
+  assert.match(SRC, /retryAfterMs/, 'Retry-After を渡していない');
+  // 失敗時の巻き戻しは従来どおり（ジョブ取消＋予約解放）
+  assert.match(SRC, /cancelCreatedJobs\(/, 'ジョブ取消が消えている');
+  assert.match(SRC, /releaseClaimedKeys\(/, '予約解放が消えている');
 });
 
 test('【重要】書いたあと読み戻して確かめる', () => {

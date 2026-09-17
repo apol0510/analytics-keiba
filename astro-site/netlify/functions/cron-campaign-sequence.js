@@ -79,7 +79,9 @@ import { refillSendable } from '../../src/lib/marketing/sequenceTickRefill.js';
 import { planPhase2Entry } from '../../src/lib/marketing/prospectPhase2Entry.js';
 import { buildProspectDeliveryKeys } from '../../src/lib/marketing/prospectSequenceHydration.js';
 // campaign を順番に先頭へ回す（後ろの campaign が永久に進まないのを防ぐ）
-import { rotateCampaigns, hasTimeForAnother } from '../../src/lib/marketing/sequenceTickRotation.js';
+import {
+  rotateCampaigns, hasTimeForAnother, MAX_CAMPAIGN_MS,
+} from '../../src/lib/marketing/sequenceTickRotation.js';
 import {
   isSequenceCampaign, resolveSequenceStep, resolveAutoStart, AUTO_START_KIND,
   resolveAudienceSource, isOwnedByRunner, SEQUENCE_RUNNER, resolveMaxSends,
@@ -87,6 +89,10 @@ import {
 import {
   readAutoStartGate, planAutoStartEntries, AUTOSTART_SKIP_LABEL,
 } from '../../src/lib/drm/drmAutoStart.js';
+import {
+  buildPhase2Probe, buildPhase2FullKeys, describePhase2Probe,
+} from '../../src/lib/marketing/prospectPhase2EntryProbe.js';
+import { runBoundedBatches } from '../../src/lib/marketing/boundedBatchWrite.js';
 import { FUNNEL_STAGE } from '../../src/lib/drm/drmFunnel.js';
 import { buildSequenceProgress, indexDeliveries } from '../../src/lib/marketing/sequenceProgress.js';
 import {
@@ -670,14 +676,38 @@ export async function runSequenceTick({
     } else {
       try {
         const people = prospectInputs.prospects || [];
-        // 前 campaign の配信済み鍵（**名指しで引く**・鍵の作り方は変えない）
-        const priorKeyMap = buildProspectDeliveryKeys({
-          prospects: people, campaign: prior, brand: BRAND, fromEmail,
+        /**
+         * ── 前 campaign の配信済み鍵を**2 段で**引く（2026-09-17 の軽量化）────────
+         *
+         * 従来は「全 prospect × 全 step」を 1 回で引いていた（約 11,826 × 3 = 約 35,478 鍵 /
+         * Redis 往復 約 178 回 / 実測 **約 19 秒**）。第 1 期の完了者は 0 名なので、
+         * この 19 秒は**毎 tick ゼロ件のために**使われていた。
+         *
+         *   ① **最後の step の鍵だけ**引く（1 人 1 鍵 = 約 11,826 → 往復 約 60 回）
+         *   ② ①を通過した人だけ、**全 step の鍵**を引く（通常ごく少数・いまは 0 件）
+         *
+         * ⚠️ **結論は変わらない。** ①は必要条件（最後の step が無ければ必ず未完了）で、
+         *    最終判定は従来どおり `planPhase2Entry` が全 step 揃っているかで行う。
+         * ⚠️ **`delivered` の累計で足切りしない。** この集合は `claimDelivered`
+         *    （キュー登録時の予約）で作る「送った鍵」で、webhook の `delivered` とは別物。
+         */
+        const probe = buildPhase2Probe({
+          prospects: people, priorCampaign: prior, brand: BRAND, fromEmail,
         });
-        const priorAll = [];
-        for (const [, byStep] of priorKeyMap) for (const [, k] of byStep) priorAll.push(k);
-        const priorFound = priorAll.length === 0 ? [] : await prospectLedger.filterDelivered({
-          brand: BRAND, campaignId: prior.campaignId, version: prior.version, keys: priorAll,
+        const lastFound = (probe.ok && probe.probeKeys.length > 0)
+          ? await prospectLedger.filterDelivered({
+            brand: BRAND, campaignId: prior.campaignId, version: prior.version, keys: probe.probeKeys,
+          })
+          : [];
+        const full = buildPhase2FullKeys({
+          prospects: people, priorCampaign: prior, brand: BRAND, fromEmail,
+          lastStepDelivered: new Set(lastFound), probe,
+        });
+        const priorFound = full.keys.length === 0 ? [] : await prospectLedger.filterDelivered({
+          brand: BRAND, campaignId: prior.campaignId, version: prior.version, keys: full.keys,
+        });
+        const probeStats = describePhase2Probe({
+          probe, survivors: full.survivors, fullKeys: full.keys.length,
         });
         const planned = planPhase2Entry({
           prospects: people, priorCampaign: prior, nextCampaign: base,
@@ -700,6 +730,8 @@ export async function runSequenceTick({
             considered: planned.considered, entered: planned.emails.length,
             capped: planned.capped === true, carriedOver: planned.carriedOver || 0,
             skipped: planned.skipped, 後段接続: priorDecl.afterCampaignId,
+            /** 軽量化の効き（鍵と往復の削減。アドレスも鍵も含めない） */
+            入口の照合: probeStats,
           };
         }
       } catch (e) {
@@ -1511,17 +1543,51 @@ export async function runSequenceTick({
    *    まったく確かめていなかったため、台帳が 1 行も書けていないのに tick は成功扱いで終わり、
    *    次の tick が同じ人をまた積む——を 10 分ごとに繰り返していた。
    */
-  let upsertFailed = null;
+  /**
+   * ── 上限つき並行で書く（2026-09-17）────────────────────────────
+   *
+   * 以前は 10 件ずつ**完全逐次**だった。1 往復 約 1.1 秒・待ちが支配的なので、
+   * 並行にすれば縮む（Airtable の上限 5 req/秒 に対し既定の並行度は **3**）。
+   *
+   * ⚠️ **速さより安全**:
+   *    - 429 / 5xx は**再試行**（従来は 1 回の 429 で tick 全体を巻き戻していた）
+   *    - 4xx は再試行しない（直らない）
+   *    - **締め切りを越えたら新しい batch を始めない**（予約だけ残る事故を増やさない）
+   *    - **1 つでも失敗したら全体を失敗**として下の巻き戻しへ進む（部分成功を成功と呼ばない）
+   * ⚠️ 冪等性は `performUpsert`（`DeliveryKey` で突合）が担保する。再試行しても行は増えない。
+   */
+  const upsertBatches = [];
   for (let i = 0; i < deliveryRecords.length; i += 10) {
-    const chunk = deliveryRecords.slice(i, i + 10);
-    // eslint-disable-next-line no-await-in-loop -- Airtable の upsert は 10 件ずつ
-    const res = await fetch(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(DELIVERIES_TABLE)}`, {
-      method: 'PATCH',
-      headers: { ...auth(KEY), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ performUpsert: { fieldsToMergeOn: ['DeliveryKey'] }, records: chunk }),
-    }).catch(() => null);
-    if (!res || !res.ok) { upsertFailed = res ? `http_${res.status}` : 'network'; break; }
+    upsertBatches.push(deliveryRecords.slice(i, i + 10));
   }
+  const writeResult = await runBoundedBatches({
+    batches: upsertBatches,
+    /**
+     * この campaign の締め切り。**契約（`MAX_CAMPAIGN_MS`）を越えたら新しい batch を始めない。**
+     * `now` はこの campaign の開始時刻（tick が campaign ごとに渡す）。
+     */
+    deadlineMs: Number(now) + MAX_CAMPAIGN_MS,
+    nowMs: Date.now,
+    send: async (chunk) => {
+      const res = await fetch(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(DELIVERIES_TABLE)}`, {
+        method: 'PATCH',
+        headers: { ...auth(KEY), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ performUpsert: { fieldsToMergeOn: ['DeliveryKey'] }, records: chunk }),
+      }).catch(() => null);
+      if (!res) return { ok: false, status: null };
+      const retryAfter = Number(res.headers && res.headers.get && res.headers.get('retry-after'));
+      return {
+        ok: res.ok,
+        status: res.status,
+        retryAfterMs: Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : undefined,
+      };
+    },
+  });
+  const upsertFailed = writeResult.ok
+    ? null
+    : (writeResult.abort === 'deadline_reached'
+      ? 'deadline'
+      : `http_${(writeResult.firstFailure && writeResult.firstFailure.status) || 'network'}`);
 
   /**
    * ⚠️ **読み戻して確かめてから成功と言う。** 例外が出なかったことは「書けた」の証拠にならない。
