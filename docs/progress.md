@@ -818,7 +818,7 @@ live だけ `maxRecipients` を渡しておらず、索引を**無制限に**読
 > **同一 tick での二重走査は採用しない。**
 
 1. 窓で最小 step が 0 sendable になったら
-2. **その tick は 1 件も積まずに終わる**（`window_needs_full_reload` / `sideEffects: none`）
+2. **その tick は 1 件も積まずに終わる**（`window_needs_full_reload`）
 3. campaign 単位で「**次回は全件で始める**」印を保存（`fullRequired`）
 4. 次の scheduled tick は**窓を一切読まず、最初から全件だけ**を 1 回実行
 5. **印の保存に失敗しても後段 step へ進まない**（そのまま 0 件で終わる＝fail closed）
@@ -829,6 +829,53 @@ live だけ `maxRecipients` を渡しておらず、索引を**無制限に**読
 ⚠️ 0 人になった**理由で分岐しない**（既 queued / 出所 / 許可リストのどれでも同じ扱い）。
 ⚠️ **全件の読み直しに失敗したら 1 件も送らない**（`prospect_full_reload_failed`・fail closed）。
 ⚠️ 事前判定のフォールバックも**同じ 1 本の経路**へ寄せた（二重実装しない）。
+
+#### ログは事実どおりに書く — `sideEffects` は `'none'` ではない（2026-09-17 訂正）
+
+`window_needs_full_reload` は**走査カーソル（Redis）を書いている**ので、
+`sideEffects: 'none'` は事実と違っていた。
+
+| 印の保存 | `markedForFullReload` | `sideEffects` |
+|---|---|---|
+| 成功 | `true` | `cursor_state_only` |
+| 失敗 | `false` | `none` |
+
+メール送信・queue 登録・予約（`claimDelivered`）・Airtable 変更は**どちらでも 0**。
+保存に失敗したときに**後段 step へ進まず 0 件で終わる**（fail closed）のも従来どおり。
+
+#### 最重要仕様は「ソース文字列」ではなく「挙動」で固定する（2026-09-17）
+
+上の 8 条は long comment と grep guard で守っていたが、**それでは足りなかった**。
+grep は「その行が書いてあるか」しか見ないので、**書いてあるのに実行されない**を素通りする。
+
+`prospectWindowFallback.behavior.test.mjs` は `globalThis.fetch` を
+**偽の Upstash Redis / Airtable / SendGrid** に差し替えて `runSequenceTick` を
+**実際に動かし**、結果で確かめる（本番へは 1 バイトも接触しない）。
+
+| | 確かめていること |
+|---|---|
+| A | 窓の step2 が後段条件で全員送信不可 → 送信 / Airtable 書込 **0**・**step3 を先行しない**・印だけ保存 |
+| A2 | 窓に step2 が居ない（窓の最小が step3）→ 事前判定で同じく 0 件で終了 |
+| B | 印が立った次の tick は**全件だけ**を読み、**全体の step2** を選ぶ／窓のカーソルを進めず印が外れる |
+| C | 印の保存に失敗しても step3 へ進まず **0 件** |
+| D | 全件の読み込み失敗 → `prospect_full_reload_failed`・送信 **0** |
+| E | 同一 tick で索引を **2 度読まない**（`SMEMBERS` の実行回数で確認） |
+| F | 窓に送れる step2 が居れば**従来どおり step2 を積む**（退行防止） |
+
+意図的な改悪 4 通り（窓ガード無効化 / `sideEffects` 固定 / 印の無視 / 事前判定の無効化）で
+**必ず落ちること**まで確認している。
+
+> ##### ⚠️ この挙動テストが、grep guard を素通りしていた実バグを 1 件見つけた
+>
+> `autoStartDecl` を**宣言より前**（窓の安全判定）で参照していたため、
+> **live の窓つき tick は毎回 TDZ の `ReferenceError` で落ちる**状態だった。
+> 配線 guard は該当行の存在しか見ないので、全部 pass したまま通り抜けていた。
+> `resolveAutoStart` は campaign 定義を読むだけの純粋関数なので、
+> **宣言の読み取りだけ**を安全判定の直前へ前倒しした
+> （入口を開けるかの判定 `autoStartGate` は従来どおり後段のまま）。
+>
+> **教訓**: 送信 0・順序・fail closed のような**最重要仕様は挙動で固定する**。
+> ソース文字列の一致は「配線が外れていないか」の補助であって、保証ではない。
 
 
 #### 第 2 期の入口も取りこぼさない
