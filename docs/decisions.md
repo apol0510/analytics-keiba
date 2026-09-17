@@ -1,4 +1,61 @@
-# 2026-09-18 — 選別配信の実行を SendGrid Marketing Campaigns へ移す（自作エンジンの完成方針を終了）
+# 2026-09-18 — マーケティング基盤の全面整理（AK = 頭脳 / SendGrid = 配送 / KMA = 凍結）
+
+> 同日の「選別配信の実行を SendGrid へ移す」判断（下の項）を**包含する上位決定**。
+> 責務境界の正本は [`docs/MARKETING_PLATFORM.md`](./MARKETING_PLATFORM.md)。
+
+## 決定
+
+| # | 決定 | 単一源 |
+|---|---|---|
+| 1 | 事業目的は「配送基盤の完成」ではなく、**顧客・prospect の行動把握 → 適切な CTA → 有料転換・継続売上** | `docs/spec.md` 先頭 |
+| 2 | **大量メール配送は自作しない。** 原則 **SendGrid Marketing Campaigns** を配送・Automation の専門基盤として利用する | `MARKETING_PLATFORM.md` |
+| 3 | **AK はマーケティングの頭脳**（顧客・prospect・会員状態・購入・行動・CTA 段階・DRM 段階・除外状態・次の訴求・誰を渡すか）を保持する | 同上 §3 |
+| 4 | **SendGrid へ事業ロジックを移さない**（配送と配送反応のみ）。会員・購入・CTA・DRM の正本は事業 repo 側 | 同上 §2 |
+| 5 | **KMA は凍結 → 移行確認後に廃止候補**。新規マーケ機能を追加しない。**いきなり削除しない**（照合・rollback 材料）| 同上 §9 |
+| 6 | **`AK → KMA → SendGrid` の中間層を育てない**。AK も KI も SendGrid を直接使う | 同上 §2 |
+| 7 | **`/admin/premium-plus-eligibility/` は維持・強化**。ただし**今回は大改修しない・URL も変えない**（`/admin/marketing/` は将来の候補にとどめる）| 同上 §4 |
+| 8 | 管理画面の目標データ契約を定義し、**現状あるもの / 無いもの**を明示（サイト全体の訪問計測・marketing stage・次 campaign は**未実装**と記録）| 同上 §4 |
+| 9 | 15,000 件選別は **1 日 1 通 × 最大 10 通**。数週間・数か月に引き伸ばさない | 同上 §5 |
+| 10 | unsubscribe / hard bounce / spam complaint / 永久除外 / 購入済みで不要 / 安全上の理由は**途中でも即除外** | 同上 §5 |
+| 11 | 選別後に残った見込み客へは **週 2 回程度の一斉メルマガ**（約 月 8 回）を基本運用候補とする | 同上 §5 |
+| 12 | **月 1〜2 万円程度（目安 1.6 万円）の外部配送費は事業コストとして許容**。ただし価格・プラン名・上限を**不変の仕様として固定しない**（契約直前に公式条件を確認）| 同上 §6 |
+| 13 | **Build vs Buy を着手前に必ず比較する。** 自前 queue / cron / dispatcher / 独自冪等性・retry・batch・Automation の作り込みで売上施策を止めない | 同上 §7 |
+| 14 | Event Webhook で戻すのは processed / delivered / open / click / bounce / dropped / unsubscribe / spam report。**open 単独を強い購入意向として扱わない** | 同上 §8 |
+| 15 | **旧 AK 自作配送は削除禁止**（既送信判定・二重送信防止・突合・rollback・実績）。**新規強化はしない**。廃止は独立 Phase | 同上 §11 |
+| 16 | **旧配送と SendGrid 本番大量配送を同時 live にしない** | `sendgridCutover.js` |
+| 17 | **KI は今回変更しない**（調査と将来方針の正本整理まで）。将来は KI も SendGrid を直接利用 | `MARKETING_PLATFORM.md` §10 |
+| 18 | SendGrid 上でも **brand / sender / list / segment / unsubscribe group / custom field を AK と KI で分離**する | 同上 §10 |
+| 19 | KMA の廃止は **8 条件をすべて満たしてから独立 Phase で**判断する | 同上 §9 |
+| 20 | 取引メール（決済・認証・サポート・期限通知）は**本方針の対象外**。従来どおり AK が送る | 同上 §2 |
+
+## なぜ方針を変えたか
+
+2026-05 以降、AK は自前の cron / queue / dispatcher / rotation / 冪等性 / retry / batch 制御を
+作り込み続け、その過程で「窓 0 だけを見た誤診」「0 人 step で tick が終わる」「tick 鍵が無く 3 重起動」
+「prospect に `custom_args` を作れず 1 通も送れていなかった」「承認範囲を超えた送信」など、
+**配送の実行そのものの不具合**を繰り返し踏んだ。
+その間、**本来の売上施策（選別 → 反応 → 有料転換）は進んでいない**。
+
+配送は成熟した専門サービスがある領域で、**事業上の差別化にならない**。
+差別化になるのは顧客状態・行動・CTA・DRM の判断で、そこは AK に残る。
+
+## 何を superseded にしたか
+
+| 旧方針 | 扱い |
+|---|---|
+| AK 自作エンジンを主配信経路として完成させる（`spec.md`「完全自動運用」2026-09-14）| **superseded**。同節の**運用原則**（毎回承認・env 開閉・日次 ARMED を要求しない）は有効 |
+| 選別の実行は `cron-campaign-sequence`（`MARKETING_ROLLOUT.md` / `CAMPAIGN_SEQUENCE.md`）| **移行対象**。切替までの現行実装として残すが新規強化しない |
+| KMA は「統合しないが並存する別サービス」（`CUSTOMER_MARKETING.md` ほか）| **凍結 → 廃止候補**（統合しない点は不変）|
+
+## 未確定のまま進めないこと
+
+- SendGrid の**現行の公表条件**（プラン・contact 枠・送信上限・Automation 条件・超過料金）
+- 元 15,509 件の突合（AK 側の所在・状態）と通し番号別の実測件数
+- KMA に**だけ**残っている責務があるか（あれば「残す必要がある責務」として明示して報告する）
+- 管理画面へ追加する行動計測（何を計測してよいか・保持期間・PII の扱いを先に決める）
+
+
+# 2026-09-18 — 選別配信の実行を SendGrid Marketing Campaigns へ移す（移行の実装判断 / 上の全面整理に含まれる）
 
 ## 決定
 

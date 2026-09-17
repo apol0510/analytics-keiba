@@ -7,7 +7,8 @@
 > ⚠️ **本番切替は未実施。** このドキュメントは設計・手順・停止境界の正本であり、
 > 「やった記録」ではない。実施済みかどうかは `docs/progress.md` 先頭の常設ブロックが正本。
 
-関連: [`docs/spec.md`](./spec.md)（確定仕様）/ [`docs/decisions.md`](./decisions.md)（判断の記録）/
+関連: [`MARKETING_PLATFORM.md`](./MARKETING_PLATFORM.md)（**責務境界の正本**）/
+[`docs/spec.md`](./spec.md)（確定仕様）/ [`docs/decisions.md`](./decisions.md)（判断の記録）/
 [`docs/progress.md`](./progress.md)（現在地）/
 [`ENGAGEMENT_SUPPRESSION.md`](../astro-site/docs/ENGAGEMENT_SUPPRESSION.md)（反応・打ち切りの単一源）
 
@@ -32,6 +33,16 @@
 **「反応」の定義は変えない。** 単一源は `prospectPolicy.js` / `prospectEngagement.js` /
 `engagementPolicy.js`。SendGrid で直接取れない反応（購入・ログインなど）は、
 **AK が contact を list から外す**ことで Automation から退出させる。
+
+### 選別のルール（2026-09-18 で明文化）
+
+- **原則 1 日 1 通 × 最大 10 通。** 「10 通を数週間・数か月かけて送る」設計にしない
+- 次のいずれかは**途中でも即除外**する（10 通を待たない）:
+  unsubscribe / hard bounce / spam complaint / 永久除外 /
+  **購入済みで不要になった訴求** / その他 安全上送るべきでない状態
+- 選別後に残った見込み客へは **週 2 回程度の一斉メルマガ**（約 月 8 回）で継続 DRM する
+- KMA（`keiba-marketing-automation`）は**凍結**。照合・rollback 材料として保持するだけで、
+  **移行先にも中継先にもしない**
 
 ---
 
@@ -124,6 +135,20 @@ SendGrid の Automation は**入った contact を 1 通目から順に**送る�
 | bounce / 苦情 / 配信停止 | SendGrid（suppression）| SendGrid 側で自動停止 ＋ AK が `SUPPRESSED` |
 | delivered 10・無反応 | AK（`applyDelivered` の打ち切り）| 10 通目で Automation は終端。AK が `EXHAUSTED` |
 
+### 戻すイベントと扱い
+
+| イベント | 扱い |
+|---|---|
+| `processed` | 送信受理。**配達ではない** |
+| `delivered` | 配達成功。**打ち切り（10 通無反応）の分母** |
+| `open` | 弱いシグナル。**単独で購入意向と見なさない** |
+| `click` | 強いシグナルだが、現状 provider 側でリンク追跡 OFF のため実質 0。当てにしない |
+| `bounce` / `dropped` | 即時除外（`SUPPRESSED`）|
+| `unsubscribe` / `spam report` | 即時除外。**解除しない**（再取り込みでも復活させない）|
+
+反応の**意味づけは AK 側**で行い、サイトアクセス・CTA・購入情報と組み合わせて
+マーケティング状態を判断する（`MARKETING_PLATFORM.md` §8）。
+
 - Event Webhook は **`custom_args` を要求しない**（`planProspectEventUpdates` は
   `email` + `event` だけで判定する）。**Automation 送信でもそのまま動く**
 - `MARKETING_PROSPECT_EVENTS_ENABLED=true` が要る（設定済み・変更しない）
@@ -132,6 +157,19 @@ SendGrid の Automation は**入った contact を 1 通目から順に**送る�
 ---
 
 ## 7. 本番切替（**二重稼働 0**）
+
+### 全体の順序（**この順に進む**）
+
+```text
+現状 read-only 監査 → 対象突合（15,509 件等） → 既送信 step 確定 → suppression 突合
+→ Contacts / List / Segment 設計 → Automation 設計 → テスト対象だけで検証
+→ 旧 AK 本番配送を停止 → 最終 snapshot → production contacts import
+→ Automation 開始 → Event Webhook 確認 → AK 管理画面への状態反映確認
+→ 二重送信 0 確認 → 本番選別開始 → 安定確認後に旧配送基盤 廃止 Phase
+```
+
+⚠️ **旧配送基盤の廃止と KMA の廃止は、選別が安定してからの独立 Phase**。
+切替と同時に消さない（照合・rollback ができなくなる）。
 
 `src/lib/marketing/sendgridCutover.js`
 
@@ -174,8 +212,13 @@ SendGrid の Automation は**入った contact を 1 通目から順に**送る�
 
 ## 8. 費用最小化（2026-09-18 MK 確定）
 
+> **月額およそ 1〜2 万円程度（目安 1.6 万円）の外部配送費は事業コストとして許容する**
+> （開発時間と事故リスクの削減と引き換え）。そのうえで
 > **必要要件を満たす範囲で、常に最小プランを選ぶ。上位プランを先回り契約しない。**
 > 超過料金込みで上位プランより高くなる場合だけ、比較したうえで判断する。
+>
+> ⚠️ **価格・プラン名称・送信上限・Automation 条件を不変の仕様として固定しない**（変動する）。
+> **契約直前に必ず SendGrid 公式の現行条件を確認する。**
 
 ⚠️ **コスト削減のために配信安全性を落とさない。** 送信頻度・選別処理・二重送信防止・
 unsubscribe・suppression・10 通・打ち切り・DRM 接続は**削らない**。

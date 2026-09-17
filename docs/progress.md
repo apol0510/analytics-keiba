@@ -35,15 +35,31 @@
 | 7 | 除外された人が次のキャンペーンでも対象に戻らない | ✅ EXHAUSTED は送信対象の入口・送信直前・再取り込みのいずれでも落ちる（テストで固定）|
 | 8 | 実配信が**継続**している（1 キャンペーンで止まらない）| ✅ **継続している**（2026-09-17 全窓走査で訂正）。`campaign-discount-free` の step2 は **約 170 通/時**で配信中。step3 が 0 なのは **step2 の 5,893 名が先に捌かれる**ため（最小 due step の設計どおり）。⚠️ 2026-09-16 に「止まっていた」と記録したのは**窓 0 だけを見た誤診** |
 
-## 🚚 実行エンジンを SendGrid Marketing Campaigns へ移す（2026-09-18 MK 確定 / **本番切替 未実施**）
+## 🚚 マーケティング基盤の全面整理 — AK = 頭脳 / SendGrid = 配送（2026-09-18 MK 確定 / **本番切替 未実施**）
 
-> **任務は変わらない。変わるのは「誰が送るか」だけ。**
-> 選別（1 日 1 通 → 最大 10 通 → 反応者は退出 → delivered 10 無反応で除外）の**実行**を
-> AK 自作 cron / queue / rotation から **SendGrid Marketing Campaigns Advanced / Custom Automation**
-> へ移す。AK は所在・状態管理と「次に送るメール番号」の確定に責務を絞る。
+> **事業目的は配信システムの開発ではない。** 顧客・prospect の行動を把握し、適切な CTA と
+> メールマーケティングで**有料転換・継続売上**を作ること。
+> したがって**大量メール配送は自作せず** SendGrid Marketing Campaigns に任せ、
+> AK は顧客状態・行動・販売・CTA・DRM の**頭脳**に集中する。
 >
-> 正本: [`docs/spec.md`](./spec.md) 先頭 / [`SENDGRID_MC_MIGRATION.md`](./SENDGRID_MC_MIGRATION.md) /
+> 正本: [`MARKETING_PLATFORM.md`](./MARKETING_PLATFORM.md)（責務境界）/
+> [`docs/spec.md`](./spec.md) 先頭（確定仕様）/
+> [`SENDGRID_MC_MIGRATION.md`](./SENDGRID_MC_MIGRATION.md)（移行手順）/
 > [`decisions.md`](./decisions.md) 2026-09-18
+
+### 確定した構成
+
+| 主体 | 役割 | 状態 |
+|---|---|---|
+| **AK** | 顧客・prospect・会員状態・購入・行動・CTA 段階・DRM 段階・除外状態・次の訴求・誰を渡すか | 現行・強化 |
+| **SendGrid Marketing Campaigns** | Contacts / List / Segment / Automation / 一斉 / drip / 配送反応 | 現行（移行中・**本番未操作**）|
+| **`/admin/premium-plus-eligibility/`** | AK のマーケティング運用画面 | **維持・強化**（今回は改修せず・URL 変更なし）|
+| **KMA** | 過去実績・照合・rollback 材料 | **凍結 → 廃止候補**（新規追加禁止・削除禁止）|
+| **KI** | 将来は自分で SendGrid を使う | **今回は変更なし**（調査・方針整理のみ）|
+| **旧 AK 自作配送** | 既送信判定・二重送信防止・突合・rollback・実績 | **削除禁止**・新規強化なし |
+
+⚠️ **`AK → KMA → SendGrid` の中間層は育てない。** 取引メール（決済・認証・サポート・期限通知）は
+本方針の対象外で、従来どおり AK が送る。
 
 ### 移行決定（確定）
 
@@ -58,7 +74,16 @@
 
 ### 元 15,509 件の現在地（**突合は未実施**）
 
-⚠️ **MK 提示の「元 15,509 件」と、repo 側に記録のある数字はまだ突き合わせていない。**
+**15,509 の出所は特定できた。** repo の記録では
+**「割引キャンペーン 3 本の 1 通目が 3 区分あわせて 15,509 通 届いた」**（2026-08-24〜09-07）。
+つまり 15,509 は**アドレスの一覧の件数ではなく、step1 の配信通数**で、
+Customers 由来と prospect 由来が混ざっている（`docs/marketing-automation-release-runbook.md` 冒頭 /
+本ファイル 2026-09-08 の節）。
+
+⚠️ **内訳はまだ確定していない。** 同じ節の集計表は凍結カーソル時点の値
+（free sent 13,499 / light 5 / premium 13）で、合計が 15,509 と一致しない。
+**どの 15,509 通がどのアドレスへ行ったのか**は read-only の突合が要る。
+
 下表は**既存の記録と稼働中の監視の値**であって、突合済みの確定値ではない。
 
 | 記録 | 値 | 出所 |
@@ -70,7 +95,9 @@
 | 反応済み未登録（ENGAGED）| 122 | 2026-09-16 全窓走査 |
 | 永久除外（blocked）| 18 | 同上 |
 
-**未実施**: 15,509 と上表の差（270 / 468 など）がどこで生じたのかの突合。
+**未実施**: ① step1 の 15,509 通を**アドレス単位**へ展開し、いまの prospect 索引 /
+Customers / 抑止台帳のどこに居るかを突き合わせる ② 既送信 step の確定（通し番号別件数の実測）
+③ suppression（AK 側の抑止台帳と provider 側 suppression）の突合。
 
 ### nextMessageNumber 別の件数（**未測定 / 下表は推定**）
 
@@ -135,9 +162,14 @@
 
 ### 次作業
 
-**この PR の merge → deploy** →（本番 read-only で）`scan` を全窓走査して通し番号別件数を確定 →
-その実測で契約プランを判断（**MK 承認**）→ SendGrid 側の器（field / list / group / Automation）を作る →
-`stop_ak_prospect`（**MK 承認**）→ snapshot → import（**MK 承認**）→ set live（**MK 承認**）。
+1. 正本固定の PR（docs のみ）と実装 PR #572 の **merge → deploy**（**MK 承認**）
+2. 本番 read-only で `scan` を全窓走査し、**通し番号別件数を確定**（`missing` 合計 0 のときだけ確定）
+3. 元 15,509 件の突合（所在・状態）と suppression の突合
+4. SendGrid の**現行の公表条件**を確認し、契約を判断（**MK 承認 / 課金変更**）
+5. SendGrid 側の器を作る（custom field 4 / list 10 / unsubscribe group / Automation）
+6. テスト対象だけで検証 → `stop_ak_prospect`（**MK 承認**）→ snapshot → import（**MK 承認**）
+   → Automation 開始（**MK 承認**）→ Webhook 確認 → 管理画面への反映確認 → **二重送信 0 確認**
+7. 安定確認後に「旧配送基盤 廃止 Phase」「KMA 廃止判断（8 条件）」へ（**独立 Phase**）
 
 ### 本番切替 未実施（明示）
 
@@ -145,6 +177,9 @@
 - SendGrid へは **1 リクエストも出していない**（contact 0 件・list 0 本・Automation 0 本）
 - 旧 AK prospect 配信は**動いたまま**（現行どおり `campaign-discount-free` の step2 が進行中）
 - 課金変更は**していない**
+- **KMA は 1 バイトも触っていない**（凍結の宣言のみ。削除・移行・改修なし）
+- **KI は 1 行も変更していない**（将来方針の記載のみ）
+- `/admin/premium-plus-eligibility/` は**改修していない**（URL も変更なし）
 
 ## 初回実配信の結果（2026-09-14 07:10 UTC / step2・150 通）
 
