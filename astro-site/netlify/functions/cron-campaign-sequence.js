@@ -93,6 +93,10 @@ import {
   buildPhase2Probe, buildPhase2FullKeys, describePhase2Probe,
 } from '../../src/lib/marketing/prospectPhase2EntryProbe.js';
 import { runBoundedBatches } from '../../src/lib/marketing/boundedBatchWrite.js';
+import {
+  createProspectScanStore, nextProspectCursor, resolveProspectPerTick,
+} from '../../src/lib/marketing/prospectScanWindow.js';
+import { isWindowStepDecisionSafe } from '../../src/lib/marketing/prospectWindowStepSafety.js';
 import { FUNNEL_STAGE } from '../../src/lib/drm/drmFunnel.js';
 import { buildSequenceProgress, indexDeliveries } from '../../src/lib/marketing/sequenceProgress.js';
 import {
@@ -574,6 +578,25 @@ export async function runSequenceTick({
    */
   const customerOnly = resolveAudienceSource(base) === AUDIENCE_FILTER.CUSTOMER;
   if (customerOnly) prospectDegraded = 'campaign_is_customer_only';
+  /**
+   * live の窓（下見は自分の窓を持つので使わない）。
+   * ⚠️ カーソルが読めなくても**止めない**。先頭から読むだけ（従来挙動）。
+   */
+  const prospectWindowSize = resolveProspectPerTick(process.env);
+  const prospectScanStore = createProspectScanStore({ redisCmd: makeRedisCmd(process.env) });
+  let prospectCursor = { offset: 0, pass: 0 };
+  /** live で窓を掛けたか（掛けたときだけ「全体と一致するか」を確かめる） */
+  let prospectWindowed = false;
+  /**
+   * ⚠️ **前の tick が「全件で始めろ」と印を残していたら、この tick は窓を一切読まない。**
+   *    同じ tick で「窓 → 全件」と 2 度走査すると、締切ぎりぎりで `claimDelivered` に達し、
+   *    予約だけ残って二度と送られない（既知の重大事故）を開く。
+   */
+  let prospectFullRequired = false;
+  if (!win && wantProspect && !customerOnly) {
+    prospectCursor = await prospectScanStore.read(campaignType);
+    prospectFullRequired = prospectCursor.fullRequired === true;
+  }
   if (wantProspect && !customerOnly && prospectStore && prospectLedger) {
     prospectInputs = await loadProspectSequenceInputs({
       store: prospectStore, deliveryKeyStore: prospectLedger,
@@ -589,8 +612,30 @@ export async function runSequenceTick({
           ? Math.min(4000, Number(win.limit)) : 2000,
         offset: Math.max(0, Number(win.offset) || 0),
         expectDigest: String(win.digest || '').trim() || undefined,
-      } : {}),
+      } : (prospectFullRequired ? {
+        /** ⚠️ 前 tick の印により**この tick は全件だけ**（窓を掛けない・カーソルも進めない） */
+      } : {
+        /**
+         * ── live も窓で切る（2026-09-17）────────────────────────────
+         *
+         * 以前は live だけ `maxRecipients` を渡さず、**索引を無制限に**読んでいた
+         * （全 11,799 件）。これが 1 campaign の**支配項**だった。
+         *
+         * 実測（下見・台帳 2 ページ固定）: 500 件 **8.2 秒** / 1,000 件 **10.1 秒** /
+         * 2,000 件 **12.7 秒** / 4,000 件 **19.0 秒**。どの窓でも `送る` は **50** のまま。
+         *
+         * ⚠️ **live の全件は測れていない**（下見は 4,000 で頭打ち）。
+         *    速くなる幅は主張しない。**「測っていない無制限」を「測った有限」にする**のが目的。
+         * ⚠️ 仕組みは配信台帳の走査（`sequenceLedgerScan`）と同じ。
+         *    続きから読み、読み切ったら先頭へ戻るので**全員に必ず順番が回る**。
+         * ⚠️ **二重送信の防御は変わらない**（`DeliveryKey` が保証。窓が重なっても送信は重複しない）。
+         * ⚠️ **1 tick の送信人数も変わらない**（上限は `SYNC_TICK_MAX_RECIPIENTS` = 50 のまま）。
+         */
+        maxRecipients: prospectWindowSize,
+        offset: prospectCursor.offset,
+      })),
     });
+    if (!win && !prospectFullRequired) prospectWindowed = true;
     if (!prospectInputs.ok) {
       // ⚠️ **Customers 由来の配信は止めない**（既存挙動を変えない）。
       //    prospect だけを 1 人も対象にせず、理由を残して続ける。
@@ -598,7 +643,117 @@ export async function runSequenceTick({
       console.error(`${SEQ_LOG_TAG} prospect を読めないため対象に含めません: ${prospectInputs.reason}`);
       prospectDegraded = prospectInputs.reason;
       prospectInputs = null;
+      /**
+       * ⚠️ **全件で読み直す周回で読めなかったら、1 件も送らない**（fail closed）。
+       *    窓で判断できないから全件に来たのに、その全件も読めていない。
+       *    ここで Customers だけ進めると「全体の最小 due step」を保証できないまま送ることになる。
+       */
+      if (prospectFullRequired) {
+        const body = {
+          ok: false, abort: 'prospect_full_reload_failed',
+          reason: prospectDegraded, sideEffects: 'none',
+          note: '窓では判断できず全件へ落としたが、その全件も読めなかったため 1 件も積んでいません。',
+        };
+        log(body);
+        return body;
+      }
     }
+  }
+  /**
+   * ── 全件を正常に読めたので「全件で始めろ」の印を外す ────────────────
+   * ⚠️ 印を外せなくても送信は続けてよい（次の tick がもう一度全件を読むだけ）。
+   */
+  if (!isDry && prospectFullRequired && prospectInputs) {
+    await prospectScanStore.clearFullRequired(campaignType, { offset: 0, pass: prospectCursor.pass + 1 });
+  }
+
+  /**
+   * ── 入口宣言を**ここで**読む（`sequence.autoStart` を宣言した campaign だけ）──
+   *
+   * ⚠️ 本来の使い道（入口の自動開始）は下の方だが、**この直後の窓の安全判定が
+   *    「選べる最小 step」を出すために先に要る**ので、宣言の読み取りだけ前倒しする。
+   *    `resolveAutoStart` は campaign 定義を読むだけの純粋関数で、I/O もゲート判定も伴わない
+   *    （入口を開けるかどうかは、下の `autoStartGate` が別途決める）。
+   */
+  const autoStartDecl = resolveAutoStart(base);
+
+  /**
+   * ── 窓の判断が「全体の判断」と一致するか確かめる（2026-09-17）──────
+   *
+   * `selectNextDueStep` は**全体で**いちばん小さい due step を選ぶ。
+   * 窓で切ると progress が窓の中だけから作られるので、
+   * **窓 A（step2 due 0 / step3 due あり）を読んだ tick で step3 を先に送ってしまう**
+   * ——全体にはまだ step2 待ちが残っているのに——という順序の逆転が起こり得る。
+   *
+   * 採用してよいのは「窓の最小 due step ＝ 選べる最小 step」のときだけ。
+   * そのときに限り、**それより小さい due は全体のどこにも存在し得ない**。
+   * 証明できないときは**全体を読み直す**（＝従来どおりの全件・fail closed）。
+   *
+   * ⚠️ **性能のために step 順序を変えない。** 遅くなっても順序を優先する。
+   */
+  if (!isDry && prospectInputs && prospectWindowed) {
+    const windowProgress = buildSequenceProgress({
+      campaign: base, selected: prospectInputs.rows, deliveries: prospectInputs.deliveries,
+      brand: BRAND, fromEmail, nowMs: now,
+      providerSuppressed: prospectInputs.providerSuppressed, softBounced: new Set(),
+    });
+    const verdict = isWindowStepDecisionSafe({
+      dueByStep: (windowProgress.ok && windowProgress.summary)
+        ? windowProgress.summary.dueByStep : {},
+      /** 入口が開くかはこの時点で未確定なので、**開く前提**で最小 step を広く取る（保守側） */
+      allowFirstStep: autoStartDecl !== null,
+      windowed: true,
+    });
+    if (!verdict.safe) {
+      /**
+       * ⚠️ 窓のままでは全体の最小 due step を保証できない。
+       *    **この tick は 1 件も積まずに終わり**、次の tick を全件で始める印だけ残す。
+       *
+       * ⚠️ **同じ tick で全件を読み直さない。** 窓で時間を使ったあとに全件を読むと、
+       *    `claimDelivered`（予約）のあと queue / upsert の途中で締切に達し、
+       *    **予約だけ残って二度と送られない**（既知の重大事故）を開く。
+       * ⚠️ 印を書けなくても**後段 step へは進まない**（このまま 0 件で終わる＝fail closed）。
+       */
+      const marked = await prospectScanStore.setFullRequired(campaignType, {
+        offset: prospectCursor.offset, pass: prospectCursor.pass,
+      });
+      const body = {
+        ok: false,
+        abort: 'window_needs_full_reload',
+        reason: verdict.reason,
+        windowMinStep: verdict.windowMinStep,
+        markedForFullReload: marked.ok === true,
+        /**
+         * ⚠️ **事実どおりに書く。** メール送信・queue 登録・予約・Airtable 変更は **0** だが、
+         *    印（Redis の走査カーソル）は書いている。書けなかったときだけ `none`。
+         */
+        sideEffects: marked.ok === true ? 'cursor_state_only' : 'none',
+        note: '窓では全体の最小 due step を保証できないため 1 件も積んでいません。'
+          + '次の tick を全件で始めます（印の保存に失敗しても、この tick では後段 step へ進みません）。',
+      };
+      log(body);
+      return body;
+    }
+  }
+
+  /**
+   * ── 窓を次へ進める（live のみ）────────────────────────────────
+   *
+   * ⚠️ **読めた人数ではなく「索引を何件消費したか」（`scanned`）で進める。**
+   *    値を読めなかった hash があると、読めた人数で進めた分だけ窓が巻き戻る。
+   * ⚠️ 読み切った／索引が縮んだら**先頭へ戻す**（周回を重ねて全員に順番が回る）。
+   * ⚠️ 書けなくても**送信は止めない**。次の tick が同じ位置から読み直すだけで、
+   *    二重送信は `DeliveryKey` が防ぐ。
+   */
+  if (!isDry && prospectInputs && prospectWindowed && prospectScanStore.usable) {
+    const advanced = nextProspectCursor({
+      offset: prospectCursor.offset,
+      scanned: Number(prospectInputs.scanned) || 0,
+      indexSize: Number(prospectInputs.indexSize) || 0,
+      pass: prospectCursor.pass,
+    });
+    await prospectScanStore.write(campaignType, advanced);
+    prospectCursor = advanced;
   }
   const prospectCount = prospectInputs ? prospectInputs.rows.length : 0;
 
@@ -627,7 +782,7 @@ export async function runSequenceTick({
   //    宣言があり、かつ専用ゲート（`MARKETING_DRM_AUTOSTART_ENABLED`）が開いている
   //    ときだけ、**登録が新しい無料会員**を上限つきで入口へ入れる。
   // ⚠️ 読めなければ**入口を開けない**（既存の配信は止めない）。
-  const autoStartDecl = resolveAutoStart(base);
+  // ⚠️ `autoStartDecl` は上（窓の安全判定の直前）で読み終えている。**ここで再宣言しない。**
   /**
    * ── 後段接続（`prior_sequence_done`）─────────────────────────────
    *
@@ -1162,6 +1317,49 @@ export async function runSequenceTick({
    *    同じ step を 2 回試すことはない（無限ループにならない）。
    * ⚠️ 1 人でも積めたらここで抜ける（**選び直しは 0 人のときだけ**）。
    */
+  /**
+   * ⚠️ **窓のまま次の step へ進んではいけない**（2026-09-17 のレビュー指摘）。
+   *
+   * 窓の中に最小 step の due が居ても、後段の安全条件
+   * （既に `queued` / `sent`・出所フィルタ・許可リスト）で**送れる人が 0 人**になることがある。
+   * そこで窓の中だけで次の step へ進むと:
+   *
+   *   窓 A: step2 due 5 人（全員 `queued` で送れない）／ step3 は送れる
+   *   窓 B: 送れる step2 が残っている
+   *
+   * カーソルが窓 A のとき **step3 を先行させてしまう**（全体には step2 が残っているのに）。
+   *
+   * だから窓のときは**次 step へ進まず、全件で読み直して最初からやり直す**。
+   * 次 step の選び直し（`emptySteps`）を許すのは**全件を読んだときだけ**。
+   */
+  if (targets.length === 0 && mayAdvanceStep && prospectWindowed && !isDry) {
+    /**
+     * ⚠️ **この tick は 1 件も積まずに終わる。** 次の tick を全件で始める印だけ残す。
+     *    同じ tick で全件を読み直すと、窓で時間を使ったあとに `claimDelivered` へ達し、
+     *    queue / upsert の途中で締切に掛かって**予約だけ残る**（既知の重大事故）。
+     * ⚠️ 印を書けなくても**後段 step へは進まない**（fail closed）。
+     */
+    const marked = await prospectScanStore.setFullRequired(campaignType, {
+      offset: prospectCursor.offset, pass: prospectCursor.pass,
+    });
+    const body = {
+      ok: false,
+      abort: 'window_needs_full_reload',
+      reason: 'zero_sendable_in_window',
+      step: plan.step,
+      alreadyQueued,
+      markedForFullReload: marked.ok === true,
+      /**
+       * ⚠️ **事実どおりに書く。** メール送信・queue 登録・予約・Airtable 変更は **0** だが、
+       *    印（Redis の走査カーソル）は書いている。書けなかったときだけ `none`。
+       */
+      sideEffects: marked.ok === true ? 'cursor_state_only' : 'none',
+      note: `窓の最小 step（step${plan.step}）が後段条件で 0 人になりました。`
+        + '窓の中だけで次の step へ進むと全体の順序が崩れるため、1 件も積んでいません。',
+    };
+    log(body);
+    return body;
+  }
   if (targets.length === 0 && mayAdvanceStep && attempt + 1 < maxStepAttempts) {
     emptySteps.push(plan.step);
     continue;
