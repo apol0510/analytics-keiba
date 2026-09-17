@@ -35,6 +35,7 @@ import {
   TICK_HARD_LIMIT_MS, MAX_CAMPAIGN_MS, HARD_LIMIT_SAFETY_MARGIN_MS,
 } from './sequenceTickRotation.js';
 import { RECIPIENTS_PER_JOB } from './campaignSend.js';
+import { DEFAULT_CONCURRENCY } from './boundedBatchWrite.js';
 
 const S = 1000;
 
@@ -49,11 +50,23 @@ function roundTrips(n) {
     + Math.ceil(n / READBACK_CHUNK);
 }
 
-/** 本番実測に基づく所要時間の予測（ミリ秒） */
-const READ_MS = 13 * S;             // 下見（読み取りのみ）の実測
-const WRITE_MS_AT_50 = 10 * S;      // live 23s − 下見 13s
+/**
+ * 本番実測に基づく所要時間の予測（ミリ秒）。
+ *
+ * ⚠️ **2026-09-17 に upsert を上限つき並行へ変更したので式も更新した。**
+ *    ジョブ作成と読み戻しは逐次のまま、配信行 upsert だけ並行度ぶん縮む。
+ *    Airtable の 5 req/秒 を超えては速くならないので、**rate 下限と遅い方**を採る。
+ */
+const READ_MS = 13 * S;             // 読み取り phase の実測
+const RTT_MS = 1.1 * S;             // 1 往復の実測
+const AIRTABLE_RPS = 5;             // Airtable の 1 base あたり上限
 function predictMs(n) {
-  return READ_MS + WRITE_MS_AT_50 * (roundTrips(n) / roundTrips(50));
+  const job = Math.ceil(n / RECIPIENTS_PER_JOB);
+  const del = Math.ceil(n / DELIVERY_UPSERT_CHUNK);
+  const rb = Math.ceil(n / READBACK_CHUNK);
+  const parallel = READ_MS + (job + rb) * RTT_MS + (del * RTT_MS) / DEFAULT_CONCURRENCY;
+  const rateFloor = READ_MS + ((job + del + rb) / AIRTABLE_RPS) * S;
+  return Math.max(parallel, rateFloor);
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -68,14 +81,31 @@ test('【最重要】同期 tick の上限は 1 campaign 30 秒の契約に収�
   );
 });
 
-test('【最重要】1 つ上のキリの良い人数（100）は契約を超える（上限が甘くない）', () => {
+test('【最重要】1 つ上のキリの良い人数（150）は契約を超える（上限が甘くない）', () => {
   assert.ok(
-    predictMs(100) > MAX_CAMPAIGN_MS,
-    '100 名が契約に収まるなら上限を見直してよい（予測式ごと再検証すること）',
+    predictMs(150) > MAX_CAMPAIGN_MS,
+    '150 名が契約に収まるなら上限を見直してよい（予測式ごと再検証すること）',
   );
 });
 
-test('【最重要】正本の設計値 500 は同期 tick では打ち切りを超える', () => {
+/**
+ * ⚠️ 計算上は 140 まで収まるが、そこでは余裕が 1 秒を切る。
+ *    予測式には誤差があるので **余裕 5 秒以上**を残す（`HARD_LIMIT_SAFETY_MARGIN_MS` と同じ考え方）。
+ */
+test('【最重要】上限には契約に対する余裕が 5 秒以上ある', () => {
+  const slack = MAX_CAMPAIGN_MS - predictMs(SYNC_TICK_MAX_RECIPIENTS);
+  assert.ok(slack >= HARD_LIMIT_SAFETY_MARGIN_MS,
+    `余裕が ${(slack / S).toFixed(1)}s しかない（${HARD_LIMIT_SAFETY_MARGIN_MS / S}s 以上が必要）`);
+});
+
+test('【重要】並行化しても Airtable の 5 req/秒 より速くはならない', () => {
+  const n = 500;
+  const trips = roundTrips(n);
+  assert.ok(predictMs(n) >= READ_MS + (trips / AIRTABLE_RPS) * S,
+    'rate 下限を下回る予測になっている（並行度を上げれば無限に速くなる、という式になっていないか）');
+});
+
+test('【最重要】正本の設計値 500 は並行化しても打ち切りを超える', () => {
   const ms = predictMs(500);
   assert.ok(ms > TICK_HARD_LIMIT_MS, `500 名が ${(ms / S).toFixed(0)}s で打ち切り内に収まっている`);
   // 予約後・キュー登録中に殺される = 送信漏れ。だから env だけ上げてはいけない
