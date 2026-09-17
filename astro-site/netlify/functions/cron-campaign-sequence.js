@@ -93,6 +93,9 @@ import {
   buildPhase2Probe, buildPhase2FullKeys, describePhase2Probe,
 } from '../../src/lib/marketing/prospectPhase2EntryProbe.js';
 import { runBoundedBatches } from '../../src/lib/marketing/boundedBatchWrite.js';
+import {
+  createProspectScanStore, nextProspectCursor, resolveProspectPerTick,
+} from '../../src/lib/marketing/prospectScanWindow.js';
 import { FUNNEL_STAGE } from '../../src/lib/drm/drmFunnel.js';
 import { buildSequenceProgress, indexDeliveries } from '../../src/lib/marketing/sequenceProgress.js';
 import {
@@ -574,6 +577,16 @@ export async function runSequenceTick({
    */
   const customerOnly = resolveAudienceSource(base) === AUDIENCE_FILTER.CUSTOMER;
   if (customerOnly) prospectDegraded = 'campaign_is_customer_only';
+  /**
+   * live の窓（下見は自分の窓を持つので使わない）。
+   * ⚠️ カーソルが読めなくても**止めない**。先頭から読むだけ（従来挙動）。
+   */
+  const prospectWindowSize = resolveProspectPerTick(process.env);
+  const prospectScanStore = createProspectScanStore({ redisCmd: makeRedisCmd(process.env) });
+  let prospectCursor = { offset: 0, pass: 0 };
+  if (!win && wantProspect && !customerOnly) {
+    prospectCursor = await prospectScanStore.read(campaignType);
+  }
   if (wantProspect && !customerOnly && prospectStore && prospectLedger) {
     prospectInputs = await loadProspectSequenceInputs({
       store: prospectStore, deliveryKeyStore: prospectLedger,
@@ -589,7 +602,26 @@ export async function runSequenceTick({
           ? Math.min(4000, Number(win.limit)) : 2000,
         offset: Math.max(0, Number(win.offset) || 0),
         expectDigest: String(win.digest || '').trim() || undefined,
-      } : {}),
+      } : {
+        /**
+         * ── live も窓で切る（2026-09-17）────────────────────────────
+         *
+         * 以前は live だけ `maxRecipients` を渡さず、**索引を無制限に**読んでいた
+         * （全 11,799 件）。これが 1 campaign の**支配項**だった。
+         *
+         * 実測（下見・台帳 2 ページ固定）: 500 件 **8.2 秒** / 1,000 件 **10.1 秒** /
+         * 2,000 件 **12.7 秒** / 4,000 件 **19.0 秒**。どの窓でも `送る` は **50** のまま。
+         *
+         * ⚠️ **live の全件は測れていない**（下見は 4,000 で頭打ち）。
+         *    速くなる幅は主張しない。**「測っていない無制限」を「測った有限」にする**のが目的。
+         * ⚠️ 仕組みは配信台帳の走査（`sequenceLedgerScan`）と同じ。
+         *    続きから読み、読み切ったら先頭へ戻るので**全員に必ず順番が回る**。
+         * ⚠️ **二重送信の防御は変わらない**（`DeliveryKey` が保証。窓が重なっても送信は重複しない）。
+         * ⚠️ **1 tick の送信人数も変わらない**（上限は `SYNC_TICK_MAX_RECIPIENTS` = 50 のまま）。
+         */
+        maxRecipients: prospectWindowSize,
+        offset: prospectCursor.offset,
+      }),
     });
     if (!prospectInputs.ok) {
       // ⚠️ **Customers 由来の配信は止めない**（既存挙動を変えない）。
@@ -599,6 +631,25 @@ export async function runSequenceTick({
       prospectDegraded = prospectInputs.reason;
       prospectInputs = null;
     }
+  }
+  /**
+   * ── 窓を次へ進める（live のみ）────────────────────────────────
+   *
+   * ⚠️ **読めた人数ではなく「索引を何件消費したか」（`scanned`）で進める。**
+   *    値を読めなかった hash があると、読めた人数で進めた分だけ窓が巻き戻る。
+   * ⚠️ 読み切った／索引が縮んだら**先頭へ戻す**（周回を重ねて全員に順番が回る）。
+   * ⚠️ 書けなくても**送信は止めない**。次の tick が同じ位置から読み直すだけで、
+   *    二重送信は `DeliveryKey` が防ぐ。
+   */
+  if (!isDry && prospectInputs && prospectScanStore.usable) {
+    const advanced = nextProspectCursor({
+      offset: prospectCursor.offset,
+      scanned: Number(prospectInputs.scanned) || 0,
+      indexSize: Number(prospectInputs.indexSize) || 0,
+      pass: prospectCursor.pass,
+    });
+    await prospectScanStore.write(campaignType, advanced);
+    prospectCursor = advanced;
   }
   const prospectCount = prospectInputs ? prospectInputs.rows.length : 0;
 
