@@ -1746,16 +1746,26 @@ export default async function handler() {
     const ids = rotateCampaigns({ ids: declared, nowMs: startedAt });
     const results = [];
     const skippedForTime = [];
+    /**
+     * ⚠️ **この tick で実際に掛かった時間**（ミリ秒）。次の campaign を始めてよいかの見積りに使う。
+     *
+     * 固定値（旧 `MIN_MS_FOR_NEXT_CAMPAIGN` = 50 秒）は予算 55 秒との差が 5 秒しかなく、
+     * 1 本目が 5 秒を超えた時点で 2 本目以降が**必ず**止まっていた
+     * （＝実質 1 tick 1 本。campaign 7 本なら 1 本の番は 70 分に 1 回）。
+     * 実測から見積もれば、**安全余裕を保ったまま** 1 tick で複数本を進められる。
+     */
+    const observedMs = [];
     for (const campaignId of ids) {
       /**
        * ⚠️ 残り時間が足りなければ**始めない**。途中で打ち切られると
        *    予約だけ取れて登録されない状態を作りかねない。
        *    始めなかった campaign は**黙って落とさず**名前を残す（次の tick で先頭に来る）。
        */
-      if (results.length > 0 && !hasTimeForAnother({ startedAtMs: startedAt, nowMs: Date.now() })) {
+      if (results.length > 0 && !hasTimeForAnother({ startedAtMs: startedAt, nowMs: Date.now(), observedMs })) {
         skippedForTime.push(campaignId);
         continue;
       }
+      const campaignStartedAt = Date.now();
       try {
         // eslint-disable-next-line no-await-in-loop -- campaign ごとに順番に進める
         results.push(await runSequenceTick({ env: process.env, now: Date.now(), campaignId }));
@@ -1763,6 +1773,9 @@ export default async function handler() {
         // 値・アドレスはログに出さない（理由コードだけ）。1 本落ちても他は続ける
         log({ ok: false, campaignId, error: String(e && e.message ? e.message : 'unknown') });
         results.push({ ok: false, campaignId, error: 'tick_failed', sideEffects: 'unknown' });
+      } finally {
+        /** ⚠️ 失敗した回も数える（失敗のほうが遅いことがある） */
+        observedMs.push(Date.now() - campaignStartedAt);
       }
     }
     const enqueued = results.reduce((n, r) => n + (Number(r && r.enqueued) || 0), 0);
