@@ -197,8 +197,11 @@ import { summarizeCohortExclusion } from '../../src/lib/marketing/importCohort.j
 import {
   isSequenceCampaign, resolveSequenceStep, describeSequence, resolveMaxSends, getSequenceSteps,} from '../../src/lib/marketing/campaignSequence.js';
 import {
-  buildSequenceProgress, selectNextDueStep, SEQ_STOP_LABEL, indexDeliveries,
+  buildSequenceProgress, selectNextDueStep, SEQ_STOP_LABEL, indexDeliveries, SEQ_STATUS,
 } from '../../src/lib/marketing/sequenceProgress.js';
+import {
+  classifyLedgerConsistency, deliveredHistogram, summarizeJobStatuses,
+} from '../../src/lib/marketing/prospectLedgerConsistency.js';
 import { readSequenceAutoState } from '../../src/lib/marketing/sequenceAutomation.js';
 import {
   AUTOGRANT_SKIP_LABEL, HARD_MAX_BATCH_SIZE,
@@ -924,6 +927,7 @@ export const handler = async (event) => {
     if (action === 'eventSinkHealth') return await handleEventSinkHealth({ KEY, BASE, now });
     if (action === 'prospectIntake') return await handleProspectIntake({ KEY, BASE, now, req });
     if (action === 'prospectSequenceCheck') return await handleProspectSequenceCheck({ now, req });
+    if (action === 'prospectLedgerAudit') return await handleProspectLedgerAudit({ KEY, BASE, now, req });
     if (action === 'sequenceTickPreview') return await handleSequenceTickPreview({ now, req });
     if (action === 'sequenceCanaryRun') return await handleSequenceCanaryRun({ now, req });
     if (action === 'prospectClaimRelease') return await handleProspectClaimRelease({ KEY, BASE, now, req });
@@ -6951,4 +6955,217 @@ async function handleSequenceCanaryRun({ now, req }) {
     note: '受け付けました。実行は sequence-canary-background が 1 回だけ行います。'
       + '結果は ScheduledEmails / prospectSequenceCheck / [sequence-canary-bg] のログで確認してください。',
   });
+}
+
+/**
+ * ── prospectLedgerAudit — **Redis の予約と Airtable の配信行のズレを数える**（read-only）
+ *
+ * ## なぜ要るか（2026-09-17 本番）
+ *
+ * `campaign-discount-free` の tick が毎回
+ * `window_needs_full_reload` / `zero_sendable_in_window` / **`alreadyQueued: 87〜97`**
+ * を出す。`alreadyQueued` は `fetchActiveDeliveryKeys`（**Airtable**）の判定だが、
+ * **prospect は Airtable に 1 行も書かない**（2026-08-27 MK 確定）。
+ * つまり prospect に active な行があるなら、それは移行前の古い行か、送り切らずに残った行。
+ *
+ * この経路は「**数えるだけ**」。直さない・消さない・送らない。
+ *
+ * ⚠️ 返すのは**件数だけ**。アドレス・`DeliveryKey`・recordId は 1 つも返さない。
+ * ⚠️ 書き込みは 0。production の状態を変えない。
+ * ⚠️ ページ打ち切り・索引の変化は**成功として扱わない**（`complete: false` / 409）。
+ */
+async function handleProspectLedgerAudit({ KEY, BASE, now, req }) {
+  const campaignId = String(req.campaignId || '').trim();
+  const campaign = getCampaign(campaignId, { includeDisabled: true });
+  if (!campaign || !isSequenceCampaign(campaign)) {
+    return json(400, { error: '連続配信のキャンペーンを指定してください', sideEffects: 'none' });
+  }
+  const steps = getSequenceSteps(campaign).map((x) => x.stepNumber);
+  const step = Number(req.step);
+  if (!Number.isInteger(step) || !steps.includes(step)) {
+    return json(400, { error: `step は ${steps.join(' / ')} のいずれかを指定してください`, sideEffects: 'none' });
+  }
+  const sending = resolveSequenceStep(campaign, step);
+  if (!sending) return json(400, { error: '未知のステップです', sideEffects: 'none' });
+  const fromEmail = getBrandConfig(BRAND).defaultFromEmail;
+
+  let store; let ledger;
+  try {
+    store = createProspectStore({
+      cmd: makeRedisCmd(process.env), pipeline: makeRedisPipeline(process.env),
+    });
+    ledger = createDeliveryKeyStore({
+      redisCmd: makeRedisCmd(process.env), redisPipeline: makeRedisPipeline(process.env),
+    });
+  } catch {
+    return json(503, { error: 'Redis へ接続できません', sideEffects: 'none' });
+  }
+
+  /**
+   * 索引の窓。**1 万件超を 1 回で見ると実行時間を超える**（2026-08-27 に本番で 504）。
+   * 2 窓目以降は 1 窓目の `digest` を必ず渡す（途中で集合が変わったら最初からやり直す）。
+   */
+  const limit = Math.min(2000, Math.max(1, Number(req.limit) || 1000));
+  const from = Math.max(0, Number(req.offset) || 0);
+  const expectDigest = String(req.digest || '').trim() || undefined;
+  const inputs = await loadProspectSequenceInputs({
+    store, deliveryKeyStore: ledger, campaign, brand: BRAND, fromEmail, nowMs: now,
+    maxRecipients: limit, offset: from, expectDigest,
+  });
+  if (!inputs.ok) {
+    const changed = inputs.reason === AUDIENCE_FAIL.INDEX_CHANGED;
+    return json(changed ? 409 : 500, {
+      error: changed
+        ? '読んでいる間に prospect の集合が変わりました。最初からやり直してください'
+        : 'prospect を読み切れませんでした',
+      reason: inputs.reason, digest: inputs.digest || null, sideEffects: 'none',
+    });
+  }
+
+  const progress = buildSequenceProgress({
+    campaign, selected: inputs.rows, deliveries: inputs.deliveries,
+    brand: BRAND, fromEmail, nowMs: now,
+    providerSuppressed: inputs.providerSuppressed, softBounced: new Set(),
+    engagementByEmail: inputs.engagementByEmail,
+  });
+  if (!progress.ok) {
+    return json(500, { error: '進行を組み立てられませんでした', sideEffects: 'none' });
+  }
+
+  // ① いまその step が due と判定されている人（＝tick が積もうとする相手）
+  const dueRows = progress.rows.filter(
+    (r) => r.status === SEQ_STATUS.DUE && r.nextStep === step && r.email,
+  );
+  const keyByEmail = new Map();
+  for (const r of dueRows) {
+    const key = computeCampaignDeliveryKey({
+      campaign: sending, recipientEmail: r.email, brand: BRAND, fromEmail,
+    });
+    if (key) keyByEmail.set(r.email, key);
+  }
+  const keys = [...keyByEmail.values()];
+
+  // ② Redis の予約集合（**読めなければ数えない**。0 件と混同しない）
+  let redisPresent = null;
+  if (keys.length > 0) {
+    try {
+      const found = await ledger.filterDelivered({
+        brand: BRAND, campaignId: campaign.campaignId, version: campaign.version, keys,
+      });
+      if (!Array.isArray(found)) throw new Error('unexpected_shape');
+      redisPresent = new Set(found);
+    } catch { redisPresent = null; }
+  } else {
+    redisPresent = new Set();
+  }
+  if (redisPresent === null) {
+    return json(503, {
+      error: 'Redis の予約集合を読めませんでした（数えません）',
+      reason: 'redis_unavailable', sideEffects: 'none',
+    });
+  }
+
+  // ③ Airtable の配信行（**全 Status**。打ち切りは成功にしない）
+  const airtable = await fetchDeliveryStatusByKeys({ KEY, BASE, keys });
+  if (!airtable.complete) {
+    return json(502, {
+      error: 'CampaignDeliveries を読み切れませんでした（部分集計は出しません）',
+      reason: airtable.reason, sideEffects: 'none',
+    });
+  }
+
+  const counts = classifyLedgerConsistency({
+    keys, redisPresent, airtableStatusByKey: airtable.statusByKey,
+  });
+
+  // ④ prospect 側の delivered 累計（打ち切り 10 通の分母）
+  const deliveredByEmail = new Map(
+    (inputs.prospects || []).map((p) => [String(p.email || '').trim().toLowerCase(), p.delivered]),
+  );
+  const hist = deliveredHistogram(dueRows.map((r) => deliveredByEmail.get(r.email)));
+
+  // ⑤ ジョブ側（任意。読み切れなければ complete:false で返す）
+  let jobs = null;
+  if (req.jobs === true) jobs = await countJobStatuses({ KEY, BASE, campaignId: campaign.campaignId });
+
+  const nextOffset = from + (Number(inputs.scanned) || 0) < (Number(inputs.indexSize) || 0)
+    ? from + (Number(inputs.scanned) || 0) : null;
+
+  return json(200, {
+    mode: 'prospect-ledger-audit',
+    sideEffects: 'none',
+    campaignId: campaign.campaignId,
+    version: campaign.version,
+    step,
+    window: {
+      offset: from, limit, indexSize: inputs.indexSize, digest: inputs.digest,
+      returned: (inputs.prospects || []).length, scanned: inputs.scanned, nextOffset,
+    },
+    /** この窓で「いま step が due」と判定された人数 */
+    dueInWindow: dueRows.length,
+    counts,
+    delivered: hist,
+    jobs,
+    notice: '読み取りのみです（書き込み 0）。件数だけを返し、アドレス・DeliveryKey・recordId は返しません。',
+  });
+}
+
+/**
+ * `DeliveryKey` を名指しして **Status をそのまま**引く（`fetchActiveDeliveryKeys` は
+ * queued / sent しか返さないので、診断では使えない）。
+ *
+ * ⚠️ 1 件でも取り切れなければ `complete: false`（**部分集計を出さない**）。
+ */
+async function fetchDeliveryStatusByKeys({ KEY, BASE, keys }) {
+  const list = [...new Set((keys || []).map((k) => String(k || '').trim()).filter(Boolean))];
+  const statusByKey = new Map();
+  /**
+   * ⚠️ **tick と同じ問い合わせ方にそろえる。** `fetchActiveDeliveryKeys`
+   *    （`cron-campaign-sequence`）は `CampaignType` で絞らず `DeliveryKey` だけで引く。
+   *    ここで `CampaignType` を足すと、列が空の古い行を取りこぼして
+   *    「Airtable には無い」と誤って数えてしまう。
+   */
+  for (const group of chunkList(list, 20)) {
+    const safe = group.filter((k) => /^[a-f0-9]{64}$/.test(k));
+    if (safe.length !== group.length) return { complete: false, reason: 'delivery_key_shape_invalid', statusByKey };
+    if (safe.length === 0) continue;
+    const formula = `OR(${safe.map((k) => `{DeliveryKey}='${k}'`).join(',')})`;
+    try {
+      // eslint-disable-next-line no-await-in-loop -- 20 件ずつの名指し取得
+      const rows = await fetchAllStrict({
+        KEY, BASE, table: DELIVERIES_TABLE, filterByFormula: formula,
+        fields: ['DeliveryKey', 'Status'], maxPages: 5,
+      });
+      for (const rec of rows) {
+        const f = rec.fields || {};
+        const k = String(f.DeliveryKey || '').trim();
+        if (k) statusByKey.set(k, String(f.Status || ''));
+      }
+    } catch (e) {
+      // 打ち切り・HTTP エラーは**成功にしない**
+      return { complete: false, reason: String((e && e.message) || 'fetch_failed'), statusByKey };
+    }
+  }
+  return { complete: true, reason: null, statusByKey };
+}
+
+/**
+ * `ScheduledEmails` の Status 別件数（この campaign のジョブだけ）。
+ *
+ * ⚠️ 40 ページで打ち切られたら `complete: false`。**「PENDING 0 件」と読める形にしない。**
+ */
+async function countJobStatuses({ KEY, BASE, campaignId }) {
+  try {
+    const rows = await fetchAllStrict({
+      KEY, BASE, table: SCHEDULED_TABLE,
+      filterByFormula: `{TargetPlan}='campaign:${campaignId}'`,
+      fields: ['Status'],
+    });
+    return summarizeJobStatuses({ statuses: rows.map((r) => (r.fields || {}).Status), truncated: false });
+  } catch (e) {
+    return {
+      ...summarizeJobStatuses({ statuses: [], truncated: true }),
+      reason: String((e && e.message) || 'fetch_failed'),
+    };
+  }
 }
