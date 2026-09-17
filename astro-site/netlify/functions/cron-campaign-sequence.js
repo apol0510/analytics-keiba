@@ -668,6 +668,16 @@ export async function runSequenceTick({
   }
 
   /**
+   * ── 入口宣言を**ここで**読む（`sequence.autoStart` を宣言した campaign だけ）──
+   *
+   * ⚠️ 本来の使い道（入口の自動開始）は下の方だが、**この直後の窓の安全判定が
+   *    「選べる最小 step」を出すために先に要る**ので、宣言の読み取りだけ前倒しする。
+   *    `resolveAutoStart` は campaign 定義を読むだけの純粋関数で、I/O もゲート判定も伴わない
+   *    （入口を開けるかどうかは、下の `autoStartGate` が別途決める）。
+   */
+  const autoStartDecl = resolveAutoStart(base);
+
+  /**
    * ── 窓の判断が「全体の判断」と一致するか確かめる（2026-09-17）──────
    *
    * `selectNextDueStep` は**全体で**いちばん小さい due step を選ぶ。
@@ -713,7 +723,11 @@ export async function runSequenceTick({
         reason: verdict.reason,
         windowMinStep: verdict.windowMinStep,
         markedForFullReload: marked.ok === true,
-        sideEffects: 'none',
+        /**
+         * ⚠️ **事実どおりに書く。** メール送信・queue 登録・予約・Airtable 変更は **0** だが、
+         *    印（Redis の走査カーソル）は書いている。書けなかったときだけ `none`。
+         */
+        sideEffects: marked.ok === true ? 'cursor_state_only' : 'none',
         note: '窓では全体の最小 due step を保証できないため 1 件も積んでいません。'
           + '次の tick を全件で始めます（印の保存に失敗しても、この tick では後段 step へ進みません）。',
       };
@@ -768,7 +782,7 @@ export async function runSequenceTick({
   //    宣言があり、かつ専用ゲート（`MARKETING_DRM_AUTOSTART_ENABLED`）が開いている
   //    ときだけ、**登録が新しい無料会員**を上限つきで入口へ入れる。
   // ⚠️ 読めなければ**入口を開けない**（既存の配信は止めない）。
-  const autoStartDecl = resolveAutoStart(base);
+  // ⚠️ `autoStartDecl` は上（窓の安全判定の直前）で読み終えている。**ここで再宣言しない。**
   /**
    * ── 後段接続（`prior_sequence_done`）─────────────────────────────
    *
@@ -1335,7 +1349,11 @@ export async function runSequenceTick({
       step: plan.step,
       alreadyQueued,
       markedForFullReload: marked.ok === true,
-      sideEffects: 'none',
+      /**
+       * ⚠️ **事実どおりに書く。** メール送信・queue 登録・予約・Airtable 変更は **0** だが、
+       *    印（Redis の走査カーソル）は書いている。書けなかったときだけ `none`。
+       */
+      sideEffects: marked.ok === true ? 'cursor_state_only' : 'none',
       note: `窓の最小 step（step${plan.step}）が後段条件で 0 人になりました。`
         + '窓の中だけで次の step へ進むと全体の順序が崩れるため、1 件も積んでいません。',
     };

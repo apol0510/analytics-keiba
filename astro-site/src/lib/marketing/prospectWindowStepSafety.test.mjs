@@ -17,6 +17,14 @@
  *
  * ⚠️ **性能改善のために step 順序を変えてはいけない。**
  *    証明できないときは全件へ落とす（fail closed）。
+ *
+ * ## このファイルの位置づけ（重要）
+ *
+ * ここにあるのは**純粋関数の検証**と、配線が外れていないかを見る**ソース文字列の確認**。
+ * 文字列が一致しても「実行されている」ことの証明にはならないので、
+ * **最重要仕様は挙動テスト `prospectWindowFallback.behavior.test.mjs` が固定する**
+ * （`runSequenceTick` を偽の Redis / Airtable / SendGrid で実際に動かし、
+ * 送信 0・印だけ保存・次 tick は全件・失敗時 fail closed を結果で確かめる）。
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -126,7 +134,13 @@ test('【最重要】証明できないときは、そのtickで 1 件も積ま�
   const i = CRON.indexOf('if (!verdict.safe)');
   const body = CRON.slice(i, i + 1200);
   assert.match(body, /abort: 'window_needs_full_reload'/, '中止していない');
-  assert.match(body, /sideEffects: 'none'/, '副作用ゼロと言い切れていない');
+  /**
+   * ⚠️ 送信・queue・予約・Airtable 変更は **0** だが、**印（走査カーソル）は書いている**。
+   *    `'none'` と言い切るのは事実と違うので、書けたときだけ `cursor_state_only`。
+   *    **実際にその値が出ること**は挙動テスト（`prospectWindowFallback.behavior.test.mjs`）が確かめる。
+   */
+  assert.match(body, /sideEffects: marked\.ok === true \? 'cursor_state_only' : 'none'/,
+    '印を書いたのに副作用ゼロと言っている（または書けたかを区別していない）');
   assert.match(body, /setFullRequired\(/, '次の tick を全件で始める印を残していない');
 });
 
@@ -170,7 +184,13 @@ test('【最重要】窓で最小 step が後段条件 0 人になったら、�
   const body = CRON.slice(i, i + 1200);
   assert.match(body, /abort: 'window_needs_full_reload'/, '中止していない');
   assert.match(body, /reason: 'zero_sendable_in_window'/, '理由を残していない');
-  assert.match(body, /sideEffects: 'none'/, '副作用ゼロと言い切れていない');
+  /**
+   * ⚠️ 送信・queue・予約・Airtable 変更は **0** だが、**印（走査カーソル）は書いている**。
+   *    `'none'` と言い切るのは事実と違うので、書けたときだけ `cursor_state_only`。
+   *    **実際にその値が出ること**は挙動テスト（`prospectWindowFallback.behavior.test.mjs`）が確かめる。
+   */
+  assert.match(body, /sideEffects: marked\.ok === true \? 'cursor_state_only' : 'none'/,
+    '印を書いたのに副作用ゼロと言っている（または書けたかを区別していない）');
   assert.match(body, /setFullRequired\(/, '次の tick を全件で始める印を残していない');
 });
 
@@ -232,7 +252,13 @@ test('【最重要】窓の事前判定も同じ「印を残して 0 件で終�
   const body = CRON.slice(i, i + 1200);
   assert.match(body, /setFullRequired\(/, '事前判定が別経路になっている');
   assert.match(body, /abort: 'window_needs_full_reload'/, '事前判定が中止していない');
-  assert.match(body, /sideEffects: 'none'/, '副作用ゼロと言い切れていない');
+  /**
+   * ⚠️ 送信・queue・予約・Airtable 変更は **0** だが、**印（走査カーソル）は書いている**。
+   *    `'none'` と言い切るのは事実と違うので、書けたときだけ `cursor_state_only`。
+   *    **実際にその値が出ること**は挙動テスト（`prospectWindowFallback.behavior.test.mjs`）が確かめる。
+   */
+  assert.match(body, /sideEffects: marked\.ok === true \? 'cursor_state_only' : 'none'/,
+    '印を書いたのに副作用ゼロと言っている（または書けたかを区別していない）');
 });
 
 /**
