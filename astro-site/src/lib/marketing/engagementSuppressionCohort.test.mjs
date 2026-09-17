@@ -28,8 +28,7 @@ import { buildEngagementView } from './engagementGuard.js';
 import { hashEmailForSignal } from './engagementSignalStore.js';
 import {
   readSequenceGates, readSequenceAutoState, resolveMaxRecipientsPerTick,
-  MAX_RECIPIENTS_PER_TICK, SEQUENCE_ENV,
-} from './sequenceAutomation.js';
+  MAX_RECIPIENTS_PER_TICK, SEQUENCE_ENV, SYNC_TICK_MAX_RECIPIENTS } from './sequenceAutomation.js';
 
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
 const DISPATCH = read('../../../netlify/functions/marketing-campaign-dispatch.js');
@@ -270,12 +269,26 @@ test('【要件】1 tick の上限が 15,000 名を同じ日に配り切れる�
   assert.ok(Math.ceil(15000 / MAX_RECIPIENTS_PER_TICK) * 10 <= 24 * 60, '同じ日に終わらない');
 });
 
-test('1 tick の上限は env で下げられる（壊れた値は既定へ）', () => {
-  assert.equal(resolveMaxRecipientsPerTick({ MARKETING_SEQUENCE_MAX_PER_TICK: '100' }), 100);
+/**
+ * ⚠️ **2026-09-17 に上限の意味が変わった。**
+ *    `MAX_RECIPIENTS_PER_TICK`（500）は**正本の設計値**だが、同期の scheduled function
+ *    （60 秒打ち切り／1 campaign 30 秒契約）には**物理的に入らない**
+ *    （500 名 = 逐次 Airtable 往復 85 回 ≒ 107 秒）。
+ *    そこで同期経路は `SYNC_TICK_MAX_RECIPIENTS` で頭打ちにする。
+ *    500 を使うなら Background（15 分）へ移すこと。詳細は `syncTickRecipientCap.test.mjs`。
+ */
+test('1 tick の上限は env で下げられる（壊れた値は同期経路の安全上限へ）', () => {
+  // 上限以下はそのまま通る
+  assert.equal(resolveMaxRecipientsPerTick({ MARKETING_SEQUENCE_MAX_PER_TICK: '50' }), 50);
+  // 上限を超える指定は頭打ち（打ち切り → 送信漏れを防ぐ）
+  assert.equal(resolveMaxRecipientsPerTick({ MARKETING_SEQUENCE_MAX_PER_TICK: '100' }),
+    SYNC_TICK_MAX_RECIPIENTS);
   for (const bad of ['0', '-1', 'abc', '', undefined, '99999']) {
     assert.equal(resolveMaxRecipientsPerTick({ MARKETING_SEQUENCE_MAX_PER_TICK: bad }),
-      MAX_RECIPIENTS_PER_TICK, String(bad));
+      SYNC_TICK_MAX_RECIPIENTS, String(bad));
   }
+  // 正本の設計値そのものは変えていない
+  assert.equal(MAX_RECIPIENTS_PER_TICK, 500);
 });
 
 test('【配線】cron が 10 分間隔で動く（1 日 1 回では配り切れない）', () => {
