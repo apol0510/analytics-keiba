@@ -7013,10 +7013,29 @@ async function handleProspectLedgerAudit({ KEY, BASE, now, req }) {
     maxRecipients: limit, offset: from, expectDigest,
   });
   if (!inputs.ok) {
-    const changed = inputs.reason === AUDIENCE_FAIL.INDEX_CHANGED;
-    return json(changed ? 409 : 500, {
-      error: changed
-        ? '読んでいる間に prospect の集合が変わりました。最初からやり直してください'
+    /**
+     * ⚠️ **理由ごとに分ける。** 一律 500 だと「Redis が読めなければ 503」という契約と
+     *    実装がズレる（呼び出し側が再試行してよい相手かを判断できない）。
+     *    - 索引が途中で変わった → **409**（最初からやり直す）
+     *    - Redis へ届かない / 読めない → **503**（時間を置いて再試行）
+     *    - それ以外（組み立て失敗など）→ 500
+     * ⚠️ どの場合も**部分結果を 200 で返さない**。
+     */
+    const REDIS_ORIGIN = [
+      AUDIENCE_FAIL.INDEX_UNAVAILABLE,
+      AUDIENCE_FAIL.LOAD_FAILED,
+      AUDIENCE_FAIL.LEDGER_UNAVAILABLE,
+    ];
+    if (inputs.reason === AUDIENCE_FAIL.INDEX_CHANGED) {
+      return json(409, {
+        error: '読んでいる間に prospect の集合が変わりました。最初からやり直してください',
+        reason: inputs.reason, digest: inputs.digest || null, sideEffects: 'none',
+      });
+    }
+    const redisOrigin = REDIS_ORIGIN.includes(inputs.reason);
+    return json(redisOrigin ? 503 : 500, {
+      error: redisOrigin
+        ? 'Redis を読めませんでした（数えません）'
         : 'prospect を読み切れませんでした',
       reason: inputs.reason, digest: inputs.digest || null, sideEffects: 'none',
     });
@@ -7075,7 +7094,7 @@ async function handleProspectLedgerAudit({ KEY, BASE, now, req }) {
   }
 
   const counts = classifyLedgerConsistency({
-    keys, redisPresent, airtableStatusByKey: airtable.statusByKey,
+    keys, redisPresent, airtableStatusesByKey: airtable.statusesByKey,
   });
 
   // ④ prospect 側の delivered 累計（打ち切り 10 通の分母）
@@ -7118,7 +7137,14 @@ async function handleProspectLedgerAudit({ KEY, BASE, now, req }) {
  */
 async function fetchDeliveryStatusByKeys({ KEY, BASE, keys }) {
   const list = [...new Set((keys || []).map((k) => String(k || '').trim()).filter(Boolean))];
-  const statusByKey = new Map();
+  /**
+   * ⚠️ **1 鍵 1 status に潰さない。** 同じ `DeliveryKey` の行は複数あり得る
+   *    （再 queue・取り消し・作り直し）。`set()` で上書きすると
+   *    「最後に読んだ 1 行」で決まってしまい、`SENT` + `CANCELLED` が並ぶ鍵が
+   *    読み順しだいで inactive に化ける。本番 tick は**全行を見て 1 行でも
+   *    queued / sent があれば active**。監査もその意味にそろえる。
+   */
+  const statusesByKey = new Map();
   /**
    * ⚠️ **tick と同じ問い合わせ方にそろえる。** `fetchActiveDeliveryKeys`
    *    （`cron-campaign-sequence`）は `CampaignType` で絞らず `DeliveryKey` だけで引く。
@@ -7127,7 +7153,7 @@ async function fetchDeliveryStatusByKeys({ KEY, BASE, keys }) {
    */
   for (const group of chunkList(list, 20)) {
     const safe = group.filter((k) => /^[a-f0-9]{64}$/.test(k));
-    if (safe.length !== group.length) return { complete: false, reason: 'delivery_key_shape_invalid', statusByKey };
+    if (safe.length !== group.length) return { complete: false, reason: 'delivery_key_shape_invalid', statusesByKey };
     if (safe.length === 0) continue;
     const formula = `OR(${safe.map((k) => `{DeliveryKey}='${k}'`).join(',')})`;
     try {
@@ -7139,14 +7165,17 @@ async function fetchDeliveryStatusByKeys({ KEY, BASE, keys }) {
       for (const rec of rows) {
         const f = rec.fields || {};
         const k = String(f.DeliveryKey || '').trim();
-        if (k) statusByKey.set(k, String(f.Status || ''));
+        if (!k) continue;
+        const acc = statusesByKey.get(k) || [];
+        acc.push(String(f.Status || ''));
+        statusesByKey.set(k, acc);
       }
     } catch (e) {
       // 打ち切り・HTTP エラーは**成功にしない**
-      return { complete: false, reason: String((e && e.message) || 'fetch_failed'), statusByKey };
+      return { complete: false, reason: String((e && e.message) || 'fetch_failed'), statusesByKey };
     }
   }
-  return { complete: true, reason: null, statusByKey };
+  return { complete: true, reason: null, statusesByKey };
 }
 
 /**

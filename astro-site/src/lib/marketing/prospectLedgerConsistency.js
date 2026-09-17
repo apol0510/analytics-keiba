@@ -75,31 +75,51 @@ export const ACTIVE_STATUSES = Object.freeze([LEDGER_STATUS.QUEUED, LEDGER_STATU
 export const isActiveStatus = (status) => ACTIVE_STATUSES.includes(status);
 
 /**
- * 鍵ごとに「Redis にあるか」「Airtable の Status は何か」を突き合わせて**数える**。
+ * **同じ `DeliveryKey` に行が何本あってもよい。** 行の集合を区分へ寄せる。
+ *
+ * ⚠️ **1 鍵 1 status に潰してはいけない。** 台帳には同じ鍵の行が複数あり得る
+ *    （再 queue・取り消し・作り直し）。「最後に読んだ 1 行」で上書きすると、
+ *    `SENT` と `CANCELLED` が並ぶ鍵が読み順しだいで inactive に化ける。
+ *    本番 tick（`fetchActiveDeliveryKeys`）は**全部の行を見て 1 行でも
+ *    `queued` / `sent` があれば active** と判定するので、監査もそれに合わせる。
+ */
+export function normalizeStatusSet(statuses) {
+  const out = new Set();
+  for (const raw of Array.isArray(statuses) ? statuses : (statuses instanceof Set ? [...statuses] : [])) {
+    out.add(normalizeLedgerStatus(raw));
+  }
+  return out;
+}
+
+/** 1 行でも `queued` / `sent` があれば active（**tick と同じ判定**） */
+export function isActiveStatusSet(set) {
+  const s = set instanceof Set ? set : new Set();
+  return ACTIVE_STATUSES.some((a) => s.has(a));
+}
+
+/** active な鍵の内訳（複数行を潰さずに数える） */
+export const ACTIVE_SHAPE = Object.freeze({
+  QUEUED_ONLY: 'queuedOnly',
+  SENT_ONLY: 'sentOnly',
+  QUEUED_AND_SENT: 'queuedAndSent',
+});
+
+/**
+ * 鍵ごとに「Redis にあるか」「Airtable の行（複数可）の Status」を突き合わせて**数える**。
  *
  * @param {{
- *   keys: string[],                  // 判定対象（同じ step の鍵。重複は 1 つとして数える）
- *   redisPresent: Set<string>,       // Redis の予約集合に入っていた鍵
- *   airtableStatusByKey: Map<string,string>, // Airtable にあった鍵 → Status（無い鍵は入れない）
+ *   keys: string[],                    // 判定対象（同じ step の鍵。重複は 1 つとして数える）
+ *   redisPresent: Set<string>,         // Redis の予約集合に入っていた鍵
+ *   airtableStatusesByKey: Map<string, string[]>, // 鍵 → その鍵の**全行**の Status（行が無い鍵は入れない）
  * }} input
- * @returns {{
- *   total: number,
- *   byStatus: Record<string, number>,
- *   active: number,
- *   activeInRedis: number,
- *   activeNotInRedis: number,
- *   inactiveInRedis: number,
- *   redisOnly: number,
- *   neither: number,
- *   balanced: boolean,
- * }}
  */
-export function classifyLedgerConsistency({ keys, redisPresent, airtableStatusByKey } = {}) {
+export function classifyLedgerConsistency({ keys, redisPresent, airtableStatusesByKey } = {}) {
   const uniq = [...new Set((Array.isArray(keys) ? keys : []).map(String).filter(Boolean))];
   const inRedis = redisPresent instanceof Set ? redisPresent : new Set();
-  const byKey = airtableStatusByKey instanceof Map ? airtableStatusByKey : new Map();
+  const byKey = airtableStatusesByKey instanceof Map ? airtableStatusesByKey : new Map();
 
-  const byStatus = {
+  /** ⚠️ **鍵の数**を数える（行の数ではない）。1 鍵が複数 status を持てば複数に数える */
+  const keysWithStatus = {
     [LEDGER_STATUS.QUEUED]: 0,
     [LEDGER_STATUS.SENT]: 0,
     [LEDGER_STATUS.FAILED]: 0,
@@ -107,9 +127,20 @@ export function classifyLedgerConsistency({ keys, redisPresent, airtableStatusBy
     [LEDGER_STATUS.OTHER]: 0,
     [LEDGER_STATUS.NONE]: 0,
   };
+  const activeShape = {
+    [ACTIVE_SHAPE.QUEUED_ONLY]: 0,
+    [ACTIVE_SHAPE.SENT_ONLY]: 0,
+    [ACTIVE_SHAPE.QUEUED_AND_SENT]: 0,
+  };
   const out = {
     total: uniq.length,
-    byStatus,
+    keysWithStatus,
+    /** active な鍵の内訳（queued だけ / sent だけ / 両方） */
+    activeShape,
+    /** active なのに failed / cancelled の行も混ざっている鍵（読み順で化けていた層） */
+    activeWithInactiveRows: 0,
+    /** Airtable に行がある鍵の数（status を問わない） */
+    withRows: 0,
     active: 0,
     /** Airtable が active で Redis にもある（＝素直に送信済み） */
     activeInRedis: 0,
@@ -128,11 +159,23 @@ export function classifyLedgerConsistency({ keys, redisPresent, airtableStatusBy
   };
 
   for (const k of uniq) {
-    const status = byKey.has(k) ? normalizeLedgerStatus(byKey.get(k)) : LEDGER_STATUS.NONE;
-    byStatus[status] = (byStatus[status] || 0) + 1;
+    const set = byKey.has(k) ? normalizeStatusSet(byKey.get(k)) : new Set([LEDGER_STATUS.NONE]);
+    // 行が 1 本も無い鍵は `none` として 1 回だけ数える
+    const hasRows = byKey.has(k) && set.size > 0 && !(set.size === 1 && set.has(LEDGER_STATUS.NONE));
+    if (hasRows) out.withRows += 1;
+    for (const st of set) keysWithStatus[st] = (keysWithStatus[st] || 0) + 1;
+
     const present = inRedis.has(k);
-    if (isActiveStatus(status)) {
+    if (isActiveStatusSet(set)) {
       out.active += 1;
+      const q = set.has(LEDGER_STATUS.QUEUED);
+      const t = set.has(LEDGER_STATUS.SENT);
+      if (q && t) activeShape[ACTIVE_SHAPE.QUEUED_AND_SENT] += 1;
+      else if (q) activeShape[ACTIVE_SHAPE.QUEUED_ONLY] += 1;
+      else activeShape[ACTIVE_SHAPE.SENT_ONLY] += 1;
+      if (set.has(LEDGER_STATUS.FAILED) || set.has(LEDGER_STATUS.CANCELLED)) {
+        out.activeWithInactiveRows += 1;
+      }
       if (present) out.activeInRedis += 1;
       else out.activeNotInRedis += 1;
       continue;
@@ -140,7 +183,7 @@ export function classifyLedgerConsistency({ keys, redisPresent, airtableStatusBy
     // ここから先は Airtable 的には「積み直してよい」状態
     if (present) {
       out.inactiveInRedis += 1;
-      if (status === LEDGER_STATUS.NONE) out.redisOnly += 1;
+      if (!hasRows) out.redisOnly += 1;
     } else {
       out.neither += 1;
     }
@@ -148,7 +191,8 @@ export function classifyLedgerConsistency({ keys, redisPresent, airtableStatusBy
 
   // 数え方の検算（崩れていたら「確定した」と言わない）
   out.balanced = out.total === out.activeInRedis + out.activeNotInRedis
-    + out.inactiveInRedis + out.neither;
+    + out.inactiveInRedis + out.neither
+    && out.active === activeShape.queuedOnly + activeShape.sentOnly + activeShape.queuedAndSent;
   return out;
 }
 
@@ -230,18 +274,23 @@ export function mergeWindowCounts(windows) {
   const sum = {
     total: 0, active: 0, activeInRedis: 0, activeNotInRedis: 0,
     inactiveInRedis: 0, redisOnly: 0, neither: 0,
+    withRows: 0, activeWithInactiveRows: 0,
   };
-  const byStatus = {};
+  const keysWithStatus = {};
+  const activeShape = {};
   let complete = list.length > 0;
   for (const w of list) {
     if (!w || w.ok !== true) { complete = false; continue; }
     for (const k of Object.keys(sum)) sum[k] += Number(w.counts?.[k]) || 0;
-    for (const [k, v] of Object.entries(w.counts?.byStatus || {})) {
-      byStatus[k] = (byStatus[k] || 0) + (Number(v) || 0);
+    for (const [k, v] of Object.entries(w.counts?.keysWithStatus || {})) {
+      keysWithStatus[k] = (keysWithStatus[k] || 0) + (Number(v) || 0);
+    }
+    for (const [k, v] of Object.entries(w.counts?.activeShape || {})) {
+      activeShape[k] = (activeShape[k] || 0) + (Number(v) || 0);
     }
     if (w.counts && w.counts.balanced === false) complete = false;
   }
-  return { complete, ...sum, byStatus };
+  return { complete, ...sum, keysWithStatus, activeShape };
 }
 
 export default classifyLedgerConsistency;

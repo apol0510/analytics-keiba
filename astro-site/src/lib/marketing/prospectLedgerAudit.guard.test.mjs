@@ -128,6 +128,32 @@ test('【最重要】診断は CampaignType で絞らない（列が空の古い
   assert.match(body, /DeliveryKey/, 'DeliveryKey で名指ししていない');
 });
 
+/* ── ⑤-b 複数行と失敗分類（実装と契約を一致させる）──────────────── */
+
+test('【最重要】同一 DeliveryKey の行を 1 つに潰さない（上書き Map を使わない）', () => {
+  const body = bodyOf('fetchDeliveryStatusByKeys');
+  assert.equal(/statusByKey\.set\(/.test(body), false, '1 鍵 1 status の上書きに戻っている');
+  assert.match(body, /statusesByKey/, '鍵ごとの全行を保持していない');
+  assert.match(body, /\.push\(/, '行を積み上げていない（最後の 1 行で決まってしまう）');
+});
+
+test('【最重要】Redis 起因の失敗は 503 に分類する（契約と実装を一致させる）', () => {
+  const body = bodyOf('handleProspectLedgerAudit');
+  for (const reason of ['INDEX_UNAVAILABLE', 'LOAD_FAILED', 'LEDGER_UNAVAILABLE']) {
+    assert.match(body, new RegExp(`AUDIENCE_FAIL\\.${reason}`), `${reason} を分類していない`);
+  }
+  assert.match(body, /redisOrigin \? 503 : 500/, 'Redis 起因を 503 にしていない');
+  assert.match(body, /INDEX_CHANGED/, '索引の変化を 409 にしていない');
+});
+
+test('【最重要】どの失敗でも部分結果を 200 で返さない', () => {
+  const body = bodyOf('handleProspectLedgerAudit');
+  // 失敗分岐の返却はすべて 4xx / 5xx
+  for (const code of ['409', '503', '500', '502']) {
+    assert.match(body, new RegExp(`json\\(${code},`), `${code} の分岐が無い`);
+  }
+});
+
 /* ── ⑥ 認可 ───────────────────────────────────────────────────── */
 
 test('【最重要】admin secret の認可より後ろに置かれている', () => {
