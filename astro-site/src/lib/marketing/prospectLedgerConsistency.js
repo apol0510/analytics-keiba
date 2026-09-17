@@ -11,12 +11,19 @@
  * `alreadyQueued` は「送ろうとしたが**既に queued / sent だった**人数」で、
  * その判定は `fetchActiveDeliveryKeys`（**Airtable の `CampaignDeliveries`**）で行っている。
  *
- * ところが **prospect は Airtable に 1 行も書かない**（2026-08-27 MK 確定。
- * レコード上限を超過したため、prospect の冪等性は Redis の集合が担う）。
- * つまり prospect について Airtable に active な行があるなら、それは
- * **移行前に Customers だったころの古い行**か、**送り切らずに残った行**しかない。
+ * ⚠️ **`alreadyQueued` の中身は 2 通りあり、見ただけでは区別できない。**
+ *    この campaign は Customers と prospect の両方へ配信する（`audienceSource: 'all'`）。
  *
- * このとき起きること:
+ *    1. **正常な一時状態（Customers）**: Customers は Airtable が正本。queue 直後は
+ *       `queued` のまま due 扱いなので、dispatch が `sent` に変えるまでの数 tick だけ
+ *       `alreadyQueued` に入る。**これは異常ではない。**
+ *    2. **不整合（prospect）**: prospect は Airtable に 1 行も書かない（2026-08-27 MK 確定。
+ *       レコード上限を超過したため、冪等性は Redis の集合が担う）。
+ *       つまり prospect の鍵に active な行があるなら、**移行前に Customers だったころの
+ *       古い行**か**送り切らずに残った行**しかない。
+ *
+ * このモジュールが数えるのは **2 を切り分けるため**（prospect の鍵だけを見る）。
+ * 2 が起きているとき、何が起きるか:
  *
  * | 見る場所 | その人の状態 |
  * |---|---|

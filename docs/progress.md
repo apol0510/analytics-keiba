@@ -914,11 +914,24 @@ campaign の順番待ち（担当 7 本の rotation）で大きく変動する�
 
 - `tick_busy` が連続するのは**同一枠の多重起動**を lock が直列化しているためで、
   古い lock の残存ではない（15:10 枠に invocation が 3 本並ぶのを実測）。
-- **`alreadyQueued` が 87〜97 件ある**。prospect は Airtable に 1 行も書かない設計
-  （2026-08-27）なのに、送信可否の判定は `fetchActiveDeliveryKeys`（**Airtable** の
-  `CampaignDeliveries`）で行っている。移行前の古い行が残っていると、
-  **Redis は「未送信」・Airtable は「active」**となり、その人は永久に積まれない。
-  件数の確定は次の調査で行う（**手で直さない**）。
+- **`alreadyQueued` が 87〜97 件ある**（原因未確定）。送信可否の判定は
+  `fetchActiveDeliveryKeys`（**Airtable** の `CampaignDeliveries`）で、
+  **出所を問わず**行われる。考えられる説明は 2 つあり、**件数を測るまでどちらとも言えない**:
+
+  1. **正常な一時状態（Customers 側）**: この campaign は Customers と prospect の
+     両方へ配信する（`audienceSource: 'all'`。2026-09-17 実測で 15:21 / 15:32 は
+     `prospect対象 50 / Airtable台帳 0`、15:40 は `prospect対象 0 / Airtable台帳 50`）。
+     Customers は Airtable が正本で、queue 直後は `queued` のまま due 扱いなので、
+     **dispatch が `sent` に変えるまでの数 tick だけ** `alreadyQueued` に入る。
+     97 → 87 と減っていたのはこれで説明できる。
+  2. **不整合（prospect 側）**: prospect は Airtable に 1 行も書かない設計（2026-08-27）
+     なので、prospect の鍵に active な行があるなら移行前の古い行か送り切らずに残った行。
+     その場合 **Redis は「未送信」・Airtable は「active」**となり、その人は永久に積まれない。
+
+  ⚠️ **1 を 2 と決めつけない。** 2026-09-17 に一度
+  「構造上すべて 2 である」と書いたが、Customers が混ざる以上その導出は成り立たない（訂正済み）。
+  prospect 側だけを数えれば判別できる（prospect の `activeNotInRedis` が 0 なら 1、
+  多ければ 2）。件数の確定は PR #570 の read-only 診断で行う（**手で直さない**）。
 
 
 #### 第 2 期の入口も取りこぼさない
