@@ -171,3 +171,98 @@ test('【最重要】速くなる幅を根拠にしていない（測ってい�
     '全件が未測定であることの注記が消えている');
   assert.match(src, /外挿/, '外挿を戒める記述が消えている');
 });
+
+// ══════════════════════════════════════════════════════════════════
+//  ⑤ 第 1 期完了 → 第 2 期入口が、窓のせいで永久に取りこぼされないこと
+// ══════════════════════════════════════════════════════════════════
+
+/**
+ * ⚠️ 入口の候補も窓から取るので、**遅れる**ことはある（最大 1 周）。
+ *    許されないのは「**永久に入れない**」「**二重に入る**」「**他 prospect が混ざる**」。
+ */
+test('【最重要】窓を回せば、第 1 期完了者は全員が入口の候補になる（最大 1 周の遅れ）', async () => {
+  const { planPhase2Entry } = await import('./prospectPhase2Entry.js');
+  const { buildProspectDeliveryKeys } = await import('./prospectSequenceHydration.js');
+  const { getCampaign } = await import('./campaignCatalog.js');
+  const { getSequenceSteps } = await import('./campaignSequence.js');
+  const { PROSPECT_STATE } = await import('./prospectPolicy.js');
+
+  const BRAND = 'AK';
+  const FROM = 'noreply@keiba.link';
+  const PRIOR = getCampaign('campaign-discount-free', { includeDisabled: true });
+  const NEXT = getCampaign('campaign-prospect-phase2', { includeDisabled: true });
+  const STEPS = getSequenceSteps(PRIOR);
+
+  // 索引 1,000 人。うち 300 人が第 1 期を配り終えている（飛び飛びに配置）
+  const people = Array.from({ length: 1000 }, (_, i) => ({
+    email: `p${i}@example.invalid`, state: PROSPECT_STATE.SENDING, delivered: 0,
+  }));
+  const done = people.filter((_, i) => i % 3 === 0);            // 334 人
+  const keyMap = buildProspectDeliveryKeys({ prospects: done, campaign: PRIOR, brand: BRAND, fromEmail: FROM });
+  const priorDelivered = new Set();
+  for (const [, byStep] of keyMap) for (const s of STEPS) { const k = byStep.get(s.stepNumber); if (k) priorDelivered.add(k); }
+
+  // 窓を回しながら入口を作る。入った人は「開始済み」として次から外れる
+  const started = new Set();
+  const entered = [];
+  const per = 200;
+  for (let tick = 0, off = 0; tick < 10; tick += 1) {
+    const window = people.slice(off, off + per);
+    const r = planPhase2Entry({
+      prospects: window, priorCampaign: PRIOR, nextCampaign: NEXT,
+      priorDeliveredKeys: priorDelivered, nextDeliveredKeys: started,
+      brand: BRAND, fromEmail: FROM, maxPerTick: 50,
+    });
+    assert.equal(r.ok, true);
+    for (const e of r.emails) {
+      // 入口は一度だけ（二重入口は許さない）
+      assert.equal(entered.includes(e), false, `${e} が二重に入口へ入った`);
+      entered.push(e);
+      const nb = buildProspectDeliveryKeys({
+        prospects: [{ email: e }], campaign: NEXT, brand: BRAND, fromEmail: FROM,
+      }).get(e);
+      started.add(nb.get(1));                                   // 第 2 期 step1 を送った扱い
+    }
+    off += per;
+    if (off >= people.length) off = 0;                          // 周回
+  }
+
+  // 第 1 期完了者だけが入り、全員が入った（他 prospect の混入 0）
+  assert.equal(entered.length, done.length, `入口へ入れたのは ${entered.length} / ${done.length} 人`);
+  const doneSet = new Set(done.map((p) => p.email));
+  for (const e of entered) assert.ok(doneSet.has(e), `第 1 期未完の ${e} が入口へ入った`);
+});
+
+test('【最重要】一度入口へ入った人は、次の周回でも再入口しない', async () => {
+  const { planPhase2Entry, PHASE2_ENTRY_SKIP } = await import('./prospectPhase2Entry.js');
+  const { buildProspectDeliveryKeys } = await import('./prospectSequenceHydration.js');
+  const { getCampaign } = await import('./campaignCatalog.js');
+  const { getSequenceSteps } = await import('./campaignSequence.js');
+  const { PROSPECT_STATE } = await import('./prospectPolicy.js');
+
+  const BRAND = 'AK';
+  const FROM = 'noreply@keiba.link';
+  const PRIOR = getCampaign('campaign-discount-free', { includeDisabled: true });
+  const NEXT = getCampaign('campaign-prospect-phase2', { includeDisabled: true });
+  const people = [{ email: 'p1@example.invalid', state: PROSPECT_STATE.SENDING, delivered: 0 }];
+  const km = buildProspectDeliveryKeys({ prospects: people, campaign: PRIOR, brand: BRAND, fromEmail: FROM });
+  const priorDelivered = new Set();
+  for (const s of getSequenceSteps(PRIOR)) priorDelivered.add(km.get('p1@example.invalid').get(s.stepNumber));
+
+  const first = planPhase2Entry({
+    prospects: people, priorCampaign: PRIOR, nextCampaign: NEXT,
+    priorDeliveredKeys: priorDelivered, brand: BRAND, fromEmail: FROM,
+  });
+  assert.deepEqual(first.emails, ['p1@example.invalid']);
+
+  // 同じ人が次の周回でまた窓に入っても、開始済みなので入らない
+  const nextKeys = buildProspectDeliveryKeys({ prospects: people, campaign: NEXT, brand: BRAND, fromEmail: FROM });
+  const started = new Set([nextKeys.get('p1@example.invalid').get(1)]);
+  const second = planPhase2Entry({
+    prospects: people, priorCampaign: PRIOR, nextCampaign: NEXT,
+    priorDeliveredKeys: priorDelivered, nextDeliveredKeys: started,
+    brand: BRAND, fromEmail: FROM,
+  });
+  assert.deepEqual(second.emails, [], '周回で再入口している');
+  assert.equal(second.skipped[PHASE2_ENTRY_SKIP.ALREADY_STARTED], 1);
+});

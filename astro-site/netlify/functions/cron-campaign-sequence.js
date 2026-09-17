@@ -96,6 +96,7 @@ import { runBoundedBatches } from '../../src/lib/marketing/boundedBatchWrite.js'
 import {
   createProspectScanStore, nextProspectCursor, resolveProspectPerTick,
 } from '../../src/lib/marketing/prospectScanWindow.js';
+import { isWindowStepDecisionSafe } from '../../src/lib/marketing/prospectWindowStepSafety.js';
 import { FUNNEL_STAGE } from '../../src/lib/drm/drmFunnel.js';
 import { buildSequenceProgress, indexDeliveries } from '../../src/lib/marketing/sequenceProgress.js';
 import {
@@ -584,6 +585,8 @@ export async function runSequenceTick({
   const prospectWindowSize = resolveProspectPerTick(process.env);
   const prospectScanStore = createProspectScanStore({ redisCmd: makeRedisCmd(process.env) });
   let prospectCursor = { offset: 0, pass: 0 };
+  /** live で窓を掛けたか（掛けたときだけ「全体と一致するか」を確かめる） */
+  let prospectWindowed = false;
   if (!win && wantProspect && !customerOnly) {
     prospectCursor = await prospectScanStore.read(campaignType);
   }
@@ -623,6 +626,7 @@ export async function runSequenceTick({
         offset: prospectCursor.offset,
       }),
     });
+    if (!win) prospectWindowed = true;
     if (!prospectInputs.ok) {
       // ⚠️ **Customers 由来の配信は止めない**（既存挙動を変えない）。
       //    prospect だけを 1 人も対象にせず、理由を残して続ける。
@@ -633,6 +637,60 @@ export async function runSequenceTick({
     }
   }
   /**
+   * ── 窓の判断が「全体の判断」と一致するか確かめる（2026-09-17）──────
+   *
+   * `selectNextDueStep` は**全体で**いちばん小さい due step を選ぶ。
+   * 窓で切ると progress が窓の中だけから作られるので、
+   * **窓 A（step2 due 0 / step3 due あり）を読んだ tick で step3 を先に送ってしまう**
+   * ——全体にはまだ step2 待ちが残っているのに——という順序の逆転が起こり得る。
+   *
+   * 採用してよいのは「窓の最小 due step ＝ 選べる最小 step」のときだけ。
+   * そのときに限り、**それより小さい due は全体のどこにも存在し得ない**。
+   * 証明できないときは**全体を読み直す**（＝従来どおりの全件・fail closed）。
+   *
+   * ⚠️ **性能のために step 順序を変えない。** 遅くなっても順序を優先する。
+   */
+  if (!isDry && prospectInputs && prospectWindowed) {
+    const windowProgress = buildSequenceProgress({
+      campaign: base, selected: prospectInputs.rows, deliveries: prospectInputs.deliveries,
+      brand: BRAND, fromEmail, nowMs: now,
+      providerSuppressed: prospectInputs.providerSuppressed, softBounced: new Set(),
+    });
+    const verdict = isWindowStepDecisionSafe({
+      dueByStep: (windowProgress.ok && windowProgress.summary)
+        ? windowProgress.summary.dueByStep : {},
+      /** 入口が開くかはこの時点で未確定なので、**開く前提**で最小 step を広く取る（保守側） */
+      allowFirstStep: autoStartDecl !== null,
+      windowed: true,
+    });
+    if (!verdict.safe) {
+      /**
+       * ⚠️ 窓のままでは全体の最小 due step を保証できない。**全件で読み直す。**
+       *    コストは従来どおりに戻るだけで、順序は必ず守られる。
+       */
+      console.warn(
+        `${SEQ_LOG_TAG} 窓の判断を採用できないため全件で読み直します: ${verdict.reason}`,
+      );
+      const full = await loadProspectSequenceInputs({
+        store: prospectStore, deliveryKeyStore: prospectLedger,
+        campaign: base, brand: BRAND, fromEmail, nowMs: now, blacklistEmails,
+      });
+      if (full.ok) {
+        prospectInputs = full;
+        prospectWindowed = false;
+        /** 全件を読んだので窓のカーソルは先頭へ戻す（周回をやり直す） */
+        prospectCursor = { offset: 0, pass: prospectCursor.pass + 1 };
+      }
+      // ⚠️ 読み直しに失敗したら**窓のまま進めない**（順序を壊さない）
+      if (!full.ok) {
+        console.error(`${SEQ_LOG_TAG} 全件の読み直しに失敗: ${full.reason}`);
+        prospectDegraded = full.reason;
+        prospectInputs = null;
+      }
+    }
+  }
+
+  /**
    * ── 窓を次へ進める（live のみ）────────────────────────────────
    *
    * ⚠️ **読めた人数ではなく「索引を何件消費したか」（`scanned`）で進める。**
@@ -641,7 +699,7 @@ export async function runSequenceTick({
    * ⚠️ 書けなくても**送信は止めない**。次の tick が同じ位置から読み直すだけで、
    *    二重送信は `DeliveryKey` が防ぐ。
    */
-  if (!isDry && prospectInputs && prospectScanStore.usable) {
+  if (!isDry && prospectInputs && prospectWindowed && prospectScanStore.usable) {
     const advanced = nextProspectCursor({
       offset: prospectCursor.offset,
       scanned: Number(prospectInputs.scanned) || 0,
