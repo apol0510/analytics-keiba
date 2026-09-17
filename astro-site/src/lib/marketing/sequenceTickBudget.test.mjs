@@ -6,9 +6,10 @@
  *
  * `MIN_MS_FOR_NEXT_CAMPAIGN`（50 秒）と `TICK_TIME_BUDGET_MS`（55 秒）の差が **5 秒**しかなく、
  * 1 本目が 5 秒を超えて終わると `hasTimeForAnother` が**必ず** false になっていた。
- * つまり **実質 1 tick = 1 campaign**。campaign は 7 本あるので、
- * `campaign-discount-free` の番は **70 分に 1 回**しか来ない
- * （1 回 50 名なので **約 43 名/時**＝ step3 の待機 5,465 名に **約 5.3 日**）。
+ * つまり **1 本目が 5 秒を超えた tick では 2 本目以降が始まらない**。
+ * campaign は 7 本あるので、最悪の場合 `campaign-discount-free` の番は
+ * **70 分に 1 回**まで開く（実測の配信速度は約 170 通/時で、軽い campaign が
+ * 先頭に来た tick では 2 本目が動くため、常に最悪値になるわけではない）。
  *
  * 実測した所要（下見 / 7 本）: 2 / 3 / 7 / 8 / 11 / 13 / 21 秒。
  * 「1 campaign ≒ 45 秒」という 50 秒の根拠は**古い前提**だった。
@@ -180,7 +181,7 @@ test('【最重要】どの tick でも予算内に終わる', () => {
     assert.ok(elapsed <= TICK_TIME_BUDGET_MS, `tick ${t} が予算超過（${elapsed / S}s）`);
     assert.ok(elapsed <= TICK_HARD_LIMIT_MS, `tick ${t} が打ち切り超過（${elapsed / S}s）`);
   }
-}); ;
+});
 
 test('【最重要】公平性 — 全 campaign が回ってくる（飢えない）', () => {
   const runs = Object.fromEntries(IDS.map((i) => [i, 0]));
