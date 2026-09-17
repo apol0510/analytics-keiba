@@ -417,6 +417,16 @@ export async function runSequenceTick({
    *    予約・キュー登録・配信行・ジョブ・送信はこの先も一切しない。
    */
   previewAllowFirstStep = false,
+  /**
+   * **窓をやめて全件で読み直す**（この関数が自分で 1 回だけ立てる / 外から渡さない）。
+   *
+   * ⚠️ 窓で切ると「全体で最小の due step」を保証できない場面がある。
+   *    最小 step の候補が**後段の安全条件（既 queued / 出所 / 許可リスト）で 0 人**になったとき、
+   *    窓の中だけで次の step へ進むと、**全体にはまだ残っている step を飛ばす**。
+   *    そのときは窓を捨てて全件で最初からやり直す（`emptySteps` もやり直す）。
+   * ⚠️ **再入は 1 回だけ**（このフラグが立っていたら二度と入らない）。
+   */
+  forceFullProspect = false,
 } = {}) {
   const isDry = dryRun === true;
   /**
@@ -587,7 +597,7 @@ export async function runSequenceTick({
   let prospectCursor = { offset: 0, pass: 0 };
   /** live で窓を掛けたか（掛けたときだけ「全体と一致するか」を確かめる） */
   let prospectWindowed = false;
-  if (!win && wantProspect && !customerOnly) {
+  if (!win && !forceFullProspect && wantProspect && !customerOnly) {
     prospectCursor = await prospectScanStore.read(campaignType);
   }
   if (wantProspect && !customerOnly && prospectStore && prospectLedger) {
@@ -605,6 +615,8 @@ export async function runSequenceTick({
           ? Math.min(4000, Number(win.limit)) : 2000,
         offset: Math.max(0, Number(win.offset) || 0),
         expectDigest: String(win.digest || '').trim() || undefined,
+      } : (forceFullProspect ? {
+        /** ⚠️ 全件で読み直す周回。**窓を掛けない**（全体の最小 due step を保証するため） */
       } : {
         /**
          * ── live も窓で切る（2026-09-17）────────────────────────────
@@ -624,9 +636,9 @@ export async function runSequenceTick({
          */
         maxRecipients: prospectWindowSize,
         offset: prospectCursor.offset,
-      }),
+      })),
     });
-    if (!win) prospectWindowed = true;
+    if (!win && !forceFullProspect) prospectWindowed = true;
     if (!prospectInputs.ok) {
       // ⚠️ **Customers 由来の配信は止めない**（既存挙動を変えない）。
       //    prospect だけを 1 人も対象にせず、理由を残して続ける。
@@ -634,6 +646,20 @@ export async function runSequenceTick({
       console.error(`${SEQ_LOG_TAG} prospect を読めないため対象に含めません: ${prospectInputs.reason}`);
       prospectDegraded = prospectInputs.reason;
       prospectInputs = null;
+      /**
+       * ⚠️ **全件で読み直す周回で読めなかったら、1 件も送らない**（fail closed）。
+       *    窓で判断できないから全件に来たのに、その全件も読めていない。
+       *    ここで Customers だけ進めると「全体の最小 due step」を保証できないまま送ることになる。
+       */
+      if (forceFullProspect) {
+        const body = {
+          ok: false, abort: 'prospect_full_reload_failed',
+          reason: prospectDegraded, sideEffects: 'none',
+          note: '窓では判断できず全件へ落としたが、その全件も読めなかったため 1 件も積んでいません。',
+        };
+        log(body);
+        return body;
+      }
     }
   }
   /**
@@ -667,26 +693,16 @@ export async function runSequenceTick({
       /**
        * ⚠️ 窓のままでは全体の最小 due step を保証できない。**全件で読み直す。**
        *    コストは従来どおりに戻るだけで、順序は必ず守られる。
+       *    読み直しの経路は「後段条件で 0 人だった」ときと**同じ 1 本**にする。
        */
       console.warn(
         `${SEQ_LOG_TAG} 窓の判断を採用できないため全件で読み直します: ${verdict.reason}`,
       );
-      const full = await loadProspectSequenceInputs({
-        store: prospectStore, deliveryKeyStore: prospectLedger,
-        campaign: base, brand: BRAND, fromEmail, nowMs: now, blacklistEmails,
+      return runSequenceTick({
+        env, now, campaignId, entryAllowlist, dryRun, preview,
+        sourceFilter, expectedCount, maxRecipientsOverride, previewAllowFirstStep,
+        forceFullProspect: true,
       });
-      if (full.ok) {
-        prospectInputs = full;
-        prospectWindowed = false;
-        /** 全件を読んだので窓のカーソルは先頭へ戻す（周回をやり直す） */
-        prospectCursor = { offset: 0, pass: prospectCursor.pass + 1 };
-      }
-      // ⚠️ 読み直しに失敗したら**窓のまま進めない**（順序を壊さない）
-      if (!full.ok) {
-        console.error(`${SEQ_LOG_TAG} 全件の読み直しに失敗: ${full.reason}`);
-        prospectDegraded = full.reason;
-        prospectInputs = null;
-      }
     }
   }
 
@@ -1271,6 +1287,33 @@ export async function runSequenceTick({
    *    同じ step を 2 回試すことはない（無限ループにならない）。
    * ⚠️ 1 人でも積めたらここで抜ける（**選び直しは 0 人のときだけ**）。
    */
+  /**
+   * ⚠️ **窓のまま次の step へ進んではいけない**（2026-09-17 のレビュー指摘）。
+   *
+   * 窓の中に最小 step の due が居ても、後段の安全条件
+   * （既に `queued` / `sent`・出所フィルタ・許可リスト）で**送れる人が 0 人**になることがある。
+   * そこで窓の中だけで次の step へ進むと:
+   *
+   *   窓 A: step2 due 5 人（全員 `queued` で送れない）／ step3 は送れる
+   *   窓 B: 送れる step2 が残っている
+   *
+   * カーソルが窓 A のとき **step3 を先行させてしまう**（全体には step2 が残っているのに）。
+   *
+   * だから窓のときは**次 step へ進まず、全件で読み直して最初からやり直す**。
+   * 次 step の選び直し（`emptySteps`）を許すのは**全件を読んだときだけ**。
+   */
+  if (targets.length === 0 && mayAdvanceStep && prospectWindowed && !forceFullProspect) {
+    console.warn(
+      `${SEQ_LOG_TAG} 窓では次の step へ進めないため全件で読み直します`
+      + `（step${plan.step} が後段条件で 0 人）`,
+    );
+    return runSequenceTick({
+      env, now, campaignId, entryAllowlist, dryRun, preview,
+      sourceFilter, expectedCount, maxRecipientsOverride, previewAllowFirstStep,
+      /** ⚠️ 再入は 1 回だけ。全件で読み直した周回では窓を使わない */
+      forceFullProspect: true,
+    });
+  }
   if (targets.length === 0 && mayAdvanceStep && attempt + 1 < maxStepAttempts) {
     emptySteps.push(plan.step);
     continue;
