@@ -2654,8 +2654,19 @@ R5 / R6 で見るのは「**購入が起きたときに処理が正しいか**�
 |---|---|
 | branch | `feat/ga4-conversion-funnel`（worktree `/Users/user/Projects/analytics-keiba-ga4`）|
 | 分岐元 | `origin/main` = `3082d8f2` |
-| PR | （作成後に追記）|
-| CI | （作成後に追記）|
+| HEAD | `4f8ea675`（実装本体）|
+| PR | [#576](https://github.com/apol0510/analytics-keiba/pull/576) — **Draft / 未 merge** |
+| CI | **green**。`safety-check` の `Verify 有料化ファネル計測` step が CI 上で実際に走ったことを実行ログで確認（run 35336583437）|
+| Deploy Preview | 事前確認のみ実施。`/`・`/pricing/`・`/results-showcase/nankan/` の 3 ページで `funnel-analytics.js` の script タグと gtag の同居を実測、JS 本体も 200 で配信を確認（**本番確認ではない**）|
+
+### 実行できなかった検証（既存状態・本 PR とは無関係）
+
+| 項目 | 状況 |
+|---|---|
+| `npm run lint` | `eslint.config.*` が **repo に存在しない**（`origin/main` でも同じ）。依存を足さないため未実行 |
+| `npm run typecheck` | `astro check` が未インストールの `@astrojs/check` を要求する。依存を足さないため未実行 |
+
+代わりに `node --check` で計測 JS の構文、`npm run build` で全ページのビルドを通している。
 
 ---
 
