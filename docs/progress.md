@@ -260,7 +260,14 @@ Customers / 抑止台帳のどこに居るかを突き合わせる ② 既送信
   （list から外す定期実行が無い）。click は計測が無効、サイト再訪・購入は紐付け不可。
   → **contact 投入はしない**。最小の直し方は「list 除外の cron 配線（新規実装なし）」＋
   「webhook の group_unsubscribe を ON」（`sendgridExitReadiness.js` と docs §11-f）
-- 🔎 **SendGrid Segment だけで開封離脱は作れない**（2026-09-18 実測）。Segment V2 の SGQL は
+- ✅ **採用: 既存 webhook の中で選別 list から即時に外す**（2026-09-18・**未 deploy**）。
+  `sendgrid-webhook.js` → `applySelectionExit()` を配線。**新しい cron は作っていない**。
+  外す相手は ENGAGED / PROMOTED / SUPPRESSED / EXHAUSTED。触る list は
+  `ak-prospect-select-start-N` だけ（**KI / KMA 影響 0**）。べき等・上限 100 名/回・
+  SendGrid 失敗でも webhook は 200・応答とログは件数のみ・
+  停止は `SENDGRID_SELECTION_EXIT_DISABLED=true`（**既定は有効**）。
+  `group_unsubscribe` はコード側の受け入れ準備済み（トグル ON は MK の 1 操作）
+- 🔎 **SendGrid Segment だけで開封離脱は作れない**- 🔎 **SendGrid Segment だけで開封離脱は作れない**（2026-09-18 実測）。Segment V2 の SGQL は
   `contact_data` の `list_ids` / `email` / `created_at` しか使えず、**engagement の列も表も無い**
   （`last_opened` は reserved_fields に載っているのに使えない）。検証用 segment は全削除済み。
   → 最小手段は **既存 Event Webhook の中で list から外す**（**新しい日次 cron を作らない**・

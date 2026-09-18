@@ -762,7 +762,45 @@ Single Send は**送信時点の list の中身**へ送る。したがって
 `removeContactsFromList()` は実装済みだが、呼ぶのは未 deploy の管理 API だけで、
 定期実行の配線が無い）。**開封した人にも 10 通届く。**
 
-### 🔎 「SendGrid の Segment だけで開封離脱」は**成立しない**（2026-09-18 本番実測）
+### ✅ 採用：**既存 webhook の中で選別 list から即時に外す**（2026-09-18 MK 確定）
+
+**新しい cron も配送エンジンも作らない。** 既に open / bounce / 苦情 / 配信停止を受けている
+`sendgrid-webhook.js` の処理の中で、そのまま list から外す。
+反応した**その時点**で外れるので、翌日の Single Send に確実に間に合う。
+
+| 外す相手 | きっかけ |
+|---|---|
+| `ENGAGED` | open（＝反応候補）→ 選別完了・DRM へ |
+| `PROMOTED` | Customers へ昇格（購入・登録）|
+| `SUPPRESSED` | 配信停止 / bounce / 苦情（`group_unsubscribe` を含む）|
+| `EXHAUSTED` | delivered 10 通・無反応で打ち切り |
+
+単一源: `src/lib/marketing/sendgridSelectionExit.js`
+
+| 守っていること | どう守るか |
+|---|---|
+| **KI / KMA に触らない** | 触るのは名前が `ak-prospect-select-start-N` の list だけ（名前で突き合わせてから id を使う）|
+| **API の範囲を閉じる** | `GET /v3/marketing/lists` / `POST /v3/marketing/contacts/search/emails` / `DELETE …/lists/{id}/contacts` の **3 つだけ**。送信・contact 作成・suppression 操作の経路を持たない |
+| **べき等** | 状態が変わった人だけを対象にし、同じ webhook 内の重複は 1 回に畳む（大文字小文字も同一視）。SendGrid は既に居ない相手でも 202 を返すので二度実行しても害が無い |
+| **暴走しない** | 1 回の webhook で外すのは最大 100 名（超過分は数えて次のイベントで回収）|
+| **落ちない** | SendGrid が失敗・例外でも**投げない**。webhook は **200 を返し続ける**（再送で二重処理させない）|
+| **PII を出さない** | 応答・ログは件数だけ（`changes` は webhook の応答から落とす）|
+| **止め方** | `SENDGRID_SELECTION_EXIT_DISABLED=true` の 1 つ。**既定は有効**（env を足さなくても動く）|
+
+⚠️ **click tracking は今回有効化しない。サイト再訪の識別も追加しない**（MK 確定）。
+open は「反応候補」として ENGAGED へ進め、**打ち切りの判定は delivered 10 通のまま**変えない。
+
+#### `group_unsubscribe` トグルについて（**コード側の受け入れ準備は完了**）
+
+`classifyEvent('group_unsubscribe')` は既に**抑止**として扱い、`SUPPRESSED` にしたうえで
+選別 list からも外す（テストで固定）。したがって SendGrid 画面で
+
+> Settings → Mail Settings → Event Webhook → **Group Unsubscribe を ON**
+
+にして問題ない（**1 操作**）。ON にしなくても SendGrid 側の除外は効くが、
+**AK 台帳に配信停止が残らない**。
+
+### （historical）🔎 「SendGrid の Segment だけで開封離脱」は**成立しない**（2026-09-18 本番実測）
 
 `POST /v3/marketing/segments/2.0` の**バリデータ**に式を投げて確かめた
 （**不正な式は何も作らずに 400**。作成できてしまった検証用 segment は**すべて削除済み**で、
