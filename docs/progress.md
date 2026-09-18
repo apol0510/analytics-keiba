@@ -242,8 +242,11 @@ Customers / 抑止台帳のどこに居るかを突き合わせる ② 既送信
 - ⚠️ `/v3/scopes` に **`marketing.write` は現れない**（Full Access でも `marketing.read` のみ）。
   そこで「**1 件だけ作って確かめる**」方式へ変更（403 なら副作用ゼロでその場で停止）。
   custom field の作成が通ったので残りを作成した
-- 残りの **Automation 3 本は API に作成経路が無い**ので画面で作る。文面は
-  `~/.analytics-keiba-ops/sendgrid-automation-content/`（**repo の外**・PII なし）へ 10 通ぶん書き出し済み
+- **Design Library へ 10 通を登録済み**（`AK Prospect Selection 01`〜`10` / editor=code /
+  中身は書き出しファイルを**無加工** / 作成後 GET で **全件一致**を確認 / 同名は二重作成しない）
+- 残りの **Automation は API に作成経路が無い**ので画面で作る。ただし 27 通ぶんを個別設定せず、
+  **start 1（10 通）だけ作り、Duplicate で start 2 / 3 を作って先頭 1 通 / 2 通を削除し入口 list を変える**
+- 文面の元は `~/.analytics-keiba-ops/sendgrid-automation-content/`（**repo の外**・PII なし）
 
 ⚠️ 参考: 作業の前後で Marketing の contacts が 104 → **105** に増えたが、**AK の投入ではない**
 （作った list は 3 本とも 0 件）。KI 側の登録とみられる。
