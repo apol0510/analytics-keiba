@@ -476,6 +476,72 @@ netlify dev:exec --context production -- node astro-site/scripts/sendgrid-create
 
 ---
 
+## 11-d. Design Library 登録 完了 ／ Automation に出ない原因（2026-09-18）
+
+### ✅ Design を 10 件登録した（手で HTML を貼らないため）
+
+| 項目 | 実測 |
+|---|---|
+| 登録 | **10 件**（`AK Prospect Selection 01`〜`10`）/ editor **code** |
+| 中身 | 書き出し済みファイルを**無加工**（`generate_plain_content: false`）|
+| 検証 | 作成後 GET で subject / html / plain を突き合わせ **全件一致** |
+| 二重作成 | 同名は飛ばす（再実行で 10 件とも `skip（既存）`）|
+
+スクリプト `scripts/sendgrid-create-designs.mjs`（`/v3/designs` の **GET と POST だけ**）:
+
+```bash
+netlify dev:exec --context production -- node astro-site/scripts/sendgrid-create-designs.mjs \
+  --apply --confirm "CREATE AK DESIGNS"
+```
+
+### 🔎 Automation の「Your Email Designs」に出ない原因（read-only 調査）
+
+**アカウントやリージョンの不一致ではない。** Automation が参照しているのは
+**Design Library ではなく Dynamic Template（`d-…`）**で、Design Library に作った
+`editor: 'code'` の Design は UI の候補に出ていない。
+
+| 否定できた仮説 | 根拠 |
+|---|---|
+| 別アカウント / subuser | `/v3/user/username` = **user_id 55647039**（`unified_acct_US…`）/ `/v3/subusers` **0 件** |
+| EU と global の分裂 | `api.eu.sendgrid.com` でも**同じ user_id・同じ 10 件**が返る |
+| 作成失敗 | `/v3/designs` に **10 件**（id / subject / thumbnail / `editor:"code"` まで取得可）|
+| 中身の破損 | 作成直後の突き合わせで**全件一致** |
+
+| 分かった構造 | 実測 |
+|---|---|
+| Automation のメール本文の実体 | **Dynamic Template**（例 `d-d9a2e28b…` / `generation: dynamic` / version の `editor: "code"`）|
+| その template は一覧に出るか | **出ない**（`/v3/templates?generations=dynamic` は 0 件なのに id 直指定の GET は 200）＝ MC が内部生成する隠しテンプレ |
+| Design Library の中身 | **10 件すべて `editor: "code"`**。design editor の Design は **0 件** |
+| 既存 Automation | `AK Prospect Selection start 1`（**draft** / message_count **1**）。1 通目の subject は通し番号 01 と一致 |
+
+→ **UI が「Your Email Designs」に出すのは design editor 側の Design だけ**で、
+アカウントには code の Design しか無いため **Blank Template だけ**に見える、という説明が
+すべての実測と整合する。
+
+#### 次の最小確認（MK / 1 操作・書き込み無し）
+
+Automation のメール追加で **「Code Editor」を選んだ状態**で "Your Email Designs" を開く。
+`AK Prospect Selection 01`〜`10` が出れば確定。
+
+#### 出なかった場合の代替（**承認前・未実行**）
+
+Automation の本文は `d-…` Dynamic Template なので、**API で流し込む余地がある**
+（`templates.create` / `templates.versions.create` の権限はある）。
+27 通を手で貼る運用には戻さない。⚠️ **Automation 自体の作成・更新の公開 API は無い**（読み取りのみ）。
+
+### Automation は **start 1 だけ作り、Duplicate で 2 / 3 を作る**
+
+| # | 操作 | 中身 |
+|---|---|---|
+| 1 | `AK Prospect Selection start 1` | 入口 `ak-prospect-select-start-1` / **10 通** / **1 日 1 通** / sender `KEIBA Analytics` / group `AK Marketing` |
+| 2 | 各メールに Design（または template）を当てる | n 通目 = **通し番号 0n** |
+| 3 | **Duplicate** → `start 2` | **先頭 1 通を削除**し入口を `-2` へ（02〜10 の 9 通）|
+| 4 | **Duplicate** → `start 3` | **先頭 2 通を削除**し入口を `-3` へ（03〜10 の 8 通）|
+
+⚠️ **Set Live はしない**（別の承認）。⚠️ 文面の単一源は書き出しファイル / Design。**画面で本文を書き直さない。**
+
+---
+
 ## 11-c. SendGrid 側の現況（read-only 実測 / 2026-09-18・**Marketing 権限つきで取得**）
 
 | 項目 | 実測 | AK 移行への意味 |
