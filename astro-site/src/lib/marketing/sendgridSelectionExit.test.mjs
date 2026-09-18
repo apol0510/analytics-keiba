@@ -16,8 +16,10 @@ import { fileURLToPath } from 'node:url';
 
 import {
   planSelectionExit, applySelectionExit, createSelectionExitClient,
-  isSelectionExitDisabled, EXIT_STATES, SELECTION_LIST_NAMES, MAX_EXIT_PER_CALL, EXIT_DISABLE_ENV,
+  isSelectionExitDisabled, EXIT_STATES, CRITICAL_EXIT_STATES, SELECTION_LIST_NAMES,
+  MAX_EXIT_PER_CALL, EXIT_DISABLE_ENV, REMOVE_ATTEMPTS,
 } from './sendgridSelectionExit.js';
+import { createEventOnceStore } from '../webhooks/webhookEventOnce.js';
 import { PROSPECT_STATE, classifyEvent } from './prospectPolicy.js';
 import { planProspectEventUpdates } from './prospectPipeline.js';
 import { containsEmailLike } from './sendgridNextMessage.js';
@@ -27,8 +29,11 @@ const WEBHOOK = fileURLToPath(new URL('../../../netlify/functions/sendgrid-webho
 const webhookSrc = readFileSync(WEBHOOK, 'utf8');
 
 /** 選別 list だけを持つ偽 SendGrid */
-function fakeClient({ failListFetch = false, failRemove = false, throwOn = null } = {}) {
+function fakeClient({
+  failListFetch = false, failRemove = false, throwOn = null, lookupFails = false, failTimes = 0,
+} = {}) {
   const calls = { lists: 0, search: 0, remove: [] };
+  let failsLeft = failTimes;
   return {
     calls,
     async selectionListIds() {
@@ -42,9 +47,16 @@ function fakeClient({ failListFetch = false, failRemove = false, throwOn = null 
       if (throwOn === 'search') throw new Error('boom');
       return emails.map((e) => `c-${e}`);
     },
+    async contactIdsChecked(emails) {
+      calls.search += 1;
+      if (throwOn === 'search') throw new Error('boom');
+      if (lookupFails) return { byEmail: new Map(), lookupFailed: true };
+      return { byEmail: new Map(emails.map((e) => [e, `c-${e}`])), lookupFailed: false };
+    },
     async removeFromList({ listId, contactIds }) {
       calls.remove.push({ listId, n: contactIds.length });
       if (throwOn === 'remove') throw new Error('boom');
+      if (failsLeft > 0) { failsLeft -= 1; return { status: 500, removed: 0 }; }
       return failRemove ? { status: 500, removed: 0 } : { status: 202, removed: contactIds.length };
     },
   };
@@ -160,7 +172,7 @@ test('webhook が配線されている（新しい cron を作っていない）
   assert.match(webhookSrc, /prospect: prospectCounts/);
   assert.equal(/prospect,\n\s*\}\);/.test(webhookSrc), false, 'changes を含む prospect をそのまま返している');
   // 失敗しても 200（catch で握って応答へ載せる）
-  assert.match(webhookSrc, /selectionExit = \{ enabled: false, errors: 1, reason: 'unexpected_error' \}/);
+  assert.match(webhookSrc, /selectionExit = \{ enabled: false, errors: 1, reason: 'unexpected_error', criticalFailure: true \}/);
   // cron の宣言を足していない
   assert.equal(/export const config[\s\S]*schedule/.test(webhookSrc), false, 'webhook に schedule を足している');
 });
@@ -200,4 +212,123 @@ test('【KI/KMA 影響 0】触る API は list の取得・contact 検索・list
   for (const bad of ['/v3/mail/send', '/v3/marketing/singlesends', 'PUT', 'PATCH']) {
     assert.equal(src.includes(bad), false, `${bad} を持っている`);
   }
+});
+
+// ── 失敗を握り潰さない（ENGAGED / PROMOTED）─────────────────────────
+test('反応者（ENGAGED / PROMOTED）の除去失敗は握り潰さない', async () => {
+  assert.deepEqual(CRITICAL_EXIT_STATES, ['ENGAGED', 'PROMOTED']);
+  for (const opts of [{ failRemove: true }, { failListFetch: true }, { lookupFails: true }, { throwOn: 'remove' }]) {
+    // eslint-disable-next-line no-await-in-loop -- 4 パターン
+    const out = await applySelectionExit({
+      changes: [{ email: 'a@example.test', state: PROSPECT_STATE.ENGAGED }],
+      client: fakeClient(opts), env: {},
+    });
+    assert.equal(out.criticalFailure, true, `${JSON.stringify(opts)} で失敗が握り潰された`);
+  }
+});
+
+test('抑止（SUPPRESSED / EXHAUSTED）だけの失敗は再送を求めない（suppression が独立して効く）', async () => {
+  const out = await applySelectionExit({
+    changes: [
+      { email: 'b@example.test', state: PROSPECT_STATE.SUPPRESSED },
+      { email: 'c@example.test', state: PROSPECT_STATE.EXHAUSTED },
+    ],
+    client: fakeClient({ failRemove: true }), env: {},
+  });
+  assert.equal(out.criticalFailure, false);
+  assert.ok(out.errors > 0, '失敗自体は数えている');
+});
+
+test('一時失敗は同じ呼び出しの中で retry して成功する', async () => {
+  const client = fakeClient({ failTimes: 1 });   // 1 回だけ 500
+  const out = await applySelectionExit({
+    changes: [{ email: 'a@example.test', state: PROSPECT_STATE.ENGAGED }],
+    client, env: {},
+  });
+  assert.equal(out.criticalFailure, false, '再試行で成功すべき');
+  assert.ok(client.calls.remove.length > 3, `retry されていない: ${client.calls.remove.length}`);
+  assert.ok(REMOVE_ATTEMPTS >= 2);
+});
+
+test('SendGrid 未設定でも反応者が居れば失敗として扱う', async () => {
+  const out = await applySelectionExit({
+    changes: [{ email: 'a@example.test', state: PROSPECT_STATE.ENGAGED }], client: null, env: {},
+  });
+  assert.equal(out.criticalFailure, true);
+});
+
+test('未投入（contact が見つからない）は失敗ではない', async () => {
+  const client = {
+    async selectionListIds() { return ['l1']; },
+    async contactIdsChecked() { return { byEmail: new Map(), lookupFailed: false }; },
+    async removeFromList() { return { status: 202, removed: 0 }; },
+  };
+  const out = await applySelectionExit({
+    changes: [{ email: 'a@example.test', state: PROSPECT_STATE.ENGAGED }], client, env: {},
+  });
+  assert.equal(out.criticalFailure, false);
+  assert.equal(out.reason, 'contacts_not_found');
+});
+
+// ── 再送（duplicate webhook）で二重に数えない ───────────────────────
+test('同じイベントが再送されても 1 回しか処理しない（delivered を二重に数えない）', async () => {
+  const store = new Map();
+  const redisCmd = async (args) => {
+    const [op, key, , nx] = args;
+    if (op !== 'SET') throw new Error('unsupported');
+    if (String(nx).toUpperCase() === 'NX' && store.has(key)) return null;
+    store.set(key, '1');
+    return 'OK';
+  };
+  const once = createEventOnceStore({ redisCmd });
+  const events = [
+    { email: 'a@example.test', event: 'delivered', sg_event_id: 'sg-evt-00000001' },
+    { email: 'b@example.test', event: 'open', sg_event_id: 'sg-evt-00000002' },
+  ];
+  const first = await once.filterUnseen(events);
+  assert.equal(first.events.length, 2);
+  assert.equal(first.seen, 0);
+  assert.equal(first.guarded, true);
+
+  const retry = await once.filterUnseen(events);          // SendGrid の再送
+  assert.equal(retry.events.length, 0, '再送で同じイベントを処理している');
+  assert.equal(retry.seen, 2);
+  assert.equal(retry.guarded, true);
+});
+
+test('印を付けられないときは再送を要求しない（guarded=false）', async () => {
+  const noRedis = createEventOnceStore({});
+  const r1 = await noRedis.filterUnseen([{ email: 'a@example.test', event: 'open', sg_event_id: 'sg-evt-00000003' }]);
+  assert.equal(r1.guarded, false);
+  assert.equal(r1.events.length, 1, 'Redis が無くても処理は続ける');
+
+  const noId = createEventOnceStore({ redisCmd: async () => 'OK' });
+  const r2 = await noId.filterUnseen([{ email: 'a@example.test', event: 'open' }]);  // sg_event_id 無し
+  assert.equal(r2.guarded, false);
+  assert.equal(r2.events.length, 1);
+
+  const broken = createEventOnceStore({ redisCmd: async () => { throw new Error('down'); } });
+  const r3 = await broken.filterUnseen([{ email: 'a@example.test', event: 'open', sg_event_id: 'sg-evt-00000004' }]);
+  assert.equal(r3.guarded, false);
+  assert.equal(r3.errors, 1);
+  assert.equal(r3.events.length, 1);
+});
+
+test('webhook は「反応者を外せない ＋ 重複防止あり」のときだけ 503 を返す', () => {
+  assert.match(webhookSrc, /const retryForExit = selectionExit\.criticalFailure === true && unseen\.guarded === true/);
+  assert.match(webhookSrc, /return jsonResponse\(503, \{ \.\.\.body, retry: 'selection_exit_failed' \}\)/);
+  // 再送で二重加算しないよう、prospect 反映は重複除去後のイベントだけ
+  assert.match(webhookSrc, /applyProspectEvents\(\{ events: unseen\.events/);
+  // 再送の 2 回目でも外せるよう、状態が変わっていなくても対象へ積む
+  assert.match(webhookSrc, /if \(r\.prospect\) out\.changes\.push\(\{ email: u\.email, state: r\.prospect\.state \}\)/);
+});
+
+test('sg_event_id が無い / 形が違うイベントは重複判定できない（保証を外す）', async () => {
+  const once = createEventOnceStore({ redisCmd: async () => 'OK' });
+  const r = await once.filterUnseen([
+    { email: 'a@example.test', event: 'open', sg_event_id: 'short' },   // 短すぎる
+    { email: 'b@example.test', event: 'open' },                          // ID 無し
+  ]);
+  assert.equal(r.guarded, false);
+  assert.equal(r.events.length, 2, '判定できなくても処理は止めない');
 });

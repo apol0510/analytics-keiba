@@ -783,7 +783,12 @@ Single Send は**送信時点の list の中身**へ送る。したがって
 | **API の範囲を閉じる** | `GET /v3/marketing/lists` / `POST /v3/marketing/contacts/search/emails` / `DELETE …/lists/{id}/contacts` の **3 つだけ**。送信・contact 作成・suppression 操作の経路を持たない |
 | **べき等** | 状態が変わった人だけを対象にし、同じ webhook 内の重複は 1 回に畳む（大文字小文字も同一視）。SendGrid は既に居ない相手でも 202 を返すので二度実行しても害が無い |
 | **暴走しない** | 1 回の webhook で外すのは最大 100 名（超過分は数えて次のイベントで回収）|
-| **落ちない** | SendGrid が失敗・例外でも**投げない**。webhook は **200 を返し続ける**（再送で二重処理させない）|
+| **反応者の失敗は握り潰さない** | `ENGAGED` / `PROMOTED` を外せなかったら **503 を返して SendGrid に再送させる**（AK に queue を作らない）。一時障害は**同じ呼び出しの中で 2 回まで再試行**してから判断する |
+| 抑止側は 200 のまま | `SUPPRESSED` / `EXHAUSTED` は **provider の suppression が list と独立に効く**ので、外し損ねても届かない。再送を求めない |
+| **再送しても二重に数えない** | `sg_event_id` を鍵に **1 回だけ**通す（`webhookEventOnce.js` / Redis・TTL 7 日）。`recordDelivered()` は呼ぶたびに +1 するので、この印が無いと再送で**打ち切りの分母が狂う** |
+| 再送を求めてよい条件 | **重複を防げているときだけ**（`sg_event_id` が無い / Redis 不通なら `guarded:false` → 503 にしない）|
+| 再送の 2 回目で外せる | 状態が変わっていなくても「いまの状態が除外対象なら」対象へ積む（2 回目は `changed:false` になるため）|
+| 未投入は失敗ではない | contact 検索で**見つからない**のは「まだ入れていない人」。**検索が HTTP で失敗した**ときだけ失敗扱い |
 | **PII を出さない** | 応答・ログは件数だけ（`changes` は webhook の応答から落とす）|
 | **止め方** | `SENDGRID_SELECTION_EXIT_DISABLED=true` の 1 つ。**既定は有効**（env を足さなくても動く）|
 

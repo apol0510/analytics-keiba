@@ -264,7 +264,11 @@ Customers / 抑止台帳のどこに居るかを突き合わせる ② 既送信
   `sendgrid-webhook.js` → `applySelectionExit()` を配線。**新しい cron は作っていない**。
   外す相手は ENGAGED / PROMOTED / SUPPRESSED / EXHAUSTED。触る list は
   `ak-prospect-select-start-N` だけ（**KI / KMA 影響 0**）。べき等・上限 100 名/回・
-  SendGrid 失敗でも webhook は 200・応答とログは件数のみ・
+  **反応者（ENGAGED / PROMOTED）を外せないときは 503 を返して SendGrid に再送させる**
+  （同一呼び出しで 2 回再試行してから判断／抑止側は suppression が独立に効くので 200 のまま）。
+  再送で `delivered` を二重に数えないよう `sg_event_id` で 1 回だけ通す
+  （`webhookEventOnce.js`・Redis・TTL 7 日）。印を付けられないときは 503 にしない。
+  応答とログは件数のみ・
   停止は `SENDGRID_SELECTION_EXIT_DISABLED=true`（**既定は有効**）。
   `group_unsubscribe` はコード側の受け入れ準備済み（トグル ON は MK の 1 操作）
 - 🔎 **SendGrid Segment だけで開封離脱は作れない**- 🔎 **SendGrid Segment だけで開封離脱は作れない**（2026-09-18 実測）。Segment V2 の SGQL は

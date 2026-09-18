@@ -155,11 +155,21 @@ test('guard: Payment Email 反映の失敗で suppression 側を巻き添えに�
 });
 
 test('guard: 応答・ログに識別子を出さない（集計のみ）', () => {
-  // 応答に載せてよいのは **集計オブジェクトだけ**（識別子・アドレスを載せない）
-  assert.match(CODE, /return jsonResponse\(200, \{[^}]*paymentEmail/, 'paymentEmail の集計を返していない');
-  assert.match(CODE, /return jsonResponse\(200, \{[^}]*ledger/, '台帳の集計を返していない');
+  /**
+   * 応答に載せてよいのは **集計オブジェクトだけ**（識別子・アドレスを載せない）。
+   * ⚠️ 2026-09-18 に応答を `const body = {...}` へまとめた（200 と 503 で同じ形を返すため）。
+   *    見る場所は変わったが、**集計だけを返す**という条件は変えていない。
+   */
+  const bodyBlock = CODE.match(/const body = \{[\s\S]*?\n    \};/);
+  assert.ok(bodyBlock, '応答の組み立てが見つからない');
+  assert.match(bodyBlock[0], /paymentEmail/, 'paymentEmail の集計を返していない');
+  assert.match(bodyBlock[0], /ledger/, '台帳の集計を返していない');
+  assert.match(CODE, /return jsonResponse\(200, body\)/, '組み立てた集計をそのまま返していない');
+  // アドレスを含む `changes` は応答へ載せない
+  assert.match(CODE, /const \{ changes: _prospectChanges, \.\.\.prospectCounts \} = prospect/);
   assert.ok(!/console\.log\([^)]*record_id/.test(CODE), 'ログに record_id を出している');
   assert.ok(!/console\.log\([^)]*idempotency_key/.test(CODE), 'ログに冪等キーを出している');
+  assert.ok(!/console\.(log|error)\([^)]*\bemail\b/.test(CODE), 'ログにアドレスを出している');
 });
 
 // ── 配信反応の恒久台帳（2026-08-01 / 既定 OFF）────────────────────

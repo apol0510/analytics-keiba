@@ -43,6 +43,19 @@ export const EXIT_STATES = Object.freeze([
   PROSPECT_STATE.SUPPRESSED, PROSPECT_STATE.EXHAUSTED,
 ]);
 
+/**
+ * **失敗を握り潰してはいけない**状態。
+ *
+ * `SUPPRESSED`（配信停止 / bounce / 苦情）と `EXHAUSTED` は
+ * **SendGrid の suppression が list とは独立に効く**ので、list から外し損ねても届かない。
+ * 一方 **`ENGAGED` / `PROMOTED` は list から外れない限り翌日の号が届く**。
+ * したがってこの 2 つの除去に失敗したら、**webhook を失敗として返して再送させる**。
+ */
+export const CRITICAL_EXIT_STATES = Object.freeze([PROSPECT_STATE.ENGAGED, PROSPECT_STATE.PROMOTED]);
+
+/** 1 回の webhook 内で除去を試す回数（**新しい queue を作らずに一時障害を吸収する**）*/
+export const REMOVE_ATTEMPTS = 2;
+
 /** 対象 list の名前（**この名前以外は絶対に触らない**） */
 export const SELECTION_LIST_NAMES = Object.freeze([listNameFor(1), listNameFor(2), listNameFor(3)]);
 
@@ -70,6 +83,7 @@ export function planSelectionExit({ changes, max } = {}) {
   const skipped = {};
   const seen = new Set();
   const emails = [];
+  const criticalEmails = [];
   let capped = 0;
 
   for (const c of Array.isArray(changes) ? changes : []) {
@@ -81,9 +95,10 @@ export function planSelectionExit({ changes, max } = {}) {
     seen.add(email);
     if (emails.length >= cap) { capped += 1; continue; }
     emails.push(email);
+    if (CRITICAL_EXIT_STATES.includes(state)) criticalEmails.push(email);
     byState[state] = (byState[state] || 0) + 1;
   }
-  return { emails, byState, skipped, capped };
+  return { emails, criticalEmails, byState, skipped, capped };
 }
 
 /**
@@ -135,6 +150,23 @@ export function createSelectionExitClient({ apiKey, fetchImpl } = {}) {
       }
       return [...new Set(ids)];
     },
+    /** アドレス → contact id（**引けたかどうか**も返す。引けない＝安全側に倒せない） */
+    async contactIdsChecked(emails) {
+      const list = [...new Set((emails || []).map(normalize))].filter(Boolean);
+      const byEmail = new Map();
+      let lookupFailed = false;
+      for (let i = 0; i < list.length; i += 50) {
+        // eslint-disable-next-line no-await-in-loop -- API の上限に合わせる
+        const r = await call('POST', '/v3/marketing/contacts/search/emails', { emails: list.slice(i, i + 50) });
+        // ⚠️ 404 は「その塊に 1 件も居ない」＝**失敗ではない**（未投入の相手）
+        if (r.status !== 200 && r.status !== 404) { lookupFailed = true; continue; }
+        for (const [email, hit] of Object.entries((r.body && r.body.result) || {})) {
+          const id = hit && hit.contact && hit.contact.id;
+          if (id) byEmail.set(normalize(email), String(id));
+        }
+      }
+      return { byEmail, lookupFailed };
+    },
     /** 選別 list から外す（**list 名を確かめた id しか渡さない**） */
     async removeFromList({ listId, contactIds }) {
       const ids = [...new Set((contactIds || []).map(String))].filter(Boolean);
@@ -158,37 +190,86 @@ export async function applySelectionExit({ changes, client, env = process.env } 
   const out = {
     enabled: false, 対象: 0, 状態別: {}, 除外した延べ件数: 0,
     list数: 0, 引き当て: 0, 上限超過: 0, errors: 0, reason: null,
+    /** ⚠️ **握り潰してはいけない失敗**（ENGAGED / PROMOTED を外せなかった） */
+    criticalFailure: false,
+    criticalTargets: 0,
+    criticalRemoved: 0,
   };
   if (isSelectionExitDisabled(env)) { out.reason = 'disabled_by_env'; return out; }
-  if (!client) { out.reason = 'sendgrid_not_configured'; return out; }
 
   const plan = planSelectionExit({ changes });
   out.対象 = plan.emails.length;
   out.状態別 = plan.byState;
   out.上限超過 = plan.capped;
-  if (plan.emails.length === 0) { out.enabled = true; out.reason = 'no_targets'; return out; }
+  out.criticalTargets = plan.criticalEmails.length;
 
+  if (!client) {
+    out.reason = 'sendgrid_not_configured';
+    // 反応者を外せない状態で「成功」にしない
+    out.criticalFailure = plan.criticalEmails.length > 0;
+    return out;
+  }
+  if (plan.emails.length === 0) { out.enabled = true; out.reason = 'no_targets'; return out; }
   out.enabled = true;
+
+  const critical = new Set(plan.criticalEmails);
   try {
     const listIds = await client.selectionListIds();
     if (!Array.isArray(listIds) || listIds.length === 0) {
       out.reason = 'selection_lists_not_found';
+      out.criticalFailure = critical.size > 0;
       return out;
     }
     out.list数 = listIds.length;
-    const ids = await client.contactIds(plan.emails);
-    out.引き当て = ids.length;
-    if (ids.length === 0) { out.reason = 'contacts_not_found'; return out; }
+
+    const looked = typeof client.contactIdsChecked === 'function'
+      ? await client.contactIdsChecked(plan.emails)
+      : { byEmail: new Map((await client.contactIds(plan.emails)).map((id) => [id, id])), lookupFailed: false };
+    const byEmail = looked.byEmail instanceof Map ? looked.byEmail : new Map();
+    out.引き当て = byEmail.size;
+
+    /**
+     * ⚠️ **引き当てに失敗した（HTTP エラー）ときは「居ない」と見なさない。**
+     *    居るのに外せていない可能性があるので、反応者が対象なら失敗として扱う。
+     *    一方「検索できたが見つからない」＝ **まだ投入していない人**なので失敗ではない。
+     */
+    if (looked.lookupFailed && critical.size > 0) {
+      out.criticalFailure = true;
+      out.reason = 'contact_lookup_failed';
+    }
+
+    const ids = [...byEmail.values()];
+    const criticalIds = new Set([...critical].map((e) => byEmail.get(e)).filter(Boolean));
+    out.criticalRemoved = 0;
+    if (ids.length === 0) {
+      if (!out.reason) out.reason = 'contacts_not_found';
+      return out;
+    }
+
+    /** list ごとに**上限つきで再試行**（新しい queue を作らずに一時障害を吸収する） */
+    const removedPerList = [];
     for (const listId of listIds) {
-      // eslint-disable-next-line no-await-in-loop -- list は最大 3 本
-      const r = await client.removeFromList({ listId, contactIds: ids });
-      out.除外した延べ件数 += r.removed;
-      if (!(r.status >= 200 && r.status < 300)) out.errors += 1;
+      let ok = false;
+      for (let attempt = 0; attempt < REMOVE_ATTEMPTS && !ok; attempt += 1) {
+        // eslint-disable-next-line no-await-in-loop -- list は最大 3 本 × 2 回
+        const r = await client.removeFromList({ listId, contactIds: ids });
+        ok = r.status >= 200 && r.status < 300;
+        if (ok) out.除外した延べ件数 += r.removed;
+      }
+      removedPerList.push(ok);
+      if (!ok) out.errors += 1;
+    }
+    const allListsOk = removedPerList.every(Boolean);
+    if (allListsOk && criticalIds.size > 0) out.criticalRemoved = criticalIds.size;
+    if (!allListsOk && criticalIds.size > 0) {
+      out.criticalFailure = true;
+      out.reason = out.reason || 'remove_failed';
     }
   } catch {
-    // ⚠️ webhook を落とさない。次のイベントか移行スクリプトの再実行で回収する
     out.errors += 1;
     out.reason = 'sendgrid_call_failed';
+    // ⚠️ 例外でも**反応者の除去失敗は握り潰さない**
+    out.criticalFailure = critical.size > 0;
   }
   return out;
 }
