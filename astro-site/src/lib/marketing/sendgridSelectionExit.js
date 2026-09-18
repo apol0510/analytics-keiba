@@ -4,13 +4,17 @@
  *
  * ## なぜ webhook の中でやるのか（2026-09-18 MK 確定）
  *
- * Single Send は**送信時点の list の中身**へ送るので、「送る前に外す」ことさえできれば
- * 未来の号からは確実に消える。SendGrid の Segment では open を条件にできないことが
- * 実測で分かったため（`sendgridExitReadiness.SEGMENT_CAPABILITY`）、外すのは AK 側の役目になる。
+ * Single Send は**送信時点の list の中身**へ送るので、送信前に外せていれば未来の号には入らない。
+ * SendGrid の Segment では open を条件にできないことが実測で分かったため
+ * （`sendgridExitReadiness.SEGMENT_CAPABILITY`）、外すのは AK 側の役目になる。
  *
  * **新しい cron も配送エンジンも作らない。** 既に open / bounce / 苦情 / 配信停止を
  * 受け取っている `sendgrid-webhook.js` の処理の中で、そのまま list から外す。
- * 反応した**その時点**で外れるので、翌日の号に確実に間に合う。
+ *
+ * ⚠️ **「必ず最終的に外れる」とは書かない。** 実際に行うのは
+ *    **即時 2 回再試行 ＋ SendGrid Event Webhook の非 2xx 再送（最大 24 時間）による再試行**で、
+ *    その窓の中で除去を繰り返し試みる。窓を過ぎても外せなければ**外れないまま残る**
+ *    （そのときは移行スクリプトの再実行など人手の回収が要る）。
  *
  * ## 外す相手（これ以外は外さない）
  *

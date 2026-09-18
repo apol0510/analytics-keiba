@@ -757,7 +757,7 @@ Single Send は**本文を自分で持つ**ので、期間が終わって `isCam
 ### なぜ外れないのか（構造）
 
 Single Send は**送信時点の list の中身**へ送る。したがって
-**「送る前に list から外す」ことさえできれば未来の号からは確実に消える**。
+**送信前に list から外せていれば、その号には入らない**。
 ところが **list から外す処理が動いていない**（`buildExitPlan()` /
 `removeContactsFromList()` は実装済みだが、呼ぶのは未 deploy の管理 API だけで、
 定期実行の配線が無い）。**開封した人にも 10 通届く。**
@@ -766,7 +766,8 @@ Single Send は**送信時点の list の中身**へ送る。したがって
 
 **新しい cron も配送エンジンも作らない。** 既に open / bounce / 苦情 / 配信停止を受けている
 `sendgrid-webhook.js` の処理の中で、そのまま list から外す。
-反応した**その時点**で外れるので、翌日の Single Send に確実に間に合う。
+除去は**即時 2 回再試行**し、失敗したら **SendGrid Event Webhook の非 2xx 再送（最大 24 時間）**で
+再試行する。⚠️ **「必ず最終的に外れる」わけではない**（再送の窓を過ぎても失敗が続けば残る）。
 
 | 外す相手 | きっかけ |
 |---|---|
@@ -834,7 +835,8 @@ open は「反応候補」として ENGAGED へ進め、**打ち切りの判定�
 すでに更新している。**その同じ処理の中で `removeContactsFromList()` を呼ぶ**のが最小で、
 
 - **新しい cron を作らない**（既存 Function の延長）
-- 反応した**その時点**で外れる（翌日の Single Send より前に確実に間に合う）
+- 除去は**即時 2 回再試行 ＋ 非 2xx 再送（最大 24 時間）**で再試行する
+  （**「必ず外れる」ではない**。窓を過ぎても失敗が続けば残るので、そのときは人手で回収する）
 - 実装は既にある（`buildExitPlan()` / `removeContactsFromList()`）。配線だけ
 
 判定の単一源: `sendgridExitReadiness.js`（`SEGMENT_CAPABILITY` / `chooseExitMechanism()`）

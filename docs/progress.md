@@ -266,6 +266,8 @@ Customers / 抑止台帳のどこに居るかを突き合わせる ② 既送信
   `ak-prospect-select-start-N` だけ（**KI / KMA 影響 0**）。べき等・上限 100 名/回・
   **反応者（ENGAGED / PROMOTED）を外せないときは 503 を返して SendGrid に再送させる**
   （同一呼び出しで 2 回再試行してから判断／抑止側は suppression が独立に効くので 200 のまま）。
+  ⚠️ 正確には「**即時 2 回再試行 ＋ Event Webhook の非 2xx 再送（最大 24 時間）による再試行**」で、
+  **「必ず最終的に外れる」保証ではない**（窓を過ぎても失敗が続けば残る）。
   再送で `delivered` を二重に数えないよう `sg_event_id` で 1 回だけ通す
   （`webhookEventOnce.js`・Redis・TTL 7 日）。印を付けられないときは 503 にしない。
   応答とログは件数のみ・
