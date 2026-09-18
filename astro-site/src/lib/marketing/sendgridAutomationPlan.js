@@ -34,6 +34,7 @@
  */
 
 import { TOTAL_MESSAGES } from './sendgridMessagePlan.js';
+import { CONTACT_FIELD_NAMES_REQUIRED } from './sendgridContactExport.js';
 
 /** list / Automation の名前（**推測で作らない**ための単一源） */
 export const LIST_NAME_PREFIX = 'ak-prospect-select-start-';
@@ -192,6 +193,25 @@ export function describeMinimalSetup(plan) {
     segment: 'なし（静的な list で入口を固定する）',
     合計: (plan && plan.totals) || {},
   };
+}
+
+/**
+ * **SendGrid 側に作ってよいものの名前**（allowlist / 単一源）。
+ *
+ * ⚠️ ここに無い名前を作らない。作成スクリプトも guard テストもこの表を見る。
+ * ⚠️ list は**対象が居る開始番号だけ**。現状の実測（次の通 1 / 2 / 3 に全員）に合わせて 3 本。
+ *    4〜10 始まりが必要になったら、**実測でそこに人が居ることを確かめてから**足す。
+ */
+export function buildMinimalSetupNames({ startMessages } = {}) {
+  const starts = Array.isArray(startMessages) && startMessages.length > 0
+    ? [...new Set(startMessages)].sort((a, b) => a - b)
+    : [1, 2, 3];
+  return Object.freeze({
+    group: UNSUBSCRIBE_GROUP_NAME,
+    field: CONTACT_FIELD_NAMES_REQUIRED[0],
+    lists: Object.freeze(starts.map((n) => listNameFor(n))),
+    senderNickname: 'KEIBA Analytics',
+  });
 }
 
 export default buildAutomationPlan;

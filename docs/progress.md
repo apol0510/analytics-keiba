@@ -229,7 +229,20 @@ Customers / 抑止台帳のどこに居るかを突き合わせる ② 既送信
 | 既存機能の権限 | ✅ `mail.send` / `asm.groups.*` / `suppression.*` / `whitelabel.read` / `user.account.read` 残存。**欠落 0** |
 
 ⚠️ 次に要るのは **`marketing.write`**（list / custom field / sender の作成と contact 投入）。
-いまは read だけなので**作れない**＝停止位置として正しい。
+**2026-09-18 に MK が Full Access へ変更したと連絡を受けたが、`/v3/scopes` は `marketing.read` のみ**
+（総数 203 のまま）。したがって**作成は実行していない**（fail closed）。
+
+作成は 1 コマンドにしてある（`scripts/sendgrid-create-minimal-setup.mjs`）。
+**`marketing.write` が無ければ着手前に中止**するので、権限が入った後にそのまま実行できる:
+
+```bash
+netlify dev:exec --context production -- node astro-site/scripts/sendgrid-create-minimal-setup.mjs \
+  --apply --confirm "CREATE AK MINIMAL SETUP"
+```
+
+下見（`--apply` なし）は実行済みで、作る 6 つ（group 1 / field 1 / list 3 / sender 1）と
+**触らない既存資産 7 つ**（KI / nankan / review 系）を確認した。
+⚠️ **Automation は API で作れない**（公開 API は統計のみ）。画面で作る設定値はスクリプトが表示する。
 
 ### SendGrid Marketing の現況（権限つきで初めて読めた）
 

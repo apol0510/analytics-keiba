@@ -435,11 +435,34 @@ SendGrid の画面で該当キーを編集し、**Marketing に Read Access**（
 ⚠️ **ここから先はすべて MK 承認が要る。この PR では 1 つも作っていない。**
 順番を守る（後ろの段が前の段に依存する）。
 
+### 作成は 1 コマンド（**`marketing.write` が無ければ 1 つも作らない**）
+
+```bash
+cd /Users/user/Projects/analytics-keiba
+# 下見（何も作らない）
+netlify dev:exec --context production -- node astro-site/scripts/sendgrid-create-minimal-setup.mjs
+# 実行（MK 承認のうえで）
+netlify dev:exec --context production -- node astro-site/scripts/sendgrid-create-minimal-setup.mjs \
+  --apply --confirm "CREATE AK MINIMAL SETUP"
+```
+
+| 守っていること | どう守るか |
+|---|---|
+| 作るのは 6 つだけ | 名前の単一源 `buildMinimalSetupNames()`（group 1 / field 1 / list 3 / sender 1）|
+| 既存を壊さない | **POST と GET しか持たない**（PUT / PATCH / DELETE を書かない）。同名があれば飛ばす |
+| KI に触らない | `intelligence` / `keiba-review` / `nankan` / `テストグループ` は素通り |
+| contact を入れない | `/v3/marketing/contacts` を触らない（別工程・別承認）|
+| 中途半端な状態を作らない | `marketing.write` が無ければ**着手前に中止**。失敗したらその場で停止 |
+| 住所を捏造しない | sender の住所欄は**既存の `keiba.link` sender から引き写す** |
+
+⚠️ **Automation は API で作れない**（公開 API は統計のみ）。スクリプトは画面で入れる値
+（入口 list / 通数 / 何日後 / 件名 / unsubscribe group / sender）を最後に表示する。
+
 | # | 作るもの | 中身 | 状態 |
 |---|---|---|---|
 | 0 | API キーに `marketing.read` | 既存キーを編集（値は不変）| ✅ **完了**（キー名 `AK SendGrid Production`）|
 | 0-b | read-only 再確認 | contacts / field_definitions / lists / segments / senders が **200** | ✅ **完了** |
-| 0-c | API キーに **`marketing.write`** を追加 | 同じキーを編集（**新規発行しない**）。作成・投入に必須 | **未 / MK 承認が要る** |
+| 0-c | API キーに **`marketing.write`** を追加 | 同じキーを編集（**新規発行しない**）。作成・投入に必須 | ⏳ **未反映**（2026-09-18 実測で `marketing.read` のみ）|
 | 1 | AK 用 **sender 1 件** | `keiba.link`（認証済み）の送信元。KI の sender は触らない | **未 / 承認** |
 | 2 | unsubscribe group **1 本** | AK と分かる名前。**KI の group は触らない** | **未 / 承認** |
 | 3 | custom field **1 本** | `ak_next_message`（Number）。任意 2 本は作らない | **未 / 承認** |
