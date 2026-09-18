@@ -143,3 +143,15 @@ test('開始日が未確定でも「何日までに始めれば成立するか�
   assert.equal(out.reason, 'start_date_undecided');
   assert.deepEqual(out.latestStartByStart, { 1: '2026-09-14', 2: '2026-09-15', 3: '2026-09-16' });
 });
+
+test('期限つきの通が無ければ、開始日を決めていなくても成立する', async () => {
+  const { checkDeadlineFeasibility } = await import('./sendgridSingleSendPlan.js');
+  const r = base();
+  const out = checkDeadlineFeasibility({
+    sends: r.sends, startDateIso: '', deadlineIso: '2026-09-23T00:00:00+09:00',
+    datedMessageNumbers: [],
+  });
+  assert.equal(out.ok, true);
+  assert.equal(out.reason, null);
+  assert.deepEqual(out.violations, []);
+});

@@ -277,6 +277,13 @@ async function main() {
   }
 
   // ── 4) 作成後の検証（**GET して突き合わせ**）────────────────
+  /**
+   * ⚠️ SendGrid は保存時に **`%sg_open_track%`（開封計測のピクセル）を HTML の先頭へ付ける**。
+   *    これは SendGrid 側の正常な加工で、こちらの本文が変わったわけではない。
+   *    突き合わせでは**この置換タグだけを外して**比べる（他の差分は NG として扱う）。
+   *    なおこのタグが付くこと自体が「**開封計測が有効**」の証拠でもある（選別の主シグナル）。
+   */
+  const stripProviderTags = (html) => String(html || '').split('%sg_open_track%').join('');
   const after = await listExisting();
   const verified = [];
   for (const s of plan.sends) {
@@ -291,13 +298,14 @@ async function main() {
       name: s.name,
       status: d.status,
       一致: String(ec.subject) === m.subject
-        && String(ec.html_content) === m.html
+        && stripProviderTags(ec.html_content) === stripProviderTags(m.html)
         && String(ec.plain_content) === m.text
         && String((d.send_to || {}).list_ids && d.send_to.list_ids[0]) === s.listId
         && Number(ec.sender_id) === s.senderId
         && Number(ec.suppression_group_id) === s.suppressionGroupId
         && !d.send_at,
       予約: d.send_at || null,
+      開封計測: String(ec.html_content || '').includes('%sg_open_track%'),
     });
   }
   const out = { 作成結果: created, 検証: verified, 全件一致: verified.every((v) => v['一致'] === true) };

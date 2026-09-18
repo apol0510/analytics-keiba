@@ -724,6 +724,56 @@ Single Send は**本文を自分で持つ**ので、期間が終わって `isCam
 **「案内は届くのに割引が乗らない」**（2026-08-25 と同型）になる。
 期限つきの通を予約する前に、必ず上の判定を通す。
 
+### ✅ 27 Single Send を draft で作成 完了（2026-09-18）
+
+| 項目 | 実測 |
+|---|---|
+| 作成 | **27 件**（201 Created × 27・失敗 0）|
+| status | **draft × 27**（`send_at` は **全件 null** ＝ 予約なし）|
+| 検証 | GET で 1 件ずつ突き合わせ **27 / 27 一致**（subject / html / plain / list / sender / group）|
+| 宛先 | list 3 本のみ（`segment_ids: []` / `all: false`）|
+| 開封計測 | **27 / 27 で有効**（保存後の HTML 先頭に `%sg_open_track%`）|
+| 再実行 | 同名は `skipped_existing`（**二重作成しない**）|
+
+⚠️ SendGrid は保存時に **`%sg_open_track%`（開封ピクセル）を HTML 先頭へ付ける**。
+これは provider 側の正常な加工なので、突き合わせでは**そのタグだけ外して**比べる。
+
+---
+
+## 11-f. 🛑 cutover 前提「反応したら選別から外れる」は**いまの構成では成立しない**
+
+判定の単一源: `src/lib/marketing/sendgridExitReadiness.js`（実測値をテストで固定）
+
+| 離脱の引き金 | 検知できるか | 次の号から外れるか | 外す役 |
+|---|---|---|---|
+| **bounce** | ✅ webhook `bounce: true` | ✅ **自動** | SendGrid suppression |
+| **苦情（spam report）** | ✅ `spam_report: true` | ✅ **自動** | SendGrid suppression |
+| **配信停止（unsubscribe）** | ⚠️ **AK に届かない**（`group_unsubscribe: false`）| ✅ **自動** | SendGrid suppression（group 34108）|
+| **開封（open）** | ✅ 開封計測 ON ＋ webhook `open: true` | ❌ **外れない** | **誰も外していない** |
+| **click** | ❌ **計測が無効**（`/v3/tracking_settings/click` = disabled・webhook `click: false`）| ❌ | — |
+| **サイト再訪 / CTA 反応** | ❌ リンクに受信者識別子が無く**紐付け不可** | ❌ | — |
+| **購入** | ❌ prospect の反応として扱う配線が無い | ❌ | — |
+
+### なぜ外れないのか（構造）
+
+Single Send は**送信時点の list の中身**へ送る。したがって
+**「送る前に list から外す」ことさえできれば未来の号からは確実に消える**。
+ところが **list から外す処理が動いていない**（`buildExitPlan()` /
+`removeContactsFromList()` は実装済みだが、呼ぶのは未 deploy の管理 API だけで、
+定期実行の配線が無い）。**開封した人にも 10 通届く。**
+
+### 最小の直し方（**自前の配送基盤は作らない**）
+
+| # | 直すこと | やり方 | 新規実装 | 承認 |
+|---|---|---|---|---|
+| 1 | **list からの除外を定期実行**する | 既にある `buildExitPlan()` ＋ `removeContactsFromList()` を cron から呼ぶ（**1 日 1 回・送信前**）。対象は ENGAGED / PROMOTED / SUPPRESSED / EXHAUSTED | **無し（配線のみ）**| deploy |
+| 2 | Event Webhook の **`group_unsubscribe` を ON** | SendGrid 画面のトグル 1 つ（AK 台帳に SUPPRESSED を残すため。除外自体は既に自動）| 無し | SendGrid 設定 |
+| 3 | **click は当てにしない** | click tracking は**アカウント全体設定**で、ON にすると transactional の magic link まで書き換わる。**open を主シグナル**にする（既存方針どおり）| 無し | 方針判断 |
+| 4 | **購入は「昇格した人」として外す** | 1 の対象集合に `PROMOTED` と Customers 在籍を含める | 無し | deploy |
+| 5 | **サイト再訪は今回使わない** | 受信者識別子をリンクへ足す実装が要る（範囲外）。選別完了後に別途判断 | 要（見送り）| 方針判断 |
+
+⚠️ **1 が入るまで contact を投入しない。** 投入すると「開封した人にも 10 通届く」状態で走り出す。
+
 ### 残る承認地点
 
 1. **27 通の作成**（draft のまま）

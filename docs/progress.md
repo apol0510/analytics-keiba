@@ -252,9 +252,14 @@ Customers / 抑止台帳のどこに居るかを突き合わせる ② 既送信
   **04〜09 は 1 バイトも変更なし**／**catalog（割引 3 本・第 2 期）は無改変**／
   **`DeliveryKey` と next_message は不変**＝既送信の号を送り直さない。
   差し替え後の再監査は **期限つき 0 件・成立 true・検証NG 0**（任意の開始日で成立）
-- ✅ **Single Sends 27 通方式へ切替**（start-1 = 01〜10 / start-2 = 02〜10 / start-3 = 03〜10）。
-  **下見は本番で実行済み**: 検証 NG **0** / 既存 **0** / list・sender・group をすべて解決。
-  作成は**未実行**（`--apply` 待ち）。作っても **draft**（予約も送信もしない経路）
+- ✅ **27 Single Send を draft で作成 完了**（2026-09-18）。201×27 / 失敗 0 /
+  **status は全件 draft・`send_at` は全件 null**（予約なし）/ GET 突き合わせ **27/27 一致** /
+  宛先は list のみ（segment なし）/ **開封計測は 27 件とも有効**
+- 🛑 **cutover 前提「反応したら選別から外れる」は未成立**。自動で外れるのは
+  **bounce・苦情・配信停止**（SendGrid suppression）だけで、**開封しても外れない**
+  （list から外す定期実行が無い）。click は計測が無効、サイト再訪・購入は紐付け不可。
+  → **contact 投入はしない**。最小の直し方は「list 除外の cron 配線（新規実装なし）」＋
+  「webhook の group_unsubscribe を ON」（`sendgridExitReadiness.js` と docs §11-f）
 - 文面の元は `~/.analytics-keiba-ops/sendgrid-automation-content/`（**repo の外**・PII なし）
 
 ⚠️ 参考: 作業の前後で Marketing の contacts が 104 → **105** に増えたが、**AK の投入ではない**

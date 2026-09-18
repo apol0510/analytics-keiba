@@ -241,6 +241,14 @@ export function checkDeadlineFeasibility({
   const latestOut = {};
   for (const [k, v] of Object.entries(latestStartByStart)) latestOut[k] = asDate(v);
 
+  /**
+   * ⚠️ **期限つきの通が 1 つも無ければ、開始日に関係なく成立する。**
+   *    （差し替え後はこの状態。開始日未定を理由に止めない）
+   */
+  if (dated.size === 0) {
+    return { ok: true, reason: null, violations: [], latestStartByStart: latestOut };
+  }
+
   const start = Date.parse(String(startDateIso || ''));
   if (!Number.isFinite(start)) {
     return { ok: false, reason: 'start_date_undecided', violations: [], latestStartByStart: latestOut };
