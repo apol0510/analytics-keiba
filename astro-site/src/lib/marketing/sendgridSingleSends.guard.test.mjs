@@ -68,6 +68,17 @@ test('同名は作らない / `--apply` と合言葉の両方が要る / 検証 
   assert.match(src, /if \(ng\.length > 0\)/);
 });
 
+test('期限つきの文面が期限後に出る計画では作らない', () => {
+  assert.match(src, /checkDeadlineFeasibility/);
+  assert.match(src, /findDeadlineMessages/);
+  assert.match(src, /apply && !feas\.ok/, '成立しないのに作れてしまう');
+  assert.match(src, /describeCampaignDeadline/, '期限を手書きしている');
+  // 開始日は**判定にしか使わない**（予約の body へ渡らない）
+  assert.match(src, /--start-date/);
+  assert.match(src, /startDateIso: startDate \? `\$\{startDate\}T00:00:00\+09:00` : ''/);
+  assert.equal(/send_at:\s/.test(src), false, 'body に send_at を入れている');
+});
+
 test('資格情報が無ければネットワークへ出ずに終了する', () => {
   let code = 0;
   try {

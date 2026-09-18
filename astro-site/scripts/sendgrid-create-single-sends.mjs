@@ -46,7 +46,10 @@ import { homedir } from 'node:os';
 
 import { buildMessagePlan, TOTAL_MESSAGES } from '../src/lib/marketing/sendgridMessagePlan.js';
 import { listNameFor, UNSUBSCRIBE_GROUP_NAME } from '../src/lib/marketing/sendgridAutomationPlan.js';
-import { buildSingleSendPlan } from '../src/lib/marketing/sendgridSingleSendPlan.js';
+import {
+  buildSingleSendPlan, checkDeadlineFeasibility, findDeadlineMessages,
+} from '../src/lib/marketing/sendgridSingleSendPlan.js';
+import { describeCampaignDeadline, CAMPAIGN_WINDOW } from '../src/lib/promotions/campaignOffers.js';
 
 const CONFIRM = 'CREATE AK SINGLE SENDS';
 const SENDER_NICKNAME = 'KEIBA Analytics';
@@ -61,6 +64,11 @@ const confirm = (() => {
 const dir = (() => {
   const i = args.indexOf('--dir');
   return i >= 0 ? String(args[i + 1] || '') : DEFAULT_DIR;
+})();
+/** 配信開始日（`YYYY-MM-DD`）。**渡しても予約はしない**。成立判定にだけ使う */
+const startDate = (() => {
+  const i = args.indexOf('--start-date');
+  return i >= 0 ? String(args[i + 1] || '') : '';
 })();
 
 const KEY = process.env.SENDGRID_API_KEY;
@@ -205,8 +213,40 @@ async function main() {
     一覧: checks,
   }, null, 1));
 
+  // ── 2-b) 期限つき文面の成立判定（**日付を含む通を期限後に置かない**）──────
+  /**
+   * ⚠️ Single Send は**本文を自分で持つ**ので、キャンペーン期間が終わっても
+   *    予約済みのメールは止まらない。AK 側は期間外に 1 円も割り引かないので、
+   *    放置すると「案内は届くのに割引が乗らない」事故になる。ここで必ず突き合わせる。
+   */
+  const deadlineText = describeCampaignDeadline();          // 例「2026年9月23日まで」
+  const dated = findDeadlineMessages({
+    contents: messages.map((m) => ({ messageNumber: m.messageNumber, subject: m.subject, html: m.html, text: m.text })),
+    deadlineText,
+  });
+  const deadlineIso = new Date(Date.parse(CAMPAIGN_WINDOW.endsAtIso) - 1).toISOString();
+  const feas = checkDeadlineFeasibility({
+    sends: plan.sends, startDateIso: startDate ? `${startDate}T00:00:00+09:00` : '',
+    deadlineIso, datedMessageNumbers: dated,
+  });
+  console.log(JSON.stringify({
+    期限つきの通: dated,
+    期限の表示: deadlineText,
+    キャンペーン期間: CAMPAIGN_WINDOW,
+    開始日: startDate || '（未指定）',
+    成立: feas.ok,
+    理由: feas.reason || null,
+    '何日までに開始すれば成立するか': feas.latestStartByStart,
+    違反: feas.violations,
+  }, null, 1));
+
   if (ng.length > 0) {
     console.error('❌ 検証 NG があります。何も作っていません。');
+    process.exit(1);
+  }
+  if (apply && !feas.ok) {
+    console.error('❌ 期限つきの文面が期限後に出ます（または開始日が未確定）。**何も作っていません**。');
+    console.error('   期間を取り直すか、開始日を早めるか、期限つきの通を外すかを決めてから再実行してください。');
     process.exit(1);
   }
   if (!apply) {

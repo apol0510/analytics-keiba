@@ -99,3 +99,47 @@ test('総送信数は「人数 × 残りの通数」で出る（実測どおり 
   assert.equal(v.emails, 98090);
   assert.equal(v.perStart[3].messagesEach, TOTAL_MESSAGES - 3 + 1);
 });
+
+test('期限つきの通を期限より後に置かない（違反を全部返す）', async () => {
+  const { checkDeadlineFeasibility, findDeadlineMessages } = await import('./sendgridSingleSendPlan.js');
+  const r = base();
+  // 期限の文字列を含むのは 01 / 02 / 03 / 10（実際の文面と同じ構成）
+  const contents = [1, 2, 3, 10].map((n) => ({ messageNumber: n, subject: 'x', html: '2026年9月23日まで', text: '' }))
+    .concat([4, 5, 6, 7, 8, 9].map((n) => ({ messageNumber: n, subject: 'x', html: 'y', text: '' })));
+  const dated = findDeadlineMessages({ contents, deadlineText: '2026年9月23日まで' });
+  assert.deepEqual(dated, [1, 2, 3, 10]);
+
+  // 9/18 開始 → 10 通目は start-1 で 9/27、start-2 で 9/26、start-3 で 9/25 ＝ すべて期限超過
+  const late = checkDeadlineFeasibility({
+    sends: r.sends, startDateIso: '2026-09-18T00:00:00+09:00',
+    deadlineIso: '2026-09-23T00:00:00+09:00', datedMessageNumbers: dated,
+  });
+  assert.equal(late.ok, false);
+  assert.deepEqual(late.violations.map((v) => v.messageNumber), [10, 10, 10]);
+  assert.deepEqual(late.violations.map((v) => v['送信日']), ['2026-09-27', '2026-09-26', '2026-09-25']);
+
+  // 最遅開始日は「10 通目の day offset」で決まる（start-1 は 9 日前、start-3 は 7 日前）
+  assert.deepEqual(late.latestStartByStart, {
+    1: '2026-09-14', 2: '2026-09-15', 3: '2026-09-16',
+  });
+
+  // 十分に早く始めれば全件成立する
+  const ok = checkDeadlineFeasibility({
+    sends: r.sends, startDateIso: '2026-09-14T00:00:00+09:00',
+    deadlineIso: '2026-09-23T00:00:00+09:00', datedMessageNumbers: dated,
+  });
+  assert.equal(ok.ok, true);
+  assert.equal(ok.violations.length, 0);
+});
+
+test('開始日が未確定でも「何日までに始めれば成立するか」は出る', async () => {
+  const { checkDeadlineFeasibility } = await import('./sendgridSingleSendPlan.js');
+  const r = base();
+  const out = checkDeadlineFeasibility({
+    sends: r.sends, startDateIso: '', deadlineIso: '2026-09-23T00:00:00+09:00',
+    datedMessageNumbers: [1, 2, 3, 10],
+  });
+  assert.equal(out.ok, false);
+  assert.equal(out.reason, 'start_date_undecided');
+  assert.deepEqual(out.latestStartByStart, { 1: '2026-09-14', 2: '2026-09-15', 3: '2026-09-16' });
+});

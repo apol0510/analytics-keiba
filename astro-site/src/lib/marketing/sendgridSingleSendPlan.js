@@ -182,4 +182,86 @@ export function estimateSendVolume({ countsByNextMessage, starts, totalMessages 
   return { contacts, emails, perStart };
 }
 
+/**
+ * ── 期限つきの文面を「期限を過ぎてから」送らないための判定 ──────────────
+ *
+ * ⚠️ **移行で新しく生まれる危険**：Single Send は**本文を自分で持つ**ので、
+ *    キャンペーン期間が終わって `isCampaignActive()` が false になっても、
+ *    **予約済みのメールは止まらない**。AK 側の「期間外は 1 円も割り引かない」は生きているので、
+ *    放っておくと「案内は届くのに割引が乗らない」＝ 2026-08-25 と同型の事故になる。
+ *
+ * そこで **期限を含む通は、期限日より後の日付に置かない**ことを機械で確かめる。
+ */
+
+/** 本文・件名に期限の文字列（例 `2026年9月23日まで`）を含む通し番号を拾う（純粋） */
+export function findDeadlineMessages({ contents, deadlineText } = {}) {
+  const needle = String(deadlineText || '').trim();
+  if (!needle) return [];
+  return (Array.isArray(contents) ? contents : [])
+    .filter((c) => [c.subject, c.html, c.text]
+      .some((v) => String(v || '').includes(needle)))
+    .map((c) => c.messageNumber)
+    .sort((a, b) => a - b);
+}
+
+/** JST の暦日で比べる（`toISOString()` の UTC 基準は使わない） */
+const jstDay = (ms) => {
+  const d = new Date(ms + 9 * 60 * 60 * 1000);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+};
+
+/**
+ * 開始日を決めたときに、**期限つきの通が期限内に収まるか**を判定する（純粋）。
+ *
+ * @param {{sends: Array, startDateIso: string, deadlineIso: string,
+ *          datedMessageNumbers: number[]}} input
+ * @returns {{ok: boolean, reason?: string, violations: Array, latestStartByStart: object}}
+ */
+export function checkDeadlineFeasibility({
+  sends, startDateIso, deadlineIso, datedMessageNumbers,
+} = {}) {
+  const deadline = Date.parse(String(deadlineIso || ''));
+  if (!Number.isFinite(deadline)) {
+    return { ok: false, reason: 'bad_deadline', violations: [], latestStartByStart: {} };
+  }
+  const dated = new Set((Array.isArray(datedMessageNumbers) ? datedMessageNumbers : []).map(Number));
+  const list = Array.isArray(sends) ? sends : [];
+  const day = 24 * 60 * 60 * 1000;
+  const deadlineDay = jstDay(deadline);
+
+  /** 開始番号ごとの「これ以降に開始したら間に合わない」日（期限つきの最後の通で決まる） */
+  const latestStartByStart = {};
+  for (const s of list) {
+    if (!dated.has(s.messageNumber)) continue;
+    const latest = deadlineDay - s.dayOffset * day;
+    const cur = latestStartByStart[s.startMessage];
+    latestStartByStart[s.startMessage] = cur === undefined ? latest : Math.min(cur, latest);
+  }
+  const asDate = (ms) => new Date(ms).toISOString().slice(0, 10);
+  const latestOut = {};
+  for (const [k, v] of Object.entries(latestStartByStart)) latestOut[k] = asDate(v);
+
+  const start = Date.parse(String(startDateIso || ''));
+  if (!Number.isFinite(start)) {
+    return { ok: false, reason: 'start_date_undecided', violations: [], latestStartByStart: latestOut };
+  }
+  const startDay = jstDay(start);
+  const violations = [];
+  for (const s of list) {
+    if (!dated.has(s.messageNumber)) continue;
+    const sendDay = startDay + s.dayOffset * day;
+    if (sendDay > deadlineDay) {
+      violations.push({
+        name: s.name,
+        messageNumber: s.messageNumber,
+        startMessage: s.startMessage,
+        送信日: asDate(sendDay),
+        期限: asDate(deadlineDay),
+        超過日数: Math.round((sendDay - deadlineDay) / day),
+      });
+    }
+  }
+  return { ok: violations.length === 0, violations, latestStartByStart: latestOut };
+}
+
 export default buildSingleSendPlan;
