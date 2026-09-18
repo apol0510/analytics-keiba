@@ -310,16 +310,51 @@ npm run audit:sendgrid-migration > /tmp/ak-migration-audit.json
 
 ---
 
-## 11. 本番切替までに必要な確認（**未完了**）
+## 11. 実数で確定した移行対象と最小構成（2026-09-18 実測）
+
+read-only 突合（§10）の結果。**`missing 0` ＋ 索引 digest 一致**で確定した値。
+
+| 項目 | 実測 |
+|---|---:|
+| 移行対象（prospect 送信候補）| **11,754** |
+| 反応済み（移行しない）| **194** |
+| 永久除外（移行しない）| **28** |
+| 10 通 配り終えた人 | **0** |
+
+| 次の通 | 人数 | 作る list / Automation |
+|---:|---:|---|
+| 1 | **328** | `ak-prospect-select-start-1` ／ 10 通 |
+| 2 | **3,692** | `ak-prospect-select-start-2` ／ 9 通 |
+| 3 | **7,734** | `ak-prospect-select-start-3` ／ 8 通 |
+| 4〜10 | **0** | **作らない** |
+
+- **list 3 本 / Automation 3 本 / custom field 1 本（`ak_next_message`）/ unsubscribe group 1 本**
+- 残送信総数 **98,380 通**、1 日 1 通なので**全員 9 日**で配り終える
+- SendGrid の suppression 実測: bounces **309** / blocks **51** / spam reports **1** /
+  global unsubscribes **0**
+
+### 🛑 先に解く必要があるブロッカー（2026-09-18 実測）
+
+| 事実 | 意味 | 次の一手 |
+|---|---|---|
+| **Marketing Campaigns API が 403**（contacts / field_definitions / lists）| **Advanced が未契約**、または API キーに **marketing スコープが無い** | どちらかを MK が確認・解消（**契約は課金変更 ＝ 承認が要る**）|
+| unsubscribe group が `テストグループ` と **`KEIBA Intelligence メルマガ`** の 2 つだけ | **この SendGrid アカウントは KI と共用**の可能性が高い | AK 用の group / sender / list 名前空間を**最初から分ける**（[`MARKETING_PLATFORM.md` §10](./MARKETING_PLATFORM.md)）|
+
+⚠️ **403 が解けるまで contact import も Automation も作れない。** 実装側の準備は完了しているので、
+残りは**契約・権限の確認**だけ。
+
+---
+
+## 12. 本番切替までに必要な確認（**未完了**）
 
 | # | 確認項目 | 状態 |
 |---|---|---|
-| 1 | Marketing Campaigns Advanced の契約プラン（公表値と枠）| **未確認** |
-| 2 | 元 15,509 件の突合（AK 側の所在・状態）| **未実施**。§10 の 1 コマンドで Customers 側・prospect 側とも出る |
-| 3 | 通し番号別の件数 | **未測定**。`npm run audit:sendgrid-migration`（§10）で **deploy 前でも**測れる |
-| 4 | 残送信総数と月間 email 枠 | 3 に依存 |
+| 1 | Marketing Campaigns Advanced の契約プラン（公表値と枠）| ⚠️ **API が 403**。未契約 or キー権限不足（§11）|
+| 2 | 元 15,509 件の突合（AK 側の所在・状態）| ✅ **完了**（2026-09-18 / 台帳ユニーク 15,556 → active 11,426 / engaged 194 / blocked 28 / 索引外 3,908）|
+| 3 | 通し番号別の件数 | ✅ **完了**（1:328 / 2:3,692 / 3:7,734 / 4〜10:0）|
+| 4 | 残送信総数と月間 email 枠 | 残送信 **98,380 通**（実測）。**枠は未確認**（§11 の 403）|
 | 5 | 現在の sender / domain authentication を再利用できるか | **未確認** |
-| 6 | unsubscribe group（`AK Marketing`）| **未作成** |
+| 6 | unsubscribe group（`AK Marketing`）| **未作成**。既存は KI 用と test のみ（実測）|
 | 7 | Event Webhook（既存経路がそのまま使えるか）| 設計上は可（`custom_args` 非依存）・**未検証** |
 | 8 | Automation へ移植する 10 通の文面 | `content` で生成可・**未投入** |
 | 9 | seed contact だけの E2E | **ローカルで完了**（`sendgridMigrationE2E.test.mjs`）|
@@ -327,7 +362,7 @@ npm run audit:sendgrid-migration > /tmp/ak-migration-audit.json
 
 ---
 
-## 12. 検証
+## 13. 検証
 
 ```bash
 cd astro-site

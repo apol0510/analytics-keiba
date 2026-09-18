@@ -225,7 +225,18 @@ CTA Stage         Premium申込訴求
 - AK / KI 間で **customer / membership / campaign state / 商品 / 料金 / entitlement を混ぜない**
   （既存方針 [`KI_INDEPENDENCE.md`](../astro-site/docs/KI_INDEPENDENCE.md) を維持）
 
-### SendGrid 上での分離方針（KI が使い始める前に満たすこと）
+### ⚠️ 実測（2026-09-18）— **アカウントは既に KI と共用の可能性が高い**
+
+read-only で確認できたのは次の 2 点:
+
+| 実測 | 意味 |
+|---|---|
+| unsubscribe group が `テストグループ` と **`KEIBA Intelligence メルマガ`** の 2 つだけ | この SendGrid アカウントは **KI 側の配信で使われている**。AK 用の group は**まだ無い** |
+| **Marketing Campaigns API が 403**（contacts / field_definitions / lists）| **Advanced 未契約**、または API キーに **marketing スコープが無い** |
+
+したがって下の分離方針は「KI が使い始める前に」ではなく、**AK が使い始める時点で必要**。
+
+### SendGrid 上での分離方針（**最初から満たすこと**）
 
 | 分離対象 | 方針 |
 |---|---|

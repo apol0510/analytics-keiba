@@ -208,4 +208,43 @@ export function containsEmailLike(value) {
   return false;
 }
 
+/**
+ * **`byCurrentStep` から通し番号別の人数を出す**（純粋）。
+ *
+ * 本番の read-only 管理 API（`prospectSequenceCheck`）は campaign ごとに
+ * 「その人が最後に受け取った step」の分布（`byCurrentStep`）を返す。
+ * 第 2 期には**第 1 期を配り終えた人しか入らない**ので、次の足し算で通し番号へ直せる:
+ *
+ *   - 第 1 期の currentStep が 0 / 1 / 2 → 次は 1 / 2 / 3 通目
+ *   - 第 1 期を配り終えた（currentStep 3）人のうち、**第 2 期がまだ 0 通**なら次は 4 通目
+ *   - 第 2 期の currentStep が s（1〜6）→ 次は `4 + s` 通目
+ *   - 第 2 期の currentStep が 7 → **配り終えた**（送る通が無い）
+ *
+ * ⚠️ 台帳を直接引ける環境では `resolveNextMessage` を使う。こちらは
+ *    **Redis の値が読めない本番**で同じ数字を出すための導出。
+ */
+export function nextMessageFromCurrentSteps(phase1ByStep, phase2ByStep) {
+  const g = (o, k) => {
+    const v = Number((o || {})[String(k)]);
+    return Number.isFinite(v) ? v : 0;
+  };
+  const phase1Done = g(phase1ByStep, 3);
+  const inPhase2 = [1, 2, 3, 4, 5, 6, 7].reduce((a, s) => a + g(phase2ByStep, s), 0);
+  return {
+    分布: {
+      1: g(phase1ByStep, 0),
+      2: g(phase1ByStep, 1),
+      3: g(phase1ByStep, 2),
+      4: phase1Done - inPhase2,
+      5: g(phase2ByStep, 1),
+      6: g(phase2ByStep, 2),
+      7: g(phase2ByStep, 3),
+      8: g(phase2ByStep, 4),
+      9: g(phase2ByStep, 5),
+      10: g(phase2ByStep, 6),
+    },
+    配り終えた: g(phase2ByStep, 7),
+  };
+}
+
 export default resolveNextMessage;

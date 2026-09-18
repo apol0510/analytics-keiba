@@ -59,6 +59,30 @@ test('鍵の作り方・判定を再実装していない（単一源を import 
   assert.equal(src.includes('createHash(\'sha256\')'), false);
 });
 
+test('管理 API 経由でも read-only の action しか叩かない', () => {
+  const m = src.match(/READ_ONLY_ADMIN_ACTIONS = new Set\(\[([^\]]*)\]\)/);
+  assert.ok(m, '管理 API の許可リストが見つからない');
+  const allowed = m[1].split(',').map((x) => x.replace(/['"\s]/g, '')).filter(Boolean);
+  assert.deepEqual([...allowed].sort(), ['prospectIndexAudit', 'prospectSequenceCheck']);
+  // 書き込み系の action 名が混ざっていない
+  for (const w of ['intake', 'promote', 'suppress', 'purge', 'enqueue', 'send', 'cancelJob']) {
+    assert.equal(allowed.includes(w), false, `${w} が許可されている`);
+  }
+  assert.match(src, /read_only_violation:\$\{payload && payload\.action\}/);
+});
+
+test('通し番号は「第1期の currentStep + 1」で決まる（第2期は完了者だけ）', async () => {
+  const { nextMessageFromCurrentSteps } = await import('./sendgridNextMessage.js');
+  // 第1期: 未受信 10 / 1通目まで 2 / 2通目まで 5 / 配り終え 3、第2期: 3 のうち 1 名が 2 通目まで
+  const r = nextMessageFromCurrentSteps({ 0: 10, 1: 2, 2: 5, 3: 3 }, { 0: 17, 2: 1 });
+  assert.equal(r['分布'][1], 10);
+  assert.equal(r['分布'][2], 2);
+  assert.equal(r['分布'][3], 5);
+  assert.equal(r['分布'][4], 2, '第1期完了 3 名 − 第2期に入った 1 名');
+  assert.equal(r['分布'][6], 1, '第2期の 2 通目まで受け取った人は次が 6 通目');
+  assert.equal(r['配り終えた'], 0);
+});
+
 test('資格情報が無ければ何もせず終了する（ネットワークへ出ない）', () => {
   let code = 0;
   try {
