@@ -852,6 +852,11 @@ const fullTitle = pageTitle
          `openBankModal` は 16 ページにコピペで散在しているため、
          ページごとに直さず**ここ 1 か所**で包む（過去に直し漏れ事故あり）。 -->
     <script src="/js/campaign-price.js" is:inline></script>
+    <!-- ⚠️ 有料化ファネルの計測（GA4）。`openBankModal` と成功画面の共通処理を
+         **ここ 1 か所**で包む。ページ側へ計測コードを書き足さないこと
+         （13 ページへコピペで散ると必ず直し漏れる）。
+         仕様: astro-site/docs/GA4_CONVERSION_FUNNEL.md -->
+    <script src="/js/funnel-analytics.js" is:inline></script>
 </head>
 <body>
     <!-- Header -->

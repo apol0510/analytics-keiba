@@ -491,6 +491,31 @@ npm run verify:safety          # build + check:safety（push 前推奨）
 
 ---
 
+## 📈 GA4 有料化ファネル計測（2026-09-18 確定）
+
+既存 GA4（測定 ID は `src/layouts/BaseLayout.astro` が唯一持つ。**変更・新規作成禁止**）で
+`流入 → 無料予想 → /results-showcase/ → /pricing/ → 申込` を確認する。
+詳細仕様・GA4 管理画面側の作業は `astro-site/docs/GA4_CONVERSION_FUNNEL.md` を参照。
+
+| 段 | 見るもの |
+|---|---|
+| 無料予想 / results-showcase / pricing 到達 | `page_view`（URL で分かるのでイベントを増やさない）|
+| 申込開始 | `application_start` |
+| 申込成功 | `application_submitted`（**サーバー受理後のみ**）|
+
+**禁止事項**
+
+- ページに `gtag(...)` を直接書かない（申込導線は 13 ページにコピペで散在。必ず直し漏れる）。
+  計測は `astro-site/public/js/funnel-analytics.js` の 1 か所だけ。
+- ボタンのクリックを申込成功として送らない。
+- `application_submitted` を入金確認（課金確定）として読まない。GA4 の `purchase` は使わない。
+- GA4 へ個人情報（氏名 / メール / 会員 ID / 金額 / 振込日）を送らない。
+  送ってよいのは閉じた語彙 `plan` / `plan_type` のみ。
+- `openBankModal` を `is:inline` でない `<script>` へ移さない（global でなくなり
+  `onclick` も計測の包み込みも壊れる）。
+
+検証: `npm run test:analytics`（`check:safety` / CI に組込済み）
+
 ## 📝 技術スタック
 
 Astro 5 + Sass（SSR）/ Netlify Pro（Functions・Blobs）/ Airtable Pro（顧客）/
