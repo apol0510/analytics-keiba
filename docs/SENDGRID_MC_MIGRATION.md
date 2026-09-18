@@ -333,15 +333,75 @@ read-only 突合（§10）の結果。**`missing 0` ＋ 索引 digest 一致**�
 - SendGrid の suppression 実測: bounces **309** / blocks **51** / spam reports **1** /
   global unsubscribes **0**
 
-### 🛑 先に解く必要があるブロッカー（2026-09-18 実測）
+### 🛑 ブロッカーは **API キーの権限**（契約ではない / 2026-09-18 確定）
 
-| 事実 | 意味 | 次の一手 |
-|---|---|---|
-| **Marketing Campaigns API が 403**（contacts / field_definitions / lists）| **Advanced が未契約**、または API キーに **marketing スコープが無い** | どちらかを MK が確認・解消（**契約は課金変更 ＝ 承認が要る**）|
-| unsubscribe group が `テストグループ` と **`KEIBA Intelligence メルマガ`** の 2 つだけ | **この SendGrid アカウントは KI と共用**の可能性が高い | AK 用の group / sender / list 名前空間を**最初から分ける**（[`MARKETING_PLATFORM.md` §10](./MARKETING_PLATFORM.md)）|
+Advanced 20K の契約後も Marketing Campaigns API は **403 のまま**。原因は切り分け済み:
 
-⚠️ **403 が解けるまで contact import も Automation も作れない。** 実装側の準備は完了しているので、
-残りは**契約・権限の確認**だけ。
+| 確認したこと | 実測 |
+|---|---|
+| API キーの総 scope 数 | **208** |
+| `marketing` で始まる scope | **0 個**（1 つも無い）|
+| SendGrid が返す 403 の本文 | `access forbidden. please ensure you have the correct scopes defined.` |
+| 同じキーで読める API | `/v3/asm/groups` `/v3/verified_senders` `/v3/whitelabel/domains` `/v3/user/account` `/v3/suppression/*` は **200** |
+| アカウント | `type: paid` / `reputation: 99` |
+
+→ **契約の問題ではなく、API キーに Marketing Campaigns の権限が付いていない。**
+
+#### 足りない最小の権限
+
+| 用途 | 必要な scope |
+|---|---|
+| **いま**（read-only で現況を確認する）| **`marketing.read`** |
+| 後で（list / custom field 作成・contact 投入）| `marketing.read` ＋ **`marketing.write`** |
+| 既にある（追加不要）| `asm.groups.create` / `asm.groups.read` / `mail.send` / `suppression.*` / `whitelabel.read` |
+
+⚠️ **既存キーの権限を編集するだけでよい。新しいキーを発行しない**
+（新規発行すると `SENDGRID_API_KEY` の差し替え＝**env 変更**になり、承認と再デプロイが要る）。
+SendGrid の画面で該当キーを編集し、**Marketing に Read Access**（後で Full Access）を足す。
+
+#### もう 1 つの前提（アカウントは KI と共用）
+
+| 実測 | 影響 |
+|---|---|
+| unsubscribe group が `テストグループ` / **`KEIBA Intelligence メルマガ`** の 2 つだけ | **AK 用の group が無い**。作るときは KI のものに触らない |
+| verified sender の nickname に `nankan analytics` / `NANKAN NoReply` / `nankankeiba` / `keiba-review` / `intelligence` | AK 専用 sender は**まだ無い**（`keiba.link` ドメインは認証済み・valid）|
+| 認証済みドメイン | `keiba.link`（valid）ほか 4 件 |
+
+→ [`MARKETING_PLATFORM.md` §10](./MARKETING_PLATFORM.md) の分離方針は**最初から必要**。
+
+---
+
+## 11-b. AK 用の最小構成（**作成手順 / 未実行**）
+
+⚠️ **ここから先はすべて MK 承認が要る。この PR では 1 つも作っていない。**
+順番を守る（後ろの段が前の段に依存する）。
+
+| # | 作るもの | 中身 | 承認 |
+|---|---|---|---|
+| 0 | API キーに `marketing.read` を追加 | 既存キーを編集（**新規発行しない**）| **要** |
+| 0-b | read-only で再確認 | `--via-admin` で 403 が消えたことを見る | 不要 |
+| 1 | unsubscribe group **1 本** | 名前は AK と分かるもの。**KI の group は触らない** | **要** |
+| 2 | custom field **1 本** | `ak_next_message`（Number）。任意 2 本は作らない | **要** |
+| 3 | list **3 本** | `ak-prospect-select-start-1` / `-2` / `-3` | **要** |
+| 4 | Automation **3 本** | 各 list を入口に 10 / 9 / 8 通・**1 日 1 通**・文面は §5 の出力を貼る | **要** |
+| 5 | contact 投入 | 通し番号別に list へ upsert（**Automation は live にしない**）| **要** |
+| 6 | 旧 AK prospect 配信の停止 | `MARKETING_PROSPECT_ENGINE=sendgrid` ＋ redeploy | **要** |
+| 7 | Automation を live | 対象が居る 3 本だけ | **要** |
+
+**作らないもの**: 4〜10 始まりの list / Automation、segment、`ak_prospect_hash`、KI 用 group の変更。
+
+---
+
+## 11-c. SendGrid 側の現況（read-only 実測 / 2026-09-18）
+
+| 項目 | 実測 |
+|---|---|
+| アカウント | `paid` / reputation **99** |
+| 認証済みドメイン | `keiba.link`（em3933・valid）/ `keiba-intelligence.jp` / `keiba-review.jp` / `nankankeiba.jp` / `mail.tirol.link` |
+| verified sender | 5 件（AK 専用は無い）|
+| unsubscribe group | 2 件（`テストグループ` / `KEIBA Intelligence メルマガ`）|
+| suppression | bounces **309** / blocks **53** / spam reports **1** / global unsubscribes **0** |
+| Marketing Campaigns（contacts / lists / field_definitions）| **403**（scope 不足）|
 
 ---
 

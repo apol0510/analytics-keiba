@@ -162,8 +162,17 @@ Customers / 抑止台帳のどこに居るかを突き合わせる ② 既送信
 | 開封あり | **0** |
 | `delivered` 分布 | 1:365 / 2:3,964 / 3:7,395 / 4:30（**max 4**）|
 
-⚠️ 走査中も配信は進むので、件数は数分で数名動く（同日 01:2x に 11,757 → 01:40 に 11,754）。
-**`missing 0` かつ digest 一致のときだけ「その時点の確定値」**として扱う。
+⚠️ 走査中も配信は進むので、件数は数分〜数時間で動く。**`missing 0` かつ digest 一致のときだけ
+「その時点の確定値」**として扱う。同日の再測（Advanced 契約後）:
+
+| 時点 | 送信候補 | ENGAGED | 永久除外 | 次の通 1 / 2 / 3 |
+|---|---:|---:|---:|---|
+| 01:2x | 11,757 | 191 | 28 | 328 / 3,692 / 7,737 |
+| 01:40 | 11,754 | 194 | 28 | 328 / 3,692 / 7,734 |
+| 再測 | **11,752** | **195** | **29** | **328 / 3,592 / 7,832** |
+
+`next=1` の **328 は動かない**（1 通も届いていない人＝配信台帳に行が無い人）。
+2 → 3 へ移っているのは **step2 が配信され続けている**ため（旧 AK 経路は現役）。
 
 ### 次に送る通し番号（＝ SendGrid の入口）
 
@@ -202,11 +211,24 @@ Customers / 抑止台帳のどこに居るかを突き合わせる ② 既送信
 |---|---|
 | **Marketing Campaigns API** | **403**（contacts / field_definitions / lists すべて）|
 | unsubscribe group | 2 件（`テストグループ` / **`KEIBA Intelligence メルマガ`**）。**AK 用は無い** |
-| suppression | bounces **309** / blocks **51** / spam reports **1** / global unsubscribes **0** |
+| verified sender | 5 件（AK 専用は無い）／ 認証済みドメインに **`keiba.link`（valid）** |
+| アカウント | `paid` / reputation **99** |
+| suppression | bounces **309** / blocks **53** / spam reports **1** / global unsubscribes **0** |
 
-⚠️ **403 は移行の前提が未成立という意味**。次のどちらか（両方かもしれない）:
-1. **Marketing Campaigns（Advanced）が未契約**
-2. API キーに **marketing スコープが無い**
+### ✅ 403 の原因は **API キーの権限**（2026-09-18 確定 / Advanced 20K 契約後も同じ）
+
+MK が **Advanced 20K を契約**（Email API Essentials 50K は維持）した後に再確認しても **403 のまま**。
+切り分けた結果、**契約ではなく API キーの scope 不足**と確定した。
+
+| 確認 | 実測 |
+|---|---|
+| API キーの総 scope 数 | **208** |
+| `marketing` で始まる scope | **0 個** |
+| 403 の本文 | `access forbidden. please ensure you have the correct scopes defined.` |
+| 同じキーで 200 が返る API | `/v3/asm/groups` `/v3/verified_senders` `/v3/whitelabel/domains` `/v3/user/account` `/v3/suppression/*` |
+
+**必要な最小権限**: いまは **`marketing.read`**、投入時に **`marketing.write`**。
+⚠️ **既存キーの権限を編集するだけでよい**（新規発行すると `SENDGRID_API_KEY` 差し替え＝env 変更になる）。
 
 ⚠️ **この SendGrid アカウントは KI と共用の可能性が高い**（unsubscribe group 名）。
 `MARKETING_PLATFORM.md` §10 の分離方針（sender / list / group / custom field を分ける）は

@@ -68,6 +68,18 @@ const BRAND = 'analytics-keiba';
 const CUSTOMERS_CAMPAIGNS = ['campaign-discount-free', 'campaign-discount-light', 'campaign-discount-premium'];
 const DELIVERIES_TABLE = 'CampaignDeliveries';
 
+/**
+ * Marketing Campaigns を使うために API キーへ足す**最小の権限**。
+ *
+ * ⚠️ **新しいキーを作らない。** 既存キーの権限を編集すれば足りる
+ *    （新規発行すると env 変更＝承認が要る作業になる）。
+ */
+export const REQUIRED_MARKETING_SCOPES = Object.freeze({
+  読み取りだけ: ['marketing.read'],
+  移行の投入まで: ['marketing.read', 'marketing.write'],
+  既にある: ['asm.groups.create', 'asm.groups.read', 'mail.send', 'suppression.read', 'whitelabel.read'],
+});
+
 /** Redis で使ってよいコマンド（**書き込みは構造的に拒否**） */
 const READ_ONLY_REDIS = new Set(['SMEMBERS', 'SCARD', 'MGET', 'SMISMEMBER', 'GET', 'SISMEMBER']);
 
@@ -440,10 +452,18 @@ async function main() {
     const safe = async (path) => {
       try { return await sendgridGet(path); } catch (e) { return { __error: String(e.message).slice(0, 40) }; }
     };
-    const [fields, lists, count, asmGroups] = await Promise.all([
+    const [fields, lists, count, asmGroups, scopes, senders, domains] = await Promise.all([
       safe('/v3/marketing/field_definitions'), safe('/v3/marketing/lists?page_size=100'),
       safe('/v3/marketing/contacts/count'), safe('/v3/asm/groups'),
+      safe('/v3/scopes'), safe('/v3/verified_senders'), safe('/v3/whitelabel/domains'),
     ]);
+    /**
+     * ⚠️ **403 の理由を「未契約」と決めつけない。**
+     *    `/v3/scopes` に `marketing.*` が 1 つも無ければ、それは**契約ではなく API キーの権限**。
+     *    （SendGrid の 403 本文も "please ensure you have the correct scopes" と言う）
+     */
+    const scopeList = (scopes && Array.isArray(scopes.scopes)) ? scopes.scopes : null;
+    const marketingScopes = scopeList ? scopeList.filter((x) => String(x).startsWith('marketing')) : null;
     const countSuppression = async (path) => {
       let n = 0; let offset = 0;
       for (let i = 0; i < 60; i += 1) {
@@ -464,8 +484,28 @@ async function main() {
     sendgridSide = {
       実行: true,
       marketingCampaigns: count && count.__error
-        ? { 読めない: count.__error, 意味: 'Marketing Campaigns 未契約 / API キーに marketing 権限が無い' }
+        ? {
+          読めない: count.__error,
+          原因: marketingScopes === null
+            ? 'scope を確認できない（/v3/scopes も読めない）'
+            : (marketingScopes.length === 0
+              ? 'api_key_missing_marketing_scope（**契約ではなく API キーの権限**）'
+              : 'marketing scope はあるので別の原因（契約・状態）を疑う'),
+          必要な最小scope: REQUIRED_MARKETING_SCOPES,
+        }
         : { contacts: Number(count.contact_count) || 0, 課金対象: Number(count.billable_count) || 0 },
+      apiKey: {
+        総scope数: scopeList ? scopeList.length : null,
+        'marketing で始まる scope': marketingScopes,
+        'mail.send': scopeList ? scopeList.includes('mail.send') : null,
+        'asm.groups.create': scopeList ? scopeList.includes('asm.groups.create') : null,
+      },
+      sender: senders && senders.results
+        ? { 件数: senders.results.length, nickname: senders.results.map((x) => String(x.nickname || '')) }
+        : { 読めない: (senders || {}).__error || null },
+      domain認証: Array.isArray(domains)
+        ? domains.map((d) => ({ domain: d.domain, subdomain: d.subdomain, valid: d.valid === true }))
+        : { 読めない: (domains || {}).__error || null },
       customField: fields && fields.custom_fields
         ? fields.custom_fields.map((f) => String(f.name))
         : { 読めない: (fields || {}).__error || null },
