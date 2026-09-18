@@ -316,24 +316,51 @@ read-only 突合（§10）の結果。**`missing 0` ＋ 索引 digest 一致**�
 
 | 項目 | 実測 |
 |---|---:|
-| 移行対象（prospect 送信候補）| **11,754** |
-| 反応済み（移行しない）| **194** |
-| 永久除外（移行しない）| **28** |
+| 移行対象（prospect 送信候補）| **11,749**（最新測定）|
+| 反応済み（移行しない）| **196** |
+| 永久除外（移行しない）| **31** |
 | 10 通 配り終えた人 | **0** |
 
 | 次の通 | 人数 | 作る list / Automation |
 |---:|---:|---|
 | 1 | **328** | `ak-prospect-select-start-1` ／ 10 通 |
-| 2 | **3,692** | `ak-prospect-select-start-2` ／ 9 通 |
-| 3 | **7,734** | `ak-prospect-select-start-3` ／ 8 通 |
+| 2 | **3,442** | `ak-prospect-select-start-2` ／ 9 通 |
+| 3 | **7,979** | `ak-prospect-select-start-3` ／ 8 通 |
 | 4〜10 | **0** | **作らない** |
 
 - **list 3 本 / Automation 3 本 / custom field 1 本（`ak_next_message`）/ unsubscribe group 1 本**
-- 残送信総数 **98,380 通**、1 日 1 通なので**全員 9 日**で配り終える
+- 残送信総数 **98,090 通**、1 日 1 通なので**全員 9 日**で配り終える
+- ⚠️ **2 と 3 の人数は動く**（旧 AK 経路が step2 を配り続けているため）。
+  **list を分けるのは投入直前の再測値で行う**（328 だけは動かない）
+- ⚠️ 選別期間の月間送信数 ≒ **98,090 通**。**Advanced 20K の月間送信枠を契約画面で確認**し、
+  超えるなら「開始を分散」か「超過を許容」を決める（**推測で枠を書かない**）
 - SendGrid の suppression 実測: bounces **309** / blocks **51** / spam reports **1** /
   global unsubscribes **0**
 
-### 🛑 ブロッカーは **API キーの権限**（契約ではない / 2026-09-18 確定）
+### ✅ ブロッカー解消（2026-09-18）— Marketing Campaigns API は **200**
+
+MK が **Advanced 20K を契約**（Email API Essentials 50K は維持）し、**本番で使っているキーの権限を編集**
+（キー名も `AK SendGrid Production` へ変更。**値は差し替えていない ＝ env 変更なし**）した結果:
+
+| endpoint | 結果 |
+|---|---|
+| `/v3/marketing/contacts/count` | **200** |
+| `/v3/marketing/field_definitions` | **200** |
+| `/v3/marketing/lists` | **200** |
+| `/v3/marketing/segments/2.0` | **200** |
+| `/v3/marketing/senders` | **200** |
+
+| 確認 | 実測 |
+|---|---|
+| 使用中キー名 | **`AK SendGrid Production`** |
+| scope 総数 | 208 → **203** |
+| `marketing.*` | **`marketing.read`**（Automation は No Access のまま = 想定どおり）|
+| **既存機能の権限が落ちていないか** | ✅ `mail.send` / `asm.groups.create` / `asm.groups.read` / `suppression.*` / `whitelabel.read` / `user.account.read` すべて残存。**編集前に確認できていた scope の欠落 0** |
+
+⚠️ **次に必要なのは `marketing.write`**（list / custom field / sender の作成と contact 投入に要る）。
+いまは **`marketing.read` だけ**なので、**読むことはできるが作れない**（＝いまの停止位置として正しい）。
+
+### 以下は解消前の記録（historical / 2026-09-18）
 
 Advanced 20K の契約後も Marketing Campaigns API は **403 のまま**。原因は切り分け済み:
 
@@ -408,32 +435,41 @@ SendGrid の画面で該当キーを編集し、**Marketing に Read Access**（
 ⚠️ **ここから先はすべて MK 承認が要る。この PR では 1 つも作っていない。**
 順番を守る（後ろの段が前の段に依存する）。
 
-| # | 作るもの | 中身 | 承認 |
+| # | 作るもの | 中身 | 状態 |
 |---|---|---|---|
-| 0 | API キーに `marketing.read` を追加 | 既存キーを編集（**新規発行しない**）| **要** |
-| 0-b | read-only で再確認 | `--via-admin` で 403 が消えたことを見る | 不要 |
-| 1 | unsubscribe group **1 本** | 名前は AK と分かるもの。**KI の group は触らない** | **要** |
-| 2 | custom field **1 本** | `ak_next_message`（Number）。任意 2 本は作らない | **要** |
-| 3 | list **3 本** | `ak-prospect-select-start-1` / `-2` / `-3` | **要** |
-| 4 | Automation **3 本** | 各 list を入口に 10 / 9 / 8 通・**1 日 1 通**・文面は §5 の出力を貼る | **要** |
-| 5 | contact 投入 | 通し番号別に list へ upsert（**Automation は live にしない**）| **要** |
-| 6 | 旧 AK prospect 配信の停止 | `MARKETING_PROSPECT_ENGINE=sendgrid` ＋ redeploy | **要** |
-| 7 | Automation を live | 対象が居る 3 本だけ | **要** |
+| 0 | API キーに `marketing.read` | 既存キーを編集（値は不変）| ✅ **完了**（キー名 `AK SendGrid Production`）|
+| 0-b | read-only 再確認 | contacts / field_definitions / lists / segments / senders が **200** | ✅ **完了** |
+| 0-c | API キーに **`marketing.write`** を追加 | 同じキーを編集（**新規発行しない**）。作成・投入に必須 | **未 / MK 承認が要る** |
+| 1 | AK 用 **sender 1 件** | `keiba.link`（認証済み）の送信元。KI の sender は触らない | **未 / 承認** |
+| 2 | unsubscribe group **1 本** | AK と分かる名前。**KI の group は触らない** | **未 / 承認** |
+| 3 | custom field **1 本** | `ak_next_message`（Number）。任意 2 本は作らない | **未 / 承認** |
+| 4 | list **3 本** | `ak-prospect-select-start-1` / `-2` / `-3` | **未 / 承認** |
+| 5 | Automation **3 本** | 各 list を入口に 10 / 9 / 8 通・**1 日 1 通**・文面は §5 の出力を貼る | **未 / 承認** |
+| 6 | contact 投入 | 通し番号別に list へ upsert（**Automation は live にしない**）| **未 / 承認** |
+| 7 | 旧 AK prospect 配信の停止 | `MARKETING_PROSPECT_ENGINE=sendgrid` ＋ redeploy | **未 / 承認** |
+| 8 | Automation を live | 対象が居る 3 本だけ | **未 / 承認** |
 
 **作らないもの**: 4〜10 始まりの list / Automation、segment、`ak_prospect_hash`、KI 用 group の変更。
 
 ---
 
-## 11-c. SendGrid 側の現況（read-only 実測 / 2026-09-18）
+## 11-c. SendGrid 側の現況（read-only 実測 / 2026-09-18・**Marketing 権限つきで取得**）
 
-| 項目 | 実測 |
-|---|---|
-| アカウント | `paid` / reputation **99** |
-| 認証済みドメイン | `keiba.link`（em3933・valid）/ `keiba-intelligence.jp` / `keiba-review.jp` / `nankankeiba.jp` / `mail.tirol.link` |
-| verified sender | 5 件（AK 専用は無い）|
-| unsubscribe group | 2 件（`テストグループ` / `KEIBA Intelligence メルマガ`）|
-| suppression | bounces **309** / blocks **53** / spam reports **1** / global unsubscribes **0** |
-| Marketing Campaigns（contacts / lists / field_definitions）| **403**（scope 不足）|
+| 項目 | 実測 | AK 移行への意味 |
+|---|---|---|
+| Marketing の contacts | **104**（課金対象 104）| **ほぼ空**。11,752 を入れても **11,856** で Advanced 20K の枠内 |
+| custom field | `registered_intelligence`(Text) / `registered_analytics`(Text) | **`ak_next_message` は無い** → 作る（Number・1 本だけ）|
+| list | **0 本** | start-1 / -2 / -3 の **3 本**を作る |
+| segment | `keiba-intelligence` 1 本（KI 用）| **触らない**。AK は segment を使わない |
+| Marketing sender | **0 件** | AK 用 sender を 1 件作る（`keiba.link` は認証済み・valid）|
+| unsubscribe group | `テストグループ` / `KEIBA Intelligence メルマガ` | **AK 用が無い** → 1 本作る。**KI のものは触らない** |
+| 認証済みドメイン | `keiba.link`(valid) ほか 4 件 | AK の送信元は `keiba.link` でよい |
+| アカウント | `paid` / reputation **99** | — |
+| suppression | bounces **309** / blocks **53** / spam **1** / global unsub **0** | 移行後もそのまま効く |
+
+⚠️ **contacts 104 は KI 側の運用ぶん**とみられる（custom field に `registered_intelligence` がある）。
+AK の投入で 11,856 になるので、**KI と同じアカウントで contact 枠を共有する**ことになる。
+枠の消費は AK 側が圧倒的に大きい（**11,752 / 11,856 ≒ 99%**）。
 
 ---
 
