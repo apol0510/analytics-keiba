@@ -529,7 +529,19 @@ Automation の本文は `d-…` Dynamic Template なので、**API で流し込�
 （`templates.create` / `templates.versions.create` の権限はある）。
 27 通を手で貼る運用には戻さない。⚠️ **Automation 自体の作成・更新の公開 API は無い**（読み取りのみ）。
 
-### Automation は **start 1 だけ作り、Duplicate で 2 / 3 を作る**
+### ❌ Automation 方式は取りやめ（2026-09-18 MK 確定）
+
+実画面で **Design Library の 10 件が Automation に出ない**ことを確認した。加えて
+**Automation は公開 API に作成・更新の経路が無い**（読み取りのみ）ため、
+画面で 27 通ぶんを組む運用になる。**目的は「SendGrid 上で自動配信すること」であって、
+Automation 機能を使うことではない**ので、**Single Sends API 方式へ切り替える**。
+
+- 作りかけの Automation `AK Prospect Selection start 1` は **draft のまま残す**（削除しない）
+- Design Library の 10 件も残す（Single Send は本文を直接持つので必須ではないが、消さない）
+
+以下は旧方針の記録（historical）:
+
+### （旧・不採用）Automation は start 1 だけ作り、Duplicate で 2 / 3 を作る
 
 | # | 操作 | 中身 |
 |---|---|---|
@@ -559,6 +571,68 @@ Automation の本文は `d-…` Dynamic Template なので、**API で流し込�
 ⚠️ **contacts 104 は KI 側の運用ぶん**とみられる（custom field に `registered_intelligence` がある）。
 AK の投入で 11,856 になるので、**KI と同じアカウントで contact 枠を共有する**ことになる。
 枠の消費は AK 側が圧倒的に大きい（**11,752 / 11,856 ≒ 99%**）。
+
+---
+
+## 11-e. Single Sends 27 通で配る（**現行方式** / 2026-09-18 MK 確定）
+
+**SendGrid が実配送を担う点は不変。AK 側に配送エンジンは作らない。**
+Single Sends は**作成・本文・宛先 list・配信停止グループ・予約まで API で完結**するので、
+**UI 手作業ゼロ**で「1 日 1 通・最大 10 通・list 別の開始位置」を実現できる。
+
+### 構成（既存 list 3 本をそのまま使う / segment は使わない）
+
+| 宛先 list | 送る通し番号 | 通数 | 人数（実測）|
+|---|---|---:|---:|
+| `ak-prospect-select-start-1` | 01 → 10 | **10** | 328 |
+| `ak-prospect-select-start-2` | 02 → 10 | **9** | 3,442 |
+| `ak-prospect-select-start-3` | 03 → 10 | **8** | 7,979 |
+| | **合計 27 Single Send** | | **11,749 名 / 98,090 通** |
+
+- **同じ暦日に同じ通し番号**が出る（day0 = 01/02/03、day1 = 02/03/04 …）。
+  3 本の list は互いに素なので **1 人が 1 日に受け取るのは 1 通**
+- 全体は **10 日**で配り終える（`最長日数 9`）
+- sender = `KEIBA Analytics`（id 9739270）/ unsubscribe group = `AK Marketing`（id 34108）
+- 文面は書き出し済み 10 通を**無加工**（`generate_plain_content: false`）
+
+計画の単一源: `src/lib/marketing/sendgridSingleSendPlan.js`
+（27 通の組み立て / 予約時刻の算出 / 総送信数の見積り。**予約は計画に含めない**）
+
+### 生成スクリプト（既定は下見）
+
+```bash
+cd /Users/user/Projects/analytics-keiba
+# 下見（27 通を組み立てて全件検証・1 通も作らない）
+netlify dev:exec --context production -- node astro-site/scripts/sendgrid-create-single-sends.mjs
+# 作成（**承認後**。作っても draft のまま・予約しない）
+netlify dev:exec --context production -- node astro-site/scripts/sendgrid-create-single-sends.mjs \
+  --apply --confirm "CREATE AK SINGLE SENDS"
+```
+
+| 守っていること | どう守るか |
+|---|---|
+| **送らない・予約しない** | `send_at` を**組み立てない**。`/schedule` `/send` `/trigger` は URL の形で拒否。作成物は **draft** |
+| 二重作成しない | 名前（`AK Prospect Selection s{start} m{nn}`）が識別子。同名は飛ばす |
+| 文面を変えない | 書き出しファイルをそのまま。`generate_plain_content: false` |
+| 宛先を間違えない | list id / sender id / group id を**引いてから**組む。1 つでも欠ければ何も作らない |
+| segment を使わない | `send_to` は `list_ids` だけ |
+| 作る前に確かめる | **27 件すべて**で subject / html / plain / list / sender / group / 予約なし を検証。NG が 1 件でもあれば作らない |
+| 作った後も確かめる | GET で 1 件ずつ突き合わせ（`全件一致` が false なら異常終了）|
+
+### 下見の結果（2026-09-18 / 本番 read-only）
+
+```
+SingleSend数 27（10 / 9 / 8）・間隔 1 日・最長 9 日
+検証NG 0 ／ 既に存在 0
+list 3 本・sender 9739270・unsubscribe group 34108 をすべて解決
+```
+
+### 残る承認地点
+
+1. **27 通の作成**（draft のまま）
+2. contact 投入（通し番号別に 3 本の list へ）
+3. **予約**（`buildSchedule()` で日付を与え、`/v3/marketing/singlesends/{id}/schedule`）
+4. 旧 AK prospect 配信の停止 → 二重稼働 0 の確認
 
 ---
 

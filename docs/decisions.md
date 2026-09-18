@@ -1,3 +1,35 @@
+# 2026-09-18 — 選別の実配信は **Single Sends API** で組む（Automation は使わない）
+
+## 決定
+
+| # | 決定 | 単一源 |
+|---|---|---|
+| 1 | 初期 prospect 選別の実配信は **Marketing Campaigns の Single Sends API** で組む | `sendgridSingleSendPlan.js` |
+| 2 | **Automation は使わない**（公開 API に作成・更新の経路が無く、API で作った Design が画面に出ない）| `SENDGRID_MC_MIGRATION.md` §11-d |
+| 3 | 既存 list 3 本をそのまま使う。**start-1 = 01〜10 / start-2 = 02〜10 / start-3 = 03〜10**（計 **27 Single Send**）| 同上 §11-e |
+| 4 | **1 日 1 通**。同じ暦日に同じ通し番号が出る並びにし、1 人が 1 日に受け取るのは 1 通 | `buildSingleSendPlan()` |
+| 5 | subject / html / plain は**既存 canonical 10 通を無加工**（`generate_plain_content: false`）| 書き出しファイル |
+| 6 | sender = `KEIBA Analytics`（id 9739270）/ unsubscribe group = `AK Marketing`（id 34108）| 実測 |
+| 7 | **segment は使わない**（宛先は list だけ）| guard テスト |
+| 8 | 生成スクリプトは**予約・送信の経路を持たない**（`send_at` を組み立てず `/schedule` `/send` `/trigger` を拒否）| `sendgrid-create-single-sends.mjs` |
+| 9 | 二重生成は**名前**で防ぐ（`AK Prospect Selection s{start} m{nn}`）| 同上 |
+| 10 | 作りかけの Automation `AK Prospect Selection start 1` は **draft のまま残す**（削除しない）| — |
+| 11 | 総送信見込みは **98,090 通**（328×10 + 3,442×9 + 7,979×8）。選別期間中は他の Marketing 送信を足さない | 実測 |
+
+## なぜ Automation をやめたか
+
+- **公開 API に Automation の作成・更新が無い**（読み取りのみ）。画面で 27 通ぶんを手で組むことになる
+- API で作った Design（`editor: 'code'`）は **Automation の「Your Email Designs」に出ない**
+  （実画面で確認。アカウント / リージョン / subuser の不一致は read-only で否定済み）
+- **目的は「SendGrid 上で自動配信すること」**であって Automation 機能を使うことではない。
+  Single Sends なら**作成・本文・宛先・配信停止グループ・予約まで API で完結**する
+
+## 変わらないこと
+
+SendGrid が実配送を担う／AK 側に配送エンジンを作らない／1 日 1 通・最大 10 通／
+既送信の再送禁止（通し番号は `highestSent + 1`）／反応の定義・打ち切り（delivered 10）／
+旧 AK 配送と同時 live にしない。
+
 # 2026-09-18 — マーケティング基盤の全面整理（AK = 頭脳 / SendGrid = 配送 / KMA = 凍結）
 
 > 同日の「選別配信の実行を SendGrid へ移す」判断（下の項）を**包含する上位決定**。

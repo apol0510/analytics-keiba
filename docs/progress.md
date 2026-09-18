@@ -244,8 +244,12 @@ Customers / 抑止台帳のどこに居るかを突き合わせる ② 既送信
   custom field の作成が通ったので残りを作成した
 - **Design Library へ 10 通を登録済み**（`AK Prospect Selection 01`〜`10` / editor=code /
   中身は書き出しファイルを**無加工** / 作成後 GET で **全件一致**を確認 / 同名は二重作成しない）
-- 残りの **Automation は API に作成経路が無い**ので画面で作る。ただし 27 通ぶんを個別設定せず、
-  **start 1（10 通）だけ作り、Duplicate で start 2 / 3 を作って先頭 1 通 / 2 通を削除し入口 list を変える**
+- ❌ **Automation 方式は取りやめ**（2026-09-18）。実画面で Design が出ないことを確認し、
+  かつ **Automation は公開 API に作成経路が無い**ため。作りかけの
+  `AK Prospect Selection start 1` は **draft のまま残す**
+- ✅ **Single Sends 27 通方式へ切替**（start-1 = 01〜10 / start-2 = 02〜10 / start-3 = 03〜10）。
+  **下見は本番で実行済み**: 検証 NG **0** / 既存 **0** / list・sender・group をすべて解決。
+  作成は**未実行**（`--apply` 待ち）。作っても **draft**（予約も送信もしない経路）
 - 文面の元は `~/.analytics-keiba-ops/sendgrid-automation-content/`（**repo の外**・PII なし）
 
 ⚠️ 参考: 作業の前後で Marketing の contacts が 104 → **105** に増えたが、**AK の投入ではない**
