@@ -347,6 +347,38 @@ Advanced 20K の契約後も Marketing Campaigns API は **403 のまま**。原
 
 → **契約の問題ではなく、API キーに Marketing Campaigns の権限が付いていない。**
 
+#### ⚠️ **権限を足す相手を間違えない**（2026-09-18 実測で判明）
+
+production の `SENDGRID_API_KEY` が指しているのは、SendGrid 上の
+**「20250924200」というキー**（`/v3/api_keys` と token の key id を突き合わせて確定）。
+別のキーを編集しても 403 は解けない。
+
+| キー名 | scope 数 | `marketing.*` | 使用中 |
+|---|---:|---|---|
+| **20250924200** | 208 | **なし** | ✅ **これが本番で使われている** |
+| アナリティクス | 171 | `marketing.read` | — |
+| keiba-intelligence | 209 | `marketing.read` | — |
+
+⚠️ **`SENDGRID_API_KEY` を別のキーへ差し替えない。** env 変更（承認＋再デプロイ）になるうえ、
+「アナリティクス」は scope 171 と**現行より狭い**ので、既存 Function が使っている権限を失う恐れがある。
+**使用中キーの権限を編集する**のが正しい直し方。
+
+#### UI 上の位置（どこを変えるか）
+
+```
+SendGrid 管理画面
+  → Settings → API Keys
+  → キー名「20250924200」の行 → Edit（鉛筆アイコン）
+  → API Key Permissions → **Restricted Access**
+  → 一覧を下へスクロールし **Marketing** の行
+  → **Read Access**（表示が No Access / Full Access の 2 択なら Full Access）
+  → Update
+```
+
+- **Automation の行は No Access のままでよい**（Automation の作成・Set Live は画面で行い、API を使わない）
+- 同じ Marketing 区画にある **Design Library** は既に Full（＝この区画自体は表示されている）
+- 変更後は再デプロイ不要（**キーの値は変わらない**）。read-only で再確認できる
+
 #### 足りない最小の権限
 
 | 用途 | 必要な scope |

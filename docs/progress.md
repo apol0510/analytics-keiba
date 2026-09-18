@@ -230,6 +230,21 @@ MK が **Advanced 20K を契約**（Email API Essentials 50K は維持）した�
 **必要な最小権限**: いまは **`marketing.read`**、投入時に **`marketing.write`**。
 ⚠️ **既存キーの権限を編集するだけでよい**（新規発行すると `SENDGRID_API_KEY` 差し替え＝env 変更になる）。
 
+#### 2026-09-18 追記 — **編集する相手を取り違えていた**
+
+MK が API キーを更新した後も 403 のままだったので、`/v3/api_keys` と token の key id を
+突き合わせて**本番で使われているキーを特定**した。
+
+| キー名 | scope 数 | `marketing.*` | 使用中 |
+|---|---:|---|---|
+| **20250924200** | 208 | **なし** | ✅ 本番の `SENDGRID_API_KEY` |
+| アナリティクス | 171 | `marketing.read` | — |
+| keiba-intelligence | 209 | `marketing.read` | — |
+
+→ **「20250924200」を編集する**（Settings → API Keys → 該当行 Edit → Restricted Access →
+**Marketing** を Read Access）。**キーの差し替えはしない**（env 変更になるうえ、
+「アナリティクス」は scope が狭く既存 Function の権限を失う）。
+
 ⚠️ **この SendGrid アカウントは KI と共用の可能性が高い**（unsubscribe group 名）。
 `MARKETING_PLATFORM.md` §10 の分離方針（sender / list / group / custom field を分ける）は
 **将来の話ではなく、最初から必要**。
