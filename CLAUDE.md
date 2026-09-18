@@ -124,9 +124,26 @@ PR の merge / production deploy / 本番データ書込み / env の変更 / qu
 変更を含まない）。手順と過去 2 件の事故は [`docs/decisions.md`](./docs/decisions.md) の
 「2026-09-15 — PR は merge 直前に必ず最新 origin/main を取り直す」が正本。
 
-### 自律完遂の運用
+### 自律完遂の運用（**途中確認を挟まない**）
 
-段取り・完了条件・報告様式は [`docs/AUTONOMOUS_DELIVERY.md`](./astro-site/docs/AUTONOMOUS_DELIVERY.md)。
+**停止条件に該当しない作業は、1 工程ごとに確認せず最後まで進める。**
+
+```text
+調査 → 同種問題をまとめて修正 → test / verify → 必要な正本 docs 更新
+ → commit → 通常 push → Draft PR → CI green 確認 → **merge 直前で停止**
+```
+
+- 「これも直しますか？」「commit しますか？」「push しますか？」「PR を作りますか？」
+  「CI を確認しますか？」といった**途中確認は不要**
+- **同一原因・同種の軽微な不整合（stale docs の整合・関連テスト修正を含む）は
+  まとめて解消してよい**。無関係な既存バグは従来どおり記録して報告する
+- 停止するのは上の「停止して確認を取る操作」＋ 別 repo への変更 / 秘密情報露出 /
+  二重送信・二重課金 / 本番破損 / rollback 不能 に該当したときだけ
+- 最終報告の既定は **実施 / 現状 / 未完 / ユーザーの手動作業 / 承認が必要なこと /
+  branch・commit・PR・CI**（承認不要ならその旨を明記）
+
+全文（**ツール非依存・そのまま貼れる共通ルール文**）と段取り・停止条件は
+[`docs/AUTONOMOUS_DELIVERY.md` §共通作業ルール](./astro-site/docs/AUTONOMOUS_DELIVERY.md)。
 
 ---
 
@@ -517,6 +534,12 @@ GITHUB_TOKEN / GITHUB_REPO_OWNER / GITHUB_REPO_NAME / GITHUB_BRANCH
 ---
 
 ## 完了報告の簡潔化
+
+> ⚠️ **2026-09-18 既定変更。** 通常の最終報告は
+> **実施 / 現状 / 未完 / ユーザーの手動作業 / 承認が必要なこと / branch・commit・PR・CI** の 6 項目
+> （[`AUTONOMOUS_DELIVERY.md` §共通作業ルール](./astro-site/docs/AUTONOMOUS_DELIVERY.md)）。
+> **承認が必要なものが無ければその旨を明記する。**
+> 下の 7 項目書式は、ユーザーがそちらを求めた場合に使う。**二重に書かない。**
 
 各フェーズの完了報告は、原則として以下だけを簡潔に記載する。
 
