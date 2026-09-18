@@ -3,11 +3,20 @@
 `/admin/premium-plus-eligibility/` を「Premium Plus 販売資格だけを見る画面」から
 **顧客販売・マーケティング管理**へ拡張したときの仕様。
 
-> **AK 独自機能。keiba-marketing-automation（KMA）とは統合しない。**
-> KMA の schema / env / 顧客 / 送信ロジックを AK へ持ち込まない。同一 Airtable Base に
-> `CampaignDeliveries_MarketingAutomation` が存在するが、これは **KMA 側のテーブル**であり
-> AK は読みも書きもしない。AK は AK 自身の `CampaignDeliveries`（`EmailType='campaign'`）だけを使う。
-> guard テストで固定済み（`adminMarketingFunction.guard.test.mjs`）。
+> 🚚 **2026-09-18 MK 確定 — この画面は維持・強化する。**
+> KMA を縮小するため、**AK のこの画面が今後のマーケティング運用の中心**になる。
+> 目標のデータ契約（何を 1 画面で見たいか / いま有るもの・無いもの）は
+> [`docs/MARKETING_PLATFORM.md` §4](../../docs/MARKETING_PLATFORM.md) が正本。
+> ⚠️ URL 名 `premium-plus-eligibility` は将来 `/admin/marketing/` 等へ整理する**候補**だが、
+> **現時点で URL は変えない**。
+>
+> **KMA（keiba-marketing-automation）は凍結 → 移行確認後に廃止候補。**
+> 新規のマーケティング機能を KMA へ追加しない。**いきなり削除もしない**
+> （過去実績・suppression・rollback 材料として保持）。
+> AK と KMA を統合しない点は従来どおり: KMA の schema / env / 顧客 / 送信ロジックを
+> AK へ持ち込まない。同一 Airtable Base の `CampaignDeliveries_MarketingAutomation` は
+> **KMA 側のテーブル**で AK は読みも書きもしない（guard テストで固定済み）。
+> AK は AK 自身の `CampaignDeliveries`（`EmailType='campaign'`）だけを使う。
 
 ## 1. 3 つの判定を混ぜない
 

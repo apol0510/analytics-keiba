@@ -1,5 +1,10 @@
 # DRM（Direct Response Marketing）基盤
 
+> 🚚 **2026-09-18 MK 確定 — 配送は SendGrid Marketing Campaigns が担う。**
+> **本 doc の判定・定義（何を反応と見なすか / いつ除外するか）は不変で、移行後もそのまま使う。**
+> 変わるのは「誰が送るか」だけ。責務境界は
+> [`docs/MARKETING_PLATFORM.md`](../../docs/MARKETING_PLATFORM.md) が正本。
+
 「一斉に送る仕組み」ではなく、**顧客の反応を計測し、反応に応じて次の訴求を変え、購入まで辿る**ための土台。
 既存の 24-touch・CTA・購入停止・suppression・頻度 guard は**一切変えていない**。
 

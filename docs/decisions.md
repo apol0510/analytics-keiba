@@ -55,6 +55,149 @@ GA4 へ流れる。プラン名は**知っている 4 つ + `other`** だけを�
 
 ---
 
+# 2026-09-18 — 選別の実配信は **Single Sends API** で組む（Automation は使わない）
+
+## 決定
+
+| # | 決定 | 単一源 |
+|---|---|---|
+| 1 | 初期 prospect 選別の実配信は **Marketing Campaigns の Single Sends API** で組む | `sendgridSingleSendPlan.js` |
+| 2 | **Automation は使わない**（公開 API に作成・更新の経路が無く、API で作った Design が画面に出ない）| `SENDGRID_MC_MIGRATION.md` §11-d |
+| 3 | 既存 list 3 本をそのまま使う。**start-1 = 01〜10 / start-2 = 02〜10 / start-3 = 03〜10**（計 **27 Single Send**）| 同上 §11-e |
+| 4 | **1 日 1 通**。同じ暦日に同じ通し番号が出る並びにし、1 人が 1 日に受け取るのは 1 通 | `buildSingleSendPlan()` |
+| 5 | subject / html / plain は**既存 canonical 10 通を無加工**（`generate_plain_content: false`）| 書き出しファイル |
+| 6 | sender = `KEIBA Analytics`（id 9739270）/ unsubscribe group = `AK Marketing`（id 34108）| 実測 |
+| 7 | **segment は使わない**（宛先は list だけ）| guard テスト |
+| 8 | 生成スクリプトは**予約・送信の経路を持たない**（`send_at` を組み立てず `/schedule` `/send` `/trigger` を拒否）| `sendgrid-create-single-sends.mjs` |
+| 9 | 二重生成は**名前**で防ぐ（`AK Prospect Selection s{start} m{nn}`）| 同上 |
+| 10 | 作りかけの Automation `AK Prospect Selection start 1` は **draft のまま残す**（削除しない）| — |
+| 11 | 総送信見込みは **98,090 通**（328×10 + 3,442×9 + 7,979×8）。選別期間中は他の Marketing 送信を足さない | 実測 |
+
+## なぜ Automation をやめたか
+
+- **公開 API に Automation の作成・更新が無い**（読み取りのみ）。画面で 27 通ぶんを手で組むことになる
+- API で作った Design（`editor: 'code'`）は **Automation の「Your Email Designs」に出ない**
+  （実画面で確認。アカウント / リージョン / subuser の不一致は read-only で否定済み）
+- **目的は「SendGrid 上で自動配信すること」**であって Automation 機能を使うことではない。
+  Single Sends なら**作成・本文・宛先・配信停止グループ・予約まで API で完結**する
+
+## 変わらないこと
+
+SendGrid が実配送を担う／AK 側に配送エンジンを作らない／1 日 1 通・最大 10 通／
+既送信の再送禁止（通し番号は `highestSent + 1`）／反応の定義・打ち切り（delivered 10）／
+旧 AK 配送と同時 live にしない。
+
+# 2026-09-18 — マーケティング基盤の全面整理（AK = 頭脳 / SendGrid = 配送 / KMA = 凍結）
+
+> 同日の「選別配信の実行を SendGrid へ移す」判断（下の項）を**包含する上位決定**。
+> 責務境界の正本は [`docs/MARKETING_PLATFORM.md`](./MARKETING_PLATFORM.md)。
+
+## 決定
+
+| # | 決定 | 単一源 |
+|---|---|---|
+| 1 | 事業目的は「配送基盤の完成」ではなく、**顧客・prospect の行動把握 → 適切な CTA → 有料転換・継続売上** | `docs/spec.md` 先頭 |
+| 2 | **大量メール配送は自作しない。** 原則 **SendGrid Marketing Campaigns** を配送・Automation の専門基盤として利用する | `MARKETING_PLATFORM.md` |
+| 3 | **AK はマーケティングの頭脳**（顧客・prospect・会員状態・購入・行動・CTA 段階・DRM 段階・除外状態・次の訴求・誰を渡すか）を保持する | 同上 §3 |
+| 4 | **SendGrid へ事業ロジックを移さない**（配送と配送反応のみ）。会員・購入・CTA・DRM の正本は事業 repo 側 | 同上 §2 |
+| 5 | **KMA は凍結 → 移行確認後に廃止候補**。新規マーケ機能を追加しない。**いきなり削除しない**（照合・rollback 材料）| 同上 §9 |
+| 6 | **`AK → KMA → SendGrid` の中間層を育てない**。AK も KI も SendGrid を直接使う | 同上 §2 |
+| 7 | **`/admin/premium-plus-eligibility/` は維持・強化**。ただし**今回は大改修しない・URL も変えない**（`/admin/marketing/` は将来の候補にとどめる）| 同上 §4 |
+| 8 | 管理画面の目標データ契約を定義し、**現状あるもの / 無いもの**を明示（サイト全体の訪問計測・marketing stage・次 campaign は**未実装**と記録）| 同上 §4 |
+| 9 | 15,000 件選別は **1 日 1 通 × 最大 10 通**。数週間・数か月に引き伸ばさない | 同上 §5 |
+| 10 | unsubscribe / hard bounce / spam complaint / 永久除外 / 購入済みで不要 / 安全上の理由は**途中でも即除外** | 同上 §5 |
+| 11 | 選別後に残った見込み客へは **週 2 回程度の一斉メルマガ**（約 月 8 回）を基本運用候補とする | 同上 §5 |
+| 12 | **月 1〜2 万円程度（目安 1.6 万円）の外部配送費は事業コストとして許容**。ただし価格・プラン名・上限を**不変の仕様として固定しない**（契約直前に公式条件を確認）| 同上 §6 |
+| 13 | **Build vs Buy を着手前に必ず比較する。** 自前 queue / cron / dispatcher / 独自冪等性・retry・batch・Automation の作り込みで売上施策を止めない | 同上 §7 |
+| 14 | Event Webhook で戻すのは processed / delivered / open / click / bounce / dropped / unsubscribe / spam report。**open 単独を強い購入意向として扱わない** | 同上 §8 |
+| 15 | **旧 AK 自作配送は削除禁止**（既送信判定・二重送信防止・突合・rollback・実績）。**新規強化はしない**。廃止は独立 Phase | 同上 §11 |
+| 16 | **旧配送と SendGrid 本番大量配送を同時 live にしない** | `sendgridCutover.js` |
+| 17 | **KI は今回変更しない**（調査と将来方針の正本整理まで）。将来は KI も SendGrid を直接利用 | `MARKETING_PLATFORM.md` §10 |
+| 18 | SendGrid 上でも **brand / sender / list / segment / unsubscribe group / custom field を AK と KI で分離**する | 同上 §10 |
+| 19 | KMA の廃止は **8 条件をすべて満たしてから独立 Phase で**判断する | 同上 §9 |
+| 20 | 取引メール（決済・認証・サポート・期限通知）は**本方針の対象外**。従来どおり AK が送る | 同上 §2 |
+
+## なぜ方針を変えたか
+
+2026-05 以降、AK は自前の cron / queue / dispatcher / rotation / 冪等性 / retry / batch 制御を
+作り込み続け、その過程で「窓 0 だけを見た誤診」「0 人 step で tick が終わる」「tick 鍵が無く 3 重起動」
+「prospect に `custom_args` を作れず 1 通も送れていなかった」「承認範囲を超えた送信」など、
+**配送の実行そのものの不具合**を繰り返し踏んだ。
+その間、**本来の売上施策（選別 → 反応 → 有料転換）は進んでいない**。
+
+配送は成熟した専門サービスがある領域で、**事業上の差別化にならない**。
+差別化になるのは顧客状態・行動・CTA・DRM の判断で、そこは AK に残る。
+
+## 何を superseded にしたか
+
+| 旧方針 | 扱い |
+|---|---|
+| AK 自作エンジンを主配信経路として完成させる（`spec.md`「完全自動運用」2026-09-14）| **superseded**。同節の**運用原則**（毎回承認・env 開閉・日次 ARMED を要求しない）は有効 |
+| 選別の実行は `cron-campaign-sequence`（`MARKETING_ROLLOUT.md` / `CAMPAIGN_SEQUENCE.md`）| **移行対象**。切替までの現行実装として残すが新規強化しない |
+| KMA は「統合しないが並存する別サービス」（`CUSTOMER_MARKETING.md` ほか）| **凍結 → 廃止候補**（統合しない点は不変）|
+
+## 未確定のまま進めないこと
+
+- SendGrid の**現行の公表条件**（プラン・contact 枠・送信上限・Automation 条件・超過料金）
+- 元 15,509 件の突合（AK 側の所在・状態）と通し番号別の実測件数
+- KMA に**だけ**残っている責務があるか（あれば「残す必要がある責務」として明示して報告する）
+- 管理画面へ追加する行動計測（何を計測してよいか・保持期間・PII の扱いを先に決める）
+
+
+# 2026-09-18 — 選別配信の実行を SendGrid Marketing Campaigns へ移す（移行の実装判断 / 上の全面整理に含まれる）
+
+## 決定
+
+| # | 決定 | 単一源 |
+|---|---|---|
+| 1 | 約 15,000 件の選別配信の**実行**は **SendGrid Marketing Campaigns Advanced / Custom Automation** が担う。AK 自作 cron / queue / rotation を主配信エンジンとして完成させ続ける方針は**終了** | `docs/SENDGRID_MC_MIGRATION.md` |
+| 2 | AK が担うのは「所在・状態管理 / **次に送るメール番号** / contact・segment / Event Webhook 受領 / DRM 接続 / 監査」 | 同上 |
+| 3 | **既存 prospect を全員 step1 から開始しない。** 受信者ごとに通し番号 1〜10 を確定する | `sendgridNextMessage.js` |
+| 4 | 次の番号は **`highestSent + 1`**。通数で数えない・**穴は埋めない**・**台帳を読めなければ送らない** | 同上（テストで固定）|
+| 5 | 通し番号は 第 1 期 3 通（`campaign-discount-free`）＋ 第 2 期 7 通（`campaign-prospect-phase2`）＝ **10** | `sendgridMessagePlan.js` |
+| 6 | SendGrid の Automation は 1 通目から始まるので、**開始番号ごとに list / Automation を分ける**（0 人の入口は作らない）| `sendgridAutomationPlan.js` |
+| 7 | 文面は**作り直さない**。既存 catalog の描画結果を使い、置き換えるのは配信停止リンクと宛名だけ | `sendgridContentExport.js` |
+| 8 | **旧 AK 配信と SendGrid Automation を同時に live にしない**。`ak_live → frozen → sendgrid_live` の順のみ | `sendgridCutover.js` |
+| 9 | AK 側の停止は `MARKETING_PROSPECT_ENGINE=sendgrid` の 1 つ。**未設定なら挙動は 1 バイトも変わらない** | `cron-campaign-sequence.js`（guard あり）|
+| 10 | **rollback で同じメールを二重送信しない**（Disable → 台帳へ反映 → 進みが合ってから再開）| `ROLLBACK_STEPS` |
+| 11 | 「反応」の定義・打ち切りの閾値（delivered 10）・DRM 接続は**変えない** | `prospectEngagement.js` / `engagementPolicy.js` |
+| 12 | **常に最小プラン**を契約する。選別中は Advanced 20K、選別終了後は要件を満たす最小（第一候補 Advanced 10K）へダウングレード | `sendgridPlanSizing.js` |
+| 13 | **課金変更（契約 / アップグレード / ダウングレード）はすべて実行直前で停止し MK 承認**を取る | 停止境界 |
+| 14 | 費用削減のために**送信頻度や選別処理を減らさない**。削るのは余った contact 枠・email 枠だけ | `docs/spec.md` |
+
+## なぜ自作エンジンの完成を目指さないのか
+
+AK 側の cron / queue / rotation は、2026-09 に入ってからも
+「窓 0 だけを見た誤診」「0 人 step で tick が終わる」「tick 鍵が無く 3 重起動」
+「prospect に custom_args が作れず 1 通も送れていなかった」など、**配信の実行そのものの不具合**を
+繰り返し踏んでいる。選別の価値は「誰に何通届いたか」の管理と反応の判定にあり、
+**大量送信のスケジューラを自前で持つこと自体には無い**。
+実行を Marketing Campaigns に寄せ、AK は状態管理へ集中する。
+
+## 再送禁止をどう保証するか
+
+移行で最大の事故は「既に受け取った通がもう一度届く」こと。二重送信防止は
+**AK の `DeliveryKey`（campaign × version × step × 受信者）**が正本で、SendGrid はそれを知らない。
+よって**投入する時点で番号が正しいこと**だけが防波堤になる。
+
+- 判定は最大の通し番号 + 1（通数で数えると穴があるときに再送する）
+- 変換層でも `assertNoResend` を通す（判定と変換のどちらが壊れても止まる）
+- 台帳が読めないときは `unresolved` にして**出さない**
+- ready 以外（反応済み・昇格済み・打ち切り・抑止・完走）は 1 件も出さない
+
+## 「1 日 1 通」は SendGrid 側の設定にする
+
+AK の step 定義は 2〜6 日間隔（`MIN_STEP_DELAY_DAYS = 2`）だが、**送るのは SendGrid** なので
+その定数は効かない。間隔は Automation 側で 1 日にする。
+⚠️ **AK の step 定義を 1 日へ書き換えて合わせない。** 書き換えると `contentHash` → `DeliveryKey`
+が変わり、**既送信者への再送**になる。
+
+## 未確定のまま進めないこと
+
+- Advanced の**公表値**（contact 枠・email 枠・超過料金）は未確認。`recommendPlan()` は
+  未確認の枠を「収まる」と言わない（`requiresQuote: true` を返して人に判断を戻す）
+- 元 15,509 件の突合、通し番号別の件数は**本番 read-only の実測が要る**（このセッションでは未実施）
+
 # 2026-09-16 — 配信停止は無人で完結させる（mailto を出さない / 見込み客も止める）
 
 ## 決定

@@ -124,9 +124,26 @@ PR の merge / production deploy / 本番データ書込み / env の変更 / qu
 変更を含まない）。手順と過去 2 件の事故は [`docs/decisions.md`](./docs/decisions.md) の
 「2026-09-15 — PR は merge 直前に必ず最新 origin/main を取り直す」が正本。
 
-### 自律完遂の運用
+### 自律完遂の運用（**途中確認を挟まない**）
 
-段取り・完了条件・報告様式は [`docs/AUTONOMOUS_DELIVERY.md`](./astro-site/docs/AUTONOMOUS_DELIVERY.md)。
+**停止条件に該当しない作業は、1 工程ごとに確認せず最後まで進める。**
+
+```text
+調査 → 同種問題をまとめて修正 → test / verify → 必要な正本 docs 更新
+ → commit → 通常 push → Draft PR → CI green 確認 → **merge 直前で停止**
+```
+
+- 「これも直しますか？」「commit しますか？」「push しますか？」「PR を作りますか？」
+  「CI を確認しますか？」といった**途中確認は不要**
+- **同一原因・同種の軽微な不整合（stale docs の整合・関連テスト修正を含む）は
+  まとめて解消してよい**。無関係な既存バグは従来どおり記録して報告する
+- 停止するのは上の「停止して確認を取る操作」＋ 別 repo への変更 / 秘密情報露出 /
+  二重送信・二重課金 / 本番破損 / rollback 不能 に該当したときだけ
+- 最終報告の既定は **実施 / 現状 / 未完 / ユーザーの手動作業 / 承認が必要なこと /
+  branch・commit・PR・CI**（承認不要ならその旨を明記）
+
+全文（**ツール非依存・そのまま貼れる共通ルール文**）と段取り・停止条件は
+[`docs/AUTONOMOUS_DELIVERY.md` §共通作業ルール](./astro-site/docs/AUTONOMOUS_DELIVERY.md)。
 
 ---
 
@@ -199,6 +216,7 @@ PR の merge / production deploy / 本番データ書込み / env の変更 / qu
 
 | 領域 | 正本 |
 |---|---|
+| 🥇 **マーケティング基盤の責務境界（AK = 頭脳 / SendGrid = 配送 / KMA = 凍結）** | [`MARKETING_PLATFORM.md`](./docs/MARKETING_PLATFORM.md) / [`SENDGRID_MC_MIGRATION.md`](./docs/SENDGRID_MC_MIGRATION.md) |
 | **メールアドレスの正本（support / noreply の役割）** | [`EMAIL_ADDRESSES.md`](./astro-site/docs/EMAIL_ADDRESSES.md) |
 | ログイン（マジックリンク） | [`AUTH_LOGIN.md`](./astro-site/docs/AUTH_LOGIN.md) / [`AUTH_SESSION_DESIGN.md`](./astro-site/docs/AUTH_SESSION_DESIGN.md) |
 | **有料ページ認可の単一源（ページに独自 plan 判定を書かない）** | [`PAID_PAGE_AUTHORIZATION.md`](./astro-site/docs/PAID_PAGE_AUTHORIZATION.md) |
@@ -219,6 +237,38 @@ PR の merge / production deploy / 本番データ書込み / env の変更 / qu
 
 CLAUDE.md 再編（2026-08-13）で旧セクションがどこへ行ったかの全件対応表は
 [`CLAUDE_MD_MIGRATION_AUDIT.md`](./astro-site/docs/CLAUDE_MD_MIGRATION_AUDIT.md)。
+
+---
+
+## 📮 メール配送は自作しない（2026-09-18 MK 確定 / **最上位方針**）
+
+**事業目的は配信システムの開発ではない。** 顧客・prospect の行動を把握し、適切な CTA と
+メールで**有料転換・継続売上**を作ること。したがって:
+
+| | |
+|---|---|
+| **AK** | マーケティングの**頭脳**（顧客・会員状態・購入・行動・CTA 段階・DRM 段階・除外状態・誰に何を送るかの判断）|
+| **SendGrid Marketing Campaigns** | **配送装置**（Contacts / List / Segment / Automation / 一斉 / drip / 配送反応）|
+| **KMA**（`keiba-marketing-automation`）| **凍結 → 移行確認後に廃止候補**。新規機能を追加しない・**削除もしない** |
+| **旧 AK 自作配送**（cron / queue / dispatcher / `CampaignDeliveries` 等）| **削除禁止**（既送信判定・突合・rollback の資産）。**新規強化しない** |
+
+### 禁止
+
+- **大量メール配送の仕組みを新しく自作しない**（自前 queue / cron / dispatcher / 独自冪等性 /
+  独自 retry / 独自 batch 制御 / 独自配信 Automation）。着手前に必ず **Build vs Buy** を比較する
+- **`AK → KMA → SendGrid` の中間層を育てない**（AK も KI も SendGrid を直接使う）
+- **SendGrid へ事業ロジックを移さない**（会員・購入・CTA・DRM の正本は事業 repo 側）
+- **旧自作配送と SendGrid の本番大量配送を同時 live にしない**
+- KMA への新規マーケ機能追加 / KMA の削除 / KI のコード変更（**いずれも別 Phase・承認が要る**）
+
+### 対象外
+
+取引メール（決済確認・マジックリンク認証・サポート返信・期限通知）は従来どおり AK が送る。
+本方針が扱うのは `EmailType='campaign'` のマーケティング配信だけ。
+
+正本: [`docs/MARKETING_PLATFORM.md`](./docs/MARKETING_PLATFORM.md)（責務境界）/
+[`docs/SENDGRID_MC_MIGRATION.md`](./docs/SENDGRID_MC_MIGRATION.md)（移行手順・停止境界）/
+[`docs/spec.md`](./docs/spec.md) 先頭（確定仕様）
 
 ---
 
@@ -509,6 +559,12 @@ GITHUB_TOKEN / GITHUB_REPO_OWNER / GITHUB_REPO_NAME / GITHUB_BRANCH
 ---
 
 ## 完了報告の簡潔化
+
+> ⚠️ **2026-09-18 既定変更。** 通常の最終報告は
+> **実施 / 現状 / 未完 / ユーザーの手動作業 / 承認が必要なこと / branch・commit・PR・CI** の 6 項目
+> （[`AUTONOMOUS_DELIVERY.md` §共通作業ルール](./astro-site/docs/AUTONOMOUS_DELIVERY.md)）。
+> **承認が必要なものが無ければその旨を明記する。**
+> 下の 7 項目書式は、ユーザーがそちらを求めた場合に使う。**二重に書かない。**
 
 各フェーズの完了報告は、原則として以下だけを簡潔に記載する。
 

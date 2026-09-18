@@ -30,6 +30,130 @@
 
 ---
 
+# マーケティングの頭脳は AK / 大量配送は SendGrid（2026-09-18 MK 確定 / **最上位方針**）
+
+**事業目的は「自前のメール配送基盤を完成させること」ではない。**
+
+> **顧客・prospect の行動を把握し、適切な CTA とメールマーケティングを行い、
+> 有料転換・継続売上につなげること。**
+
+したがって **大量メール配送は自作しない**。原則として
+**SendGrid Marketing Campaigns をメール配送・Automation の専門基盤として利用する**。
+AK 自作の cron / queue / rotation を**主配信エンジンとして完成させ続ける方針は終了**する。
+
+責務境界の正本は [`MARKETING_PLATFORM.md`](./MARKETING_PLATFORM.md)、
+移行手順・停止境界・rollback は [`SENDGRID_MC_MIGRATION.md`](./SENDGRID_MC_MIGRATION.md)。
+
+## 現行の構成（**これが一意の現行仕様**）
+
+| 主体 | 役割 | 状態 |
+|---|---|---|
+| **AK** | マーケティングの**頭脳**（顧客・prospect・会員状態・購入・行動・CTA 段階・DRM 段階・除外状態・次の訴求・誰を SendGrid へ渡すか）| 現行・強化 |
+| **SendGrid Marketing Campaigns** | **配送装置**（Contacts / List / Segment / Automation / 一斉 / drip / 配送反応）| 現行（移行中）|
+| **`/admin/premium-plus-eligibility/`** | AK のマーケティング運用画面 | **維持・強化**（今回は大改修しない・URL も変えない）|
+| **KMA**（`keiba-marketing-automation`）| 過去実績・照合・rollback 材料の保管 | **凍結 → 移行確認後に廃止候補**（新規機能追加 禁止 / 削除も禁止）|
+| **KI** | 将来は**自分で** SendGrid MC を使う | 今回は**調査・方針整理のみ**（コード変更しない）|
+| **旧 AK 自作配送** | 既送信判定・二重送信防止・突合・rollback・過去実績 | **削除禁止**・新規強化なし |
+
+- **`AK → KMA → SendGrid` という中間層を育てない。** AK は SendGrid を直接使う
+- **SendGrid へ事業ロジックを移さない。** 会員状態・購入状態・CTA 段階・DRM 判断の正本は事業 repo 側
+- **取引メールは対象外**（決済確認・認証・サポート・期限通知は従来どおり AK が送る）。
+  本方針が扱うのは `EmailType='campaign'` のマーケティング配信だけ
+
+## 15,000 件の選別（AK の最優先施策）
+
+```text
+約15,000件 → 1日1通 → 最大10通 → 反応を見る
+          → 10通送っても無反応なら除外 → 反応を残す → 継続DRM
+```
+
+- **原則 1 日 1 通 × 最大 10 通**（「数週間・数か月かけて 10 通」にしない）
+- unsubscribe / hard bounce / spam complaint / 永久除外 / 購入済みで不要になった訴求 /
+  その他 安全上送るべきでない状態は、**途中でも即除外**
+- 選別後に残った見込み客（仮に約 5,000 件）へは **週 2 回程度の一斉メルマガ**を基本運用候補とする
+  （約 月 8 回・月 40,000 通。頻度は将来データで調整可）
+- 元 15,509 件・prospect 移行件数・既送信 step は**推測しない**。既存データから read-only で突合する
+
+### 最重要：再送禁止
+
+**既存の prospect を全員 step1 から開始しない。**
+現行の `DeliveryKey` / prospect の `delivered` / sequence 進行を正本として、
+受信者ごとに「**次に送るべき通し番号 1〜10**」を確定する。
+
+| 通し番号 | campaignId | step |
+|---|---|---|
+| 1〜3 | `campaign-discount-free` | 1〜3 |
+| 4〜10 | `campaign-prospect-phase2` | 1〜7 |
+
+- 次の番号は **`highestSent + 1`**（受け取った通数では数えない）
+- **穴は埋めない**（1 と 3 が届いていれば次は 4。2 を送り直さない）
+- **台帳を引けなければ送らない**（「読めない」を「未送信」と読み替えない）
+- SendGrid 側は **Single Sends 27 通**で配る（**開始番号ごとに list を分ける**：
+  start-1 = 01〜10 / start-2 = 02〜10 / start-3 = 03〜10）。
+  **Automation は使わない**（公開 API に作成経路が無く、API で作った Design も画面に出ない。
+  2026-09-18 実画面で確認。目的は自動配信であって Automation 機能ではない）
+- 文面・`version`・step 定義を **1 バイトも変えない**（変えると鍵が変わり再送になる）
+- **メールアドレス / PII を docs・ログ・repo へ出さない**
+
+単一源: `sendgridMessagePlan.js` / `sendgridNextMessage.js` / `sendgridMigrationScan.js` /
+`sendgridContactExport.js` / `sendgridAutomationPlan.js` / `sendgridContentExport.js` /
+`sendgridCutover.js` / `sendgridPlanSizing.js`
+
+## 二重稼働を作らない
+
+**旧 AK 自作配送と SendGrid の本番大量配送を同時に live にしない。**
+`ak_live → frozen → sendgrid_live` の順にしか進めず、**`frozen` を必ず挟む**。
+
+| `MARKETING_PROSPECT_ENGINE` | AK の挙動 |
+|---|---|
+| 未設定 / `ak` | 従来どおり（1 バイトも変わらない）|
+| `sendgrid` | prospect を母集団に入れない / prospect 専用 campaign は 1 件も積まない |
+
+rollback は「Automation を Disable → 送られた通を台帳へ反映 → **進みが合ってから** AK 再開」。
+**同じメールを二重送信する rollback は禁止。**
+
+## 費用
+
+**月額およそ 1〜2 万円程度（目安 1.6 万円）の外部配送費は事業コストとして許容する**
+（開発時間と事故リスクの削減と引き換え）。そのうえで、
+**必要要件を満たす範囲で常に最小プラン**を選び、上位プランを先回り契約しない。
+選別終了後は要件を満たす最小プランへダウングレードする。
+
+⚠️ **価格・プラン名称・送信上限・Automation 条件を不変の仕様として固定しない**（変動する）。
+**契約直前に必ず SendGrid 公式の現行条件を確認する。** 判定は `sendgridPlanSizing.js`
+（**コードに金額を持たない**／未確認の枠を「収まる」と言わない）。
+
+毎月確認する: active contact 数 / 月間予定送信数 / Automation 利用の有無 / 超過料金 /
+1 段階下げられるか。
+
+⚠️ **コスト削減のために配信安全性を落とさない。** 二重送信防止 / unsubscribe /
+bounce・suppression / 1 日 1 通 / 最大 10 通 / delivered 10 無反応で除外 / 反応者を DRM へ /
+既送 step の再送禁止は**どれも削らない**。送信頻度や必要な選別処理を減らして費用を下げない。
+
+## Build vs Buy（原則）
+
+大量メール配送のように**成熟した専門サービスが存在する機能**は、着手前に必ず
+**Build vs Buy を比較する**。自前 queue / 自前 cron / 自前 dispatcher / 独自冪等性 /
+独自 retry / 独自 batch 制御 / 独自配信 Automation を作り込み、
+**本来の売上施策が止まる**状態を再発させない。
+差別化にならない基盤は外部サービスを使い、差別化になるもの（予想ロジック・顧客状態・
+CTA 判断・DRM）は自前で持つ。
+
+## 停止境界（**この手前で必ず止まる**）
+
+- **課金変更のすべて**（契約 / アップグレード / ダウングレード）
+- production contacts の一括 import / 本番 Automation の Set Live / production 大量配信
+- **旧 AK 本番配送の停止**（`MARKETING_PROSPECT_ENGINE` の設定）
+- production env の変更 / production データの補正 / schema 変更
+- **KMA の削除** / **KI のコード変更** / PR merge / production deploy
+
+## 完成条件
+
+SendGrid 上で実 prospect が **1 日 1 通 → 最大 10 通 → 反応者は退出して DRM へ →
+delivered 10 無反応で除外**を本番で満たし、**旧 AK 配送と二重稼働していない**ことを確認し、
+かつ**反応が AK の顧客状態・管理画面へ戻っている**ところまでを完成とする。
+その後に旧配送基盤の廃止 Phase・KMA の廃止判断へ進む。
+
 # 配信停止は無人で完結する（2026-09-16 MK 確定）
 
 ## 完成条件
@@ -172,6 +296,14 @@ fallback があると、本番に既存の管理 secret が入っているだけ
 の「運営者による代理入金連絡」節。
 
 # マーケティングメールは完全自動運用（2026-09-14 MK 確定 / 旧「毎回承認」運用を上書き）
+
+> ⚠️ **2026-09-18 に一部 superseded。** 「**AK 自作 cron / queue / rotation を主配信エンジンとして
+> 完成させる**」という前提は終了し、大量配送は **SendGrid Marketing Campaigns** が担う
+> （正本は本ファイル先頭 ＋ [`MARKETING_PLATFORM.md`](./MARKETING_PLATFORM.md)）。
+> **本節のうち有効なのは運用原則**（配信ごと・step ごと・毎日の承認や env 開閉を通常運用に
+> 要求しない／止めるのは異常時の例外運用／自動化しても安全条件は緩めない）で、
+> これは **SendGrid 移行後も同じ**。以下の AK 自作経路の記述は、
+> **切替が済むまでの現行実装の説明**として読むこと（新規強化はしない）。
 
 AK のマーケティングメールは、**一度有効化したらその状態を維持**し、cron が
 
@@ -798,6 +930,12 @@ signature に**会員ごとの再募集開始日時**を含める（`rank:plus_r
 
 # 連続配信の責務境界（2026-09-08 確定）
 
+> 🚚 **2026-09-18 以降、これは「AK 自作経路の現行実装」**（切替までの説明）。
+> prospect 選別の実行は **SendGrid Marketing Campaigns** へ移す（本ファイル先頭 /
+> [`MARKETING_PLATFORM.md`](./MARKETING_PLATFORM.md)）。**この表を根拠に自作経路を拡張しない。**
+> ⚠️ 下表の「本番は割引 3 本を指定」は**古い**。`MARKETING_SEQUENCE_CAMPAIGN_ID` は
+> **未設定が正**（2026-09-15 に本番も未設定へ戻した）。
+
 **「誰がどのシーケンスを進めるか」を取り違えると、動いているのに進まない状態になる。**
 詳細な仕様は `astro-site/docs/CAMPAIGN_SEQUENCE.md` §11 が正本。ここでは境界だけを固定する。
 
@@ -959,6 +1097,13 @@ step1 の対象になる。`cron-campaign-sequence` は既定では step1 を自
   **`declarationsReady: true` を「完成」と読まない**
 
 # 🚧 メール配信基盤の是正 — **完了条件（クローズ禁止・常設）**
+
+> 🚚 **2026-09-18 で位置づけを更新。** 大量配送は SendGrid へ移すため、
+> 完了条件 ①②（自作キューの取りこぼし / 積みかけジョブ）は
+> **新規開発の対象ではなく、切替までの安全維持**（不具合修正と安全側の停止）に限る。
+> **③（`EmailEvents` に配送イベントが記録されること）は移行後も必要**なので、
+> 引き続きこの任務の完了条件として残す（SendGrid Automation からの
+> delivered / open / bounce / unsubscribe を AK が受け取れることが前提）。
 
 > **2026-08-28 に完成条件を変更。** 下の 3 つが**すべて**満たされるまで、この任務は
 > 「完了」でも「クローズ」でもない。**キュー不具合が直っただけでは完了にしない。**
@@ -3378,6 +3523,9 @@ Airtable Team は 1 Base 50,000 レコードで、配信 1 回（14,279 名）�
 ---
 
 # メールマーケティング方針（2026-08-10 改定）
+
+> 🚚 **2026-09-18: 判定は不変、実行は SendGrid。** 本節のエンゲージメント分類・閾値・
+> 取引メールへの不適用は**移行後もそのまま**使う。変わるのは「誰が送るか」だけ。
 
 **大量送信を減らし、反応する見込みのある相手へ「受け取る側に得のあるメール」だけを送る。**
 Customers レコードは削除しない。会員・決済とマーケティング配信可否は分ける。

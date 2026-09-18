@@ -720,6 +720,11 @@ UI には常に **「管理者プレビュー / 実顧客には影響しませ�
 
 ## KMA（keiba-marketing-automation）との責務分離
 
+> 🚚 **2026-09-18 MK 確定 — KMA は凍結 → 移行確認後に廃止候補。**
+> 新規のマーケティング機能を KMA へ追加しない（削除もしない）。
+> 以下の責務分離は**当時の記録**であり、KMA 側の新規実装を前提にしてはいけない。
+> 現行の責務境界は [`docs/MARKETING_PLATFORM.md`](../../docs/MARKETING_PLATFORM.md)。
+
 別 project / 別 repository。AK と統合しない。
 
 | | 役割 |

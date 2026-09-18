@@ -1,3 +1,11 @@
+
+
+> 🚚 **2026-09-18 MK 確定 — 大量メール配送は SendGrid Marketing Campaigns へ移す。**
+> 本 doc が説明する **AK 自作の配送経路は「切替が済むまでの現行実装」**であり、
+> **新規強化はしない**（不具合修正と安全側の停止のみ）。現行の責務境界は
+> [`docs/MARKETING_PLATFORM.md`](../../docs/MARKETING_PLATFORM.md)、移行手順は
+> [`docs/SENDGRID_MC_MIGRATION.md`](../../docs/SENDGRID_MC_MIGRATION.md) が正本。
+
 > ⚠️ **通常運用は完全自動（2026-09-14 MK 確定）。** 配信ごとの承認・env 開閉・redeploy は行わない。
 > 現行の運用手順は [`CAMPAIGN_SEQUENCE.md` §5](./CAMPAIGN_SEQUENCE.md) が正本。
 > 積まれたジョブを送るのは **`cron-marketing-dispatch`（5 分ごと / 2026-09-14 新設）**。

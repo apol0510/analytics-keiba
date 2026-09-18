@@ -1,5 +1,10 @@
 # 大規模継続配信 activation runbook（100 名カナリア → 段階拡大）
 
+> 🚚 **2026-09-18 MK 確定 — AK 自作配送の起動手順は「移行前の記録」。**
+> 大量配送は SendGrid Marketing Campaigns へ移す。本 runbook を根拠に
+> **自作配送の新規強化・再拡大をしない**。現行の責務境界は
+> [`docs/MARKETING_PLATFORM.md`](../../docs/MARKETING_PLATFORM.md)。
+
 > ⚠️ **このページは「起動のしかた」の記録**。運用中の現行手順は
 > [`CAMPAIGN_SEQUENCE.md` §5](./CAMPAIGN_SEQUENCE.md) を正本とする。
 >

@@ -32,6 +32,10 @@ import { getRecord, patchRecord } from '../../src/lib/payments/paymentEmailDeps.
 import { createProspectStore } from '../../src/lib/marketing/prospectStore.js';
 import { classifyEvent, PROSPECT_STATE } from '../../src/lib/marketing/prospectPolicy.js';
 import { planProspectEventUpdates } from '../../src/lib/marketing/prospectPipeline.js';
+import {
+  applySelectionExit, createSelectionExitClient,
+} from '../../src/lib/marketing/sendgridSelectionExit.js';
+import { createEventOnceStore } from '../../src/lib/webhooks/webhookEventOnce.js';
 
 config();
 
@@ -139,23 +143,87 @@ export default async (req) => {
     }
 
     // ── 6. 見込み客プールへの反映（既定 OFF）────────────────────────
-    let prospect = { enabled: false, engaged: 0, suppressed: 0, delivered: 0, exhausted: 0, notFound: 0, errors: 0 };
+    /**
+     * ⚠️ **再送で `delivered` を二重に数えない。**
+     *    下の「選別 list から外せなかった」ときは **5xx を返して SendGrid に再送させる**が、
+     *    再送されるのはバッチ全体で、`recordDelivered()` は呼ぶたびに +1 する。
+     *    そこで `sg_event_id` で 1 回だけ通す（印は Redis・TTL 付き）。
+     *    ⚠️ 印を付けられないとき（Redis 不通・ID 無し）は `guarded:false` になり、
+     *       **その回は再送を要求しない**（二重加算を防げないまま再送させない）。
+     */
+    const once = createEventOnceStore({ redisCmd: safeRedisCmdForOnce() });
+    const unseen = await once.filterUnseen(events);
+
+    let prospect = { enabled: false, engaged: 0, suppressed: 0, delivered: 0, exhausted: 0, notFound: 0, errors: 0, changes: [] };
     try {
-      prospect = await applyProspectEvents({ events, now: Date.now() });
+      prospect = await applyProspectEvents({ events: unseen.events, now: Date.now() });
     } catch {
       prospect = { ...prospect, errors: 1 };
     }
 
+    // ── 7. 選別を終えた人を SendGrid の選別 list から外す ─────────────
+    //
+    // Single Send は**送信時点の list の中身**へ送るので、ここで外しておけば
+    // 翌日の号には入らない。**新しい cron は作らない**（この webhook の中で完結）。
+    // ⚠️ 触るのは `ak-prospect-select-start-N` だけ。KI / KMA の資産には触れない。
+    // ⚠️ 失敗しても **200 を返す**（SendGrid に再送させない。次のイベントで回収できる）。
+    let selectionExit = { enabled: false, reason: 'not_attempted', criticalFailure: false };
+    try {
+      selectionExit = await applySelectionExit({
+        changes: prospect.changes,
+        client: createSelectionExitClient({ apiKey: process.env.SENDGRID_API_KEY }),
+      });
+    } catch {
+      selectionExit = { enabled: false, errors: 1, reason: 'unexpected_error', criticalFailure: true };
+    }
+    // ⚠️ アドレスを表に出さないため、`changes` は応答・ログから落とす
+    const { changes: _prospectChanges, ...prospectCounts } = prospect;
+
+    /**
+     * ── 反応者（ENGAGED / PROMOTED）を外せなかったら **握り潰さない** ──────────
+     *
+     * 配信停止・bounce・苦情は SendGrid の suppression が list とは独立に効くので、
+     * 外し損ねても届かない。**反応者は list に残ると翌日の号が届く**ので、
+     * **5xx を返して SendGrid に再送させる**（再送は provider 側の仕組みで、AK に queue を作らない）。
+     *
+     * ⚠️ 再送を要求してよいのは **イベントの重複を防げているとき**だけ
+     *    （`unseen.guarded`）。防げないなら二重加算の方が害が大きいので 200 で終える。
+     */
+    const retryForExit = selectionExit.criticalFailure === true && unseen.guarded === true;
+
     // 件数のみ（メールアドレス・recordId を出さない）
     console.log('📨 [sendgrid-webhook] 処理完了:', {
       received: events.length,
+      duplicateSkipped: unseen.seen,
+      idempotencyGuarded: unseen.guarded,
       processed,
       failed,
       paymentEmail,
       ledger,
-      prospect,
+      prospect: prospectCounts,
+      selectionExit,
     });
-    return jsonResponse(200, { success: true, received: events.length, processed, failed, paymentEmail, ledger, prospect });
+    const body = {
+      success: !retryForExit,
+      received: events.length,
+      duplicateSkipped: unseen.seen,
+      idempotencyGuarded: unseen.guarded,
+      processed,
+      failed,
+      paymentEmail,
+      ledger,
+      prospect: prospectCounts,
+      selectionExit,
+    };
+    if (retryForExit) {
+      // ⚠️ 本文にアドレスは出さない。理由コードだけ
+      console.error('⚠️ [sendgrid-webhook] 反応者を選別 list から外せませんでした（再送を要求）:', {
+        reason: selectionExit.reason || 'remove_failed',
+        criticalTargets: selectionExit.criticalTargets || 0,
+      });
+      return jsonResponse(503, { ...body, retry: 'selection_exit_failed' });
+    }
+    return jsonResponse(200, body);
   } catch {
     console.error('❌ [sendgrid-webhook] 処理エラー');
     return jsonResponse(500, { error: 'Webhook processing failed' });
@@ -182,8 +250,34 @@ export default async (req) => {
  * ⚠️ Redis の `ak:prospect:` 配下のみ。既存の台帳・決済メール処理には触れない。
  * ⚠️ ここが失敗しても webhook 全体は 200 を返す（配信基盤の再送を招かない）。
  */
+/**
+ * イベント重複防止に使う Redis（**無ければ null**。webhook を止めない）。
+ * ⚠️ `ak:mkt:webhook-event:` 以外は触らない（呼び出し側が鍵を決める）。
+ */
+function safeRedisCmdForOnce() {
+  const url = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) return null;
+  return (args) => fetch(url, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(args),
+  }).then(async (r) => {
+    if (!r.ok) throw new Error(`upstash_http_${r.status}`);
+    return (await r.json()).result;
+  });
+}
+
 async function applyProspectEvents({ events, now }) {
-  const out = { enabled: false, engaged: 0, suppressed: 0, delivered: 0, exhausted: 0, notFound: 0, errors: 0 };
+  /**
+   * `changes` は **選別 list から外す相手**（`{email, state}`）。
+   * ⚠️ 応答・ログには出さない（アドレスを含むため）。呼び出し元が
+   *    `applySelectionExit()` へ渡すためだけに使い、件数だけを表に出す。
+   */
+  const out = {
+    enabled: false, engaged: 0, suppressed: 0, delivered: 0, exhausted: 0,
+    notFound: 0, errors: 0, changes: [],
+  };
   if (process.env.MARKETING_PROSPECT_EVENTS_ENABLED !== 'true') return out;
   if (!process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN) return out;
   out.enabled = true;
@@ -216,7 +310,11 @@ async function applyProspectEvents({ events, now }) {
       if (u.action === 'delivered' || u.alsoDelivered === true) {
         const d = await store.recordDelivered({ email: u.email, nowMs: now, env: process.env });
         if (d && d.ok) out.delivered += 1; else out.notFound += 1;
-        if (d && d.ok && d.prospect && d.prospect.state === PROSPECT_STATE.EXHAUSTED) out.exhausted += 1;
+        if (d && d.ok && d.prospect && d.prospect.state === PROSPECT_STATE.EXHAUSTED) {
+          if (d.changed) out.exhausted += 1;
+          // 打ち切り（delivered 10 通・無反応）も選別から外す
+          out.changes.push({ email: u.email, state: PROSPECT_STATE.EXHAUSTED });
+        }
       }
       if (u.action === 'delivered') continue;
       const r = u.action === 'suppress'
@@ -224,6 +322,13 @@ async function applyProspectEvents({ events, now }) {
         : await store.recordEngagement({ email: u.email, nowMs: now, kind: u.kind });
       if (!r.ok) { out.notFound += 1; continue; }
       if (u.action === 'suppress') out.suppressed += 1; else if (r.changed) out.engaged += 1;
+      /**
+       * ⚠️ **状態が変わっていなくても積む。**
+       *    除去に失敗して再送されたとき、2 回目は `changed:false`（既に ENGAGED）になる。
+       *    ここで積まないと**再送しても外れない**ので、「いまの状態が除外対象か」で判断する。
+       *    除去そのものはべき等なので、余分に積んでも害は無い。
+       */
+      if (r.prospect) out.changes.push({ email: u.email, state: r.prospect.state });
     } catch { out.errors += 1; }
   }
   return out;

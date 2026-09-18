@@ -16,6 +16,12 @@
 「送信コードが完成した」は完成ではない。**実配信が進み、反応ありを保持し、
 10 delivered 無反応を自動除外できる状態**までを完成とする。
 
+> 🚚 **2026-09-18 MK 確定 — 実行エンジンを SendGrid Marketing Campaigns へ移す。**
+> 任務（選別の目的・反応の定義・delivered 10 の打ち切り・DRM 接続）は**変わらない**。
+> 変わるのは「誰が送るか」だけで、AK は状態管理と**次に送るメール番号**の確定に絞る。
+> 現在地は下の「🚚 実行エンジンを SendGrid Marketing Campaigns へ移す」節。
+> **本番切替は未実施**（下の完成条件表は AK 自作経路での到達状況の記録として残す）。
+
 ## 完成条件（チェックリスト）
 
 | # | 条件 | 状態 |
@@ -28,6 +34,405 @@
 | 6 | **delivered 10 通・無反応で自動除外**される | 🛑 **未達**。第 2 期は本番反映済みだが **1 通も送っていない**。第 1 期 step3 が 0 通で完了者が 0 名のため入口が開かない（`delivered` max は **4** のまま）。⚠️ 原因は停滞ではなく **step2（残り 5,893 名）が先に捌かれる**こと。step2 → step3 → 第 1 期完了 → 第 2 期、の順に時間が要る |
 | 7 | 除外された人が次のキャンペーンでも対象に戻らない | ✅ EXHAUSTED は送信対象の入口・送信直前・再取り込みのいずれでも落ちる（テストで固定）|
 | 8 | 実配信が**継続**している（1 キャンペーンで止まらない）| ✅ **継続している**（2026-09-17 全窓走査で訂正）。`campaign-discount-free` の step2 は **約 170 通/時**で配信中。step3 が 0 なのは **step2 の 5,893 名が先に捌かれる**ため（最小 due step の設計どおり）。⚠️ 2026-09-16 に「止まっていた」と記録したのは**窓 0 だけを見た誤診** |
+
+## 🚚 マーケティング基盤の全面整理 — AK = 頭脳 / SendGrid = 配送（2026-09-18 MK 確定 / **本番切替 未実施**）
+
+> **事業目的は配信システムの開発ではない。** 顧客・prospect の行動を把握し、適切な CTA と
+> メールマーケティングで**有料転換・継続売上**を作ること。
+> したがって**大量メール配送は自作せず** SendGrid Marketing Campaigns に任せ、
+> AK は顧客状態・行動・販売・CTA・DRM の**頭脳**に集中する。
+>
+> 正本: [`MARKETING_PLATFORM.md`](./MARKETING_PLATFORM.md)（責務境界）/
+> [`docs/spec.md`](./spec.md) 先頭（確定仕様）/
+> [`SENDGRID_MC_MIGRATION.md`](./SENDGRID_MC_MIGRATION.md)（移行手順）/
+> [`decisions.md`](./decisions.md) 2026-09-18
+
+### 確定した構成
+
+| 主体 | 役割 | 状態 |
+|---|---|---|
+| **AK** | 顧客・prospect・会員状態・購入・行動・CTA 段階・DRM 段階・除外状態・次の訴求・誰を渡すか | 現行・強化 |
+| **SendGrid Marketing Campaigns** | Contacts / List / Segment / Automation / 一斉 / drip / 配送反応 | 現行（移行中・**本番未操作**）|
+| **`/admin/premium-plus-eligibility/`** | AK のマーケティング運用画面 | **維持・強化**（今回は改修せず・URL 変更なし）|
+| **KMA** | 過去実績・照合・rollback 材料 | **凍結 → 廃止候補**（新規追加禁止・削除禁止）|
+| **KI** | 将来は自分で SendGrid を使う | **今回は変更なし**（調査・方針整理のみ）|
+| **旧 AK 自作配送** | 既送信判定・二重送信防止・突合・rollback・実績 | **削除禁止**・新規強化なし |
+
+⚠️ **`AK → KMA → SendGrid` の中間層は育てない。** 取引メール（決済・認証・サポート・期限通知）は
+本方針の対象外で、従来どおり AK が送る。
+
+### 移行決定（確定）
+
+| 決定 | 内容 |
+|---|---|
+| 実行 | SendGrid Marketing Campaigns（1 日 1 通・最大 10 通・Automation）|
+| AK の責務 | 状態管理 / 通し番号 1〜10 の確定 / contact・segment / Event Webhook 受領 / DRM 接続 / 監査 |
+| 再送 | **全員 step1 から開始しない。** `highestSent + 1`・穴は埋めない・読めなければ送らない |
+| 通し番号 | 1〜3 = `campaign-discount-free` / 4〜10 = `campaign-prospect-phase2` |
+| 二重稼働 | `ak_live → frozen → sendgrid_live` の順のみ。`MARKETING_PROSPECT_ENGINE` で AK 側を止める |
+| 費用 | **常に最小プラン**。課金変更は MK 承認の直前で停止 |
+
+### 元 15,509 件の現在地（**突合は未実施**）
+
+**15,509 の出所は特定できた。** repo の記録では
+**「割引キャンペーン 3 本の 1 通目が 3 区分あわせて 15,509 通 届いた」**（2026-08-24〜09-07）。
+つまり 15,509 は**アドレスの一覧の件数ではなく、step1 の配信通数**で、
+Customers 由来と prospect 由来が混ざっている（`docs/marketing-automation-release-runbook.md` 冒頭 /
+本ファイル 2026-09-08 の節）。
+
+⚠️ **内訳はまだ確定していない。** 同じ節の集計表は凍結カーソル時点の値
+（free sent 13,499 / light 5 / premium 13）で、合計が 15,509 と一致しない。
+**どの 15,509 通がどのアドレスへ行ったのか**は read-only の突合が要る。
+
+下表は**既存の記録と稼働中の監視の値**であって、突合済みの確定値ではない。
+
+| 記録 | 値 | 出所 |
+|---|---:|---|
+| CSV 統合後の一意件数 | 15,779 | 2026-08 取り込み時の記録 |
+| Customers 最大時 | 15,977 | 2026-08-27 削除前 |
+| prospect へ移した件数 | 11,979 | 2026-08-27 移行実績 |
+| **現在の送信候補（active 索引）** | **約 11,760** | 稼働中の監視（2026-09-18 23:15Z / read-only）|
+| 反応済み未登録（ENGAGED）| 122 | 2026-09-16 全窓走査 |
+| 永久除外（blocked）| 18 | 同上 |
+
+**未実施**: ① step1 の 15,509 通を**アドレス単位**へ展開し、いまの prospect 索引 /
+Customers / 抑止台帳のどこに居るかを突き合わせる ② 既送信 step の確定（通し番号別件数の実測）
+③ suppression（AK 側の抑止台帳と provider 側 suppression）の突合。
+
+> ✅ **①〜③ は 1 コマンドで出せる状態にした**（deploy 不要・read-only）。
+>
+> ```bash
+> cd astro-site
+> UPSTASH_REDIS_REST_URL=... UPSTASH_REDIS_REST_TOKEN=... \
+> AIRTABLE_API_KEY=... AIRTABLE_BASE_ID=... SENDGRID_API_KEY=... \
+> npm run audit:sendgrid-migration > /tmp/ak-migration-audit.json
+> ```
+>
+> 出力はアドレスを含まない件数だけ（`@` が混ざったら中止）。
+>
+> ✅ **2026-09-18 に実行済み**。production の `UPSTASH_*` は Netlify 側で **secret 指定**のため
+> 値を取り出せないが、**`netlify dev:exec --context production` が子プロセスへ env を注入する**ので、
+> 画面にも context にも秘密を出さずに実行できた。Upstash が読めない本番では
+> **`--via-admin`**（既にデプロイ済みの read-only 管理 API 経由）を使う。
+>
+> ```bash
+> cd /Users/user/Projects/analytics-keiba
+> netlify dev:exec --context production -- \
+>   node astro-site/scripts/sendgrid-migration-audit.mjs --via-admin
+> ```
+>
+> 結果は上の「📐 実数突合 完了」。**MK の手入力・コピーは不要**。
+
+### nextMessageNumber 別の件数（**2026-09-18 に実測で確定。下表は当時の推定＝歴史記録**）
+
+> ✅ **実測は上の「📐 実数突合 完了」を正本とする**（1:328 / 2:3,692 / 3:7,734 / 4〜10:0）。
+> 推定（1:約256 / 2:約3,914 / 3:約7,590）は**おおむね当たっていた**が、確定値ではない。
+> 以下は推定を立てた経緯の記録として残す。
+
+⚠️ **実測していない。** 走査 action（`admin-sendgrid-migration` の `scan`）は本 PR で実装したが、
+**本番へ deploy していない**ため実行できない。加えて本セッションは
+**本番の認証情報を参照できず**（credential materialization が拒否された）、
+既存の read-only 経路も叩けなかった。下表は既存記録と監視値からの**推定**で、
+**確定値として使ってはいけない**。
+
+| 次に送る番号 | 推定件数 | 根拠 |
+|---:|---:|---|
+| 1 | 約 256 | 索引 11,760 − step1 到達 11,504 |
+| 2 | 約 3,914 | step1 11,504 − step2 7,590 |
+| 3 | 約 7,590 | step2 7,590 − step3 **0** |
+| 4〜10 | **0** | 第 2 期の配信台帳が 0 行（1 通も送っていない）|
+
+- 推定の残送信総数: **約 98,500 通**（256×10 ＋ 3,914×9 ＋ 7,590×8）
+- 1 日 1 通なので**全員が 10 日以内**に配り終わる → 選別期間の月間通数 ≒ 残送信総数
+
+## 📐 実数突合 完了（2026-09-18 / 本番 read-only・書き込み 0）
+
+**`netlify dev:exec --context production -- node astro-site/scripts/sendgrid-migration-audit.mjs --via-admin`**
+で実測。secret は子プロセスへ注入されるだけで**画面にもログにも出していない**。
+出力はアドレスを含まない件数のみ（`@` 混入時は中止する作り）。
+
+### prospect（`missing 0` / 索引 digest 一致 ＝ **確定**）
+
+| 項目 | 実測 |
+|---|---:|
+| 送信候補（active）| **11,749**（最新測定）|
+| 反応済み未登録（ENGAGED）| **196** |
+| 永久除外（blocked / SUPPRESSED・EXHAUSTED）| **31** |
+| 読めなかった件数 | **0** |
+| 開封あり | **0** |
+| `delivered` 分布 | 1:365 / 2:3,964 / 3:7,395 / 4:30（**max 4**）|
+
+⚠️ 走査中も配信は進むので、件数は数分〜数時間で動く。**`missing 0` かつ digest 一致のときだけ
+「その時点の確定値」**として扱う。同日の再測（Advanced 契約後）:
+
+| 時点 | 送信候補 | ENGAGED | 永久除外 | 次の通 1 / 2 / 3 |
+|---|---:|---:|---:|---|
+| 01:2x | 11,757 | 191 | 28 | 328 / 3,692 / 7,737 |
+| 01:40 | 11,754 | 194 | 28 | 328 / 3,692 / 7,734 |
+| 再測 | 11,752 | 195 | 29 | 328 / 3,592 / 7,832 |
+| **Marketing 権限つきの再測** | **11,749** | **196** | **31** | **328 / 3,442 / 7,979** |
+
+`next=1` の **328 は動かない**（1 通も届いていない人＝配信台帳に行が無い人）。
+2 → 3 へ移っているのは **step2 が配信され続けている**ため（旧 AK 経路は現役）。
+
+### 次に送る通し番号（＝ SendGrid の入口）
+
+| 次の通 | 人数 | 意味 |
+|---:|---:|---|
+| 1 | **328** | 1 通も届いていない（配信台帳に行が無い人。**この値は動かない**）|
+| 2 | **3,442** | 1 通目まで届いた |
+| 3 | **7,979** | 2 通目まで届いた |
+| 4〜10 | **0** | 第 2 期は**まだ 1 通も配っていない** |
+| 配り終えた | **0** | 10 通完走者は居ない |
+| **合計** | **11,749** | ＝ 送信候補と一致（取りこぼしなし）|
+
+⚠️ 2 → 3 は**旧 AK 経路が step2 を配信し続けているため動く**（数時間で数百人）。
+移行の直前にもう一度測り、**その値で list を分ける**。
+
+### 元 15,509 の展開（Customers 側の配信台帳）
+
+| 項目 | 実測 |
+|---|---:|
+| 割引 3 本の配信行 | 19,427（sent 16,163 / cancelled 3,263 / queued 1）|
+| **ユニーク宛先** | **15,556**（free 15,538 / light 5 / premium 13）|
+| Customers 残存 | **4,050** |
+
+その 15,556 名が**いまどこに居るか**（`prospectIndexAudit` で全件突合）:
+
+| 居場所 | 人数 |
+|---|---:|
+| prospect 送信候補 | **11,426** |
+| prospect 反応済み | **194** |
+| 永久除外 | **28** |
+| prospect 索引に居ない（Customers 側 or 削除済み）| **3,908** |
+
+- 「15,509」は当時の**送信通数**、いまの台帳ユニークは **15,556**（差 47 は cancelled 行のみの宛先など）
+- prospect 送信候補 11,754 − 台帳由来 11,426 = **328** ＝ 次が 1 通目の人数と一致（**台帳に行が無い人**）
+
+### SendGrid（provider 実測）
+
+| 項目 | 実測 |
+|---|---|
+| **Marketing Campaigns API** | **403**（contacts / field_definitions / lists すべて）|
+| unsubscribe group | 2 件（`テストグループ` / **`KEIBA Intelligence メルマガ`**）。**AK 用は無い** |
+| verified sender | 5 件（AK 専用は無い）／ 認証済みドメインに **`keiba.link`（valid）** |
+| アカウント | `paid` / reputation **99** |
+| suppression | bounces **309** / blocks **53** / spam reports **1** / global unsubscribes **0** |
+
+### ✅ **403 は解消**（2026-09-18 / Advanced 20K 契約 ＋ 使用中キーの権限編集）
+
+| 確認 | 実測 |
+|---|---|
+| 使用中キー名 | **`AK SendGrid Production`**（値は差し替えていない ＝ **env 変更なし**）|
+| `contacts` / `field_definitions` / `lists` / `segments` / `senders` | **全部 200** |
+| scope | 208 → **203**。`marketing.read` あり（Automation は No Access のまま）|
+| 既存機能の権限 | ✅ `mail.send` / `asm.groups.*` / `suppression.*` / `whitelabel.read` / `user.account.read` 残存。**欠落 0** |
+
+### ✅ AK 用の最小構成を作成 完了（2026-09-18 / 承認のうえ実行）
+
+| 作ったもの | 確認 |
+|---|---|
+| custom field `ak_next_message` | Number |
+| unsubscribe group `AK Marketing` | **id 34108** |
+| list `ak-prospect-select-start-1 / -2 / -3` | 各 **contacts 0** |
+| sender `KEIBA Analytics` | from `noreply@keiba.link` / 表示名 `KEIBA Analytics` / **verified** |
+
+- **contact は 1 件も投入していない**／Automation は作っていない・live にしていない
+- **KI / nankan / review の既存資産はすべて不変**
+- ⚠️ `/v3/scopes` に **`marketing.write` は現れない**（Full Access でも `marketing.read` のみ）。
+  そこで「**1 件だけ作って確かめる**」方式へ変更（403 なら副作用ゼロでその場で停止）。
+  custom field の作成が通ったので残りを作成した
+- **Design Library へ 10 通を登録済み**（`AK Prospect Selection 01`〜`10` / editor=code /
+  中身は書き出しファイルを**無加工** / 作成後 GET で **全件一致**を確認 / 同名は二重作成しない）
+- ❌ **Automation 方式は取りやめ**（2026-09-18）。実画面で Design が出ないことを確認し、
+  かつ **Automation は公開 API に作成経路が無い**ため。作りかけの
+  `AK Prospect Selection start 1` は **draft のまま残す**
+- ✅ **案 B を採用して解決**（2026-09-18）。期限つきの **01 / 02 / 03 / 10 だけ**を
+  選別用の**期限なし文面**へ差し替えた（`prospectSelectionSteps.js`）。
+  **04〜09 は 1 バイトも変更なし**／**catalog（割引 3 本・第 2 期）は無改変**／
+  **`DeliveryKey` と next_message は不変**＝既送信の号を送り直さない。
+  差し替え後の再監査は **期限つき 0 件・成立 true・検証NG 0**（任意の開始日で成立）
+- ✅ **27 Single Send を draft で作成 完了**（2026-09-18）。201×27 / 失敗 0 /
+  **status は全件 draft・`send_at` は全件 null**（予約なし）/ GET 突き合わせ **27/27 一致** /
+  宛先は list のみ（segment なし）/ **開封計測は 27 件とも有効**
+- 🛑 **cutover 前提「反応したら選別から外れる」は未成立**。自動で外れるのは
+  **bounce・苦情・配信停止**（SendGrid suppression）だけで、**開封しても外れない**
+  （list から外す定期実行が無い）。click は計測が無効、サイト再訪・購入は紐付け不可。
+  → **contact 投入はしない**。最小の直し方は「list 除外の cron 配線（新規実装なし）」＋
+  「webhook の group_unsubscribe を ON」（`sendgridExitReadiness.js` と docs §11-f）
+- ✅ **採用: 既存 webhook の中で選別 list から即時に外す**（2026-09-18・**未 deploy**）。
+  `sendgrid-webhook.js` → `applySelectionExit()` を配線。**新しい cron は作っていない**。
+  外す相手は ENGAGED / PROMOTED / SUPPRESSED / EXHAUSTED。触る list は
+  `ak-prospect-select-start-N` だけ（**KI / KMA 影響 0**）。べき等・上限 100 名/回・
+  **反応者（ENGAGED / PROMOTED）を外せないときは 503 を返して SendGrid に再送させる**
+  （同一呼び出しで 2 回再試行してから判断／抑止側は suppression が独立に効くので 200 のまま）。
+  ⚠️ 正確には「**即時 2 回再試行 ＋ Event Webhook の非 2xx 再送（最大 24 時間）による再試行**」で、
+  **「必ず最終的に外れる」保証ではない**（窓を過ぎても失敗が続けば残る）。
+  再送で `delivered` を二重に数えないよう `sg_event_id` で 1 回だけ通す
+  （`webhookEventOnce.js`・Redis・TTL 7 日）。印を付けられないときは 503 にしない。
+  応答とログは件数のみ・
+  停止は `SENDGRID_SELECTION_EXIT_DISABLED=true`（**既定は有効**）。
+  `group_unsubscribe` はコード側の受け入れ準備済み（トグル ON は MK の 1 操作）
+- 🔎 **SendGrid Segment だけで開封離脱は作れない**- 🔎 **SendGrid Segment だけで開封離脱は作れない**（2026-09-18 実測）。Segment V2 の SGQL は
+  `contact_data` の `list_ids` / `email` / `created_at` しか使えず、**engagement の列も表も無い**
+  （`last_opened` は reserved_fields に載っているのに使えない）。検証用 segment は全削除済み。
+  → 最小手段は **既存 Event Webhook の中で list から外す**（**新しい日次 cron を作らない**・
+  反応した時点で外れる）。画面の segment builder に engagement 条件があるかだけは**未確認**
+- 文面の元は `~/.analytics-keiba-ops/sendgrid-automation-content/`（**repo の外**・PII なし）
+
+⚠️ 参考: 作業の前後で Marketing の contacts が 104 → **105** に増えたが、**AK の投入ではない**
+（作った list は 3 本とも 0 件）。KI 側の登録とみられる。
+
+### （historical）作成前の状態
+
+⚠️ 次に要るのは **`marketing.write`**（list / custom field / sender の作成と contact 投入）。
+**2026-09-18 に MK が Full Access へ変更したと連絡を受けたが、`/v3/scopes` は `marketing.read` のみ**
+（総数 203 のまま）。したがって**作成は実行していない**（fail closed）。
+
+作成は 1 コマンドにしてある（`scripts/sendgrid-create-minimal-setup.mjs`）。
+**`marketing.write` が無ければ着手前に中止**するので、権限が入った後にそのまま実行できる:
+
+```bash
+netlify dev:exec --context production -- node astro-site/scripts/sendgrid-create-minimal-setup.mjs \
+  --apply --confirm "CREATE AK MINIMAL SETUP"
+```
+
+下見（`--apply` なし）は実行済みで、作る 6 つ（group 1 / field 1 / list 3 / sender 1）と
+**触らない既存資産 7 つ**（KI / nankan / review 系）を確認した。
+⚠️ **Automation は API で作れない**（公開 API は統計のみ）。画面で作る設定値はスクリプトが表示する。
+
+### SendGrid Marketing の現況（権限つきで初めて読めた）
+
+| 項目 | 実測 | 意味 |
+|---|---|---|
+| contacts | **104**（課金対象 104）| ほぼ空。AK の 11,749 を入れて **11,853** → Advanced 20K の枠内 |
+| custom field | `registered_intelligence` / `registered_analytics` | **`ak_next_message` は無い**（作る）|
+| list | **0 本** | start-1 / -2 / -3 の 3 本を作る |
+| segment | `keiba-intelligence` 1 本 | KI 用。**触らない** |
+| Marketing sender | **0 件**（verified sender は 5 件）| AK 用 sender を 1 件作る |
+| unsubscribe group | `テストグループ` / `KEIBA Intelligence メルマガ` | AK 用が無い（作る）|
+| 認証済みドメイン | `keiba.link`(valid) ほか 4 件 | 送信元は `keiba.link` でよい |
+
+⚠️ **選別期間の月間送信数は約 98,090 通**（1 日 1 通で 9 日）。
+**Marketing Campaigns Advanced 20K の月間送信枠を契約画面で確認**し、超えるなら
+「開始を分散する」か「超過を許容する」かを決める（**推測で枠を書かない**）。
+
+### 403 の原因は API キーの権限だった（historical / 解消済み）
+
+MK が **Advanced 20K を契約**（Email API Essentials 50K は維持）した後に再確認しても **403 のまま**。
+切り分けた結果、**契約ではなく API キーの scope 不足**と確定した。
+
+| 確認 | 実測 |
+|---|---|
+| API キーの総 scope 数 | **208** |
+| `marketing` で始まる scope | **0 個** |
+| 403 の本文 | `access forbidden. please ensure you have the correct scopes defined.` |
+| 同じキーで 200 が返る API | `/v3/asm/groups` `/v3/verified_senders` `/v3/whitelabel/domains` `/v3/user/account` `/v3/suppression/*` |
+
+**必要な最小権限**: いまは **`marketing.read`**、投入時に **`marketing.write`**。
+⚠️ **既存キーの権限を編集するだけでよい**（新規発行すると `SENDGRID_API_KEY` 差し替え＝env 変更になる）。
+
+#### 2026-09-18 追記 — **編集する相手を取り違えていた**
+
+MK が API キーを更新した後も 403 のままだったので、`/v3/api_keys` と token の key id を
+突き合わせて**本番で使われているキーを特定**した。
+
+| キー名 | scope 数 | `marketing.*` | 使用中 |
+|---|---:|---|---|
+| **20250924200** | 208 | **なし** | ✅ 本番の `SENDGRID_API_KEY` |
+| アナリティクス | 171 | `marketing.read` | — |
+| keiba-intelligence | 209 | `marketing.read` | — |
+
+→ **「20250924200」を編集する**（Settings → API Keys → 該当行 Edit → Restricted Access →
+**Marketing** を Read Access）。**キーの差し替えはしない**（env 変更になるうえ、
+「アナリティクス」は scope が狭く既存 Function の権限を失う）。
+
+⚠️ **この SendGrid アカウントは KI と共用の可能性が高い**（unsubscribe group 名）。
+`MARKETING_PLATFORM.md` §10 の分離方針（sender / list / group / custom field を分ける）は
+**将来の話ではなく、最初から必要**。
+
+### 見積り（実数ベース）
+
+| 項目 | 値 |
+|---|---:|
+| 移行対象 contacts | **11,754** |
+| 残送信総数 | **98,380 通**（328×10 + 3,692×9 + 7,734×8）|
+| 選別期間の月間通数 | ≒ **98,380**（1 日 1 通なので **9 日**で配り終える）|
+| 最小プラン | **判定不能**。10K は contact 枠を超過、20K は **email 枠が未確認** → `requiresQuote: true` |
+| 選別後（仮に 5,000 名）| 月 **40,000 通**（週 2 回 × 月 8 回）→ Advanced 10K が候補 |
+
+### SendGrid 最小構成（実数で確定）
+
+- **list は 3 本だけ**: `ak-prospect-select-start-1`（328）/ `-2`（3,692）/ `-3`（7,734）
+- **Automation も 3 本**（10 通 / 9 通 / 8 通・各 1 日 1 通）。**4〜10 始まりは作らない**
+- **custom field は `ak_next_message` の 1 本だけ**（任意 2 本は無くてよい）
+- **unsubscribe group は AK 用を 1 本**（既存の KI 用と分ける）
+- segment は使わない（動的な出入りで二重送信になりうるため）
+
+### SendGrid 移行準備状況
+
+| # | 項目 | 状態 |
+|---|---|---|
+| 1 | 通し番号の単一源（3+7=10・鍵は既存と一致）| ✅ 実装・テスト済み |
+| 2 | nextMessageNumber 判定（再送禁止）| ✅ 実装・テスト済み |
+| 3 | 走査（窓・digest・`missing` 0 でのみ確定）| ✅ 実装・テスト済み（**本番未実行**）|
+| 4 | contact 変換層（**必須 custom field は 1 本**・通し番号別 list）| ✅ 実装・テスト済み |
+| 5 | Automation 移行計画（1 日 1 通・**対象が居る入口だけ**作る・segment は使わない）| ✅ 実装・テスト済み |
+| 5-b | 突合スクリプト（手元から read-only・1 コマンド）| ✅ 実装・guard テスト済み（**未実行**）|
+| 6 | 10 通の文面移植（配信停止タグ差し替え）| ✅ 実装・テスト済み（**未投入**）|
+| 7 | 切替の状態機械・AK 側停止 env・rollback | ✅ 実装・テスト済み（**env 未設定**）|
+| 8 | 管理 API（read 4 / write 2・三重ゲート）| ✅ 実装・煙試験済み（**未 deploy**）|
+| 9 | 非本番相当の E2E（再送 0 / 退出 / bounce / 10 通完走 / ゲート閉）| ✅ ローカルで完走 |
+| 10 | SendGrid 側の準備（custom field / list / unsubscribe group / Automation）| ❌ **未着手** |
+| 11 | 契約プランの公表値確認 | ❌ **未確認** |
+| 12 | 本番 contact import / Automation live | ❌ **未実施**（停止境界）|
+
+### 費用（想定・**契約変更は未実施**）
+
+| 項目 | 値 |
+|---|---|
+| 現在の SendGrid 想定プラン | **選別中: Advanced 20K**（第一候補。公表値は未確認）。⚠️ **そもそも Marketing Campaigns API が 403** ＝ 未契約 or キー権限不足 |
+| contact 数 | **11,754**（2026-09-18 実測）|
+| 残送信予定数 | **98,380 通**（実測ベース）|
+| 月間予定通数 | 選別中 ≒ 98,500 / 選別後 ≒ 残存 contact × 8 |
+| 選別完了後のダウングレード条件 | 残存 contact ≤ 10,000 **かつ** 月間通数 ≤ 50,000 → **Advanced 10K** へ下げる（例: 5,000 件 × 月 8 回 = 40,000 通）|
+| 未実施の課金変更 | **すべて未実施**（新規契約・アップグレード・ダウングレードのいずれも行っていない）|
+| 次に契約判断が必要になる地点 | ① contact import の直前（20K で足りるかを実測件数で確認）② 選別完了時（10K へ下げられるか）|
+
+⚠️ 20K の **email 枠は未確認**なので、`recommendPlan()` は現時点で「収まる」と答えない
+（`requiresQuote: true`）。**公表値を確認してから契約する。**
+
+### 未完了
+
+1. 元 15,509 件の突合（AK 側の所在・状態の確定）
+2. 通し番号別件数の**実測**（`scan` の全窓走査・`missing` 合計 0）
+3. SendGrid 側の準備（custom field 4 本 / list 10 本 / unsubscribe group / Automation 10 本）
+4. 契約プランの公表値確認と契約判断
+5. 旧 AK prospect 配信の停止（`MARKETING_PROSPECT_ENGINE=sendgrid` ＋ redeploy）
+6. contact import → Automation live → 二重稼働 0 の確認
+7. 反応者の退出（AK → list 除去）が本番で効くことの確認
+8. delivered 10 無反応 → EXHAUSTED → 次回以降の配信から除外されることの本番確認
+
+### 次作業
+
+1. 正本固定の PR（docs のみ）と実装 PR #572 の **merge → deploy**（**MK 承認**）
+2. 本番 read-only で `scan` を全窓走査し、**通し番号別件数を確定**（`missing` 合計 0 のときだけ確定）
+3. 元 15,509 件の突合（所在・状態）と suppression の突合
+4. SendGrid の**現行の公表条件**を確認し、契約を判断（**MK 承認 / 課金変更**）
+5. SendGrid 側の器を作る（custom field 4 / list 10 / unsubscribe group / Automation）
+6. テスト対象だけで検証 → `stop_ak_prospect`（**MK 承認**）→ snapshot → import（**MK 承認**）
+   → Automation 開始（**MK 承認**）→ Webhook 確認 → 管理画面への反映確認 → **二重送信 0 確認**
+7. 安定確認後に「旧配送基盤 廃止 Phase」「KMA 廃止判断（8 条件）」へ（**独立 Phase**）
+
+### 本番切替 未実施（明示）
+
+- production env は**何も変えていない**（`MARKETING_PROSPECT_ENGINE` は未設定 = 従来どおり AK）
+- SendGrid へは **1 リクエストも出していない**（contact 0 件・list 0 本・Automation 0 本）
+- 旧 AK prospect 配信は**動いたまま**（現行どおり `campaign-discount-free` の step2 が進行中）
+- 課金変更は**していない**
+- **KMA は 1 バイトも触っていない**（凍結の宣言のみ。削除・移行・改修なし）
+- **KI は 1 行も変更していない**（将来方針の記載のみ）
+- `/admin/premium-plus-eligibility/` は**改修していない**（URL も変更なし）
 
 ## 初回実配信の結果（2026-09-14 07:10 UTC / step2・150 通）
 
