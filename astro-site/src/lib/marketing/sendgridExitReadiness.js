@@ -181,4 +181,105 @@ export function minimalFixes(readiness) {
   return fixes;
 }
 
+/**
+ * ── V2 Segment で「開封したら外れる」を作れるか（2026-09-18 本番実測）──────────
+ *
+ * **作れない。** Segment V2 の SGQL は本番アカウントで次のように検証される
+ * （`POST /v3/marketing/segments/2.0` のバリデータが返した実メッセージ）:
+ *
+ * | 試した式 | 返答 |
+ * |---|---|
+ * | `CONTAINS(list_ids, '…')` | `unsupported SQL function: 'CONTAINS'` |
+ * | `last_opened is null` | `illegal column name … 'last_opened' referenced for table: 'contact_data'` |
+ * | `last_clicked` / `last_emailed` / `singlesend_id` / `automation_id` | 同上（**contact_data の列として存在しない**）|
+ * | `… in (select contact_id from singlesend_data …)` | `illegal table name: 'singlesend_data'` |
+ * | `automation_data` / `engagement_data` / `email_activity` / `message_data` / `singlesends` / `events` / `campaign_data` | すべて `illegal table name` |
+ * | `list_ids` / `email` / `created_at` | **201 Created**（＝使える）|
+ *
+ * ⚠️ `GET /v3/marketing/field_definitions` の `reserved_fields` には `last_opened` などが
+ *    載っているが、**Segment のクエリでは使えない**（載っていることと使えることは別）。
+ * ⚠️ 検証で作った一時 segment は**すべて削除済み**（残っているのは `keiba-intelligence` のみ）。
+ * ⚠️ 確かめたのは **API のバリデータ**。画面の segment builder で engagement 条件が
+ *    出るかどうかは**未確認**（出るなら、その segment を Single Send から参照する案は成立しうる）。
+ */
+export const SEGMENT_CAPABILITY = Object.freeze({
+  測定日: '2026-09-18',
+  使えるテーブル: Object.freeze(['contact_data']),
+  使える列: Object.freeze(['list_ids', 'email', 'created_at']),
+  使えない列: Object.freeze(['last_opened', 'last_clicked', 'last_emailed', 'singlesend_id', 'automation_id']),
+  使えないテーブル: Object.freeze([
+    'singlesend_data', 'automation_data', 'engagement_data', 'email_activity',
+    'message_data', 'singlesends', 'events', 'campaign_data',
+  ]),
+  使えない関数: Object.freeze(['CONTAINS']),
+  画面のsegment_builder: '未確認',
+});
+
+/**
+ * 「SendGrid の segment だけで開封離脱を作れるか」。
+ * **作れないときは理由を返す**（黙って false にしない）。
+ */
+export function canUseNativeSegmentExit(capability = SEGMENT_CAPABILITY) {
+  const cap = capability || {};
+  const cols = new Set(cap['使える列'] || []);
+  const tables = new Set(cap['使えるテーブル'] || []);
+  const engagementColumn = ['last_opened', 'last_clicked'].some((c) => cols.has(c));
+  const engagementTable = ['singlesend_data', 'engagement_data', 'engagement_events']
+    .some((t) => tables.has(t));
+  if (engagementColumn || engagementTable) return { ok: true, reason: null };
+  return {
+    ok: false,
+    reason: 'segment_has_no_engagement_fields',
+    detail: '開封・クリックを表す列もテーブルも Segment V2 のクエリで使えない（本番のバリデータが拒否）',
+  };
+}
+
+/**
+ * segment が使えないときの**代わりの外し方**。
+ *
+ * ⚠️ **新しい日次 cron を作らない**のが目的なので、**既にある webhook の中で外す**。
+ *    `sendgrid-webhook.js` は既に open / bounce / 苦情 / 配信停止を受けて
+ *    prospect の状態を更新している。**その同じ処理の中で list から外す**のが最小。
+ */
+export const EXIT_MECHANISM = Object.freeze({
+  NATIVE_SEGMENT: 'native_segment',
+  WEBHOOK_LIST_REMOVAL: 'webhook_list_removal',
+  DAILY_CRON: 'daily_cron',
+});
+
+export function chooseExitMechanism(capability = SEGMENT_CAPABILITY) {
+  const native = canUseNativeSegmentExit(capability);
+  if (native.ok) {
+    return {
+      mechanism: EXIT_MECHANISM.NATIVE_SEGMENT,
+      newCron: false,
+      why: 'segment が engagement を条件にできるなら、宛先を segment にするだけで自動的に外れる',
+    };
+  }
+  return {
+    mechanism: EXIT_MECHANISM.WEBHOOK_LIST_REMOVAL,
+    newCron: false,
+    why: `${native.detail}。既存の Event Webhook の処理内で list から外せば、`
+      + '新しい日次 cron を作らずに次の号の前に外せる',
+    fallback: EXIT_MECHANISM.DAILY_CRON,
+  };
+}
+
+/**
+ * ⚠️ **open は「人が読んだ」と同義ではない**（正本に残す）。
+ *
+ * - Apple Mail Privacy Protection は**受信者が開いていなくても**画像を先読みして open を立てる
+ * - 画像をブロックする環境では**開いていても** open が立たない
+ * - したがって open を離脱シグナルにすると、**誤って外す**／**外し損ねる**の両方が起きる
+ *
+ * 本件では「反応があれば選別を打ち切って DRM へ」なので、**誤って外す方向に倒れる**のは
+ * 「送りすぎない」側であり、選別の目的（無反応者の除外）とは矛盾しない。
+ * 逆に open が立たない人は最大 10 通まで届くだけで、こちらも設計どおり。
+ */
+export const OPEN_SIGNAL_LIMITS = Object.freeze({
+  誤検知: 'Apple MPP などの先読みで、開いていない人にも open が立つ',
+  検知漏れ: '画像ブロック環境では、開いた人でも open が立たない',
+  方針: 'open は「反応の可能性」であって「人の意思」ではない。打ち切り（EXHAUSTED）は delivered 10 通を分母にする既存判定のまま変えない',
+});
+
 export default evaluateExitReadiness;

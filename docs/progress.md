@@ -260,6 +260,11 @@ Customers / 抑止台帳のどこに居るかを突き合わせる ② 既送信
   （list から外す定期実行が無い）。click は計測が無効、サイト再訪・購入は紐付け不可。
   → **contact 投入はしない**。最小の直し方は「list 除外の cron 配線（新規実装なし）」＋
   「webhook の group_unsubscribe を ON」（`sendgridExitReadiness.js` と docs §11-f）
+- 🔎 **SendGrid Segment だけで開封離脱は作れない**（2026-09-18 実測）。Segment V2 の SGQL は
+  `contact_data` の `list_ids` / `email` / `created_at` しか使えず、**engagement の列も表も無い**
+  （`last_opened` は reserved_fields に載っているのに使えない）。検証用 segment は全削除済み。
+  → 最小手段は **既存 Event Webhook の中で list から外す**（**新しい日次 cron を作らない**・
+  反応した時点で外れる）。画面の segment builder に engagement 条件があるかだけは**未確認**
 - 文面の元は `~/.analytics-keiba-ops/sendgrid-automation-content/`（**repo の外**・PII なし）
 
 ⚠️ 参考: 作業の前後で Marketing の contacts が 104 → **105** に増えたが、**AK の投入ではない**

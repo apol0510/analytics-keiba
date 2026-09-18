@@ -108,3 +108,42 @@ test('引き金の一覧を勝手に増やさない', () => {
     'unsubscribe', 'bounce', 'complaint', 'open', 'click', 'site_revisit', 'purchase',
   ]);
 });
+
+test('V2 Segment だけでは開封離脱を作れない（本番のバリデータ実測）', async () => {
+  const {
+    SEGMENT_CAPABILITY, canUseNativeSegmentExit, chooseExitMechanism, EXIT_MECHANISM,
+  } = await import('./sendgridExitReadiness.js');
+
+  // 使えるのは contact_data の list_ids / email / created_at だけ
+  assert.deepEqual(SEGMENT_CAPABILITY['使えるテーブル'], ['contact_data']);
+  assert.deepEqual(SEGMENT_CAPABILITY['使える列'], ['list_ids', 'email', 'created_at']);
+  for (const c of ['last_opened', 'last_clicked', 'singlesend_id']) {
+    assert.ok(SEGMENT_CAPABILITY['使えない列'].includes(c), `${c} が使えることになっている`);
+  }
+
+  const native = canUseNativeSegmentExit();
+  assert.equal(native.ok, false);
+  assert.equal(native.reason, 'segment_has_no_engagement_fields');
+
+  // 代わりの最小手段は「既存 webhook の中で list から外す」＝**新しい cron を作らない**
+  const chosen = chooseExitMechanism();
+  assert.equal(chosen.mechanism, EXIT_MECHANISM.WEBHOOK_LIST_REMOVAL);
+  assert.equal(chosen.newCron, false);
+});
+
+test('engagement を条件にできる環境なら segment 方式を選ぶ', async () => {
+  const { canUseNativeSegmentExit, chooseExitMechanism, EXIT_MECHANISM } = await import('./sendgridExitReadiness.js');
+  const capable = {
+    使えるテーブル: ['contact_data'],
+    使える列: ['list_ids', 'email', 'created_at', 'last_opened'],
+  };
+  assert.equal(canUseNativeSegmentExit(capable).ok, true);
+  assert.equal(chooseExitMechanism(capable).mechanism, EXIT_MECHANISM.NATIVE_SEGMENT);
+});
+
+test('open の限界を正本として持つ（人の意思と同義にしない）', async () => {
+  const { OPEN_SIGNAL_LIMITS } = await import('./sendgridExitReadiness.js');
+  assert.match(OPEN_SIGNAL_LIMITS['誤検知'], /Apple MPP/);
+  assert.match(OPEN_SIGNAL_LIMITS['検知漏れ'], /画像ブロック/);
+  assert.match(OPEN_SIGNAL_LIMITS['方針'], /delivered 10/);
+});

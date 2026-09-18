@@ -762,6 +762,48 @@ Single Send は**送信時点の list の中身**へ送る。したがって
 `removeContactsFromList()` は実装済みだが、呼ぶのは未 deploy の管理 API だけで、
 定期実行の配線が無い）。**開封した人にも 10 通届く。**
 
+### 🔎 「SendGrid の Segment だけで開封離脱」は**成立しない**（2026-09-18 本番実測）
+
+`POST /v3/marketing/segments/2.0` の**バリデータ**に式を投げて確かめた
+（**不正な式は何も作らずに 400**。作成できてしまった検証用 segment は**すべて削除済み**で、
+残っているのは `keiba-intelligence` のみ）。
+
+| 試した式 | SendGrid の返答 |
+|---|---|
+| `CONTAINS(list_ids, '…')` | `unsupported SQL function: 'CONTAINS'` |
+| `last_opened is null` | `illegal column name … 'last_opened' referenced for table: 'contact_data'` |
+| `last_clicked` / `last_emailed` / `singlesend_id` / `automation_id` | 同上（**contact_data に無い**）|
+| `select … from singlesend_data / automation_data / engagement_data / email_activity / message_data / singlesends / events / campaign_data` | すべて **`illegal table name`** |
+| `list_ids` / `email` / `created_at` | **201 Created**（使える）|
+
+→ **この本番アカウントの Segment V2 では、engagement（open / click / Single Send 別の反応）を
+条件にできない。** 使えるテーブルは `contact_data` だけで、engagement の列も表も無い。
+
+⚠️ `GET /v3/marketing/field_definitions` の `reserved_fields` には `last_opened` などが
+**載っている**が、Segment のクエリでは**使えない**（載っていることと使えることは別）。
+⚠️ 確かめたのは **API のバリデータ**。**画面の segment builder に engagement 条件が出るかは未確認**。
+出るのであれば「segment を作って Single Send の宛先にする」案は成立しうる（**MK が画面で 1 回見れば確定**）。
+
+#### では何が最小か（**新しい日次 cron は作らない**）
+
+**既にある Event Webhook の中で list から外す。**
+`sendgrid-webhook.js` は open / bounce / 苦情 / 配信停止を受けて prospect の状態を
+すでに更新している。**その同じ処理の中で `removeContactsFromList()` を呼ぶ**のが最小で、
+
+- **新しい cron を作らない**（既存 Function の延長）
+- 反応した**その時点**で外れる（翌日の Single Send より前に確実に間に合う）
+- 実装は既にある（`buildExitPlan()` / `removeContactsFromList()`）。配線だけ
+
+判定の単一源: `sendgridExitReadiness.js`（`SEGMENT_CAPABILITY` / `chooseExitMechanism()`）
+
+#### ⚠️ open を主シグナルにすることの限界（正本）
+
+| 限界 | 中身 |
+|---|---|
+| 誤検知 | **Apple Mail Privacy Protection** などが画像を先読みし、**開いていない人にも open が立つ** |
+| 検知漏れ | 画像ブロック環境では、**開いた人でも open が立たない** |
+| 方針 | open は「反応の可能性」であって「人の意思」ではない。**打ち切り（EXHAUSTED）の判定は delivered 10 通の既存ルールのまま変えない**。誤って外す方向は「送りすぎない」側に倒れるので、選別の目的とは矛盾しない |
+
 ### 最小の直し方（**自前の配送基盤は作らない**）
 
 | # | 直すこと | やり方 | 新規実装 | 承認 |
