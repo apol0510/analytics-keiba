@@ -2599,7 +2599,7 @@ R5 / R6 で見るのは「**購入が起きたときに処理が正しいか**�
 
 ## 未完了任務
 
-**GA4 管理画面側の作業（コードでは行えない。承認待ち・未実施）**
+**GA4 管理画面側の作業（コードでは行えない。承認待ち・未実施 = 残り 4 件）**
 
 | # | 作業 | 未実施だと |
 |---|---|---|
@@ -2607,16 +2607,27 @@ R5 / R6 で見るのは「**購入が起きたときに処理が正しいか**�
 | 2 | カスタム ディメンション `plan_type` を登録 | 月額/年額/買い切り別に見られない |
 | 3 | `application_submitted` を**キーイベント**に指定 | 参照元別の転換が標準レポートに出ない |
 | 4 | 探索 → 目標到達プロセスで 6 段のファネルを作成 | 毎回手で組む必要がある |
-| 5 | GA4 と Search Console のリンク | 検索クエリと到着後行動が別々のまま |
 
 ※ いずれも**未実施でもイベントは届く**（探索でパラメータが使えないだけ）。
 ※ `application_start` はキーイベントにしない（開いただけを転換と呼ばない）。
+
+**GA4 と Search Console のリンク — ✅ 完了済み（2026-09-18 / MK が管理画面で手動設定）**
+
+| 項目 | 値 |
+|---|---|
+| GA4 property | `analytics-keiba` |
+| web stream | `analytics-keiba` |
+| stream URL | `https://analytics.keiba.link/` |
+| Search Console プロパティ | `https://analytics.keiba.link/` |
+| 確認 | GA4 画面で「リンク作成済み」を確認済み |
+
+**本番 DebugView での目視確認 — 未完了**（本番反映後に行う。下記「次作業」2）
 
 ## 次作業
 
 1. Draft PR のレビュー → merge（**merge は承認待ちで停止中**）
 2. 本番反映後、GA4 DebugView で `/pricing/` のモーダルを開いて `application_start` を目視
-3. 上の GA4 管理画面 5 件を**承認を得てから**実施
+3. 上の GA4 管理画面 **4 件**を**承認を得てから**実施（Search Console リンクは完了済み）
 
 ## 完成条件
 
@@ -2628,15 +2639,20 @@ R5 / R6 で見るのは「**購入が起きたときに処理が正しいか**�
 - [x] PII を GA4 へ送らない（閉じた語彙。商品名に混ざっても `other` に畳む）
 - [x] 対象・関連テスト PASS
 - [x] safety PASS
-- [x] lint / build PASS
+- [x] syntax PASS（`node --check`）
+- [x] build PASS
+- [ ] lint — **この repo では実行不能**（`eslint.config.*` が存在しない。`origin/main` でも同じ）。依存追加はしない
+- [ ] typecheck — **この repo では実行不能**（`astro check` が未導入の `@astrojs/check` を要求）。依存追加はしない
 - [x] secret / PII 混入なし
 - [x] package / lockfile の意図しない変更なし
 - [x] docs 更新済み
 - [x] git diff 確認済み
 - [x] rollback 方針確認済み
-- [ ] Draft PR / CI green（下記参照）
-- [ ] 本番反映
-- [ ] GA4 管理画面 5 件
+- [x] Draft PR 作成済み（#576）
+- [x] CI green（`safety-check` の `Verify 有料化ファネル計測` step が CI 上で実行されたことをログで確認）
+- [ ] 本番反映（merge 待ち）
+- [ ] GA4 管理画面 **4 件**（Search Console リンクは完了済みのため対象外）
+- [ ] 本番 DebugView での目視確認
 
 ## rollback
 
@@ -2646,7 +2662,9 @@ R5 / R6 で見るのは「**購入が起きたときに処理が正しいか**�
 
 ## 本番反映状態
 
-**未反映**（Draft PR 停止中）。GA4 管理画面の設定も**未実施**。
+**未反映**（Draft PR / merge 直前で停止中）。
+GA4 管理画面の設定は **4 件が未実施**（Search Console リンクのみ 2026-09-18 に完了済み）。
+本番 DebugView での目視確認も**未完了**。
 
 ## branch / HEAD / PR / CI
 
@@ -2654,8 +2672,10 @@ R5 / R6 で見るのは「**購入が起きたときに処理が正しいか**�
 |---|---|
 | branch | `feat/ga4-conversion-funnel`（worktree `/Users/user/Projects/analytics-keiba-ga4`）|
 | 分岐元 | `origin/main` = `3082d8f2` |
-| HEAD | `4f8ea675`（実装本体）|
-| PR | [#576](https://github.com/apol0510/analytics-keiba/pull/576) — **Draft / 未 merge** |
+| コード本体の commit | `4f8ea675`（以後の commit は docs のみ）|
+| 再確認時の PR HEAD（実測）| `fc959d1b`（2026-09-18 再確認時点。**この docs 修正 commit で 1 つ進む**ので、最新の HEAD は PR #576 の画面を正とする）|
+| origin/main との差 | **behind 0 / ahead 2**（再確認時点の実測。`git rev-list --left-right --count origin/main...HEAD`）|
+| PR | [#576](https://github.com/apol0510/analytics-keiba/pull/576) — **Draft / 未 merge / MERGEABLE** |
 | CI | **green**。`safety-check` の `Verify 有料化ファネル計測` step が CI 上で実際に走ったことを実行ログで確認（run 35336583437）|
 | Deploy Preview | 事前確認のみ実施。`/`・`/pricing/`・`/results-showcase/nankan/` の 3 ページで `funnel-analytics.js` の script タグと gtag の同居を実測、JS 本体も 200 で配信を確認（**本番確認ではない**）|
 
