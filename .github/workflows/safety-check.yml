@@ -31,6 +31,8 @@ on:
       - 'astro-site/netlify/functions/**'
       - 'astro-site/src/lib/webhooks/**'
       - 'astro-site/public/robots.txt'
+      # 有料化ファネルの計測本体（src/** に入らないので明示する）
+      - 'astro-site/public/js/funnel-analytics.js'
       - 'astro-site/package.json'
       - 'astro-site/scripts/e2e-admin-plus.mjs'
       - 'astro-site/scripts/e2e-magic-link-verify.mjs'
@@ -73,6 +75,8 @@ on:
       - 'astro-site/netlify/functions/**'
       - 'astro-site/src/lib/webhooks/**'
       - 'astro-site/public/robots.txt'
+      # 有料化ファネルの計測本体（src/** に入らないので明示する）
+      - 'astro-site/public/js/funnel-analytics.js'
       - 'astro-site/package.json'
       - 'astro-site/scripts/e2e-admin-plus.mjs'
       - 'astro-site/scripts/e2e-magic-link-verify.mjs'
@@ -314,6 +318,10 @@ jobs:
       - name: Verify /results の飛び先が実在する（404 リダイレクトの回帰検知）
         working-directory: astro-site
         run: npm run test:archive-redirect
+
+      - name: Verify 有料化ファネル計測（申込開始と成功を混同しない / 個人情報を GA4 へ送らない）
+        working-directory: astro-site
+        run: npm run test:analytics
 
       - name: Verify Netlify deploy trigger（一過性 timeout は retry / 4xx は即 FAIL / 重複 build なし）
         run: bash .github/actions/netlify-deploy/tests/run-tests.sh
