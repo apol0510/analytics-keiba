@@ -5864,6 +5864,12 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
               const result = await response.json();
 
               if (result.success) {
+                // ⚠️ 有料化ファネルの「申込成功」。このページだけ成功画面の共通処理
+                //    (`SubmissionResult.showSuccessScreen`) を使っておらず、
+                //    `funnel-analytics.js` の包み込みが効かないのでここで 1 行だけ呼ぶ。
+                //    **サーバーが受理を返したこの分岐の中でしか呼ばない**こと。
+                window.AkFunnel && window.AkFunnel.applicationSubmitted(currentPlan, currentPlanType);
+
                 formMessage.textContent = '✅ お申し込みを受け付けました。確認メールをお送りしましたのでご確認ください。';
                 formMessage.className = 'form-message success';
                 formMessage.style.display = 'block';

@@ -2528,6 +2528,137 @@ R5 / R6 で見るのは「**購入が起きたときに処理が正しいか**�
 `test:drm` 136 pass ／ `check:safety` EXIT=0 ／ `build` EXIT=0。
 **実メール送信・queue・本番書込み・production deploy・PR merge は 1 件も行っていない。**
 
+# 📈 有料化ファネルを GA4 で見えるようにする（2026-09-18）— **コード完了 / GA4 管理画面は未実施**
+
+## 目的
+
+既存 GA4（測定 ID は `BaseLayout.astro` が唯一持つ）で、
+
+```
+流入 → 無料予想 → /results-showcase/ → /pricing/ → 申込開始 → 申込成功
+```
+
+の**各段と離脱**を運用確認できるようにする。アクセス数を見ることが目的ではなく、
+**どの段で離脱し、どこから有料転換につながっているか**を見ることが目的。
+
+## 新たに確定した仕様（2026-09-18 MK 確定）
+
+1. **URL で判別できる段にはイベントを足さない**。無料予想 / results-showcase / pricing は
+   `page_view` の Page path で数える。
+2. **URL が変わらない申込だけ**イベントで固定する。
+   `application_start`（モーダルが開いた）/ `application_submitted`（**サーバーが受理**）。
+3. **ボタンのクリックを申込成功にしない。** 申込成功は申込 API の成功分岐からしか出さない。
+4. **`application_submitted` は入金確認ではない。** よって GA4 の `purchase` は使わない。
+5. **GA4 へ個人情報を送らない。** 送るのは閉じた語彙 `plan` / `plan_type` のみ。
+6. **計測コードをページへ書き足さない。** 既存関数を 1 か所で包む。
+7. 測定 ID `G-BTDCZE1B13` は正しい既存 ID。**変更・新規作成しない。**
+
+正本: [`docs/spec.md`](./spec.md) 冒頭 /
+[`astro-site/docs/GA4_CONVERSION_FUNNEL.md`](../astro-site/docs/GA4_CONVERSION_FUNNEL.md) /
+[`docs/decisions.md`](./decisions.md) 2026-09-18。
+
+## 現在地
+
+### 調査で分かったこと（実測）
+
+| 事実 | 実測 |
+|---|---|
+| GA4 の読み込み | `src/layouts/BaseLayout.astro` の 1 か所（全ページ）。本番 HTML でも配信確認済み |
+| 既存カスタムイベント | **0 件**（`src/` 配下に `gtag(` は BaseLayout の初期化 3 行のみ）|
+| `dataLayer` を触るファイル | BaseLayout だけ |
+| View Transitions | **未使用** → ページ遷移ごとに `page_view` が出る（SPA 遷移の取りこぼし無し）|
+| 無料予想の route | `/free/`・`/free/{jra,nankan}/`・`/free-prediction/`・`/free-prediction/{jra,nankan}/` ＋ 旧 stub `/free-prediction-*` |
+| results-showcase | `/results-showcase/{jra,nankan}/` |
+| pricing | `/pricing/` |
+| 申込 API | `/.netlify/functions/bank-transfer-application`（**13 ページ**が叩く）|
+| 申込成功が確定する地点 | 同 API が `result.success` / `response.ok` を返した分岐 |
+| 成功画面の共通処理 | `SubmissionResult.showSuccessScreen`（`history.type === 'bank-transfer'`）を **12 ページ**が使用。`dashboard.astro` だけ自前 |
+| 申込モーダル | 13 ページすべてが global `openBankModal` ＋ `id="bankModal"` で統一 |
+
+### 実装（ページ側の申込コードは 1 行しか触っていない）
+
+| 何 | ファイル |
+|---|---|
+| 計測本体（GA4 へ送るのはここだけ）| `astro-site/public/js/funnel-analytics.js`（新規）|
+| 全ページへの読み込み | `astro-site/src/layouts/BaseLayout.astro`（1 行追加）|
+| 共通の成功画面を使わない 1 ページ | `astro-site/src/pages/dashboard.astro`（成功分岐に 1 行）|
+| 振る舞いテスト | `astro-site/src/lib/analytics/funnelAnalytics.test.mjs`（新規 / 14 件）|
+| 配線の退行検知 | `astro-site/src/lib/analytics/funnelWiring.guard.test.mjs`（新規 / 8 件）|
+| 実行 | `npm run test:analytics` → `check:safety` ＋ `safety-check.yml` に個別 step |
+
+拾い方は `campaign-price.js` と同じ「**既存関数を 1 か所で包む**」。
+申込開始は global `openBankModal` を、申込成功は `SubmissionResult.showSuccessScreen` を包む。
+`openBankModal` は `onclick=` から呼ばれる＝ global でなければ動かないので、
+包み込みが効く前提が壊れたら guard テストが落ちる（`is:inline` を外した場合も検知）。
+
+### guard が本当に効くことの確認（mutation）
+
+`dashboard.astro` の計測 1 行を削って `test:analytics` を回し、
+「申込フォームを持つページは、必ず申込成功を出せる形になっている」が**落ちること**を確認。
+復元後は 8/8 PASS。
+
+## 未完了任務
+
+**GA4 管理画面側の作業（コードでは行えない。承認待ち・未実施）**
+
+| # | 作業 | 未実施だと |
+|---|---|---|
+| 1 | カスタム ディメンション `plan` を登録（範囲: イベント / パラメータ `plan`）| プラン別に割れない |
+| 2 | カスタム ディメンション `plan_type` を登録 | 月額/年額/買い切り別に見られない |
+| 3 | `application_submitted` を**キーイベント**に指定 | 参照元別の転換が標準レポートに出ない |
+| 4 | 探索 → 目標到達プロセスで 6 段のファネルを作成 | 毎回手で組む必要がある |
+| 5 | GA4 と Search Console のリンク | 検索クエリと到着後行動が別々のまま |
+
+※ いずれも**未実施でもイベントは届く**（探索でパラメータが使えないだけ）。
+※ `application_start` はキーイベントにしない（開いただけを転換と呼ばない）。
+
+## 次作業
+
+1. Draft PR のレビュー → merge（**merge は承認待ちで停止中**）
+2. 本番反映後、GA4 DebugView で `/pricing/` のモーダルを開いて `application_start` を目視
+3. 上の GA4 管理画面 5 件を**承認を得てから**実施
+
+## 完成条件
+
+- [x] 正本仕様と実装が一致（spec.md / decisions.md / GA4_CONVERSION_FUNNEL.md）
+- [x] 既存 GA4 実装を確認済み（読み込み位置・既存イベント 0 件・測定 ID）
+- [x] ファネル各段を判別可能（前半 3 段は page_view の path、後半 2 段はイベント）
+- [x] 申込開始と申込成功を混同しない（成功はサーバー受理分岐のみ / guard で強制）
+- [x] 二重イベント送信対策（2 秒の重複よけ / 包み込み 1 回 / リロードで再送しない）
+- [x] PII を GA4 へ送らない（閉じた語彙。商品名に混ざっても `other` に畳む）
+- [x] 対象・関連テスト PASS
+- [x] safety PASS
+- [x] lint / build PASS
+- [x] secret / PII 混入なし
+- [x] package / lockfile の意図しない変更なし
+- [x] docs 更新済み
+- [x] git diff 確認済み
+- [x] rollback 方針確認済み
+- [ ] Draft PR / CI green（下記参照）
+- [ ] 本番反映
+- [ ] GA4 管理画面 5 件
+
+## rollback
+
+`BaseLayout.astro` の `<script src="/js/funnel-analytics.js" is:inline></script>` **1 行を外す**と
+計測が完全に止まる。申込導線は変えていないので影響しない。
+`dashboard.astro` の 1 行は `window.AkFunnel &&` で守ってあり、スクリプトが無ければ何もしない。
+
+## 本番反映状態
+
+**未反映**（Draft PR 停止中）。GA4 管理画面の設定も**未実施**。
+
+## branch / HEAD / PR / CI
+
+| | |
+|---|---|
+| branch | `feat/ga4-conversion-funnel`（worktree `/Users/user/Projects/analytics-keiba-ga4`）|
+| 分岐元 | `origin/main` = `3082d8f2` |
+| PR | （作成後に追記）|
+| CI | （作成後に追記）|
+
+---
+
 # ✅ 旧 mailto 残件の精算 — **完了・残件 0（2026-09-17）**
 
 > **旧 mailto 依頼 総 1 件 / 未反映 1 件を精算し、残件 0。
