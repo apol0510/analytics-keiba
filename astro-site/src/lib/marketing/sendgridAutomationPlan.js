@@ -163,4 +163,35 @@ export function buildExitPlan({ changes, listIdByMessage } = {}) {
   return { removals, counts: { 退出: removals.length, 状態別: counts } };
 }
 
+/**
+ * **SendGrid 側に作る最小構成**を 1 つにまとめる（純粋）。
+ *
+ * ⚠️ **必要なものしか作らない。** 対象が 0 人の開始番号には list も Automation も作らない。
+ *    custom field も必須 1 本だけを要求し、任意の 2 本は「有れば使う」。
+ *    ここで返した以上のものを SendGrid 側に増やさない。
+ *
+ * @param {{automations: Array, totals: object}} plan `buildAutomationPlan` の出力
+ */
+export function describeMinimalSetup(plan) {
+  const list = Array.isArray(plan && plan.automations) ? plan.automations : [];
+  const needed = list.filter((a) => a.needed);
+  return {
+    作るlist: needed.map((a) => a.listName),
+    作るAutomation: needed.map((a) => ({
+      name: a.automationName,
+      入口list: a.listName,
+      通数: a.messageCount,
+      対象: a.contactCount,
+      間隔日数: INTERVAL_DAYS,
+    })),
+    作らないもの: list.filter((a) => !a.needed).map((a) => a.listName),
+    必須customField: ['ak_next_message'],
+    任意customField: ['ak_delivered', 'ak_migrated_at'],
+    unsubscribeGroup: UNSUBSCRIBE_GROUP_NAME,
+    /** segment は使わない（動的に出入りすると同じ通が二度出る恐れがある）*/
+    segment: 'なし（静的な list で入口を固定する）',
+    合計: (plan && plan.totals) || {},
+  };
+}
+
 export default buildAutomationPlan;

@@ -34,18 +34,42 @@ import { TOTAL_MESSAGES } from './sendgridMessagePlan.js';
 /**
  * SendGrid 側に用意する custom field。
  *
- * ⚠️ **名前は SendGrid の制約に合わせて英小文字 + `_` のみ**。
- * ⚠️ `ak_prospect_hash` は `sha256(email)`。アドレスそのものは contact の
- *    `email` にしか置かない（AK 側の照合はこの hash で行う）。
+ * ## **必要最小限しか作らない**（2026-09-18 MK 確定）
+ *
+ * SendGrid 側に増やした field / list は、そのまま**運用の複雑さ**になる。
+ * 必須は **`ak_next_message` の 1 本だけ**で、これは
+ * 「どの Automation に入れるか」を人が画面で確かめるために要る。
+ *
+ * 残りは**任意**。SendGrid に無ければ**作らずに進む**（値を送らないだけで、
+ * 移行も送信も成立する）。AK 側の照合は Event Webhook の `email` で足りるので、
+ * hash を SendGrid へ置く必然性は無い。
+ *
+ * ⚠️ 名前は英小文字 + `_` のみ（SendGrid の制約）。
  */
 export const CONTACT_FIELDS = Object.freeze([
-  Object.freeze({ name: 'ak_next_message', type: 'Number', note: '次に送る通し番号（1〜10）' }),
-  Object.freeze({ name: 'ak_prospect_hash', type: 'Text', note: 'sha256(email)。AK 側の照合鍵' }),
-  Object.freeze({ name: 'ak_delivered', type: 'Number', note: '移行時点の delivered 累計（打ち切りの分母）' }),
-  Object.freeze({ name: 'ak_migrated_at', type: 'Text', note: '移行した日時（ISO8601 / UTC）' }),
+  Object.freeze({
+    name: 'ak_next_message', type: 'Number', required: true,
+    note: '次に送る通し番号（1〜10）。**これだけは必須**',
+  }),
+  Object.freeze({
+    name: 'ak_delivered', type: 'Number', required: false,
+    note: '移行時点の delivered 累計（打ち切りの分母の控え）',
+  }),
+  Object.freeze({
+    name: 'ak_migrated_at', type: 'Text', required: false,
+    note: '移行した日時（ISO8601 / UTC）',
+  }),
 ]);
 
 export const CONTACT_FIELD_NAMES = Object.freeze(CONTACT_FIELDS.map((f) => f.name));
+/** **これが無ければ移行しない**（画面でどの Automation か確かめられなくなる） */
+export const CONTACT_FIELD_NAMES_REQUIRED = Object.freeze(
+  CONTACT_FIELDS.filter((f) => f.required).map((f) => f.name),
+);
+/** 無ければ**作らずに進む**（値を送らないだけ） */
+export const CONTACT_FIELD_NAMES_OPTIONAL = Object.freeze(
+  CONTACT_FIELDS.filter((f) => !f.required).map((f) => f.name),
+);
 
 /** 1 リクエストへ詰める contact 数。SendGrid の上限より十分小さく取る */
 export const CONTACTS_PER_REQUEST = 1000;
@@ -83,14 +107,19 @@ export function resolveFieldIds(definitions) {
   }
   const ids = {};
   const missing = [];
+  const optionalMissing = [];
   for (const name of CONTACT_FIELD_NAMES) {
     if (byName.has(name)) ids[name] = byName.get(name);
-    else missing.push(name);
+    else if (CONTACT_FIELD_NAMES_REQUIRED.includes(name)) missing.push(name);
+    else optionalMissing.push(name);
   }
+  // ⚠️ **必須が欠けたときだけ**止める。任意の欠けは「作らない」であって失敗ではない
   if (missing.length > 0) {
-    return { ok: false, reason: EXPORT_FAIL.FIELD_IDS_MISSING, missing, ids: {} };
+    return {
+      ok: false, reason: EXPORT_FAIL.FIELD_IDS_MISSING, missing, optionalMissing, ids: {},
+    };
   }
-  return { ok: true, ids, missing: [] };
+  return { ok: true, ids, missing: [], optionalMissing };
 }
 
 /**
@@ -115,7 +144,8 @@ export function buildContactUpserts({
   const bump = (r) => { refused[r] = (refused[r] || 0) + 1; };
 
   const ids = fieldIds && typeof fieldIds === 'object' ? fieldIds : {};
-  const missing = CONTACT_FIELD_NAMES.filter((n) => !ids[n]);
+  // ⚠️ 止めるのは**必須が欠けたとき**だけ（任意の field は無ければ送らない）
+  const missing = CONTACT_FIELD_NAMES_REQUIRED.filter((n) => !ids[n]);
   if (missing.length > 0) {
     return {
       ok: false, reason: EXPORT_FAIL.FIELD_IDS_MISSING, missing, batches: [], refused, counts: {},
@@ -156,15 +186,11 @@ export function buildContactUpserts({
     seen.add(email);
     accepted += 1;
     if (!byMessage.has(n)) byMessage.set(n, { listId, contacts: [] });
-    byMessage.get(n).contacts.push({
-      email,
-      custom_fields: {
-        [ids.ak_next_message]: n,
-        [ids.ak_prospect_hash]: String(e.hash || ''),
-        [ids.ak_delivered]: intOr(e.delivered, 0),
-        [ids.ak_migrated_at]: at,
-      },
-    });
+    // **在る field にだけ値を入れる**（無い field を作らせない）
+    const custom = { [ids.ak_next_message]: n };
+    if (ids.ak_delivered) custom[ids.ak_delivered] = intOr(e.delivered, 0);
+    if (ids.ak_migrated_at && at) custom[ids.ak_migrated_at] = at;
+    byMessage.get(n).contacts.push({ email, custom_fields: custom });
   }
 
   if (accepted === 0) {
@@ -215,8 +241,10 @@ export function summarizeContactExport(result) {
  *
  * ⚠️ **戻り値はアドレスを含む。** repo / docs / ログへ保存しない。
  */
-export function buildContactCsv({ entries, migratedAt } = {}) {
-  const header = ['email', ...CONTACT_FIELD_NAMES];
+export function buildContactCsv({ entries, migratedAt, includeOptional = true } = {}) {
+  const header = includeOptional
+    ? ['email', ...CONTACT_FIELD_NAMES]
+    : ['email', ...CONTACT_FIELD_NAMES_REQUIRED];
   const rows = [];
   const refused = {};
   const bump = (r) => { refused[r] = (refused[r] || 0) + 1; };
@@ -231,7 +259,9 @@ export function buildContactCsv({ entries, migratedAt } = {}) {
     const n = intOr(e.nextMessageNumber, 0);
     if (n < 1 || n > TOTAL_MESSAGES) { bump(EXPORT_REFUSE.BAD_MESSAGE_NUMBER); continue; }
     seen.add(email);
-    rows.push([email, String(n), String(e.hash || ''), String(intOr(e.delivered, 0)), at]);
+    rows.push(includeOptional
+      ? [email, String(n), String(intOr(e.delivered, 0)), at]
+      : [email, String(n)]);
   }
   return { header, rows, refused, counts: { 行数: rows.length } };
 }

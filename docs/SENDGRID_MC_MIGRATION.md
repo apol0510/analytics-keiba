@@ -71,7 +71,7 @@
 
 ---
 
-## 3. なぜ Automation を 10 本に分けるのか
+## 3. なぜ開始番号ごとに Automation を分けるのか
 
 SendGrid の Automation は**入った contact を 1 通目から順に**送る。「4 通目から始める」入り方は無い。
 したがって **4 通目から始めたい人は「4 通目始まりの Automation」へ入れる**以外に再送を避ける方法が無い。
@@ -83,7 +83,11 @@ SendGrid の Automation は**入った contact を 1 通目から順に**送る�
 | 10 | `ak-prospect-select-start-10` | `AK Prospect Selection start 10` | 1 |
 
 - 各 Automation の n 番目は **entry から (n-1) 日後**（1 日 1 通）
-- **対象が 0 人の入口は作らない**
+- **対象が 0 人の入口は作らない**（実測の分布しだいで、作るのは 10 本より**ずっと少ない**）
+- **segment は使わない。** segment は条件に合致すると出入りが動的に起きるので、
+  `ak_next_message` を後から更新した拍子に**別の Automation へ再入場して同じ通が二度出る**恐れがある。
+  入口は**静的な list**（明示的に入れた人だけ）に固定する
+- 何を作るかは `describeMinimalSetup()` が返す（**それ以上を SendGrid 側に増やさない**）
 - ⚠️ AK 側の `delayDays`（2〜6 日）とは別物。**AK の step 定義を書き換えて合わせない**
   （書き換えると `contentHash` → `DeliveryKey` が変わり再送の入口になる）
 
@@ -95,15 +99,19 @@ SendGrid の Automation は**入った contact を 1 通目から順に**送る�
 
 `src/lib/marketing/sendgridContactExport.js`
 
-| custom field | 型 | 中身 |
-|---|---|---|
-| `ak_next_message` | Number | 次に送る通し番号（1〜10）|
-| `ak_prospect_hash` | Text | `sha256(email)`。AK 側の照合鍵 |
-| `ak_delivered` | Number | 移行時点の delivered 累計（打ち切りの分母）|
-| `ak_migrated_at` | Text | 移行日時（ISO8601 / UTC）|
+**必要最小限しか作らない。** 必須は **1 本だけ**。
+
+| custom field | 型 | 要否 | 中身 |
+|---|---|---|---|
+| `ak_next_message` | Number | **必須** | 次に送る通し番号（1〜10）。どの Automation に入れるかを画面で確かめるために要る |
+| `ak_delivered` | Number | 任意 | 移行時点の delivered 累計の控え |
+| `ak_migrated_at` | Text | 任意 | 移行日時（ISO8601 / UTC）|
+
+- 任意の 2 本は **SendGrid に無ければ作らずに進む**（値を送らないだけで移行も送信も成立する）
+- `ak_prospect_hash` は**作らない**（Event Webhook が `email` を返すので AK 側で照合できる）
 
 - **`ready` 以外は 1 件も出さない**
-- **custom field の id が 1 つでも解決できなければ何も作らない**
+- **必須の custom field の id が解決できなければ何も作らない**（任意の欠けは止めない）
 - **list id が解決できない通し番号は出さない**
 - 変換の時点でも `assertNoResend` を通す（判定と変換のどちらが壊れても止まる）
 - 生成物（アドレスを含む配列 / CSV）は **repo・docs・ログへ保存しない**
@@ -270,13 +278,45 @@ active contact 数 / 月間予定送信数 / Automation 利用の有無 / 超過
 
 ---
 
-## 10. 本番切替までに必要な確認（**未完了**）
+## 10. 突合は手元から 1 コマンド（read-only）
+
+11,000 件超 × 10 通ぶんの照会は**同期 Function に収まらない**ので、手元から読む。
+**新しい基盤は作らない**（既存の判定・鍵の作り方をそのまま import するだけのスクリプト）。
+
+```bash
+cd astro-site
+UPSTASH_REDIS_REST_URL=... UPSTASH_REDIS_REST_TOKEN=... \
+AIRTABLE_API_KEY=... AIRTABLE_BASE_ID=... SENDGRID_API_KEY=... \
+npm run audit:sendgrid-migration > /tmp/ak-migration-audit.json
+```
+
+| 守っていること | どう守るか |
+|---|---|
+| **読むだけ** | Redis は `SMEMBERS / SCARD / MGET / SMISMEMBER / GET / SISMEMBER` のみ許可。Airtable / SendGrid は **GET だけ** |
+| **アドレスを出さない** | 出力は件数と分布だけ。`@` が混ざったら**出力せず中止**（exit 3）|
+| **資格情報が無ければ何もしない** | exit 2 で終了（ネットワークへ出ない）|
+| **判定を再実装しない** | `sendgridMessagePlan` / `sendgridNextMessage` / `deliveryKeyStore` を import |
+
+出力に入るもの:
+
+- prospect の 送信候補 / 反応済み / 永久除外 / 読めた件数 / **値なし**（0 でなければ「確定」と呼ばない）
+- **通し番号別の件数**（＝ 既送信 step 別の人数）・穴あき・除外理由の内訳・delivered 分布
+- Customers 側（Airtable 台帳）の campaign 別 行数・status 別・**ユニーク宛先**と、
+  その人たちが**いまどこに居るか**（prospect 送信候補 / 反応済み / 永久除外 / それ以外）
+- SendGrid 側の現況（contact 数 / 必須 custom field の有無 / 移行用 list / unsubscribe group）
+- 見積り（残送信総数・月間通数・**枠に収まる最小プラン**）
+
+検証: `npm run test:marketing`（`sendgridMigrationAudit.guard.test.mjs` が read-only を固定）
+
+---
+
+## 11. 本番切替までに必要な確認（**未完了**）
 
 | # | 確認項目 | 状態 |
 |---|---|---|
 | 1 | Marketing Campaigns Advanced の契約プラン（公表値と枠）| **未確認** |
-| 2 | 元 15,509 件の突合（AK 側の所在・状態）| **未実施** |
-| 3 | 通し番号別の件数（`scan` の全窓走査）| **未測定**（deploy 後に実施）|
+| 2 | 元 15,509 件の突合（AK 側の所在・状態）| **未実施**。§10 の 1 コマンドで Customers 側・prospect 側とも出る |
+| 3 | 通し番号別の件数 | **未測定**。`npm run audit:sendgrid-migration`（§10）で **deploy 前でも**測れる |
 | 4 | 残送信総数と月間 email 枠 | 3 に依存 |
 | 5 | 現在の sender / domain authentication を再利用できるか | **未確認** |
 | 6 | unsubscribe group（`AK Marketing`）| **未作成** |
@@ -287,7 +327,7 @@ active contact 数 / 月間予定送信数 / Automation 利用の有無 / 超過
 
 ---
 
-## 11. 検証
+## 12. 検証
 
 ```bash
 cd astro-site

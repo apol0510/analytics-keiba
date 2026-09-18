@@ -99,6 +99,20 @@ Customers 由来と prospect 由来が混ざっている（`docs/marketing-autom
 Customers / 抑止台帳のどこに居るかを突き合わせる ② 既送信 step の確定（通し番号別件数の実測）
 ③ suppression（AK 側の抑止台帳と provider 側 suppression）の突合。
 
+> ✅ **①〜③ は 1 コマンドで出せる状態にした**（deploy 不要・read-only）。
+>
+> ```bash
+> cd astro-site
+> UPSTASH_REDIS_REST_URL=... UPSTASH_REDIS_REST_TOKEN=... \
+> AIRTABLE_API_KEY=... AIRTABLE_BASE_ID=... SENDGRID_API_KEY=... \
+> npm run audit:sendgrid-migration > /tmp/ak-migration-audit.json
+> ```
+>
+> 出力はアドレスを含まない件数だけ（`@` が混ざったら中止）。
+> **本セッションでは実行できていない**（production の資格情報は Netlify 側で secret 指定のため
+> CLI から読み出せず、auto mode でも credential materialization が拒否された）。
+> **MK が上のコマンドを実行して JSON を渡せば、突合と件数確定はこちらで完了できる。**
+
 ### nextMessageNumber 別の件数（**未測定 / 下表は推定**）
 
 ⚠️ **実測していない。** 走査 action（`admin-sendgrid-migration` の `scan`）は本 PR で実装したが、
@@ -124,8 +138,9 @@ Customers / 抑止台帳のどこに居るかを突き合わせる ② 既送信
 | 1 | 通し番号の単一源（3+7=10・鍵は既存と一致）| ✅ 実装・テスト済み |
 | 2 | nextMessageNumber 判定（再送禁止）| ✅ 実装・テスト済み |
 | 3 | 走査（窓・digest・`missing` 0 でのみ確定）| ✅ 実装・テスト済み（**本番未実行**）|
-| 4 | contact 変換層（custom field 4 / 通し番号別 list）| ✅ 実装・テスト済み |
-| 5 | Automation 移行計画（1 日 1 通・0 人の入口は作らない）| ✅ 実装・テスト済み |
+| 4 | contact 変換層（**必須 custom field は 1 本**・通し番号別 list）| ✅ 実装・テスト済み |
+| 5 | Automation 移行計画（1 日 1 通・**対象が居る入口だけ**作る・segment は使わない）| ✅ 実装・テスト済み |
+| 5-b | 突合スクリプト（手元から read-only・1 コマンド）| ✅ 実装・guard テスト済み（**未実行**）|
 | 6 | 10 通の文面移植（配信停止タグ差し替え）| ✅ 実装・テスト済み（**未投入**）|
 | 7 | 切替の状態機械・AK 側停止 env・rollback | ✅ 実装・テスト済み（**env 未設定**）|
 | 8 | 管理 API（read 4 / write 2・三重ゲート）| ✅ 実装・煙試験済み（**未 deploy**）|

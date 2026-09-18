@@ -12,10 +12,12 @@ import assert from 'node:assert/strict';
 
 import {
   buildContactUpserts, buildContactCsv, resolveFieldIds, summarizeContactExport,
-  CONTACT_FIELD_NAMES, EXPORT_REFUSE, EXPORT_FAIL,
+  CONTACT_FIELD_NAMES, CONTACT_FIELD_NAMES_REQUIRED, CONTACT_FIELD_NAMES_OPTIONAL,
+  EXPORT_REFUSE, EXPORT_FAIL,
 } from './sendgridContactExport.js';
 import {
-  buildAutomationPlan, buildExitPlan, listNameFor, automationNameFor, INTERVAL_DAYS,
+  buildAutomationPlan, buildExitPlan, describeMinimalSetup,
+  listNameFor, automationNameFor, INTERVAL_DAYS,
 } from './sendgridAutomationPlan.js';
 import { buildMessageContents, SENDGRID_UNSUBSCRIBE_TAG } from './sendgridContentExport.js';
 import { buildMessagePlan, TOTAL_MESSAGES } from './sendgridMessagePlan.js';
@@ -32,20 +34,43 @@ const ready = (email, n, over = {}) => ({
   nextMessageNumber: n, highestSent: n - 1, delivered: n - 1, ...over,
 });
 
-test('custom field が 1 つでも欠ければ何も作らない', () => {
-  const partial = resolveFieldIds({ custom_fields: [{ id: 'f1', name: CONTACT_FIELD_NAMES[0] }] });
-  assert.equal(partial.ok, false);
-  assert.equal(partial.reason, EXPORT_FAIL.FIELD_IDS_MISSING);
+test('必須の custom field は ak_next_message 1 本だけ（余計な field を要求しない）', () => {
+  assert.deepEqual(CONTACT_FIELD_NAMES_REQUIRED, ['ak_next_message']);
+  assert.deepEqual(CONTACT_FIELD_NAMES_OPTIONAL, ['ak_delivered', 'ak_migrated_at']);
+});
+
+test('必須の custom field が無ければ何も作らない', () => {
+  const none = resolveFieldIds({ custom_fields: [{ id: 'f9', name: 'ak_delivered' }] });
+  assert.equal(none.ok, false);
+  assert.equal(none.reason, EXPORT_FAIL.FIELD_IDS_MISSING);
+  assert.deepEqual(none.missing, ['ak_next_message']);
 
   const built = buildContactUpserts({
     entries: [ready('a@example.test', 1)],
-    fieldIds: { [CONTACT_FIELD_NAMES[0]]: 'f1' },
+    fieldIds: { ak_delivered: 'f9' },
     listIdByMessage: LIST_IDS,
     migratedAt: '2026-09-18T00:00:00.000Z',
   });
   assert.equal(built.ok, false);
   assert.equal(built.reason, EXPORT_FAIL.FIELD_IDS_MISSING);
   assert.equal(built.batches.length, 0);
+});
+
+test('任意の custom field が無くても移行できる（**SendGrid に field を増やさない**）', () => {
+  const only = resolveFieldIds({ custom_fields: [{ id: 'f1', name: 'ak_next_message' }] });
+  assert.equal(only.ok, true);
+  assert.deepEqual(only.optionalMissing, ['ak_delivered', 'ak_migrated_at']);
+
+  const built = buildContactUpserts({
+    entries: [ready('a@example.test', 2)],
+    fieldIds: only.ids,
+    listIdByMessage: LIST_IDS,
+    migratedAt: '2026-09-18T00:00:00.000Z',
+  });
+  assert.equal(built.ok, true);
+  const cf = built.batches[0].contacts[0].custom_fields;
+  assert.deepEqual(Object.keys(cf), ['f1'], '無い field へ値を入れない');
+  assert.equal(cf.f1, 2);
 });
 
 test('通し番号ごとに別の list へ入る（4 通目の人は 4 通目始まりへ）', () => {
@@ -66,6 +91,7 @@ test('通し番号ごとに別の list へ入る（4 通目の人は 4 通目始
   const cf = byStart[4].contacts[0].custom_fields;
   assert.equal(cf[fields.ids.ak_next_message], 4);
   assert.equal(cf[fields.ids.ak_migrated_at], '2026-09-18T00:00:00.000Z');
+  assert.equal(cf[fields.ids.ak_delivered], 3);
 });
 
 test('ready 以外・重複・list 未解決・再送の疑いは 1 件も出さない', () => {
@@ -123,6 +149,13 @@ test('CSV も ready 以外を出さない', () => {
   assert.equal(csv.rows.length, 1);
   assert.equal(csv.rows[0][0], 'a@example.test');
   assert.equal(csv.rows[0][1], '3');
+
+  // 最小構成（必須だけ）でも出せる
+  const minimal = buildContactCsv({
+    entries: [ready('a@example.test', 3)], includeOptional: false,
+  });
+  assert.deepEqual(minimal.header, ['email', ...CONTACT_FIELD_NAMES_REQUIRED]);
+  assert.deepEqual(minimal.rows[0], ['a@example.test', '3']);
 });
 
 test('Automation は 1 日 1 通で、開始番号から 10 通目までを持つ', () => {
@@ -171,4 +204,19 @@ test('文面は 10 通ぶん作れ、配信停止だけ SendGrid のタグへ置
   }
   // 件名は 10 通すべて違う
   assert.equal(new Set(built.messages.map((m) => m.subject)).size, TOTAL_MESSAGES);
+});
+
+
+test('最小構成は「対象が居る入口だけ」を作る（0 人の list / Automation を作らない）', () => {
+  const plan = buildMessagePlan();
+  const built = buildAutomationPlan({
+    countsByNextMessage: { 1: 10, 3: 5 }, plan: plan.plan,
+  });
+  const setup = describeMinimalSetup(built);
+  assert.deepEqual(setup['作るlist'], [listNameFor(1), listNameFor(3)]);
+  assert.equal(setup['作るAutomation'].length, 2);
+  assert.equal(setup['作るAutomation'][0]['間隔日数'], 1);
+  assert.equal(setup['作らないもの'].length, 8);
+  assert.deepEqual(setup['必須customField'], ['ak_next_message']);
+  assert.match(setup.segment, /なし/, 'segment で入口を作らない（動的だと二重送信の恐れ）');
 });
