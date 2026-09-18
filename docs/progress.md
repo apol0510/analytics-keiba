@@ -228,6 +228,28 @@ Customers / 抑止台帳のどこに居るかを突き合わせる ② 既送信
 | scope | 208 → **203**。`marketing.read` あり（Automation は No Access のまま）|
 | 既存機能の権限 | ✅ `mail.send` / `asm.groups.*` / `suppression.*` / `whitelabel.read` / `user.account.read` 残存。**欠落 0** |
 
+### ✅ AK 用の最小構成を作成 完了（2026-09-18 / 承認のうえ実行）
+
+| 作ったもの | 確認 |
+|---|---|
+| custom field `ak_next_message` | Number |
+| unsubscribe group `AK Marketing` | **id 34108** |
+| list `ak-prospect-select-start-1 / -2 / -3` | 各 **contacts 0** |
+| sender `KEIBA Analytics` | from `noreply@keiba.link` / 表示名 `KEIBA Analytics` / **verified** |
+
+- **contact は 1 件も投入していない**／Automation は作っていない・live にしていない
+- **KI / nankan / review の既存資産はすべて不変**
+- ⚠️ `/v3/scopes` に **`marketing.write` は現れない**（Full Access でも `marketing.read` のみ）。
+  そこで「**1 件だけ作って確かめる**」方式へ変更（403 なら副作用ゼロでその場で停止）。
+  custom field の作成が通ったので残りを作成した
+- 残りの **Automation 3 本は API に作成経路が無い**ので画面で作る。文面は
+  `~/.analytics-keiba-ops/sendgrid-automation-content/`（**repo の外**・PII なし）へ 10 通ぶん書き出し済み
+
+⚠️ 参考: 作業の前後で Marketing の contacts が 104 → **105** に増えたが、**AK の投入ではない**
+（作った list は 3 本とも 0 件）。KI 側の登録とみられる。
+
+### （historical）作成前の状態
+
 ⚠️ 次に要るのは **`marketing.write`**（list / custom field / sender の作成と contact 投入）。
 **2026-09-18 に MK が Full Access へ変更したと連絡を受けたが、`/v3/scopes` は `marketing.read` のみ**
 （総数 203 のまま）。したがって**作成は実行していない**（fail closed）。

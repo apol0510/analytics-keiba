@@ -462,12 +462,12 @@ netlify dev:exec --context production -- node astro-site/scripts/sendgrid-create
 |---|---|---|---|
 | 0 | API キーに `marketing.read` | 既存キーを編集（値は不変）| ✅ **完了**（キー名 `AK SendGrid Production`）|
 | 0-b | read-only 再確認 | contacts / field_definitions / lists / segments / senders が **200** | ✅ **完了** |
-| 0-c | API キーに **`marketing.write`** を追加 | 同じキーを編集（**新規発行しない**）。作成・投入に必須 | ⏳ **未反映**（2026-09-18 実測で `marketing.read` のみ）|
-| 1 | AK 用 **sender 1 件** | `keiba.link`（認証済み）の送信元。KI の sender は触らない | **未 / 承認** |
-| 2 | unsubscribe group **1 本** | AK と分かる名前。**KI の group は触らない** | **未 / 承認** |
-| 3 | custom field **1 本** | `ak_next_message`（Number）。任意 2 本は作らない | **未 / 承認** |
-| 4 | list **3 本** | `ak-prospect-select-start-1` / `-2` / `-3` | **未 / 承認** |
-| 5 | Automation **3 本** | 各 list を入口に 10 / 9 / 8 通・**1 日 1 通**・文面は §5 の出力を貼る | **未 / 承認** |
+| 0-c | API キーに Marketing の書き込み権限 | 同じキーを編集（値は不変）| ✅ **完了**（⚠️ scope 名は `/v3/scopes` に出ないが**作成は通る**）|
+| 1 | AK 用 **sender 1 件** | `KEIBA Analytics` / from `noreply@keiba.link` / reply-to `support@keiba.link` | ✅ **完了**（verified: true）|
+| 2 | unsubscribe group **1 本** | `AK Marketing` | ✅ **完了**（**id 34108**）|
+| 3 | custom field **1 本** | `ak_next_message`（Number）| ✅ **完了** |
+| 4 | list **3 本** | `ak-prospect-select-start-1` / `-2` / `-3` | ✅ **完了**（各 contacts **0**）|
+| 5 | Automation **3 本** | 各 list を入口に 10 / 9 / 8 通・**1 日 1 通**・文面は書き出し済みを貼る | **未（API に作成経路が無い → 画面で作る）**|
 | 6 | contact 投入 | 通し番号別に list へ upsert（**Automation は live にしない**）| **未 / 承認** |
 | 7 | 旧 AK prospect 配信の停止 | `MARKETING_PROSPECT_ENGINE=sendgrid` ＋ redeploy | **未 / 承認** |
 | 8 | Automation を live | 対象が居る 3 本だけ | **未 / 承認** |

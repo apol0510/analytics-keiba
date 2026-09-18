@@ -84,15 +84,17 @@ async function main() {
   const hasAsmCreate = all.includes('asm.groups.create');
   log(`scope: marketing.read=${hasRead} / marketing.write=${hasWrite} / asm.groups.create=${hasAsmCreate}`);
 
+  /**
+   * ⚠️ **scope の名前だけで判断しない。**
+   *
+   * SendGrid の `/v3/scopes` には `marketing.write` が現れないことがある（画面で
+   * Marketing を Full Access にしても `marketing.read` しか出ない実測がある）。
+   * そこで「作れるかどうか」は**いちばん小さい作成を 1 回試して確かめる**。
+   * 403 なら**その 1 回で止める**ので、途中まで作られた状態にはならない
+   * （403 は何も作らずに返るため、副作用ゼロ）。
+   */
   if (apply && !hasWrite) {
-    console.error([
-      '❌ marketing.write がありません。**何も作らずに中止します**（片方だけ作らないため）。',
-      '   SendGrid 画面 → Settings → API Keys → 「AK SendGrid Production」 → Edit',
-      '   → Restricted Access → **Marketing** の行を **Full Access** → Update',
-      '   （Automation の行は No Access のままでよい）',
-      '   保存後 /v3/scopes に marketing.write が出ることを確認してから再実行してください。',
-    ].join('\n'));
-    process.exit(2);
+    log('⚠️ scope 一覧に marketing.write が無い。1 件だけ試して作れるか確かめます…');
   }
   if (apply && confirm !== CONFIRM) {
     console.error(`❌ --confirm "${CONFIRM}" が要ります。何も作っていません。`);
@@ -164,8 +166,16 @@ async function main() {
   }
 
   // ── 3) 作成（**作るのは allowlist の名前だけ**）────────────────
+  /**
+   * ⚠️ **marketing の書き込みを先に試す**（custom field）。ここが 403 なら、
+   *    別 scope で通ってしまう unsubscribe group を作らずに済む＝中途半端な状態を作らない。
+   */
+  const order = [
+    ...plan.filter((p) => p.kind === 'custom field'),
+    ...plan.filter((p) => p.kind !== 'custom field'),
+  ];
   const created = [];
-  for (const p of plan) {
+  for (const p of order) {
     if (p.exists) { created.push({ ...p, result: 'skipped_existing' }); continue; }
     // eslint-disable-next-line no-await-in-loop -- 直列に作る（途中で止めたいので）
     const r = await p.run();
@@ -175,7 +185,18 @@ async function main() {
       error: ok ? null : ((r.body && r.body.errors) || []).map((e) => e.message).join(' / ') || null,
     });
     log(`  ${ok ? '✅' : '❌'} ${p.kind} / ${p.name} (${r.status})`);
-    if (!ok) { log('  中止します（途中までの状態は上のとおり）'); break; }
+    if (!ok) {
+      if (r.status === 403) {
+        log([
+          '  ❌ 403（書き込み権限が無い）。**何も作らずに中止しました**。',
+          '     SendGrid 画面 → Settings → API Keys → 「AK SendGrid Production」 → Edit',
+          '     → Restricted Access → **Marketing** の行を **Full Access** → Update',
+        ].join('\n'));
+      } else {
+        log('  中止します（途中までの状態は上のとおり）');
+      }
+      break;
+    }
   }
 
   // ── 4) 作ったあとに read-only で確かめる ───────────────────────
