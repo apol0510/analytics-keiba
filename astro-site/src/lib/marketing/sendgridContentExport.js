@@ -26,6 +26,7 @@
 import { renderCampaign, getCampaign as catalogGetCampaign } from './campaignCatalog.js';
 import { resolveSequenceStep } from './campaignSequence.js';
 import { UNSUBSCRIBE_PLACEHOLDER } from './marketingEmailShell.js';
+import { PROSPECT_SELECTION_OVERRIDES } from './prospectSelectionSteps.js';
 
 /** SendGrid の配信停止リンク（unsubscribe group）の置換タグ */
 export const SENDGRID_UNSUBSCRIBE_TAG = '<%asm_group_unsubscribe_raw_url%>';
@@ -54,15 +55,27 @@ const hasPlaceholder = (s) => MUSTACHE.test(String(s || ''));
 /**
  * 通し番号ぶんの文面を組む。
  *
- * @param {{plan: Array, lookup?: Function}} input
+ * ## 差し替え（2026-09-18 / 案 B）
+ *
+ * 通し番号 **01 / 02 / 03 / 10** は固定の期限（「◯月◯日まで」）を含んでいたため、
+ * **選別配信用の期限なし文面**（`prospectSelectionSteps.js`）へ差し替える。
+ *
+ * ⚠️ 差し替えるのは**本文だけ**。通し番号 ↔ (campaignId, step) の対応と
+ *    `DeliveryKey` は**変えない**ので、「誰が何通目まで受け取ったか」も
+ *    **next_message も動かない**（＝既送信の号を送り直さない）。
+ * ⚠️ **04〜09 は catalog のまま**（日付を含まないので差し替えない）。
+ * ⚠️ `overrides: {}` を渡せば差し替え無しにもできる（比較・検証用）。
+ *
+ * @param {{plan: Array, lookup?: Function, overrides?: object}} input
  * @returns {{ok: boolean, reason?: string, detail?: string, messages: Array<{
  *   messageNumber: number, campaignId: string, stepNumber: number,
  *   subject: string, html: string, text: string}>}}
  */
-export function buildMessageContents({ plan, lookup } = {}) {
+export function buildMessageContents({ plan, lookup, overrides } = {}) {
   const get = typeof lookup === 'function'
     ? lookup
     : (id) => catalogGetCampaign(id, { includeDisabled: true });
+  const swapByNumber = overrides === undefined ? PROSPECT_SELECTION_OVERRIDES : (overrides || {});
 
   const messages = [];
   for (const entry of Array.isArray(plan) ? plan : []) {
@@ -80,13 +93,21 @@ export function buildMessageContents({ plan, lookup } = {}) {
       };
     }
     /**
+     * ⚠️ 差し替えは**描画の入力を置き換えるだけ**。
+     *    `campaignId` / `stepNumber` / `DeliveryKey` は触らない。
+     */
+    const override = swapByNumber[entry.messageNumber] || null;
+    const source = override
+      ? { ...effective, ...override, sequenceStep: effective.sequenceStep }
+      : effective;
+    /**
      * ⚠️ **`unsubscribeUrl` に SendGrid のタグを直接渡さない。**
      *    シェルは href を HTML escape するので `<%...%>` が `&lt;%...%&gt;` になり、
      *    SendGrid が置換してくれない（＝配信停止リンクが壊れる）。
      *    既定の印のまま描画し、**描画後に印だけ差し替える**。
      */
     const rendered = renderCampaign({
-      campaign: effective,
+      campaign: source,
       name: FALLBACK_SALUTATION_NAME,
     });
     if (!rendered) {
@@ -122,6 +143,8 @@ export function buildMessageContents({ plan, lookup } = {}) {
       messageNumber: entry.messageNumber,
       campaignId: entry.campaignId,
       stepNumber: entry.stepNumber,
+      /** 選別用に差し替えたか（監査で見る） */
+      差し替え: Boolean(override),
       subject: rendered.subject,
       html,
       text,
