@@ -938,6 +938,12 @@ contact を投入したあと、**遅れて届いた `delivered` イベント**�
 | `{action:'reconcile', scope:'excluded', offset, limit}` | 反応・抑止・打ち切り側の窓。**下見のみ** |
 | 上記 ＋ `apply:true, confirm:'MIGRATE PROSPECTS TO SENDGRID'` | 実行（**`SENDGRID_MIGRATION_WRITE_ENABLED=true` が要る**）|
 
+- **reconcile は在籍の貼り替えに絞る。** SendGrid に居ない人を**入れに行かない**
+  （入れるのは `import` の仕事。`addMissing: true` を明示したときだけ入れる）
+- **受理しないと分かっている宛先には二度と足さない。** 実行時に 1 件まで割っても通らなかった宛先は
+  `ak:mkt:index:sendgrid-rejected` に **`sha256(email)` だけ**を覚え、次回からは
+  `provider rejected（対象外）` として計画に載せない。**アドレスは保存しない**し、
+  **AK 本体の状態（SUPPRESSED / blocked）も変えない**（選別配信の対象外として維持するだけ）
 - 応答は**件数だけ**（アドレスを返さない・ログへ出さない）
 - `RECONCILE_LIMITS.maxChanges`（3,000）を越える計画は**実行しない**で人に返す
 - 旧 AK がまだ prospect を送る設定（`engine=ak`）なら**貼り替えない**（二重稼働の上で触らない）

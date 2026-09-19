@@ -42,6 +42,9 @@ export const RECONCILE_LIMITS = Object.freeze({
   removeChunk: 100,
 });
 
+/** 受理されないと分かっている宛先の索引（**hash だけ**。アドレスは持たない） */
+export const REJECTED_INDEX_KEY = 'ak:mkt:index:sendgrid-rejected';
+
 export const RECONCILE_ACTION = Object.freeze({
   /** 正しい list に居る。何もしない */
   OK: 'ok',
@@ -49,8 +52,13 @@ export const RECONCILE_ACTION = Object.freeze({
   ADD: 'add',
   /** 間違った list に居る → 外す */
   REMOVE: 'remove',
-  /** SendGrid に居ない → 入れる（**受理されないことがある**） */
+  /**
+   * SendGrid に居ない。**reconcile では入れない**（既定）。
+   * 入れるのは `import` の仕事で、ここは**在籍の貼り替え**に絞る。
+   */
   MISSING: 'missing',
+  /** SendGrid が受理しないと分かっている宛先。**二度と試さない**（選別対象外のまま） */
+  PROVIDER_REJECTED: 'provider_rejected',
   /** AK 側で送ってはいけない人が list に居る → 全 list から外す */
   EXIT: 'exit',
   /** 判定できない（通し番号が無い等）。**触らない** */
@@ -98,6 +106,15 @@ export function classifyContact(ak, sg, ctx) {
   const wrong = [...current].filter((id) => id !== want);
 
   if (!sg) {
+    // **受理されないと分かっている宛先には二度と足さない**（選別対象外のまま）
+    const hash = typeof ctx.hashOf === 'function' ? ctx.hashOf(email) : null;
+    if (hash && ctx.knownRejected && ctx.knownRejected.has(hash)) {
+      return { email, action: RECONCILE_ACTION.PROVIDER_REJECTED, reason: 'provider_rejected' };
+    }
+    // 既定では**入れない**。reconcile は在籍の貼り替えに絞る（入れるのは import の仕事）
+    if (!ctx.addMissing) {
+      return { email, action: RECONCILE_ACTION.MISSING, nextMessage: n, reason: 'not_in_sendgrid' };
+    }
     return { email, action: RECONCILE_ACTION.MISSING, addTo: want, nextMessage: n, reason: 'not_in_sendgrid' };
   }
   if (!current.has(want)) {
@@ -128,7 +145,10 @@ export function classifyContact(ak, sg, ctx) {
  *   listIdByMessage: Map<number,string>|object,
  * }} input
  */
-export function buildReconcilePlan({ akEntries, sendgridByEmail, listIdByMessage } = {}) {
+export function buildReconcilePlan({
+  akEntries, sendgridByEmail, listIdByMessage,
+  knownRejected, hashOf, addMissing = false,
+} = {}) {
   const lookup = sendgridByEmail instanceof Map
     ? sendgridByEmail
     : new Map(Object.entries(sendgridByEmail || {}));
@@ -147,9 +167,11 @@ export function buildReconcilePlan({ akEntries, sendgridByEmail, listIdByMessage
     [RECONCILE_ACTION.ADD]: 0,
     [RECONCILE_ACTION.REMOVE]: 0,
     [RECONCILE_ACTION.MISSING]: 0,
+    [RECONCILE_ACTION.PROVIDER_REJECTED]: 0,
     [RECONCILE_ACTION.EXIT]: 0,
     [RECONCILE_ACTION.SKIP]: 0,
   };
+  const rejectedSet = knownRejected instanceof Set ? knownRejected : new Set(knownRejected || []);
   const reasons = {};
   const seen = new Set();
 
@@ -157,7 +179,9 @@ export function buildReconcilePlan({ akEntries, sendgridByEmail, listIdByMessage
     const email = norm(ak && ak.email);
     if (!email || seen.has(email)) { counts[RECONCILE_ACTION.SKIP] += 1; continue; }
     seen.add(email);
-    const r = classifyContact(ak, lookup.get(email) || null, { listIdByMessage, allListIds });
+    const r = classifyContact(ak, lookup.get(email) || null, {
+      listIdByMessage, allListIds, knownRejected: rejectedSet, hashOf, addMissing,
+    });
     counts[r.action] += 1;
     reasons[r.reason] = (reasons[r.reason] || 0) + 1;
     for (const listId of r.removeFrom || []) {
@@ -188,7 +212,8 @@ export function summarizeReconcilePlan(plan) {
     一致: plan.counts[RECONCILE_ACTION.OK],
     入れ直す: plan.counts[RECONCILE_ACTION.ADD],
     間違った_list_から外す: plan.counts[RECONCILE_ACTION.REMOVE],
-    'SendGrid に居ない': plan.counts[RECONCILE_ACTION.MISSING],
+    'SendGrid に居ない（入れない）': plan.counts[RECONCILE_ACTION.MISSING],
+    'provider rejected（対象外）': plan.counts[RECONCILE_ACTION.PROVIDER_REJECTED],
     退出させる: plan.counts[RECONCILE_ACTION.EXIT],
     触らない: plan.counts[RECONCILE_ACTION.SKIP],
     変更予定: plan.changes,
