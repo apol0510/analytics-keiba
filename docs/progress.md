@@ -2129,8 +2129,15 @@ rollback の根拠は **実際に剥がした鍵そのもの**でなければな
 | AK active だが list に居ない | 3 | 反応イベントで list から外れたが AK 側が ENGAGED になっていない |
 
 どちらも **AK の状態を正として SendGrid の list を合わせ直す一括処理**が要る。
-現状の `exit` action は**アドレスを引数で渡す前提**なので、この用途には使えない。
-**予約の前にこの 7 名を解消すること。**
+→ **実装した**: `admin-sendgrid-migration` の `reconcile` action（下見が既定）。
+判定の単一源は `src/lib/marketing/sendgridListReconcile.js`、手順は
+[`SENDGRID_MC_MIGRATION.md`](./SENDGRID_MC_MIGRATION.md) §14、
+遅延 `delivered` の監視と「予約してよい」の判定は同 §15。
+
+**1 回限りの手修正にしない。** 配送の反応は遅れて届くので、
+**予約の直前に毎回** reconcile を走らせる（cutover のたびに再利用する）。
+
+⚠️ 本番での下見・実行は **merge → deploy → 書き込みゲート開放**が要る（未実施）。
 
 # 🔴 常設 / 未完了任務 — **DRM 実運用は未完成**（2026-09-14 固定）
 

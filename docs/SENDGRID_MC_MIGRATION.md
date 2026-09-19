@@ -900,3 +900,94 @@ npm run check:fn-no-undef
 0 人の入口を作らない / 退出は全 list から外す / 配信停止タグが消えたら出さない /
 ゲートが閉じていれば 1 リクエストも出さない / 二重稼働を拒否する / 最小プランを選ぶ /
 コードに金額を持たない。
+
+---
+
+## 14. 予約の直前に list を AK へ合わせ直す（**reconcile** / 2026-09-19 追加）
+
+### なぜ要るか（2026-09-19 の実測）
+
+contact を投入したあと、**遅れて届いた `delivered` イベント**で AK の
+「次に送る番号」が 2 → 3 へ進んだ人が出た。SendGrid 側は投入時のまま
+（`ak_next_message = 2` / `start-2` 在籍）なので、**そのまま予約すると 2 通目が再送**される。
+反応して離脱した人が list に残る取りこぼしも同じ形で起きる。
+
+**これは「3 名を手で直す」話ではない。** 配送は非同期に遅れて届くので、
+**予約の直前に毎回**、AK を正本として list を貼り替える。cutover のたびに再利用する。
+
+### 正本（この順序で判定する）
+
+1. **AK が正本**。SendGrid の `ak_next_message` も list 在籍も AK に合わせる
+2. 送ってよい人（`READY`）は**自分の通し番号の list だけ**に居る
+3. 送ってはいけない人（ENGAGED / PROMOTED / SUPPRESSED / EXHAUSTED / Customers 昇格済み）は
+   **3 本すべての list に居ない**
+4. **AK の list 以外には触らない**（KI / nankan / review の資産を巻き込まない）
+5. **`provider rejected` は対象外のまま**。直し方が無いので「直った」ことにしない
+
+### 順序（**remove → add**）
+
+先に add すると、旧 list と新 list の**両方に居る瞬間**ができる。
+その瞬間に予約が走れば 2 通届く。だから **必ず remove が先**。
+順序は `reconcileSteps()` が固定し、guard テストで「remove の分岐が add より前」を検査する。
+
+### 使い方
+
+| 呼び出し | 何をするか |
+|---|---|
+| `{action:'reconcile', scope:'active', offset, limit}` | 送ってよい人の窓。**下見のみ**（既定）|
+| `{action:'reconcile', scope:'excluded', offset, limit}` | 反応・抑止・打ち切り側の窓。**下見のみ** |
+| 上記 ＋ `apply:true, confirm:'MIGRATE PROSPECTS TO SENDGRID'` | 実行（**`SENDGRID_MIGRATION_WRITE_ENABLED=true` が要る**）|
+
+- 応答は**件数だけ**（アドレスを返さない・ログへ出さない）
+- `RECONCILE_LIMITS.maxChanges`（3,000）を越える計画は**実行しない**で人に返す
+- 旧 AK がまだ prospect を送る設定（`engine=ak`）なら**貼り替えない**（二重稼働の上で触らない）
+- アドレスを持たない prospect レコード（purge 済み）は**触らず数えるだけ**
+
+判定の単一源は `src/lib/marketing/sendgridListReconcile.js`、
+テストは `sendgridListReconcile.test.mjs` と `sendgridReconcileHandler.guard.test.mjs`。
+
+---
+
+## 15. 遅延 `delivered` の監視と「予約してよい」の判定（2026-09-19 追加）
+
+旧 AK の prospect 配送を止めたあとも、**すでに送った分の `delivered` / `open` が
+遅れて届き続ける**。届くたびに AK の通し番号と状態が動くので、
+**動きが止まってから予約する**。
+
+### 見る数（すべて read-only・アドレスを出さない）
+
+| 記号 | 取り方 | 意味 |
+|---|---|---|
+| `A` | `{action:'scan'}` を全窓 → `indexSize` | AK の送信候補（active） |
+| `D` | `{action:'scan'}` を全窓 → `次に送る番号別` | 通し番号の分布 |
+| `E` | `admin-marketing` `{action:'prospectSequenceCheck'}` → `pool.反応済み未登録` | ENGAGED 数 |
+| `L` | `GET /v3/marketing/lists` の `contact_count` 3 本 | list 在籍 |
+| `R` | 正本に記録した `provider rejected` 件数 | SendGrid が受理しない宛先 |
+
+### 不整合の定義
+
+```
+不整合 = |（A − R）− L合計|  ＋  Σ_n |D[n] − L[n]|  の食い違い分
+```
+
+- `A − R = L合計` なら**総数は合っている**
+- 総数が合っていても **通し番号ごと**（`D[n]` と `L[n]`）がずれていれば、
+  その人数だけ「間違った list に居る」＝**再送になる**
+
+### 安定判定（**これを満たすまで予約しない**）
+
+**30 分間隔で 3 回**続けて、次の 3 つがすべて動かないこと（＝**最低 1 時間**の静止）:
+
+1. `E`（ENGAGED 数）が増えない
+2. `D`（通し番号の分布）が変わらない
+3. `L`（list 3 本の在籍数）が変わらない
+
+1 つでも動いたら、**動いた時刻を「遅延 delivered の最終観測時刻」として記録**し、
+そこから数え直す。静止を確認したら **reconcile の下見 → 実行 → もう一度下見で変更 0 件**
+を確認し、そのうえで予約する。
+
+### 記録すること
+
+- 各回の観測時刻・`A` / `D` / `E` / `L`
+- 遅延 `delivered` の最終観測時刻
+- reconcile の下見件数と実行件数（**アドレスは書かない**）

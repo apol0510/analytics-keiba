@@ -4,12 +4,13 @@
  * ## 立場
  *
  * 2026-09-18 の移行で、**実際に送るのは SendGrid**。AK が Marketing Campaigns API へ
- * 触るのは次の 4 つだけで、**メールを送る API（`/v3/mail/send`）はここから呼ばない**。
+ * 触るのは次の 5 つだけで、**メールを送る API（`/v3/mail/send`）はここから呼ばない**。
  *
  *   1. 読み取り: custom field 定義 / list / contact 数 / unsubscribe group
  *   2. contact の upsert（移行の投入）
  *   3. list から contact を外す（**退出**。反応した人を Automation から抜く）
  *   4. contact の id 引き当て（退出に要る）
+ *   5. contact の現状の引き当て（在籍 list / `ak_next_message`。**予約直前の突き合わせ**に要る）
  *
  * ## 書き込みは二重ゲート（**既定は何もできない**）
  *
@@ -134,6 +135,37 @@ export function createSendGridMarketingApi({ apiKey, fetchImpl, env } = {}) {
         for (const [email, hit] of Object.entries(result)) {
           const id = hit && hit.contact && hit.contact.id;
           if (id) out.set(String(email).toLowerCase(), String(id));
+        }
+      }
+      return out;
+    },
+
+    /**
+     * アドレス → contact の**現状**（id / 在籍 list / custom field）。
+     *
+     * 予約の直前に「AK の状態と SendGrid の在籍が一致しているか」を全件で見るために要る。
+     * ⚠️ 応答の生データをログへ出さない（アドレスが含まれる）。
+     */
+    async lookupContacts(emails, { fieldId } = {}) {
+      const list = [...new Set((Array.isArray(emails) ? emails : []).map((e) => String(e || '').trim().toLowerCase()))]
+        .filter(Boolean);
+      const out = new Map();
+      if (list.length === 0) return out;
+      for (let i = 0; i < list.length; i += 50) {
+        // eslint-disable-next-line no-await-in-loop -- 50 件ずつ（API の上限）
+        const r = await request('POST', '/v3/marketing/contacts/search/emails', { emails: list.slice(i, i + 50) });
+        const result = (r.body && r.body.result) || {};
+        for (const [email, hit] of Object.entries(result)) {
+          const c = hit && hit.contact;
+          if (!c || !c.id) continue;
+          const custom = (c.custom_fields && typeof c.custom_fields === 'object') ? c.custom_fields : {};
+          const raw = fieldId ? custom[fieldId] : undefined;
+          const n = Number(raw);
+          out.set(String(email).toLowerCase(), {
+            id: String(c.id),
+            listIds: Array.isArray(c.list_ids) ? c.list_ids.map(String) : [],
+            nextMessage: Number.isInteger(n) ? n : null,
+          });
         }
       }
       return out;
