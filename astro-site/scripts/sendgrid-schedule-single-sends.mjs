@@ -48,8 +48,9 @@
  */
 
 import {
-  buildSingleSendPlan, buildSchedule, singleSendName, SINGLE_SEND_STARTS,
+  buildSingleSendPlan, buildSchedule, SINGLE_SEND_STARTS,
 } from '../src/lib/marketing/sendgridSingleSendPlan.js';
+import { buildMessagePlan } from '../src/lib/marketing/sendgridMessagePlan.js';
 import { listNameFor } from '../src/lib/marketing/sendgridAutomationPlan.js';
 
 const CONFIRM = 'SCHEDULE AK SINGLE SENDS';
@@ -109,8 +110,26 @@ const startMs = Date.parse(startArg);
 if (!Number.isFinite(startMs)) fail(`開始日時を読めません: ${startArg}`);
 if (startMs < Date.now()) fail('開始日時が過去です');
 
-// ── 1. 予約計画 ─────────────────────────────────────────────
-const plan = buildSingleSendPlan();
+// ── 1. 予約計画（id は**推測せず** SendGrid から引く）──────────
+const listsForPlan = (await sg('GET', '/v3/marketing/lists?page_size=100')).result || [];
+const listIdByStart = {};
+for (const n of SINGLE_SEND_STARTS) {
+  const hit = listsForPlan.find((l) => String(l.name) === listNameFor(n));
+  if (hit) listIdByStart[n] = String(hit.id);
+}
+const existingSends = (await sg('GET', '/v3/marketing/singlesends?page_size=100')).result || [];
+const sample = existingSends.find((x) => /^AK Prospect Selection /.test(String(x.name)));
+if (!sample) fail('AK Prospect Selection の Single Send が見つかりません');
+const sampleDetail = await sg('GET', `/v3/marketing/singlesends/${sample.id}`);
+const senderId = sampleDetail.email_config && sampleDetail.email_config.sender_id;
+const groupId = sampleDetail.email_config && sampleDetail.email_config.suppression_group_id;
+if (!senderId || !groupId) fail('sender / unsubscribe group を引けません');
+
+const msgPlan = buildMessagePlan();
+if (!msgPlan.ok) fail(`10 通の計画を作れません: ${msgPlan.reason}`);
+const plan = buildSingleSendPlan({
+  messages: msgPlan.plan, listIdByStart, senderId, suppressionGroupId: groupId,
+});
 if (!plan.ok) fail(`計画を作れません: ${plan.reason}`);
 const sched = buildSchedule({ sends: plan.sends, baseDateIso: new Date(startMs).toISOString() });
 if (!sched.ok) fail(`予約日時を作れません: ${sched.reason}`);
@@ -120,7 +139,7 @@ if (sendAtByName.size !== 27) fail(`27 通になりません（${sendAtByName.si
 const jst = (iso) => new Date(iso).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
 console.log(`■ 予約計画（開始 ${jst(new Date(startMs).toISOString())} JST）`);
 for (const start of SINGLE_SEND_STARTS) {
-  const rows = plan.sends.filter((s) => s.start === start);
+  const rows = plan.sends.filter((s) => s.startMessage === start);
   const first = sendAtByName.get(rows[0].name);
   const last = sendAtByName.get(rows[rows.length - 1].name);
   console.log(`  ${listNameFor(start)}: ${rows.length} 通 / ${jst(first)} → ${jst(last)}`);
@@ -159,17 +178,15 @@ for (let i = 0; i < 12; i += 1) {
   off = w.nextOffset;
 }
 
-const lists = (await sg('GET', '/v3/marketing/lists?page_size=100')).result || [];
 const L = SINGLE_SEND_STARTS.map((n) => {
-  const hit = lists.find((l) => l.name === listNameFor(n));
+  const hit = listsForPlan.find((l) => l.name === listNameFor(n));
   return hit ? Number(hit.contact_count) : null;
 });
 const Lsum = L.reduce((x, y) => x + (y || 0), 0);
 console.log(`  ② 総数: A ${A} − rejected ${PROVIDER_REJECTED} = ${A - PROVIDER_REJECTED} / list 合計 ${Lsum}`);
 console.log(`  ③ 号別: ${SINGLE_SEND_STARTS.map((n) => `n${n} ${(D[n] || 0) - (n === 1 ? PROVIDER_REJECTED : 0)}/${L[n - 1]}`).join(' ')}`);
 
-const sends = ((await sg('GET', '/v3/marketing/singlesends?page_size=100')).result || [])
-  .filter((s) => sendAtByName.has(s.name));
+const sends = existingSends.filter((s) => sendAtByName.has(s.name));
 const drafts = sends.filter((s) => s.status === 'draft').length;
 const already = sends.filter((s) => s.send_at).length;
 console.log(`  ④ Single Send: ${sends.length} 通 / draft ${drafts} / 予約済み ${already}`);
