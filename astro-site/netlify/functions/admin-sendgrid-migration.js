@@ -303,7 +303,15 @@ export const handler = async (event) => {
         },
         { minChunk: 1 },
       );
-      const plan = buildReconcilePlan({ akEntries, sendgridByEmail: sgMap, listIdByMessage: ids });
+      /**
+       * ⚠️ **状態を引けなかった人は触らない**（fail closed）。
+       *    引けないまま「SendGrid に居ない」と見なすと、
+       *    **間違った list に居る人を外さずに正しい list へ足す**ことになり、
+       *    両方に載って 2 通届く。分からないなら何もしないほうが安全。
+       */
+      const unresolved = new Set(lookupSplit.rejected.map((e) => String(e).toLowerCase()));
+      const targets = akEntries.filter((e) => !unresolved.has(String(e.email).toLowerCase()));
+      const plan = buildReconcilePlan({ akEntries: targets, sendgridByEmail: sgMap, listIdByMessage: ids });
       const safety = assertReconcileSafety(plan);
       const gateOpen = isWriteEnabled(process.env);
       const apply = req.apply === true;

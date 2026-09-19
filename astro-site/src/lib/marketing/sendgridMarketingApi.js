@@ -152,8 +152,20 @@ export function createSendGridMarketingApi({ apiKey, fetchImpl, env } = {}) {
       const out = new Map();
       if (list.length === 0) return out;
       for (let i = 0; i < list.length; i += 50) {
-        // eslint-disable-next-line no-await-in-loop -- 50 件ずつ（API の上限）
-        const r = await request('POST', '/v3/marketing/contacts/search/emails', { emails: list.slice(i, i + 50) });
+        /**
+         * ⚠️ **1 件も見つからないと 404 が返る**（2026-09-19 本番実測）。
+         *    これは「居ない」であって失敗ではない。例外にすると
+         *    「引けなかった」と「居ない」が混ざり、居ないだけの人を
+         *    **外さずに入れてしまう**（＝両方の list に載って 2 通届く）。
+         */
+        let r;
+        try {
+          // eslint-disable-next-line no-await-in-loop -- 50 件ずつ（API の上限）
+          r = await request('POST', '/v3/marketing/contacts/search/emails', { emails: list.slice(i, i + 50) });
+        } catch (e) {
+          if (e && e.reason === 'http_error' && e.status === 404) continue; // 1 件も居ない
+          throw e;
+        }
         const result = (r.body && r.body.result) || {};
         for (const [email, hit] of Object.entries(result)) {
           const c = hit && hit.contact;
