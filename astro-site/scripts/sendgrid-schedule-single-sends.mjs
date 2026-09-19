@@ -62,6 +62,8 @@ const readArg = (name) => {
 };
 const confirm = readArg('--confirm');
 const startArg = readArg('--start');
+/** 予約済みの状態だけを確かめる（照合も予約もしない） */
+const verifyOnly = args.includes('--verify');
 
 const API = 'https://api.sendgrid.com';
 const ALLOWED = ['/v3/marketing/singlesends', '/v3/marketing/lists'];
@@ -143,6 +145,26 @@ for (const start of SINGLE_SEND_STARTS) {
   const first = sendAtByName.get(rows[0].name);
   const last = sendAtByName.get(rows[rows.length - 1].name);
   console.log(`  ${listNameFor(start)}: ${rows.length} 通 / ${jst(first)} → ${jst(last)}`);
+}
+
+if (verifyOnly) {
+  console.log('■ 予約状態の確認（read-only）');
+  const idByNameV = new Map(existingSends.filter((x) => sendAtByName.has(x.name)).map((x) => [x.name, x.id]));
+  let okV = 0;
+  for (const [name, sendAt] of sendAtByName.entries()) {
+    // eslint-disable-next-line no-await-in-loop -- 27 通を順番に
+    const d = await sg('GET', `/v3/marketing/singlesends/${idByNameV.get(name)}`);
+    const listIds = ((d.send_to && d.send_to.list_ids) || []).length;
+    const listId = ((d.send_to && d.send_to.list_ids) || [])[0] || '';
+    const start = Number(String(name).match(/ s(\d) /)[1]);
+    const rightList = listId === listIdByStart[start];
+    const match = Date.parse(d.send_at) === Date.parse(sendAt) && d.status === 'scheduled'
+      && listIds === 1 && rightList;
+    if (match) okV += 1;
+    console.log(`  ${name} status=${d.status} send_at(JST)=${jst(d.send_at)} list=${listNameFor(start)}${match ? '' : '  ← 不一致'}`);
+  }
+  console.log(okV === 27 ? '✅ 27 通すべて予約済み・日時と宛先 list が一致' : `❌ 一致しない通があります（${okV}/27）`);
+  process.exit(okV === 27 ? 0 : 1);
 }
 
 // ── 2. 予約前の照合（1 つでも欠ければ予約しない）───────────────
@@ -234,7 +256,12 @@ for (const [name, sendAt] of sendAtByName.entries()) {
   // eslint-disable-next-line no-await-in-loop -- 27 通を順番に
   const d = await sg('GET', `/v3/marketing/singlesends/${idByName.get(name)}`);
   const listIds = ((d.send_to && d.send_to.list_ids) || []).length;
-  const match = d.send_at === sendAt && d.status === 'scheduled' && listIds === 1;
+  /**
+   * ⚠️ **文字列で比べない。** `toISOString()` はミリ秒を付けるが SendGrid は付けない
+   *    （`...T10:00:00.000Z` と `...T10:00:00Z`）。同じ時刻を「不一致」と読んでしまう。
+   */
+  const match = Date.parse(d.send_at) === Date.parse(sendAt)
+    && d.status === 'scheduled' && listIds === 1;
   if (match) ok += 1;
   rows.push(`${name} status=${d.status} send_at=${d.send_at} list=${listIds}${match ? '' : '  ← 不一致'}`);
 }

@@ -46,12 +46,17 @@ test('開始日時が過去なら予約しない', () => {
 });
 
 test('予約後に 27 件すべてを GET で検証する', () => {
-  assert.match(SRC, /d\.send_at === sendAt && d\.status === 'scheduled' && listIds === 1/);
+  assert.match(SRC, /Date\.parse\(d\.send_at\) === Date\.parse\(sendAt\)/);
+  assert.match(SRC, /d\.status === 'scheduled'/);
   assert.match(SRC, /ok === 27/);
 });
 
-test('アドレスを出力しない（扱うのは通数と日時だけ）', () => {
-  assert.equal(/email|contacts\/search|RecipientEmail/.test(SRC), false);
+test('受信者のアドレスを扱わない（通数・日時・list 名だけ）', () => {
+  // contact を引く経路そのものを持たない
+  assert.equal(/contacts\/search|\/marketing\/contacts|RecipientEmail|\bemails\b/.test(CODE), false);
+  // `email_config`（送信元の設定）以外で email という語を使っていない
+  const hits = [...CODE.matchAll(/email[A-Za-z_]*/g)].map((m) => m[0]);
+  assert.deepEqual([...new Set(hits)].sort(), ['email_config']);
 });
 
 test('新しい配送基盤を作らない（常駐・定期実行・自前送信を持たない）', () => {
