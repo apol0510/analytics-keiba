@@ -55,3 +55,9 @@ test('アドレスを持たない prospect レコードは触らず数えるだ�
 test('AK の list 以外を消しに行かない（list id は SendGrid の名前解決から作る）', () => {
   assert.match(BLOCK, /const ids = listIdsByMessage\(await api\.getLists\(\)\);/);
 });
+
+test('状態を引けなかった人は計画から外す（fail closed）', () => {
+  assert.match(BLOCK, /const unresolved = new Set\(lookupSplit\.rejected/);
+  assert.match(BLOCK, /const targets = akEntries\.filter\(\(e\) => !unresolved\.has/);
+  assert.match(BLOCK, /buildReconcilePlan\(\{ akEntries: targets/);
+});
