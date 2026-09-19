@@ -16,6 +16,7 @@ import { CONTINUATION_LIST_NAME } from './sendgridContinuation.js';
 
 export const ACTIVE_INDEX_KEY = 'ak:prospect:index:active';
 export const ENGAGED_INDEX_KEY = 'ak:prospect:index:engaged';
+export const BLOCKED_INDEX_KEY = 'ak:prospect:index:blocked';
 export const WATCH_STATE_KEY = 'ak:mkt:selection-watch:v1';
 
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
@@ -32,7 +33,8 @@ const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
  */
 export function buildMarketingOverview({
   lists = [], singleSends = [], stats = [],
-  akActive = null, akEngaged = null, watchState = null, weeklyEnabled = false,
+  akActive = null, akEngaged = null, akBlocked = null,
+  watchState = null, weeklyEnabled = false,
 } = {}) {
   const byName = new Map(lists.map((l) => [l.name, l.contactCount]));
   const selectionLists = [1, 2, 3].map((n) => ({
@@ -79,6 +81,8 @@ export function buildMarketingOverview({
     反応: {
       AK送信候補: akActive,
       AK反応済み: akEngaged,
+      /** 配信停止・bounce・苦情・打ち切り（**もう送らない**人） */
+      AK抑止: akBlocked,
       継続list: byName.has(CONTINUATION_LIST_NAME) ? byName.get(CONTINUATION_LIST_NAME) : null,
       継続list名: CONTINUATION_LIST_NAME,
     },
@@ -123,11 +127,13 @@ export async function collectMarketingOverview({ apiKey, redisCmd, env = process
 
   let akActive = null;
   let akEngaged = null;
+  let akBlocked = null;
   let watchState = null;
   if (typeof redisCmd === 'function') {
     try {
       akActive = num(await redisCmd(['SCARD', ACTIVE_INDEX_KEY]));
       akEngaged = num(await redisCmd(['SCARD', ENGAGED_INDEX_KEY]));
+      akBlocked = num(await redisCmd(['SCARD', BLOCKED_INDEX_KEY]));
       const raw = await redisCmd(['GET', WATCH_STATE_KEY]);
       if (raw) watchState = JSON.parse(raw);
     } catch { /* 読めなければ null のまま（**推測しない**） */ }
@@ -141,6 +147,7 @@ export async function collectMarketingOverview({ apiKey, redisCmd, env = process
     stats: (statsRaw && statsRaw.results) || [],
     akActive,
     akEngaged,
+    akBlocked,
     watchState,
     weeklyEnabled: String((env && env.SENDGRID_WEEKLY_ENABLED) || '').trim() === 'true',
   });
