@@ -5378,8 +5378,14 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         ].join('');
 
         // ⚠️ 点検が**動いていないこと**に気づけるようにする（空欄で流さない）
+        // ⚠️ 「起動はしたが最後まで行かなかった」を**見分けられる**ように両方出す
         $('mailWatch').innerHTML = w
-          ? `<p>最終実行: <b>${esc(jst(w['最終実行']))}</b> / 最後に知らせた: ${esc(jst(w['最後に知らせた']))} / 不整合: ${esc(w['不整合'])}</p>`
+          ? [
+            `<p>最終起動: <b>${esc(jst(w['最終起動']))}</b> / 最終実行: <b>${esc(jst(w['最終実行']))}</b></p>`,
+            `<p>最後に知らせた: ${esc(jst(w['最後に知らせた']))} / 不整合: ${esc(w['不整合'])}</p>`,
+            (w['最終起動'] && w['最終実行'] && Date.parse(w['最終起動']) > Date.parse(w['最終実行']))
+              ? '<p class="note"><b>起動はしましたが最後まで終わっていません</b>（途中で落ちた可能性）</p>' : '',
+          ].filter(Boolean).join('')
           : '<p><b>まだ 1 回も動いていません</b>（毎日 20:20 JST に動きます）</p>';
 
         stateEl.textContent = `engine=${esc(d.engine)}（読み取りのみ・${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) } 時点）`;

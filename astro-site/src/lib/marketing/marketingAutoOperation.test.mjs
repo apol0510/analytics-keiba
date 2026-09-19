@@ -394,3 +394,34 @@ test('active 側の reconcile は継続 list を触らない', () => {
   const block = ADMIN_SRC.slice(ADMIN_SRC.indexOf("if (action === 'reconcile')"), ADMIN_SRC.indexOf("    // ── 書き込み"));
   assert.match(block, /scope === 'excluded'\s*\n?\s*\? planContinuation/);
 });
+
+// ── 「動かなかった」と「途中で落ちた」を見分ける（2026-09-19 の取りこぼし）──
+
+test('点検は走り出しをまず残す（記録が無い＝動いていない と言い切れるように）', () => {
+  const src = readFileSync(new URL('../../../netlify/functions/cron-sendgrid-selection-watch.js', import.meta.url), 'utf8');
+  const head = src.slice(src.indexOf('export default async function handler'), src.indexOf('let state ='));
+  assert.match(head, /lastStartedAtMs: now/, '走り出しを最初に残していない');
+});
+
+test('overview は最終起動と最終実行の両方を返す', async () => {
+  const { buildMarketingOverview } = await import('./marketingOverview.js');
+  const out = buildMarketingOverview({
+    watchState: { lastStartedAtMs: Date.UTC(2026, 8, 20, 11, 20), lastCheckedAtMs: Date.UTC(2026, 8, 20, 11, 21) },
+  });
+  assert.equal(out['自動点検']['最終起動'], '2026-09-20T11:20:00.000Z');
+  assert.equal(out['自動点検']['最終実行'], '2026-09-20T11:21:00.000Z');
+});
+
+test('定期実行の式を netlify.toml とコードの両方に同じ値で書く', () => {
+  const toml = readFileSync(new URL('../../../netlify.toml', import.meta.url), 'utf8');
+  const watch = readFileSync(new URL('../../../netlify/functions/cron-sendgrid-selection-watch.js', import.meta.url), 'utf8');
+  const weekly = readFileSync(new URL('../../../netlify/functions/cron-sendgrid-weekly.js', import.meta.url), 'utf8');
+  const pick = (src) => (src.match(/schedule: '([^']+)'/) || [])[1];
+  const tomlOf = (name) => {
+    const i = toml.indexOf(`[functions."${name}"]`);
+    if (i < 0) return null;
+    return (toml.slice(i).match(/schedule = "([^"]+)"/) || [])[1];
+  };
+  assert.equal(pick(watch), tomlOf('cron-sendgrid-selection-watch'), '点検の式が食い違っている');
+  assert.equal(pick(weekly), tomlOf('cron-sendgrid-weekly'), '週次の式が食い違っている');
+});
