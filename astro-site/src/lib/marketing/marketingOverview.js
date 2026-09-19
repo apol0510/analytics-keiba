@@ -18,6 +18,11 @@ export const ACTIVE_INDEX_KEY = 'ak:prospect:index:active';
 export const ENGAGED_INDEX_KEY = 'ak:prospect:index:engaged';
 export const BLOCKED_INDEX_KEY = 'ak:prospect:index:blocked';
 export const WATCH_STATE_KEY = 'ak:mkt:selection-watch:v1';
+/**
+ * ⚠️ `/v3/marketing/stats/singlesends` の `page_size` は **1〜50**。
+ *    100 を渡すと 400 になる（2026-09-19 に本番で踏み、点検が丸ごと落ちた）。
+ */
+export const STATS_PAGE_SIZE = 50;
 
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 
@@ -35,6 +40,8 @@ export function buildMarketingOverview({
   lists = [], singleSends = [], stats = [],
   akActive = null, akEngaged = null, akBlocked = null,
   watchState = null, weeklyEnabled = false,
+  /** 取れなかった素材（**0 と区別する**。空欄や 0 で流さない） */
+  unavailable = [],
 } = {}) {
   const byName = new Map(lists.map((l) => [l.name, l.contactCount]));
   const selectionLists = [1, 2, 3].map((n) => ({
@@ -62,20 +69,27 @@ export function buildMarketingOverview({
     .map((x) => x.send_at).sort()[0] || null;
 
   const w = watchState && typeof watchState === 'object' ? watchState : null;
+  /**
+   * ⚠️ **読めなかったものを 0 で出さない。**
+   *    実績が取れていないのに 0 と書くと「送っていない」と読まれる。
+   */
+  const statsUnavailable = unavailable.includes('stats');
+  const metrics = (list) => (statsUnavailable ? null : {
+    requests: sum(list, 'requests'),
+    delivered: sum(list, 'delivered'),
+    開封: sum(list, 'opens'),
+    bounce: sum(list, 'bounces'),
+    配信停止: sum(list, 'unsubscribes'),
+  });
 
   return {
+    取得できなかったもの: unavailable,
     選別: {
       list別: selectionLists,
       list合計: selectionLists.reduce((a, r) => a + (r.人数 || 0), 0),
       予約: selectionSends.filter((x) => x.status === 'scheduled').length,
       送信済み: selectionSends.filter((x) => x.status === 'triggered').length,
-      実績: {
-        requests: sum(selectionSends, 'requests'),
-        delivered: sum(selectionSends, 'delivered'),
-        開封: sum(selectionSends, 'opens'),
-        bounce: sum(selectionSends, 'bounces'),
-        配信停止: sum(selectionSends, 'unsubscribes'),
-      },
+      実績: metrics(selectionSends),
       次の配信: nextOf(selectionSends),
     },
     反応: {
@@ -98,7 +112,7 @@ export function buildMarketingOverview({
       予約: weeklySends.filter((x) => x.status === 'scheduled').length,
       送信済み: weeklySends.filter((x) => x.status === 'triggered').length,
       次の配信: nextOf(weeklySends),
-      実績: {
+      実績: statsUnavailable ? null : {
         delivered: sum(weeklySends, 'delivered'),
         開封: sum(weeklySends, 'opens'),
         配信停止: sum(weeklySends, 'unsubscribes'),
@@ -121,10 +135,17 @@ export async function collectMarketingOverview({ apiKey, redisCmd, env = process
     return r.json();
   };
 
+  /**
+   * ⚠️ 取れなかったものは**名前を控える**。黙って空にすると 0 と見分けが付かない。
+   */
+  const unavailable = [];
+  const safe = async (name, path) => {
+    try { return await get(path); } catch { unavailable.push(name); return {}; }
+  };
   const [listsRaw, sendsRaw, statsRaw] = await Promise.all([
-    get('/v3/marketing/lists?page_size=100').catch(() => ({})),
-    get('/v3/marketing/singlesends?page_size=100').catch(() => ({})),
-    get('/v3/marketing/stats/singlesends?page_size=100').catch(() => ({})),
+    safe('lists', '/v3/marketing/lists?page_size=100'),
+    safe('singleSends', '/v3/marketing/singlesends?page_size=100'),
+    safe('stats', `/v3/marketing/stats/singlesends?page_size=${STATS_PAGE_SIZE}`),
   ]);
 
   let akActive = null;
@@ -152,6 +173,7 @@ export async function collectMarketingOverview({ apiKey, redisCmd, env = process
     akBlocked,
     watchState,
     weeklyEnabled: String((env && env.SENDGRID_WEEKLY_ENABLED) || '').trim() === 'true',
+    unavailable,
   });
 }
 

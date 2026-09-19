@@ -425,3 +425,46 @@ test('定期実行の式を netlify.toml とコードの両方に同じ値で書
   assert.equal(pick(watch), tomlOf('cron-sendgrid-selection-watch'), '点検の式が食い違っている');
   assert.equal(pick(weekly), tomlOf('cron-sendgrid-weekly'), '週次の式が食い違っている');
 });
+
+// ── 読めなかったものを 0 で出さない（2026-09-19 の 400 事故）──────
+
+test('【本件】stats の page_size は 1〜50（100 を渡すと 400 で点検が丸ごと落ちた）', async () => {
+  const { STATS_PAGE_SIZE } = await import('./marketingOverview.js');
+  assert.ok(STATS_PAGE_SIZE >= 1 && STATS_PAGE_SIZE <= 50);
+  for (const f of ['../../../netlify/functions/cron-sendgrid-selection-watch.js', './marketingOverview.js']) {
+    const src = readFileSync(new URL(f, import.meta.url), 'utf8');
+    assert.equal(/stats\/singlesends\?page_size=(\d+)/.test(src) && Number(RegExp.$1) > 50, false,
+      `${f} が page_size>50 で stats を呼んでいる`);
+  }
+});
+
+test('【重要】実績が読めないときは 0 ではなく「取得できず」にする', async () => {
+  const { buildMarketingOverview } = await import('./marketingOverview.js');
+  const out = buildMarketingOverview({
+    singleSends: [{ id: 's1', name: 'AK Prospect Selection s1 m01', status: 'triggered' }],
+    stats: [],
+    unavailable: ['stats'],
+  });
+  assert.equal(out['選別']['実績'], null, '読めていないのに数字を出している');
+  assert.equal(out['週次']['実績'], null);
+  assert.deepEqual(out['取得できなかったもの'], ['stats']);
+  // 読めているときは従来どおり数字が出る
+  const ok = buildMarketingOverview({
+    singleSends: [{ id: 's1', name: 'AK Prospect Selection s1 m01', status: 'triggered' }],
+    stats: [{ id: 's1', stats: { requests: 10, delivered: 9 } }],
+  });
+  assert.equal(ok['選別']['実績'].delivered, 9);
+});
+
+test('点検は実績が読めなくても止まらず、読めなかったことを異常として残す', () => {
+  const src = readFileSync(new URL('../../../netlify/functions/cron-sendgrid-selection-watch.js', import.meta.url), 'utf8');
+  assert.match(src, /statsUnavailable = String/);
+  assert.match(src, /id: 'stats_unavailable'/);
+  assert.match(src, /result\.ok = false/);
+});
+
+test('画面も「取得できず」と書く（0 と書かない）', () => {
+  const page = readFileSync(new URL('../../pages/admin/premium-plus-eligibility.astro', import.meta.url), 'utf8');
+  assert.match(page, /'取得できず'/);
+  assert.match(page, /読めなかった情報があります/);
+});
