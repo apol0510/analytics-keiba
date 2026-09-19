@@ -21,6 +21,7 @@ import {
   WEEKLY_DAYS, WEEKLY_MAX_PER_WEEK, WEEKLY_REFUSE, WEEKLY_LIST_NAME,
 } from './weeklyNewsletterPlan.js';
 import { buildWeeklyContent, renderWeekly, CONTENT_FAIL } from './weeklyNewsletterContent.js';
+import { buildShowcaseDay, buildLatestShowcase } from '../resultsShowcase.js';
 
 // ── 反応した人を次の導線へ渡す ───────────────────────────────
 
@@ -162,18 +163,47 @@ test('JST の暦日で切る（UTC 基準にしない）', () => {
 
 // ── 文面 ────────────────────────────────────────────────────
 
-const SHOWCASE = {
+/**
+ * ⚠️ **形を推測しない。** 素材は実物と同じ作り方（`buildShowcaseDay`）で用意する。
+ *    2026-09-19 に `venues` を「会場オブジェクトの配列」と取り違えて本番の事前検査が
+ *    `no_main_race` で止まった。ここを実物から作れば同じ取り違えは起きない。
+ */
+const DAY_ENTRY = {
   date: '2026-10-06',
-  venues: [{
+  venue: '大井',
+  venues: ['大井'],
+  races: Array.from({ length: 12 }, (_, i) => ({
+    raceNumber: i + 1,
     venue: '大井',
-    mainRace: { raceNumber: 11, isHit: true },
-    races: Array.from({ length: 12 }, (_, i) => ({ raceNumber: i + 1, isHit: i % 3 === 0 })),
-  }],
+    bettingLines: [`4→2.5.8.10.11`],
+    isHit: i % 3 === 0,
+    umatan: { combination: '4-2', payout: 1200 },
+    betPoints: 5,
+  })),
 };
+const SHOWCASE = buildShowcaseDay(DAY_ENTRY);
+
+test('素材は実物の形（venueGroups / 集計）で渡ってくる', () => {
+  assert.ok(Array.isArray(SHOWCASE.venueGroups) && SHOWCASE.venueGroups.length > 0);
+  assert.ok(SHOWCASE.venueGroups[0].mainRace, 'メインレースが取れていない');
+  assert.equal(typeof SHOWCASE.totalRaces, 'number');
+});
 
 test('実績が無ければ文面を組まない（数字を作らない）', () => {
   assert.equal(buildWeeklyContent({ dateKey: '2026-10-07', showcase: null }).reason, CONTENT_FAIL.NO_RESULTS);
-  assert.equal(buildWeeklyContent({ dateKey: '2026-10-07', showcase: { venues: [{ venue: '大井', races: [] }] } }).reason, CONTENT_FAIL.NO_MAIN_RACE);
+  assert.equal(
+    buildWeeklyContent({ dateKey: '2026-10-07', showcase: { venueGroups: [{ venue: '大井', mainRace: null }] } }).reason,
+    CONTENT_FAIL.NO_MAIN_RACE,
+  );
+});
+
+test('【本件】実物の archive から組める（本番の事前検査が no_main_race で止まらない）', async () => {
+  const { readFileSync: read } = await import('node:fs');
+  const arr = JSON.parse(read(new URL('../../data/archiveResults.json', import.meta.url), 'utf8'));
+  const real = buildLatestShowcase(arr);
+  const c = buildWeeklyContent({ dateKey: null, showcase: real });
+  assert.equal(c.ok, true, `実データで組めない: ${c.reason}`);
+  assert.deepEqual(validateWeeklyContent(c.step).issues, []);
 });
 
 test('【要件】自動で組んだ文面が品質基準を通る', () => {
@@ -300,9 +330,67 @@ test('weeklyPreflight は宛先・文面・CTA・配信停止・枠の 5 点を�
   assert.equal(block.includes("'POST', '/v3/marketing/singlesends'"), false, '作成の経路を持っている');
 });
 
-test('overview は自動点検の最終実行時刻も返す（動いていないことに気づける）', () => {
-  const block = ADMIN_SRC.slice(ADMIN_SRC.indexOf("if (action === 'overview')"), ADMIN_SRC.indexOf("if (action === 'weeklyPreflight')"));
-  assert.match(block, /ak:mkt:selection-watch:v1/);
-  assert.match(block, /最終実行:/);
-  assert.match(block, /自動点検: watch/);
+test('overview は自動点検の最終実行時刻も返す（動いていないことに気づける）', async () => {
+  const { buildMarketingOverview, WATCH_STATE_KEY } = await import('./marketingOverview.js');
+  assert.equal(WATCH_STATE_KEY, 'ak:mkt:selection-watch:v1');
+  const never = buildMarketingOverview({});
+  assert.equal(never['自動点検'], null, '動いていないことが分かる形になっていない');
+  const ran = buildMarketingOverview({ watchState: { lastCheckedAtMs: Date.UTC(2026, 8, 19, 11, 20) } });
+  assert.equal(ran['自動点検']['最終実行'], '2026-09-19T11:20:00.000Z');
+});
+
+test('管理画面が出す数は 1 か所で作る（2 つの API で割れない）', () => {
+  const ov = ADMIN_SRC.slice(ADMIN_SRC.indexOf("if (action === 'overview')"), ADMIN_SRC.indexOf("if (action === 'weeklyPreflight')"));
+  assert.match(ov, /collectMarketingOverview\(/);
+  const mkt = readFileSync(new URL('../../../netlify/functions/admin-marketing.js', import.meta.url), 'utf8');
+  assert.match(mkt, /action === 'mailOverview'/);
+  assert.match(mkt, /collectMarketingOverview\(/);
+});
+
+test('管理画面は送信基盤の名前が入った関数を叩かない', () => {
+  const page = readFileSync(new URL('../../pages/admin/premium-plus-eligibility.astro', import.meta.url), 'utf8');
+  assert.equal(/sendgrid/i.test(page), false, '画面に送信基盤の固有名詞が入っている');
+  assert.match(page, /const MAIL_API = MKT_API;/);
+  assert.match(page, /action: 'mailOverview'/);
+});
+
+test('overview は件数と日時だけを返す（アドレスを持たない）', async () => {
+  const { buildMarketingOverview } = await import('./marketingOverview.js');
+  const out = buildMarketingOverview({
+    lists: [{ name: 'ak-prospect-select-start-1', contactCount: 318 }, { name: 'ak-drm-engaged', contactCount: 7 }],
+    singleSends: [{ id: 's1', name: 'AK Prospect Selection s1 m01', status: 'scheduled', send_at: '2026-09-20T10:00:00Z' }],
+    stats: [{ id: 's1', stats: { requests: 0, delivered: 0 } }],
+    akActive: 11708, akEngaged: 237, weeklyEnabled: false,
+  });
+  assert.equal(/@/.test(JSON.stringify(out)), false, 'アドレスが混ざっている');
+  assert.equal(out['選別']['予約'], 1);
+  assert.equal(out['反応']['継続list'], 7);
+  assert.equal(out['週次']['有効'], false);
+});
+
+// ── 過去に反応した人の取りこぼしを reconcile で埋める ──────────
+
+test('reconcile（excluded）が継続 list への追加を計画する', () => {
+  const block = ADMIN_SRC.slice(ADMIN_SRC.indexOf("if (action === 'reconcile')"), ADMIN_SRC.indexOf("    // ── 書き込み"));
+  // 渡すのは反応した人だけ（判定は planContinuation に委ねる）
+  assert.match(block, /planContinuation\(\{ changes: targets\.map/);
+  // すでに居る人は数えて追加しない（重複 0）
+  assert.match(block, /listIds\.includes\(String\(contListId\)\)\) contAlready \+= 1/);
+  // 追加は継続 list 1 本だけへ
+  assert.match(block, /list_ids: \[contListId\]/);
+  // 受理されない宛先は分割して切り離す
+  assert.match(block, /runWithSplit\(contToAdd/);
+  // 下見では 1 件も足さない
+  assert.match(block, /追加予定: contToAdd\.length/);
+});
+
+test('継続 list へ入れてもメールは送らない（送信の経路を持たない）', () => {
+  const block = ADMIN_SRC.slice(ADMIN_SRC.indexOf("if (action === 'reconcile')"), ADMIN_SRC.indexOf("    // ── 書き込み"));
+  assert.equal(block.includes('/v3/mail/send'), false);
+  assert.equal(block.includes('singlesends'), false);
+});
+
+test('active 側の reconcile は継続 list を触らない', () => {
+  const block = ADMIN_SRC.slice(ADMIN_SRC.indexOf("if (action === 'reconcile')"), ADMIN_SRC.indexOf("    // ── 書き込み"));
+  assert.match(block, /scope === 'excluded'\s*\n?\s*\? planContinuation/);
 });

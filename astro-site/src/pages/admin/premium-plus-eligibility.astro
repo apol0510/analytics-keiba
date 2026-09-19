@@ -48,6 +48,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       <button type="button" class="tab on" id="tabSales" role="tab" aria-selected="true">💠 Premium Plus 販売</button>
       <button type="button" class="tab" id="tabMkt" role="tab" aria-selected="false">📣 顧客マーケティング</button>
       <button type="button" class="tab" id="tabCb" role="tab" aria-selected="false">🎁 カムバック特典</button>
+      <button type="button" class="tab" id="tabMail" role="tab" aria-selected="false">📮 メール配信</button>
     </nav>
 
     <!-- ═══ タブ1: Premium Plus 販売資格（既存の安全設計を維持）═══ -->
@@ -1129,6 +1130,33 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           </table>
           <p class="empty" id="cbOfferEmpty" hidden></p>
         </div>
+      </div>
+    </section>
+
+    <!-- ═══ タブ4: メール配信（選別・継続・週次の現在地）═══ -->
+    <section id="paneMail" hidden>
+      <p class="pane-lead">
+        配信しているのは<b>外部の配信基盤</b>で、この画面は<b>状態を読むだけ</b>です。
+        ここから送信・予約・停止はできません（事故を増やさないため、操作は持たせていません）。
+      </p>
+      <div class="dry-panel" id="mailState">管理シークレットを入れて「再読み込み」を押してください。</div>
+      <div id="mailCards" hidden>
+        <section class="step" aria-labelledby="mailSelH">
+          <h2 id="mailSelH" class="step-h"><span class="step-n">1</span> 選別配信（1 日 1 通・最大 10 通）</h2>
+          <div class="dry-panel" id="mailSelection"></div>
+        </section>
+        <section class="step" aria-labelledby="mailReactH">
+          <h2 id="mailReactH" class="step-h"><span class="step-n">2</span> 反応と次の導線</h2>
+          <div class="dry-panel" id="mailReaction"></div>
+        </section>
+        <section class="step" aria-labelledby="mailWeekH">
+          <h2 id="mailWeekH" class="step-h"><span class="step-n">3</span> 週 2 回の一斉配信</h2>
+          <div class="dry-panel" id="mailWeekly"></div>
+        </section>
+        <section class="step" aria-labelledby="mailWatchH">
+          <h2 id="mailWatchH" class="step-h"><span class="step-n">4</span> 毎日の自動点検</h2>
+          <div class="dry-panel" id="mailWatch"></div>
+        </section>
       </div>
     </section>
 
@@ -5280,6 +5308,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       ['sales', 'tabSales', 'paneSales'],
       ['mkt', 'tabMkt', 'paneMkt'],
       ['comeback', 'tabCb', 'paneCb'],
+      ['mail', 'tabMail', 'paneMail'],
     ];
     function showTab(which) {
       for (const [name, tabId, paneId] of TABS) {
@@ -5290,10 +5319,76 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       }
       if (which === 'mkt' && mkCampaigns.length === 0) mkLoadCampaigns();
       if (which === 'comeback' && !cbCatalog) cbLoadOffers();
+      if (which === 'mail') mailLoad();
     }
     $('tabSales').addEventListener('click', () => showTab('sales'));
     $('tabMkt').addEventListener('click', () => showTab('mkt'));
     $('tabCb').addEventListener('click', () => showTab('comeback'));
+    $('tabMail').addEventListener('click', () => showTab('mail'));
+
+    // ── メール配信の現在地（**読むだけ**。送信・予約・停止の操作は持たせない）──
+    // ⚠️ 画面からは**マーケ API**を叩く（管理画面に送信基盤の固有名詞を持ち込まない）
+    const MAIL_API = MKT_API;
+    let mailLoading = false;
+    async function mailLoad() {
+      if (mailLoading) return;
+      const secret = secretEl.value.trim();
+      const stateEl = $('mailState');
+      if (!secret) { stateEl.textContent = '管理シークレットを入力してください'; $('mailCards').hidden = true; return; }
+      mailLoading = true;
+      stateEl.textContent = '読み込み中…';
+      try {
+        const res = await fetch(MAIL_API, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
+          body: JSON.stringify({ action: 'mailOverview' }),
+        });
+        const d = await res.json().catch(() => null);
+        if (!res.ok || !d || d.ok !== true) {
+          // ⚠️ 読めなかったことを「異常なし」に見せない
+          stateEl.textContent = `読み込めませんでした（${res.status}${d && d.reason ? ' ' + d.reason : ''}）`;
+          $('mailCards').hidden = true;
+          return;
+        }
+        const jst = (iso) => (iso ? new Date(iso).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '—');
+        const sel = d['選別'] || {};
+        const rec = d['反応'] || {};
+        const wk = d['週次'] || {};
+        const w = d['自動点検'];
+        const esc = (v) => String(v == null ? '—' : v);
+
+        $('mailSelection').innerHTML = [
+          `<p>次の配信: <b>${esc(jst(sel['次の配信']))}</b>（予約 ${esc(sel['予約'])} 通 / 送信済み ${esc(sel['送信済み'])} 通）</p>`,
+          `<p>宛先: ${(sel['list別'] || []).map((r) => `${esc(r.list)} <b>${esc(r['人数'])}</b>`).join(' / ')}（計 <b>${esc(sel['list合計'])}</b>）</p>`,
+          `<p>実績: 送信 ${esc((sel['実績'] || {}).requests)} / 到達 ${esc((sel['実績'] || {}).delivered)} / 開封 ${esc((sel['実績'] || {})['開封'])} / bounce ${esc((sel['実績'] || {}).bounce)} / 配信停止 ${esc((sel['実績'] || {})['配信停止'])}</p>`,
+        ].join('');
+
+        $('mailReaction').innerHTML = [
+          `<p>AK 送信候補 <b>${esc(rec['AK送信候補'])}</b> / 反応済み <b>${esc(rec['AK反応済み'])}</b></p>`,
+          `<p>継続配信 list（${esc(rec['継続list名'])}）: <b>${esc(rec['継続list'])}</b> 人</p>`,
+          `<p class="note">反応した人は選別から自動で外れ、この list へ移ります。</p>`,
+        ].join('');
+
+        $('mailWeekly').innerHTML = [
+          `<p>状態: <b>${wk['有効'] ? '有効' : '停止中（不活性）'}</b></p>`,
+          `<p>次の配信: <b>${esc(jst(wk['次の配信']))}</b>（予約 ${esc(wk['予約'])} / 送信済み ${esc(wk['送信済み'])}）</p>`,
+          `<p>実績: 到達 ${esc((wk['実績'] || {}).delivered)} / 開封 ${esc((wk['実績'] || {})['開封'])} / 配信停止 ${esc((wk['実績'] || {})['配信停止'])}</p>`,
+        ].join('');
+
+        // ⚠️ 点検が**動いていないこと**に気づけるようにする（空欄で流さない）
+        $('mailWatch').innerHTML = w
+          ? `<p>最終実行: <b>${esc(jst(w['最終実行']))}</b> / 最後に知らせた: ${esc(jst(w['最後に知らせた']))} / 不整合: ${esc(w['不整合'])}</p>`
+          : '<p><b>まだ 1 回も動いていません</b>（毎日 20:20 JST に動きます）</p>';
+
+        stateEl.textContent = `engine=${esc(d.engine)}（読み取りのみ・${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) } 時点）`;
+        $('mailCards').hidden = false;
+      } catch (e) {
+        stateEl.textContent = '通信に失敗しました。状態は不明です。';
+        $('mailCards').hidden = true;
+      } finally {
+        mailLoading = false;
+      }
+    }
 
     // ── キャンペーンカタログ ──
     async function mkLoadCampaigns() {
