@@ -1287,6 +1287,62 @@ grep は「その行が書いてあるか」しか見ないので、**書いて�
 > ソース文字列の一致は「配線が外れていないか」の補助であって、保証ではない。
 
 
+#### ✅ 本番 E2E 検証 成立（2026-09-17 / #569 deploy 後・read-only 実測）
+
+deploy（`68fad1bd` / production 15:00:22Z）後、**窓 → 全件フォールバックが本番で 1 周成立した**。
+以下はすべて read-only の実測で、送信を人手で起こしてはいない。
+
+| 時刻(UTC) | 観測した事実 |
+|---|---|
+| 15:10:42 | tick: `campaign-discount-free` → `abort: window_needs_full_reload` / `reason: zero_sendable_in_window` / `step: 2` / `alreadyQueued: 97` / **`markedForFullReload: true`** |
+| 〃 | **その tick は queue 0・送信 0・step3 へ進まず**（後段 step を先行させていない） |
+| 15:20:19〜15:21:11 | 次の tick: `campaign-discount-free` を**約 45 秒**（窓 2,000 件＝約 13 秒ではなく**全件 11,775 件**を読んだ長さ）で処理し、`ステップ 2 / 対象 50 / 登録 50 / 失敗 0 / prospect対象 50 / Airtable台帳 0` |
+| 15:25:07 | dispatch cron: `対象 1 / verified 50 / 起動 1` |
+| 15:25:12 | background dispatch 起動 |
+| 15:25:48 | 全索引走査: **step2 7,004 → 7,054（+50）/ due2 4,443 → 4,393（−50）/ step3 = 0 のまま / PENDING ジョブ 0** |
+| 15:30:52 | 次の窓でも同じ判定が再現: `window_needs_full_reload` / `zero_sendable_in_window` / `alreadyQueued: 87` / `markedForFullReload: true` / **`sideEffects: cursor_state_only`**（#569 で直した表記が本番のログに出ている） |
+
+**成立したと言えること**:
+
+1. 窓で最小 step が 0 人になったとき、**その tick は 1 件も積まない**
+2. その回の副作用は**走査カーソルだけ**（`sideEffects: cursor_state_only` / `markedForFullReload: true`）
+3. **step3 を先行させない**（`due2 > 0` の間、全索引で step3 送信は 0 のまま）
+4. **次の tick が全件で始まり**、全体の最小 due step（step2）を選んで 50 通を積む
+5. dispatch まで到達し、**queue 滞留 0**
+6. 1 run の上限 50 / 失敗 0 / prospect 以外の混入 0（`Airtable台帳 0`）を維持
+
+⚠️ **`fullRequired` の解除だけは直接観測できていない**（カーソルを読む read-only 経路が無い）。
+所要時間が全件相当（約 45 秒）だったことと、その後の挙動からの**間接確認**にとどまる。
+
+⚠️ **throughput を定常値として固定しない。** 実測は
+**15:05:28 → 15:25:48（観測 20.3 分）で +50 通**。
+campaign の順番待ち（担当 7 本の rotation）で大きく変動するため、
+この値を 1 時間あたりへ外挿してはいけない。
+
+##### 付随して分かったこと（未解決・別件として追う）
+
+- `tick_busy` が連続するのは**同一枠の多重起動**を lock が直列化しているためで、
+  古い lock の残存ではない（15:10 枠に invocation が 3 本並ぶのを実測）。
+- **`alreadyQueued` が 87〜97 件ある**（原因未確定）。送信可否の判定は
+  `fetchActiveDeliveryKeys`（**Airtable** の `CampaignDeliveries`）で、
+  **出所を問わず**行われる。考えられる説明は 2 つあり、**件数を測るまでどちらとも言えない**:
+
+  1. **正常な一時状態（Customers 側）**: この campaign は Customers と prospect の
+     両方へ配信する（`audienceSource: 'all'`。2026-09-17 実測で 15:21 / 15:32 は
+     `prospect対象 50 / Airtable台帳 0`、15:40 は `prospect対象 0 / Airtable台帳 50`）。
+     Customers は Airtable が正本で、queue 直後は `queued` のまま due 扱いなので、
+     **dispatch が `sent` に変えるまでの数 tick だけ** `alreadyQueued` に入る。
+     97 → 87 と減っていたのはこれで説明できる。
+  2. **不整合（prospect 側）**: prospect は Airtable に 1 行も書かない設計（2026-08-27）
+     なので、prospect の鍵に active な行があるなら移行前の古い行か送り切らずに残った行。
+     その場合 **Redis は「未送信」・Airtable は「active」**となり、その人は永久に積まれない。
+
+  ⚠️ **1 を 2 と決めつけない。** 2026-09-17 に一度
+  「構造上すべて 2 である」と書いたが、Customers が混ざる以上その導出は成り立たない（訂正済み）。
+  prospect 側だけを数えれば判別できる（prospect の `activeNotInRedis` が 0 なら 1、
+  多ければ 2）。件数の確定は PR #570 の read-only 診断で行う（**手で直さない**）。
+
+
 #### 第 2 期の入口も取りこぼさない
 
 入口の候補も窓から取るので**遅れる**ことはある（最大 1 周）。
