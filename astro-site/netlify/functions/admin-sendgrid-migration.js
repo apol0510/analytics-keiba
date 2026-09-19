@@ -285,9 +285,20 @@ export const handler = async (event) => {
 
       let akActive = null;
       let akEngaged = null;
+      /** 毎日の自動点検が**いつ動いたか**（動いていないことに気づけるように出す） */
+      let watch = null;
       try {
         akActive = Number(await redisCmd(['SCARD', 'ak:prospect:index:active'])) || 0;
         akEngaged = Number(await redisCmd(['SCARD', 'ak:prospect:index:engaged'])) || 0;
+        const raw = await redisCmd(['GET', 'ak:mkt:selection-watch:v1']);
+        if (raw) {
+          const w = JSON.parse(raw);
+          watch = {
+            最終実行: w.lastCheckedAtMs ? new Date(w.lastCheckedAtMs).toISOString() : null,
+            最後に知らせた: w.lastNotifiedAtMs ? new Date(w.lastNotifiedAtMs).toISOString() : null,
+            不整合: Number.isFinite(w.lastMismatch) ? w.lastMismatch : null,
+          };
+        }
       } catch { /* 読めなければ null のまま返す（推測しない） */ }
 
       return json(200, {
@@ -317,6 +328,7 @@ export const handler = async (event) => {
           継続list: byName.get(CONTINUATION_LIST_NAME) ?? null,
           継続list名: CONTINUATION_LIST_NAME,
         },
+        自動点検: watch,
         週次: {
           有効: String(process.env.SENDGRID_WEEKLY_ENABLED || '').trim() === 'true',
           予約: weeklySends.filter((x) => x.status === 'scheduled').length,
