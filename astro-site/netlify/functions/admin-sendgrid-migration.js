@@ -14,6 +14,7 @@
  * | `plan` | **なし** | 通し番号別件数 → list / Automation 移行計画 |
  * | `content` | **なし** | 10 通の件名（`full:true` で本文も）|
  * | `preflight` | **なし** | SendGrid 側の前提（custom field / list / contact 数 / unsubscribe group）|
+ * | `reconcile` | 下見は**なし** | **予約の直前に AK を正本として list を合わせ直す**（二重ゲート + `apply:true` で書き込み）|
  * | `import` | **書き込み** | contact の upsert（**二重ゲート + `apply:true`**）|
  * | `exit` | **書き込み** | 反応・抑止した人を list から外す（同上）|
  *
@@ -49,6 +50,10 @@ import {
 import {
   resolveProspectEngine, assertSingleEngine, CUTOVER_STEPS, ROLLBACK_STEPS,
 } from '../../src/lib/marketing/sendgridCutover.js';
+import {
+  buildReconcilePlan, summarizeReconcilePlan, assertReconcileSafety, reconcileSteps,
+  RECONCILE_LIMITS,
+} from '../../src/lib/marketing/sendgridListReconcile.js';
 
 const BRAND = 'analytics-keiba';
 /** 1 回の import で投入してよい contact 数（**上限を越える指示は拒否**） */
@@ -224,6 +229,146 @@ export const handler = async (event) => {
         unsubscribeGroups: groups.map((g) => ({ id: g.id, name: g.name })),
         cutover: { steps: CUTOVER_STEPS, rollback: ROLLBACK_STEPS },
         notice: 'これは読み取りのみです。',
+      });
+    }
+
+    /**
+     * ── reconcile（**予約の直前に毎回**走らせる）────────────────
+     *
+     * 遅れて届いた `delivered` で AK の通し番号が進むと、投入時のままの list に
+     * 残っている人へ**同じ号をもう一度**送ってしまう。反応して離脱した人が
+     * list に残る取りこぼしも同じ形で起きる。だから **AK を正本**として
+     * 在籍を貼り替える。**1 回限りの手修正にしない。**
+     *
+     * - `scope: 'active'`   … 送ってよい人（索引を窓で読む）
+     * - `scope: 'excluded'` … 反応・抑止・打ち切り（**3 本すべてから外す**）
+     * - `apply` 省略時は**下見**。SendGrid へ書き込みは 1 件も出さない
+     */
+    if (action === 'reconcile') {
+      const apiKey = process.env.SENDGRID_API_KEY;
+      if (!apiKey) return json(503, { ok: false, reason: 'sendgrid_api_key_missing', sideEffects: 'none' });
+      const api = createSendGridMarketingApi({ apiKey });
+      const ids = listIdsByMessage(await api.getLists());
+      const fields = resolveFieldIds(await api.getFieldDefinitions());
+      if (!fields.ok) {
+        return json(409, { ok: false, reason: fields.reason, missing: fields.missing, sideEffects: 'none' });
+      }
+
+      const scope = String(req.scope || 'active') === 'excluded' ? 'excluded' : 'active';
+      let akEntries = [];
+      let window = null;
+
+      if (scope === 'active') {
+        const out = await runScan(req);
+        if (!out.ok) {
+          return json(out.reason === 'prospect_index_changed' ? 409 : 500, {
+            mode: 'sendgrid-migration-reconcile', ok: false, reason: out.reason, sideEffects: 'none',
+          });
+        }
+        window = out.window;
+        akEntries = toExportEntries(out.results).map((e) => ({
+          email: e.email, nextMessageNumber: e.nextMessageNumber, sendable: true,
+        }));
+      } else {
+        const store = createProspectStore({ cmd: redisCmd, pipeline: redisPipeline });
+        const hashes = [...new Set([...(await store.engagedHashes()), ...(await store.blockedHashes())])].sort();
+        const offset = Math.max(0, Number(req.offset) || 0);
+        const limit = Math.min(Math.max(1, Number(req.limit) || 200), 500);
+        const slice = hashes.slice(offset, offset + limit);
+        let withoutEmail = 0;
+        for (const h of slice) {
+          // eslint-disable-next-line no-await-in-loop -- 窓で切ってある
+          const rec = await store.loadByHash(h);
+          // ⚠️ アドレスを持たないレコード（purge 済み）は**触れない**。数えるだけ
+          if (!rec || !rec.email) { withoutEmail += 1; continue; }
+          akEntries.push({ email: rec.email, state: rec.state, sendable: false });
+        }
+        window = {
+          offset, limit, total: hashes.length, returned: slice.length,
+          アドレス無し: withoutEmail,
+          nextOffset: offset + slice.length < hashes.length ? offset + slice.length : null,
+        };
+      }
+
+      const sgMap = await api.lookupContacts(
+        akEntries.map((e) => e.email), { fieldId: fields.ids.ak_next_message },
+      );
+      const plan = buildReconcilePlan({ akEntries, sendgridByEmail: sgMap, listIdByMessage: ids });
+      const safety = assertReconcileSafety(plan);
+      const gateOpen = isWriteEnabled(process.env);
+      const apply = req.apply === true;
+
+      if (!apply) {
+        return json(200, {
+          mode: 'sendgrid-migration-reconcile',
+          ok: true, sideEffects: 'none', dryRun: true,
+          gate: gateOpen ? 'open' : 'closed',
+          engine, scope, window,
+          summary: summarizeReconcilePlan(plan),
+          safety,
+          notice: '下見です。SendGrid へは 1 リクエストも書き込んでいません。',
+        });
+      }
+
+      if (!gateOpen) {
+        return json(403, { ok: false, reason: 'write_gate_closed', gateEnv: WRITE_GATE_ENV, sideEffects: 'none' });
+      }
+      if (String(req.confirm || '') !== WRITE_CONFIRM) {
+        return json(400, { ok: false, reason: 'confirm_mismatch', sideEffects: 'none' });
+      }
+      // ⚠️ 旧 AK がまだ prospect を送る設定なら**貼り替えない**（二重稼働の上で触らない）
+      const single = assertSingleEngine({
+        akProspectSending: engine !== 'sendgrid', sendgridAutomationLive: req.automationLive === true,
+      });
+      if (!single.ok) {
+        return json(409, { ok: false, reason: single.violation, engine, sideEffects: 'none' });
+      }
+      if (!safety.ok) {
+        return json(409, {
+          ok: false, reason: safety.violation, changes: plan.changes,
+          maxChanges: RECONCILE_LIMITS.maxChanges, sideEffects: 'none',
+        });
+      }
+
+      // **remove → add の順**（両方の list に居る瞬間を作らない）
+      const applied = { removed: 0, added: 0, requests: 0, rejectedBatches: 0 };
+      for (const step of reconcileSteps(plan)) {
+        if (step.op === 'remove') {
+          const contactIds = step.emails.map((e) => (sgMap.get(e) || {}).id).filter(Boolean);
+          if (contactIds.length === 0) continue;
+          // eslint-disable-next-line no-await-in-loop -- 窓とチャンクで切ってある
+          const r = await api.removeContactsFromList({ listId: step.listId, contactIds, confirm: req.confirm });
+          applied.removed += r.removed; applied.requests += 1;
+        } else {
+          const batch = {
+            list_ids: [step.listId],
+            startMessage: null,
+            contacts: step.entries.map((e) => ({
+              email: e.email, custom_fields: { [fields.ids.ak_next_message]: e.nextMessage },
+            })),
+          };
+          try {
+            // eslint-disable-next-line no-await-in-loop -- 窓とチャンクで切ってある
+            const r = await api.upsertContacts({ batch, confirm: req.confirm });
+            applied.added += r.count; applied.requests += 1;
+          } catch (e) {
+            // ⚠️ 受理されない宛先が 1 件でもあると batch ごと落ちる。
+            //    **黙って成功にしない**。数えて人に返す（provider rejected の扱いは import と同じ）
+            applied.rejectedBatches += 1;
+          }
+        }
+      }
+
+      return json(200, {
+        mode: 'sendgrid-migration-reconcile',
+        ok: applied.rejectedBatches === 0,
+        sideEffects: 'sendgrid_lists_only',
+        engine, scope, window,
+        summary: summarizeReconcilePlan(plan),
+        applied,
+        notice: applied.rejectedBatches > 0
+          ? 'SendGrid が受理しない宛先を含む batch があります（provider rejected）。件数を確認してください。'
+          : null,
       });
     }
 

@@ -19,8 +19,10 @@
 > 🚚 **2026-09-18 MK 確定 — 実行エンジンを SendGrid Marketing Campaigns へ移す。**
 > 任務（選別の目的・反応の定義・delivered 10 の打ち切り・DRM 接続）は**変わらない**。
 > 変わるのは「誰が送るか」だけで、AK は状態管理と**次に送るメール番号**の確定に絞る。
-> 現在地は下の「🚚 実行エンジンを SendGrid Marketing Campaigns へ移す」節。
-> **本番切替は未実施**（下の完成条件表は AK 自作経路での到達状況の記録として残す）。
+> 現在地は下の「📥 選別 contact を SendGrid へ投入した」節。
+> **2026-09-18 に本番切替済み**（`MARKETING_PROSPECT_ENGINE=sendgrid` / 旧 AK prospect 配送は停止 /
+> contact 投入済み）。**Single Send の予約・実送信はまだ 1 件も行っていない。**
+> 下の完成条件表は AK 自作経路での到達状況の記録として残す。
 
 ## 完成条件（チェックリスト）
 
@@ -35,7 +37,7 @@
 | 7 | 除外された人が次のキャンペーンでも対象に戻らない | ✅ EXHAUSTED は送信対象の入口・送信直前・再取り込みのいずれでも落ちる（テストで固定）|
 | 8 | 実配信が**継続**している（1 キャンペーンで止まらない）| ✅ **継続している**（2026-09-17 全窓走査で訂正）。`campaign-discount-free` の step2 は **約 170 通/時**で配信中。step3 が 0 なのは **step2 の 5,893 名が先に捌かれる**ため（最小 due step の設計どおり）。⚠️ 2026-09-16 に「止まっていた」と記録したのは**窓 0 だけを見た誤診** |
 
-## 🚚 マーケティング基盤の全面整理 — AK = 頭脳 / SendGrid = 配送（2026-09-18 MK 確定 / **本番切替 未実施**）
+## 🚚 マーケティング基盤の全面整理 — AK = 頭脳 / SendGrid = 配送（2026-09-18 MK 確定 / **本番切替 実施済み・予約前で停止中**）
 
 > **事業目的は配信システムの開発ではない。** 顧客・prospect の行動を把握し、適切な CTA と
 > メールマーケティングで**有料転換・継続売上**を作ること。
@@ -424,12 +426,14 @@ MK が API キーを更新した後も 403 のままだったので、`/v3/api_k
    → Automation 開始（**MK 承認**）→ Webhook 確認 → 管理画面への反映確認 → **二重送信 0 確認**
 7. 安定確認後に「旧配送基盤 廃止 Phase」「KMA 廃止判断（8 条件）」へ（**独立 Phase**）
 
-### 本番切替 未実施（明示）
+### 本番切替の現在地（2026-09-18/19 時点）
 
-- production env は**何も変えていない**（`MARKETING_PROSPECT_ENGINE` は未設定 = 従来どおり AK）
-- SendGrid へは **1 リクエストも出していない**（contact 0 件・list 0 本・Automation 0 本）
-- 旧 AK prospect 配信は**動いたまま**（現行どおり `campaign-discount-free` の step2 が進行中）
-- 課金変更は**していない**
+- production env は **`MARKETING_PROSPECT_ENGINE=sendgrid`**（＝旧 AK prospect 配送は**停止**）
+- SendGrid の 3 list へ **contact 投入済み**（合計 11,704・内訳は下の「📥 選別 contact を…」節）
+- `SENDGRID_MIGRATION_WRITE_ENABLED` は**投入後に閉じた**（read-only で closed を確認）
+- Single Send 27 通は **draft・予約 0・送信 0**（＝**実送信はまだ 0**）
+- 旧 AK の **Customers 向け**配信は従来どおり継続（止めたのは prospect 宛だけ）
+- 課金変更は**していない**（Advanced 20K は MK が契約画面で確認済み）
 - **KMA は 1 バイトも触っていない**（凍結の宣言のみ。削除・移行・改修なし）
 - **KI は 1 行も変更していない**（将来方針の記載のみ）
 - `/admin/premium-plus-eligibility/` は**改修していない**（URL も変更なし）
@@ -2070,6 +2074,71 @@ rollback の根拠は **実際に剥がした鍵そのもの**でなければな
 <!-- 並び順: 最上位は「反応で選別する大規模マーケティング配信基盤」（約 15,000 件 / PR #521）。
      2026-09-14 に #521 が main へ入ったので、この DRM ブロックは**その直下**に置いている。
      先頭を奪わないこと。 -->
+# 📥 選別 contact を SendGrid へ投入した（2026-09-18/19）— **投入完了 / 予約・送信は未実施**
+
+> 旧 AK の prospect 配送を止めてから投入した。**Single Send の予約・実送信はまだ 1 件も行っていない。**
+
+## 順序（実施済み）
+
+1. production `MARKETING_PROSPECT_ENGINE=sendgrid` ＋ redeploy（2026-09-18T14:31:33Z published）
+2. 停止の確認 — 下見が `no_due_recipients`（prospect 0）／停止後のジョブは
+   `CampaignDeliveries` に `CustomerRecordId` 付きの行があり **Customers 向けだけ**
+3. `SENDGRID_MIGRATION_WRITE_ENABLED=true` ＋ redeploy → 投入 → **投入後に閉じて redeploy**
+
+## 投入の内訳（数式で閉じる）
+
+```
+投入直前の AK active        11,726
+ − 投入中に active を外れた人   12   （反応 → ENGAGED。webhook が list からも外す）
+ − provider rejected          10   （SendGrid が受理しない宛先）
+ ≒ SendGrid 受理             11,704   （計測時刻で 11,704〜11,714 の範囲で動く）
+```
+
+| 項目 | 値 |
+|---|---|
+| list `ak-prospect-select-start-1 / 2 / 3` | 318 / 2,590 / 8,796（合計 **11,704**）|
+| `ak_next_message` 別（SendGrid 検索）| 1:318 / 2:2,592 / 3:8,806 / 4 以上:0 |
+| SendGrid contacts 総数 | 11,815（＝ 投入 11,714 ＋ 既存 105 − 重複 4）|
+| Single Send | **27 通すべて draft・予約 0・送信 0** |
+
+3 list の合計と「今回増えた実ユニーク数」が一致するので、**同じ人が 2 つの list に入っていない**。
+索引 ＝ 受理 ＋ provider rejected で閉じるので、**offset の取りこぼしもない**。
+
+## provider rejected 10 件（**AK 側は未変更**）
+
+- 分類: **`provider rejected` / `next_message = 1`**。10 件すべて**まだ 1 通も届いていない**宛先。
+- 原因: AK 側の正規化は `prospectPolicy.normalizeEmail`（**小文字化のみ・形式検証なし**）のため、
+  形式が壊れた文字列が索引に残る。SendGrid の contacts API はこれを受理せず、
+  **1 件でも混ざるとリクエスト全体を 400 で落とす**。
+- **アドレスは記録しない**（PII）。索引上の位置だけを作業ログに残した。
+- AK 側を SUPPRESSED / blocked へ変えるのは **production データ変更**なので**実施していない**。
+  変更するかは MK 判断。
+
+## 投入時に踏んだ落とし穴（再発防止）
+
+| 事象 | 原因 | 対処 |
+|---|---|---|
+| 2,000 件窓が 500 で失敗 | 受理できない宛先が 1 件でもあるとリクエスト全体が落ちる | 窓を 500 → 50 → 1 と割り、該当 1 件だけ飛ばす |
+| 「拒否 322 件」と出た | `prospect_index_changed`（索引が動いたので**書かずに止まった**）を宛先拒否と同一視していた | digest を固定するのをやめ、**理由コードで区別**。upsert は冪等なので全件パスをやり直して解消 |
+
+## 残っている差（**予約の前に解消が要る**）
+
+| 差 | 件数 | 意味 |
+|---|---|---|
+| list に居るが AK では active でない | 4 | 反応した人の list 除外が、contact 投入より**先に**届いて無効打になった |
+| AK active だが list に居ない | 3 | 反応イベントで list から外れたが AK 側が ENGAGED になっていない |
+
+どちらも **AK の状態を正として SendGrid の list を合わせ直す一括処理**が要る。
+→ **実装した**: `admin-sendgrid-migration` の `reconcile` action（下見が既定）。
+判定の単一源は `src/lib/marketing/sendgridListReconcile.js`、手順は
+[`SENDGRID_MC_MIGRATION.md`](./SENDGRID_MC_MIGRATION.md) §14、
+遅延 `delivered` の監視と「予約してよい」の判定は同 §15。
+
+**1 回限りの手修正にしない。** 配送の反応は遅れて届くので、
+**予約の直前に毎回** reconcile を走らせる（cutover のたびに再利用する）。
+
+⚠️ 本番での下見・実行は **merge → deploy → 書き込みゲート開放**が要る（未実施）。
+
 # 🔴 常設 / 未完了任務 — **DRM 実運用は未完成**（2026-09-14 固定）
 
 > **完成条件の正本は `docs/spec.md`「🚧 DRM（無料登録者 → 有料転換）」。ここには書き写さない。**

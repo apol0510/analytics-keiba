@@ -1,3 +1,42 @@
+# 2026-09-19 — 予約の直前に SendGrid の list を **AK へ合わせ直す**（1 回限りの手修正にしない）
+
+## 決定
+
+| # | 決定 | 単一源 |
+|---|---|---|
+| 1 | **AK が正本**。SendGrid の `ak_next_message` も list 在籍も AK に合わせる | `sendgridListReconcile.js` |
+| 2 | **予約の直前に毎回** reconcile を走らせる（cutover のたびに再利用する手順）| `SENDGRID_MC_MIGRATION.md` §14 |
+| 3 | 順序は **remove → add**。逆にすると 2 つの list に居る瞬間ができ、そこで予約が走ると 2 通届く | `reconcileSteps()` |
+| 4 | 送ってはいけない人（ENGAGED / PROMOTED / SUPPRESSED / EXHAUSTED / Customers 昇格済み）は **3 本すべてから外す** | `RECONCILE_EXCLUDE_STATES` |
+| 5 | **AK の list 以外には触らない**（KI / nankan / review を巻き込まない）| guard テスト |
+| 6 | `provider rejected` は**対象外のまま**。直し方が無いので「直った」ことにしない | `applied.rejectedBatches` |
+| 7 | 変更が 3,000 件を越える計画は**実行せず人に返す** | `RECONCILE_LIMITS.maxChanges` |
+| 8 | 遅延 `delivered` が**止まってから**予約する（30 分 × 3 回の静止）| 同 §15 |
+
+## なぜ「3 名を直す」では終わらないのか
+
+2026-09-19 の実測で、投入後に遅れて届いた `delivered` により
+AK の通し番号が 2 → 3 へ進んだ人が **3 名**出た。SendGrid 側は投入時のままなので、
+そのまま予約すれば **その 3 名に 2 通目が再送**される。
+
+配送の反応は**非同期に遅れて届く**。だから同じことは次の cutover でも必ず起きる。
+人数が少ないうちに手で直すと、次に人数が増えたときに気づけない。
+**予約直前の手順として仕組みに入れる**のが正しい。
+
+## なぜ remove を先にするのか
+
+add を先にすると、旧 list と新 list の**両方に在籍する瞬間**ができる。
+Single Send は**送信時の在籍**に対して配られるので、その瞬間に予約時刻が重なると
+同じ人に 2 通届く。remove が先なら、最悪でも**その回が届かない**だけで、
+再送にはならない（届かなかった号は次の reconcile で復帰する）。
+
+## 変えていないもの
+
+旧 AK の配送経路 / prospect の状態機械 / 反応の定義 / delivered 10 の打ち切り /
+DeliveryKey。reconcile は **SendGrid の list 在籍と custom field だけ**を触る。
+
+---
+
 # 2026-09-18 — 有料化ファネルの計測は「URL で分かる段」と「分からない段」を分ける
 
 ## 決定
