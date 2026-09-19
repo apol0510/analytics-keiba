@@ -56,11 +56,14 @@ import {
   buildReconcilePlan, summarizeReconcilePlan, assertReconcileSafety, reconcileSteps,
   RECONCILE_LIMITS, runWithSplit, REJECTED_INDEX_KEY,
 } from '../../src/lib/marketing/sendgridListReconcile.js';
-import { CONTINUATION_LIST_NAME } from '../../src/lib/marketing/sendgridContinuation.js';
+import {
+  CONTINUATION_LIST_NAME, planContinuation, summarizeContinuation,
+} from '../../src/lib/marketing/sendgridContinuation.js';
 import {
   planWeeklySend, validateWeeklyContent, summarizeWeeklyPlan,
 } from '../../src/lib/marketing/weeklyNewsletterPlan.js';
 import { buildWeeklyContent } from '../../src/lib/marketing/weeklyNewsletterContent.js';
+import { collectMarketingOverview } from '../../src/lib/marketing/marketingOverview.js';
 import { buildLatestShowcase } from '../../src/lib/resultsShowcase.js';
 
 const BRAND = 'analytics-keiba';
@@ -243,105 +246,19 @@ export const handler = async (event) => {
     /**
      * ── overview（**管理画面に出す数**）─────────────────────────
      *
-     * MK が毎日見るのはここ 1 か所。**新しい集計基盤は作らない**（既にある数を並べるだけ）。
+     * 数の作り方は `marketingOverview.js` に 1 つだけ置く（画面側の API と割れないように）。
      * 読み取りだけで、アドレスは 1 件も返さない。
      */
     if (action === 'overview') {
       const apiKey = process.env.SENDGRID_API_KEY;
       if (!apiKey) return json(503, { ok: false, reason: 'sendgrid_api_key_missing', sideEffects: 'none' });
-      const api = createSendGridMarketingApi({ apiKey });
-
-      const [lists, sendsRaw, statsRaw] = await Promise.all([
-        api.getLists(),
-        fetch('https://api.sendgrid.com/v3/marketing/singlesends?page_size=100', {
-          headers: { Authorization: `Bearer ${apiKey}` },
-        }).then((r) => r.json()).catch(() => ({})),
-        fetch('https://api.sendgrid.com/v3/marketing/stats/singlesends?page_size=100', {
-          headers: { Authorization: `Bearer ${apiKey}` },
-        }).then((r) => r.json()).catch(() => ({})),
-      ]);
-
-      const byName = new Map(lists.map((l) => [l.name, l.contactCount]));
-      const selection = [1, 2, 3].map((n) => ({
-        list: listNameFor(n), 人数: byName.get(listNameFor(n)) ?? null,
-      }));
-      const statById = new Map(((statsRaw && statsRaw.results) || []).map((x) => [String(x.id), x.stats || {}]));
-      const sends = ((sendsRaw && sendsRaw.result) || []).map((x) => {
-        const st = statById.get(String(x.id)) || {};
-        return {
-          name: String(x.name || ''),
-          status: String(x.status || ''),
-          send_at: x.send_at || null,
-          requests: Number(st.requests) || 0,
-          delivered: Number(st.delivered) || 0,
-          opens: Number(st.unique_opens) || 0,
-          bounces: Number(st.bounces) || 0,
-          unsubscribes: Number(st.unsubscribes) || 0,
-        };
-      });
-      const selectionSends = sends.filter((x) => /^AK Prospect Selection /.test(x.name));
-      const weeklySends = sends.filter((x) => /^AK Weekly /.test(x.name));
-      const sum = (rows, key) => rows.reduce((a, r) => a + (Number(r[key]) || 0), 0);
-
-      let akActive = null;
-      let akEngaged = null;
-      /** 毎日の自動点検が**いつ動いたか**（動いていないことに気づけるように出す） */
-      let watch = null;
-      try {
-        akActive = Number(await redisCmd(['SCARD', 'ak:prospect:index:active'])) || 0;
-        akEngaged = Number(await redisCmd(['SCARD', 'ak:prospect:index:engaged'])) || 0;
-        const raw = await redisCmd(['GET', 'ak:mkt:selection-watch:v1']);
-        if (raw) {
-          const w = JSON.parse(raw);
-          watch = {
-            最終実行: w.lastCheckedAtMs ? new Date(w.lastCheckedAtMs).toISOString() : null,
-            最後に知らせた: w.lastNotifiedAtMs ? new Date(w.lastNotifiedAtMs).toISOString() : null,
-            不整合: Number.isFinite(w.lastMismatch) ? w.lastMismatch : null,
-          };
-        }
-      } catch { /* 読めなければ null のまま返す（推測しない） */ }
-
+      const overview = await collectMarketingOverview({ apiKey, redisCmd, env: process.env });
       return json(200, {
         mode: 'sendgrid-marketing-overview',
         ok: true,
         sideEffects: 'none',
         engine,
-        選別: {
-          list別: selection,
-          list合計: selection.reduce((a, r) => a + (r.人数 || 0), 0),
-          予約: selectionSends.filter((x) => x.status === 'scheduled').length,
-          送信済み: selectionSends.filter((x) => x.status === 'triggered').length,
-          実績: {
-            requests: sum(selectionSends, 'requests'),
-            delivered: sum(selectionSends, 'delivered'),
-            開封: sum(selectionSends, 'opens'),
-            bounce: sum(selectionSends, 'bounces'),
-            配信停止: sum(selectionSends, 'unsubscribes'),
-          },
-          次の配信: selectionSends
-            .filter((x) => x.status === 'scheduled' && x.send_at)
-            .map((x) => x.send_at).sort()[0] || null,
-        },
-        反応: {
-          AK送信候補: akActive,
-          AK反応済み: akEngaged,
-          継続list: byName.get(CONTINUATION_LIST_NAME) ?? null,
-          継続list名: CONTINUATION_LIST_NAME,
-        },
-        自動点検: watch,
-        週次: {
-          有効: String(process.env.SENDGRID_WEEKLY_ENABLED || '').trim() === 'true',
-          予約: weeklySends.filter((x) => x.status === 'scheduled').length,
-          送信済み: weeklySends.filter((x) => x.status === 'triggered').length,
-          次の配信: weeklySends
-            .filter((x) => x.status === 'scheduled' && x.send_at)
-            .map((x) => x.send_at).sort()[0] || null,
-          実績: {
-            delivered: sum(weeklySends, 'delivered'),
-            開封: sum(weeklySends, 'opens'),
-            配信停止: sum(weeklySends, 'unsubscribes'),
-          },
-        },
+        ...overview,
         notice: '読み取りのみ。アドレスは含みません。',
       });
     }
@@ -526,6 +443,34 @@ export const handler = async (event) => {
       const gateOpen = isWriteEnabled(process.env);
       const apply = req.apply === true;
 
+      /**
+       * ── 反応した人を継続配信の list へ渡す（**過去分の取りこぼしもここで埋まる**）──
+       *
+       * webhook は「その瞬間に反応した人」しか渡せない。list を作る前に反応していた人は
+       * どこにも入らないままなので、**AK の最新状態を正**として reconcile のときに拾う。
+       * ⚠️ 渡すのは ENGAGED / PROMOTED だけ。配信停止・bounce・苦情・打ち切りは渡さない
+       *    （`planContinuation` が弾く）。
+       */
+      const contPlan = scope === 'excluded'
+        ? planContinuation({ changes: targets.map((e) => ({ email: e.email, state: e.state })) })
+        : { emails: [], counts: { 対象: 0, 対象外: 0, 重複: 0, 上限超過: 0 }, refused: {} };
+      /** すでに継続 list に居る人は数えない（**重複 0** を数で示す） */
+      let contListId = null;
+      let contAlready = 0;
+      let contToAdd = [];
+      if (contPlan.emails.length > 0) {
+        const contHit = (await api.getLists()).find((l) => l.name === CONTINUATION_LIST_NAME);
+        contListId = contHit ? contHit.id : null;
+        if (contListId) {
+          const known = await api.lookupContacts(contPlan.emails, { fieldId: fields.ids.ak_next_message });
+          for (const email of contPlan.emails) {
+            const hit = known.get(email);
+            if (hit && Array.isArray(hit.listIds) && hit.listIds.includes(String(contListId))) contAlready += 1;
+            else contToAdd.push(email);
+          }
+        }
+      }
+
       if (!apply) {
         return json(200, {
           mode: 'sendgrid-migration-reconcile',
@@ -533,6 +478,13 @@ export const handler = async (event) => {
           gate: gateOpen ? 'open' : 'closed',
           engine, scope, window,
           summary: summarizeReconcilePlan(plan),
+          継続導線: {
+            ...summarizeContinuation(contPlan, { added: 0 }),
+            list: CONTINUATION_LIST_NAME,
+            listあり: !!contListId,
+            すでに在籍: contAlready,
+            追加予定: contToAdd.length,
+          },
           safety,
           引けなかった宛先: lookupSplit.rejected.length,
           notice: '下見です。SendGrid へは 1 リクエストも書き込んでいません。',
@@ -602,12 +554,37 @@ export const handler = async (event) => {
         }
       }
 
+      /**
+       * 継続配信の list へ入れる（**メールは送らない**。list に入れるだけ）。
+       * 受理されない宛先は分割して切り離し、件数だけ数える。
+       */
+      const contApplied = { 追加: 0, 受理されず: 0 };
+      if (contListId && contToAdd.length > 0) {
+        const r = await runWithSplit(contToAdd, async (chunk) => {
+          await api.upsertContacts({
+            batch: { list_ids: [contListId], contacts: chunk.map((email) => ({ email })) },
+            confirm: req.confirm,
+          });
+        }, { minChunk: 1 });
+        contApplied.追加 = r.ok;
+        contApplied.受理されず = r.rejected.length;
+      }
+
       return json(200, {
         mode: 'sendgrid-migration-reconcile',
         ok: true,
         sideEffects: 'sendgrid_lists_only',
         engine, scope, window,
         summary: summarizeReconcilePlan(plan),
+        継続導線: {
+          list: CONTINUATION_LIST_NAME,
+          対象: contPlan.emails.length,
+          すでに在籍: contAlready,
+          追加: contApplied.追加,
+          受理されず: contApplied.受理されず,
+          対象外: contPlan.counts.対象外,
+          理由別: contPlan.refused,
+        },
         applied,
         引けなかった宛先: lookupSplit.rejected.length,
         notice: applied.providerRejected > 0

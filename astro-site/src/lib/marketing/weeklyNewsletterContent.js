@@ -26,35 +26,37 @@ export const CONTENT_FAIL = Object.freeze({
   NO_MAIN_RACE: 'no_main_race',
 });
 
-const pct = (n) => `${Math.round(n * 1000) / 10}%`;
-
 /**
- * @param {{
- *   dateKey: string,
- *   showcase: {date?:string, venues?: Array<{venue:string, mainRace?:object, races?:Array}>}|null,
- * }} input
+ * @param {{ dateKey?: string|null, showcase: object|null }} input
+ *   `showcase` は `buildLatestShowcase()` の戻り値をそのまま渡す。
+ *   ⚠️ **形を推測しない。** `venues` は**会場名の配列**で、明細は `venueGroups` に入る
+ *   （2026-09-19 に取り違えて `no_main_race` で止まった）。
  * @returns {{ok:boolean, reason?:string, step?:object}}
  */
 export function buildWeeklyContent({ dateKey, showcase } = {}) {
-  const venues = (showcase && Array.isArray(showcase.venues)) ? showcase.venues : [];
-  if (venues.length === 0) return { ok: false, reason: CONTENT_FAIL.NO_RESULTS };
+  const groups = (showcase && Array.isArray(showcase.venueGroups)) ? showcase.venueGroups : [];
+  if (groups.length === 0) return { ok: false, reason: CONTENT_FAIL.NO_RESULTS };
 
-  const mains = venues.map((v) => v && v.mainRace).filter(Boolean);
+  const mains = groups.map((g) => g && g.mainRace).filter(Boolean);
   if (mains.length === 0) return { ok: false, reason: CONTENT_FAIL.NO_MAIN_RACE };
 
-  const allRaces = venues.flatMap((v) => (Array.isArray(v.races) ? v.races : []));
-  const hits = allRaces.filter((r) => r && r.isHit === true).length;
-  const total = allRaces.length;
-  const hitRate = total > 0 ? hits / total : 0;
+  const total = Number(showcase.totalRaces) || groups.reduce((a, g) => a + (Number(g.totalRaces) || 0), 0);
+  const hits = Number(showcase.hitRaces) || 0;
+  if (total <= 0) return { ok: false, reason: CONTENT_FAIL.NO_RESULTS };
+  /** ⚠️ **数字を作らない。** 的中率・回収率は showcase が出したものだけを使う */
+  const hitRate = Number.isFinite(Number(showcase.hitRate)) ? Number(showcase.hitRate) : null;
   const mainHits = mains.filter((m) => m && m.isHit === true).length;
-  const day = String((showcase && showcase.date) || dateKey || '');
+  const venueLabel = String(showcase.venueLabel || groups.map((g) => g.venue).filter(Boolean).join('・'));
+  const day = String(showcase.date || dateKey || '');
+  if (!day || !venueLabel) return { ok: false, reason: CONTENT_FAIL.NO_RESULTS };
 
   const headline = `${day} の結果：メイン ${mainHits}/${mains.length} 的中`;
+  const rateText = hitRate === null ? '' : `（的中率 ${hitRate}%）`;
   const body = [
     'いつも KEIBA Analytics の無料予想をご覧いただきありがとうございます。',
     '前回ご覧いただいた無料予想の続きとして、有料版で実際に配信した買い目の結果をお届けします。',
     '',
-    `${day} は ${venues.map((v) => v.venue).join('・')} の ${total} レースを配信し、${hits} レースが的中しました（的中率 ${pct(hitRate)}）。`,
+    `${day} は ${venueLabel} の ${total} レースを配信し、${hits} レースが的中しました${rateText}。`,
     `メインレースは ${mains.length} 鞍中 ${mainHits} 鞍が的中しています。`,
     '',
     '買い目は「本命 → 相手 5 頭」の一方向馬単 5 点だけです。点数を増やして当てにいく作りにはしていません。',

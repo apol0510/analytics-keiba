@@ -910,6 +910,7 @@ export const handler = async (event) => {
   const now = Date.now();
 
   try {
+    if (action === 'mailOverview') return await handleMailOverview();
     if (action === 'campaigns') return handleCampaigns();
     if (action === 'preview') return handlePreview({ req });
     if (action === 'customers') return await handleCustomers({ KEY, BASE, now, req });
@@ -965,6 +966,32 @@ export const handler = async (event) => {
     return json(500, { error: 'internal error' });
   }
 };
+
+/**
+ * マーケ画面へ出す「メール配信の現在地」（**読み取りだけ**）。
+ *
+ * 画面は送信基盤の名前が入った関数を叩けない（管理画面にメール基盤の固有名詞を
+ * 持ち込ませない guard がある）ので、**この API から返す**。
+ * 数の作り方は `marketingOverview.js` に 1 つだけ置き、移行用 API と割れないようにする。
+ */
+async function handleMailOverview() {
+  const apiKey = process.env.SENDGRID_API_KEY;
+  if (!apiKey) return json(503, { ok: false, reason: 'provider_key_missing', sideEffects: 'none' });
+  try {
+    const { collectMarketingOverview } = await import('../../src/lib/marketing/marketingOverview.js');
+    const overview = await collectMarketingOverview({ apiKey, redisCmd: makeRedisCmd(process.env), env: process.env });
+    return json(200, {
+      mode: 'mail-overview', ok: true, sideEffects: 'none', ...overview,
+      notice: '読み取りのみ。アドレスは含みません。',
+    });
+  } catch (e) {
+    // ⚠️ 読めなかったことを「異常なし」に見せない
+    return json(200, {
+      mode: 'mail-overview', ok: false, sideEffects: 'none',
+      reason: String((e && e.message) || 'unavailable'),
+    });
+  }
+}
 
 function handleCampaigns() {
   // 使用停止中のものも理由付きで返す（管理者が「なぜ使えないか」を画面で分かるように）

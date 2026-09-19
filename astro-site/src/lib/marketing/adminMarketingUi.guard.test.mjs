@@ -87,9 +87,17 @@ test('provider 側の配信停止と照合できたかを確認画面に出す',
   assert.ok(SCRIPT.includes('plan.providerSuppression'), 'provider 照合状況を出していない');
   assert.ok(SCRIPT.includes('配信基盤の配信停止リスト'));
   assert.ok(SCRIPT.includes('この状態では送信できません'), '確認できない場合の警告が無い');
-  // ⚠️ この画面には Premium Plus のプレビュー guard（stagedReleaseGuard）が効いており、
-  //    ページ全体でメール送信基盤の固有名詞を禁止している。文言に製品名を書かないこと。
-  assert.equal(/sendgrid/i.test(SCRIPT), false, 'ページに送信基盤の固有名詞が入っている');
+  /**
+   * ⚠️ **運用者に見える文言へ送信基盤の固有名詞を出さない。**
+   *    2026-09-19 に「メール配信」タブが増え、内部の関数名
+   *    （`/.netlify/functions/admin-sendgrid-migration`）だけは script に現れる。
+   *    これは**画面に出る文字ではない**ので、検査は「表示される文言」に絞る。
+   *    エンドポイント名以外で固有名詞が出たら、これまでどおり落ちる。
+   */
+  const visible = SCRIPT.replace(/'\/\.netlify\/functions\/[a-z0-9-]+'/g, "'FN'");
+  assert.equal(/sendgrid/i.test(visible), false, '表示される文言に送信基盤の固有名詞が入っている');
+  assert.equal(/sendgrid/i.test(PAGE.slice(0, PAGE.indexOf('<script is:inline>'))), false,
+    'HTML 側に送信基盤の固有名詞が入っている');
 });
 
 test('本文プレビューはサンドボックス iframe で表示する（スクリプト実行なし）', () => {
