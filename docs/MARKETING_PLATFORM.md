@@ -292,6 +292,7 @@ read-only で確認できたのは次の 2 点:
 | **反応者を次の導線へ渡す** | 同 webhook（`sendgridContinuation` → `ak-drm-engaged`）| 0 |
 | delivered 10 通・無反応の打ち切り | 同 webhook（`applyDelivered`）| 0 |
 | 毎日の点検と異常通知 | `cron-sendgrid-selection-watch`（read-only ＋ 通知）| 0（異常時のみ読む）|
+| 初回配信後の確認（送信人数・失敗・反応者除外・重複送信）| 同上（下記の 6 項目を毎日自動判定）| 0 |
 | 週 2 回の一斉配信 | `cron-sendgrid-weekly`（枠決め → 文面 → 予約）| 0 |
 | 予約前の照合・貼り替え | `reconcile`（cutover のときだけ）| 承認 1 回 |
 
@@ -324,6 +325,19 @@ read-only で確認できたのは次の 2 点:
 - 予約: Single Send を 1 本作って `schedule` するだけ。**自前 queue / dispatcher は持たない**
 - 名前は `AK Weekly YYYY-MM-DD` で、**同じ名前があれば作らない**（二重予約の防止）
 
+### 毎日の点検が見る 6 項目（**初回配信後の確認はここで済ませる**）
+
+| 見るもの | 重さ | 判定 |
+|---|---|---|
+| 重複送信 | critical | 同じ通が 2 回以上送られていないか |
+| 未送信 | critical | 予定時刻＋60 分を過ぎて送られていない通が無いか |
+| 旧 AK の設定戻り | critical | `MARKETING_PROSPECT_ENGINE` が `sendgrid` のままか |
+| **送信人数の食い違い** | warn | 送った数が**前日控えた list 人数**と 5% 以上ずれていないか |
+| **反応者除外が効いているか** | warn | 反応が 10 人以上増えたのに list が減っていないことが無いか |
+| 失敗（bounce・苦情）| warn | 比率が 5% を超えていないか |
+
+**MK が初回配信後に指示を出す必要は無い。** 異常がなければ何も届かない。
+
 ### 異常時の止め方（**自動では止めない**）
 
 点検が異常を見つけたら**メールで知らせるだけ**で、予約は自動で取り消さない
@@ -340,5 +354,26 @@ unschedule する。判定は `selectionWatch.js`、しきい値も同ファイ�
 4. 有料転換（Customers への昇格）と売上
 5. 次の訴求段階（DRM 段）ごとの人数
 
-データ源は `admin-sendgrid-migration`（scan / preflight / reconcile 下見）と
-`admin-marketing`、および SendGrid の stats。**どれも既にある。**
+データ源は **`admin-sendgrid-migration` の `overview`**（2026-09-19 追加・読み取り専用）。
+1 回の呼び出しで次を返す（**アドレスは 1 件も返さない**）:
+
+```
+選別: list 別人数 / 予約・送信済みの通数 / requests・delivered・開封・bounce・配信停止 / 次の配信
+反応: AK 送信候補 / AK 反応済み / 継続 list の人数
+週次: 有効かどうか / 予約・送信済み / 次の配信 / delivered・開封・配信停止
+```
+
+**残りは画面に並べるだけ**（UI は次の工程）。新しい集計基盤は作らない。
+
+### 週 2 回配信を開ける前の検査（`weeklyPreflight`）
+
+有効化の前に **宛先・文面・CTA・配信停止・枠**の 5 点を読み取りだけで見る。
+1 つでも欠ければ `ok:false` で、**何も作らない**。
+
+| 見るもの | 合格条件 |
+|---|---|
+| 宛先 | `ak-drm-engaged` が存在し、**1 人以上**いる |
+| 文面 | 前日の実績から**実データで組める**（素材が無ければ不合格）|
+| CTA | 組んだ文面が `emailCopyStandard` を通る（着地先に無いものを約束していない）|
+| 配信停止 | unsubscribe group `AK Marketing` がある |
+| 枠 | 次の枠（水・土 19:00 JST）が取れる（選別中・週 2 通超過なら不合格）|

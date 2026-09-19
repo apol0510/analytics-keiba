@@ -79,7 +79,10 @@ export default async function handler() {
   const now = Date.now();
   const log = (o) => console.log(JSON.stringify({ fn: 'sendgrid-selection-watch', ...o }));
 
-  let state = { lastMismatch: null, lastNotifiedAtMs: null };
+  let state = {
+    lastMismatch: null, lastNotifiedAtMs: null,
+    lastEngaged: null, lastListTotal: null, lastListByName: null,
+  };
   try {
     const raw = await redis(['GET', WATCH_KEY]);
     if (raw) state = { ...state, ...JSON.parse(raw) };
@@ -97,18 +100,28 @@ export default async function handler() {
 
   let sends = [];
   let listTotal = 0;
+  const listByName = {};
   try {
     const lists = (await sg('/v3/marketing/lists?page_size=100')).result || [];
     for (const n of [1, 2, 3]) {
       const hit = lists.find((l) => String(l.name) === listNameFor(n));
-      if (hit) listTotal += Number(hit.contact_count) || 0;
+      if (hit) {
+        listTotal += Number(hit.contact_count) || 0;
+        listByName[listNameFor(n)] = Number(hit.contact_count) || 0;
+      }
     }
+    /** 前回控えた list 人数（**送るはずだった人数**）。初回は比べない */
+    const prevByName = (state.lastListByName && typeof state.lastListByName === 'object')
+      ? state.lastListByName : {};
     const all = (await sg('/v3/marketing/singlesends?page_size=100')).result || [];
     const mine = all.filter((s) => /^AK Prospect Selection /.test(String(s.name)));
     const stats = (await sg('/v3/marketing/stats/singlesends?page_size=100')).results || [];
     const statById = new Map(stats.map((s) => [String(s.id), s.stats || {}]));
     sends = mine.map((s) => {
       const st = statById.get(String(s.id)) || {};
+      /** その通の宛先 list を前回控えた人数で見積もる（**送るはずだった人数**） */
+      const startMatch = /\ss(\d)\s/.exec(` ${String(s.name)} `);
+      const listName = startMatch ? listNameFor(Number(startMatch[1])) : null;
       return {
         name: String(s.name),
         status: String(s.status || ''),
@@ -117,6 +130,8 @@ export default async function handler() {
         delivered: Number(st.delivered) || 0,
         bounces: Number(st.bounces) || 0,
         spam: Number(st.spam_reports) || 0,
+        expectedRecipients: listName && Number.isFinite(prevByName[listName])
+          ? prevByName[listName] : null,
       };
     });
   } catch (e) {
@@ -132,7 +147,9 @@ export default async function handler() {
     providerRejected: PROVIDER_REJECTED,
     listTotal,
     previousMismatch: state.lastMismatch,
-    engagedInSelectionLists: null, // 反応者の list 残留は reconcile 側で見る（二重に数えない）
+    /** 「反応は増えたのに list が減っていない」＝ 除外が効いていない、を見る */
+    engagedDelta: Number.isFinite(state.lastEngaged) ? engagedCount - state.lastEngaged : null,
+    listDelta: Number.isFinite(state.lastListTotal) ? listTotal - state.lastListTotal : null,
   });
 
   const decide = shouldNotify({ result, lastNotifiedAtMs: state.lastNotifiedAtMs, nowMs: now });
@@ -158,6 +175,10 @@ export default async function handler() {
       lastMismatch: result.mismatch,
       lastNotifiedAtMs: decide.notify ? now : state.lastNotifiedAtMs,
       lastCheckedAtMs: now,
+      lastEngaged: engagedCount,
+      lastListTotal: listTotal,
+      /** 次回「送るはずだった人数」を見積もるために控える（**人数だけ**） */
+      lastListByName: listByName,
     })]);
   } catch { /* 記録できなくても判定結果は返す */ }
 

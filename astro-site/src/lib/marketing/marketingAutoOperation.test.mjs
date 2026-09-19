@@ -228,3 +228,74 @@ test('週次が触れるのは singlesends と lists だけ（自前配送を持
     assert.equal(WEEKLY_CODE.includes(banned), false, `${banned} を持っている`);
   }
 });
+
+// ── 初回配信後の自動点検を強める（2026-09-19 追加）─────────────
+
+test('【要件】送った数が list の人数と食い違ったら検知する', () => {
+  const r = evaluateSelectionWatch({
+    nowMs: Date.UTC(2026, 8, 20, 12),
+    sends: [send({ requests: 200, expectedRecipients: 318 })],
+    engine: 'sendgrid', akActive: 100, providerRejected: 10, listTotal: 90,
+  });
+  assert.ok(r.findings.some((f) => f.id === WATCH_FINDING.RECIPIENT_GAP));
+});
+
+test('送った数が list の人数とほぼ一致なら検知しない', () => {
+  const r = evaluateSelectionWatch({
+    nowMs: Date.UTC(2026, 8, 20, 12),
+    sends: [send({ requests: 317, expectedRecipients: 318 })],
+    engine: 'sendgrid', akActive: 100, providerRejected: 10, listTotal: 90, previousMismatch: 0,
+  });
+  assert.equal(r.findings.some((f) => f.id === WATCH_FINDING.RECIPIENT_GAP), false);
+});
+
+test('まだ送っていない通・人数を控えていない通は食い違いを見ない', () => {
+  const r = evaluateSelectionWatch({
+    nowMs: Date.UTC(2026, 8, 20, 9),
+    sends: [
+      send({ status: 'scheduled', requests: 0, expectedRecipients: 318, sendAtMs: Date.UTC(2026, 8, 20, 10) }),
+      send({ requests: 10, expectedRecipients: null }),
+    ],
+    engine: 'sendgrid', akActive: 100, providerRejected: 10, listTotal: 90, previousMismatch: 0,
+  });
+  assert.equal(r.findings.some((f) => f.id === WATCH_FINDING.RECIPIENT_GAP), false);
+});
+
+test('【要件】反応は増えたのに list が減っていなければ「除外が効いていない」', () => {
+  const base = {
+    nowMs: Date.UTC(2026, 8, 21, 12), sends: [send()], engine: 'sendgrid',
+    akActive: 100, providerRejected: 10, listTotal: 90, previousMismatch: 0,
+  };
+  const bad = evaluateSelectionWatch({ ...base, engagedDelta: 25, listDelta: 0 });
+  assert.ok(bad.findings.some((f) => f.id === WATCH_FINDING.EXIT_NOT_WORKING));
+  // 反応が増えて list が減っていれば正常（除外が効いている）
+  const good = evaluateSelectionWatch({ ...base, engagedDelta: 25, listDelta: -25 });
+  assert.equal(good.findings.some((f) => f.id === WATCH_FINDING.EXIT_NOT_WORKING), false);
+  // 反応が少し増えただけでは騒がない
+  const quiet = evaluateSelectionWatch({ ...base, engagedDelta: 2, listDelta: 0 });
+  assert.equal(quiet.findings.some((f) => f.id === WATCH_FINDING.EXIT_NOT_WORKING), false);
+});
+
+// ── 管理画面に出す数 / 週次の事前検査（配線をソースで固定）─────
+
+const ADMIN_SRC = readFileSync(new URL('../../../netlify/functions/admin-sendgrid-migration.js', import.meta.url), 'utf8');
+
+test('overview は読み取りだけで、アドレスを返さない', () => {
+  const block = ADMIN_SRC.slice(ADMIN_SRC.indexOf("if (action === 'overview')"), ADMIN_SRC.indexOf("if (action === 'weeklyPreflight')"));
+  assert.match(block, /sideEffects: 'none'/);
+  for (const banned of ['PUT', 'DELETE', 'upsertContacts', 'removeContactsFromList']) {
+    assert.equal(block.includes(banned), false, `${banned} を持っている`);
+  }
+  // 出すのは件数だけ（contact の生データを載せない）
+  assert.equal(block.includes('contacts/search'), false);
+});
+
+test('weeklyPreflight は宛先・文面・CTA・配信停止・枠の 5 点を見る', () => {
+  const block = ADMIN_SRC.slice(ADMIN_SRC.indexOf("if (action === 'weeklyPreflight')"), ADMIN_SRC.indexOf('// ── 書き込み'));
+  for (const key of ['宛先', '文面', 'CTA', '配信停止', '枠']) {
+    assert.ok(block.includes(`${key}:`), `${key} を見ていない`);
+  }
+  assert.match(block, /const ok = Object\.values\(checks\)\.every\(\(c\) => c\.ok === true\)/);
+  assert.match(block, /sideEffects: 'none'/);
+  assert.equal(block.includes("'POST', '/v3/marketing/singlesends'"), false, '作成の経路を持っている');
+});
