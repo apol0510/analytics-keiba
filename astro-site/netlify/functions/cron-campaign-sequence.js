@@ -686,7 +686,7 @@ export async function runSequenceTick({
        */
       if (prospectFullRequired) {
         const body = {
-          ok: false, abort: 'prospect_full_reload_failed',
+          ok: false, abort: 'prospect_full_reload_failed', campaignId: base.campaignId,
           reason: prospectDegraded, sideEffects: 'none',
           note: '窓では判断できず全件へ落としたが、その全件も読めなかったため 1 件も積んでいません。',
         };
@@ -756,6 +756,8 @@ export async function runSequenceTick({
       const body = {
         ok: false,
         abort: 'window_needs_full_reload',
+        /** ⚠️ **どの campaign が止まったかをログだけで突き合わせられるようにする。** */
+        campaignId: base.campaignId,
         reason: verdict.reason,
         windowMinStep: verdict.windowMinStep,
         markedForFullReload: marked.ok === true,
@@ -796,7 +798,10 @@ export async function runSequenceTick({
   // ⚠️ **Airtable 台帳が空でも prospect が居れば続ける。**
   //    移行後は既送信が Redis 側にしか無いので、ここで打ち切ると 2 通目が黙って止まる。
   if (emails.length === 0 && prospectCount === 0) {
-    const body = { ok: false, abort: TICK_ABORT.NO_DUE, reason: 'no_one_in_sequence', sideEffects: 'none' };
+    const body = {
+      ok: false, abort: TICK_ABORT.NO_DUE, campaignId: base.campaignId,
+      reason: 'no_one_in_sequence', sideEffects: 'none',
+    };
     log(body);
     return body;
   }
@@ -1333,7 +1338,9 @@ export async function runSequenceTick({
     },
   });
   if (ledgerFailed) {
-    const body = { ok: false, abort: 'delivery_ledger_unreadable', sideEffects: 'none' };
+    const body = {
+      ok: false, abort: 'delivery_ledger_unreadable', campaignId: base.campaignId, sideEffects: 'none',
+    };
     log(body);
     return body;
   }
@@ -1381,6 +1388,8 @@ export async function runSequenceTick({
     const body = {
       ok: false,
       abort: 'window_needs_full_reload',
+      /** ⚠️ **どの campaign が止まったかをログだけで突き合わせられるようにする。** */
+      campaignId: base.campaignId,
       reason: 'zero_sendable_in_window',
       step: plan.step,
       alreadyQueued,
@@ -1469,7 +1478,7 @@ export async function runSequenceTick({
 
   if (targets.length === 0) {
     const body = {
-      ok: false, abort: TICK_ABORT.NO_DUE,
+      ok: false, abort: TICK_ABORT.NO_DUE, campaignId: base.campaignId,
       reason: filtered.dropped > 0 ? 'filtered_out' : 'all_already_queued',
       alreadyQueued, ...audienceView, sideEffects: 'none',
       /** 枠を埋めるために何人まで見たか（見切っていなければ次の tick に続きがある）*/
