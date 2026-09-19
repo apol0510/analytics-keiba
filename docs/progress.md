@@ -3006,7 +3006,7 @@ R5 / R6 で見るのは「**購入が起きたときに処理が正しいか**�
 `test:drm` 136 pass ／ `check:safety` EXIT=0 ／ `build` EXIT=0。
 **実メール送信・queue・本番書込み・production deploy・PR merge は 1 件も行っていない。**
 
-# 📈 有料化ファネルを GA4 で見えるようにする（2026-09-18）— **コード完了 / GA4 管理画面は未実施**
+# 📈 有料化ファネルを GA4 で見えるようにする（2026-09-18）— **本番反映済み / 残り = GA4 管理画面 4 件 + DebugView 目視**
 
 ## 目的
 
@@ -3101,11 +3101,12 @@ R5 / R6 で見るのは「**購入が起きたときに処理が正しいか**�
 
 **本番 DebugView での目視確認 — 未完了**（本番反映後に行う。下記「次作業」2）
 
-## 次作業
+## 次作業（**人間側の Google 画面操作が要る**）
 
-1. Draft PR のレビュー → merge（**merge は承認待ちで停止中**）
-2. 本番反映後、GA4 DebugView で `/pricing/` のモーダルを開いて `application_start` を目視
-3. 上の GA4 管理画面 **4 件**を**承認を得てから**実施（Search Console リンクは完了済み）
+1. GA4 → 管理 → **DebugView** で、本番 `/pricing/` のプランボタンを押して
+   `application_start`（`plan` / `plan_type` 付き）が届くことを目視する。
+   ※ ブラウザに GA Debugger 拡張を入れるなど、デバッグモードでの閲覧が要る。
+2. GA4 管理画面の **4 件**を承認を得てから実施（Search Console リンクは完了済み）。
 
 ## 完成条件
 
@@ -3126,11 +3127,12 @@ R5 / R6 で見るのは「**購入が起きたときに処理が正しいか**�
 - [x] docs 更新済み
 - [x] git diff 確認済み
 - [x] rollback 方針確認済み
-- [x] Draft PR 作成済み（#576）
-- [x] CI green（`safety-check` の `Verify 有料化ファネル計測` step が CI 上で実行されたことをログで確認）
-- [ ] 本番反映（merge 待ち）
+- [x] PR #576 squash merge 済み（`48522404`）
+- [x] CI green（PR / main の両方で `Verify 有料化ファネル計測` step が実行されたことをログで確認）
+- [x] **本番反映済み**（自動 deploy。手動 production deploy は行っていない）
+- [x] 本番での動作確認（GA4 へ 1 件も送らない形で実測。下記「本番実測」）
 - [ ] GA4 管理画面 **4 件**（Search Console リンクは完了済みのため対象外）
-- [ ] 本番 DebugView での目視確認
+- [ ] 本番 DebugView での目視確認（**人間側の Google 画面操作が必要**）
 
 ## rollback
 
@@ -3140,21 +3142,47 @@ R5 / R6 で見るのは「**購入が起きたときに処理が正しいか**�
 
 ## 本番反映状態
 
-**未反映**（Draft PR / merge 直前で停止中）。
+**反映済み**（2026-09-18 / PR #576 squash merge `48522404` → **自動 deploy**。
+手動 production deploy は行っていない）。
+
 GA4 管理画面の設定は **4 件が未実施**（Search Console リンクのみ 2026-09-18 に完了済み）。
-本番 DebugView での目視確認も**未完了**。
+本番 DebugView での目視確認も**未完了**（人間側の Google 画面操作が要る）。
+
+### 本番実測（read-only / **GA4 へは 1 件も送っていない**）
+
+| 確認 | 実測 |
+|---|---|
+| `/js/funnel-analytics.js` | merge 前 **404** → 反映後 **200**（10,106 bytes）。`origin/main` の内容と**バイト一致** |
+| script タグ | `/pricing/`・`/`・`/results-showcase/nankan/`・`/free-prediction/nankan/`・`/dashboard/` の 5 ページで 200 ＋ 計測 script ＋ gtag を確認 |
+| 読み込み順 | `submission-result.js` → `campaign-price.js` → `funnel-analytics.js` |
+| 包み込み | `__akFunnelModalWrapped` / `__akFunnelSuccessWrapped` ともに **true**。`campaign-price.js` の包み込み（`__akCampaignPriceWrapped`）とも**共存**している |
+| 語彙 | `PLAN_LABELS` / `PLAN_TYPE_LABELS` が本番で仕様どおり |
+
+**本番ページ上での発火確認**（本物の `gtag` を退避してスパイへ差し替え、観測後に元へ戻した。
+`dataLayer` の増加 **0** ＝ Google へは何も送っていない）:
+
+| 操作 | 出たイベント |
+|---|---|
+| `openBankModal('Premium Annual', 49800, 'annual')` | `application_start` `{plan:'Premium', plan_type:'Annual'}` |
+| 成功画面（`type:'bank-transfer'`）| `application_submitted` `{plan:'Premium Sanrenpuku', plan_type:'Lifetime'}` |
+| 成功画面（`type:'contact'`）| **出ない**（申込ではないので数えない）|
+
+PII（メール・金額）の混入 **0**。確認後はモーダルを閉じ、`gtag` を復元し、
+検証で端末の `localStorage` に残った申請履歴 2 件も削除済み（残 0）。
+
+⚠️ これは「計測が本番で動いている」ことの確認であって、
+**GA4 の管理画面で受信を見たわけではない**。DebugView 目視は未完了のまま。
 
 ## branch / HEAD / PR / CI
 
 | | |
 |---|---|
-| branch | `feat/ga4-conversion-funnel`（worktree `/Users/user/Projects/analytics-keiba-ga4`）|
+| PR | [#576](https://github.com/apol0510/analytics-keiba/pull/576) — **MERGED**（2026-09-18 12:14 UTC / squash）|
+| merge 直前の PR HEAD（実測）| `8921bdeda6708d01a3fd81ca7d0863d3749db16b` — behind 0 / ahead 3 / MERGEABLE・CLEAN |
+| main の squash commit | `48522404`（12 ファイル / +1,055 −1）|
 | 分岐元 | `origin/main` = `3082d8f2` |
-| コード本体の commit | `4f8ea675`（以後の commit は docs のみ）|
-| 再確認時の PR HEAD（実測）| `fc959d1b`（2026-09-18 再確認時点。**この docs 修正 commit で 1 つ進む**ので、最新の HEAD は PR #576 の画面を正とする）|
-| origin/main との差 | **behind 0 / ahead 2**（再確認時点の実測。`git rev-list --left-right --count origin/main...HEAD`）|
-| PR | [#576](https://github.com/apol0510/analytics-keiba/pull/576) — **Draft / 未 merge / MERGEABLE** |
-| CI | **green**。`safety-check` の `Verify 有料化ファネル計測` step が CI 上で実際に走ったことを実行ログで確認（run 35336583437）|
+| CI | **green**。PR 側（run 35342845852）と **main 側（run 35343582143）**の両方で `Verify 有料化ファネル計測` step が success |
+| 作業 worktree | `/Users/user/Projects/analytics-keiba-ga4` — merge 後に**撤去済み**。branch `feat/ga4-conversion-funnel` も削除（squash 後は再利用しない）|
 | Deploy Preview | 事前確認のみ実施。`/`・`/pricing/`・`/results-showcase/nankan/` の 3 ページで `funnel-analytics.js` の script タグと gtag の同居を実測、JS 本体も 200 で配信を確認（**本番確認ではない**）|
 
 ### 実行できなかった検証（既存状態・本 PR とは無関係）
