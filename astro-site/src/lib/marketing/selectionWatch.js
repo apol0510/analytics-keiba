@@ -14,7 +14,8 @@
  * | `duplicate_send` | critical | 同じ通が 2 回以上送られた |
  * | `send_missing` | critical | 予定時刻を過ぎたのに送られていない |
  * | `engine_conflict` | critical | 旧 AK が prospect を送る設定に戻っている |
- * | `exit_stalled` | warn | 反応者が list に残り続けている（除外が効いていない）|
+ * | `recipient_gap` | warn | 送った数が list の人数と大きく食い違う |
+ * | `exit_not_working` | warn | 反応は増えているのに list が減っていない（除外が効いていない）|
  * | `list_drift` | warn | AK と list の人数差が**広がっている** |
  * | `bounce_spike` | warn | bounce / 苦情の比率が高い |
  *
@@ -29,7 +30,8 @@ export const WATCH_FINDING = Object.freeze({
   DUPLICATE_SEND: 'duplicate_send',
   SEND_MISSING: 'send_missing',
   ENGINE_CONFLICT: 'engine_conflict',
-  EXIT_STALLED: 'exit_stalled',
+  RECIPIENT_GAP: 'recipient_gap',
+  EXIT_NOT_WORKING: 'exit_not_working',
   LIST_DRIFT: 'list_drift',
   BOUNCE_SPIKE: 'bounce_spike',
 });
@@ -42,8 +44,10 @@ export const WATCH_THRESHOLDS = Object.freeze({
   driftIncrease: 20,
   /** bounce + 苦情がこの比率を超えたら spike */
   bounceRate: 0.05,
-  /** 反応者がこの人数以上 list に残っていたら除外が止まっている */
-  stalledExits: 5,
+  /** 送った数と list の人数がこの比率以上ずれたら食い違い */
+  recipientGapRate: 0.05,
+  /** 反応がこの人数以上増えたのに list が減っていなければ除外が効いていない */
+  exitLagCount: 10,
 });
 
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
@@ -55,13 +59,15 @@ const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
  *   engine: string,
  *   akActive: number, providerRejected: number, listTotal: number,
  *   previousMismatch: number|null,
- *   engagedInSelectionLists: number|null,
+ *   engagedDelta: number|null, listDelta: number|null,
  * }} input
  */
 export function evaluateSelectionWatch(input = {}) {
   const {
     nowMs = Date.now(), sends = [], engine = '', akActive = 0, providerRejected = 0,
-    listTotal = 0, previousMismatch = null, engagedInSelectionLists = null,
+    listTotal = 0, previousMismatch = null,
+    /** 前回からの増減（**増えたのに減らない**を見るため） */
+    engagedDelta = null, listDelta = null,
   } = input;
 
   const findings = [];
@@ -91,10 +97,29 @@ export function evaluateSelectionWatch(input = {}) {
     if (due && !sent) add(WATCH_FINDING.SEND_MISSING, WATCH_SEVERITY.CRITICAL, { name: s.name });
   }
 
-  // 反応者が list に残り続けている
-  if (Number.isFinite(engagedInSelectionLists)
-    && engagedInSelectionLists >= WATCH_THRESHOLDS.stalledExits) {
-    add(WATCH_FINDING.EXIT_STALLED, WATCH_SEVERITY.WARN, { count: engagedInSelectionLists });
+  /**
+   * 送った数が list の人数と食い違っていないか。
+   * Single Send は**送信時**の在籍へ配るので、直前に控えた人数と大きくずれたら
+   * 宛先の取り違えか、除外が効きすぎ・効かなすぎのどちらか。
+   */
+  for (const s of sends) {
+    if (!s || !Number.isFinite(s.expectedRecipients) || s.expectedRecipients <= 0) continue;
+    if (num(s.requests) === 0) continue;                       // まだ送っていない
+    const gap = Math.abs(num(s.requests) - s.expectedRecipients) / s.expectedRecipients;
+    if (gap > WATCH_THRESHOLDS.recipientGapRate) {
+      add(WATCH_FINDING.RECIPIENT_GAP, WATCH_SEVERITY.WARN, {
+        name: s.name, requests: num(s.requests), expected: s.expectedRecipients,
+      });
+    }
+  }
+
+  /**
+   * 反応が増えているのに list が減っていない ＝ **除外が効いていない**。
+   * 反応が増えること自体は正常なので、「増えたのに減らない」だけを見る。
+   */
+  if (Number.isFinite(engagedDelta) && Number.isFinite(listDelta)
+    && engagedDelta >= WATCH_THRESHOLDS.exitLagCount && listDelta >= 0) {
+    add(WATCH_FINDING.EXIT_NOT_WORKING, WATCH_SEVERITY.WARN, { engagedDelta, listDelta });
   }
 
   // AK と list の不整合が**広がっている**か（増えていなければ異常としない）

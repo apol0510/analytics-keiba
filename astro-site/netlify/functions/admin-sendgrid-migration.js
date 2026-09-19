@@ -15,6 +15,8 @@
  * | `content` | **なし** | 10 通の件名（`full:true` で本文も）|
  * | `preflight` | **なし** | SendGrid 側の前提（custom field / list / contact 数 / unsubscribe group）|
  * | `reconcile` | 下見は**なし** | **予約の直前に AK を正本として list を合わせ直す**（二重ゲート + `apply:true` で書き込み）|
+ * | `overview` | **なし** | 管理画面に出す数（選別の進み / 反応者 / 週次の予約 / 送信実績）|
+ * | `weeklyPreflight` | **なし** | 週 2 回配信を開ける前の検査（宛先・文面・CTA・配信停止）|
  * | `import` | **書き込み** | contact の upsert（**二重ゲート + `apply:true`**）|
  * | `exit` | **書き込み** | 反応・抑止した人を list から外す（同上）|
  *
@@ -54,6 +56,12 @@ import {
   buildReconcilePlan, summarizeReconcilePlan, assertReconcileSafety, reconcileSteps,
   RECONCILE_LIMITS, runWithSplit, REJECTED_INDEX_KEY,
 } from '../../src/lib/marketing/sendgridListReconcile.js';
+import { CONTINUATION_LIST_NAME } from '../../src/lib/marketing/sendgridContinuation.js';
+import {
+  planWeeklySend, validateWeeklyContent, summarizeWeeklyPlan,
+} from '../../src/lib/marketing/weeklyNewsletterPlan.js';
+import { buildWeeklyContent } from '../../src/lib/marketing/weeklyNewsletterContent.js';
+import { buildLatestShowcase } from '../../src/lib/resultsShowcase.js';
 
 const BRAND = 'analytics-keiba';
 /** 1 回の import で投入してよい contact 数（**上限を越える指示は拒否**） */
@@ -229,6 +237,173 @@ export const handler = async (event) => {
         unsubscribeGroups: groups.map((g) => ({ id: g.id, name: g.name })),
         cutover: { steps: CUTOVER_STEPS, rollback: ROLLBACK_STEPS },
         notice: 'これは読み取りのみです。',
+      });
+    }
+
+    /**
+     * ── overview（**管理画面に出す数**）─────────────────────────
+     *
+     * MK が毎日見るのはここ 1 か所。**新しい集計基盤は作らない**（既にある数を並べるだけ）。
+     * 読み取りだけで、アドレスは 1 件も返さない。
+     */
+    if (action === 'overview') {
+      const apiKey = process.env.SENDGRID_API_KEY;
+      if (!apiKey) return json(503, { ok: false, reason: 'sendgrid_api_key_missing', sideEffects: 'none' });
+      const api = createSendGridMarketingApi({ apiKey });
+
+      const [lists, sendsRaw, statsRaw] = await Promise.all([
+        api.getLists(),
+        fetch('https://api.sendgrid.com/v3/marketing/singlesends?page_size=100', {
+          headers: { Authorization: `Bearer ${apiKey}` },
+        }).then((r) => r.json()).catch(() => ({})),
+        fetch('https://api.sendgrid.com/v3/marketing/stats/singlesends?page_size=100', {
+          headers: { Authorization: `Bearer ${apiKey}` },
+        }).then((r) => r.json()).catch(() => ({})),
+      ]);
+
+      const byName = new Map(lists.map((l) => [l.name, l.contactCount]));
+      const selection = [1, 2, 3].map((n) => ({
+        list: listNameFor(n), 人数: byName.get(listNameFor(n)) ?? null,
+      }));
+      const statById = new Map(((statsRaw && statsRaw.results) || []).map((x) => [String(x.id), x.stats || {}]));
+      const sends = ((sendsRaw && sendsRaw.result) || []).map((x) => {
+        const st = statById.get(String(x.id)) || {};
+        return {
+          name: String(x.name || ''),
+          status: String(x.status || ''),
+          send_at: x.send_at || null,
+          requests: Number(st.requests) || 0,
+          delivered: Number(st.delivered) || 0,
+          opens: Number(st.unique_opens) || 0,
+          bounces: Number(st.bounces) || 0,
+          unsubscribes: Number(st.unsubscribes) || 0,
+        };
+      });
+      const selectionSends = sends.filter((x) => /^AK Prospect Selection /.test(x.name));
+      const weeklySends = sends.filter((x) => /^AK Weekly /.test(x.name));
+      const sum = (rows, key) => rows.reduce((a, r) => a + (Number(r[key]) || 0), 0);
+
+      let akActive = null;
+      let akEngaged = null;
+      try {
+        akActive = Number(await redisCmd(['SCARD', 'ak:prospect:index:active'])) || 0;
+        akEngaged = Number(await redisCmd(['SCARD', 'ak:prospect:index:engaged'])) || 0;
+      } catch { /* 読めなければ null のまま返す（推測しない） */ }
+
+      return json(200, {
+        mode: 'sendgrid-marketing-overview',
+        ok: true,
+        sideEffects: 'none',
+        engine,
+        選別: {
+          list別: selection,
+          list合計: selection.reduce((a, r) => a + (r.人数 || 0), 0),
+          予約: selectionSends.filter((x) => x.status === 'scheduled').length,
+          送信済み: selectionSends.filter((x) => x.status === 'triggered').length,
+          実績: {
+            requests: sum(selectionSends, 'requests'),
+            delivered: sum(selectionSends, 'delivered'),
+            開封: sum(selectionSends, 'opens'),
+            bounce: sum(selectionSends, 'bounces'),
+            配信停止: sum(selectionSends, 'unsubscribes'),
+          },
+          次の配信: selectionSends
+            .filter((x) => x.status === 'scheduled' && x.send_at)
+            .map((x) => x.send_at).sort()[0] || null,
+        },
+        反応: {
+          AK送信候補: akActive,
+          AK反応済み: akEngaged,
+          継続list: byName.get(CONTINUATION_LIST_NAME) ?? null,
+          継続list名: CONTINUATION_LIST_NAME,
+        },
+        週次: {
+          有効: String(process.env.SENDGRID_WEEKLY_ENABLED || '').trim() === 'true',
+          予約: weeklySends.filter((x) => x.status === 'scheduled').length,
+          送信済み: weeklySends.filter((x) => x.status === 'triggered').length,
+          次の配信: weeklySends
+            .filter((x) => x.status === 'scheduled' && x.send_at)
+            .map((x) => x.send_at).sort()[0] || null,
+          実績: {
+            delivered: sum(weeklySends, 'delivered'),
+            開封: sum(weeklySends, 'opens'),
+            配信停止: sum(weeklySends, 'unsubscribes'),
+          },
+        },
+        notice: '読み取りのみ。アドレスは含みません。',
+      });
+    }
+
+    /**
+     * ── weeklyPreflight（**開ける前に見る**）────────────────────
+     *
+     * 週 2 回配信を有効にしてよいかを、**宛先・文面・CTA・配信停止**の 4 点で判定する。
+     * 1 つでも欠ければ `ok:false`。**実際の作成・予約はしない**。
+     */
+    if (action === 'weeklyPreflight') {
+      const apiKey = process.env.SENDGRID_API_KEY;
+      if (!apiKey) return json(503, { ok: false, reason: 'sendgrid_api_key_missing', sideEffects: 'none' });
+      const api = createSendGridMarketingApi({ apiKey });
+      const lists = await api.getLists();
+      const cont = lists.find((l) => l.name === CONTINUATION_LIST_NAME) || null;
+
+      const sendsRaw = await fetch('https://api.sendgrid.com/v3/marketing/singlesends?page_size=100', {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      }).then((r) => r.json()).catch(() => ({}));
+      const existingNames = ((sendsRaw && sendsRaw.result) || []).map((x) => String(x.name || ''));
+
+      const selectionEndsAt = String(process.env.SENDGRID_SELECTION_ENDS_AT || '').trim();
+      const selectionEndsMs = Date.parse(selectionEndsAt);
+      const plan = planWeeklySend({
+        nowMs: Date.now(),
+        selectionEndsMs: Number.isFinite(selectionEndsMs) ? selectionEndsMs : null,
+        existingNames,
+        audienceCount: cont ? cont.contactCount : 0,
+        listId: cont ? cont.id : null,
+      });
+
+      /** 文面は**実データで**組んでみて、品質基準に通るかまで見る */
+      let content = { ok: false, reason: 'not_built' };
+      let copy = { ok: false, issues: ['not_evaluated'] };
+      try {
+        const mod = await import('../../src/data/archiveResults.json', { with: { type: 'json' } });
+        const showcase = buildLatestShowcase((mod && (mod.default || mod)) || []);
+        content = buildWeeklyContent({ dateKey: null, showcase });
+        if (content.ok) copy = validateWeeklyContent(content.step);
+      } catch { /* 下の判定で弾く */ }
+
+      const groups = await api.getUnsubscribeGroups();
+      const group = groups.find((g) => g.name === 'AK Marketing') || null;
+
+      const checks = {
+        宛先: {
+          ok: !!cont && cont.contactCount > 0,
+          list: CONTINUATION_LIST_NAME,
+          人数: cont ? cont.contactCount : null,
+          詳細: cont ? null : 'list_missing',
+        },
+        文面: { ok: content.ok === true, 詳細: content.ok ? null : content.reason },
+        CTA: {
+          ok: copy.ok === true,
+          詳細: copy.ok ? null : (copy.issues || []).join(',') || 'copy_rejected',
+        },
+        配信停止: {
+          ok: !!group,
+          group: group ? group.name : null,
+          詳細: group ? null : 'unsubscribe_group_missing',
+        },
+        枠: { ok: plan.ok === true, 詳細: plan.ok ? plan.slot.name : plan.reason },
+      };
+      const ok = Object.values(checks).every((c) => c.ok === true);
+      return json(200, {
+        mode: 'sendgrid-weekly-preflight',
+        ok,
+        sideEffects: 'none',
+        有効: String(process.env.SENDGRID_WEEKLY_ENABLED || '').trim() === 'true',
+        選別終了予定: selectionEndsAt || null,
+        checks,
+        次の枠: plan.ok ? summarizeWeeklyPlan(plan) : null,
+        notice: '読み取りのみ。作成・予約はしていません。',
       });
     }
 
