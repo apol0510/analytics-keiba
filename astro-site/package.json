@@ -89,6 +89,7 @@
     "test:webhooks": "node --test src/lib/webhooks/*.test.mjs",
     "test:crm": "node --test src/lib/crm/*.test.mjs",
     "audit:sendgrid-migration": "node scripts/sendgrid-migration-audit.mjs",
+    "schedule:sendgrid-single-sends": "node scripts/sendgrid-schedule-single-sends.mjs",
     "check:measurement": "node scripts/check-measurement-settings.mjs",
     "check:fn-no-undef": "node scripts/check-functions-no-undef.mjs",
     "check:no-unbounded-scan": "node scripts/check-no-unbounded-customer-scan.mjs",
