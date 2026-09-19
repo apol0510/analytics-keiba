@@ -66,14 +66,59 @@ test('AK の list 以外には触らない（KI などの資産を巻き込ま�
   assert.equal(plan.changes, 0, 'AK 以外の list 在籍は変更理由にしない');
 });
 
-test('SendGrid に居ない人は「入れる」に積む（provider rejected はここで直らない）', () => {
+test('【本件】SendGrid に居ない人は reconcile では入れない（入れるのは import の仕事）', () => {
   const plan = buildReconcilePlan({
     akEntries: [ready('missing@example.com', 1)],
     sendgridByEmail: {},
     listIdByMessage: L,
   });
   assert.equal(plan.counts[RECONCILE_ACTION.MISSING], 1);
+  assert.equal(plan.addByList.size, 0, '入れに行っていない');
+  assert.equal(plan.changes, 0);
+});
+
+test('明示すれば入れに行ける（既定は入れない）', () => {
+  const plan = buildReconcilePlan({
+    akEntries: [ready('missing@example.com', 1)],
+    sendgridByEmail: {},
+    listIdByMessage: L,
+    addMissing: true,
+  });
   assert.equal(plan.addByList.get('list-1').length, 1);
+});
+
+test('【本件】受理されないと分かっている宛先には二度と足さない（明示しても）', () => {
+  const hashOf = (e) => `h:${e}`;
+  const knownRejected = new Set([hashOf('bad@example.com')]);
+  for (const addMissing of [false, true]) {
+    const plan = buildReconcilePlan({
+      akEntries: [ready('bad@example.com', 1)],
+      sendgridByEmail: {},
+      listIdByMessage: L,
+      knownRejected, hashOf, addMissing,
+    });
+    assert.equal(plan.counts[RECONCILE_ACTION.PROVIDER_REJECTED], 1, `addMissing=${addMissing}`);
+    assert.equal(plan.changes, 0, `addMissing=${addMissing}`);
+    assert.equal(summarizeReconcilePlan(plan)['provider rejected（対象外）'], 1);
+  }
+});
+
+test('【本件】実際の write plan は貼り替えだけになる（rejected への add 試行を含まない）', () => {
+  const hashOf = (e) => `h:${e}`;
+  const knownRejected = new Set(['a', 'b', 'c'].map((x) => hashOf(`r${x}@example.com`)));
+  const ak = [
+    ready('moved1@example.com', 3), ready('moved2@example.com', 3), ready('moved3@example.com', 3),
+    ready('ra@example.com', 1), ready('rb@example.com', 1), ready('rc@example.com', 1),
+  ];
+  const sg = {};
+  for (const e of ['moved1', 'moved2', 'moved3']) sg[`${e}@example.com`] = { listIds: ['list-2'], nextMessage: 2 };
+  const plan = buildReconcilePlan({
+    akEntries: ak, sendgridByEmail: sg, listIdByMessage: L, knownRejected, hashOf,
+  });
+  assert.equal(plan.changes, 6, 'remove 3 + add 3 だけ');
+  assert.equal(plan.counts[RECONCILE_ACTION.PROVIDER_REJECTED], 3);
+  const steps = reconcileSteps(plan);
+  assert.equal(steps.filter((x) => x.op === 'add').reduce((a, x) => a + x.entries.length, 0), 3);
 });
 
 test('通し番号が壊れている人は触らない（当て推量で list へ入れない）', () => {
@@ -110,8 +155,11 @@ test('要約にアドレスを入れない', () => {
 });
 
 test('変更が多すぎるときは実行しない（人に返す）', () => {
-  const many = Array.from({ length: RECONCILE_LIMITS.maxChanges + 1 }, (_, i) => ready(`u${i}@example.com`, 1));
-  const plan = buildReconcilePlan({ akEntries: many, sendgridByEmail: {}, listIdByMessage: L });
+  const n = RECONCILE_LIMITS.maxChanges + 1;
+  const many = Array.from({ length: n }, (_, i) => ready(`u${i}@example.com`, 3));
+  const sg = {};
+  for (let i = 0; i < n; i += 1) sg[`u${i}@example.com`] = { listIds: ['list-2'], nextMessage: 2 };
+  const plan = buildReconcilePlan({ akEntries: many, sendgridByEmail: sg, listIdByMessage: L });
   const safety = assertReconcileSafety(plan);
   assert.equal(safety.ok, false);
   assert.equal(safety.violation, 'too_many_changes');
@@ -136,10 +184,11 @@ test('list id が無ければ計画を作らない（fail closed）', () => {
 test('同じアドレスが 2 回来ても 1 回しか数えない', () => {
   const plan = buildReconcilePlan({
     akEntries: [ready('a@example.com', 1), ready('a@example.com', 1)],
-    sendgridByEmail: {},
+    sendgridByEmail: { 'a@example.com': { listIds: ['list-2'], nextMessage: 2 } },
     listIdByMessage: L,
   });
   assert.equal(plan.addByList.get('list-1').length, 1);
+  assert.equal(plan.changes, 2, 'remove 1 + add 1');
 });
 
 test('【現場の形】投入直後の実測（一致 / 番号が進んだ / 反応で離脱）が 1 回で閉じる', () => {
@@ -159,6 +208,7 @@ test('【現場の形】投入直後の実測（一致 / 番号が進んだ / �
   assert.equal(s['一致'], 5);
   assert.equal(s['入れ直す'], 3);
   assert.equal(s['退出させる'], 2);
+  assert.equal(s['provider rejected（対象外）'], 0);
   assert.equal(s['変更予定'], 3 + 3 + 2, 'remove 3 + add 3 + exit 2');
   assert.equal(assertReconcileSafety(plan).ok, true);
 });

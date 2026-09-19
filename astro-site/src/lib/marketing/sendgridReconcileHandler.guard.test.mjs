@@ -64,5 +64,24 @@ test('AK の list 以外を消しに行かない（list id は SendGrid の名�
 test('状態を引けなかった人は計画から外す（fail closed）', () => {
   assert.match(BLOCK, /const unresolved = new Set\(lookupSplit\.rejected/);
   assert.match(BLOCK, /const targets = akEntries\.filter\(\(e\) => !unresolved\.has/);
-  assert.match(BLOCK, /buildReconcilePlan\(\{ akEntries: targets/);
+  assert.match(BLOCK, /buildReconcilePlan\(\{\s*\n\s*akEntries: targets,/);
+});
+
+test('SendGrid に居ない人へは既定で足さない（reconcile は貼り替えに絞る）', () => {
+  assert.match(BLOCK, /addMissing: req\.addMissing === true/);
+});
+
+test('受理しない宛先は hash の索引で覚え、二度と試さない（アドレスは保存しない）', () => {
+  assert.match(BLOCK, /SMEMBERS', REJECTED_INDEX_KEY/);
+  assert.match(BLOCK, /SADD', REJECTED_INDEX_KEY, \.\.\.r\.rejected\.map\(\(e\) => emailHash\(e\.email\)\)/);
+  assert.equal(/SADD[^\n]*e\.email\s*\)/.test(BLOCK.replace(/emailHash\(e\.email\)/g, 'H')), false, '生アドレスを保存していない');
+});
+
+test('AK 本体の状態（抑止・打ち切り）を書き換える呼び出しが無い', () => {
+  for (const banned of ['recordSuppression(', 'recordEngagement(', 'markBlocked(', 'blockedKey(', 'applyDelivered(']) {
+    assert.equal(BLOCK.includes(banned), false, `${banned} を呼んでいる`);
+  }
+  // Redis へ書くのは「受理しない宛先の hash 索引」だけ
+  const writes = [...BLOCK.matchAll(/redisCmd\(\['([A-Z]+)'/g)].map((m) => m[1]);
+  assert.deepEqual([...new Set(writes)].sort(), ['SADD', 'SMEMBERS']);
 });

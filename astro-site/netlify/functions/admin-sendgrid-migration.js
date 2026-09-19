@@ -28,7 +28,7 @@
  * ⚠️ ゲートが閉じているときは **SendGrid へ 1 リクエストも出さない**。
  */
 
-import { createProspectStore } from '../../src/lib/marketing/prospectStore.js';
+import { createProspectStore, emailHash } from '../../src/lib/marketing/prospectStore.js';
 import { createDeliveryKeyStore } from '../../src/lib/marketing/deliveryKeyStore.js';
 import { getBrandConfig } from '../../src/lib/newsletter/brand-config.js';
 import {
@@ -52,7 +52,7 @@ import {
 } from '../../src/lib/marketing/sendgridCutover.js';
 import {
   buildReconcilePlan, summarizeReconcilePlan, assertReconcileSafety, reconcileSteps,
-  RECONCILE_LIMITS, runWithSplit,
+  RECONCILE_LIMITS, runWithSplit, REJECTED_INDEX_KEY,
 } from '../../src/lib/marketing/sendgridListReconcile.js';
 
 const BRAND = 'analytics-keiba';
@@ -311,7 +311,30 @@ export const handler = async (event) => {
        */
       const unresolved = new Set(lookupSplit.rejected.map((e) => String(e).toLowerCase()));
       const targets = akEntries.filter((e) => !unresolved.has(String(e.email).toLowerCase()));
-      const plan = buildReconcilePlan({ akEntries: targets, sendgridByEmail: sgMap, listIdByMessage: ids });
+
+      /**
+       * **SendGrid が受理しないと分かっている宛先には二度と足さない。**
+       * 索引は `sha256(email)` だけを持つ（**アドレスは持たない**）。
+       * ここに載っている人は選別配信の**対象外のまま**にする（AK 側の状態は変えない）。
+       */
+      let knownRejected = new Set();
+      try {
+        const raw = await redisCmd(['SMEMBERS', REJECTED_INDEX_KEY]);
+        if (Array.isArray(raw)) knownRejected = new Set(raw.map(String));
+      } catch { /* 読めなければ空。**足さない側**へは倒さない（下の addMissing:false が効く） */ }
+
+      const plan = buildReconcilePlan({
+        akEntries: targets,
+        sendgridByEmail: sgMap,
+        listIdByMessage: ids,
+        knownRejected,
+        hashOf: emailHash,
+        /**
+         * ⚠️ **reconcile は在籍の貼り替えに絞る**。SendGrid に居ない人を入れるのは
+         *    `import` の仕事。ここで入れに行くと、受理されない宛先へ毎回試行してしまう。
+         */
+        addMissing: req.addMissing === true,
+      });
       const safety = assertReconcileSafety(plan);
       const gateOpen = isWriteEnabled(process.env);
       const apply = req.apply === true;
@@ -379,6 +402,16 @@ export const handler = async (event) => {
           applied.added += r.ok;
           applied.requests += r.requests;
           applied.providerRejected += r.rejected.length;
+          /**
+           * 受理されなかった宛先を **hash で**覚える（アドレスは保存しない）。
+           * 次回からは計画に載らず、**二度と試さない**。
+           * ⚠️ AK 本体の状態（SUPPRESSED / blocked）は**変えない**。
+           */
+          if (r.rejected.length > 0) {
+            try {
+              await redisCmd(['SADD', REJECTED_INDEX_KEY, ...r.rejected.map((e) => emailHash(e.email))]);
+            } catch { /* 覚えられなくても実行結果は変えない（次回また試すだけ） */ }
+          }
         }
       }
 
