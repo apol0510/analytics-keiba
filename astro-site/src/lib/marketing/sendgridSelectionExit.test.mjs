@@ -201,17 +201,85 @@ test('【KI/KMA 影響 0】選別 list 以外の id は絶対に返さない', a
   assert.deepEqual(seen, ['GET https://api.sendgrid.com/v3/marketing/lists']);
 });
 
-test('【KI/KMA 影響 0】触る API は list の取得・contact 検索・list からの除去だけ', () => {
+test('【KI/KMA 影響 0】触る API は list 取得・contact 検索・list からの除去・継続 list への追加だけ', () => {
   const src = readFileSync(fileURLToPath(new URL('./sendgridSelectionExit.js', import.meta.url)), 'utf8');
   const paths = [...src.matchAll(/'(\/v3\/[^']+)'/g)].map((m) => m[1].split('?')[0]);
   const uniq = [...new Set(paths)].sort();
-  assert.deepEqual(uniq, ['/v3/marketing/contacts/search/emails', '/v3/marketing/lists']);
+  /**
+   * 2026-09-19 に 1 つだけ増えた: `PUT /v3/marketing/contacts`。
+   * **反応した人を継続配信の list へ渡す**ためだけに使う（止めて終わりにしない）。
+   * contact を作る API と同じ口だが、渡す list は継続 list 1 本に限る。
+   */
+  assert.deepEqual(uniq, [
+    '/v3/marketing/contacts', '/v3/marketing/contacts/search/emails', '/v3/marketing/lists',
+  ]);
   // DELETE は list の members に対してだけ（テンプレート文字列側）
   assert.match(src, /\/v3\/marketing\/lists\/\$\{encodeURIComponent\(listId\)\}\/contacts\?contact_ids=/);
-  // 送信・contact 作成・suppression 操作の経路を持たない
-  for (const bad of ['/v3/mail/send', '/v3/marketing/singlesends', 'PUT', 'PATCH']) {
+  // PUT は継続 list への追加 1 か所だけ
+  assert.equal((src.match(/call\('PUT'/g) || []).length, 1);
+  assert.match(src, /list_ids: \[String\(listId\)\]/);
+  // 送信・予約・suppression 操作の経路を持たない
+  for (const bad of ['/v3/mail/send', '/v3/marketing/singlesends', 'PATCH', '/suppression']) {
     assert.equal(src.includes(bad), false, `${bad} を持っている`);
   }
+});
+
+test('継続 list が無ければ何もしない（webhook が list を作らない）', async () => {
+  const { applySelectionExit: apply } = await import('./sendgridSelectionExit.js');
+  const client = {
+    async selectionListIds() { return ['ak-1']; },
+    async contactIdsChecked() { return { byEmail: new Map([['a@example.test', 'c1']]), lookupFailed: false }; },
+    async removeFromList() { return { status: 200, removed: 1 }; },
+    async continuationListId() { return null; },
+    async addToContinuation() { throw new Error('作ってはいけない'); },
+  };
+  const out = await apply({
+    changes: [{ email: 'a@example.test', state: PROSPECT_STATE.ENGAGED }], client, env: {},
+  });
+  assert.equal(out.continuation.skipped, 'continuation_list_not_found');
+  assert.equal(out.continuation.入れた件数, 0);
+});
+
+test('反応した人は継続 list へ渡す（外してから入れる）', async () => {
+  const { applySelectionExit: apply } = await import('./sendgridSelectionExit.js');
+  const order = [];
+  const client = {
+    async selectionListIds() { return ['ak-1']; },
+    async contactIdsChecked() { return { byEmail: new Map([['a@example.test', 'c1']]), lookupFailed: false }; },
+    async removeFromList() { order.push('remove'); return { status: 200, removed: 1 }; },
+    async continuationListId() { return 'cont-1'; },
+    async addToContinuation({ listId, emails }) {
+      order.push('add');
+      assert.equal(listId, 'cont-1');
+      assert.deepEqual(emails, ['a@example.test']);
+      return { status: 202, added: 1 };
+    },
+  };
+  const out = await apply({
+    changes: [{ email: 'a@example.test', state: PROSPECT_STATE.ENGAGED }], client, env: {},
+  });
+  assert.deepEqual(order, ['remove', 'add'], '入れてから外している');
+  assert.equal(out.continuation.入れた件数, 1);
+});
+
+test('止めた人・配り終えた人は継続 list へ渡さない', async () => {
+  const { applySelectionExit: apply } = await import('./sendgridSelectionExit.js');
+  const client = {
+    async selectionListIds() { return ['ak-1']; },
+    async contactIdsChecked() { return { byEmail: new Map([['b@example.test', 'c2']]), lookupFailed: false }; },
+    async removeFromList() { return { status: 200, removed: 1 }; },
+    async continuationListId() { return 'cont-1'; },
+    async addToContinuation() { throw new Error('渡してはいけない'); },
+  };
+  const out = await apply({
+    changes: [
+      { email: 'b@example.test', state: PROSPECT_STATE.SUPPRESSED },
+      { email: 'c@example.test', state: PROSPECT_STATE.EXHAUSTED },
+    ],
+    client,
+    env: {},
+  });
+  assert.equal(out.continuation.対象, 0);
 });
 
 // ── 失敗を握り潰さない（ENGAGED / PROMOTED）─────────────────────────

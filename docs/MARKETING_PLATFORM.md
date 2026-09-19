@@ -274,3 +274,71 @@ read-only で確認できたのは次の 2 点:
 **変わらないもの**（今回の方針でも 1 つも緩めない）:
 反応の定義 / delivered 10 通・無反応での打ち切り / unsubscribe・bounce・complaint の即時除外 /
 二重送信防止（`DeliveryKey`）/ 取引メールへの不適用 / PII を docs・ログ・repo へ出さないこと。
+
+---
+
+## 自動運用（2026-09-19 MK 確定 / **MK が毎日触らない**）
+
+> **MK が毎回 Claude を起動して配信準備・予約・送信確認を指示する運用は禁止。**
+> 日々の仕事は「顧客の反応と売上を見る」だけにする。
+
+### 誰が何をするか
+
+| 役割 | 担い手 | 人手 |
+|---|---|---|
+| 大量配送・予約実行 | **SendGrid**（Single Send）| 0 |
+| 反応の取り込み（delivered / open / 配信停止 / bounce / 苦情）| **既存 Event Webhook** | 0 |
+| 反応者を選別から外す | 同 webhook（`sendgridSelectionExit`）| 0 |
+| **反応者を次の導線へ渡す** | 同 webhook（`sendgridContinuation` → `ak-drm-engaged`）| 0 |
+| delivered 10 通・無反応の打ち切り | 同 webhook（`applyDelivered`）| 0 |
+| 毎日の点検と異常通知 | `cron-sendgrid-selection-watch`（read-only ＋ 通知）| 0（異常時のみ読む）|
+| 週 2 回の一斉配信 | `cron-sendgrid-weekly`（枠決め → 文面 → 予約）| 0 |
+| 予約前の照合・貼り替え | `reconcile`（cutover のときだけ）| 承認 1 回 |
+
+### 棚卸し（2026-09-19 時点）
+
+**自動で回るもの**
+
+- 27 通の配信そのもの（SendGrid が予定どおり送る）
+- 反応の取り込みと、反応者・配信停止・bounce・苦情の**即時除外**
+- delivered 10 通・無反応の**自動打ち切り**（EXHAUSTED → list からも外れる）
+- 反応者を `ak-drm-engaged` へ渡す（継続配信の母集団づくり）
+- 毎日の点検と異常通知
+
+**まだ人手が要るもの（残件）**
+
+| # | 残件 | いま必要な人手 | 無くす方法 |
+|---|---|---|---|
+| 1 | `ak-drm-engaged` list の作成 | MK が 1 回 | 作成後は不要（webhook が入れる）|
+| 2 | 週次の有効化（`SENDGRID_WEEKLY_ENABLED`）| MK が 1 回 | 開けたら以後不要 |
+| 3 | 管理画面のマーケティング表示 | 画面の実装 | `/admin/premium-plus-eligibility/` の強化（下記）|
+| 4 | cutover 時の reconcile | 承認 1 回 | 予約のたびに 1 回だけ。日常運用には出てこない |
+
+### 週 2 回の一斉配信（選別後）
+
+- 宛先: **`ak-drm-engaged`**（反応した人。webhook が自動で入れる）
+- 曜日・時刻: **水・土 19:00 JST**、1 週間に **2 通まで**
+- 文面: **前日の実績から自動で組む**（`weeklyNewsletterContent`）。
+  **数字は渡された実績だけ**を使い、素材が無ければ**送らない**
+- 品質: `emailCopyStandard` を通らない文面は**送らない**（着地先に無いものを約束しない）
+- 予約: Single Send を 1 本作って `schedule` するだけ。**自前 queue / dispatcher は持たない**
+- 名前は `AK Weekly YYYY-MM-DD` で、**同じ名前があれば作らない**（二重予約の防止）
+
+### 異常時の止め方（**自動では止めない**）
+
+点検が異常を見つけたら**メールで知らせるだけ**で、予約は自動で取り消さない
+（止めるほうが事故になる場面があるため）。止めるときは SendGrid 側で当該 Single Send を
+unschedule する。判定は `selectionWatch.js`、しきい値も同ファイルに集約する。
+
+### 管理画面（`/admin/premium-plus-eligibility/`）の強化 — **設計のみ / 未実装**
+
+見えるようにするもの（**新しい集計基盤は作らない。既存の read-only API を並べる**）:
+
+1. 選別の進み（号ごとの配信数・delivered・open・除外数）
+2. 反応者の数と、継続配信 list の人数
+3. 週次配信の予約状況と直近の結果
+4. 有料転換（Customers への昇格）と売上
+5. 次の訴求段階（DRM 段）ごとの人数
+
+データ源は `admin-sendgrid-migration`（scan / preflight / reconcile 下見）と
+`admin-marketing`、および SendGrid の stats。**どれも既にある。**
