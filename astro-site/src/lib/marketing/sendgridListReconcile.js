@@ -235,4 +235,40 @@ export function reconcileSteps(plan) {
   return steps;
 }
 
+/**
+ * **1 件でも受理されない宛先が混ざると batch ごと落ちる**ので、落ちたら割って通す。
+ *
+ * SendGrid の contacts API（upsert も `search/emails` も）は、
+ * 壊れたアドレスが 1 件混ざると**リクエスト全体を 400 で返す**。
+ * 2026-09-18 の投入でこれを踏み、良い宛先まで巻き添えで落ちた。
+ * だから **半分に割って再試行**し、1 件まで割っても通らないものだけを
+ * `provider rejected` として数える（**直せないものを直ったことにしない**）。
+ *
+ * @param {Array} items 送る単位（アドレスの配列など）
+ * @param {(chunk:Array)=>Promise<any>} run 1 チャンクを処理する（失敗は throw）
+ * @returns {Promise<{ok:number, rejected:Array, requests:number}>} rejected は**ログへ出さない**
+ */
+export async function runWithSplit(items, run, { minChunk = 1 } = {}) {
+  const list = Array.isArray(items) ? items : [];
+  const rejected = [];
+  let ok = 0; let requests = 0;
+  const stack = list.length > 0 ? [list] : [];
+  while (stack.length > 0) {
+    const cur = stack.pop();
+    if (!cur || cur.length === 0) continue;
+    try {
+      // eslint-disable-next-line no-await-in-loop -- 失敗したときだけ割る
+      await run(cur);
+      requests += 1;
+      ok += cur.length;
+    } catch {
+      requests += 1;
+      if (cur.length <= minChunk) { rejected.push(...cur); continue; }
+      const mid = Math.floor(cur.length / 2);
+      stack.push(cur.slice(mid), cur.slice(0, mid));
+    }
+  }
+  return { ok, rejected, requests };
+}
+
 export default buildReconcilePlan;

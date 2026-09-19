@@ -10,7 +10,8 @@ import assert from 'node:assert/strict';
 
 import {
   buildReconcilePlan, summarizeReconcilePlan, assertReconcileSafety, reconcileSteps,
-  classifyContact, RECONCILE_ACTION, RECONCILE_EXCLUDE_STATES, RECONCILE_LIMITS,
+  classifyContact, runWithSplit,
+  RECONCILE_ACTION, RECONCILE_EXCLUDE_STATES, RECONCILE_LIMITS,
 } from './sendgridListReconcile.js';
 
 const L = { 1: 'list-1', 2: 'list-2', 3: 'list-3' };
@@ -160,4 +161,42 @@ test('【現場の形】投入直後の実測（一致 / 番号が進んだ / �
   assert.equal(s['退出させる'], 2);
   assert.equal(s['変更予定'], 3 + 3 + 2, 'remove 3 + add 3 + exit 2');
   assert.equal(assertReconcileSafety(plan).ok, true);
+});
+
+// ── 受理されない宛先で batch ごと落ちる問題（2026-09-19 本番実測）────────────
+
+test('【本件】壊れた宛先が 1 件混ざっても、良い宛先を巻き添えにしない', async () => {
+  const bad = new Set(['bad@@example', 'broken']);
+  const seen = [];
+  const r = await runWithSplit(
+    ['a@example.com', 'bad@@example', 'b@example.com', 'broken', 'c@example.com'],
+    async (chunk) => {
+      seen.push(chunk.length);
+      if (chunk.some((e) => bad.has(e))) throw new Error('sendgrid_api:http_error');
+    },
+  );
+  assert.equal(r.ok, 3, '良い 3 件は通る');
+  assert.deepEqual(r.rejected.sort(), ['bad@@example', 'broken']);
+  assert.ok(seen.length > 1, '落ちたら割って再試行している');
+});
+
+test('全部通るときは 1 リクエストで終わる（無駄に割らない）', async () => {
+  let calls = 0;
+  const r = await runWithSplit(['a@example.com', 'b@example.com'], async () => { calls += 1; });
+  assert.equal(calls, 1);
+  assert.equal(r.ok, 2);
+  assert.equal(r.rejected.length, 0);
+});
+
+test('全部落ちるときは全件を rejected として返す（成功にしない）', async () => {
+  const r = await runWithSplit(['a@example.com', 'b@example.com'], async () => { throw new Error('x'); });
+  assert.equal(r.ok, 0);
+  assert.equal(r.rejected.length, 2);
+});
+
+test('空なら 1 リクエストも出さない', async () => {
+  let calls = 0;
+  const r = await runWithSplit([], async () => { calls += 1; });
+  assert.equal(calls, 0);
+  assert.equal(r.ok, 0);
 });
