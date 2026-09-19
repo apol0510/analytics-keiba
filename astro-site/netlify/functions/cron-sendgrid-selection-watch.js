@@ -25,6 +25,7 @@ import { ACTIVE_INDEX, ENGAGED_INDEX } from '../../src/lib/marketing/prospectSto
 import { listNameFor } from '../../src/lib/marketing/sendgridAutomationPlan.js';
 import { resolveProspectEngine } from '../../src/lib/marketing/sendgridCutover.js';
 import { OFFICIAL_FROM_EMAIL, OFFICIAL_FROM_NAME } from '../../src/lib/payments/senderIdentity.js';
+import { STATS_PAGE_SIZE } from '../../src/lib/marketing/marketingOverview.js';
 
 /** 見張りの記録（**件数と時刻だけ**。アドレスは持たない） */
 const WATCH_KEY = 'ak:mkt:selection-watch:v1';
@@ -112,6 +113,7 @@ export default async function handler() {
 
   let sends = [];
   let listTotal = 0;
+  let statsUnavailable = null;
   const listByName = {};
   try {
     const lists = (await sg('/v3/marketing/lists?page_size=100')).result || [];
@@ -127,7 +129,18 @@ export default async function handler() {
       ? state.lastListByName : {};
     const all = (await sg('/v3/marketing/singlesends?page_size=100')).result || [];
     const mine = all.filter((s) => /^AK Prospect Selection /.test(String(s.name)));
-    const stats = (await sg('/v3/marketing/stats/singlesends?page_size=100')).results || [];
+    /**
+     * ⚠️ `page_size` は **1〜50**。100 を渡すと 400 で落ちる
+     *    （2026-09-19 の 11:20 UTC に実際に落ち、点検そのものが走らなかった）。
+     * ⚠️ 実績が取れなくても**点検を止めない**。取れなかったことを finding として残す
+     *    （黙って 0 にすると「送っていない」と読めてしまう）。
+     */
+    let stats = [];
+    try {
+      stats = (await sg(`/v3/marketing/stats/singlesends?page_size=${STATS_PAGE_SIZE}`)).results || [];
+    } catch (e) {
+      statsUnavailable = String((e && e.message) || 'stats_unavailable');
+    }
     const statById = new Map(stats.map((s) => [String(s.id), s.stats || {}]));
     sends = mine.map((s) => {
       const st = statById.get(String(s.id)) || {};
@@ -163,6 +176,15 @@ export default async function handler() {
     engagedDelta: Number.isFinite(state.lastEngaged) ? engagedCount - state.lastEngaged : null,
     listDelta: Number.isFinite(state.lastListTotal) ? listTotal - state.lastListTotal : null,
   });
+
+  /**
+   * 実績が取れなかったときは**異常として扱う**（黙って「異常なし」にしない）。
+   * 送信数・bounce を見ないまま「問題なし」と言わないため。
+   */
+  if (statsUnavailable) {
+    result.ok = false;
+    result.findings.push({ id: 'stats_unavailable', severity: 'warn', detail: { reason: statsUnavailable } });
+  }
 
   const decide = shouldNotify({ result, lastNotifiedAtMs: state.lastNotifiedAtMs, nowMs: now });
   let notified = null;

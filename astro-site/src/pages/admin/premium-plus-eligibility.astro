@@ -5357,10 +5357,14 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         const w = d['自動点検'];
         const esc = (v) => String(v == null ? '—' : v);
 
+        // ⚠️ 取れなかった実績を 0 で出さない（「送っていない」と読まれる）
+        const na = Array.isArray(d['取得できなかったもの']) ? d['取得できなかったもの'] : [];
+        const metric = (m, k) => (m ? esc(m[k]) : '取得できず');
         $('mailSelection').innerHTML = [
           `<p>次の配信: <b>${esc(jst(sel['次の配信']))}</b>（予約 ${esc(sel['予約'])} 通 / 送信済み ${esc(sel['送信済み'])} 通）</p>`,
           `<p>宛先: ${(sel['list別'] || []).map((r) => `${esc(r.list)} <b>${esc(r['人数'])}</b>`).join(' / ')}（計 <b>${esc(sel['list合計'])}</b>）</p>`,
-          `<p>実績: 送信 ${esc((sel['実績'] || {}).requests)} / 到達 ${esc((sel['実績'] || {}).delivered)} / 開封 ${esc((sel['実績'] || {})['開封'])} / bounce ${esc((sel['実績'] || {}).bounce)} / 配信停止 ${esc((sel['実績'] || {})['配信停止'])}</p>`,
+          `<p>実績: 送信 ${metric(sel['実績'], 'requests')} / 到達 ${metric(sel['実績'], 'delivered')} / 開封 ${metric(sel['実績'], '開封')} / bounce ${metric(sel['実績'], 'bounce')} / 配信停止 ${metric(sel['実績'], '配信停止')}</p>`,
+          na.length ? `<p class="note"><b>読めなかった情報があります</b>（${na.map(esc).join(' / ')}）。0 件という意味ではありません。</p>` : '',
         ].join('');
 
         $('mailReaction').innerHTML = [
@@ -5374,7 +5378,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         $('mailWeekly').innerHTML = [
           `<p>状態: <b>${wk['有効'] ? '有効' : '停止中（不活性）'}</b></p>`,
           `<p>次の配信: <b>${esc(jst(wk['次の配信']))}</b>（予約 ${esc(wk['予約'])} / 送信済み ${esc(wk['送信済み'])}）</p>`,
-          `<p>実績: 到達 ${esc((wk['実績'] || {}).delivered)} / 開封 ${esc((wk['実績'] || {})['開封'])} / 配信停止 ${esc((wk['実績'] || {})['配信停止'])}</p>`,
+          `<p>実績: 到達 ${metric(wk['実績'], 'delivered')} / 開封 ${metric(wk['実績'], '開封')} / 配信停止 ${metric(wk['実績'], '配信停止')}</p>`,
         ].join('');
 
         // ⚠️ 点検が**動いていないこと**に気づけるようにする（空欄で流さない）
