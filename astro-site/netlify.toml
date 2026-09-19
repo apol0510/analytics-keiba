@@ -152,6 +152,18 @@
   # そのまま zip するため、config の除外が反映されない）。代わりに build スクリプト末尾の
   # scripts/prune-ssr-function-data.mjs で、ビルド後の SSR 関数から重い src/data 群を削除している。
 
+# ── 定期実行の宣言（**コード側の `export const config` と二重に書く**）────────
+#
+# 2026-09-19 に `cron-sendgrid-selection-watch` が予定時刻（11:20 UTC）に動いた記録を
+# 残さなかった。コード側の宣言だけでは「登録されたか」を外から確かめられないので、
+# **netlify.toml にも書いて宣言を目に見える形にする**。
+# ⚠️ 両方に書くときは**同じ式**にすること（食い違うと、どちらが効くか読めなくなる）。
+[functions."cron-sendgrid-selection-watch"]
+  schedule = "20 11 * * *"   # 毎日 20:20 JST（配信 19:00 の後に見る）
+
+[functions."cron-sendgrid-weekly"]
+  schedule = "0 3 * * *"     # 毎日 12:00 JST（枠が無ければ何もしない）
+
 [dev]
   command = "npm run dev"
   port = 4321

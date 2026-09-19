@@ -79,6 +79,18 @@ export default async function handler() {
   const now = Date.now();
   const log = (o) => console.log(JSON.stringify({ fn: 'sendgrid-selection-watch', ...o }));
 
+  /**
+   * ── **走り出したことを最初に残す**（2026-09-19 の取りこぼしを受けて追加）────
+   *
+   * 記録を最後に書くと、「動かなかった」と「動いたが途中で落ちた」を**外から区別できない**。
+   * 実際 2026-09-19 の 11:20 UTC に記録が残らず、どちらなのか判らなかった。
+   * 何より先に「走り出した時刻」を残せば、次からは必ず区別できる。
+   */
+  try {
+    const prev = JSON.parse((await redis(['GET', WATCH_KEY])) || '{}');
+    await redis(['SET', WATCH_KEY, JSON.stringify({ ...prev, lastStartedAtMs: now })]);
+  } catch { /* 残せなくても点検は続ける（残せないこと自体は下の結果で分かる） */ }
+
   let state = {
     lastMismatch: null, lastNotifiedAtMs: null,
     lastEngaged: null, lastListTotal: null, lastListByName: null,
@@ -175,6 +187,7 @@ export default async function handler() {
       lastMismatch: result.mismatch,
       lastNotifiedAtMs: decide.notify ? now : state.lastNotifiedAtMs,
       lastCheckedAtMs: now,
+      lastStartedAtMs: now,
       lastEngaged: engagedCount,
       lastListTotal: listTotal,
       /** 次回「送るはずだった人数」を見積もるために控える（**人数だけ**） */

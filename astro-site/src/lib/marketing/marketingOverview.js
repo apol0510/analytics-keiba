@@ -87,6 +87,8 @@ export function buildMarketingOverview({
       継続list名: CONTINUATION_LIST_NAME,
     },
     自動点検: w ? {
+      /** **走り出した**時刻。ここだけ入って「最終実行」が古いなら、途中で落ちている */
+      最終起動: w.lastStartedAtMs ? new Date(w.lastStartedAtMs).toISOString() : null,
       最終実行: w.lastCheckedAtMs ? new Date(w.lastCheckedAtMs).toISOString() : null,
       最後に知らせた: w.lastNotifiedAtMs ? new Date(w.lastNotifiedAtMs).toISOString() : null,
       不整合: Number.isFinite(w.lastMismatch) ? w.lastMismatch : null,
