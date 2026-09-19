@@ -40,6 +40,7 @@
 
 import { PROSPECT_STATE } from './prospectPolicy.js';
 import { listNameFor } from './sendgridAutomationPlan.js';
+import { CONTINUATION_LIST_NAME, planContinuation } from './sendgridContinuation.js';
 
 /** 選別から外す状態 */
 export const EXIT_STATES = Object.freeze([
@@ -171,6 +172,31 @@ export function createSelectionExitClient({ apiKey, fetchImpl } = {}) {
       }
       return { byEmail, lookupFailed };
     },
+    /**
+     * 継続配信の list を引く（**名前が一致するものだけ**）。
+     * 無ければ `null`（**webhook は list を作らない**）。
+     */
+    async continuationListId() {
+      const r = await call('GET', '/v3/marketing/lists?page_size=100');
+      if (r.status !== 200) return null;
+      for (const l of (r.body && r.body.result) || []) {
+        if (String(l.name) === CONTINUATION_LIST_NAME) return String(l.id);
+      }
+      return null;
+    },
+    /**
+     * 継続配信の list へ入れる（**反応した人だけ**）。
+     * upsert なので何度呼んでも二重にならない。
+     */
+    async addToContinuation({ listId, emails }) {
+      const list = [...new Set((emails || []).map(normalize))].filter(Boolean);
+      if (!listId || list.length === 0) return { status: 0, added: 0 };
+      const r = await call('PUT', '/v3/marketing/contacts', {
+        list_ids: [String(listId)],
+        contacts: list.map((email) => ({ email })),
+      });
+      return { status: r.status, added: r.status >= 200 && r.status < 300 ? list.length : 0 };
+    },
     /** 選別 list から外す（**list 名を確かめた id しか渡さない**） */
     async removeFromList({ listId, contactIds }) {
       const ids = [...new Set((contactIds || []).map(String))].filter(Boolean);
@@ -198,6 +224,8 @@ export async function applySelectionExit({ changes, client, env = process.env } 
     criticalFailure: false,
     criticalTargets: 0,
     criticalRemoved: 0,
+    /** 反応した人を継続配信の list へ渡した結果（**選別を止めるだけで終わらせない**） */
+    continuation: { 対象: 0, 入れた件数: 0, skipped: null },
   };
   if (isSelectionExitDisabled(env)) { out.reason = 'disabled_by_env'; return out; }
 
@@ -268,6 +296,28 @@ export async function applySelectionExit({ changes, client, env = process.env } 
     if (!allListsOk && criticalIds.size > 0) {
       out.criticalFailure = true;
       out.reason = out.reason || 'remove_failed';
+    }
+
+    /**
+     * ── 反応した人を**次の導線へ渡す**（止めるだけで終わらせない）───────
+     *
+     * ⚠️ **外してから入れる。** 先に入れると、選別 list と継続 list の両方に
+     *    居る瞬間ができる。
+     * ⚠️ 継続 list が無ければ**作らない**（webhook に list を作らせない）。
+     * ⚠️ ここが失敗しても webhook 全体は失敗させない（選別の停止のほうが重い）。
+     *    件数と理由だけ残す。
+     */
+    const cont = planContinuation({ changes });
+    out.continuation.対象 = cont.emails.length;
+    if (cont.emails.length > 0 && typeof client.continuationListId === 'function') {
+      const contListId = await client.continuationListId();
+      if (!contListId) {
+        out.continuation.skipped = 'continuation_list_not_found';
+      } else {
+        const r = await client.addToContinuation({ listId: contListId, emails: cont.emails });
+        out.continuation.入れた件数 = r.added;
+        if (r.added === 0) out.continuation.skipped = 'add_failed';
+      }
     }
   } catch {
     out.errors += 1;
