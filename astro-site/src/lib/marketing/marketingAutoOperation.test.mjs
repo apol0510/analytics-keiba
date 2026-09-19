@@ -299,3 +299,10 @@ test('weeklyPreflight は宛先・文面・CTA・配信停止・枠の 5 点を�
   assert.match(block, /sideEffects: 'none'/);
   assert.equal(block.includes("'POST', '/v3/marketing/singlesends'"), false, '作成の経路を持っている');
 });
+
+test('overview は自動点検の最終実行時刻も返す（動いていないことに気づける）', () => {
+  const block = ADMIN_SRC.slice(ADMIN_SRC.indexOf("if (action === 'overview')"), ADMIN_SRC.indexOf("if (action === 'weeklyPreflight')"));
+  assert.match(block, /ak:mkt:selection-watch:v1/);
+  assert.match(block, /最終実行:/);
+  assert.match(block, /自動点検: watch/);
+});
