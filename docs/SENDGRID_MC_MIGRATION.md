@@ -946,6 +946,23 @@ contact を投入したあと、**遅れて届いた `delivered` イベント**�
 判定の単一源は `src/lib/marketing/sendgridListReconcile.js`、
 テストは `sendgridListReconcile.test.mjs` と `sendgridReconcileHandler.guard.test.mjs`。
 
+### 壊れた宛先で巻き添えにしない（2026-09-19 本番実測）
+
+SendGrid の contacts API は、**受理できない宛先が 1 件でも混ざるとリクエスト全体を 400** で返す。
+`PUT /v3/marketing/contacts`（投入）だけでなく **`POST /v3/marketing/contacts/search/emails`
+（引き当て）でも同じ**ことを本番で踏んだ。
+
+そのため reconcile は、引き当ても投入も **`runWithSplit()` で半分に割って再試行**する。
+1 件まで割っても通らないものだけを `provider rejected` として**数える**
+（**直せないものを直ったことにしない**）。応答に出すのは件数だけで、アドレスは出さない。
+
+### 窓の大きさ（実測）
+
+| scope | 安全な `limit` | 理由 |
+|---|---:|---|
+| `active` | **500** | 索引の窓読みと引き当てが同期 Function の時間に収まる |
+| `excluded` | **50** | 反応済み・抑止側は 1 件ずつレコードを読むため、200 で時間切れ（500 を実測）|
+
 ---
 
 ## 15. 遅延 `delivered` の監視と「予約してよい」の判定（2026-09-19 追加）

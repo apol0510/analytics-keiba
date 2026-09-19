@@ -36,9 +36,14 @@ test('【再送防止】remove が add より先に走る順序を、判定側�
   assert.ok(BLOCK.indexOf("step.op === 'remove'") < BLOCK.indexOf('upsertContacts'), 'remove の分岐が add より前に無い');
 });
 
-test('受理されない batch を黙って成功にしない', () => {
-  assert.match(BLOCK, /rejectedBatches \+= 1/);
-  assert.match(BLOCK, /ok: applied\.rejectedBatches === 0/);
+test('受理されない宛先で良い宛先を巻き添えにせず、件数を必ず返す', () => {
+  assert.match(BLOCK, /runWithSplit\(step\.entries/);
+  assert.match(BLOCK, /applied\.providerRejected \+= r\.rejected\.length/);
+});
+
+test('contact の引き当ても分割つき（壊れた宛先で全部落とさない）', () => {
+  assert.match(BLOCK, /const lookupSplit = await runWithSplit\(/);
+  assert.match(BLOCK, /引けなかった宛先: lookupSplit\.rejected\.length/);
 });
 
 test('応答にアドレスを載せない（要約だけ返す）', () => {

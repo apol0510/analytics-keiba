@@ -52,7 +52,7 @@ import {
 } from '../../src/lib/marketing/sendgridCutover.js';
 import {
   buildReconcilePlan, summarizeReconcilePlan, assertReconcileSafety, reconcileSteps,
-  RECONCILE_LIMITS,
+  RECONCILE_LIMITS, runWithSplit,
 } from '../../src/lib/marketing/sendgridListReconcile.js';
 
 const BRAND = 'analytics-keiba';
@@ -290,8 +290,18 @@ export const handler = async (event) => {
         };
       }
 
-      const sgMap = await api.lookupContacts(
-        akEntries.map((e) => e.email), { fieldId: fields.ids.ak_next_message },
+      /**
+       * ⚠️ **壊れたアドレスが 1 件混ざると `search/emails` も 400 で全部落ちる**
+       *    （2026-09-19 に本番で実測）。落ちたら割って、引けるものだけ引く。
+       */
+      const sgMap = new Map();
+      const lookupSplit = await runWithSplit(
+        akEntries.map((e) => e.email),
+        async (chunk) => {
+          const part = await api.lookupContacts(chunk, { fieldId: fields.ids.ak_next_message });
+          for (const [email, v] of part.entries()) sgMap.set(email, v);
+        },
+        { minChunk: 1 },
       );
       /**
        * ⚠️ **状態を引けなかった人は触らない**（fail closed）。
@@ -314,6 +324,7 @@ export const handler = async (event) => {
           engine, scope, window,
           summary: summarizeReconcilePlan(plan),
           safety,
+          引けなかった宛先: lookupSplit.rejected.length,
           notice: '下見です。SendGrid へは 1 リクエストも書き込んでいません。',
         });
       }
@@ -339,7 +350,7 @@ export const handler = async (event) => {
       }
 
       // **remove → add の順**（両方の list に居る瞬間を作らない）
-      const applied = { removed: 0, added: 0, requests: 0, rejectedBatches: 0 };
+      const applied = { removed: 0, added: 0, requests: 0, providerRejected: 0 };
       for (const step of reconcileSteps(plan)) {
         if (step.op === 'remove') {
           const contactIds = step.emails.map((e) => (sgMap.get(e) || {}).id).filter(Boolean);
@@ -348,34 +359,39 @@ export const handler = async (event) => {
           const r = await api.removeContactsFromList({ listId: step.listId, contactIds, confirm: req.confirm });
           applied.removed += r.removed; applied.requests += 1;
         } else {
-          const batch = {
-            list_ids: [step.listId],
-            startMessage: null,
-            contacts: step.entries.map((e) => ({
-              email: e.email, custom_fields: { [fields.ids.ak_next_message]: e.nextMessage },
-            })),
-          };
-          try {
-            // eslint-disable-next-line no-await-in-loop -- 窓とチャンクで切ってある
-            const r = await api.upsertContacts({ batch, confirm: req.confirm });
-            applied.added += r.count; applied.requests += 1;
-          } catch (e) {
-            // ⚠️ 受理されない宛先が 1 件でもあると batch ごと落ちる。
-            //    **黙って成功にしない**。数えて人に返す（provider rejected の扱いは import と同じ）
-            applied.rejectedBatches += 1;
-          }
+          /**
+           * ⚠️ 受理されない宛先が 1 件でも混ざると batch ごと落ちる。
+           *    **良い宛先を巻き添えにしない**ため、落ちたら半分に割って通し、
+           *    1 件まで割っても通らないものだけを `provider rejected` として数える。
+           */
+          // eslint-disable-next-line no-await-in-loop -- 窓とチャンクで切ってある
+          const r = await runWithSplit(step.entries, async (chunk) => {
+            await api.upsertContacts({
+              batch: {
+                list_ids: [step.listId],
+                contacts: chunk.map((e) => ({
+                  email: e.email, custom_fields: { [fields.ids.ak_next_message]: e.nextMessage },
+                })),
+              },
+              confirm: req.confirm,
+            });
+          }, { minChunk: 1 });
+          applied.added += r.ok;
+          applied.requests += r.requests;
+          applied.providerRejected += r.rejected.length;
         }
       }
 
       return json(200, {
         mode: 'sendgrid-migration-reconcile',
-        ok: applied.rejectedBatches === 0,
+        ok: true,
         sideEffects: 'sendgrid_lists_only',
         engine, scope, window,
         summary: summarizeReconcilePlan(plan),
         applied,
-        notice: applied.rejectedBatches > 0
-          ? 'SendGrid が受理しない宛先を含む batch があります（provider rejected）。件数を確認してください。'
+        引けなかった宛先: lookupSplit.rejected.length,
+        notice: applied.providerRejected > 0
+          ? 'SendGrid が受理しない宛先がありました（provider rejected）。件数だけ数えています（AK 側は変更しません）。'
           : null,
       });
     }
