@@ -5364,9 +5364,11 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
         ].join('');
 
         $('mailReaction').innerHTML = [
-          `<p>AK 送信候補 <b>${esc(rec['AK送信候補'])}</b> / 反応済み <b>${esc(rec['AK反応済み'])}</b></p>`,
+          `<p>AK 送信候補 <b>${esc(rec['AK送信候補'])}</b> / 反応済み <b>${esc(rec['AK反応済み'])}</b> / もう送らない <b>${esc(rec['AK抑止'])}</b></p>`,
           `<p>継続配信 list（${esc(rec['継続list名'])}）: <b>${esc(rec['継続list'])}</b> 人</p>`,
           `<p class="note">反応した人は選別から自動で外れ、この list へ移ります。</p>`,
+          `<p class="note">有料転換と売上はここにまだ出していません（数え方が未確定のため、
+            推測値を出さない方針です）。確定したら同じ場所に足します。</p>`,
         ].join('');
 
         $('mailWeekly').innerHTML = [
