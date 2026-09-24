@@ -23,6 +23,7 @@ import { resolveTickCampaignIds } from '../../../netlify/functions/cron-campaign
 import {
   ROLLOUT_CAMPAIGN_ID, POST_EXPIRY_CAMPAIGN_ID,
 } from '../../../netlify/functions/cron-marketing-rollout.js';
+import { isCampaignActive } from '../promotions/campaignOffers.js';
 
 const sequences = () => listCampaigns({ includeDisabled: false }).filter((c) => c.sequence);
 const ROLLOUT_OWNED = [ROLLOUT_CAMPAIGN_ID, POST_EXPIRY_CAMPAIGN_ID];
@@ -80,10 +81,23 @@ test('【最重要】env 未設定 — 自分の担当だけを自動で拾う',
     assert.ok(isOwnedByRunner(getCampaign(id, { includeDisabled: true }), SEQUENCE_RUNNER.CAMPAIGN_SEQUENCE),
       `${id} は自分の担当ではない`);
   }
-  // DRM の 3 本と割引 3 本は入る
-  for (const id of ['free-signup-onboarding', 'light-to-premium-sequence', 'sanrenpuku-upsell-sequence',
-    'campaign-discount-free', 'campaign-discount-light', 'campaign-discount-premium']) {
+  // 常時稼働の DRM 3 本は、いつ動かしても入る
+  for (const id of ['free-signup-onboarding', 'light-to-premium-sequence', 'sanrenpuku-upsell-sequence']) {
     assert.ok(ids.includes(id), `${id} が対象に入っていない`);
+  }
+  /**
+   * 割引 3 本は**期間限定**（`get enabled() { return isCampaignActive(); }`）。
+   *
+   * ⚠️ 「入っている」を無条件に求めると、開催期間が終わった翌日から
+   *    **本文を 1 行も変えていないのに** CI が赤になる（2026-09-24 に実際に起きた）。
+   * ⚠️ かといって「入らない」も無条件には求められない（期間中は入るのが正しい）。
+   *    正本（`isCampaignActive()`）と**一致すること**を求める。
+   *    これで「期間外は自動で対象から外れる（fail closed）」も同時に固定できる。
+   */
+  const active = isCampaignActive();
+  for (const id of ['campaign-discount-free', 'campaign-discount-light', 'campaign-discount-premium']) {
+    assert.equal(ids.includes(id), active,
+      active ? `${id} が開催期間中なのに対象に入っていない` : `${id} が期間外なのに対象に残っている`);
   }
 });
 

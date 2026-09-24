@@ -27,6 +27,7 @@ import { buildProspect, applySend, applyDelivered } from './prospectPolicy.js';
 import { emailHash } from './prospectStore.js';
 import { buildDeliveredSetKey } from './deliveryKeyStore.js';
 import { prospectCursorKey, DEFAULT_PROSPECT_PER_TICK } from './prospectScanWindow.js';
+import { CAMPAIGN_WINDOW } from '../promotions/campaignOffers.js';
 
 const BRAND = 'analytics-keiba';
 const FROM = 'noreply@keiba.link';
@@ -35,7 +36,19 @@ const CAMPAIGN = getCampaign(CAMPAIGN_ID, { includeDisabled: true });
 const CAMPAIGN_TYPE = `${CAMPAIGN.campaignId}:v${CAMPAIGN.version}`;
 const STEPS = getSequenceSteps(CAMPAIGN);
 const DAY = 86400000;
-const NOW = Date.UTC(2026, 8, 20, 0, 0, 0);
+
+/**
+ * この test の「いま」。**開催期間の真ん中**（固定の日付を書かない）。
+ *
+ * ⚠️ `campaign-discount-free` は `get enabled() { return isCampaignActive(); }` で、
+ *    **実時計**が開催期間の外へ出た瞬間に catalog から消える（= tick は `not_a_sequence`）。
+ *    日付を直書きすると、期間が終わった翌日から **本文を 1 行も変えていないのに**
+ *    この test が落ちる（2026-09-24 に実際に CI が赤になった）。
+ *    正本（`CAMPAIGN_WINDOW`）から導出して、期間をどう引き直しても中に居るようにする。
+ */
+const NOW = Math.floor(
+  (Date.parse(CAMPAIGN_WINDOW.startsAtIso) + Date.parse(CAMPAIGN_WINDOW.endsAtIso)) / 2,
+);
 
 const keyFor = (email, step) => computeCampaignDeliveryKey({
   campaign: resolveSequenceStep(CAMPAIGN, step), recipientEmail: email, brand: BRAND, fromEmail: FROM,
@@ -156,14 +169,20 @@ function makeWorld({ prospects, cursor = null, activeKeys = new Set(), redisFail
  */
 async function runTick(world, extra = {}) {
   const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
   const originalEnv = {};
   for (const k of Object.keys(ENV)) originalEnv[k] = process.env[k];
   globalThis.fetch = world.fetchImpl;
+  // ⚠️ tick 内の `getCampaign()` は `enabled` を**実時計**で評価する（`isCampaignActive()`）。
+  //    引数の `now` は届かないので、`Date.now` ごと `NOW` に合わせる。
+  //    こうしないと開催期間が終わった翌日から全件 `not_a_sequence` で落ちる。
+  Date.now = () => NOW;
   for (const [k, v] of Object.entries(ENV)) process.env[k] = v;
   try {
     return await runSequenceTick({ env: { ...ENV }, now: NOW, campaignId: CAMPAIGN_ID, ...extra });
   } finally {
     globalThis.fetch = originalFetch;
+    Date.now = originalNow;
     for (const [k, v] of Object.entries(originalEnv)) {
       if (v === undefined) delete process.env[k]; else process.env[k] = v;
     }
