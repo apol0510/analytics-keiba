@@ -10,6 +10,8 @@ import { isOsaeCandidate, sortOsaeCandidates, isIneligibleHorse, getDisplayCompu
 import { buildFreePublicRows } from '../../lib/freePublicView.js';
 import { injectHorseHistoriesIntoVenues } from '../../lib/loadHorseHistoriesJra.js';
 import ResultsShowcaseBanner from '../../components/ResultsShowcaseBanner.astro';
+import FreePreviewFirstView from '../../components/FreePreviewFirstView.astro';
+import { pickMainRace, buildFirstViewPick } from '../../lib/freePreviewFirstView.js';
 // AK専用: shared featureScores（正本素材）を読むだけ → AK専用3項目へ要約派生（premium と同じ）。
 // KIは6項目詳細 / AKは3項目要約（docs/feature-scores-site-differentiation.md）。
 import { loadFeatureScores, getHorseFeatures, venueCodeFromName } from '../../lib/loadFeatureScores.js';
@@ -239,6 +241,22 @@ if (!error && Array.isArray(venues) && venues.length > 0) {
 }
 
 // generateAdvancedMetrics imported from featureScores.js
+
+// ファーストビュー（2026-09-27）: 各会場メインレースの ◎ と公開事実だけの短い理由。
+// 公開 DTO（buildFreePublicRows）を通すので pt / AI総合指数 / 役割 / 買い目は入らない。
+const firstViewPicks = (!error && Array.isArray(venues) ? venues : []).map((v) => {
+  const race = pickMainRace(v?.predictions, (r) => r?.raceInfo?.raceNumber);
+  if (!race) return null;
+  return buildFirstViewPick({
+    venue: v.venue || v.eventInfo?.venue || '',
+    raceNumber: race.raceInfo?.raceNumber,
+    raceName: race.raceInfo?.raceName || '',
+    horses: race.horses,
+    resolveRecent: (h) => _displayRecentOf(h),
+    recentOrder: 'latest-first',
+  });
+}).filter(Boolean);
+
 ---
 
 <BaseLayout
@@ -270,6 +288,9 @@ if (!error && Array.isArray(venues) && venues.length > 0) {
               )}
             </h1>
           </div>
+
+        <!-- 2026-09-27: 結論・注目馬 → 短い理由 → 無料登録 CTA（詳しい分析はこの下） -->
+        <FreePreviewFirstView picks={firstViewPicks} category="jra" />
 
         <!-- 2026-08-20: このページが「有料版のプレビュー」であることを最上部で伝える -->
         <div class="preview-banner">
@@ -2861,7 +2882,12 @@ if (!error && Array.isArray(venues) && venues.length > 0) {
         .preview-banner { flex-direction: column; align-items: stretch; text-align: center; gap: 10px; padding: 14px; }
         .preview-banner-badge { align-self: center; }
         .preview-banner-title { font-size: 0.96rem; }
-        .preview-banner-cta { width: 100%; text-align: center; }
+        .preview-banner-cta { width: 100%; text-align: center; box-sizing: border-box; }
+    }
+    /* 2026-09-27: スマホは見出しを詰め、注目馬（ファーストビュー）を 1 画面目に入れる */
+    @media (max-width: 640px) {
+        .header-section { padding: 16px 14px; margin-bottom: 18px; }
+        .header-section .race-title, .race-title { font-size: 1.45rem; line-height: 1.35; margin: 8px 0 0; }
     }
 </style>
 
