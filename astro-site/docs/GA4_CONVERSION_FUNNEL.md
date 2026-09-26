@@ -34,6 +34,12 @@ URL で確実に判別できるからである。イベントを増やすと同�
 申込はモーダルの中で起きて **URL が変わらない**。page_view では
 「申込を始めた」と「申込が通った」を区別できないので、ここだけイベントで固定する。
 
+### 無料登録の入口（2026-09-27）もイベントを増やさない
+
+`/free-prediction/{jra,nankan}` のファーストビューに無料登録 CTA を置いた（`FreePreviewFirstView.astro`）。
+CTA のクリックや表示はイベントにしない。`/free-signup/` の `page_view` を **`page_referrer` が
+`/free-prediction/` のもの**に絞れば、この入口からの到達数が分かる。
+
 ### 無料予想の正規表現に `/free-signup/` を入れないこと
 
 `^/free` で雑に拾うと **無料登録ページ `/free-signup/`** が無料予想に混ざる。

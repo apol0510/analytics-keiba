@@ -12,6 +12,8 @@ import { buildFreePublicRows } from '../../lib/freePublicView.js';
 import AccordionClickClose from '../../components/AccordionClickClose.astro';
 import RaceAccordionClickClose from '../../components/RaceAccordionClickClose.astro';
 import ResultsShowcaseBanner from '../../components/ResultsShowcaseBanner.astro';
+import FreePreviewFirstView from '../../components/FreePreviewFirstView.astro';
+import { pickMainRace, buildFirstViewPick } from '../../lib/freePreviewFirstView.js';
 
 // 南関 featureScores → AK 3項目（安定性/能力上位性/展開利）。
 // shared featureScores がある馬のみ返す。無ければ null → 呼び出し側で既存 horse.importance に fallback。
@@ -75,6 +77,22 @@ const formattedDate = `${parseInt(month)}月${parseInt(day)}日`;
 // SEO・サマリー用に最初の会場のメインレース情報を採用
 const { raceInfo } = firstVenue;
 const analysis = firstVenue.mainRace.analysis;
+
+// ファーストビュー（2026-09-27）: 各会場メインレースの ◎ と公開事実だけの短い理由。
+// 公開 DTO（buildFreePublicRows）を通すので pt / AI総合指数 / 役割 / 買い目は入らない。
+const cleanNankanRaceName = (name) => (name || '').replace(/\s*[ダ芝]\d+[,.]?\d*m.*$/, '').replace(/\s*（\d+頭）.*$/, '').replace(/\s*発走時刻.*$/, '');
+const firstViewPicks = venuesProcessed.map((v) => {
+    const race = pickMainRace(v.allRacesData.races, (r) => r.raceNumber);
+    if (!race) return null;
+    return buildFirstViewPick({
+        venue: v.track,
+        raceNumber: race.raceNumber,
+        raceName: cleanNankanRaceName(race.raceName),
+        horses: normalizeHorseData(race),
+        resolveRecent: (h) => ((Array.isArray(h.recentRacesFromEntriesNankan) && h.recentRacesFromEntriesNankan.length > 0) ? h.recentRacesFromEntriesNankan : getDisplayRecentRacesForNankan(h)),
+        recentOrder: 'oldest-first',
+    });
+}).filter(Boolean);
 ---
 
 <BaseLayout title={`AI予想分析 | ${raceInfo.title}`} description={`${raceInfo.track}競馬 ${raceInfo.raceName} の AI 予想プレビュー。出走馬と印を公開。AI予測買い目・AI総合指数・累積スコア・役割は有料版で公開しています。`}>
@@ -92,6 +110,9 @@ const analysis = firstVenue.mainRace.analysis;
             </h1>
             <!-- 余計な詳細指標を削除し、シンプルに -->
         </div>
+
+        <!-- 2026-09-27: 結論・注目馬 → 短い理由 → 無料登録 CTA（詳しい分析はこの下） -->
+        <FreePreviewFirstView picks={firstViewPicks} category="nankan" />
 
         <!-- 2026-08-20: このページが「有料版のプレビュー」であることを最上部で伝える -->
         <div class="preview-banner">
@@ -2734,7 +2755,12 @@ const analysis = firstVenue.mainRace.analysis;
         .preview-banner { flex-direction: column; align-items: stretch; text-align: center; gap: 10px; padding: 14px; }
         .preview-banner-badge { align-self: center; }
         .preview-banner-title { font-size: 0.96rem; }
-        .preview-banner-cta { width: 100%; text-align: center; }
+        .preview-banner-cta { width: 100%; text-align: center; box-sizing: border-box; }
+    }
+    /* 2026-09-27: スマホは見出しを詰め、注目馬（ファーストビュー）を 1 画面目に入れる */
+    @media (max-width: 640px) {
+        .header-section { padding: 16px 14px; margin-bottom: 18px; }
+        .header-section .race-title, .race-title { font-size: 1.45rem; line-height: 1.35; margin: 8px 0 0; }
     }
 </style>
 

@@ -1,0 +1,160 @@
+---
+/**
+ * FreePreviewFirstView — `/free-prediction/{jra,nankan}` のファーストビュー（2026-09-27 MK 確定）。
+ *
+ * 並び: 結論・注目馬 → 短い理由 → 無料登録 CTA → （この下に既存のプレビューバナー・全レース）
+ *
+ * ⚠️ picks は freePreviewFirstView.js の buildFirstViewPick() の戻り値だけを受け取る
+ *    （公開 DTO 由来。pt / AI総合指数 / 役割 / 買い目は入っていない）。
+ * ⚠️ 無料登録 CTA は**ゲートではない**。ページの中身は登録の有無で変えず、
+ *    未ログインかどうかで CTA の表示だけを切り替える（JS が動かなければ出したまま）。
+ */
+import { MEMBER_EXTRAS } from '../lib/freeViewpoints/copy.js';
+
+interface Pick {
+  venue: string;
+  raceNumber: number | null;
+  raceName: string;
+  headcount: number;
+  honmei: { number: number; name: string; jockey: string | null };
+  reasons: string[];
+  others: { mark: string; number: number; name: string }[];
+}
+interface Props { picks: Pick[]; category: 'jra' | 'nankan'; }
+const { picks = [], category } = Astro.props;
+const freeHref = category === 'jra' ? '/free/jra/' : '/free/nankan/';
+---
+
+<section class="fpfv" aria-labelledby="fpfv-title">
+  {picks.length > 0 && (
+    <>
+      <h2 id="fpfv-title" class="fpfv-title">今日の注目馬<span class="fpfv-title-sub">メインレースのAI本命</span></h2>
+      <div class="fpfv-picks">
+        {picks.map((p) => (
+          <article class="fpfv-card">
+            <p class="fpfv-race">
+              {p.venue && <span class="fpfv-venue">{p.venue}</span>}
+              {p.raceNumber != null && <span class="fpfv-rnum">{p.raceNumber}R</span>}
+              {p.raceName && <span class="fpfv-rname">{p.raceName}</span>}
+            </p>
+            <p class="fpfv-honmei">
+              <span class="fpfv-mark" aria-label="本命">◎</span>
+              <span class="fpfv-num">{p.honmei.number}</span>
+              <span class="fpfv-name">{p.honmei.name}</span>
+            </p>
+            <ul class="fpfv-reasons" aria-label="注目ポイント">
+              {p.reasons.map((r) => <li>{r}</li>)}
+              {p.honmei.jockey && <li>騎手 {p.honmei.jockey}</li>}
+            </ul>
+            {p.others.length > 0 && (
+              <p class="fpfv-others">
+                <span class="fpfv-others-label">相手候補</span>
+                {p.others.map((o) => <span class="fpfv-other"><span class="fpfv-other-mark">{o.mark}</span>{o.number}</span>)}
+              </p>
+            )}
+          </article>
+        ))}
+      </div>
+      <p class="fpfv-more"><a href="#fpfv-races">全レースの印と分析を見る ↓</a></p>
+    </>
+  )}
+
+  <div class="fpfv-signup" data-fpfv-guest-only>
+    <p class="fpfv-signup-head">無料会員登録で「無料予想」がもっと詳しく</p>
+    <p class="fpfv-signup-body">メールアドレスだけ・料金はかかりません。登録すると<a href={freeHref}>無料予想</a>の各レースに次の情報が加わります。</p>
+    <ul class="fpfv-signup-list">
+      {MEMBER_EXTRAS.benefits.map((b: string) => <li>{b}</li>)}
+      <li>毎日ログインでポイントが貯まります</li>
+    </ul>
+    <a class="fpfv-signup-cta" href="/free-signup/">無料で登録する →</a>
+    <p class="fpfv-signup-note">{MEMBER_EXTRAS.note}</p>
+  </div>
+</section>
+<div id="fpfv-races" class="fpfv-anchor" aria-hidden="true"></div>
+
+<script is:inline>
+  // 未ログインにだけ無料登録 CTA を出す（ページの中身は出し分けない）。
+  // 判定は /free/ の RaceViewpointsBoard と同じ 5 キー OR 判定にそろえる。
+  (function () {
+    function registered() {
+      try {
+        for (var k of ['user-plan', 'userPlan', 'user_plan', 'user_email', 'userEmail', 'auth_data']) {
+          if (localStorage.getItem(k)) return true;
+        }
+        return localStorage.getItem('isLoggedIn') === 'true';
+      } catch (e) { return false; }
+    }
+    function apply() {
+      var hide = registered();
+      document.querySelectorAll('[data-fpfv-guest-only]').forEach(function (el) {
+        el.hidden = hide;
+      });
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', apply);
+    else apply();
+  })();
+</script>
+
+<style>
+  .fpfv { max-width: 900px; margin: 0 auto 22px; }
+  .fpfv-title {
+    margin: 0 0 12px; font-size: 1.35rem; font-weight: 800; color: #f8fafc;
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; line-height: 1.4;
+  }
+  .fpfv-title-sub { font-size: 0.9rem; font-weight: 700; color: #94a3b8; }
+  .fpfv-picks { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+  .fpfv-card {
+    border-radius: 14px; padding: 16px 18px;
+    background: rgba(15, 23, 42, 0.72);
+    border: 2px solid rgba(239, 68, 68, 0.55);
+  }
+  .fpfv-race { margin: 0 0 8px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; font-size: 0.95rem; color: #cbd5e1; line-height: 1.5; }
+  .fpfv-venue { font-weight: 800; color: #f1f5f9; }
+  .fpfv-rnum { font-weight: 800; color: #fbbf24; }
+  .fpfv-rname { min-width: 0; overflow-wrap: anywhere; }
+  .fpfv-honmei { margin: 0 0 10px; display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .fpfv-mark { font-size: 1.9rem; font-weight: 900; color: #ef4444; line-height: 1; }
+  .fpfv-num {
+    flex-shrink: 0; min-width: 2.1em; text-align: center;
+    font-size: 1.15rem; font-weight: 900; color: #0f172a; background: #f8fafc;
+    border-radius: 8px; padding: 3px 7px;
+  }
+  .fpfv-name { font-size: 1.4rem; font-weight: 900; color: #f8fafc; line-height: 1.3; overflow-wrap: anywhere; min-width: 0; }
+  .fpfv-reasons { margin: 0 0 10px; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 6px 8px; }
+  .fpfv-reasons li {
+    font-size: 0.95rem; font-weight: 700; color: #fde68a;
+    background: rgba(245, 158, 11, 0.14); border: 1px solid rgba(245, 158, 11, 0.4);
+    border-radius: 999px; padding: 4px 12px; line-height: 1.5;
+  }
+  .fpfv-others { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; font-size: 1rem; color: #e2e8f0; }
+  .fpfv-others-label { font-size: 0.85rem; color: #94a3b8; }
+  .fpfv-other { font-weight: 800; }
+  .fpfv-other-mark { margin-right: 2px; color: #60a5fa; }
+  .fpfv-more { margin: 10px 0 0; text-align: right; font-size: 0.95rem; }
+  .fpfv-more a { color: #93c5fd; font-weight: 700; text-decoration: none; }
+  .fpfv-more a:hover { text-decoration: underline; }
+
+  .fpfv-signup {
+    margin-top: 16px; padding: 16px 18px; border-radius: 14px;
+    border: 2px solid #22c55e; background: rgba(34, 197, 94, 0.1);
+  }
+  .fpfv-signup[hidden] { display: none; }
+  .fpfv-signup-head { margin: 0 0 6px; font-size: 1.1rem; font-weight: 800; color: #bbf7d0; line-height: 1.5; }
+  .fpfv-signup-body { margin: 0 0 8px; font-size: 0.95rem; line-height: 1.8; color: #f1f5f9; }
+  .fpfv-signup-body a { color: #86efac; }
+  .fpfv-signup-list { margin: 0 0 12px; padding-left: 1.2em; font-size: 0.92rem; line-height: 1.9; color: #e2e8f0; }
+  .fpfv-signup-cta {
+    display: block; text-align: center; text-decoration: none;
+    background: #22c55e; color: #052e16; font-weight: 800; font-size: 1.05rem;
+    padding: 13px 20px; border-radius: 10px;
+  }
+  .fpfv-signup-cta:hover { background: #4ade80; }
+  .fpfv-signup-note { margin: 10px 0 0; font-size: 0.85rem; line-height: 1.7; color: #cbd5e1; }
+  .fpfv-anchor { scroll-margin-top: 80px; }
+
+  @media (max-width: 640px) {
+    .fpfv-title { font-size: 1.25rem; }
+    .fpfv-card, .fpfv-signup { padding: 14px 16px; }
+    .fpfv-name { font-size: 1.3rem; }
+  }
+</style>
