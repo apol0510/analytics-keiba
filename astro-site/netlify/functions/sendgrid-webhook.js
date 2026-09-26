@@ -41,6 +41,13 @@ config();
 
 const BLACKLIST_TABLE = 'EmailBlacklist';
 
+/**
+ * 選別 list から外す処理に使ってよい時間の締め切り（**受信からの経過**）。
+ * 同期 Function の打ち切りより十分手前に置き、越えそうなら新しい塊を始めない
+ * （`sendgridSelectionExit.js` の `deadlineAtMs`）。
+ */
+const SELECTION_EXIT_DEADLINE_MS = 7000;
+
 function jsonResponse(status, body) {
   return new Response(JSON.stringify(body), {
     status,
@@ -49,6 +56,7 @@ function jsonResponse(status, body) {
 }
 
 export default async (req) => {
+  const receivedAtMs = Date.now();
   // POST のみ
   if (req.method !== 'POST') {
     return jsonResponse(405, { error: 'Method not allowed' });
@@ -172,6 +180,7 @@ export default async (req) => {
       selectionExit = await applySelectionExit({
         changes: prospect.changes,
         client: createSelectionExitClient({ apiKey: process.env.SENDGRID_API_KEY }),
+        deadlineAtMs: receivedAtMs + SELECTION_EXIT_DEADLINE_MS,
       });
     } catch {
       selectionExit = { enabled: false, errors: 1, reason: 'unexpected_error', criticalFailure: true };

@@ -7,6 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 import {
   planContinuation, summarizeContinuation,
@@ -289,6 +290,68 @@ test('まだ送っていない通・人数を控えていない通は食い違�
     engine: 'sendgrid', akActive: 100, providerRejected: 10, listTotal: 90, previousMismatch: 0,
   });
   assert.equal(r.findings.some((f) => f.id === WATCH_FINDING.RECIPIENT_GAP), false);
+});
+
+// ── 2026-09-26: 毎回「注意」が出ていた誤検知の是正 ─────────────────
+const day = (d, h = 10) => Date.UTC(2026, 8, d, h);
+
+test('【回帰】過去の通は前日の list 人数と比べない（毎回発火しない）', () => {
+  // 2026-09-25 11:20Z の本番相当: start-1 は 318 → 13 人へ縮んだ。初日の通は 318 のまま
+  const expectedRecipients = 13;
+  const r = evaluateSelectionWatch({
+    nowMs: day(25, 11),
+    previousCheckedAtMs: Date.UTC(2026, 8, 24, 11, 20),
+    sends: [
+      send({ name: 'AK Prospect Selection s1 m01', sendAtMs: day(20), requests: 318, expectedRecipients }),
+      send({ name: 'AK Prospect Selection s1 m02', sendAtMs: day(21), requests: 144, expectedRecipients }),
+      send({ name: 'AK Prospect Selection s1 m06', sendAtMs: day(25), requests: 13, expectedRecipients }),
+    ],
+    engine: 'sendgrid', akActive: 100, providerRejected: 10, listTotal: 90, previousMismatch: 0,
+  });
+  assert.equal(r.findings.some((f) => f.id === WATCH_FINDING.RECIPIENT_GAP), false, JSON.stringify(r.findings));
+});
+
+test('最新の通が本当に食い違っていれば検知する（list ごとに見る）', () => {
+  const r = evaluateSelectionWatch({
+    nowMs: day(25, 11),
+    previousCheckedAtMs: Date.UTC(2026, 8, 24, 11, 20),
+    sends: [
+      send({ name: 'AK Prospect Selection s3 m07', sendAtMs: day(24), requests: 8425, expectedRecipients: 8400 }),
+      send({ name: 'AK Prospect Selection s3 m08', sendAtMs: day(25), requests: 2000, expectedRecipients: 8400 }),
+      send({ name: 'AK Prospect Selection s2 m07', sendAtMs: day(25), requests: 2411, expectedRecipients: 2420 }),
+    ],
+    engine: 'sendgrid', akActive: 100, providerRejected: 10, listTotal: 90, previousMismatch: 0,
+  });
+  const gaps = r.findings.filter((f) => f.id === WATCH_FINDING.RECIPIENT_GAP);
+  assert.equal(gaps.length, 1);
+  assert.equal(gaps[0].detail.name, 'AK Prospect Selection s3 m08');
+});
+
+test('前回の点検より前に送った通は比べない（配り終えた list で誤検知しない）', () => {
+  // start-3 は 09-27 が最終。09-28 の点検では最新の通が前回点検より前になる
+  const r = evaluateSelectionWatch({
+    nowMs: day(28, 11),
+    previousCheckedAtMs: Date.UTC(2026, 8, 27, 11, 20),
+    sends: [send({ name: 'AK Prospect Selection s3 m10', sendAtMs: day(27), requests: 1700, expectedRecipients: 3 })],
+    engine: 'sendgrid', akActive: 100, providerRejected: 10, listTotal: 90, previousMismatch: 0,
+  });
+  assert.equal(r.findings.some((f) => f.id === WATCH_FINDING.RECIPIENT_GAP), false);
+});
+
+test('少人数 list の数人の差は比率が大きくても見ない', () => {
+  assert.ok(WATCH_THRESHOLDS.recipientGapMinCount >= 5);
+  const r = evaluateSelectionWatch({
+    nowMs: day(25, 11),
+    sends: [send({ name: 'AK Prospect Selection s1 m06', sendAtMs: day(25), requests: 13, expectedRecipients: 12 })],
+    engine: 'sendgrid', akActive: 100, providerRejected: 10, listTotal: 90, previousMismatch: 0,
+  });
+  assert.equal(r.findings.some((f) => f.id === WATCH_FINDING.RECIPIENT_GAP), false);
+});
+
+test('点検 cron は前回の点検時刻と list 名を渡している', () => {
+  const src = readFileSync(fileURLToPath(new URL('../../../netlify/functions/cron-sendgrid-selection-watch.js', import.meta.url)), 'utf8');
+  assert.match(src, /previousCheckedAtMs: Number\.isFinite\(state\.lastCheckedAtMs\)/);
+  assert.match(src, /\n\s+listName,\n/);
 });
 
 test('【要件】反応は増えたのに list が減っていなければ「除外が効いていない」', () => {
