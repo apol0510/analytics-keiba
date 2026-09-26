@@ -155,6 +155,7 @@ export default async function handler() {
         delivered: Number(st.delivered) || 0,
         bounces: Number(st.bounces) || 0,
         spam: Number(st.spam_reports) || 0,
+        listName,
         expectedRecipients: listName && Number.isFinite(prevByName[listName])
           ? prevByName[listName] : null,
       };
@@ -172,6 +173,8 @@ export default async function handler() {
     providerRejected: PROVIDER_REJECTED,
     listTotal,
     previousMismatch: state.lastMismatch,
+    /** 控えた list 人数は前回の点検時点のもの。**それより後に送った通**だけと比べる */
+    previousCheckedAtMs: Number.isFinite(state.lastCheckedAtMs) ? state.lastCheckedAtMs : null,
     /** 「反応は増えたのに list が減っていない」＝ 除外が効いていない、を見る */
     engagedDelta: Number.isFinite(state.lastEngaged) ? engagedCount - state.lastEngaged : null,
     listDelta: Number.isFinite(state.lastListTotal) ? listTotal - state.lastListTotal : null,
