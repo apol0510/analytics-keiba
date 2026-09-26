@@ -176,6 +176,23 @@ export const MEMBER_EXTRAS = Object.freeze({
 
 
 /**
+ * 「今日の無料予想」＝答えを先に見せる部分（2026-09-27 MK 確定）。
+ * ⚠️ 役割名（BANNED_PAID_TERMS の本命・対抗 等）と評価語（BANNED_JUDGEMENT_WORDS）は書かない。
+ *    印は記号と「上から順」だけで伝える。
+ */
+export const ANSWER = Object.freeze({
+  heading: '今日の無料予想',
+  sub: 'メインレースのAIの印',
+  markLegend: '印は ◎ → ○ → ▲ → △ の順にAIの評価が上です。',
+  markline: 'AIの印（◎○▲△）は全レース無料で見られます。買い目は有料版で公開しています。',
+  toList: '全レースの印を見る ↓',
+  listHeading: '全レースの印',
+  noMarks: '印の準備中',
+  guideSummary: '見どころの読み方（使い方・凡例・かんたん表示）',
+  moreHeading: 'もっと詳しく見たい方へ',
+});
+
+/**
  * 初めての人向けの補足（2026-08-20 追加）。
  *
  * 対象は**競馬を始めたばかりの人**。「初コース」「乗り替わり」「中◯週」も知らない前提で書く。
@@ -241,5 +258,5 @@ export const HELP_TOGGLE = Object.freeze({
 
 export default {
   TAG_LABEL, TAG_SENTENCE, STATE_LABEL, STATE_SENTENCE, HIGHLIGHT_LABEL,
-  BANNED_WORDS, BANNED_JUDGEMENT_WORDS, BANNED_PAID_TERMS, coverageNote, MEMBER_EXTRAS, TERM_HELP, CHIP_HELP, LAYOFF_LABEL, INTERVAL_HELP, HOW_TO_USE, HELP_TOGGLE, HORSE_CHANGE_CHIP, TAG_ICON, STATE_ICON, PAID_CTA, HORSE_SECTION,
+  BANNED_WORDS, BANNED_JUDGEMENT_WORDS, BANNED_PAID_TERMS, coverageNote, MEMBER_EXTRAS, ANSWER, TERM_HELP, CHIP_HELP, LAYOFF_LABEL, INTERVAL_HELP, HOW_TO_USE, HELP_TOGGLE, HORSE_CHANGE_CHIP, TAG_ICON, STATE_ICON, PAID_CTA, HORSE_SECTION,
 };

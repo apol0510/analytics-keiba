@@ -71,15 +71,27 @@ t('会員限定要素に使う class は、ゲートより強い display 指定�
   }
 });
 
-t('冒頭CTA（未登録）がアコーディオンの外にある', () => {
-  const header = src.slice(0, src.indexOf('</header>'));
-  assert.match(header, /class="rvb-topgate"[^>]*data-guest-only/);
-  assert.match(header, /href="\/free-signup\/"/);
+// 2026-09-27 MK 確定: 登録案内は答え（今日の無料予想・全レース一覧）の後ろへ移した。
+// 「アコーディオンを開かないと見えない」状態には戻さない（外に置く）ことは維持する。
+const outsideRaceDetails = (cls) => {
+  const i = src.indexOf(`class="${cls}"`);
+  assert.ok(i > -1, `${cls} が無い`);
+  const lastDetailOpen = src.lastIndexOf('<details class="rvb-detail"', i);
+  const lastDetailClose = src.lastIndexOf('</details>', i);
+  assert.ok(lastDetailOpen === -1 || lastDetailClose > lastDetailOpen, `${cls} がレースのアコーディオンの中にある`);
+  return i;
+};
+
+t('登録案内（未登録）はアコーディオンの外・全レース一覧の後ろにある', () => {
+  const i = outsideRaceDetails('rvb-topgate');
+  assert.match(src, /class="rvb-topgate"[^>]*data-guest-only/);
+  assert.match(src.slice(i, i + 800), /href="\/free-signup\/"/);
+  assert.ok(i > src.indexOf('<ol class="rvb-list"'), '登録案内が一覧より前（上部）にある');
 });
 
-t('冒頭に登録済みの人向けの表示がある', () => {
-  const header = src.slice(0, src.indexOf('</header>'));
-  assert.match(header, /class="rvb-topmember"[^>]*data-member-only/);
+t('登録済みの人向けの表示もアコーディオンの外にある', () => {
+  outsideRaceDetails('rvb-topmember');
+  assert.match(src, /class="rvb-topmember"[^>]*data-member-only/);
 });
 
 t('会員限定である旨のバッジが付いている', () => {

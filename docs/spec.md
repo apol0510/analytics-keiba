@@ -1461,6 +1461,23 @@ Concurrency Group: 南関 `archive-nankan-update` / JRA `archive-jra-update`。
 | データ源 | 南関 = `horseStats/nankan`（**馬番**結合）／ JRA = `horseHistories/jra`（**馬名**結合・`lib/jra/horseHistoryJoin.js`）|
 | 検証 | `npm run test:free-viewpoints`（`check:safety` と CI 個別 step に組込済み）|
 
+#### 答えを先に見せる（2026-09-27 MK 確定）
+
+`/free/` の最初に見せるのは**分析方法ではなく「今日の無料予想（印）」**。上から次の順に並べる。
+
+1. 見出し・日付・鮮度の注記（従来どおり）と「印は無料・買い目は有料版」の 1 行
+2. **今日の無料予想**: 各会場のメインレースの ◎○▲△（馬番・馬名）と、ごく短い理由（前走 1〜3 着のときだけ）
+3. **全レース一覧**: 各行に印（◎○▲△）を出す。開くと従来どおりの詳細分析
+4. 下層: 会場ごとの「今日の◯◯では」、見どころの読み方（説明文・使い方・かんたん表示・凡例）は**折りたたみ**
+5. 有料版の実績バナー・無料登録の案内（`rvb-topgate` / `rvb-topmember`）は**一覧の後ろ**
+
+| 守ること | 単一源 / 検証 |
+|---|---|
+| 印は公開 DTO 由来の `horseRows`（`headlineMark`）だけ。役割名・pt・AI総合指数・特徴量・買い目は使わない | `src/lib/freeViewpoints/answerView.js` |
+| 既存の分析情報は削除しない（位置と開閉だけ変える）| `answerFirst.guard.test.mjs` |
+| 無料登録・有料 CTA は答え（今日の無料予想・一覧）より後ろ | `answerFirst.guard.test.mjs` |
+| `/free-prediction/` は変更しない（PR #597 は不採用）| — |
+
 #### 2 つのレイヤーを混同しない
 
 - **絶対タグ**: JRA / 南関それぞれの**カテゴリ全体の分布**が基準。意味が日替わりしない
