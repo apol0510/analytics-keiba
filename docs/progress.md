@@ -2446,6 +2446,55 @@ premium|active 13 / premium_sanrenpuku|active 5 / light|active 2 / light|expirin
 
 ---
 
+<!-- 常設ブロック: 元々の会員への週次（A を SendGrid MC で実現）。本番有効化まで消さない -->
+# 📨 元々の会員への週次 — A を SendGrid MC で実現（2026-09-27 MK 確定）— **Phase 1 配信停止の橋渡し：実装・Draft PR / 本番未反映**
+
+## 新たに確定した方針（正本: `docs/spec.md` 先頭 / `docs/decisions.md` 2026-09-27 追記 9）
+
+- A「元々の会員への定期配信」を **SendGrid Marketing Campaigns 上で実現**する（AK = 判断 / SendGrid = 配送）。
+- **現役 Premium / Light（22 名）は無料→有料向け週次から当面除外**（送信不可の意味ではない）。
+- **最初の実装は配信停止の橋渡し**。unsubscribe group は既存の **`AK Marketing`（id 34108）**。新規作成しない。
+- DRM 新規登録育成（全 6 通）の**受信中は一時除外**。受信歴だけで永久除外しない。
+- 複数 list の重複が 1 通にまとまることは**canary で実測するまで安全仕様にしない**。
+
+## 現在地
+
+- 2026-09-27 本番 read-only で unsubscribe group を確認: **34108 = `AK Marketing`**（is_default=false・group 停止 34 件）/
+  28368 = `テストグループ` / 29174 = `KEIBA Intelligence メルマガ`。
+- `AK Marketing` の group 停止 **34 件は Customers に未反映**（橋渡しが無かったため）。
+
+## Phase 1: 配信停止の橋渡し（正本 `astro-site/docs/UNSUBSCRIBE.md` §8）
+
+| 方向 | 内容 | 状態 |
+|---|---|---|
+| SendGrid → AK | `asm_group_id=34108` の `group_unsubscribe` → Customers 停止（既に停止中でも新しい停止なら停止時刻を進める）。`group_resubscribe` は **再開 ＞ AK の停止時刻** のときだけ解除（時刻なし・同時刻以前は解除しない）。KI・テスト・不明 group は変えない | ✅ 実装・テスト（本番未反映）|
+| 見込み客 | `group_unsubscribe` の抑止を **34108 のときだけ**へ限定（KI・テスト・不明は影響なし）。単一源 `akMarketingGroup.js` | ✅ 実装・テスト（本番未反映）|
+| AK → SendGrid | Customers の停止を記録できたら `AK Marketing` の group suppression へ追加（GET で id・名前を照合してから。global は使わない）| ✅ 実装・テスト（本番未反映）|
+| AK → SendGrid（再開）| 利用者の明示的な再開で Customers が RECORDED / ALREADY なら、34108 で停止中のときだけ group suppression から外す（global・KI・テストは外さない／失敗しても AK 側は巻き戻さない）| ✅ 実装・テスト（本番未反映）|
+| gate | `AK_MARKETING_UNSUBSCRIBE_BRIDGE_ENABLED=true` のときだけ書く（既定は判定と件数だけ）| 未設定（本番 env 変更は未実施）|
+| Phase 2 準備 | 週次の対象判定 `nativeWeeklyAudience.js`（現役有料・受信中・基本除外・進行不明は対象外）。**まだどこからも呼ばない** | ✅ 実装・テスト |
+
+## 未完了
+
+- merge / production deploy
+- Event Webhook で `group_unsubscribe` / `group_resubscribe` を受け取る設定（SendGrid 設定変更）
+- gate env の投入＋redeploy
+- 既存の group 停止 34 件: 2026-09-28 read-only 分類で **Customers 一致 0 / 重複 0 / 停止済み 0 / 不一致 34**（Customers への反映対象は 0）。
+  見込み客側は本番 Redis が masked secret でローカルから**未計測**（測るには本番 Function 経由の read-only 経路が要る）
+- Phase 2: 元々の会員の list の作成と週次への追加 / 月間通数と契約枠の確認 / 複数 list 重複の canary
+
+## 次作業
+
+① Draft PR の CI → MK が merge・deploy を判断 → ② Event Webhook 設定と gate の有効化（承認）→ 本番で両方向を確認
+→ ③ Phase 2（元々の会員の list・週次への追加）の設計確定と実装。
+
+## 本番未反映 / 高リスク未実施
+
+- 本番未反映: この PR の全変更（merge・deploy していない）。
+- 未実施: env 変更 / SendGrid Event Webhook 設定変更 / suppression・contact・list への本番 write / canary・実メール送信。
+
+---
+
 <!-- 常設ブロック: /free/ 全レース予想一覧（2026-09-27）。MK 目視で採否が決まるまで消さない -->
 # 📋 `/free/` の初期表示を「全レースの予想一覧」にする（2026-09-27 MK 確定 UI）— **本番反映済み（#599 `e3b54dae` → #600 `3faeeaf7` → 横はみ出し修正 #603 `7ed2438c`）/ GA4 計測は継続タスク**
 

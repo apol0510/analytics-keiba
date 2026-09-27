@@ -34,13 +34,14 @@
  */
 
 import { TOTAL_MESSAGES } from './sendgridMessagePlan.js';
+import { AK_MARKETING_GROUP } from '../unsubscribe/akMarketingGroup.js';
 import { CONTACT_FIELD_NAMES_REQUIRED } from './sendgridContactExport.js';
 
 /** list / Automation の名前（**推測で作らない**ための単一源） */
 export const LIST_NAME_PREFIX = 'ak-prospect-select-start-';
 export const AUTOMATION_NAME_PREFIX = 'AK Prospect Selection start ';
 /** 配信停止グループ（Marketing Campaigns の unsubscribe group） */
-export const UNSUBSCRIBE_GROUP_NAME = 'AK Marketing';
+export const UNSUBSCRIBE_GROUP_NAME = AK_MARKETING_GROUP.name;
 
 /** メール間隔（日）。**1 日 1 通**（2026-09-18 MK 確定） */
 export const INTERVAL_DAYS = 1;

@@ -139,8 +139,10 @@ test('SendGrid のイベント種別の翻訳（知らないものは無視）',
   for (const [t, r] of [['bounce', SUPPRESS_REASON.BOUNCE], ['blocked', SUPPRESS_REASON.BOUNCE],
     ['dropped', SUPPRESS_REASON.DROPPED], ['spamreport', SUPPRESS_REASON.COMPLAINT],
     ['unsubscribe', SUPPRESS_REASON.UNSUBSCRIBE], ['group_unsubscribe', SUPPRESS_REASON.UNSUBSCRIBE]]) {
-    assert.equal(classifyEvent(t).kind, 'suppress', t);
-    assert.equal(classifyEvent(t).reason, r, t);
+    // group 単位の停止は AK Marketing（34108）のものだけが抑止になる
+    const ev = t === 'group_unsubscribe' ? { asm_group_id: 34108 } : null;
+    assert.equal(classifyEvent(t, ev).kind, 'suppress', t);
+    assert.equal(classifyEvent(t, ev).reason, r, t);
   }
   /**
    * 配信成功は**反応ではない**が、**打ち切りの分母**なので数える（2026-09-14）。

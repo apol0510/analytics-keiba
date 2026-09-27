@@ -1,3 +1,20 @@
+# 2026-09-27（追記 9）— 元々の会員への定期配信は SendGrid MC で行う／まず配信停止の橋渡しから（MK 確定）
+
+- A「元々の会員への定期配信」を **SendGrid Marketing Campaigns 上で実現**する（統合案を採用。A/B/C の比較は `progress.md` 📬）。
+- **現役 Premium / Light（本番実測 22 名）は無料→有料向け週次から当面除外**。
+- **最初の実装は配信停止の橋渡し**。unsubscribe group は既存の `AK Marketing`（id 34108）を使い、新規作成しない
+  （2026-09-27 本番 read-only で id・名前の一致を確認。他は `テストグループ` 28368 / `KEIBA Intelligence メルマガ` 29174）。
+- SendGrid → AK は `asm_group_id` が AK Marketing のときだけ。KI・テスト・不明 group は AK を変えない。
+  再開（`group_resubscribe`）も同じ分離で、**AK 側の停止より新しい再開だけ**解除する。
+- （2026-09-28 追加確定）AK 側で利用者が**明示的に再開**したら、SendGrid の **AK Marketing の group suppression からだけ**外す。
+  Customers が RECORDED / ALREADY のとき・34108 で停止中のときだけ DELETE。global・KI 29174・テスト 28368 は外さない。
+  SendGrid 側の解除に失敗しても AK 側の再開は巻き戻さない（固定コードで不一致を観測する）。
+- AK → SendGrid は **group suppression**（global unsubscribe は使わない）。contact 検索はしない。
+- DRM 新規登録育成の受信中は週次から一時除外（単一源 `sequenceProgress`）。受信歴だけで永久除外しない。
+- 複数 list の重複を SendGrid が 1 通にまとめることは**未検証の安全仕様にしない**。canary 実測を本番有効化の条件にする。
+
+---
+
 # 2026-09-27（追記 8）— レース番号「1R」の色は薄い緑のまま（MK 確定）
 
 一度パレット（アイスブルー）へ寄せたが、MK 判断で**薄い緑（`#86efac`）に戻す**。2026-08-21 の決定を維持する。

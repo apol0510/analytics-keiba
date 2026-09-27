@@ -174,7 +174,8 @@ export function planProspectEventUpdates({ events, classify } = {}) {
   for (const ev of (events || [])) {
     const email = normalizeEmail(ev && ev.email);
     if (!email) continue;
-    const c = typeof classify === 'function' ? classify(ev && ev.event) : null;
+    // イベント本体も渡す（group 単位の配信停止は group を見て判定するため）
+    const c = typeof classify === 'function' ? classify(ev && ev.event, ev) : null;
     if (!c || c.kind === 'ignore') continue;
     if (!idsByEmail.has(email)) idsByEmail.set(email, { ids: [], complete: true });
     const idRec = idsByEmail.get(email);

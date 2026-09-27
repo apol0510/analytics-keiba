@@ -1,3 +1,39 @@
+# 元々の会員への定期配信 — A を SendGrid Marketing Campaigns で実現する（2026-09-27 MK 確定）
+
+> 「AK = 判断 / SendGrid = 配送」を維持する。**誰に送るかは AK が決め、送るのは SendGrid。**
+> 根拠の実測は `docs/progress.md` の 📬 ブロック（#607 本番監査）。
+
+## 確定した方針
+
+| # | 方針 |
+|---|---|
+| 1 | **A「元々の会員への定期配信」を SendGrid Marketing Campaigns 上で実現する**（旧 AK 自作配送を強化しない）|
+| 2 | **現役の Premium / Light は、無料→有料向けの週次メールから当面除外する**（送信不可の意味ではない。有料会員向けは別途）|
+| 3 | **最初の実装は配信停止の橋渡し**（AK ⇄ SendGrid unsubscribe group `AK Marketing`）。正本 `astro-site/docs/UNSUBSCRIBE.md` §8 |
+| 4 | unsubscribe group は**既存の `AK Marketing`（id 34108）を使う**。新規作成しない。id だけで信用せず、名前との一致を確かめてから使う |
+| 5 | DRM 新規登録育成（`free-signup-onboarding`・全 6 通）の**受信中は週次から一時除外**する。判定は既存の単一源 `sequenceProgress` / `campaignSequence`。**受信歴だけで永久除外しない**（完了・停止で終わった人は次の週次から再評価）|
+| 6 | 週次の宛先に複数 list（`ak-drm-engaged` と元々の会員の list）を入れる場合、**SendGrid が同一アドレスを 1 通にまとめることを未検証の安全仕様にしない**。本番有効化の完成条件に canary 実測を入れる（下）|
+
+## 配信停止の単一源
+
+- **AK が正本**（Customers `UnsubscribedAnalyticsKeiba` / `EmailBlacklist` / 配信基盤の停止リスト）。
+- SendGrid の group suppression（`AK Marketing`）は**送信時の最後の砦**。
+- SendGrid → AK は `asm_group_id` が AK Marketing のイベントだけ。KI・テスト・不明 group は AK を変えない（Customers・見込み客とも）。
+- 再開は **再開の時刻 ＞ AK の停止時刻** のときだけ。時刻が無い・読めない・同時刻以前は解除しない。同時刻は停止を優先。
+- AK → SendGrid は global unsubscribe ではなく **AK Marketing の group suppression** へ加える。
+- 利用者が AK 側で**明示的に再開**したら（Customers が RECORDED / ALREADY）、**AK Marketing の group suppression からだけ**外す
+  （34108 で停止中のときだけ。global・KI・テストは外さない。失敗しても AK 側は巻き戻さない）。
+
+## 本番有効化の完成条件（週次を元々の会員へ開ける前）
+
+1. 配信停止の橋渡しが両方向で本番確認できている（Event Webhook で `group_unsubscribe` / `group_resubscribe` を受け取れる設定を含む）
+2. 週次の宛先人数が AK の判定人数と一致する（現役有料会員・受信中・基本除外が外れている）
+3. **同一の運営確認用アドレスを `ak-drm-engaged` と元々の会員の list の両方へ入れた canary で、
+   1 Single Send → delivered 1 件だけ**を実測する（canary 実送信は高リスク境界。承認のうえで行う）
+4. 月間通数が契約枠に収まることを契約画面で確認する（Advanced 20K の送信枠は未確認）
+
+---
+
 # 無料導線のページ役割と現在のファネル（2026-09-27 MK 確定 / **売上・GA4・CTA・DRM の分析はこの定義を使う**）
 
 > ⚠️ **過去のページ役割と現在の役割を混同しない。** 2026-08-20 以前は `/free-prediction/` が
