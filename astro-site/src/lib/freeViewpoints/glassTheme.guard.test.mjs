@@ -94,3 +94,23 @@ test('左端の強い色帯を復活させない', () => {
   assert.ok(/\.rvb-sentence\s*\{[^}]*border: 1px solid/.test(glass), '見どころの文が左の色帯のまま');
   assert.ok(/\.rvb-horse\s*\{[^}]*border: 1px solid/.test(glass), '出走馬カードが左の色帯のまま');
 });
+
+test('「無料予想」見出しは太くしすぎない・◎馬名は一回り小さく（追記 5）', () => {
+  const last = (sel) => {
+    const all = [...glass.matchAll(new RegExp(`\\n\\s*${sel.replace(/[.[\]()]/g, '\\$&')}\\s*\\{([^}]*)\\}`, 'g'))];
+    return all.length ? all[all.length - 1][1] : '';
+  };
+  const w = Number((last('.rvb-title, .rvb-headcard .rvb-title').match(/font-weight:\s*(\d+)/) || [])[1]);
+  assert.ok(w && w <= 700, `見出しが太すぎる（${w}）`);
+  assert.ok(/font-size:\s*0?\.9\d*em/.test(last('.rm-main .rm-name')), '◎ 馬名が一回り小さくなっていない');
+});
+
+test('馬名・見出しは純白ではなく白に近い水色（追記 5）', () => {
+  for (const v of ['--t-hero', '--t-name', '--t-main']) {
+    const hex = ((glass.match(new RegExp(`${v}:\\s*(#[0-9a-f]{6})`, 'i')) || [])[1] || '').toLowerCase();
+    assert.ok(hex, `${v} が無い`);
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+    assert.ok(b > r && b - r >= 20, `${v}（${hex}）が水色寄りでない（ほぼ白）`);
+    assert.ok(r >= 180, `${v}（${hex}）が暗すぎる`);
+  }
+});

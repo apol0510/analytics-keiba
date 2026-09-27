@@ -1112,9 +1112,9 @@ const LEGEND = [
     --g-text-3: var(--t-note);
     --g-accent: var(--t-action);
     /* 文字パレット（2026-09-27 MK 追記 4）: 純白主体をやめ、階層別の青白〜ブルーグレー */
-    --t-hero: #d4ecff;      /* H1・重要見出し: 明るいアイスブルー */
-    --t-name: #dde9f7;      /* 馬名・レース名: frost の青白 */
-    --t-main: #c9dcef;      /* 本文 */
+    --t-hero: #c8ebff;      /* H1・重要見出し: 明るいアイスブルー */
+    --t-name: #d9f1ff;      /* 馬名・レース名: 白に近い淡い水色（純白にしない）*/
+    --t-main: #c3def3;      /* 本文: 淡い水色 */
     --t-sub: #94adc8;       /* 時刻・補助: ブルーグレー */
     --t-note: #a3b7cc;      /* 日付・注記: 淡いブルーグレー */
     --t-action: #7fe0f2;    /* 操作文字: シアン寄り */
@@ -1307,4 +1307,12 @@ const LEGEND = [
   .rm-main .rm-mark { color: #fda4af; text-shadow: 0 0 9px rgba(251, 113, 133, .50); }
   .rvb-horse-mark { color: #7dd3fc; text-shadow: 0 0 8px rgba(125, 211, 252, .40); }
   .rvb-horse.hm-main .rvb-horse-mark { color: #fda4af; text-shadow: 0 0 9px rgba(251, 113, 133, .50); }
+
+  /* ═══ 2026-09-27 MK 確定（追記 5）: 見出しを軽く・◎馬名を少し小さく ═══ */
+  .rvb-title, .rvb-headcard .rvb-title { font-weight: 700; letter-spacing: .05em; }
+  .rvb-headcard .rvb-title { font-size: 1.5rem; }
+  .rm-main .rm-name { font-size: .94em; font-weight: 700; }
+  @media (max-width: 640px) {
+    .rvb-headcard .rvb-title { font-size: 1.32rem; }
+  }
 </style>
