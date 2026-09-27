@@ -2265,6 +2265,85 @@ Netlify production deploy ready（merge から約 80 秒）。GA 遮断・非 GE
 
 ---
 
+<!-- 常設ブロック: 元々の会員へのメール再開 A/B/C 比較（2026-09-27〜）。MK が A/B/C を決めるまで消さない -->
+# 📬 元々の会員へのメール再開 — A/B/C 比較用 read-only 監査（2026-09-27 MK 指示）— **監査 action を追加（Draft PR・未 merge）/ 採否は未確定**
+
+## 目的
+
+元々の会員（Airtable 既存顧客）へ 9/24 以降マーケティングメールが届いていない。再開策
+**A. 定期配信を正式に定義する / B. 期限前・失効後の自動配信を有効化する / C. SendGrid MC の list に入れる**
+を**実数で比べる材料を集める**。**A/B/C のどれを採るかはこの作業で決めない。**
+「AK = 頭脳 / SendGrid = 配送」の境界は崩さない。`ak-drm-engaged` を元々の会員と同じ母集団とみなさない。
+
+## 元々の会員の定義（一意に決まる）
+
+`importCohort.resolveCohort(fields) === 'existing'`＝`Source` が `customer-import:` で始まらない Customers。
+移行計画の `keep_not_imported`（2026-08-27 実測 1,487）と同じ集合。
+`crm/importedCohort.isImportedCustomer` が見る `ImportBatchId` / `CreatedBy` は Customers に列が無い（87 列実測）ので定義に使わない。
+過去の「約 1,488」は定義ではなく当時の実測値として扱う。
+
+## ここまでの実測（2026-09-27 本番 read-only・既存 action のみ）
+
+| 出どころ | 値 |
+|---|---|
+| `mailOverview`（SendGrid 側）| prospect list 11 / 833 / 309（計 1,153）・予約 3・送信済み 24・requests 82,200・delivered 81,725・open 632・bounce 129・unsubscribe 35 / 反応状況: 送信候補 1,164・反応あり 794・抑止 10,031・継続 list `ak-drm-engaged` 806 / 週次配信は無効 / 監査上の不整合 4,821 |
+| provider suppression | 合計 471 |
+| `segments`（全 Customers。元々の会員に限らない）| expired 34（全員送信可）/ withdrawn 29（全員送信可）/ ex-paid-now-free 30（送信可 29・soft bounce 1）|
+| `jobsBrief` | ジョブ 0・送信/dispatch ゲートは有効 |
+
+## 既存の監査で止まる理由
+
+- 公式監査 `sendgrid-migration-audit.mjs --via-admin` は prospect 向けで、突合段階が本番で 2 回
+  `admin_api_unavailable`（大きな照合が同期 Function に収まらない）。
+- `segments` は 1 セグメントずつ・全 Customers が母数で、`free-all` は 504。元々の会員だけの内訳を返す action が無い。
+- 配信履歴の名指し取得（`fetchDeliveriesByEmails`）は POST で、GET だけの契約に入らない。
+
+## 足りない数（この監査で取る）
+
+1. 元々の会員の実数 2. プラン・契約内訳（free / light / premium / expired / withdrawn / 判定不能）
+3. 基本的な送信可否と除外理由（配信停止・blacklist・provider suppression・停止/テスト・強制ログアウト・アドレス不正/欠落）。
+   現役有料会員・反応なし・直近の接触・既送信は**施策側の制約として別に数える**（送信不可の意味ではない）
+4. 9/24 以降の旧 AK 経路の送信数（日別・campaign 別・状態別）
+5. DRM 対象との重複（段の判定 `resolveFunnelStage` と、DRM 育成 campaign の受信者）
+6. SendGrid の GET で見える状態（lists / segments / singlesends / 予約 / suppression）。
+   元々の会員が contacts に居るかは `unavailable_by_read_only_contract`（POST 検索が要るので測らない）
+
+## 追加した read-only 監査
+
+`admin-marketing` `action: 'nativeMailAudit'` ＋ クライアント `astro-site/scripts/native-mail-audit.mjs`。
+仕様は [`CUSTOMER_MARKETING.md` §7-4](../astro-site/docs/CUSTOMER_MARKETING.md)。
+GET だけ・件数だけ・窓＋封をした cursor・集合 digest 3 回照合・未知の入力は 400・境目の重複は停止。
+送信可否は 2 層: ① `baseSendability`（`audienceSegments.resolveBaseExclusion`。`evaluateSegment` から切り出して共有）/
+② `policyRestrictions`（現役有料会員・反応なし・直近の接触・既送信）。A/B/C ごとの送信数は 1 つの数字へ潰さない。
+2026-09-27 MK 指摘で修正（初版は ② を ① に混ぜ「現役有料会員＝送信不可」と読める出力だった）。
+
+### 判断材料として記録する事実（**直さない**）
+
+- **7 日 2 通 cap は仕様上あるが本番で効いていない**（`recentSendAtMs` を渡す呼び出し元が 0）。
+- **旧 AK の 24h 横断ガードは SendGrid MC の送信に効かない**（材料が `CampaignDeliveries` だけ）。
+  C を採ると、旧 AK 経路と SendGrid MC の両方から同じ人へ届き得る。
+
+## 完成条件
+
+| # | 条件 | 状態 |
+|---|---|---|
+| 1 | read-only 監査 action を追加し、テスト（認証必須・件数だけ・PII 無し・GET だけ・書込み分岐なし・窓・fail closed・定義の単一源）で固定 | ✅ Draft PR・CI |
+| 2 | merge → production deploy（**要 MK 承認**）| ⏸ 未実施 |
+| 3 | 本番で監査を実行し、上の 1〜6 を実数で埋める | ⏸ 未実施（2 の後）|
+| 4 | 実数で A/B/C を比較して MK へ提示し、判断を受ける | ⏸ 未実施 |
+
+## 未完了
+
+- merge・deploy・本番実行はしていない（実送信・queue・env 変更・SendGrid 変更・本番書込みも 0）。
+- 元々の会員が SendGrid contacts に居るかは測らない（read-only 契約の外。必要なら別途承認）。
+
+## 次作業
+
+① Draft PR の CI を確認 → MK が merge・deploy を判断 → ② 本番で `native-mail-audit.mjs` を実行し数を記録（docs PR）
+→ ③ A/B/C の比較表を MK へ提示。
+
+---
+
 <!-- 常設ブロック: /free/ 全レース予想一覧（2026-09-27）。MK 目視で採否が決まるまで消さない -->
 # 📋 `/free/` の初期表示を「全レースの予想一覧」にする（2026-09-27 MK 確定 UI）— **本番反映済み（#599 `e3b54dae` → #600 `3faeeaf7` → 横はみ出し修正 #603 `7ed2438c`）/ GA4 計測は継続タスク**
 
