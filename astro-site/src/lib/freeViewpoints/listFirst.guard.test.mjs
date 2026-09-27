@@ -71,6 +71,8 @@ test('各行の初期表示: 時刻・R・レース名・[メイン]・◎馬番
   assert.equal(Object.values(LIST_COPY).filter((v) => typeof v === 'string').some((v) => v.includes('詳しく')), false, '文言に「詳しく」が残っている');
   // 馬名は ◎ だけ（○▲△ は馬番のみ）
   assert.ok(/m\.kind === 'main' && m\.name && <span class="rm-name">/.test(summary), '馬名が ◎ だけになっていない');
+  const rest = summary.slice(summary.indexOf('rm-rest'));
+  assert.equal(rest.includes('rm-name'), false, '○▲△ に馬名を出している');
 });
 
 test('初期表示に条件タグ・説明・分析を出さない（記号も残さない）', () => {

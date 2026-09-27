@@ -50,12 +50,43 @@ test('有料版の実績バナーも /free/ の中だけガラスに寄せる（
   assert.equal(banner.includes('backdrop-filter'), false, 'バナー本体を変えている（他ページに波及する）');
 });
 
-test('印と操作文字は薄くしない（可読性優先）', () => {
-  const rule = (sel) => (glass.match(new RegExp(`${sel.replace(/[.[\]()]/g, '\\$&')}\\s*\\{([^}]*)\\}`)) || [])[1] || '';
-  for (const sel of ['.rm-num', '.rm-name']) assert.ok(/color:\s*#f8fafc/.test(rule(sel)), `${sel} が明るい白でない`);
-  assert.ok(/text-shadow/.test(rule('.rm-main .rm-mark')), '◎ に視認性の補助が無い');
-  assert.equal(/opacity:\s*0?\.[0-5]/.test(rule('.rvb-more')), false, '「詳細」を薄くしている');
-  assert.ok(/border:/.test(rule('.rvb-more')), '「詳細」が操作できる見た目でない');
+test('文字パレット（単一源）があり、純白を主要文字色にしない（追記 4）', () => {
+  for (const v of ['--t-hero:', '--t-name:', '--t-main:', '--t-sub:', '--t-note:', '--t-action:', '--t-glow:']) {
+    assert.ok(glass.includes(v), `${v} が無い`);
+  }
+  // ガラスの層（3 版目以降）で純白を文字色に使わない
+  assert.equal(/(^|[;{\s])color:\s*(#fff\b|#ffffff|#f8fafc|#f1f5f9)/i.test(glass), false, 'ガラスの層に純白の文字色がある');
+  const rule = (sel) => (glass.match(new RegExp(`(?:^|[}\\n])\\s*${sel.replace(/[.[\]()]/g, '\\$&')}\\s*\\{([^}]*)\\}`)) || [])[1] || '';
+  assert.ok(/var\(--t-hero\)/.test(rule('.rvb-title, .rvb-headcard .rvb-title')), '見出しがアイスブルーでない');
+  assert.ok(/var\(--t-action\)/.test(glass.match(/\.rvb-more, \.rvb-closebtn, [^{]*\{([^}]*)\}/)[1]), '操作文字がシアンでない');
+});
+
+test('印はガラスのチップ（◎＝赤系＋glow、○▲△＝シアン系）。馬番も同じ色温度', () => {
+  // 同じセレクタが複数あるときは後勝ち（実際に効く方）を見る
+  const rule = (sel) => {
+    const all = [...glass.matchAll(new RegExp(`\\n\\s*${sel.replace(/[.[\]()]/g, '\\$&')}\\s*\\{([^}]*)\\}`, 'g'))];
+    return all.length ? all[all.length - 1][1] : '';
+  };
+  assert.ok(/border:/.test(rule('.rm, .rm-rest')) && /background:/.test(rule('.rm, .rm-rest')), '印がチップになっていない');
+  assert.ok(/text-shadow/.test(rule('.rm-main .rm-mark')) && /#fda4af/i.test(rule('.rm-main .rm-mark')), '◎ が赤系＋glow でない');
+  assert.ok(/#7dd3fc/i.test(rule('.rm-mark')), '○▲△ がシアン系でない');
+  assert.ok(/var\(--t-name\)/.test(rule('.rm-num')), '馬番が同じ色温度でない');
+});
+
+test('操作文字・小さい文字を薄くしない（透明度で下げない）', () => {
+  assert.equal(/\.rvb-more[^{]*\{[^}]*opacity:\s*0?\.[0-6]/.test(glass), false, '「詳細」を薄くしている');
+  for (const sel of ['--t-sub', '--t-note']) {
+    const hex = (glass.match(new RegExp(`${sel}:\\s*(#[0-9a-f]{6})`, 'i')) || [])[1];
+    assert.ok(hex, `${sel} が無い`);
+    // 暗いネイビー背景（#0b1a30 相当）に対してコントラスト 4.5:1 以上
+    const lum = (h) => {
+      const c = [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255)
+        .map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+      return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    };
+    const ratio = (lum(hex) + 0.05) / (lum('#0b1a30') + 0.05);
+    assert.ok(ratio >= 4.5, `${sel} のコントラスト不足（${ratio.toFixed(2)}）`);
+  }
 });
 
 test('左端の強い色帯を復活させない', () => {

@@ -167,9 +167,17 @@ const LEGEND = [
                   return marks.length > 0
                     ? (
                       <span class="rvb-marks">
-                        {marks.map((m: any) => (
+                        {marks.filter((m: any) => m.kind === 'main').map((m: any) => (
                           <span class={`rm rm-${m.kind}`}><span class="rm-mark">{m.mark}</span><span class="rm-num">{m.number}</span>{m.kind === 'main' && m.name && <span class="rm-name">{m.name}</span>}</span>
                         ))}
+                        {/* ○▲△ は 1 つのガラスチップにまとめる（スマホで 1 行に収める） */}
+                        {marks.some((m: any) => m.kind !== 'main') && (
+                          <span class="rm-rest">
+                            {marks.filter((m: any) => m.kind !== 'main').map((m: any) => (
+                              <span class={`rm-item rm-${m.kind}`}><span class="rm-mark">{m.mark}</span><span class="rm-num">{m.number}</span></span>
+                            ))}
+                          </span>
+                        )}
                       </span>
                     )
                     : <span class="rvb-marks rvb-marks-none">{LIST_COPY.noMarks}</span>;
@@ -1099,10 +1107,19 @@ const LEGEND = [
     --g-hi: inset 0 1px 0 rgba(255, 255, 255, .07);
     --g-shadow: 0 10px 30px rgba(2, 6, 23, .38);
     --g-blur: blur(12px) saturate(140%);
-    --g-text: #f1f5f9;
-    --g-text-2: #d6e6f5;
-    --g-text-3: #a9c4dd;
-    --g-accent: #a5f3fc;
+    --g-text: var(--t-main);
+    --g-text-2: var(--t-main);
+    --g-text-3: var(--t-note);
+    --g-accent: var(--t-action);
+    /* 文字パレット（2026-09-27 MK 追記 4）: 純白主体をやめ、階層別の青白〜ブルーグレー */
+    --t-hero: #d4ecff;      /* H1・重要見出し: 明るいアイスブルー */
+    --t-name: #dde9f7;      /* 馬名・レース名: frost の青白 */
+    --t-main: #c9dcef;      /* 本文 */
+    --t-sub: #94adc8;       /* 時刻・補助: ブルーグレー */
+    --t-note: #a3b7cc;      /* 日付・注記: 淡いブルーグレー */
+    --t-action: #7fe0f2;    /* 操作文字: シアン寄り */
+    --t-glow: 0 0 12px rgba(125, 211, 252, .28);
+    --t-glow-soft: 0 0 8px rgba(125, 211, 252, .16);
     position: relative;
     isolation: isolate;
   }
@@ -1150,7 +1167,7 @@ const LEGEND = [
   .rvb-venuetab:hover { background: rgba(125, 211, 252, .10); color: var(--g-text); }
   .rvb-venuetab[aria-selected="true"] {
     background: linear-gradient(160deg, rgba(56, 189, 248, .26), rgba(14, 116, 144, .22));
-    border-color: var(--g-line-strong); color: #fff;
+    border-color: var(--g-line-strong); color: var(--t-hero);
     box-shadow: var(--g-hi), 0 0 0 1px rgba(103, 232, 249, .12);
   }
   .rvb-venuetab[aria-selected="true"]::after { background: rgba(255, 255, 255, .10); color: #e0f2fe; }
@@ -1168,10 +1185,8 @@ const LEGEND = [
   .rvb-sum-line .rvb-name { color: var(--g-text); }
 
   /* 印: 見やすさ最優先（少しだけ発光） */
-  .rm-num { color: #f8fafc; }
   .rm-mark { color: #93c5fd; text-shadow: 0 0 6px rgba(96, 165, 250, .40); }
   .rm-main .rm-mark { color: #fca5a5; text-shadow: 0 0 8px rgba(248, 113, 113, .50); }
-  .rm-name { color: #f8fafc; }
   .rvb-mainbadge { background: rgba(245, 158, 11, .12); border-color: rgba(251, 191, 36, .50); color: #fde68a; box-shadow: var(--g-hi); }
   .rvb-more {
     color: var(--g-accent); background: rgba(125, 211, 252, .08);
@@ -1235,4 +1250,61 @@ const LEGEND = [
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07), 0 10px 30px rgba(2, 6, 23, .38);
   }
   .rvb-resultslot :global(.scb-arrow) { background: rgba(255, 255, 255, .10); border: 1px solid rgba(255, 255, 255, .18); }
+
+  /* ═══ 2026-09-27 MK 確定（追記 4）: 文字・印・ラベルもガラスの色設計へ統一 ═══════════════
+     純白を主要文字色に使わない。読みにくい半透明にはせず、色味（青白〜ブルーグレー）と
+     ごく弱い glow で「ガラス越しに発光」させる。小さい文字は透明度を下げず色味だけで合わせる。 */
+  .rvb { color: var(--t-main); }
+  /* 見出し */
+  .rvb-title, .rvb-headcard .rvb-title { color: var(--t-hero); text-shadow: var(--t-glow); }
+  .rvb-venue-name { color: var(--t-hero); text-shadow: var(--t-glow-soft); }
+  .rvb-horses-head, .rvb-member-head, .rvb-howto-txt b, .rvb-highlight-head { color: var(--t-hero); }
+  /* 馬名・レース名 */
+  .rvb-name, .rvb-sum-line .rvb-name, .rvb-horse-name, .sc-name, .rm-name { color: var(--t-name); text-shadow: var(--t-glow-soft); }
+  /* 本文 */
+  .rvb-lead, .rvb-sentence, .rvb-howto-lead, .rvb-howto-txt, .rvb-cta-body, .rvb-topmember-body,
+  .rvb-signupbox-body, .rvb-signupbox-list, .rvb-signup-body, .rvb-signup-list, .rvb-samecond-head,
+  .mh-where, .mh-rank, .hl-val, .rvb-headnote-free,
+  .rvb-detail-sum, .rvb-detail[open] .rvb-detail-sum, .rvb-detail:not([open]) .rvb-detail-sum,
+  .rvb-row > .rvb-detail > .rvb-detail-sum, .rvb-marks { color: var(--t-main); }
+  /* 時刻・補助 */
+  .rvb-time, .rvb-sum-line .rvb-time, .rvb-meta, .rvb-horse-sub, .rvb-horse-meta, .rvb-horse-prev,
+  .rvb-cov, .rvb-horses-note, .rvb-horse-num, .sc-meta, .sc-finish, .mh-when { color: var(--t-sub); }
+  /* 日付・注記 */
+  .rvb-date, .rvb-headcard .rvb-date, .rvb-headnote-paid, .rvb-signupbox-note, .rvb-foot,
+  .rvb-highlight-note, .rvb-howto-note, .rvb-signup-mini, .rvb-helphint { color: var(--t-note); }
+  /* 操作文字 */
+  .rvb-more, .rvb-closebtn, .rvb-venuecmp-sum, .rvb-guide-sum, .rvb-guide[open] .rvb-guide-sum,
+  .rvb-howto-sum, .rvb-howto[open] .rvb-howto-sum, .rvb-signup-mini a { color: var(--t-action); }
+  .rvb-more, .rvb-closebtn { text-shadow: 0 0 8px rgba(127, 224, 242, .30); }
+  .rvb-closebtn:hover { color: #062a36; text-shadow: none; }
+
+  /* タブ・ラベル・バッジ */
+  .rvb-headcard .rvb-cat { color: var(--t-action); text-shadow: var(--t-glow-soft); }
+  .rvb-venuetab { color: var(--t-main); }
+  .rvb-venuetab:hover { color: var(--t-hero); }
+  .rvb-venuetab[aria-selected="true"] { color: var(--t-hero); text-shadow: var(--t-glow); }
+  .rvb-venuetab[aria-selected="true"]::after { color: var(--t-action); }
+  .rvb-venue-count { color: var(--t-action); }
+  .rvb-mainbadge {
+    color: var(--t-hero); background: rgba(125, 211, 252, .10);
+    border-color: rgba(103, 232, 249, .45); text-shadow: var(--t-glow-soft);
+  }
+  .rvb-headnote-free .rvb-headnote-ic { color: #fda4af; text-shadow: 0 0 8px rgba(251, 113, 133, .45); }
+
+  /* 印 ◎○▲△: ベタ色をやめ、小さなガラスのチップ。馬番も同じ色温度 */
+  .rvb-marks { gap: 6px 8px; }
+  .rm, .rm-rest {
+    align-items: baseline; padding: 1px 8px 1px 6px; border-radius: 8px;
+    border: 1px solid rgba(125, 211, 252, .22); background: rgba(125, 211, 252, .06);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06);
+  }
+  .rm-rest { display: inline-flex; gap: 10px; }
+  .rm-item { display: inline-flex; align-items: baseline; gap: 2px; }
+  .rm-mark { color: #7dd3fc; text-shadow: 0 0 8px rgba(125, 211, 252, .45); }
+  .rm-num { color: var(--t-name); text-shadow: var(--t-glow-soft); }
+  .rm-main { border-color: rgba(251, 113, 133, .40); background: rgba(244, 63, 94, .08); }
+  .rm-main .rm-mark { color: #fda4af; text-shadow: 0 0 9px rgba(251, 113, 133, .50); }
+  .rvb-horse-mark { color: #7dd3fc; text-shadow: 0 0 8px rgba(125, 211, 252, .40); }
+  .rvb-horse.hm-main .rvb-horse-mark { color: #fda4af; text-shadow: 0 0 9px rgba(251, 113, 133, .50); }
 </style>
