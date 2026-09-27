@@ -98,7 +98,7 @@ const LEGEND = [
            必ずカード内に一緒に出すこと。単独で置かない。 */}
     <div class="rvb-headcard">
       <div class="rvb-headtop">
-        <h1 class="rvb-title">無料予想<span class="rvb-cat">{categoryLabel}</span></h1>
+        <h1 class="rvb-title"><span class="rvb-title-badge">無料予想</span><span class="rvb-cat">{categoryLabel}</span></h1>
         <p class="rvb-date"><span class="rvb-date-ic" aria-hidden="true">📅</span>{fmtDate(view.date)}</p>
       </div>
       {freshness !== 'today' && (
@@ -1333,4 +1333,17 @@ const LEGEND = [
   .hl-val, .mh-rank, .rvb-samecond-head { font-weight: 500; }
   .rvb-horse-num { font-weight: 500; }
   .rvb-venuecmp-sum, .rvb-guide-sum, .rvb-howto-sum { font-weight: 500; }
+
+  /* ═══ 2026-09-27 MK 確定（追記 7）: 「無料予想」だけを黄緑〜ライムのガラス pill で強調 ═══
+     カード全体は染めない。「中央競馬／南関競馬」（水色の .rvb-cat）とは役割を分ける。 */
+  .rvb-title-badge {
+    display: inline-block; padding: .06em .62em .1em; border-radius: 999px;
+    color: #dcf5a8;
+    background: linear-gradient(160deg, rgba(163, 230, 53, .16), rgba(132, 204, 22, .07));
+    border: 1px solid rgba(190, 242, 100, .50);
+    -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .10), 0 0 14px rgba(163, 230, 53, .14);
+    text-shadow: 0 0 10px rgba(190, 242, 100, .30);
+    line-height: 1.25;
+  }
 </style>

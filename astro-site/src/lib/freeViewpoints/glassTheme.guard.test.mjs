@@ -137,3 +137,15 @@ test('チップ・ボタン・境界は維持（追記 6 で弱体化しない�
     assert.ok(re.test(glass), `${re} が消えている`);
   }
 });
+
+test('「無料予想」だけを黄緑〜ライムのガラス pill で強調（追記 7）', () => {
+  assert.ok(board.includes('<h1 class="rvb-title"><span class="rvb-title-badge">無料予想</span>'), '「無料予想」が pill に入っていない');
+  const m = glass.match(/\.rvb-title-badge\s*\{([^}]*)\}/);
+  assert.ok(m, 'pill の指定が無い');
+  assert.ok(/border-radius:\s*999px/.test(m[1]) && /border:[^;]*rgba\((1[6-9]\d|2\d\d),\s*2[2-4]\d,\s*(\d{1,3})/.test(m[1]), '黄緑〜ライムの角丸枠でない');
+  assert.ok(/backdrop-filter/.test(m[1]) && /box-shadow/.test(m[1]), 'ガラス調・控えめな glow が無い');
+  // カード全体は染めない・中央/南関ラベルは水色のまま
+  assert.equal(/\.rvb-headcard\s*\{[^}]*rgba\(1[3-9]\d,\s*2[0-4]\d,\s*[0-9]{1,2},/.test(glass), false, 'カード全体を黄緑に染めている');
+  const cat = [...glass.matchAll(/\.rvb-headcard \.rvb-cat\s*\{([^}]*)\}/g)].map((x) => x[1]).join(' ');
+  assert.equal(/rgba\((1[6-9]\d|2\d\d),\s*2[2-4]\d,\s*(\d{1,2}),/.test(cat), false, '中央/南関ラベルまで黄緑にしている');
+});

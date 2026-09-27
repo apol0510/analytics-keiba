@@ -85,7 +85,8 @@ const t2 = (name, fn) => { fn(); passed2 += 1; console.log(`  ✓ ${name}`); };
 console.log('homeCta.guard（名称の一致）');
 
 t2('H1 が nav と同じ「無料予想」である', () => {
-  assert.match(board, /<h1 class="rvb-title">無料予想/,
+  // 2026-09-27 MK 追記 7: 「無料予想」は H1 の中で黄緑の pill（span）に入れる。文字は nav と同じ
+  assert.match(board, /<h1 class="rvb-title">(?:<span class="rvb-title-badge">)?無料予想/,
     'nav は「無料予想」なので H1 も一致させる');
 });
 
