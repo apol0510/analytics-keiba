@@ -28,6 +28,7 @@ import {
 } from '../../src/lib/webhooks/sendgridSignature.js';
 import { emailMatchFormula } from '../../src/lib/webhooks/airtableFormula.js';
 import { applyPaymentEmailEvents } from '../../src/lib/payments/paymentEmailWebhook.js';
+import { applyGroupEventsToCustomers } from '../../src/lib/unsubscribe/akMarketingGroupBridge.js';
 import { getRecord, patchRecord } from '../../src/lib/payments/paymentEmailDeps.js';
 import { createProspectStore } from '../../src/lib/marketing/prospectStore.js';
 import { classifyEvent, PROSPECT_STATE } from '../../src/lib/marketing/prospectPolicy.js';
@@ -198,6 +199,20 @@ export default async (req) => {
     // ⚠️ アドレスを表に出さないため、`changes` は応答・ログから落とす
     const { changes: _prospectChanges, ...prospectCounts } = prospect;
 
+    // ── 8. AK Marketing group の配信停止 / 再開 → Customers（既定 OFF）──────────
+    //
+    // `asm_group_id` が AK Marketing のものだけを扱う（KI・テスト・不明 group は触らない）。
+    // 判定は `akMarketingGroupBridge.js` が単一源。gate が閉じていれば**件数を数えるだけ**。
+    // ⚠️ 失敗しても再送は要求しない（他の段の書き込みまで重ねて走るため）。件数だけ残す。
+    let akMarketingGroup = { enabled: false, targeted: 0, ignored: {}, written: {}, noop: {}, errors: 0 };
+    try {
+      akMarketingGroup = await applyGroupEventsToCustomers({
+        events, env: process.env, fetchImpl: fetch, nowMs: Date.now(),
+      });
+    } catch {
+      akMarketingGroup = { ...akMarketingGroup, errors: akMarketingGroup.errors + 1 };
+    }
+
     /**
      * ── 反応者（ENGAGED / PROMOTED）を外せなかったら **握り潰さない** ──────────
      *
@@ -228,6 +243,7 @@ export default async (req) => {
       ledger,
       prospect: prospectCounts,
       selectionExit,
+      akMarketingGroup,
     });
     const body = {
       success: !retry,
@@ -239,6 +255,7 @@ export default async (req) => {
       ledger,
       prospect: prospectCounts,
       selectionExit,
+      akMarketingGroup,
     };
     if (retry) {
       // ⚠️ 本文にアドレスは出さない。理由コードだけ

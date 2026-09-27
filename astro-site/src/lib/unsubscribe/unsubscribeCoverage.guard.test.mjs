@@ -61,8 +61,20 @@ test('決済・利用開始メールの経路は配信停止フラグを見な�
 });
 
 test('配信停止 Function はメールを 1 通も送らない', () => {
-  assert.ok(!/sendgrid|SENDGRID|api\.sendgrid\.com|mail\/send/i.test(FN),
-    '配信停止処理からメールを送っている');
+  // 2026-09-27: AK Marketing の group suppression へ加える橋渡し（UNSUBSCRIBE.md §8）で
+  // SendGrid の **ASM（配信停止）API** を呼ぶようになった。これはメール送信ではない。
+  // 守りたいのは「配信停止処理がメールを送らない」ことなので、**送信 API と送信ライブラリ**を
+  // Function 本体と橋渡しモジュールの両方で禁止する（以前は SendGrid の語そのものを禁止していた）。
+  const BRIDGE = read('src/lib/unsubscribe/akMarketingGroupBridge.js');
+  for (const [name, src] of [['unsubscribe.js', FN], ['akMarketingGroupBridge.js', BRIDGE]]) {
+    assert.ok(!/mail\/send|@sendgrid\/mail|sgMail|setApiKey\(|\/v3\/marketing\/singlesends|\/v3\/mail\//i.test(src),
+      `${name}: 配信停止処理からメールを送っている`);
+  }
+  // SendGrid へ触るのは橋渡しモジュール経由だけ（Function 本体に API の URL を直書きしない）
+  assert.ok(!/api\.sendgrid\.com/i.test(FN), '配信停止 Function に SendGrid の URL を直書きしている');
+  // 橋渡しが SendGrid へ書くのは AK Marketing の group suppression だけ
+  const posts = BRIDGE.match(/https:\/\/api\.sendgrid\.com[^`'"]*/g) || [];
+  assert.ok(posts.every((u) => u.startsWith('https://api.sendgrid.com/v3/asm/groups/')), posts.join(','));
 });
 
 // ── 4. 他人を止められない ───────────────────────────────────────

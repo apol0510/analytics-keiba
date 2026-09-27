@@ -26,6 +26,7 @@ import {
 import { createProspectStore } from '../../src/lib/marketing/prospectStore.js';
 import { makeRedisCmd } from '../../src/lib/marketing/deliveryKeyStore.js';
 import { SUPPRESS_REASON } from '../../src/lib/marketing/prospectPolicy.js';
+import { addToAkMarketingGroupSuppression } from '../../src/lib/unsubscribe/akMarketingGroupBridge.js';
 import {
   resolveUnsubscribeSigningKeys, verifyUnsubscribeSignature,
   isLegacyUnsignedAllowed, decideSignatureAcceptance,
@@ -350,14 +351,27 @@ export default async function handler(request) {
       console.log(`📮 unsubscribe sinks: ${JSON.stringify(sinkResults)} ok=${outcome.ok} trace=${trace}`);
 
       if (outcome.ok) {
+        // ── AK → SendGrid: AK Marketing group suppression へ加える（既定 OFF）──────
+        //    Customers の停止を**記録できたときだけ**。global unsubscribe は使わない
+        //    （KI 等の配信まで止めてしまう）。再開（resubscribe）では SendGrid 側を触らない
+        //    （解除の向きは未確定。止め続ける側に倒す）。
+        //    ⚠️ 同期に失敗しても**利用者への応答は変えない**（AK が単一源で、
+        //       週次の宛先は AK の判定から毎回作り直すため送られない）。件数・状態だけ残す。
+        let akMarketingGroup = 'not_applicable';
+        if (brand === 'analytics-keiba' && requestedAction === 'unsubscribe'
+          && sinkResults[SINK.CUSTOMER] === SINK_RESULT.RECORDED) {
+          const r = await addToAkMarketingGroupSuppression({ email: postEmail, env: process.env, fetchImpl: fetch });
+          akMarketingGroup = r.status;
+        }
         console.log(`✅ unsubscribe ok: kind=${parsed.kind} brand=${brand} action=${requestedAction}`
-          + ` recorded=${outcome.recorded.join('+')} trace=${trace}`);
+          + ` recorded=${outcome.recorded.join('+')} akMarketingGroup=${akMarketingGroup} trace=${trace}`);
         return new Response(
           JSON.stringify({
             success: true,
             brand,
             action: requestedAction,
             recorded: outcome.recorded,
+            akMarketingGroup,
             message: requestedAction === 'resubscribe'
               ? '配信を再開しました'
               : '配信停止が完了しました',

@@ -73,7 +73,7 @@ mailto 併記と単一源の迂回を検出する。
 - **transactional は止めない**。入金確認・利用開始メール（`payment-email-worker` /
   `confirm-bank-payment`）は配信停止フラグを**見ない**（guard で固定）
 - **配信再開（resubscribe）は `Customers` だけ**。見込み客の抑止は解除しない
-  （再取り込み・再登録で復活させない）
+  （再取り込み・再登録で復活させない）。SendGrid の `group_resubscribe` も同じ（§8）
 
 ## 5. 他人を止められない（URL に署名する）
 
@@ -136,6 +136,7 @@ MK が明示的に開ける運用とする（既定では閉じている）。
 | エンドポイント | `netlify/functions/unsubscribe.js` |
 | 見込み客の抑止 | `src/lib/marketing/prospectStore.js` の `recordSuppression()` |
 | 送信直前の除外 | `netlify/functions/marketing-campaign-dispatch.js` / `prospectDispatchContext.js` |
+| **AK ⇄ SendGrid `AK Marketing` の橋渡し（§8）** | `src/lib/unsubscribe/akMarketingGroupBridge.js` |
 | テスト | `npm run test:unsubscribe`（`check:safety` と CI に組込済み）|
 
 ## 7. 残っている穴（把握のうえ許容）
@@ -144,3 +145,52 @@ MK が明示的に開ける運用とする（既定では閉じている）。
 場合は `unsubscribe@keiba.link` に届く。新規送信分では起きない。
 恒久対応が要る場合は「受信メールを解析する基盤」が必要になるが、**既存 HTTPS 経路で
 解決できる範囲を超える**ため、必要になった時点で別途判断する（現時点では未実装）。
+
+## 8. AK ⇄ SendGrid unsubscribe group `AK Marketing` の橋渡し（2026-09-27 MK 確定 / **実装済み・本番未有効**）
+
+SendGrid Marketing Campaigns の配信（選別・週次）は、配信停止を SendGrid の unsubscribe group
+**`AK Marketing`（id 34108）**で扱う。旧 AK 経路は §1 の HTTPS ワンクリック → Customers。
+**2 本が互いに伝わっていなかった**（2026-09-27 時点で `AK Marketing` の group 停止 34 件は Customers に未反映）。
+
+単一源: `src/lib/unsubscribe/akMarketingGroupBridge.js`。**AK が正本**、SendGrid の group suppression は送信時の最後の砦。
+
+### SendGrid → AK（`sendgrid-webhook.js` の 8 段目）
+
+| イベント | `asm_group_id` | Customers |
+|---|---|---|
+| `group_unsubscribe` | **34108（AK Marketing）** | `UnsubscribedAnalyticsKeiba=true`（既に true なら何もしない）|
+| `group_resubscribe` | **34108** | **AK 側の停止より新しいときだけ** false へ戻す。時刻が無い・古い再開では戻さない |
+| 上記 2 種 | KI（29174）・テスト（28368）・その他 | **変えない**（`foreign_group`）|
+| 上記 2 種 | 無い・数値でない | **変えない**（`unknown_group` / fail closed）|
+| `unsubscribe`（global）・bounce・spam 等 | — | 橋渡しは関与しない（既存の `EmailBlacklist` 処理のまま）|
+
+- 署名検証を通ったあとにだけ動く（guard テストで順序を固定）。独立した try/catch で、失敗しても他の段を止めない。
+- 同じ人の複数イベントは**新しいほう**、同時刻は**停止を優先**。同じアドレスが Customers に 2 件ある場合は書かない。
+- 失敗しても SendGrid に再送は求めない（他の段の書き込みまで重ねて走るため）。件数だけ残す。
+
+### AK → SendGrid（`unsubscribe.js`）
+
+- Customers の停止を**記録できたときだけ**、`AK Marketing` の **group suppression** へアドレスを直接加える
+  （`POST /v3/asm/groups/34108/suppressions`）。**global unsubscribe は使わない**（KI の配信まで止まる）。
+- 書く前に `GET /v3/asm/groups/34108` で **id と名前の両方**を照合し、違えば書かない。contact 検索はしない。
+- 同じアドレスを何度加えても 1 件（冪等）。
+- **利用者への応答は同期の成否で変えない**（AK が正本で、週次の宛先は AK の判定から作るため送られない）。
+- **AK 側の配信再開（resubscribe）では SendGrid 側を触らない**（止め続ける側に倒す。解除の向きは未確定・下記）。
+
+### gate
+
+`AK_MARKETING_UNSUBSCRIBE_BRIDGE_ENABLED=true` のときだけ書く。それ以外は判定と件数だけ。
+**本番の有効化は env 変更＋redeploy（要承認）**。
+
+### 有効化の前提（未実施）
+
+1. Event Webhook で `group_unsubscribe` / `group_resubscribe` を受け取る設定（SendGrid 設定変更・要承認。
+   2026-09-18 時点で `group_unsubscribe: false`）
+2. gate env の投入＋redeploy
+3. 既に `AK Marketing` で止まっている 34 件（2026-09-27 実測）を Customers へ反映するかの判断（一括反映は別承認）
+
+### 未確定（MK 判断待ち）
+
+- AK 側で配信再開したとき、SendGrid の group suppression から外すか（現状は外さない）。
+- 見込み客（prospect）経路は `group_unsubscribe` を **group を問わず**停止扱いにしている（`prospectPolicy.classifyEvent`）。
+  KI の group 停止で AK の見込み客が止まり得る（安全側だが分離の原則とは合わない）。今回は変更していない。

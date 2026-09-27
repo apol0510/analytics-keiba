@@ -754,6 +754,9 @@ Single Send は**本文を自分で持つ**ので、期間が終わって `isCam
 | **サイト再訪 / CTA 反応** | ❌ リンクに受信者識別子が無く**紐付け不可** | ❌ | — |
 | **購入** | ❌ prospect の反応として扱う配線が無い | ❌ | — |
 
+> 2026-09-27: AK ⇄ `AK Marketing` の配信停止の橋渡しを実装（`astro-site/docs/UNSUBSCRIBE.md` §8）。
+> Event Webhook の `group_unsubscribe` / `group_resubscribe` が OFF のままでは AK へは届かない（設定変更は要承認・未実施）。
+
 ### なぜ外れないのか（構造）
 
 Single Send は**送信時点の list の中身**へ送る。したがって
