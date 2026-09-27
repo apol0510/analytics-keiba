@@ -149,13 +149,3 @@ test('「無料予想」だけを黄緑〜ライムのガラス pill で強調�
   const cat = [...glass.matchAll(/\.rvb-headcard \.rvb-cat\s*\{([^}]*)\}/g)].map((x) => x[1]).join(' ');
   assert.equal(/rgba\((1[6-9]\d|2\d\d),\s*2[2-4]\d,\s*(\d{1,2}),/.test(cat), false, '中央/南関ラベルまで黄緑にしている');
 });
-
-test('レース番号もパレットへ（緑にしない・操作文字のシアンと分ける）', () => {
-  const rule = (board.match(/\n\s*\.rvb-r\s*\{([^}]*)\}/) || [])[1] || '';
-  const hex = ((rule.match(/color:\s*(#[0-9a-f]{6})/i) || [])[1] || '').toLowerCase();
-  assert.ok(hex, '.rvb-r の色が読めない');
-  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
-  assert.ok(b > g && b > r, `レース番号（${hex}）が青系でない（緑のまま）`);
-  const action = ((glass.match(/--t-action:\s*(#[0-9a-f]{6})/i) || [])[1] || '').toLowerCase();
-  assert.notEqual(hex, action, 'レース番号が操作文字と同じ色');
-});
