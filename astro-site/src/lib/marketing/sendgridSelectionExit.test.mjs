@@ -382,13 +382,15 @@ test('印を付けられないときは再送を要求しない（guarded=false�
   assert.equal(r3.events.length, 1);
 });
 
-test('webhook は「反応者を外せない ＋ 重複防止あり」のときだけ 503 を返す', () => {
-  assert.match(webhookSrc, /const retryForExit = selectionExit\.criticalFailure === true && unseen\.guarded === true/);
-  assert.match(webhookSrc, /return jsonResponse\(503, \{ \.\.\.body, retry: 'selection_exit_failed' \}\)/);
-  // 再送で二重加算しないよう、prospect 反映は重複除去後のイベントだけ
-  assert.match(webhookSrc, /applyProspectEvents\(\{ events: unseen\.events/);
-  // 再送の 2 回目でも外せるよう、状態が変わっていなくても対象へ積む
-  assert.match(webhookSrc, /if \(r\.prospect\) out\.changes\.push\(\{ email: u\.email, state: r\.prospect\.state \}\)/);
+test('webhook は「反応者を外せない or 反映が終わらない」＋ 重複防止ありのときだけ 503 を返す', () => {
+  assert.match(webhookSrc, /const retryForExit = selectionExit\.criticalFailure === true && prospectGuarded === true/);
+  assert.match(webhookSrc, /retry: retryForExit \? 'selection_exit_failed' : 'prospect_incomplete'/);
+  // 2026-09-27: 「処理済み」の印を反映より先に付けない（印はレコードと同じ transaction の中）
+  assert.equal(/filterUnseen\(/.test(webhookSrc), false, '反映前に処理済みの印を付けている');
+  assert.match(webhookSrc, /applyProspectEvents\(\{ events, now/);
+  // 再送の 2 回目でも外せるよう、反映済みでも対象へ積む（prospectEventBatch の exitChange）
+  const batch = readFileSync(fileURLToPath(new URL('./prospectEventBatch.js', import.meta.url)), 'utf8');
+  assert.match(batch, /const c = exitChange\(u, r\.next\);\n\s+if \(c\) out\.changes\.push\(c\);/);
 });
 
 test('sg_event_id が無い / 形が違うイベントは重複判定できない（保証を外す）', async () => {

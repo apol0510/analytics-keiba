@@ -35,7 +35,7 @@ import { planProspectEventUpdates } from '../../src/lib/marketing/prospectPipeli
 import {
   applySelectionExit, createSelectionExitClient,
 } from '../../src/lib/marketing/sendgridSelectionExit.js';
-import { createEventOnceStore } from '../../src/lib/webhooks/webhookEventOnce.js';
+import { applyProspectEventBatch } from '../../src/lib/marketing/prospectEventBatch.js';
 
 config();
 
@@ -46,7 +46,16 @@ const BLACKLIST_TABLE = 'EmailBlacklist';
  * 同期 Function の打ち切りより十分手前に置き、越えそうなら新しい塊を始めない
  * （`sendgridSelectionExit.js` の `deadlineAtMs`）。
  */
-const SELECTION_EXIT_DEADLINE_MS = 7000;
+const SELECTION_EXIT_DEADLINE_MS = 50_000;
+
+/**
+ * prospect への反映に使ってよい時間の締め切り（**受信からの経過**）。
+ *
+ * Netlify の同期 Function は **60 秒で打ち切られ、変更できない**（公式 docs の既定値表）。
+ * 反映（〜40 秒）→ list から外す（〜50 秒）→ 応答、の順に締め切りを置き、打ち切りまで 10 秒残す。
+ * 越えそうなら新しい塊を始めず、5xx で SendGrid に再送させる（反映済みは冪等に飛ばす）。
+ */
+const PROSPECT_DEADLINE_MS = 40_000;
 
 function jsonResponse(status, body) {
   return new Response(JSON.stringify(body), {
@@ -152,21 +161,22 @@ export default async (req) => {
 
     // ── 6. 見込み客プールへの反映（既定 OFF）────────────────────────
     /**
-     * ⚠️ **再送で `delivered` を二重に数えない。**
-     *    下の「選別 list から外せなかった」ときは **5xx を返して SendGrid に再送させる**が、
-     *    再送されるのはバッチ全体で、`recordDelivered()` は呼ぶたびに +1 する。
-     *    そこで `sg_event_id` で 1 回だけ通す（印は Redis・TTL 付き）。
-     *    ⚠️ 印を付けられないとき（Redis 不通・ID 無し）は `guarded:false` になり、
-     *       **その回は再送を要求しない**（二重加算を防げないまま再送させない）。
+     * ⚠️ 2026-09-27 是正: 以前は `sg_event_id` の「処理済み」印を**反映より先に**全イベントへ
+     *    付けていた。Function が途中で止まると、印だけ付いて反映されないイベントが残り、
+     *    **再送されても捨てられる**。今は反映済みの印をレコードと**同じ書き込み（比較して書く）** に入れる
+     *    （`prospectEventBatch.js`）。再送で同じイベントが来ても数え直さない。
      */
-    const once = createEventOnceStore({ redisCmd: safeRedisCmdForOnce() });
-    const unseen = await once.filterUnseen(events);
-
-    let prospect = { enabled: false, engaged: 0, suppressed: 0, delivered: 0, exhausted: 0, notFound: 0, errors: 0, changes: [] };
+    let prospect = {
+      enabled: false, engaged: 0, suppressed: 0, delivered: 0, exhausted: 0,
+      notFound: 0, errors: 0, incomplete: false, remaining: 0, changes: [],
+    };
+    let prospectGuarded = false;
     try {
-      prospect = await applyProspectEvents({ events: unseen.events, now: Date.now() });
+      const r = await applyProspectEvents({ events, now: Date.now(), deadlineAtMs: receivedAtMs + PROSPECT_DEADLINE_MS });
+      prospect = r.result;
+      prospectGuarded = r.guarded;
     } catch {
-      prospect = { ...prospect, errors: 1 };
+      prospect = { ...prospect, errors: 1, incomplete: true };
     }
 
     // ── 7. 選別を終えた人を SendGrid の選別 list から外す ─────────────
@@ -196,15 +206,22 @@ export default async (req) => {
      * **5xx を返して SendGrid に再送させる**（再送は provider 側の仕組みで、AK に queue を作らない）。
      *
      * ⚠️ 再送を要求してよいのは **イベントの重複を防げているとき**だけ
-     *    （`unseen.guarded`）。防げないなら二重加算の方が害が大きいので 200 で終える。
+     *    （全イベントに `sg_event_id` がある = `prospectGuarded`）。防げないなら二重加算の方が
+     *    害が大きいので 200 で終える。
      */
-    const retryForExit = selectionExit.criticalFailure === true && unseen.guarded === true;
+    /**
+     * 再送を求めるのは次のどちらかで、**かつ重複を防げるとき**（全イベントに ID がある）だけ:
+     *  - 反応者（ENGAGED / PROMOTED）を list から外せなかった
+     *  - prospect への反映が時間内・書き込みで終わらなかった（反映済みは再送で飛ばされる）
+     */
+    const retryForExit = selectionExit.criticalFailure === true && prospectGuarded === true;
+    const retryForProspect = prospect.incomplete === true && prospectGuarded === true;
+    const retry = retryForExit || retryForProspect;
 
     // 件数のみ（メールアドレス・recordId を出さない）
     console.log('📨 [sendgrid-webhook] 処理完了:', {
       received: events.length,
-      duplicateSkipped: unseen.seen,
-      idempotencyGuarded: unseen.guarded,
+      idempotencyGuarded: prospectGuarded,
       processed,
       failed,
       paymentEmail,
@@ -213,10 +230,9 @@ export default async (req) => {
       selectionExit,
     });
     const body = {
-      success: !retryForExit,
+      success: !retry,
       received: events.length,
-      duplicateSkipped: unseen.seen,
-      idempotencyGuarded: unseen.guarded,
+      idempotencyGuarded: prospectGuarded,
       processed,
       failed,
       paymentEmail,
@@ -224,13 +240,17 @@ export default async (req) => {
       prospect: prospectCounts,
       selectionExit,
     };
-    if (retryForExit) {
+    if (retry) {
       // ⚠️ 本文にアドレスは出さない。理由コードだけ
-      console.error('⚠️ [sendgrid-webhook] 反応者を選別 list から外せませんでした（再送を要求）:', {
-        reason: selectionExit.reason || 'remove_failed',
+      console.error('⚠️ [sendgrid-webhook] 反映が終わっていません（再送を要求）:', {
+        prospect: retryForProspect ? (prospect.reason || 'incomplete') : null,
+        remaining: prospect.remaining || 0,
+        selectionExit: retryForExit ? (selectionExit.reason || 'remove_failed') : null,
         criticalTargets: selectionExit.criticalTargets || 0,
       });
-      return jsonResponse(503, { ...body, retry: 'selection_exit_failed' });
+      return jsonResponse(503, {
+        ...body, retry: retryForExit ? 'selection_exit_failed' : 'prospect_incomplete',
+      });
     }
     return jsonResponse(200, body);
   } catch {
@@ -257,90 +277,47 @@ export default async (req) => {
  * ⚠️ 反応（open / click）は状態を ENGAGED にするだけで、**Airtable へは書かない**
  *    （昇格は管理画面から明示的に行う）。除外（bounce / 苦情 / 配信停止）は**即時**。
  * ⚠️ Redis の `ak:prospect:` 配下のみ。既存の台帳・決済メール処理には触れない。
- * ⚠️ ここが失敗しても webhook 全体は 200 を返す（配信基盤の再送を招かない）。
+ * ⚠️ 反映が終わらなかったとき（時間切れ・書き込み失敗）は、重複を防げる場合に限り 5xx で再送させる。
  */
-/**
- * イベント重複防止に使う Redis（**無ければ null**。webhook を止めない）。
- * ⚠️ `ak:mkt:webhook-event:` 以外は触らない（呼び出し側が鍵を決める）。
- */
-function safeRedisCmdForOnce() {
-  const url = process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
-  if (!url || !token) return null;
-  return (args) => fetch(url, {
+async function applyProspectEvents({ events, now, deadlineAtMs }) {
+  /**
+   * `result.changes` は **選別 list から外す相手**（`{email, state}`）。
+   * ⚠️ 応答・ログには出さない（アドレスを含むため）。呼び出し元が
+   *    `applySelectionExit()` へ渡すためだけに使い、件数だけを表に出す。
+   */
+  const empty = {
+    enabled: false, engaged: 0, suppressed: 0, delivered: 0, exhausted: 0,
+    notFound: 0, errors: 0, incomplete: false, remaining: 0, changes: [],
+  };
+  if (process.env.MARKETING_PROSPECT_EVENTS_ENABLED !== 'true') return { result: empty, guarded: false };
+  if (!process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN) {
+    return { result: empty, guarded: false };
+  }
+
+  const redisFetch = (args) => fetch(process.env.UPSTASH_REDIS_REST_URL, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    headers: {
+      Authorization: `Bearer ${process.env.UPSTASH_REDIS_REST_TOKEN}`,
+      'Content-Type': 'application/json',
+    },
     body: JSON.stringify(args),
   }).then(async (r) => {
     if (!r.ok) throw new Error(`upstash_http_${r.status}`);
     return (await r.json()).result;
   });
-}
-
-async function applyProspectEvents({ events, now }) {
   /**
-   * `changes` は **選別 list から外す相手**（`{email, state}`）。
-   * ⚠️ 応答・ログには出さない（アドレスを含むため）。呼び出し元が
-   *    `applySelectionExit()` へ渡すためだけに使い、件数だけを表に出す。
+   * ⚠️ 書き込みは**比較して書く**（`PROSPECT_CAS_LUA` の EVAL）。レコード・索引・抑止台帳・
+   *    反映済みの印が全部か何も無いかになり、同じ相手への別の更新を後勝ちで消さない。
    */
-  const out = {
-    enabled: false, engaged: 0, suppressed: 0, delivered: 0, exhausted: 0,
-    notFound: 0, errors: 0, changes: [],
-  };
-  if (process.env.MARKETING_PROSPECT_EVENTS_ENABLED !== 'true') return out;
-  if (!process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN) return out;
-  out.enabled = true;
-
-  const store = createProspectStore({
-    cmd: (args) => fetch(process.env.UPSTASH_REDIS_REST_URL, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${process.env.UPSTASH_REDIS_REST_TOKEN}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(args),
-    }).then(async (r) => {
-      if (!r.ok) throw new Error(`upstash_http_${r.status}`);
-      return (await r.json()).result;
-    }),
-  });
+  const store = createProspectStore({ cmd: redisFetch });
 
   const { updates } = planProspectEventUpdates({ events, classify: classifyEvent });
-  for (const u of updates) {
-    try {
-      /**
-       * ⚠️ **`delivered` を数えるのがここ**（2026-09-14 追加）。打ち切りは
-       *    「delivered 10 通で無反応」なので、数えないと分母が 0 のままで
-       *    **誰も除外されない**。`applyDelivered()` は閾値に達して反応 0 の相手を
-       *    その場で EXHAUSTED にする（打ち切りが起きる唯一の場所）。
-       * ⚠️ 反応（open / click）と delivered は**同じバッチで両方起こりうる**。
-       *    先に delivered を数えてから反応を記録する（順序を入れ替えない）。
-       */
-      if (u.action === 'delivered' || u.alsoDelivered === true) {
-        const d = await store.recordDelivered({ email: u.email, nowMs: now, env: process.env });
-        if (d && d.ok) out.delivered += 1; else out.notFound += 1;
-        if (d && d.ok && d.prospect && d.prospect.state === PROSPECT_STATE.EXHAUSTED) {
-          if (d.changed) out.exhausted += 1;
-          // 打ち切り（delivered 10 通・無反応）も選別から外す
-          out.changes.push({ email: u.email, state: PROSPECT_STATE.EXHAUSTED });
-        }
-      }
-      if (u.action === 'delivered') continue;
-      const r = u.action === 'suppress'
-        ? await store.recordSuppression({ email: u.email, nowMs: now, reason: u.reason })
-        : await store.recordEngagement({ email: u.email, nowMs: now, kind: u.kind });
-      if (!r.ok) { out.notFound += 1; continue; }
-      if (u.action === 'suppress') out.suppressed += 1; else if (r.changed) out.engaged += 1;
-      /**
-       * ⚠️ **状態が変わっていなくても積む。**
-       *    除去に失敗して再送されたとき、2 回目は `changed:false`（既に ENGAGED）になる。
-       *    ここで積まないと**再送しても外れない**ので、「いまの状態が除外対象か」で判断する。
-       *    除去そのものはべき等なので、余分に積んでも害は無い。
-       */
-      if (r.prospect) out.changes.push({ email: u.email, state: r.prospect.state });
-    } catch { out.errors += 1; }
-  }
-  return out;
+  /** 全員のイベント ID が揃っているときだけ「再送しても二重に数えない」と言える */
+  const guarded = updates.length > 0 && updates.every((u) => u.eventIdsComplete === true);
+  const result = await applyProspectEventBatch({
+    updates, store, nowMs: now, env: process.env, deadlineAtMs,
+  });
+  return { result, guarded };
 }
 
 async function applyEmailEventLedger({ events, now }) {

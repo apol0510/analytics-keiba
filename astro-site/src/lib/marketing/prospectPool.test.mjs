@@ -36,6 +36,7 @@ import {
 } from './prospectPipeline.js';
 import { createProspectAdminApi, isProspectWriteEnabled, INTAKE_MAX_ROWS } from './prospectAdminApi.js';
 import { planTickDelivery, TICK_ABORT } from './automationTickPlan.js';
+import { isProspectCasEval, emulateProspectCas } from './prospectCasFakeForTests.mjs';
 
 const FN = readFileSync(fileURLToPath(
   new URL('../../../netlify/functions/admin-marketing-prospect.js', import.meta.url)), 'utf8');
@@ -50,6 +51,7 @@ function fakeRedis(seed = {}) {
   const calls = [];
   const cmd = async (a) => {
     calls.push(a);
+    if (isProspectCasEval(a)) return emulateProspectCas(a, { get: (k) => (store.has(k) ? store.get(k) : null), set: (k, v) => store.set(k, v), del: (k) => store.delete(k), sadd: (k, m) => { const s = store.get(k) || new Set(); s.add(m); store.set(k, s); }, srem: (k, m) => { const s = store.get(k); if (s) s.delete(m); }, has: (k, m) => { const s = store.get(k); return !!(s && s.has && s.has(m)); } });
     const [op, key] = a;
     if (op === 'GET') return store.has(key) ? store.get(key) : null;
     if (op === 'SET') {
@@ -541,10 +543,10 @@ test('guard: write ゲートは Redis / Airtable 初期化より前', () => {
 });
 
 test('guard: webhook の prospect 反映は既定 OFF で、失敗しても 200 を返す', () => {
-  assert.match(HOOK, /MARKETING_PROSPECT_EVENTS_ENABLED !== 'true'\) return out/);
-  assert.match(HOOK, /prospect = await applyProspectEvents/);
+  assert.match(HOOK, /MARKETING_PROSPECT_EVENTS_ENABLED !== 'true'\) return \{ result: empty, guarded: false \}/);
+  assert.match(HOOK, /const r = await applyProspectEvents/);
   // 例外を握って全体を落とさない
-  const at = HOOK.indexOf('prospect = await applyProspectEvents');
+  const at = HOOK.indexOf('const r = await applyProspectEvents');
   assert.match(HOOK.slice(at, at + 200), /catch/);
 });
 
@@ -589,8 +591,11 @@ test('除外・打ち切りは TTL で消えず、台帳へ hash と理由・日
   for (const k of Object.keys(entry)) assert.ok(BLOCKED_FIELDS.includes(k), `${k} を保存している`);
   assert.equal(JSON.stringify(entry).includes('@'), false, '台帳にアドレスが入っている');
   // ⚠️ 台帳キーに TTL を付けない
-  const setCall = r.calls.find((c) => c[0] === 'SET' && c[1] === blockedKey(h));
-  assert.equal(setCall.includes('EX'), false, '台帳に TTL を付けている');
+  // 2026-09-27: 台帳は「比較して書く」（EVAL）の中で SET される。TTL（EX / EXPIRE）を付けていないこと
+  const evalCall = r.calls.find((c) => c[0] === 'EVAL' && c.includes(blockedKey(h)));
+  assert.ok(evalCall, '台帳を書いていない');
+  assert.equal(evalCall.includes('EX') || evalCall.includes('EXPIRE'), false, '台帳に TTL を付けている');
+  assert.equal(/EXPIRE|'EX'/.test(String(evalCall[1])), false, 'スクリプトが TTL を付けている');
 });
 
 test('無反応の打ち切り（delivered 基準）も台帳へ載る', async () => {

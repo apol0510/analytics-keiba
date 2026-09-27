@@ -160,13 +160,26 @@ export function planPromotions({
  * `classifyEvent` の結果ごとに 1 件ずつ。**同じアドレスの重複は最後の 1 つに畳む**が、
  * **除外は反応より優先**する（苦情の後の開封で復活させない）。
  */
+/** provider のイベント ID の形（`webhookEventOnce.js` と同じ基準） */
+export const PROVIDER_EVENT_ID = /^[A-Za-z0-9_.:-]{8,120}$/;
+
 export function planProspectEventUpdates({ events, classify } = {}) {
   const byEmail = new Map();
+  /**
+   * 2026-09-27: 相手ごとに**関わったイベントの ID** を控える。反映と同じ書き込みでレコードに残し、
+   * 再送されたときに「もう反映した」を判定する（処理済みの印だけが先に付くのを防ぐ）。
+   * ID の無いイベントが 1 つでも混ざった相手は `eventIdsComplete:false`（重複を防げない）。
+   */
+  const idsByEmail = new Map();
   for (const ev of (events || [])) {
     const email = normalizeEmail(ev && ev.email);
     if (!email) continue;
     const c = typeof classify === 'function' ? classify(ev && ev.event) : null;
     if (!c || c.kind === 'ignore') continue;
+    if (!idsByEmail.has(email)) idsByEmail.set(email, { ids: [], complete: true });
+    const idRec = idsByEmail.get(email);
+    const evId = String((ev && ev.sg_event_id) || '').trim();
+    if (PROVIDER_EVENT_ID.test(evId)) { if (!idRec.ids.includes(evId)) idRec.ids.push(evId); } else idRec.complete = false;
     const cur = byEmail.get(email);
     // 除外が 1 つでもあれば、その相手は除外に倒す
     if (c.kind === 'suppress') { byEmail.set(email, { email, action: 'suppress', reason: c.reason }); continue; }
@@ -188,7 +201,10 @@ export function planProspectEventUpdates({ events, classify } = {}) {
     }
     byEmail.set(email, { email, action: 'engage', kind: c.engagement });
   }
-  const updates = [...byEmail.values()];
+  const updates = [...byEmail.values()].map((u) => {
+    const idRec = idsByEmail.get(u.email) || { ids: [], complete: false };
+    return { ...u, eventIds: idRec.ids, eventIdsComplete: idRec.complete && idRec.ids.length > 0 };
+  });
   return {
     updates,
     counts: {

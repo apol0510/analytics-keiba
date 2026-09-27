@@ -334,6 +334,9 @@ test('【配線】webhook が delivered を prospect へ反映している', () 
     fileURLToPath(new URL('../../../netlify/functions/sendgrid-webhook.js', import.meta.url)),
     'utf8',
   );
-  assert.match(src, /store\.recordDelivered\(/, 'delivered を数えていない（打ち切りが発火しない）');
-  assert.match(src, /PROSPECT_STATE\.EXHAUSTED/, '打ち切りを観測できていない');
+  // 2026-09-27: 反映は `prospectEventBatch`（原子的・冪等）へ移した。delivered を数えて打ち切る経路はそこ
+  assert.match(src, /applyProspectEventBatch\(/, 'prospect へ反映していない');
+  const batch = readFileSync(fileURLToPath(new URL('./prospectEventBatch.js', import.meta.url)), 'utf8');
+  assert.match(batch, /applyDelivered\(/, 'delivered を数えていない（打ち切りが発火しない）');
+  assert.match(batch, /PROSPECT_STATE\.EXHAUSTED/, '打ち切りを観測できていない');
 });
