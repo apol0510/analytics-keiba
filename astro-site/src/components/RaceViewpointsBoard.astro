@@ -1112,9 +1112,9 @@ const LEGEND = [
     --g-text-3: var(--t-note);
     --g-accent: var(--t-action);
     /* 文字パレット（2026-09-27 MK 追記 4）: 純白主体をやめ、階層別の青白〜ブルーグレー */
-    --t-hero: #c8ebff;      /* H1・重要見出し: 明るいアイスブルー */
-    --t-name: #d9f1ff;      /* 馬名・レース名: 白に近い淡い水色（純白にしない）*/
-    --t-main: #c3def3;      /* 本文: 淡い水色 */
+    --t-hero: #b9e5ff;      /* H1・重要見出し: 明るいアイスブルー */
+    --t-name: #c9ecff;      /* 馬名・レース名: 淡いアイスブルー（純白にしない）*/
+    --t-main: #b8d9f0;      /* 本文: 淡い水色 */
     --t-sub: #94adc8;       /* 時刻・補助: ブルーグレー */
     --t-note: #a3b7cc;      /* 日付・注記: 淡いブルーグレー */
     --t-action: #7fe0f2;    /* 操作文字: シアン寄り */
@@ -1309,10 +1309,28 @@ const LEGEND = [
   .rvb-horse.hm-main .rvb-horse-mark { color: #fda4af; text-shadow: 0 0 9px rgba(251, 113, 133, .50); }
 
   /* ═══ 2026-09-27 MK 確定（追記 5）: 見出しを軽く・◎馬名を少し小さく ═══ */
-  .rvb-title, .rvb-headcard .rvb-title { font-weight: 700; letter-spacing: .05em; }
+  .rvb-title, .rvb-headcard .rvb-title { font-weight: 600; letter-spacing: .05em; }
   .rvb-headcard .rvb-title { font-size: 1.5rem; }
-  .rm-main .rm-name { font-size: .94em; font-weight: 700; }
+  .rm-main .rm-name { font-size: .94em; font-weight: 500; }
   @media (max-width: 640px) {
     .rvb-headcard .rvb-title { font-size: 1.32rem; }
   }
+
+  /* ═══ 2026-09-27 MK 確定（追記 6）: 主要文字を一段軽く（ガラスの繊細さに合わせる）═══
+     目安: 大見出し 600 / 会場名・見出し 600 / レース名・タブ・◎馬名 500 / 本文 400〜500 / 補助 400。
+     ⚠️ iPhone のヒラギノは太さの段階が少なく 600 以上は W6 になるため、馬名・レース名は 500 にする。
+     チップ・ボタン・境界・glow は変えない（太さだけ）。 */
+  .rvb-venue-name { font-weight: 600; }
+  .rvb-horses-head, .rvb-member-head, .rvb-topmember-head, .rvb-signupbox-head, .rvb-highlight-head,
+  .rvb-cta-head, .rvb-signup-head { font-weight: 600; }
+  .rvb-name, .rvb-sum-line .rvb-name, .rvb-horse-name, .sc-name { font-weight: 500; }
+  .rvb-r { font-weight: 600; }
+  .rvb-venuetab { font-weight: 500; }
+  .rvb-venuetab[aria-selected="true"] { font-weight: 600; }
+  .rvb-venuetab-count, .rvb-venue-count { font-weight: 500; }
+  .rvb-marks { font-weight: 600; }
+  .rvb-headnote-free { font-weight: 500; }
+  .hl-val, .mh-rank, .rvb-samecond-head { font-weight: 500; }
+  .rvb-horse-num { font-weight: 500; }
+  .rvb-venuecmp-sum, .rvb-guide-sum, .rvb-howto-sum { font-weight: 500; }
 </style>

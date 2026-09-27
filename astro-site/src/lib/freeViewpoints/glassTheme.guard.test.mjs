@@ -114,3 +114,26 @@ test('馬名・見出しは純白ではなく白に近い水色（追記 5）', 
     assert.ok(r >= 180, `${v}（${hex}）が暗すぎる`);
   }
 });
+
+test('主要文字を一段軽く（追記 6）: 見出し 600 以下・馬名/レース名 500・一覧の印行 600 以下', () => {
+  const last = (sel) => {
+    const all = [...glass.matchAll(new RegExp(`\\n\\s*${sel.replace(/[.[\]()]/g, '\\$&')}\\s*\\{([^}]*)\\}`, 'g'))];
+    return all.length ? all[all.length - 1][1] : '';
+  };
+  const w = (sel) => Number((last(sel).match(/font-weight:\s*(\d+)/) || [])[1]);
+  assert.ok(w('.rvb-title, .rvb-headcard .rvb-title') <= 600, '大見出しが重い');
+  assert.ok(w('.rvb-venue-name') <= 600, '会場名が重い');
+  assert.ok(w('.rm-main .rm-name') <= 500, '◎馬名が重い');
+  assert.ok(w('.rvb-name, .rvb-sum-line .rvb-name, .rvb-horse-name, .sc-name') <= 500, 'レース名・馬名が重い');
+  assert.ok(w('.rvb-marks') <= 600, '一覧の印行が重い');
+  assert.ok(w('.rvb-headnote-free') <= 500, '「AIの印…」が重い');
+  assert.ok(w('.rvb-venuetab') <= 500, 'タブが重い');
+  // ◎馬名のサイズは現状維持（これ以上小さくしない）
+  assert.ok(/font-size:\s*\.94em/.test(last('.rm-main .rm-name')), '◎馬名のサイズを変えている');
+});
+
+test('チップ・ボタン・境界は維持（追記 6 で弱体化しない）', () => {
+  for (const re of [/\.rm, \.rm-rest\s*\{[^}]*border:/, /\.rvb-more\s*\{[^}]*border:/, /--g-line-strong:/, /--t-glow:/]) {
+    assert.ok(re.test(glass), `${re} が消えている`);
+  }
+});
