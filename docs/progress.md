@@ -2266,7 +2266,7 @@ Netlify production deploy ready（merge から約 80 秒）。GA 遮断・非 GE
 ---
 
 <!-- 常設ブロック: 元々の会員へのメール再開 A/B/C 比較（2026-09-27〜）。MK が A/B/C を決めるまで消さない -->
-# 📬 元々の会員へのメール再開 — A/B/C 比較用 read-only 監査（2026-09-27 MK 指示）— **監査 action を追加（Draft PR・未 merge）/ 採否は未確定**
+# 📬 元々の会員へのメール再開 — A/B/C 比較用 read-only 監査（2026-09-27 MK 指示）— **監査 #607 `ad7a2c0f` 本番反映・本番実測済み / 採否は未確定（MK 判断待ち）**
 
 ## 目的
 
@@ -2327,20 +2327,122 @@ GET だけ・件数だけ・窓＋封をした cursor・集合 digest 3 回照�
 
 | # | 条件 | 状態 |
 |---|---|---|
-| 1 | read-only 監査 action を追加し、テスト（認証必須・件数だけ・PII 無し・GET だけ・書込み分岐なし・窓・fail closed・定義の単一源）で固定 | ✅ Draft PR・CI |
-| 2 | merge → production deploy（**要 MK 承認**）| ⏸ 未実施 |
-| 3 | 本番で監査を実行し、上の 1〜6 を実数で埋める | ⏸ 未実施（2 の後）|
-| 4 | 実数で A/B/C を比較して MK へ提示し、判断を受ける | ⏸ 未実施 |
+| 1 | read-only 監査 action を追加し、テスト（認証必須・件数だけ・PII 無し・GET だけ・書込み分岐なし・窓・fail closed・定義の単一源）で固定 | ✅ #607 squash merge `ad7a2c0f` |
+| 2 | merge → production deploy（MK 承認済み）| ✅ production deploy ready 2026-09-27 12:08:28Z（`ad7a2c0f`）|
+| 3 | 本番で監査を実行し、上の 1〜6 を実数で埋める | ✅ 2026-09-27 12:18Z（下の「本番実測」）|
+| 4 | 実数で A/B/C を比較して MK へ提示し、判断を受ける | 🔄 比較表を提示（下）・**MK 判断待ち** |
+
+## 本番実測（2026-09-27 12:18Z / `native-mail-audit.mjs` / read-only）
+
+実行: `netlify dev:exec --context production -- node astro-site/scripts/native-mail-audit.mjs`。
+6 窓・集合 digest 3 回一致（走査中の増減なし）・境目の重複 0・出力に PII / 秘密値 0。
+**書込み 0**（実送信・queue・env・Airtable・SendGrid いずれも変更なし）。
+
+### 母数（`baseSendability.sendable` を会員総数として扱わない）
+
+| 項目 | 値 |
+|---|---|
+| native 総レコード | **1,538** |
+| uniqueMembers | 1,538 |
+| noEmail（アドレス欠落。母数外の別枠）| 0 |
+| duplicate（同一アドレスの 2 件目以降。別枠）| 0 |
+
+2026-08-27 の `keep_not_imported` 1,487 から +51（その後の自然流入の新規登録）。
+
+### プラン・契約
+
+| 主区分（重なりは 退会→判定不能→期限切れ→premium→light→free で畳む）| 人数 |
+|---|---|
+| free | 1,455 |
+| expired | 32 |
+| withdrawn | 29 |
+| premium（現役・三連複含む）| 18 |
+| light（現役・期限間近含む）| 4 |
+| 判定不能 | 0 |
+
+plan × contract（畳まない全軸）: free|none 1,461 / premium|expired 42 / light|expired 12 / premium_sanrenpuku|expired 1 /
+premium|active 13 / premium_sanrenpuku|active 5 / light|active 2 / light|expiring_soon 2。
+→ 期限切れは契約上 **55 名**（うち退会フラグ付きは主区分で withdrawn 側に畳まれている）。退会 29 名は全員 基本的に送信可能。
+
+### ① 基本的な送信可否（`baseSendability`）
+
+| | 人数 |
+|---|---|
+| **送信可能** | **1,458** |
+| 除外 合計 | 80 |
+| └ 配信基盤の停止リスト（provider_suppressed）| 38 |
+| └ ソフトバウンス履歴（blacklist_soft）| 22 |
+| └ バウンス・苦情（blacklist_hard）| 11 |
+| └ 停止・テスト（suspended_or_test）| 6 |
+| └ 配信停止（unsubscribed）| 3 |
+
+均衡: 1,458 + 80 = 1,538 ✅。provider_unknown 0（停止リストは読めた: 合計 471）。
+
+### ② 施策側の制約（`policyRestrictions`／**送信不可の意味ではない**）
+
+| 制約 | 値 |
+|---|---|
+| 現役有料会員 | 22（Premium 18 / Light 4）、うち①送信可能 20 |
+| 反応なし（engagement blocked）| **未適用**（除外リストが空 `blocklist_empty`。件数 null。0 人ではない）|
+| 直近の接触 / 既送信 | 未計測（campaign 依存）|
+
+### 9/24 以降の旧 AK 経路の送信（`CampaignDeliveries` / `ScheduledEmails`）
+
+- `CampaignDeliveries`: **10 行・全て sent・2026-09-27・`free-signup-onboarding`（DRM 育成）**。割引 campaign 等の送信は 0。
+- `ScheduledEmails`（9/24 以降作成）: 2 ジョブ・SENT 2・Recipients 10・Sent 10・Failed 0。
+- 元々の会員のうち 9/24 以降に受信したのは 10 名（全員 DRM 育成）。
+- ⚠️ SendGrid MC と prospect の送信はこの台帳に行を作らないので含まない。
+
+### DRM との重複
+
+| 項目 | 値 |
+|---|---|
+| DRM の段（`resolveFunnelStage`）| free_to_paid 1,515 / light_to_premium 4 / premium_to_sanrenpuku 13 / completed 6 / 判定不能 0 |
+| DRM 育成 campaign を受けたことがある元々の会員 | **14 名**（全員 `free-signup-onboarding`）|
+
+→ 元々の会員の 98.5% は DRM 第 1 段の**定義上の対象**だが、実際に DRM 育成が届いたのは 14 名（新規登録起点の自動開始だけが動いているため）。
+
+### SendGrid（GET のみ）
+
+| 項目 | 値 |
+|---|---|
+| lists | `ak-prospect-select-start-1` 11 / `-2` 833 / `-3` 308 / `ak-drm-engaged` 808 |
+| segments | 0 件 |
+| singlesends | 30（triggered 26 / scheduled 3 / draft 1）|
+| 予約 | `AK Prospect Selection s2 m10` 9/28 10:00Z / `s1 m09` 9/28 10:00Z / `s1 m10` 9/29 10:00Z |
+| suppression | 471（bounces 328 / blocks 142 / invalid 4 / spam 3 / global unsubscribe 3）|
+| 元々の会員が contacts に居るか | `unavailable_by_read_only_contract`（POST 検索が要るため測っていない）|
+
+## A/B/C 比較（**採否は未確定**・MK 判断待ち）
+
+| 観点 | A. 元々の会員向け定期配信を正式化 | B. 期限前・失効後の自動配信を有効化 | C. SendGrid MC の list へ投入 |
+|---|---|---|---|
+| 対象人数 | 最大 ①送信可能 1,458（無料 1,455 が中心）。有料 22 を含めるかは対象条件で決める | 契約の期限に当たった日の人だけ（期限 7 日前・当日・失効 7 日後・30 日後）。母集団は有料/期限切れ **77 名**（現役 22 + 期限切れ 55）。1 日あたりは数名以下の見込み（期限日の分布は未計測）| 最大 1,458（投入条件次第）|
+| DRM との重複 | 段の定義上 1,515 名が DRM 第 1 段。実受信 14 名とは確実に重なる | 小（DRM 段 2・3 の 17 名と、期限切れ→第 1 段に戻る人）| A と同じ（1,515 / 14）|
+| 二重送信リスク | 旧 AK 経路で送るなら 24h 横断ガードが DRM と共通に効く。SendGrid 経由なら効かない | 旧 AK 経路（ScheduledEmails → 既存 dispatcher）なので 24h ガードが効く | **高**。DRM は旧 AK 経路、C は SendGrid MC で、互いの送信を見ない |
+| 24h ガード | 送る経路次第 | 効く | **効かない**（SendGrid MC 送信は `CampaignDeliveries` に行を作らない）|
+| 7 日 2 通 cap | 本番で実効なし（全案共通）| 同左 | 同左。SendGrid 側の頻度制御は別に設計が要る |
+| 必要なコード変更 | 定期配信の定義（campaign / 対象条件 / 頻度）を新設。既存 campaign 基盤に乗せるなら中規模 | 基本なし（`cron-marketing-automation` は実装済み・既定で無効）。文面（`premium-renewal` / `expired-comeback`）の現行確認は要る | 投入（contact upsert）と除外同期（AK の配信停止・blacklist を SendGrid へ反映）、DRM との排他 |
+| SendGrid 設定変更 | 旧 AK 経路なら不要 | 不要 | **要**（list / segment / singlesend or automation 作成）|
+| env 変更 | 送信経路の gate 次第 | **要**: `MARKETING_AUTOMATION_SCHEDULER_ENABLED=true` と、**当日の JST 日付**を入れる `MARKETING_AUTOMATION_DISPATCH_ARMED`（翌日に自動で閉じる設計）| 移行時の gate 次第 |
+| rollback | campaign 停止・gate 閉 | env を外して redeploy（ARMED は翌日自動で閉じる）| list から外す・singlesend 取消。**届いたメールは戻せない** |
+| 運用負荷 | 文面を定期的に用意する負荷が続く | 小さいが、ARMED が**日付一致**のため**毎日の env 更新＋redeploy**が要る（現設計のまま常時稼働はできない）| SendGrid 側の設定管理と AK との同期を二重に持つ |
+
+### 読み取り上の注意
+
+- ①の 1,458 は「基本的に送ってよい人」であって、どの案でも送る人数ではない。
+- 反応なし除外は現在 **未適用**（除外リスト空）。A/C で大量送信するなら、先に除外が効く状態を確認する必要がある。
+- 元々の会員が SendGrid contacts に既に居るかは未計測（C の重複投入リスクは未評価）。
 
 ## 未完了
 
-- merge・deploy・本番実行はしていない（実送信・queue・env 変更・SendGrid 変更・本番書込みも 0）。
-- 元々の会員が SendGrid contacts に居るかは測らない（read-only 契約の外。必要なら別途承認）。
+- A/B/C の採否（MK 判断）。
+- B を選ぶ場合: ARMED の日付一致設計を常時稼働向けにするか（コード変更の要否）の判断。
+- C を選ぶ場合: contacts 照合（POST 検索）の承認、DRM との排他設計、頻度制御。
 
 ## 次作業
 
-① Draft PR の CI を確認 → MK が merge・deploy を判断 → ② 本番で `native-mail-audit.mjs` を実行し数を記録（docs PR）
-→ ③ A/B/C の比較表を MK へ提示。
+① MK が A/B/C を判断 → ② 選んだ案の設計・実装（Draft PR）→ ③ 送信前の下見 → ④ 承認のうえ有効化。
 
 ---
 
