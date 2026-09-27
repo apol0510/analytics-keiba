@@ -911,6 +911,61 @@ Airtable は 1 ページ 100 件・**base あたり毎秒 5 リクエスト**。
 判定は `src/lib/marketing/customerScanBounds.js` / `src/lib/crm/customerEmailLookup.js`
 （どちらも純粋。**超集合であること**を JS の鏡と突き合わせるテストで固定している）。
 
+## 7-4. 元々の会員へのメール再開 A/B/C 比較用 読み取り監査（`nativeMailAudit` / 2026-09-27）
+
+A（元々の会員向け定期配信を正式化）/ B（期限前・失効後の自動配信を有効化）/
+C（SendGrid Marketing Campaigns へ投入）の**どれを採るかを決める材料を集めるだけ**の action。
+**採否はこの監査では決めない。**
+
+| 項目 | 内容 |
+|---|---|
+| 入口 | `admin-marketing` `action: 'nativeMailAudit'`（既存の `x-admin-secret` 認可の後で分岐）|
+| 本体 | `src/lib/marketing/nativeMemberMailAudit.js`（判定と I/O 制限はここだけ）|
+| クライアント | `netlify dev:exec --context production -- node astro-site/scripts/native-mail-audit.mjs`（秘密値を取り出さない・結果をファイルへ書かない）|
+| 元々の会員の定義 | `importCohort.resolveCohort(fields) === 'existing'`（`Source` が `customer-import:` で始まらない）。formula はここから組み立て、読んだ全件を同関数で再確認（食い違えば `cohort_formula_mismatch`）|
+| 除外理由 | `audienceSegments.resolveSegmentExclusion`（`evaluateSegment` と同じ順序・同じコード。今回この関数を切り出して共有した）|
+| phase | `baseline`（母数と集合 digest）/ `customers`（内訳・送信可否・9/24 以降の受信・DRM 重複）/ `deliveries`（旧 AK 経路の日別・campaign 別）/ `sendgrid`（GET で見える状態）/ `policy`（頻度上限の事実）|
+
+### 読み取り専用の担保（テストで固定）
+
+- Airtable / SendGrid は **GET だけ**。`createReadOnlyFetch` が GET 以外・body 付きを**送る前に**拒否する。
+- Redis は既存の engagement 除外リストの読み取りだけ。Upstash REST は HTTP 上は POST なので、
+  **コマンドで制限**する（`GET` / `SMEMBERS` / `SCARD` 以外は送る前に拒否）。
+  ⚠️ `resolveEngagementView` は除外リストを**書く**ので、この監査からは呼ばない。
+- 受け付ける入力キーは `action` / `phase` / `cursor` / `pages` だけ。`apply` 等が来たら 400。
+- 配信履歴の名指し取得（`fetchDeliveriesByEmails`）は POST なので使わない。代わりに
+  「9/24 以降」「DRM 育成 campaign」の formula で GET し、窓の中で突き合わせる。
+
+### 件数だけ（PII を返さない）
+
+アドレス・氏名・recordId・token・secret を返さない。Airtable の offset は recordId を含むため、
+**AES-GCM で封をした cursor** にして返す。応答は返す直前に `findPii` で検査し、
+引っかかれば中身を捨てて `pii_guard_tripped`。
+
+### タイムアウトと集合の変化
+
+- 1 窓は最大 5 ページ（500 件）。補助テーブルは 20 ページで **fail closed**（黙って短くしない）。
+- 集合 digest（recordId の sha256 先頭 32bit の和。順序に依らず足せる）を
+  **前 → 本走査 → 後** の 3 回取り、1 つでも違えばクライアントが数字を出さずに止まる。
+- 窓の境目で同じアドレスが続いたら（`boundaryDuplicate`）止まる。
+
+### 測らないもの
+
+- **元々の会員が SendGrid contacts に既に居るか**: `unavailable_by_read_only_contract`。
+  照合は `POST /v3/marketing/contacts/search` が要るため、GET だけの契約の外。
+- 頻度（`recent_contact`）と既送信（`already_delivered`）は campaign ごとに変わるので評価しない。
+
+### 頻度上限の実効状況（**事実の記録。この作業では直さない**）
+
+| 仕組み | 仕様 | 本番での実効 |
+|---|---|---|
+| 7 日 2 通 cap（`sequencePolicy.checkFrequencyCap`、既定 windowDays 7 / maxSends 2）| 連続配信で 7 日に 2 通まで | **効いていない**。`recentSendAtMs` を渡す呼び出し元が 1 つも無く、常に空で判定される |
+| 24 時間の横断ガード（`marketingDispatchGate.verifyBeforeSend` / `isRecentMarketingContact`）| 別 campaign を含め 24h 以内に marketing を受けた人へ送らない | **旧 AK 経路だけ**。材料は `CampaignDeliveries` の `EmailType=campaign` の sent / queued 行で、**SendGrid MC の送信は行を作らないため効かない** |
+
+どちらも A/B/C の判断材料（特に C を選ぶと、旧 AK 経路と SendGrid MC の両方から同じ人へ届き得る）。
+直したら `nativeMemberMailAudit.guard.test.mjs` の事実テストが落ちるので、`FREQUENCY_POLICY_FACTS` と
+`docs/progress.md` を同時に更新すること。
+
 ## 8. 関連ファイル
 
 | 目的 | ファイル |
