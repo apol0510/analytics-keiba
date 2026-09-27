@@ -2173,7 +2173,7 @@ MK が示した完成の目安（`/free/`）: スマホで開いたとき、長�
      2026-09-14 に #521 が main へ入ったので、この DRM ブロックは**その直下**に置いている。
      先頭を奪わないこと。 -->
 <!-- 常設ブロック: /free/ 全レース予想一覧（2026-09-27）。MK 目視で採否が決まるまで消さない -->
-# 📋 `/free/` の初期表示を「全レースの予想一覧」にする（2026-09-27 MK 確定 UI）— **MK 採用・PR #600 merge（2026-09-27）/ 本番確認・計測は下記**
+# 📋 `/free/` の初期表示を「全レースの予想一覧」にする（2026-09-27 MK 確定 UI）— **本番反映済み（#599 `e3b54dae` → #600 `3faeeaf7`、2026-09-27）/ 横スクロール不具合 1 件あり（未修正）/ GA4 計測は継続タスク**
 
 正本: [`decisions.md`](./decisions.md) 2026-09-27（UI 確定 ＋ 追記の再修正）/ [`spec.md`](./spec.md)「`/free/` の初期表示 = 全レースの予想一覧」。
 ページ役割・#597/#598 不採用の記録は別の docs PR（#599）で扱う。
@@ -2257,15 +2257,48 @@ MK が示した完成の目安（`/free/`）: スマホで開いたとき、長�
 | テスト | `listFirst.guard` を 2 版目へ更新、`homeCta.guard` の副題チェックを上書き決定に合わせて更新 |
 | MK 目視 | **未**（Deploy Preview で確認）|
 
+## 本番反映（2026-09-27）
+
+| 項目 | 結果 |
+|---|---|
+| merge | #599（ページ役割の正本化・docs）squash `e3b54dae` → #600（`/free/` UI）squash `3faeeaf7`。#600 は main を通常 merge して docs 衝突を両方残す形で解消（履歴改変なし）|
+| 反映 | merge から約 90 秒で本番 `https://analytics.keiba.link/free/{jra,nankan}/` に反映（Netlify 自動デプロイ）|
+| 確認方法 | **read-only**（GET と、ブラウザ内 localStorage の再現のみ。サーバー・Airtable・env への書込み 0。発生した POST は既存 GA4 の page_view 送信のみ）|
+
+### 本番 read-only 確認結果（スマホ 390px）
+
+| 確認 | `/free/jra/` | `/free/nankan/` |
+|---|---|---|
+| HTTP | 200 | 200 |
+| 「無料予想」黄緑 pill・全レース一覧（行に ◎○▲△）| ✅（2 会場 24 行）| ✅（12 行）|
+| ボード内の登録 CTA（`/free-signup/`）| 1 か所（ページ全体の残り 2 件はナビ・フッター。`/pricing/` も同数）| 同左 |
+| 未ログイン: 登録案内を表示 / 会員向け表示を非表示 | ✅ | ✅ |
+| ログイン後の localStorage（`login.astro` が書く `user-plan`＝`{plan:'free', nonAuthoritative:true}` と `isLoggedIn='true'`）を再現: 登録案内が消え、会員向け表示が出る | ✅ | ✅ |
+| 横スクロールなし | ✅（390px）| ❌ **437px**（下記）|
+| `/free-prediction/` | 変更なし（200）| — |
+
+**実アカウントでのログイン確認は未確認**: 正本に安全な確認用アカウントの登録が無く、本物のログインには
+マジックリンクのメール送信（実送信）が要るため read-only にならない。上の localStorage 再現で判定ロジックは確認済み。
+
+### 見つかった不具合（未修正・UI 修正は別 PR で要判断）
+
+- **`/free/nankan/` がスマホで横にはみ出す（scrollWidth 437px / 画面 390px）。** 2026-09-28 船橋の 3R
+  「船橋デビュー馬未勝利選抜馬」のような**長いレース名**で発生。原因: 一覧 `.rvb-list` が `display:grid` で、
+  グリッド項目（`.rvb-row`）の `min-width:auto` と、折り返さないレース名（`white-space:nowrap`）の最小内容幅で
+  列が 420px に広がる。`/free/jra/`（当日のレース名が短い）は 390px で正常。
+- 直し方の候補（最小）: `.rvb-list { grid-template-columns: minmax(0, 1fr) }` ＋ `.rvb-row, .rvb-row > .rvb-detail { min-width: 0 }`。
+  長いレース名は省略表示（…）になる。テストで「長いレース名でも横にはみ出さない」を固定する。
+- 参考: `/pricing/` も 401px で横にはみ出す（`.plan-button-free`）。#600 とは無関係の既存の事象。
+
 ## 未完了
 
-1. ~~MK が Deploy Preview を目視して採否を決める~~ → ✅ MK 採用・#600 merge（2026-09-27）
-2. 本番 `https://analytics.keiba.link/free/jra/`・`/free/nankan/` の表示確認（反映後）
-3. 反映後、現在のファネルの段ごと（`/free/` 閲覧 → `/free-signup/` → 登録完了 …）で推移を見る
+1. **`/free/nankan/` の横はみ出しの修正**（上記・UI 修正のため別 PR で MK 判断）
+2. 実アカウントでのログイン済み表示の確認（安全な確認用アカウントが用意できたら）
+3. **GA4 計測（継続タスク）**: 現在のファネルの段ごと（`/free/` 閲覧 → `/free-signup/` → 登録完了 → 継続利用・DRM → 有料版プレビュー・pricing 到達 → 申込 → 入金確認）で、反映前後の推移を見る。段の定義は `astro-site/docs/GA4_CONVERSION_FUNNEL.md`。GA4 探索の作成は管理画面側の作業（未実施）
 
 ## 次作業
 
-本番反映の確認 → GA4 で `/free/` → `/free-signup/` の推移を見る（段の定義は `GA4_CONVERSION_FUNNEL.md`）
+横はみ出しの修正 PR（MK 判断）→ GA4 で `/free/` → `/free-signup/` の推移を継続して見る
 
 ---
 
