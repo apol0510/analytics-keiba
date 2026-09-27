@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 import {
   planSelectionExit, applySelectionExit, createSelectionExitClient,
   isSelectionExitDisabled, EXIT_STATES, CRITICAL_EXIT_STATES, SELECTION_LIST_NAMES,
-  MAX_EXIT_PER_CALL, EXIT_DISABLE_ENV, REMOVE_ATTEMPTS,
+  MAX_EXIT_PER_CALL, EXIT_DISABLE_ENV, REMOVE_ATTEMPTS, EXIT_CHUNK_SIZE, EXIT_CHUNK_ESTIMATE_MS,
 } from './sendgridSelectionExit.js';
 import { createEventOnceStore } from '../webhooks/webhookEventOnce.js';
 import { PROSPECT_STATE, classifyEvent } from './prospectPolicy.js';
@@ -79,7 +79,7 @@ test('外すのは 4 つの状態だけ（送信継続中の人は外さない�
   assert.equal(r.skipped[PROSPECT_STATE.NEW], 1);
 });
 
-test('重複は 1 回にまとめ、上限を超えたぶんは数える（べき等・暴走しない）', () => {
+test('重複は 1 回にまとめ、安全上限を超えたぶんは数える（べき等・暴走しない）', () => {
   const many = Array.from({ length: MAX_EXIT_PER_CALL + 5 }, (_, i) => ({
     email: `u${i}@example.test`, state: PROSPECT_STATE.ENGAGED,
   }));
@@ -399,4 +399,99 @@ test('sg_event_id が無い / 形が違うイベントは重複判定できな�
   ]);
   assert.equal(r.guarded, false);
   assert.equal(r.events.length, 2, '判定できなくても処理は止めない');
+});
+
+// ── 2026-09-26: 100 件で切り捨てず、分けて外す ───────────────────────
+const many = (n, state, prefix = 'u') => Array.from({ length: n }, (_, i) => ({
+  email: `${prefix}${i}@example.test`, state,
+}));
+
+test('【回帰】100 件を超える打ち切りも全員外す（超過分を捨てない）', async () => {
+  assert.ok(MAX_EXIT_PER_CALL >= 1000, '受け付け上限が通常のバッチ規模より小さい');
+  const client = fakeClient();
+  const out = await applySelectionExit({
+    changes: many(350, PROSPECT_STATE.EXHAUSTED), client, env: {},
+    deadlineAtMs: Number.POSITIVE_INFINITY,
+  });
+  assert.equal(out['対象'], 350);
+  assert.equal(out['上限超過'], 0);
+  assert.equal(out['時間切れ残り'], 0);
+  assert.equal(out['塊数'], Math.ceil(350 / EXIT_CHUNK_SIZE));
+  // 塊ごとに 3 本 → 1 回の DELETE は塊の大きさを超えない
+  assert.equal(client.calls.remove.length, out['塊数'] * 3);
+  for (const r of client.calls.remove) assert.ok(r.n <= EXIT_CHUNK_SIZE);
+  assert.equal(out['除外した延べ件数'], 350 * 3);
+  assert.equal(containsEmailLike(out), false);
+});
+
+test('時間予算を越えそうなら新しい塊を始めず、残りを数える（0 と区別する）', async () => {
+  let t = 0;
+  const client = fakeClient();
+  const orig = client.removeFromList.bind(client);
+  client.removeFromList = async (a) => { t += 500; return orig(a); };   // 1 塊 = 3 本 × 500ms
+  const out = await applySelectionExit({
+    changes: many(500, PROSPECT_STATE.EXHAUSTED), client, env: {},
+    nowFn: () => t, deadlineAtMs: 3000 + EXIT_CHUNK_ESTIMATE_MS - 1,   // 3 塊目は見積りが 1ms はみ出す
+  });
+  assert.equal(out['塊数'], 2, '予算内の塊だけ処理する');
+  assert.equal(out['時間切れ残り'], 500 - 2 * EXIT_CHUNK_SIZE);
+  assert.equal(out.reason, 'time_budget_exhausted');
+  assert.equal(out.criticalFailure, false, '打ち切りだけなら再送は求めない');
+});
+
+test('予算がすでに尽きていても最初の塊は必ず処理する', async () => {
+  const client = fakeClient();
+  const out = await applySelectionExit({
+    changes: many(150, PROSPECT_STATE.EXHAUSTED), client, env: {},
+    nowFn: () => 10_000, deadlineAtMs: 0,
+  });
+  assert.equal(out['塊数'], 1);
+  assert.equal(out['時間切れ残り'], 50);
+});
+
+test('優先順: 反応者 → 打ち切り → 抑止（時間切れで残るのは抑止から）', () => {
+  const r = planSelectionExit({
+    changes: [
+      { email: 's@example.test', state: PROSPECT_STATE.SUPPRESSED },
+      { email: 'x@example.test', state: PROSPECT_STATE.EXHAUSTED },
+      { email: 'e@example.test', state: PROSPECT_STATE.ENGAGED },
+      { email: 'p@example.test', state: PROSPECT_STATE.PROMOTED },
+    ],
+  });
+  assert.deepEqual(r.emails, ['e@example.test', 'p@example.test', 'x@example.test', 's@example.test']);
+});
+
+test('反応者を時間切れで残したら握り潰さない', async () => {
+  let t = 0;
+  const client = fakeClient();
+  const orig = client.removeFromList.bind(client);
+  client.removeFromList = async (a) => { t += 1000; return orig(a); };
+  const out = await applySelectionExit({
+    changes: many(250, PROSPECT_STATE.ENGAGED), client, env: {},
+    nowFn: () => t, deadlineAtMs: 1000,
+  });
+  assert.ok(out['時間切れ残り'] > 0);
+  assert.equal(out.criticalFailure, true);
+  assert.equal(out.reason, 'time_budget_exhausted');
+});
+
+test('継続 list へ渡すのは外せた人だけ（時間切れの人は渡さない）', async () => {
+  let t = 0;
+  let added = [];
+  const client = fakeClient();
+  const orig = client.removeFromList.bind(client);
+  client.removeFromList = async (a) => { t += 1000; return orig(a); };
+  client.continuationListId = async () => 'cont-1';
+  client.addToContinuation = async ({ emails }) => { added = emails; return { status: 202, added: emails.length }; };
+  const out = await applySelectionExit({
+    changes: many(150, PROSPECT_STATE.ENGAGED), client, env: {},
+    nowFn: () => t, deadlineAtMs: 1000,
+  });
+  assert.equal(out['時間切れ残り'], 50);
+  assert.equal(added.length, 100, '外していない人を継続 list へ入れている');
+});
+
+test('webhook は受信時刻からの締め切りを渡している', () => {
+  assert.match(webhookSrc, /const receivedAtMs = Date\.now\(\)/);
+  assert.match(webhookSrc, /deadlineAtMs: receivedAtMs \+ SELECTION_EXIT_DEADLINE_MS/);
 });

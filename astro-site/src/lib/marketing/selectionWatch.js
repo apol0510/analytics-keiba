@@ -46,6 +46,11 @@ export const WATCH_THRESHOLDS = Object.freeze({
   bounceRate: 0.05,
   /** 送った数と list の人数がこの比率以上ずれたら食い違い */
   recipientGapRate: 0.05,
+  /**
+   * 差がこの人数未満なら比率に関係なく見ない（少人数 list で 1〜2 人の差が 5% を超えるため）。
+   * 2026-09-26: start-1（12 名）は 13 vs 12 で毎回 8% になっていた。
+   */
+  recipientGapMinCount: 10,
   /** 反応がこの人数以上増えたのに list が減っていなければ除外が効いていない */
   exitLagCount: 10,
 });
@@ -66,6 +71,11 @@ export function evaluateSelectionWatch(input = {}) {
   const {
     nowMs = Date.now(), sends = [], engine = '', akActive = 0, providerRejected = 0,
     listTotal = 0, previousMismatch = null,
+    /**
+     * 前回の点検時刻。`expectedRecipients` は**その時刻の list 人数**なので、
+     * 比べてよいのはそれ**より後に送った通**だけ。
+     */
+    previousCheckedAtMs = null,
     /** 前回からの増減（**増えたのに減らない**を見るため） */
     engagedDelta = null, listDelta = null,
   } = input;
@@ -101,11 +111,34 @@ export function evaluateSelectionWatch(input = {}) {
    * 送った数が list の人数と食い違っていないか。
    * Single Send は**送信時**の在籍へ配るので、直前に控えた人数と大きくずれたら
    * 宛先の取り違えか、除外が効きすぎ・効かなすぎのどちらか。
+   *
+   * ⚠️ 2026-09-26 是正: 旧実装は**過去すべての通**を「前日の list 人数」と比べていた。
+   *    list は反応・bounce で毎日減るので、初日の通ほど差が開き**毎回必ず発火**していた
+   *    （start-1 m01 = requests 318 vs 前日 list 13）。比べるのは次の 1 通だけにする:
+   *    - **list ごとに最新の送信済みの 1 通**
+   *    - しかも**前回の点検より後**に送った通（控えた人数と同じ時点の list へ送ったもの）
+   *    - 差が `recipientGapMinCount` 人未満なら見ない（少人数 list の揺れ）
    */
+  const listOf = (s) => {
+    if (s && s.listName) return String(s.listName);
+    const m = /\ss(\d)\s/.exec(` ${String((s && s.name) || '')} `);
+    return m ? `start-${m[1]}` : null;
+  };
+  const latestByList = new Map();
   for (const s of sends) {
-    if (!s || !Number.isFinite(s.expectedRecipients) || s.expectedRecipients <= 0) continue;
-    if (num(s.requests) === 0) continue;                       // まだ送っていない
-    const gap = Math.abs(num(s.requests) - s.expectedRecipients) / s.expectedRecipients;
+    if (!s || num(s.requests) === 0) continue;                 // まだ送っていない
+    if (!Number.isFinite(s.sendAtMs)) continue;
+    const key = listOf(s);
+    if (!key) continue;
+    const cur = latestByList.get(key);
+    if (!cur || s.sendAtMs > cur.sendAtMs) latestByList.set(key, s);
+  }
+  for (const s of latestByList.values()) {
+    if (!Number.isFinite(s.expectedRecipients) || s.expectedRecipients <= 0) continue;
+    if (Number.isFinite(previousCheckedAtMs) && s.sendAtMs <= previousCheckedAtMs) continue;
+    const diff = Math.abs(num(s.requests) - s.expectedRecipients);
+    if (diff < WATCH_THRESHOLDS.recipientGapMinCount) continue;
+    const gap = diff / s.expectedRecipients;
     if (gap > WATCH_THRESHOLDS.recipientGapRate) {
       add(WATCH_FINDING.RECIPIENT_GAP, WATCH_SEVERITY.WARN, {
         name: s.name, requests: num(s.requests), expected: s.expectedRecipients,
