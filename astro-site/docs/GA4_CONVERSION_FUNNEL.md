@@ -8,19 +8,25 @@
 
 ```
 流入（検索・メール・直接）
-  → 無料予想
-  → /results-showcase/（有料実績ショーケース）
+  → /free/（無料予想本体）
+  → /free-signup/（無料登録）→ 無料会員として継続利用・DRM
+  → /free-prediction/（有料版プレビュー）・/results-showcase/（有料実績ショーケース）
   → /pricing/
   → 申込開始（振込モーダルを開く）
   → 申込成功（サーバーが申込を受理）
 ```
+
+> 2026-09-27 訂正: `/free/` と `/free-prediction/` は役割が違うので**別の段**。
+> ページの役割は `docs/spec.md` 冒頭「無料導線のページ役割と現在のファネル」が正本。
 
 ## 2. 各段を何で見るか
 
 | 段 | 見るもの | 種別 |
 |---|---|---|
 | 流入 | `session_start` / 参照元は GA4 が自動で持つ | 既存 |
-| 無料予想 到達 | `page_view` — Page path が `^/free(-prediction)?/\|^/free-prediction-` | 既存 |
+| 無料予想 到達（`/free/`＝無料予想本体・無料獲得の主入口）| `page_view` — Page path が `^/free/` | 既存 |
+| 無料登録ページ 到達 | `page_view` — Page path が `^/free-signup/`（`page_referrer` で `/free/` 由来を絞れる）| 既存 |
+| 有料版プレビュー 到達（`/free-prediction/`）| `page_view` — Page path が `^/free-prediction(/\|-)` | 既存 |
 | results-showcase 到達 | `page_view` — Page path が `/results-showcase/` で始まる | 既存 |
 | pricing 到達 | `page_view` — Page path が `/pricing/` で始まる | 既存 |
 | **申込開始** | **`application_start`** | **追加** |
@@ -36,9 +42,20 @@ URL で確実に判別できるからである。イベントを増やすと同�
 
 ### 無料予想の正規表現に `/free-signup/` を入れないこと
 
-`^/free` で雑に拾うと **無料登録ページ `/free-signup/`** が無料予想に混ざる。
-上の正規表現は `/free/…` と `/free-prediction/…` と `/free-prediction-…` だけを拾い、
-`/free-signup/` は拾わない。
+`^/free` で雑に拾うと **無料登録ページ `/free-signup/`** と**有料版プレビュー `/free-prediction/`** が
+無料予想に混ざる。無料予想の段は `^/free/`（末尾スラッシュ必須）だけを拾う。
+
+### `/free/` と `/free-prediction/` を同じ段にしない（2026-09-27 MK 確定）
+
+役割が違う（正本: `docs/spec.md` 冒頭「無料導線のページ役割と現在のファネル」）。
+
+| 段 | ページ | 見る目的 |
+|---|---|---|
+| 無料予想 | `/free/` | 無料獲得ファネル: 流入 → `/free/` → `/free-signup/` → 登録完了 |
+| 有料版プレビュー | `/free-prediction/` | 有料転換ファネル: 有料版の価値確認 → `/pricing/` → 申込 |
+
+`/free-prediction/` → `/free-signup/` は主要ファネルとして扱わない。
+（2026-09-18 版はこの 2 つを 1 段に数えていた。GA4 の探索は未作成なので、作るときはこの段で組む。）
 
 ## 3. イベント仕様
 
@@ -119,7 +136,7 @@ guard テストがこれを検知する。
 | 1 | カスタム ディメンション `plan` を登録（範囲: イベント / イベント パラメータ `plan`）| プラン別に申込を分解できる | イベント数は見えるがプラン別に割れない |
 | 2 | カスタム ディメンション `plan_type` を登録（同上）| 月額 / 年額 / 買い切り別に見られる | 同上 |
 | 3 | `application_submitted` を**キーイベント**に指定 | 参照元別のコンバージョンとして扱われる | 参照元別の転換が標準レポートに出ない |
-| 4 | 探索 → 目標到達プロセスデータ探索で上表 6 段を作る | 離脱段が見える | 毎回手で組む必要がある |
+| 4 | 探索 → 目標到達プロセスデータ探索で上表の段を作る（無料獲得と有料転換は別の探索に分ける）| 離脱段が見える | 毎回手で組む必要がある |
 
 > `application_start` はキーイベントにしない（開いただけで転換とは言えない）。
 
