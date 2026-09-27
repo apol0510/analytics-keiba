@@ -2280,7 +2280,7 @@ MK が示した完成の目安（`/free/`）: スマホで開いたとき、長�
 **実アカウントでのログイン確認は未確認**: 正本に安全な確認用アカウントの登録が無く、本物のログインには
 マジックリンクのメール送信（実送信）が要るため read-only にならない。上の localStorage 再現で判定ロジックは確認済み。
 
-### 見つかった不具合（未修正・UI 修正は別 PR で要判断）
+### 見つかった不具合 → 修正 PR #603 作成（2026-09-27 MK 承認 / Draft・未 merge）
 
 - **`/free/nankan/` がスマホで横にはみ出す（scrollWidth 437px / 画面 390px）。** 2026-09-28 船橋の 3R
   「船橋デビュー馬未勝利選抜馬」のような**長いレース名**で発生。原因: 一覧 `.rvb-list` が `display:grid` で、
@@ -2288,17 +2288,31 @@ MK が示した完成の目安（`/free/`）: スマホで開いたとき、長�
   列が 420px に広がる。`/free/jra/`（当日のレース名が短い）は 390px で正常。
 - 直し方の候補（最小）: `.rvb-list { grid-template-columns: minmax(0, 1fr) }` ＋ `.rvb-row, .rvb-row > .rvb-detail { min-width: 0 }`。
   長いレース名は省略表示（…）になる。テストで「長いレース名でも横にはみ出さない」を固定する。
-- 参考: `/pricing/` も 401px で横にはみ出す（`.plan-button-free`）。#600 とは無関係の既存の事象。
+- **修正（ブランチ `fix/free-list-overflow`）**: `.rvb-list { grid-template-columns: minmax(0, 1fr) }`、行・詳細・summary・
+  見出し行・印行に `min-width:0`、レース名は 1 行のまま `overflow:hidden; text-overflow:ellipsis; white-space:nowrap` で「…」、
+  印のチップは `max-width:100%`。検証: `listOverflow.guard.test.mjs`（修正前は 3 件失敗・修正後は全件通過を確認）。
+- 実測（ローカル・9/28 船橋データ・全レースを 1 つずつ開閉）:
+
+  | | 修正前（閉 / 開いた最大）| 修正後 |
+  |---|---|---|
+  | `/free/nankan/` 390px | 437 / 451 | 390 / 390 |
+  | `/free/nankan/` 360px | 437 / 451 | 360 / 360 |
+  | `/free/nankan/` 320px | 437 / 452 | 320 / 320 |
+  | `/free/jra/` 390px | 390 / 390 | 390 / 390 |
+  | `/free/jra/` 320px | 320 / 328 | 320 / 320 |
+
+- 参考: `/pricing/` も 401px で横にはみ出す（`.plan-button-free`）。#600 とは無関係の**既存の不具合として別に残す**（今回の修正には混ぜない）。
 
 ## 未完了
 
-1. **`/free/nankan/` の横はみ出しの修正**（上記・UI 修正のため別 PR で MK 判断）
+1. **`/free/nankan/` の横はみ出しの修正** → 修正 PR #603（Draft・未 merge）。merge・本番確認が残り
+1-b. `/pricing/` の 401px 横はみ出し（既存の不具合・未着手・別件）
 2. 実アカウントでのログイン済み表示の確認（安全な確認用アカウントが用意できたら）
 3. **GA4 計測（継続タスク）**: 現在のファネルの段ごと（`/free/` 閲覧 → `/free-signup/` → 登録完了 → 継続利用・DRM → 有料版プレビュー・pricing 到達 → 申込 → 入金確認）で、反映前後の推移を見る。段の定義は `astro-site/docs/GA4_CONVERSION_FUNNEL.md`。GA4 探索の作成は管理画面側の作業（未実施）
 
 ## 次作業
 
-横はみ出しの修正 PR（MK 判断）→ GA4 で `/free/` → `/free-signup/` の推移を継続して見る
+横はみ出し修正 PR の merge（MK 判断）→ 本番 390px で再確認 → GA4 で `/free/` → `/free-signup/` の推移を継続して見る
 
 ---
 
