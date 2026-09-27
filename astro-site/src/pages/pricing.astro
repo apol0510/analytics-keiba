@@ -1085,6 +1085,10 @@ const planTierByToken = buildPlanTierByToken();
 
     /* ボタン */
     .plan-button {
+        /* 2026-09-27: 幅に余白・枠を含める。<button> は既定で border-box だが、
+           無料プランの <a> は content-box のため「100% ＋ 余白 ＋ 枠」でカードからはみ出し、
+           スマホで /pricing/ が 401px（390px 画面）まで横に広がっていた。 */
+        box-sizing: border-box;
         width: 100%;
         padding: 0.75rem 1rem;
         border-radius: 0.5rem;
