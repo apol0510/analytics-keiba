@@ -83,6 +83,18 @@ DRM 接触 → pricing / 有料版プレビュー到達 → application（申込
 
 ---
 
+# `/pricing/` は主要スマホ幅で横スクロールしない（2026-09-27）
+
+`/pricing/` は 320 / 360 / 390px で横スクロールしないこと。未ログイン・プラン出し分け（`data-plan-tier` の各状態）・
+銀行振込モーダル表示中のいずれでも満たす。
+
+- プランボタン（`.plan-button`）は `width: 100%` なので **`box-sizing: border-box` を必ず持つ**。
+  `<a>` で作ったボタン（無料プランの「無料会員登録」）は既定が content-box のため、これが無いと余白・枠の分だけ
+  カードからはみ出す（2026-09-27 に本番で 401px まで広がった）。
+- 検証: `astro-site/src/lib/pricing/pricingMobileWidth.guard.test.mjs`（`test:pricing-tiers` / `check:safety` に含まれる）。
+
+---
+
 # マーケティングの頭脳は AK / 大量配送は SendGrid（2026-09-18 MK 確定 / **最上位方針**）
 
 **事業目的は「自前のメール配送基盤を完成させること」ではない。**
