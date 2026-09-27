@@ -1533,6 +1533,27 @@ DTO に `pt` / AI総合指数 / 役割 / 特徴量 / 買い目は含まれない
 2026-08-20 に MK 判断で **nav 掲載（独立トップ項目「🔍 レースの見どころ」）と `noindex` 解除**を実施した。
 URL を変える場合は **301 リダイレクトが必要**になる点に注意。
 
+### `/free/` の初期表示 = 全レースの予想一覧（2026-09-27 MK 確定）
+
+判断の根拠は `docs/decisions.md` 2026-09-27。上から次の順に並べる。
+
+| 位置 | 出すもの |
+|---|---|
+| 上部（最小）| 無料予想 / 対象 / 日付 / 今日ぶんでない場合だけ鮮度注記 / 「印は無料・買い目は有料版」の 1 行 |
+| 全レース一覧（主役）| 各行 = 発走時刻・R・レース名・`[メイン]`・◎馬番＋馬名・○▲△馬番・`詳しく ▾`。**行全体が `<summary>`** |
+| 「詳しく」の中 | 距離・頭数、条件タグとその説明、見どころの文、照合注記、出走馬と条件変化・前走、無料会員の追加情報、有料版の案内、閉じるボタン |
+| 各会場の一覧の後 | 会場内の見くらべ（折りたたみ）|
+| 一覧の後 | 無料登録の案内 1 つ（未登録のみ）→ 見どころの読み方（説明・使い方・かんたん表示・凡例／折りたたみ）→ 有料版の実績バナー |
+
+| 守ること | 単一源 / 検証 |
+|---|---|
+| 上部にメインレース専用枠を作らない。メインは一覧の `[メイン]` だけ | `listFirst.guard.test.mjs` |
+| 印は公開 DTO の `headlineMark` だけ。○▲△ は馬番のみ・馬名は ◎ だけ | `src/lib/freeViewpoints/listView.js` / `listView.test.mjs` |
+| メインレース判定は会場ごとのレース数（`race-config.js` の `getMainRaceNumber`、無ければ最終レース）| `listView.js` |
+| 初期表示に条件タグ・説明・記号を出さない。分析は削除せず「詳しく」の中 | `listFirst.guard.test.mjs` |
+| 登録 CTA（`/free-signup/`）はページに 1 つ、一覧の後ろ。詳細内は短い案内だけ | `listFirst.guard.test.mjs` / `memberGateStrength.guard.test.mjs` |
+| 行の開閉は details / summary の既定動作（`preventDefault` しない・`:focus-visible` を出す）| `listFirst.guard.test.mjs` / `accordionClose.guard.test.mjs` |
+
 ### `/results-showcase/` との関係（既存の例外を変えない）
 
 `/results-showcase/{jra,nankan}` は **前日確定分**のメインレース 5 点を無料公開している

@@ -20,8 +20,9 @@ import { RACE_STATE } from '../lib/freeViewpoints/raceViewpoints.js';
 import {
   TAG_LABEL, TAG_SENTENCE, TAG_ICON, STATE_LABEL, STATE_SENTENCE, STATE_ICON,
   HIGHLIGHT_LABEL, HORSE_CHANGE_CHIP, PAID_CTA, HORSE_SECTION, MEMBER_EXTRAS, coverageNote,
-  TERM_HELP, CHIP_HELP, INTERVAL_HELP, HOW_TO_USE, HELP_TOGGLE, LAYOFF_LABEL,
+  TERM_HELP, CHIP_HELP, INTERVAL_HELP, HOW_TO_USE, HELP_TOGGLE, LAYOFF_LABEL, LIST_COPY,
 } from '../lib/freeViewpoints/copy.js';
+import { headlineMarksOf, isMainRaceIn } from '../lib/freeViewpoints/listView.js';
 
 interface Props { view: any; categoryLabel: string; freeUrl: string; }
 const { view, categoryLabel, freeUrl } = Astro.props;
@@ -106,69 +107,8 @@ const LEGEND = [
           : `${fmtDate(view.date)}（次回の開催）ぶんを先に出しています。今日の開催ではありません。`}
       </p>
     )}
-    <p class="rvb-lead">
-      出走馬の<strong>近走（前走の会場・距離・騎手）</strong>だけを数えて、レースごとに
-      「何が替わったか」「近走を見比べやすいか」を出しています。
-      各レースを開くと、<strong>出走馬と、その馬の条件がどう変わったか</strong>まで確認できます。
-    </p>
-    <details class="rvb-howto" id="rvb-howto">
-      <summary class="rvb-howto-sum">
-        <span aria-hidden="true">💡</span><span class="rvb-howto-sum-txt">{HOW_TO_USE.toggleOpen}</span>
-      </summary>
-      <div class="rvb-howto-body">
-        <p class="rvb-howto-lead">{HOW_TO_USE.lead}</p>
-        <ol class="rvb-howto-steps">
-          {HOW_TO_USE.steps.map((st: any, i: number) => (
-            <li class="rvb-howto-step">
-              <span class="rvb-howto-no">{i + 1}</span>
-              <span class="rvb-howto-txt"><b>{st.title}</b>{st.body}</span>
-            </li>
-          ))}
-        </ol>
-        <p class="rvb-howto-note">{HOW_TO_USE.note}</p>
-      </div>
-    </details>
-
-    <div class="rvb-helpbar">
-      <button type="button" class="rvb-helpbtn" id="rvb-help-toggle" aria-pressed="true">
-        <span aria-hidden="true">🔎</span><span class="rvb-helpbtn-txt">{HELP_TOGGLE.on}</span>
-      </button>
-      <span class="rvb-helphint">{HELP_TOGGLE.hint}</span>
-    </div>
-
-    <ul class="rvb-legend">
-      {LEGEND.map((l) => (
-        <li class={`lg lg-${l.kind}`}>
-          <span class="lg-chip"><span class="lg-ic">{l.icon}</span>{l.label}</span>
-          <span class="lg-desc" data-help>{l.desc}</span>
-        </li>
-      ))}
-    </ul>
-
-    {/* ページ冒頭の常設バナー。未登録には CTA、登録済みには「何が増えたか」を出す。
-        アコーディオンを開かないと登録案内が見えなかった問題への対応（2026-08-20）。 */}
-    <div class="rvb-topgate" data-guest-only>
-      <p class="rvb-topgate-head"><span aria-hidden="true">🔓</span>{MEMBER_EXTRAS.topLockedHeading}</p>
-      <p class="rvb-topgate-body">{MEMBER_EXTRAS.topLockedBody}</p>
-      <ul class="rvb-topgate-list">
-        {MEMBER_EXTRAS.benefits.map((b: string) => <li>{b}</li>)}
-      </ul>
-      <a class="rvb-topgate-cta" href="/free-signup/">{MEMBER_EXTRAS.topCtaLabel}</a>
-      <p class="rvb-topgate-note">{MEMBER_EXTRAS.topLockedNote}</p>
-    </div>
-
-    <div class="rvb-topmember" data-member-only>
-      <p class="rvb-topmember-head"><span aria-hidden="true">✅</span>{MEMBER_EXTRAS.topMemberHeading}</p>
-      <p class="rvb-topmember-body">{MEMBER_EXTRAS.topMemberBody}</p>
-    </div>
+    <p class="rvb-markline">{LIST_COPY.markline}</p>
   </header>
-
-  {/* 有料版の直近実績への導線。「見どころ」を読んだ人に、同じ日の買い目がどうなったかを見せる。
-      ⚠️ 実績バナーの中身は **ページ側から slot で差し込む**。ここで直接 import すると、
-         resultsShowcase.js → mainRaceBetting.js と有料ロジックがこの純粋な表示部品に
-         入り込み、board.guard.test.mjs の「有料データを読むモジュールを import しない」
-         方針を骨抜きにするため。差し込みが無ければ何も出ない。 */}
-  <div class="rvb-resultslot"><slot name="results" /></div>
 
   {/* 会場タブ。複数開催（JRA 3 場 / 南関 2 場）で全会場を縦に並べると 10 画面ぶんになるため、
       1 会場ずつ出す。**JS が動かない環境ではタブを出さず、全会場を縦に並べたまま**にする
@@ -201,66 +141,64 @@ const LEGEND = [
     >
       <h2 class="rvb-venue-name">{venue.venue}<span class="rvb-venue-count">{venue.races.length}R</span></h2>
 
-      <div class="rvb-highlight">
-        <span class="rvb-highlight-head">今日の{venue.venue}では</span>
-        <ul class="rvb-highlight-list">
-          {(['mostChanged', 'easiest', 'hardest'] as const).map((k) => (
-            venue.highlights[k] ? (
-              <li class={`hl hl-${k}`}>
-                <span class="hl-key">{HIGHLIGHT_LABEL[k]}</span>
-                <span class="hl-val">{venue.highlights[k]}R</span>
-              </li>
-            ) : null
-          ))}
-        </ul>
-        <p class="rvb-highlight-note">
-          ※ ここは<strong>今日のこの会場だけを見くらべた結果</strong>です。
-          各レースに付いている印は「いつもと比べてどうか」なので、別の見かたになります。
-        </p>
-      </div>
-
       <ol class="rvb-list">
         {venue.races.map((race: any) => (
           <li class={`rvb-row ${stateClass(race.result.state)}`}>
-            <div class="rvb-row-main">
-              <span class="rvb-time">{race.startTime || '--:--'}</span>
-              <span class="rvb-r">{race.raceNumber}R</span>
-              <span class="rvb-name">{race.raceName || '　'}</span>
-              <span class="rvb-meta">
-                {race.distanceMeters ? `${race.distanceMeters}m` : '距離未取得'} ・ {race.entryCount}頭
-              </span>
-            </div>
-
-            <div class="rvb-row-tags">
-              {race.result.state === RACE_STATE.TAGGED
-                ? race.result.tags.map((t: string) => {
-                    const ev = tagEvidence(t, race.result.counts);
-                    return (
-                      <span class={`rvb-tag tag-${TAG_KIND[t] || 'other'}`}>
-                        <span class="rvb-tag-ic">{TAG_ICON[t]}</span>{TAG_LABEL[t]}
-                        {ev && ev.of ? <span class="rvb-tag-n">{ev.of}頭中{ev.n}頭</span> : null}
-                      </span>
-                    );
-                  })
-                : (
-                  <span class={`rvb-state st-${stateClass(race.result.state).replace('is-', '')}`}>
-                    <span class="rvb-tag-ic">{STATE_ICON[race.result.state]}</span>{STATE_LABEL[race.result.state]}
-                  </span>
-                )}
-            </div>
-
-            {race.result.state === RACE_STATE.TAGGED && (
-              <p class="rvb-tag-help" data-help>
-                {race.result.tags.map((t: string) => TERM_HELP[t]).filter(Boolean).join(' ')}
-              </p>
-            )}
-
+            {/* 2026-09-27 MK 確定: 初期表示は予想だけ（時刻・R・レース名・[メイン]・◎馬番+馬名・○▲△馬番・詳しく）。
+                行全体が summary なので、タップ / Enter / Space で開ける。分析はすべて開いた中。 */}
             <details class="rvb-detail" data-race={race.raceNumber}>
               <summary class="rvb-detail-sum">
-                <span class="rvb-detail-ic" aria-hidden="true">＋</span>
-                <span class="rvb-detail-txt">このレースの見かたと出走馬</span>
+                <span class="rvb-sum-line">
+                  <span class="rvb-time">{race.startTime || '--:--'}</span>
+                  <span class="rvb-r">{race.raceNumber}R</span>
+                  <span class="rvb-name">{race.raceName || '　'}</span>
+                  {isMainRaceIn(venue.races, race) && <span class="rvb-mainbadge">{LIST_COPY.mainBadge}</span>}
+                  <span class="rvb-more"><span class="rvb-more-closed">{LIST_COPY.open}</span><span class="rvb-more-open">{LIST_COPY.close}</span><span class="rvb-more-ic" aria-hidden="true">▾</span></span>
+                </span>
+                {(() => {
+                  const marks = headlineMarksOf(race.horseRows);
+                  return marks.length > 0
+                    ? (
+                      <span class="rvb-marks">
+                        {marks.map((m: any) => (
+                          <span class={`rm rm-${m.kind}`}><span class="rm-mark">{m.mark}</span><span class="rm-num">{m.number}</span>{m.kind === 'main' && m.name && <span class="rm-name">{m.name}</span>}</span>
+                        ))}
+                      </span>
+                    )
+                    : <span class="rvb-marks rvb-marks-none">{LIST_COPY.noMarks}</span>;
+                })()}
               </summary>
               <div class="rvb-detail-body">
+                <p class="rvb-detail-meta">
+                  <span class="rvb-meta">
+                    {race.distanceMeters ? `${race.distanceMeters}m` : '距離未取得'} ・ {race.entryCount}頭
+                  </span>
+                </p>
+
+                <div class="rvb-row-tags">
+                  {race.result.state === RACE_STATE.TAGGED
+                    ? race.result.tags.map((t: string) => {
+                        const ev = tagEvidence(t, race.result.counts);
+                        return (
+                          <span class={`rvb-tag tag-${TAG_KIND[t] || 'other'}`}>
+                            <span class="rvb-tag-ic">{TAG_ICON[t]}</span>{TAG_LABEL[t]}
+                            {ev && ev.of ? <span class="rvb-tag-n">{ev.of}頭中{ev.n}頭</span> : null}
+                          </span>
+                        );
+                      })
+                    : (
+                      <span class={`rvb-state st-${stateClass(race.result.state).replace('is-', '')}`}>
+                        <span class="rvb-tag-ic">{STATE_ICON[race.result.state]}</span>{STATE_LABEL[race.result.state]}
+                      </span>
+                    )}
+                </div>
+
+                {race.result.state === RACE_STATE.TAGGED && (
+                  <p class="rvb-tag-help" data-help>
+                    {race.result.tags.map((t: string) => TERM_HELP[t]).filter(Boolean).join(' ')}
+                  </p>
+                )}
+
                 {race.result.state === RACE_STATE.TAGGED
                   ? race.result.tags.map((t: string) => (
                     <p class={`rvb-sentence sn-${TAG_KIND[t] || 'other'}`}>
@@ -398,15 +336,10 @@ const LEGEND = [
                       </div>
                     </div>
 
-                    <div class="rvb-signup" data-guest-only>
-                      <p class="rvb-signup-head">{MEMBER_EXTRAS.lockedHeading}</p>
-                      <p class="rvb-signup-body">{MEMBER_EXTRAS.lockedBody}</p>
-                      <ul class="rvb-signup-list">
-                        {MEMBER_EXTRAS.benefits.map((b: string) => <li>{b}</li>)}
-                      </ul>
-                      <a class="rvb-signup-cta" href="/free-signup/">{MEMBER_EXTRAS.ctaLabel}</a>
-                      <p class="rvb-signup-note">{MEMBER_EXTRAS.note}</p>
-                    </div>
+                    {/* 登録 CTA はレースごとに繰り返さない。主 CTA は一覧の後ろの 1 か所（#rvb-signup）。 */}
+                    <p class="rvb-signup-mini" data-guest-only>
+                      {LIST_COPY.memberMore}<a href="#rvb-signup">{LIST_COPY.memberMoreLink}</a>
+                    </p>
                   </>
                 )}
 
@@ -429,8 +362,97 @@ const LEGEND = [
           </li>
         ))}
       </ol>
+
+      {/* 会場内の見くらべ。初期表示には出さず折りたたむ。 */}
+      <details class="rvb-venuecmp">
+        <summary class="rvb-venuecmp-sum">{LIST_COPY.venueCompare(venue.venue)}</summary>
+        <div class="rvb-highlight">
+          <span class="rvb-highlight-head">今日の{venue.venue}では</span>
+          <ul class="rvb-highlight-list">
+            {(['mostChanged', 'easiest', 'hardest'] as const).map((k) => (
+              venue.highlights[k] ? (
+                <li class={`hl hl-${k}`}>
+                  <span class="hl-key">{HIGHLIGHT_LABEL[k]}</span>
+                  <span class="hl-val">{venue.highlights[k]}R</span>
+                </li>
+              ) : null
+            ))}
+          </ul>
+          <p class="rvb-highlight-note">
+            ※ ここは<strong>今日のこの会場だけを見くらべた結果</strong>です。
+            各レースの「詳しく」に出る見どころは「いつもと比べてどうか」なので、別の見かたになります。
+          </p>
+        </div>
+      </details>
     </div>
   ))}
+
+  {/* 無料登録の案内は一覧の後ろに 1 つだけ（2026-09-27 MK 確定）。無料予想そのものより目立たせない。 */}
+  <section class="rvb-signupbox" id="rvb-signup" data-guest-only>
+    <p class="rvb-signupbox-head">{LIST_COPY.signupHeading}</p>
+    <p class="rvb-signupbox-body">{LIST_COPY.signupBody}</p>
+    <ul class="rvb-signupbox-list">
+      {MEMBER_EXTRAS.benefits.map((b: string) => <li>{b}</li>)}
+    </ul>
+    <a class="rvb-signup-cta" href="/free-signup/">{MEMBER_EXTRAS.topCtaLabel}</a>
+    <p class="rvb-signupbox-note">{MEMBER_EXTRAS.note}</p>
+  </section>
+  <div class="rvb-topmember" data-member-only>
+    <p class="rvb-topmember-head"><span aria-hidden="true">✅</span>{MEMBER_EXTRAS.topMemberHeading}</p>
+    <p class="rvb-topmember-body">{MEMBER_EXTRAS.topMemberBody}</p>
+  </div>
+
+  {/* 見どころの読み方（説明・使い方・かんたん表示・凡例）。削除せず、一覧の後ろで折りたたむ。 */}
+  <details class="rvb-guide" id="rvb-guide">
+    <summary class="rvb-guide-sum"><span aria-hidden="true">📖</span><span>{LIST_COPY.guideSummary}</span></summary>
+    <div class="rvb-guide-body">
+      <p class="rvb-lead">
+        出走馬の<strong>近走（前走の会場・距離・騎手）</strong>だけを数えて、レースごとに
+        「何が替わったか」「近走を見比べやすいか」を出しています。
+        各レースを開くと、<strong>出走馬と、その馬の条件がどう変わったか</strong>まで確認できます。
+      </p>
+      <details class="rvb-howto" id="rvb-howto">
+        <summary class="rvb-howto-sum">
+          <span aria-hidden="true">💡</span><span class="rvb-howto-sum-txt">{HOW_TO_USE.toggleOpen}</span>
+        </summary>
+        <div class="rvb-howto-body">
+          <p class="rvb-howto-lead">{HOW_TO_USE.lead}</p>
+          <ol class="rvb-howto-steps">
+            {HOW_TO_USE.steps.map((st: any, i: number) => (
+              <li class="rvb-howto-step">
+                <span class="rvb-howto-no">{i + 1}</span>
+                <span class="rvb-howto-txt"><b>{st.title}</b>{st.body}</span>
+              </li>
+            ))}
+          </ol>
+          <p class="rvb-howto-note">{HOW_TO_USE.note}</p>
+        </div>
+      </details>
+
+      <div class="rvb-helpbar">
+        <button type="button" class="rvb-helpbtn" id="rvb-help-toggle" aria-pressed="true">
+          <span aria-hidden="true">🔎</span><span class="rvb-helpbtn-txt">{HELP_TOGGLE.on}</span>
+        </button>
+        <span class="rvb-helphint">{HELP_TOGGLE.hint}</span>
+      </div>
+
+      <ul class="rvb-legend">
+        {LEGEND.map((l) => (
+          <li class={`lg lg-${l.kind}`}>
+            <span class="lg-chip"><span class="lg-ic">{l.icon}</span>{l.label}</span>
+            <span class="lg-desc" data-help>{l.desc}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  </details>
+
+  {/* 有料版の直近実績への導線。「見どころ」を読んだ人に、同じ日の買い目がどうなったかを見せる。
+      ⚠️ 実績バナーの中身は **ページ側から slot で差し込む**。ここで直接 import すると、
+         resultsShowcase.js → mainRaceBetting.js と有料ロジックがこの純粋な表示部品に
+         入り込み、board.guard.test.mjs の「有料データを読むモジュールを import しない」
+         方針を骨抜きにするため。差し込みが無ければ何も出ない。 */}
+  <div class="rvb-resultslot"><slot name="results" /></div>
 
   <p class="rvb-foot">
     近走の集計元は、南関は出走各馬の近走詳細データ、中央は JRA 公式の競走成績です。
@@ -875,13 +897,6 @@ const LEGEND = [
 
   /* chips とは別の行に置く（同じ grid-area を共有すると重なる）。
      チップ行と履歴行を縦に積むため column にする。 */
-  .rvb-topgate { text-align: left; margin-top: 14px; border: 2px dashed #22c55e; border-radius: 12px; background: rgba(34,197,94,.09); padding: 13px 14px; }
-  .rvb-topgate-head { margin: 0 0 6px; font-weight: 800; font-size: .95rem; color: #bbf7d0; display: flex; align-items: center; gap: 6px; }
-  .rvb-topgate-body { margin: 0 0 8px; font-size: .84rem; line-height: 1.8; color: #f1f5f9; }
-  .rvb-topgate-list { margin: 0 0 10px; padding-left: 1.15em; font-size: .8rem; line-height: 1.95; color: #e2e8f0; }
-  .rvb-topgate-cta { display: inline-block; background: #22c55e; color: #052e16; font-weight: 800; font-size: .9rem; padding: 10px 20px; border-radius: 9px; text-decoration: none; }
-  .rvb-topgate-cta:hover { background: #4ade80; }
-  .rvb-topgate-note { margin: 8px 0 0; font-size: .74rem; color: #cbd5e1; line-height: 1.7; }
   .rvb-topmember { text-align: left; margin-top: 14px; border: 1px solid rgba(6,182,212,.5); border-radius: 12px; background: rgba(6,182,212,.09); padding: 12px 14px; }
   .rvb-topmember-head { margin: 0 0 5px; font-weight: 800; font-size: .92rem; color: #a5f3fc; display: flex; align-items: center; gap: 6px; }
   .rvb-topmember-body { margin: 0; font-size: .82rem; line-height: 1.8; color: #e2e8f0; }
@@ -981,4 +996,53 @@ const LEGEND = [
   .mchip-run { color: #ddd6fe; border-color: #a78bfa; background: rgba(167,139,250,.18); }
   .rvb-mchip-help { font-size: .7rem; color: #94a3b8; line-height: 1.6; width: 100%; }
   :root[data-rvb-help="off"] .rvb-mchip-help { display: none; }
+
+  /* ── 2026-09-27 MK 確定: 初期表示は全レースの予想一覧（行全体が summary）── */
+  .rvb-markline { margin: 8px auto 0; max-width: 660px; font-size: .9rem; line-height: 1.7; color: #cbd5e1; }
+  .rvb-row { padding: 0; }
+  .rvb-row > .rvb-detail { margin: 0; border: 0; border-radius: 0 9px 9px 0; }
+  .rvb-row > .rvb-detail:not([open]) { background: linear-gradient(180deg, rgba(56,189,248,.10), rgba(3,105,161,.08)); }
+  .rvb-row > .rvb-detail > .rvb-detail-sum { display: block; padding: 10px 12px; color: #f1f5f9; font-size: 1rem; font-weight: 400; }
+  .rvb-row > .rvb-detail > .rvb-detail-sum:focus-visible { outline: 3px solid #22d3ee; outline-offset: -3px; border-radius: 8px; }
+  .rvb-sum-line { display: flex; align-items: baseline; gap: 4px 10px; min-width: 0; }
+  .rvb-sum-line .rvb-time { font-size: .9rem; flex-shrink: 0; }
+  .rvb-sum-line .rvb-r { flex-shrink: 0; min-width: 0; }
+  .rvb-sum-line .rvb-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .95rem; }
+  .rvb-mainbadge { flex-shrink: 0; font-size: .85rem; font-weight: 800; color: #fde68a; border: 1px solid rgba(245,158,11,.6); border-radius: 6px; padding: 0 6px; line-height: 1.5; }
+  .rvb-more { margin-left: auto; flex-shrink: 0; font-size: .88rem; font-weight: 700; color: #7dd3fc; white-space: nowrap; }
+  .rvb-more-ic { display: inline-block; margin-left: 3px; transition: transform .15s; }
+  .rvb-more-open { display: none; }
+  .rvb-detail[open] .rvb-more-closed { display: none; }
+  .rvb-detail[open] .rvb-more-open { display: inline; }
+  .rvb-detail[open] .rvb-more-ic { transform: rotate(180deg); }
+  .rvb-marks { margin-top: 6px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 14px; font-size: 1.05rem; font-weight: 800; color: #e2e8f0; }
+  .rm { display: inline-flex; align-items: baseline; gap: 2px; min-width: 0; }
+  .rm-mark { color: #60a5fa; }
+  .rm-main .rm-mark { color: #f87171; }
+  .rm-name { margin-left: 6px; color: #f8fafc; overflow-wrap: anywhere; }
+  .rvb-marks-none { font-size: .88rem; font-weight: 600; color: #94a3b8; }
+  .rvb-detail-meta { margin: 8px 0 0; }
+  .rvb-detail-meta .rvb-meta { margin-left: 0; }
+  .rvb-signup-mini { margin: 12px 0 0; font-size: .88rem; color: #cbd5e1; }
+  .rvb-signup-mini a { color: #86efac; }
+
+  .rvb-venuecmp { margin: 12px 0 0; border: 1px solid rgba(148,163,184,.3); border-radius: 10px; background: rgba(15,23,42,.4); }
+  .rvb-venuecmp-sum { cursor: pointer; padding: 9px 12px; font-size: .9rem; font-weight: 700; color: #cbd5e1; }
+  .rvb-venuecmp > .rvb-highlight { margin: 0 10px 10px; }
+
+  .rvb-signupbox { max-width: 900px; margin: 28px auto 0; padding: 14px 16px; border: 1px solid rgba(34,197,94,.5); border-radius: 12px; background: rgba(34,197,94,.06); }
+  .rvb-signupbox-head { margin: 0 0 4px; font-size: 1rem; font-weight: 800; color: #bbf7d0; }
+  .rvb-signupbox-body { margin: 0 0 6px; font-size: .9rem; line-height: 1.7; color: #e2e8f0; }
+  .rvb-signupbox-list { margin: 0 0 10px; padding-left: 1.2em; font-size: .88rem; line-height: 1.8; color: #e2e8f0; }
+  .rvb-signupbox .rvb-signup-cta { display: inline-block; background: #22c55e; color: #052e16; font-weight: 800; font-size: .95rem; padding: 9px 18px; border-radius: 9px; text-decoration: none; }
+  .rvb-signupbox .rvb-signup-cta:hover { background: #4ade80; }
+  .rvb-signupbox-note { margin: 8px 0 0; font-size: .85rem; color: #cbd5e1; line-height: 1.7; }
+  .rvb-topmember { max-width: 900px; margin: 28px auto 0; }
+  .rvb-guide { max-width: 900px; margin: 16px auto 0; border: 1px solid rgba(148,163,184,.35); border-radius: 12px; background: rgba(15,23,42,.45); }
+  .rvb-guide-sum { cursor: pointer; padding: 11px 14px; display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: .92rem; color: #cbd5e1; }
+  .rvb-guide[open] .rvb-guide-sum { border-bottom: 1px solid rgba(148,163,184,.3); color: #f1f5f9; }
+  .rvb-guide-body { padding: 12px 12px 14px; text-align: center; }
+  @media (max-width: 640px) {
+    .rvb-row > .rvb-detail > .rvb-detail-sum { padding: 10px 10px; }
+  }
 </style>
