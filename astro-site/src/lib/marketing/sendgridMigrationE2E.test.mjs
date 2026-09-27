@@ -28,6 +28,7 @@ import { buildExitPlan, listNameFor } from './sendgridAutomationPlan.js';
 import {
   createSendGridMarketingApi, WRITE_CONFIRM, WRITE_GATE_ENV, SendGridApiError,
 } from './sendgridMarketingApi.js';
+import { isProspectCasEval, emulateProspectCas } from './prospectCasFakeForTests.mjs';
 
 const BRAND = 'analytics-keiba';
 const FROM = 'support@keiba.link';
@@ -40,6 +41,7 @@ function createMemoryRedis() {
   const setOf = (k) => { if (!sets.has(k)) sets.set(k, new Set()); return sets.get(k); };
   const cmd = async (args) => {
     const op = String(args[0]).toUpperCase();
+    if (isProspectCasEval(args)) return emulateProspectCas(args, { get: (k) => (strings.has(k) ? strings.get(k) : null), set: (k, v) => strings.set(k, String(v)), del: (k) => strings.delete(k), sadd: (k, m) => setOf(k).add(String(m)), srem: (k, m) => setOf(k).delete(String(m)) });
     if (op === 'GET') return strings.has(args[1]) ? strings.get(args[1]) : null;
     if (op === 'SET') { strings.set(args[1], String(args[2])); return 'OK'; }
     if (op === 'DEL') { strings.delete(args[1]); return 1; }

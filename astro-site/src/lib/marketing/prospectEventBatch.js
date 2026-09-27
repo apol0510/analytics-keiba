@@ -18,29 +18,27 @@
  * ## ここで守ること（テストで固定）
  *
  * 1. **原子性**: 相手ごとの「レコード・送信候補索引・反応済み索引・抑止台帳」を
- *    **1 回の transaction** で書く（`/multi-exec`）。途中で止まっても片方だけ残らない。
- *    transaction が使えなければ**書かない**（ばらばらに書いて不整合を作らない）。
- * 2. **処理済みの印だけが先に付かない**: 反映済みの印（`appliedEventIds`）は
+ *    **1 回の Lua 実行**（`PROSPECT_CAS_LUA`）で書く。途中で止まっても片方だけ残らない。
+ * 2. **後勝ちで消さない（lost update を起こさない）**: 読んだ値の SHA1 が今も同じときだけ書く。
+ *    違えば（同じ相手へ別の webhook が先に書いた）その相手だけ**読み直して計算し直す**。
+ *    同じ相手へ delivered と open が別々の呼び出しで同時に来ても、両方が残る。
+ * 3. **処理済みの印だけが先に付かない**: 反映済みの印（`appliedEventIds`）は
  *    **レコードと同じ書き込み**の中に入れる。書けなければ印も付かない。
- * 3. **冪等**: 同じイベントが再送されても `appliedEventIds` にあれば数え直さない。
+ * 4. **冪等**: 同じイベントが再送されても `appliedEventIds` にあれば数え直さない。
  *    そのときも**索引と抑止台帳だけは state に合わせて張り直す**（過去の部分書き込みを直す）。
- * 4. **時間内に収める**: 読みは `MGET`、書きは相手をまとめた transaction（既定 50 名）。
- *    1 塊 = 2 往復。締め切りを越えそうなら**新しい塊を始めず**、残りを `remaining` で返す。
- *    呼び出し側は `incomplete` なら 5xx を返して SendGrid に再送させる（反映済みは 3. で飛ばす）。
+ * 5. **時間内に収める**: 読みは `MGET`、書きは相手をまとめた 1 回の EVAL（既定 50 名）。
+ *    衝突が無ければ 1 塊 = 2 往復。締め切りを越えそうなら**新しい塊を始めず**、残りを `remaining` で返す。
+ *    呼び出し側は `incomplete` なら 5xx を返して SendGrid に再送させる（反映済みは 4. で飛ばす）。
  *
  * ⚠️ アドレスは戻り値の `changes` にだけ入る（選別 list から外すため）。ログへ出さないこと。
- * ⚠️ 同じ相手を**別々の呼び出しが同時に**書き換えると後勝ちになる（WATCH が使えないため）。
- *    同じイベントの二重反映は 3. で防げるが、別イベントの同時反映は防げない（既知の限界）。
  */
 
 import {
   PROSPECT_STATE, applyDelivered, applyEngagement, applySuppression,
 } from './prospectPolicy.js';
-import {
-  emailHash, buildProspectWriteCommands, blockEntryFor, APPLIED_EVENT_IDS_CAP,
-} from './prospectStore.js';
+import { emailHash, APPLIED_EVENT_IDS_CAP, CAS_ATTEMPTS } from './prospectStore.js';
 
-/** 1 回の transaction にまとめる相手の数（1 塊 = MGET 1 回 + transaction 1 回） */
+/** 1 回の EVAL にまとめる相手の数（衝突が無ければ 1 塊 = MGET 1 回 + EVAL 1 回） */
 export const PROSPECT_BATCH_CHUNK = 50;
 /** 1 塊の所要見積り（Upstash 1 往復 ~45ms の実測に大きく余裕を取る） */
 export const PROSPECT_CHUNK_ESTIMATE_MS = 1500;
@@ -129,83 +127,87 @@ export async function applyProspectEventBatch({
   const size = Number.isInteger(chunkSize) && chunkSize > 0 ? chunkSize : PROSPECT_BATCH_CHUNK;
   const out = {
     enabled: true, engaged: 0, suppressed: 0, delivered: 0, exhausted: 0,
-    notFound: 0, duplicate: 0, healed: 0, errors: 0,
+    notFound: 0, duplicate: 0, healed: 0, errors: 0, conflictsRetried: 0,
     chunks: 0, failedChunks: 0, remaining: 0, incomplete: false, reason: null,
     changes: [],
   };
   if (list.length === 0) return out;
-  if (!store || store.hasTransaction !== true) {
-    // ⚠️ ばらばらに書くと部分書き込みを作る。**1 件も書かず**に未完了として返す
-    out.incomplete = true; out.remaining = list.length; out.reason = 'transaction_unavailable';
+  if (!store || typeof store.casMany !== 'function' || typeof store.loadManyRaw !== 'function') {
+    // ⚠️ 比較して書く手段が無ければ**1 件も書かない**（後勝ち・部分書き込みを作らない）
+    out.incomplete = true; out.remaining = list.length; out.reason = 'cas_unavailable';
     return out;
   }
   const deadline = Number.isFinite(deadlineAtMs) ? deadlineAtMs : nowFn() + DEFAULT_PROSPECT_BUDGET_MS;
+  const overBudget = () => nowFn() + PROSPECT_CHUNK_ESTIMATE_MS > deadline;
 
   for (let i = 0; i < list.length; i += size) {
     /** 最初の塊は必ず処理する。2 つ目以降は締め切りを越えそうなら始めない */
-    if (i > 0 && nowFn() + PROSPECT_CHUNK_ESTIMATE_MS > deadline) {
+    if (i > 0 && overBudget()) {
       out.remaining = list.length - i;
       out.incomplete = true;
       out.reason = out.reason || 'time_budget_exhausted';
       break;
     }
-    const chunk = list.slice(i, i + size);
     out.chunks += 1;
-    const hashes = chunk.map((u) => emailHash(u.email));
-
-    let byHash;
-    try {
-      // eslint-disable-next-line no-await-in-loop -- 塊を順に処理する
-      const recs = await store.loadMany(hashes);
-      byHash = new Map((recs || []).map((r) => [r.hash, r]));
-    } catch {
-      out.failedChunks += 1; out.errors += chunk.length;
-      out.remaining = list.length - i; out.incomplete = true; out.reason = 'read_failed';
-      break;
-    }
-
-    const cmds = [];
-    const pending = { engaged: 0, suppressed: 0, delivered: 0, exhausted: 0, notFound: 0, duplicate: 0, healed: 0 };
-    const pendingChanges = [];
-    for (let k = 0; k < chunk.length; k += 1) {
-      const u = chunk[k];
-      const hash = hashes[k];
-      const cur = byHash.get(hash);
-      if (!cur) { pending.notFound += 1; continue; }
-      const { hash: _h, ...record } = cur;
-      const r = applyProspectUpdate({ prospect: record, update: u, nowMs, env });
-      if (r.duplicate) {
-        pending.duplicate += 1;
-        // 再送: 数え直さない。**索引と抑止台帳だけ** state に合わせて張り直す（過去の部分書き込みを直す）
-        cmds.push(...buildProspectWriteCommands(hash, null, record.state, {
-          blockEntry: blockEntryFor(hash, record, nowMs),
-        }));
-        pending.healed += 1;
-      } else {
-        cmds.push(...buildProspectWriteCommands(hash, r.next, r.next.state, {
-          blockEntry: blockEntryFor(hash, r.next, nowMs),
-        }));
-        if (r.deliveredCounted) pending.delivered += 1;
-        if (r.newlyExhausted) pending.exhausted += 1;
-        if (r.engagedNow) pending.engaged += 1;
-        if (r.suppressedNow) pending.suppressed += 1;
+    /** この塊でまだ書けていない相手（衝突したら読み直して回す） */
+    let pendingIdx = list.slice(i, i + size).map((u) => ({ u, hash: emailHash(u.email) }));
+    let stop = null;
+    for (let attempt = 0; attempt < CAS_ATTEMPTS && pendingIdx.length > 0; attempt += 1) {
+      if (attempt > 0) {
+        if (overBudget()) { stop = 'time_budget_exhausted'; break; }
+        out.conflictsRetried += pendingIdx.length;
       }
-      const c = exitChange(u, r.next);
-      if (c) pendingChanges.push(c);
-    }
+      let rows;
+      try {
+        // eslint-disable-next-line no-await-in-loop -- 塊を順に処理する
+        rows = await store.loadManyRaw(pendingIdx.map((p) => p.hash));
+      } catch { stop = 'read_failed'; break; }
 
-    try {
-      // eslint-disable-next-line no-await-in-loop -- 塊を順に処理する
-      if (cmds.length > 0) await store.commitAtomic(cmds);
-    } catch {
-      // ⚠️ 何も書かれていない（transaction）。**数えず・外さず**、残りごと未完了にして再送で回復させる
-      out.failedChunks += 1; out.errors += chunk.length;
-      out.remaining = list.length - i; out.incomplete = true; out.reason = 'write_failed';
+      const items = [];
+      const plans = [];
+      for (let k = 0; k < pendingIdx.length; k += 1) {
+        const { u, hash } = pendingIdx[k];
+        const row = rows[k];
+        if (!row || !row.record) { out.notFound += 1; continue; }
+        const r = applyProspectUpdate({ prospect: row.record, update: u, nowMs, env });
+        // 反映済み（再送）: 数え直さず、索引と台帳だけ今の state に合わせる
+        items.push(store.casItem({ hash, expectRaw: row.raw, next: r.duplicate ? null : r.next, nowMs }));
+        plans.push({ u, hash, r });
+      }
+      if (items.length === 0) { pendingIdx = []; break; }
+
+      let ok;
+      try {
+        // eslint-disable-next-line no-await-in-loop -- 同上
+        ok = await store.casMany(items);
+      } catch { stop = 'write_failed'; break; }
+
+      const conflicted = [];
+      ok.forEach((w, k) => {
+        const { u, hash, r } = plans[k];
+        if (!w.ok) { conflicted.push({ u, hash }); return; }   // 誰かが先に書いた → 読み直す
+        // 書けた相手だけを数える（書けていないものを反映済みとして扱わない）
+        if (r.duplicate) { out.duplicate += 1; out.healed += 1; } else {
+          if (r.deliveredCounted) out.delivered += 1;
+          if (r.newlyExhausted) out.exhausted += 1;
+          if (r.engagedNow) out.engaged += 1;
+          if (r.suppressedNow) out.suppressed += 1;
+        }
+        const c = exitChange(u, r.next);
+        if (c) out.changes.push(c);
+      });
+      pendingIdx = conflicted;
+    }
+    if (!stop && pendingIdx.length > 0) stop = 'cas_conflict';
+    if (stop) {
+      // ⚠️ 書けていない相手と、まだ手を付けていない後ろの塊を**未完了**として返す（再送で回復させる）
+      const untouched = list.length - Math.min(list.length, i + size);
+      out.remaining = pendingIdx.length + untouched;
+      out.incomplete = true;
+      out.reason = stop;
+      if (stop === 'read_failed' || stop === 'write_failed') { out.failedChunks += 1; out.errors += pendingIdx.length; }
       break;
     }
-    // 書けた塊だけを数える（書けていないものを反映済みとして扱わない）
-    for (const [k, v] of Object.entries(pending)) out[k] += v;
-    out.changes.push(...pendingChanges);
   }
   return out;
 }

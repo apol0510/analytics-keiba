@@ -93,9 +93,9 @@ export class ProspectStoreError extends Error {
 }
 export const STORE_FAIL = Object.freeze({
   OUT_OF_NAMESPACE: 'out_of_namespace',
-  /** まとめて 1 回で書く手段（transaction）が無い。**ばらばらに書いて不整合を作らない** */
-  TRANSACTION_UNAVAILABLE: 'transaction_unavailable',
-  TRANSACTION_FAILED: 'transaction_failed',
+  /** 読んでから書くまでに他の誰かが書いた（**上書きせず**に読み直す。上限回数を越えたらこれ） */
+  CAS_CONFLICT: 'cas_conflict',
+  CAS_FAILED: 'cas_failed',
   UNREACHABLE: 'unreachable',
   UNKNOWN_RESULT: 'unknown_result',
   DATA_CORRUPT: 'data_corrupt',
@@ -110,7 +110,7 @@ const pick = (obj, allow) => {
 
 /**
  * その状態なら**送信候補**か。索引（`ACTIVE_INDEX`）に居るべきかどうかの単一源。
- * ⚠️ ここと `syncIndexes` の判定がズレると、状態と索引が食い違う。
+ * ⚠️ ここと `casItem`（索引の出し分け）の判定がズレると、状態と索引が食い違う。
  */
 export const isSendableState = (state) => state === PROSPECT_STATE.NEW
   || state === PROSPECT_STATE.SENDING;
@@ -131,29 +131,82 @@ export function blockKindForState(state) {
 }
 
 /**
- * レコード・送信候補索引・反応済み索引・抑止台帳を **state に合わせて揃える**コマンド列（純粋）。
+ * **比較して書く（compare-and-set）**。レコード・送信候補索引・反応済み索引・抑止台帳を
+ * **1 回の Lua 実行**で書く。Redis は Lua を**原子的に**実行するので、途中で他の書き込みが
+ * 割り込むことも、途中の 1 つだけ反映されることも無い。
  *
- * ⚠️ 2026-09-27: `write()` がこれらを**別々の往復**で書いていたため、Function が途中で止まると
- *    「レコードは EXHAUSTED なのに送信候補索引に残る」「どの索引にも居ない」が本番で 23 件できた。
- *    このコマンド列を **1 回の transaction（Upstash `/multi-exec`）** で送れば、全部か何も無いかになる。
+ * ## なぜ要るか（2026-09-27）
  *
- * @param {string} hash
- * @param {object|null} record  書くレコード（`null` なら**索引と台帳だけ**を state に合わせる）
- * @param {string} stateForIndex 索引を合わせる state
- * @param {{blockEntry?: object|null}} [opts]
- * @returns {Array<string[]>}
+ * 1. 部分書き込み: 4 つの書き込みを別往復で出していたため、Function が途中で止まると
+ *    23 件が不整合になった（EXHAUSTED なのに送信候補索引に残る / どこにも居ない）。
+ * 2. **後勝ち（lost update）**: 「読む → JS で計算 → 書く」の間に同じ相手へ別の書き込み
+ *    （例: delivered と open を別々の webhook が同時に処理）が入ると、後から書いた方が
+ *    先の更新を**黙って消す**。Upstash REST では WATCH が使えないので、
+ *    **読んだ値の SHA1 が今も同じときだけ書く**ことで防ぐ。違えば 1 件も書かずに 0 を返し、
+ *    呼び出し側が読み直して計算し直す（`updateWithCas` / `prospectEventBatch`）。
+ *
+ * ## 引数
+ *
+ * KEYS = [送信候補索引, 反応済み索引, 抑止索引, (レコード鍵, 抑止台帳鍵) × N]
+ * ARGV = [N, (hash, 期待値, レコード操作, 新しい値, 送信候補, 反応済み, 抑止台帳の値) × N]
+ *   - 期待値: `ABSENT`（無いこと）または読んだ値の SHA1（`redis.sha1hex` と同じ 16 進）
+ *   - レコード操作: `SET` / `KEEP`（索引だけ直す）/ `DEL`
+ *   - 送信候補・反応済み: `1`（入れる）/ `0`（外す）/ `-`（触らない）
+ *   - 抑止台帳の値: 空文字なら触らない
+ *
+ * 戻り値: 相手ごとに `0`（期待と違ったので**何も**書かなかった）/ `1`（書いた・索引の所属は不変）/
+ *         `2`（書いた・索引の所属が実際に変わった＝自己修復の件数に数える）
+ *
+ * ⚠️ 鍵は全部 KEYS で渡す（スクリプトの中で鍵を組み立てない）。
+ * ⚠️ Lua の途中でコマンドがエラーになると、それまでの書き込みは巻き戻らない（Redis の仕様）。
+ *    使うのは正しい型の鍵への GET / SET / DEL / SADD / SREM だけなので実務上は起きない。
  */
-export function buildProspectWriteCommands(hash, record, stateForIndex, { blockEntry } = {}) {
-  const cmds = [];
-  if (record) cmds.push(['SET', prospectKey(hash), JSON.stringify(pick(record, PROSPECT_FIELDS))]);
-  cmds.push([isSendableState(stateForIndex) ? 'SADD' : 'SREM', ACTIVE_INDEX, hash]);
-  cmds.push([stateForIndex === PROSPECT_STATE.ENGAGED ? 'SADD' : 'SREM', ENGAGED_INDEX, hash]);
-  if (blockEntry) {
-    cmds.push(['SET', blockedKey(hash), JSON.stringify(pick(blockEntry, BLOCKED_FIELDS))]);
-    cmds.push(['SADD', BLOCKED_INDEX, hash]);
-  }
-  return cmds;
-}
+export const PROSPECT_CAS_LUA = [
+  'local n = tonumber(ARGV[1])',
+  'local out = {}',
+  'for i = 1, n do',
+  '  local kp = KEYS[3 + (i - 1) * 2 + 1]',
+  '  local kb = KEYS[3 + (i - 1) * 2 + 2]',
+  '  local a = 1 + (i - 1) * 7',
+  '  local hash = ARGV[a + 1]',
+  '  local expect = ARGV[a + 2]',
+  '  local recOp = ARGV[a + 3]',
+  '  local newRaw = ARGV[a + 4]',
+  '  local act = ARGV[a + 5]',
+  '  local eng = ARGV[a + 6]',
+  '  local blk = ARGV[a + 7]',
+  "  local cur = redis.call('GET', kp)",
+  '  local ok = false',
+  "  if expect == 'ABSENT' then",
+  '    ok = (not cur)',
+  '  elseif cur then',
+  '    ok = (redis.sha1hex(cur) == expect)',
+  '  end',
+  '  if ok then',
+  '    local moved = 0',
+  "    if recOp == 'SET' then redis.call('SET', kp, newRaw)",
+  "    elseif recOp == 'DEL' then redis.call('DEL', kp) end",
+  "    if act == '1' then moved = moved + redis.call('SADD', KEYS[1], hash)",
+  "    elseif act == '0' then moved = moved + redis.call('SREM', KEYS[1], hash) end",
+  "    if eng == '1' then moved = moved + redis.call('SADD', KEYS[2], hash)",
+  "    elseif eng == '0' then moved = moved + redis.call('SREM', KEYS[2], hash) end",
+  "    if blk ~= '' then",
+  "      redis.call('SET', kb, blk)",
+  "      redis.call('SADD', KEYS[3], hash)",
+  '    end',
+  '    if moved > 0 then out[i] = 2 else out[i] = 1 end',
+  '  else',
+  '    out[i] = 0',
+  '  end',
+  'end',
+  'return out',
+].join('\n');
+
+/** 読んだ値 → Lua の `redis.sha1hex` と同じ SHA1（UTF-8 のバイト列に対して） */
+export const casDigest = (raw) => createHash('sha1').update(String(raw), 'utf8').digest('hex');
+
+/** 読み直しの上限（同じ相手へ書き込みが集中しても無限に回らない） */
+export const CAS_ATTEMPTS = 8;
 
 /** 抑止台帳に載せる中身（**アドレスなし**）。載せない state なら `null` */
 export function blockEntryFor(hash, d, nowMs = Date.now()) {
@@ -171,10 +224,10 @@ export function blockEntryFor(hash, d, nowMs = Date.now()) {
 }
 
 /**
- * @param {{ cmd: (args: string[]) => Promise<any>, pipeline?: Function, transaction?: Function }} deps
- *   Upstash REST 相当。`transaction` は `/multi-exec`（**全部か何も無いか**）。
+ * @param {{ cmd: (args: string[]) => Promise<any>, pipeline?: Function }} deps Upstash REST 相当。
+ *   書き込みは**すべて** `PROSPECT_CAS_LUA`（EVAL）経由（比較して書く・原子的）。
  */
-export function createProspectStore({ cmd, pipeline, transaction } = {}) {
+export function createProspectStore({ cmd, pipeline } = {}) {
   if (typeof cmd !== 'function') throw new Error('createProspectStore: cmd が必要です');
   const state = { commands: 0, keysTouched: new Set() };
 
@@ -210,124 +263,106 @@ export function createProspectStore({ cmd, pipeline, transaction } = {}) {
   };
 
   /**
-   * 索引の張り替え。**状態と索引を必ず揃える**（片方だけ残さない）。
-   * @returns {Promise<number>} 実際に変わった件数（0 なら既に揃っていた）
+   * 1 人ぶんの「比較して書く」指示を作る（純粋）。
+   *
+   * @param {{hash: string, expectRaw: string|null, next?: object|null, del?: boolean,
+   *          nowMs?: number, onlyChanges?: {active?: boolean|null, engaged?: boolean|null}}} it
+   *   - `expectRaw`: 読んだ生の値（`null` なら「無いこと」を期待）
+   *   - `next`: 書くレコード（無ければ**索引と台帳だけ**を今の state に合わせる）
+   *   - `onlyChanges`: 索引の一部だけ動かすとき（`null` = 触らない）
    */
-  const syncIndexes = async (hash, next) => {
-    const sendable = isSendableState(next.state);
-    const engaged = next.state === PROSPECT_STATE.ENGAGED;
-    const n = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
-    let changed = 0;
-    if (sendable) changed += n(await call(['SADD', ACTIVE_INDEX, hash]));
-    else changed += n(await call(['SREM', ACTIVE_INDEX, hash]));
-    if (engaged) changed += n(await call(['SADD', ENGAGED_INDEX, hash]));
-    else changed += n(await call(['SREM', ENGAGED_INDEX, hash]));
-    return changed;
-  };
-
-  /** 抑止台帳へ載せる（**TTL なし・アドレスなし**・冪等） */
-  const block = async (hash, { kind, reason, at, sends, delivered }) => {
-    const entry = pick({ hash, kind, reason, at, sends, delivered, source: 'prospect' }, BLOCKED_FIELDS);
-    await call(['SET', blockedKey(hash), JSON.stringify(entry)]);
-    await call(['SADD', BLOCKED_INDEX, hash]);
-    return entry;
+  const casItem = ({ hash, expectRaw, next = null, del = false, nowMs, onlyChanges = null }) => {
+    const current = parse(expectRaw);
+    const basis = next || current || {};
+    const d = next ? pick(next, PROSPECT_FIELDS) : null;
+    const flag = (v) => (v === true ? '1' : v === false ? '0' : '-');
+    let active; let engaged;
+    if (del) { active = false; engaged = false; }
+    else if (onlyChanges) { active = onlyChanges.active ?? null; engaged = onlyChanges.engaged ?? null; }
+    else { active = isSendableState(basis.state); engaged = basis.state === PROSPECT_STATE.ENGAGED; }
+    const block = (!del && !onlyChanges) ? blockEntryFor(hash, basis, nowMs) : null;
+    return {
+      hash,
+      expect: expectRaw === null || expectRaw === undefined ? 'ABSENT' : casDigest(expectRaw),
+      recOp: del ? 'DEL' : (d ? 'SET' : 'KEEP'),
+      newRaw: d ? JSON.stringify(d) : '',
+      act: flag(active),
+      eng: flag(engaged),
+      blk: block ? JSON.stringify(pick(block, BLOCKED_FIELDS)) : '',
+    };
   };
 
   /**
-   * 既存レコードの**索引だけ**を state に合わせて張り直す（レコードは触らない）。
-   *
-   * ⚠️ 1 件ずつ `syncIndexes` を呼ぶと 1 件 4 往復になり、
-   *    まさに 504 を起こした往復数へ逆戻りする。**集合ごとにまとめて 1 コマンド**にする
-   *    （最大 4 コマンド）。
-   *
-   * @returns {Promise<number>} 実際に変わった件数（0 なら既に揃っていた）
+   * まとめて「比較して書く」（**1 回の EVAL**）。戻り値は相手ごとの
+   * `{ok: 書いたか, indexChanged: 索引の所属が実際に変わったか}`（衝突なら ok=false で何も書いていない）。
+   * ⚠️ 鍵は全部 `ak:prospect:` 配下であることを送る前に確かめる（1 つでも外れれば送らない）。
    */
-  const reindexExisting = async (entries) => {
-    const list = (entries || []).filter((e) => e && e.hash && e.data);
-    if (list.length === 0) return 0;
-    const addActive = []; const remActive = [];
-    const addEngaged = []; const remEngaged = [];
-    for (const { hash, data } of list) {
-      (isSendableState(data.state) ? addActive : remActive).push(hash);
-      (data.state === PROSPECT_STATE.ENGAGED ? addEngaged : remEngaged).push(hash);
-    }
-    const n = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
-    let changed = 0;
-    const ops = [
-      addActive.length ? ['SADD', ACTIVE_INDEX, ...addActive] : null,
-      remActive.length ? ['SREM', ACTIVE_INDEX, ...remActive] : null,
-      addEngaged.length ? ['SADD', ENGAGED_INDEX, ...addEngaged] : null,
-      remEngaged.length ? ['SREM', ENGAGED_INDEX, ...remEngaged] : null,
-    ].filter(Boolean);
-    for (const op of ops) {
-      // eslint-disable-next-line no-await-in-loop -- 最大 4 コマンド
-      changed += n(await call(op));
-    }
-    return changed;
-  };
-
-  /**
-   * コマンド列を **1 回の transaction** で書く。全コマンドの鍵が `ak:prospect:` 配下であることを
-   * 送る前に確かめる（1 つでも外れていれば 1 つも送らない）。
-   */
-  const ATOMIC_OPS = ['SET', 'SADD', 'SREM'];
-  const commitAtomic = async (commands) => {
-    const list = (commands || []).filter(Boolean);
+  const casMany = async (items) => {
+    const list = (items || []).filter(Boolean);
     if (list.length === 0) return [];
-    if (typeof transaction !== 'function') {
-      throw new ProspectStoreError(STORE_FAIL.TRANSACTION_UNAVAILABLE);
+    const keys = [ACTIVE_INDEX, ENGAGED_INDEX, BLOCKED_INDEX];
+    const argv = [String(list.length)];
+    for (const it of list) {
+      keys.push(prospectKey(it.hash), blockedKey(it.hash));
+      argv.push(it.hash, it.expect, it.recOp, it.newRaw, it.act, it.eng, it.blk);
     }
-    for (const c of list) {
-      const op = String(c[0] || '').toUpperCase();
-      if (!ATOMIC_OPS.includes(op)) throw new ProspectStoreError(STORE_FAIL.OUT_OF_NAMESPACE, `unsupported_op:${op}`);
-      assertKey(c[1]);
-      state.keysTouched.add(String(c[1]));
-    }
+    for (const k of keys) { assertKey(k); state.keysTouched.add(k); }
     state.commands += 1;
     let res;
-    try { res = await transaction(list); }
-    catch (e) { throw new ProspectStoreError(STORE_FAIL.TRANSACTION_FAILED, e && e.message); }
+    try { res = await cmd(['EVAL', PROSPECT_CAS_LUA, String(keys.length), ...keys, ...argv]); }
+    catch (e) { throw new ProspectStoreError(STORE_FAIL.CAS_FAILED, e && e.message); }
     if (!Array.isArray(res) || res.length !== list.length) {
-      throw new ProspectStoreError(STORE_FAIL.TRANSACTION_FAILED, 'result_shape');
+      throw new ProspectStoreError(STORE_FAIL.CAS_FAILED, 'result_shape');
     }
-    return res;
+    return res.map((v) => ({ ok: Number(v) >= 1, indexChanged: Number(v) === 2 }));
   };
 
-  const write = async (hash, next) => {
-    const d = pick(next, PROSPECT_FIELDS);
-    /**
-     * transaction があれば**全部を 1 回で**書く（途中で止まっても片方だけ残らない）。
-     * 無い呼び出し元（移行・管理 API の一部）は従来どおり順に書く。
-     */
-    if (typeof transaction === 'function') {
-      await commitAtomic(buildProspectWriteCommands(hash, d, d.state, {
-        blockEntry: blockEntryFor(hash, d),
-      }));
-      return d;
+  /** 生の値のまま読む（CAS の期待値に使う） */
+  const loadRaw = async (hash) => {
+    const raw = await call(['GET', prospectKey(hash)], STORE_FAIL.DATA_CORRUPT);
+    return raw === null || raw === undefined ? null : String(raw);
+  };
+
+  /**
+   * 読んで・計算して・**比較して書く**を、衝突したら読み直して繰り返す（上限 `CAS_ATTEMPTS`）。
+   *
+   * @param {string} hash
+   * @param {(cur: object|null) => ({next?: object|null, del?: boolean, result: object}|null)} mutate
+   *   `null` を返せば何も書かない。`next` 無し・`del` 無しなら索引だけ state に合わせる。
+   * @param {{nowMs?: number, allowAbsent?: boolean}} [opts]
+   */
+  const updateWithCas = async (hash, mutate, { nowMs, allowAbsent = false } = {}) => {
+    for (let attempt = 0; attempt < CAS_ATTEMPTS; attempt += 1) {
+      // eslint-disable-next-line no-await-in-loop -- 衝突したら読み直す
+      const raw = await loadRaw(hash);
+      const cur = parse(raw);
+      if (!cur && !allowAbsent) return { notFound: true };
+      const m = mutate(cur);
+      if (!m) return { written: false };
+      const item = casItem({ hash, expectRaw: raw, next: m.next || null, del: m.del === true, nowMs });
+      // eslint-disable-next-line no-await-in-loop -- 同上
+      const [r] = await casMany([item]);
+      if (r.ok) return { written: true, indexChanged: r.indexChanged, ...m };
     }
-    // ⚠️ TTL は付けない（消えると再取り込みで復活する）
-    await call(['SET', prospectKey(hash), JSON.stringify(d)]);
-    await syncIndexes(hash, d);
-    // 抑止・打ち切りに入ったら**必ず台帳へ**（レコードを消しても残る）
-    const kind = blockKindForState(d.state);
-    if (kind) {
-      await block(hash, {
-        kind,
-        // 打ち切りの理由は **delivered 基準**であることが分かる値を残す
-        reason: d.suppressedReason || (kind === BLOCK_KIND.EXHAUSTED ? PROSPECT_CUTOFF_REASON : 'unknown'),
-        at: d.suppressedAt || d.lastDeliveredAt || d.lastSentAt || new Date().toISOString(),
-        sends: d.sends,
-        delivered: d.delivered,
-      });
-    }
-    return d;
+    throw new ProspectStoreError(STORE_FAIL.CAS_CONFLICT, 'attempts_exhausted');
   };
 
   return {
     state, assertKey: assertKeyName,
-    /** 1 回の transaction で書けるか（webhook は無ければ書かない） */
-    hasTransaction: typeof transaction === 'function',
-    commitAtomic,
+    /** 比較して書く（`prospectEventBatch` が塊ごとに使う） */
+    casItem,
+    casMany,
+    /** まとめ読み（**生の値のまま**・CAS の期待値に使う）。1 回の MGET で 500 件まで */
+    async loadManyRaw(hashes) {
+      const list = (hashes || []).slice(0, 500);
+      if (list.length === 0) return [];
+      const raw = await call(['MGET', ...list.map(prospectKey)], STORE_FAIL.DATA_CORRUPT);
+      if (!Array.isArray(raw) || raw.length !== list.length) throw new ProspectStoreError(STORE_FAIL.DATA_CORRUPT, 'mget');
+      return raw.map((r, i) => {
+        const rawStr = r === null || r === undefined ? null : String(r);
+        return { hash: list[i], raw: rawStr, record: parse(rawStr) };
+      });
+    },
 
     async load(email) {
       return parse(await call(['GET', prospectKey(emailHash(email))], STORE_FAIL.DATA_CORRUPT));
@@ -394,54 +429,34 @@ export function createProspectStore({ cmd, pipeline, transaction } = {}) {
         throw new ProspectStoreError(STORE_FAIL.DATA_CORRUPT, 'current_mget');
       }
 
-      const fresh = [];
-      // ⚠️ 既存レコードは**上書きしない**が、索引は state に合わせて張り直す（自己修復）
-      const existing = [];
+      /**
+       * ⚠️ 2026-09-27: 書き込みは**すべて比較して書く**（`casMany`・1 回の EVAL）。
+       *   - 新規: 「まだ無いこと」を条件に作る。同時に誰かが作っていれば**上書きせず** existed に数える
+       *   - 既存: 読んだ値のままなら索引だけ state に合わせる（2026-08-27 の自己修復）。
+       *     読んだ後に誰かが書いていれば、その書き込み自体が索引まで揃えているので何もしない
+       */
+      const items = [];
+      const kinds = [];
       list.forEach((p, i) => {
         if (blockedRaw[i] !== null && blockedRaw[i] !== undefined) { out.blocked += 1; return; }
         if (curRaw[i] !== null && curRaw[i] !== undefined) {
           out.existed += 1;
-          existing.push({ hash: hashes[i], data: parse(curRaw[i]) });
+          items.push(casItem({ hash: hashes[i], expectRaw: String(curRaw[i]) }));
+          kinds.push('existing');
           return;
         }
-        fresh.push({ hash: hashes[i], data: pick(p, PROSPECT_FIELDS) });
+        items.push(casItem({ hash: hashes[i], expectRaw: null, next: pick(p, PROSPECT_FIELDS) }));
+        kinds.push('fresh');
       });
-
-      // ⚠️ ここが 2026-08-27 の事故の恒久対策。
-      //    `SET` と `SADD` は別往復なので、途中で落ちると
-      //    **レコードはあるのに索引に居ない**人が残る。次の実行では `existed` 扱いになり、
-      //    以前は**索引を張り直さずに素通り**していたため、永久に送信候補へ戻らなかった。
-      //    再実行するだけで直るように、`existed` でも索引を突き合わせる。
-      out.reindexed = await reindexExisting(existing);
-
-      if (fresh.length === 0) return out;
-
-      // 3) まとめ書き。**pipeline が無ければ 1 件ずつ**（遅いが正しい）
-      const writes = fresh.map((f) => ['SET', prospectKey(f.hash), JSON.stringify(f.data)]);
-      if (typeof pipeline === 'function') {
-        for (const k of writes) assertKeyName(k[1]);
-        const res = await pipeline(writes);
-        if (!Array.isArray(res) || res.length !== writes.length) {
-          throw new ProspectStoreError(STORE_FAIL.UNKNOWN_RESULT, 'pipeline_write');
+      if (items.length === 0) return out;
+      const res = await casMany(items);
+      res.forEach((r, i) => {
+        if (kinds[i] === 'fresh') {
+          if (r.ok) out.added += 1;
+          else out.existed += 1;       // 同時に誰かが作った。**上書きしない**
+        } else if (r.ok && r.indexChanged) {
+          out.reindexed += 1;          // 実際に直った件数だけ（揃っていたものは数えない）
         }
-      } else {
-        for (const w of writes) {
-          // eslint-disable-next-line no-await-in-loop -- pipeline が無いときの退避経路
-          await call(w);
-        }
-      }
-      // 索引は 1 コマンドでまとめて張る（NEW / SENDING は送信候補）
-      await call(['SADD', ACTIVE_INDEX, ...fresh.map((f) => f.hash)]);
-      await call(['SREM', ENGAGED_INDEX, ...fresh.map((f) => f.hash)]);
-
-      // 4) **読み戻して確かめる**（例外が出なかったことは書けた証拠にならない）
-      const check = await call(['MGET', ...fresh.map((f) => prospectKey(f.hash))], STORE_FAIL.DATA_CORRUPT);
-      if (!Array.isArray(check) || check.length !== fresh.length) {
-        throw new ProspectStoreError(STORE_FAIL.DATA_CORRUPT, 'verify_mget');
-      }
-      check.forEach((v) => {
-        if (v === null || v === undefined) out.unverified += 1;
-        else out.added += 1;
       });
       return out;
     },
@@ -453,17 +468,15 @@ export function createProspectStore({ cmd, pipeline, transaction } = {}) {
     async addIfAbsent(prospect) {
       const hash = emailHash(prospect.email);
       if (await this.isBlocked(hash)) return { added: false, blocked: true, prospect: null };
-      const cur = await this.loadByHash(hash);
-      if (cur) {
-        // ⚠️ **レコードは上書きしない**が、索引だけは状態に合わせて張り直す。
-        //    `SET` と `SADD` は別往復なので、途中で落ちると
-        //    「レコードはあるのに索引に居ない」人が残る（2026-08-27 の事故）。
-        //    再実行で自己修復できるように、既存でも必ず突き合わせる。
-        const reindexed = await syncIndexes(hash, cur);
-        return { added: false, prospect: cur, reindexed };
-      }
-      const saved = await write(hash, prospect);
-      return { added: true, prospect: saved, reindexed: 0 };
+      /**
+       * 無ければ「無いこと」を条件に作る。あれば**上書きせず**索引だけ state に合わせる
+       * （2026-08-27 の自己修復）。どちらも比較して書く。
+       */
+      const r = await updateWithCas(hash, (cur) => (cur
+        ? { result: { added: false, prospect: cur } }
+        : { next: prospect, result: { added: true, prospect: pick(prospect, PROSPECT_FIELDS) } }),
+      { allowAbsent: true });
+      return { ...r.result, reindexed: !r.result.added && r.indexChanged ? 1 : 0 };
     },
 
     /** 抑止台帳に載っているか（hash で照合。アドレスは要らない） */
@@ -519,8 +532,18 @@ export function createProspectStore({ cmd, pipeline, transaction } = {}) {
         out.planned.push({
           hash, state: rec.state, isActive, isEngaged, changes: changes.map((c) => c[0]),
         });
-        if (apply) {
-          for (const c of changes) out.applied += Number(await call(c)) || 0;
+        if (apply && changes.length > 0) {
+          // 比較して書く: 読んだ値のままのときだけ索引を動かす（読んだ後に書かれていれば触らない）
+          const [cr] = await casMany([casItem({
+            hash,
+            expectRaw: String(curRaw[i]),
+            onlyChanges: {
+              active: wantActive !== isActive ? wantActive : null,
+              engaged: wantEngaged !== isEngaged ? wantEngaged : null,
+            },
+          })]);
+          if (cr.ok) out.applied += changes.length;
+          else out.skipped.push({ hash, reason: 'changed_concurrently' });
         }
         /* eslint-enable no-await-in-loop */
       }
@@ -576,10 +599,10 @@ export function createProspectStore({ cmd, pipeline, transaction } = {}) {
      */
     async purge(hash) {
       if (!(await this.isBlocked(hash))) return { purged: false, reason: 'not_blocked' };
-      await call(['DEL', prospectKey(hash)]);
-      await call(['SREM', ACTIVE_INDEX, hash]);
-      await call(['SREM', ENGAGED_INDEX, hash]);
-      return { purged: true };
+      // 読んだ値のままのときだけ消す（消した直後に別の書き込みが復活させる／逆も起きない）
+      const r = await updateWithCas(hash, (cur) => (cur ? { del: true, result: { purged: true } } : null));
+      if (r.notFound || r.written === false) return { purged: true };
+      return r.result;
     },
 
     /**
@@ -587,42 +610,49 @@ export function createProspectStore({ cmd, pipeline, transaction } = {}) {
      * ⚠️ ここでは打ち切らない（届いた保証が無い）。打ち切りは `recordDelivered`。
      */
     async recordSend({ email, nowMs, runId }) {
-      const hash = emailHash(email);
-      const cur = await this.loadByHash(hash);
-      if (!cur) return { ok: false, reason: 'not_found' };
-      const next = applySend({ prospect: cur, nowMs, runId });
-      return { ok: true, prospect: await write(hash, next) };
+      const r = await updateWithCas(emailHash(email), (cur) => {
+        const next = applySend({ prospect: cur, nowMs, runId });
+        return { next, result: { ok: true, prospect: pick(next, PROSPECT_FIELDS) } };
+      }, { nowMs });
+      return r.notFound ? { ok: false, reason: 'not_found' } : r.result;
     },
 
     /**
      * **配信成功（delivered）**を記録する。打ち切り（EXHAUSTED）が起きるのはここだけで、
-     * 打ち切ると `write()` が抑止台帳へ載せる（再取り込みでも復活しない）。
+     * 打ち切ると同じ書き込みで抑止台帳へ載せる（再取り込みでも復活しない）。
+     * ⚠️ 比較して書く（同じ相手への別の更新を**後勝ちで消さない**）。
      */
     async recordDelivered({ email, nowMs, env }) {
-      const hash = emailHash(email);
-      const cur = await this.loadByHash(hash);
-      if (!cur) return { ok: false, reason: 'not_found' };
-      const r = applyDelivered({ prospect: cur, nowMs, env });
-      if (!r.changed) return { ok: true, changed: false, prospect: cur };
-      return { ok: true, changed: true, prospect: await write(hash, r.prospect) };
+      const r = await updateWithCas(emailHash(email), (cur) => {
+        const x = applyDelivered({ prospect: cur, nowMs, env });
+        if (!x.changed) return null;
+        return { next: x.prospect, result: { ok: true, changed: true, prospect: pick(x.prospect, PROSPECT_FIELDS) } };
+      }, { nowMs });
+      if (r.notFound) return { ok: false, reason: 'not_found' };
+      if (r.written === false) return { ok: true, changed: false, prospect: await this.loadByHash(emailHash(email)) };
+      return r.result;
     },
 
     async recordEngagement({ email, nowMs, kind }) {
-      const hash = emailHash(email);
-      const cur = await this.loadByHash(hash);
-      if (!cur) return { ok: false, reason: 'not_found' };
-      const r = applyEngagement({ prospect: cur, nowMs, kind });
-      if (!r.changed) return { ok: true, changed: false, prospect: cur };
-      return { ok: true, changed: true, prospect: await write(hash, r.prospect) };
+      const r = await updateWithCas(emailHash(email), (cur) => {
+        const x = applyEngagement({ prospect: cur, nowMs, kind });
+        if (!x.changed) return null;
+        return { next: x.prospect, result: { ok: true, changed: true, prospect: pick(x.prospect, PROSPECT_FIELDS) } };
+      }, { nowMs });
+      if (r.notFound) return { ok: false, reason: 'not_found' };
+      if (r.written === false) return { ok: true, changed: false, prospect: await this.loadByHash(emailHash(email)) };
+      return r.result;
     },
 
     async recordSuppression({ email, nowMs, reason }) {
-      const hash = emailHash(email);
-      const cur = await this.loadByHash(hash);
-      if (!cur) return { ok: false, reason: 'not_found' };
-      const r = applySuppression({ prospect: cur, nowMs, reason });
-      if (!r.changed) return { ok: true, changed: false, prospect: cur };
-      return { ok: true, changed: true, prospect: await write(hash, r.prospect) };
+      const r = await updateWithCas(emailHash(email), (cur) => {
+        const x = applySuppression({ prospect: cur, nowMs, reason });
+        if (!x.changed) return null;
+        return { next: x.prospect, result: { ok: true, changed: true, prospect: pick(x.prospect, PROSPECT_FIELDS) } };
+      }, { nowMs });
+      if (r.notFound) return { ok: false, reason: 'not_found' };
+      if (r.written === false) return { ok: true, changed: false, prospect: await this.loadByHash(emailHash(email)) };
+      return r.result;
     },
 
     /**
@@ -631,12 +661,12 @@ export function createProspectStore({ cmd, pipeline, transaction } = {}) {
      * PROMOTED にすると、その相手は二度と登録されない）。
      */
     async recordPromotion({ email, nowMs, recordId }) {
-      const hash = emailHash(email);
-      const cur = await this.loadByHash(hash);
-      if (!cur) return { ok: false, reason: 'not_found' };
-      const next = applyPromotion({ prospect: cur, nowMs });
-      if (recordId) next.promotedRecordId = String(recordId);
-      return { ok: true, prospect: await write(hash, next) };
+      const r = await updateWithCas(emailHash(email), (cur) => {
+        const next = applyPromotion({ prospect: cur, nowMs });
+        if (recordId) next.promotedRecordId = String(recordId);
+        return { next, result: { ok: true, prospect: pick(next, PROSPECT_FIELDS) } };
+      }, { nowMs });
+      return r.notFound ? { ok: false, reason: 'not_found' } : r.result;
     },
 
     /** 昇格の権利を 1 つだけ取る（自動と手動の二重登録を防ぐ） */

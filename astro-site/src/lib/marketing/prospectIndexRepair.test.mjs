@@ -18,6 +18,7 @@ import {
   ACTIVE_INDEX, ENGAGED_INDEX,
 } from './prospectStore.js';
 import { buildProspect, PROSPECT_STATE } from './prospectPolicy.js';
+import { isProspectCasEval, emulateProspectCas } from './prospectCasFakeForTests.mjs';
 
 const NOW = Date.UTC(2026, 7, 27);
 const BATCH = 'imp-2026-08-09-001';
@@ -26,6 +27,7 @@ function fakeRedis() {
   const kv = new Map(); const sets = new Map(); const commands = [];
   const setOf = (k) => { if (!sets.has(k)) sets.set(k, new Set()); return sets.get(k); };
   const cmd = async (args) => {
+    if (isProspectCasEval(args)) { commands.push(args); return emulateProspectCas(args, { get: (k) => (kv.has(k) ? kv.get(k) : null), set: (k, v) => kv.set(k, v), del: (k) => kv.delete(k), sadd: (k, m) => setOf(k).add(m), srem: (k, m) => setOf(k).delete(m), has: (k, m) => setOf(k).has(m) }); }
     commands.push(args);
     const [op, key, ...rest] = args;
     if (op === 'GET') return kv.has(key) ? kv.get(key) : null;
@@ -52,7 +54,12 @@ function orphan(r, email, over = {}) {
   r.kv.set(prospectKey(hash), JSON.stringify(p));
   return hash;
 }
-const writes = (r) => r.commands.filter((c) => ['SET', 'SADD', 'SREM'].includes(c[0]));
+const writes = (r) => r.commands.filter((c) => ['SET', 'SADD', 'SREM', 'EVAL'].includes(c[0]));
+/** 2026-09-27: 書き込みは「比較して書く」EVAL。1 人目の指示（レコード操作・送信候補・反応済み・台帳）を取り出す */
+const casOf = (c) => {
+  const nk = Number(c[2]); const argv = c.slice(3 + nk);
+  return { n: Number(argv[0]), hash: argv[1], recOp: argv[3], newRaw: argv[4], act: argv[5], eng: argv[6], blk: argv[7] };
+};
 
 /* ── 1. 本番の 1 件を直す ─────────────────────────────────── */
 
@@ -72,8 +79,10 @@ test('【要件】state=SENDING で active に居ない 1 件を、SADD 1 回だ
   assert.equal(r.active().has(hash), true);
 
   const w = writes(r);
-  assert.equal(w.length, 1, `⚠️ 書き込みが ${w.length} 回（SADD 1 回だけのはず）`);
-  assert.deepEqual(w[0], ['SADD', ACTIVE_INDEX, hash]);
+  assert.equal(w.length, 1, `⚠️ 書き込みが ${w.length} 回（比較して書く 1 回だけのはず）`);
+  // 比較して書く 1 回の中身が「送信候補へ SADD だけ」（レコード・反応済み・台帳は触らない）
+  assert.equal(w[0][0], 'EVAL');
+  assert.deepEqual(casOf(w[0]), { n: 1, hash, recOp: 'KEEP', newRaw: '', act: '1', eng: '-', blk: '' });
 });
 
 test('⚠️【要件】下見では 1 バイトも書かない', async () => {

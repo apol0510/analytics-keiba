@@ -36,7 +36,6 @@ import {
   applySelectionExit, createSelectionExitClient,
 } from '../../src/lib/marketing/sendgridSelectionExit.js';
 import { applyProspectEventBatch } from '../../src/lib/marketing/prospectEventBatch.js';
-import { makeRedisTransaction } from '../../src/lib/marketing/deliveryKeyStore.js';
 
 config();
 
@@ -164,7 +163,7 @@ export default async (req) => {
     /**
      * ⚠️ 2026-09-27 是正: 以前は `sg_event_id` の「処理済み」印を**反映より先に**全イベントへ
      *    付けていた。Function が途中で止まると、印だけ付いて反映されないイベントが残り、
-     *    **再送されても捨てられる**。今は反映済みの印をレコードと**同じ transaction** に入れる
+     *    **再送されても捨てられる**。今は反映済みの印をレコードと**同じ書き込み（比較して書く）** に入れる
      *    （`prospectEventBatch.js`）。再送で同じイベントが来ても数え直さない。
      */
     let prospect = {
@@ -307,10 +306,10 @@ async function applyProspectEvents({ events, now, deadlineAtMs }) {
     return (await r.json()).result;
   });
   /**
-   * ⚠️ **transaction（`/multi-exec`）で書く**。レコード・索引・抑止台帳・反映済みの印が
-   *    全部か何も無いかになる。無ければ書かない（`prospectEventBatch` が未完了として返す）。
+   * ⚠️ 書き込みは**比較して書く**（`PROSPECT_CAS_LUA` の EVAL）。レコード・索引・抑止台帳・
+   *    反映済みの印が全部か何も無いかになり、同じ相手への別の更新を後勝ちで消さない。
    */
-  const store = createProspectStore({ cmd: redisFetch, transaction: makeRedisTransaction(process.env) });
+  const store = createProspectStore({ cmd: redisFetch });
 
   const { updates } = planProspectEventUpdates({ events, classify: classifyEvent });
   /** 全員のイベント ID が揃っているときだけ「再送しても二重に数えない」と言える */

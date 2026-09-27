@@ -390,7 +390,7 @@ test('webhook は「反応者を外せない or 反映が終わらない」＋ �
   assert.match(webhookSrc, /applyProspectEvents\(\{ events, now/);
   // 再送の 2 回目でも外せるよう、反映済みでも対象へ積む（prospectEventBatch の exitChange）
   const batch = readFileSync(fileURLToPath(new URL('./prospectEventBatch.js', import.meta.url)), 'utf8');
-  assert.match(batch, /const c = exitChange\(u, r\.next\);\n\s+if \(c\) pendingChanges\.push\(c\);/);
+  assert.match(batch, /const c = exitChange\(u, r\.next\);\n\s+if \(c\) out\.changes\.push\(c\);/);
 });
 
 test('sg_event_id が無い / 形が違うイベントは重複判定できない（保証を外す）', async () => {

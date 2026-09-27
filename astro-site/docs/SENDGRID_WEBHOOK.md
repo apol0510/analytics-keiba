@@ -298,23 +298,43 @@ webhook の処理が Function の実行時間内に終わらず途中で止ま�
 
 `maxDuration` を伸ばす道は無い。**処理量を時間内に収める**設計にした。
 
-### 設計（`src/lib/marketing/prospectEventBatch.js`）
+### 設計（`src/lib/marketing/prospectStore.js` の `PROSPECT_CAS_LUA` / `prospectEventBatch.js`）
+
+**書き込みはすべて「比較して書く」（compare-and-set）1 回の Lua 実行**。Redis は Lua を原子的に
+実行するので、途中で割り込まれることも、途中の 1 つだけ反映されることも無い。
 
 | 守ること | どう守るか |
 |---|---|
-| 途中で止まっても片方だけ残らない | 相手ごとの 4 つの書き込みを **1 回の transaction（Upstash `/multi-exec`）** にまとめる。transaction が使えなければ**書かない** |
-| 印だけ先に付かない | 反映済みの `sg_event_id` を**レコードの中**（`appliedEventIds`・上限 50）に、同じ transaction で書く |
-| 再送で二重に数えない | 反映済みの ID なら数え直さない |
+| 途中で止まっても片方だけ残らない | レコード・送信候補索引・反応済み索引・抑止台帳を **1 回の EVAL** で書く |
+| **後勝ちで消さない（lost update 不可）** | 読んだ値の **SHA1 が今も同じときだけ**書く。違えば（同じ相手へ別の書き込みが先に入った）**1 件も書かず**、その相手だけ読み直して計算し直す（上限 8 回）|
+| 印だけ先に付かない | 反映済みの `sg_event_id` を**レコードの中**（`appliedEventIds`・上限 50）に、同じ EVAL で書く |
+| 再送で二重に数えない | 反映済みの ID なら数え直さない（同じイベントを 2 本が同時に処理しても 1 回）|
 | 再送で過去の不整合も直る | 反映済みのときも、索引と抑止台帳を**レコードの state に合わせて張り直す** |
-| 時間内に収める | 読みは `MGET`、書きは 50 名ぶんを 1 回の transaction。**1 塊 = 2 往復**（1,000 名で 40 往復）|
-| 終わらなければ再送 | 締め切り（受信から 40 秒）を越えそうなら新しい塊を始めず、**503** で SendGrid に再送させる（全イベントに ID があるときだけ）|
+| 時間内に収める | 読みは `MGET`、書きは 50 名ぶんを 1 回の EVAL。衝突が無ければ **1 塊 = 2 往復** |
+| 終わらなければ再送 | 締め切り（受信から 40 秒）を越えそう・読み直しが上限・書き込み失敗 → **503**（全イベントに ID があるときだけ）|
 
 締め切りの並び: 反映 40 秒 → 選別 list からの除去 50 秒 → 打ち切り 60 秒（余裕 10 秒）。
 
+**同じ記録・索引へ書く他の経路も同じ CAS を通る**（配信停止 `unsubscribe.js` の `recordSuppression`、
+管理 API の `recordSend` / `recordPromotion` / `reindexByHash` / `purge`、移行の `addIfAbsent` /
+`addManyIfAbsent`）。`prospectStore` の外から prospect の記録・索引・台帳へ直接書く箇所は無い
+（2026-09-27 に監査・`prospectEventBatch.test.mjs` の guard で固定）。
+
+並行で起きたときの結果は「どちらかを先に処理した結果」のどれかと一致する（直列化可能）。
+delivered は ENGAGED / SUPPRESSED の後では数えない仕様なので、**順序によって delivered の値は変わり得る**が、
+どちらのイベントも捨てられない（`appliedEventIds` に両方残る）。
+
+### 検証
+
+- `prospectEventBatch.test.mjs`（25 件）: 並行 2 本（delivered×open / delivered×click / delivered×配信停止 /
+  送信記録×open / 同じ人へ 5 本 / 200 名×2 本の重なり）、同じイベントの同時処理、書き込み失敗→再送、
+  時間切れ→再送、部分書き込みの自己修復、往復数
+- 衝突検出を外すと（SHA1 比較を無効化すると）並行系の 8 件が落ちることを確認済み（テストが本当に後勝ちを検出している）
+- **本物の Lua 文字列**を Lua VM（fengari）で実行し、テスト用エミュレータと 3,000 ケースで一致（不一致 0）
+
 ### 既知の限界
 
-- 同じ相手を**別々の呼び出しが同時に**書き換えると後勝ち（REST では WATCH が使えない）。
-  同じイベントの二重反映は防げるが、別イベントの同時反映は防げない。
+- **Upstash の Lua で `redis.sha1hex` が使えることは本番で未確認**（標準 Redis の Lua API。merge 前に確認する）
 - 既に不整合になっている 23 名は、その人に次のイベントが届いたときに直る。
   今すぐ直すには既存の `prospectIndexRepair`（書き込み・要承認）を使う。
-- webhook 以外の呼び出し元（配信停止・管理 API）は transaction を渡しておらず、従来どおり順に書く。
+- 読み直しが上限（8 回）に達したときは書かずに未完了（webhook は 503、store の呼び出しは `CAS_CONFLICT` で例外）。
