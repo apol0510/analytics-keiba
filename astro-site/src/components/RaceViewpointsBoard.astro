@@ -151,7 +151,7 @@ const LEGEND = [
       <ol class="rvb-list">
         {venue.races.map((race: any) => (
           <li class={`rvb-row ${stateClass(race.result.state)}`}>
-            {/* 2026-09-27 MK 確定: 初期表示は予想だけ（時刻・R・レース名・[メイン]・◎馬番+馬名・○▲△馬番・詳しく）。
+            {/* 2026-09-27 MK 確定: 初期表示は予想だけ（時刻・R・レース名・[メイン]・◎馬番+馬名・○▲△馬番・詳細）。
                 行全体が summary なので、タップ / Enter / Space で開ける。分析はすべて開いた中。 */}
             <details class="rvb-detail" data-race={race.raceNumber}>
               <summary class="rvb-detail-sum">
@@ -387,7 +387,7 @@ const LEGEND = [
           </ul>
           <p class="rvb-highlight-note">
             ※ ここは<strong>今日のこの会場だけを見くらべた結果</strong>です。
-            各レースの「詳しく」に出る見どころは「いつもと比べてどうか」なので、別の見かたになります。
+            各レースの「詳細」に出る見どころは「いつもと比べてどうか」なので、別の見かたになります。
           </p>
         </div>
       </details>
@@ -1084,4 +1084,155 @@ const LEGEND = [
     .rvb-headcard { padding: 14px 14px; border-radius: 14px; }
     .rvb-headcard .rvb-title { font-size: 1.4rem; }
   }
+
+  /* ═══ 2026-09-27 MK 確定（3 版目）: /free/ 全体をガラスモーフィズムで統一 ═══════════════
+     一部だけガラスにしない。上部カード・タブ・見出し・行カード・詳細内・折りたたみ・登録案内・
+     有料案内・印・ラベル・文字まで、下の --g-* トークン（単一源）で同じ質感に揃える。
+     ⚠️ 可読性を優先: 本文は #f1f5f9 / 補助は淡いブルー。◎○▲△ と「詳細／閉じる」は薄くしない。
+     ⚠️ 意味別の色分け（タグ・状態）は色相として残し、質感だけ揃える。左端の色帯は付けない。 */
+  .rvb {
+    --g-bg: rgba(15, 34, 64, .46);
+    --g-bg-soft: rgba(15, 34, 64, .30);
+    --g-bg-bar: rgba(10, 25, 48, .78);
+    --g-line: rgba(125, 211, 252, .20);
+    --g-line-strong: rgba(103, 232, 249, .50);
+    --g-hi: inset 0 1px 0 rgba(255, 255, 255, .07);
+    --g-shadow: 0 10px 30px rgba(2, 6, 23, .38);
+    --g-blur: blur(12px) saturate(140%);
+    --g-text: #f1f5f9;
+    --g-text-2: #d6e6f5;
+    --g-text-3: #a9c4dd;
+    --g-accent: #a5f3fc;
+    position: relative;
+    isolation: isolate;
+  }
+  /* ガラスが「透けて」見えるよう、背後にごく淡い光を置く（装飾は控えめ） */
+  .rvb::before {
+    content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+    background:
+      radial-gradient(60% 30% at 12% 0%, rgba(56, 189, 248, .13), transparent 70%),
+      radial-gradient(45% 28% at 92% 12%, rgba(99, 102, 241, .13), transparent 70%),
+      radial-gradient(60% 30% at 50% 100%, rgba(14, 165, 233, .09), transparent 70%);
+  }
+
+  /* 共通のガラス（最上位ブロック） */
+  .rvb-headcard, .rvb-venuecmp, .rvb-signupbox, .rvb-topmember, .rvb-guide {
+    background: var(--g-bg);
+    border: 1px solid var(--g-line);
+    -webkit-backdrop-filter: var(--g-blur); backdrop-filter: var(--g-blur);
+    box-shadow: var(--g-hi), var(--g-shadow);
+  }
+  /* 入れ子のガラス（詳細の中・折りたたみの中）: shadow は付けず内側の明るさだけ */
+  .rvb-howto, .rvb-member, .rvb-cta, .rvb-highlight, .rvb-horse, .rvb-sentence, .lg, .rvb-helpbtn, .rvb-freshness {
+    -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+    box-shadow: var(--g-hi);
+  }
+
+  /* 上部カード */
+  .rvb-headcard { background: linear-gradient(160deg, rgba(20, 44, 80, .55), rgba(10, 25, 48, .45)); }
+  .rvb-headcard .rvb-title { color: var(--g-text); letter-spacing: .02em; }
+  .rvb-headcard .rvb-cat { background: rgba(125, 211, 252, .14); border: 1px solid rgba(125, 211, 252, .42); color: #e0f2fe; box-shadow: var(--g-hi); }
+  .rvb-headcard .rvb-date { color: var(--g-text-2); }
+  .rvb-headnotes { border-top-color: var(--g-line); }
+  .rvb-headnote-free { color: var(--g-text); }
+  .rvb-headnote-free .rvb-headnote-ic { color: #fca5a5; background: rgba(248, 113, 113, .14); border: 1px solid rgba(248, 113, 113, .35); text-shadow: 0 0 8px rgba(248, 113, 113, .45); }
+  .rvb-headnote-paid { color: var(--g-text-3); }
+  .rvb-headnote-paid .rvb-headnote-ic { background: rgba(148, 163, 184, .12); border: 1px solid rgba(148, 163, 184, .28); }
+  .rvb-headcard .rvb-freshness { background: rgba(245, 158, 11, .10); border-color: rgba(251, 191, 36, .38); color: #fde68a; }
+
+  /* 会場タブ・会場見出し */
+  :root[data-rvb-venuetabs="on"] .rvb-venuebar {
+    background: var(--g-bg-bar); border: 1px solid var(--g-line);
+    -webkit-backdrop-filter: var(--g-blur); backdrop-filter: var(--g-blur);
+    box-shadow: var(--g-hi), 0 6px 20px rgba(2, 6, 23, .35);
+  }
+  .rvb-venuetab { background: rgba(255, 255, 255, .04); border: 1px solid rgba(125, 211, 252, .12); color: var(--g-text-2); }
+  .rvb-venuetab:hover { background: rgba(125, 211, 252, .10); color: var(--g-text); }
+  .rvb-venuetab[aria-selected="true"] {
+    background: linear-gradient(160deg, rgba(56, 189, 248, .26), rgba(14, 116, 144, .22));
+    border-color: var(--g-line-strong); color: #fff;
+    box-shadow: var(--g-hi), 0 0 0 1px rgba(103, 232, 249, .12);
+  }
+  .rvb-venuetab[aria-selected="true"]::after { background: rgba(255, 255, 255, .10); color: #e0f2fe; }
+  .rvb-venue-name { color: var(--g-text); display: flex; align-items: center; gap: 8px; }
+  .rvb-venue-count {
+    margin-left: 0; font-size: .85rem; font-weight: 700; color: #bae6fd;
+    background: rgba(125, 211, 252, .10); border: 1px solid rgba(125, 211, 252, .30);
+    border-radius: 999px; padding: 2px 10px; box-shadow: var(--g-hi);
+  }
+
+  /* 行カード: 閉じた状態にも内側の明るさ、開いた状態は shadow を少し足す（色相は同じ） */
+  .rvb-row > .rvb-detail:not([open]) { box-shadow: var(--g-hi); }
+  .rvb-row > .rvb-detail[open], .rvb-row > .rvb-detail.is-open { box-shadow: 0 0 0 1px rgba(34,211,238,.10) inset, var(--g-hi), 0 12px 28px rgba(2, 6, 23, .40); }
+  .rvb-sum-line .rvb-time { color: var(--g-text-3); }
+  .rvb-sum-line .rvb-name { color: var(--g-text); }
+
+  /* 印: 見やすさ最優先（少しだけ発光） */
+  .rm-num { color: #f8fafc; }
+  .rm-mark { color: #93c5fd; text-shadow: 0 0 6px rgba(96, 165, 250, .40); }
+  .rm-main .rm-mark { color: #fca5a5; text-shadow: 0 0 8px rgba(248, 113, 113, .50); }
+  .rm-name { color: #f8fafc; }
+  .rvb-mainbadge { background: rgba(245, 158, 11, .12); border-color: rgba(251, 191, 36, .50); color: #fde68a; box-shadow: var(--g-hi); }
+  .rvb-more {
+    color: var(--g-accent); background: rgba(125, 211, 252, .08);
+    border: 1px solid rgba(125, 211, 252, .32); border-radius: 999px; padding: 1px 9px; box-shadow: var(--g-hi);
+  }
+  .rvb-detail[open] .rvb-more { border-color: var(--g-line-strong); background: rgba(125, 211, 252, .14); }
+
+  /* 詳細の中 */
+  .rvb-row > .rvb-detail .rvb-detail-body { border-top-color: var(--g-line); }
+  .tag-distance { border-color: rgba(245, 158, 11, .55); background: rgba(245, 158, 11, .12); }
+  .tag-course   { border-color: rgba(34, 197, 94, .55); background: rgba(34, 197, 94, .12); }
+  .tag-jockey   { border-color: rgba(139, 92, 246, .60); background: rgba(139, 92, 246, .14); }
+  .tag-compare  { border-color: rgba(14, 165, 233, .60); background: rgba(14, 165, 233, .12); }
+  .tag-contrast { border-color: rgba(239, 68, 68, .55); background: rgba(239, 68, 68, .12); }
+  .st-neutral   { border-color: rgba(148, 163, 184, .45); background: rgba(148, 163, 184, .10); }
+  .st-nohistory { border-color: rgba(107, 114, 128, .50); background: rgba(107, 114, 128, .14); }
+  .st-pending   { border-color: rgba(251, 146, 60, .55); background: rgba(251, 146, 60, .12); }
+  .rvb-tag, .rvb-state, .rvb-chip, .rvb-mchip { box-shadow: var(--g-hi); }
+  .rvb-sentence { border: 1px solid var(--g-line); border-radius: 10px; background: var(--g-bg-soft); padding: 8px 11px; color: var(--g-text); }
+  .sn-distance { border-color: rgba(245, 158, 11, .40); }
+  .sn-course { border-color: rgba(34, 197, 94, .40); }
+  .sn-jockey { border-color: rgba(139, 92, 246, .45); }
+  .sn-compare { border-color: rgba(14, 165, 233, .45); }
+  .sn-contrast { border-color: rgba(239, 68, 68, .40); }
+  .sn-neutral, .sn-nohistory { border-color: var(--g-line); }
+  .sn-pending { border-color: rgba(251, 146, 60, .40); }
+  .rvb-cov, .rvb-horses-note, .rvb-horse-meta, .rvb-horse-prev { color: var(--g-text-3); }
+  .rvb-horses { border-top-color: var(--g-line); }
+  .rvb-horse { border: 1px solid var(--g-line); border-radius: 10px; background: var(--g-bg-soft); }
+  .rvb-horse.hm-main { border-color: rgba(248, 113, 113, .45); background: rgba(239, 68, 68, .07); }
+  .rvb-horse.hm-sub { border-color: rgba(251, 191, 36, .40); background: rgba(245, 158, 11, .06); }
+  .rvb-horse.hm-tana { border-color: rgba(74, 222, 128, .40); background: rgba(34, 197, 94, .06); }
+  .rvb-horse.hm-ren { border-color: rgba(56, 189, 248, .40); background: rgba(14, 165, 233, .06); }
+  .rvb-horse-mark { text-shadow: 0 0 6px rgba(147, 197, 253, .35); }
+  .rvb-horse.hm-main .rvb-horse-mark { color: #fca5a5; text-shadow: 0 0 8px rgba(248, 113, 113, .5); }
+  .rvb-member { background: rgba(8, 47, 73, .35); border-color: rgba(34, 211, 238, .35); }
+  .rvb-cta { border-color: rgba(251, 191, 36, .40); background: linear-gradient(180deg, rgba(245, 158, 11, .10), rgba(245, 158, 11, .04)); }
+  .rvb-cta-b { background: rgba(245, 158, 11, .08); border-color: rgba(251, 191, 36, .55); }
+  .rvb-closebtn { background: rgba(34, 211, 238, .14); border-color: var(--g-line-strong); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); box-shadow: var(--g-hi); }
+
+  /* 一覧の後ろ・折りたたみ */
+  .rvb-venuecmp { border-radius: 12px; }
+  .rvb-venuecmp-sum, .rvb-guide-sum { color: var(--g-text-2); }
+  .rvb-highlight { border: 1px solid rgba(168, 85, 247, .35); background: rgba(168, 85, 247, .07); }
+  .hl { background: rgba(168, 85, 247, .12); border-color: rgba(192, 132, 252, .40); }
+  .rvb-howto { background: var(--g-bg-soft); border-color: var(--g-line); }
+  .lg { background: var(--g-bg-soft); }
+  .rvb-helpbtn { background: rgba(34, 197, 94, .12); border-color: rgba(74, 222, 128, .45); }
+  .rvb-signupbox { background: linear-gradient(160deg, rgba(20, 83, 45, .30), rgba(15, 34, 64, .40)); border-color: rgba(74, 222, 128, .32); }
+  .rvb-signupbox-head { color: #bbf7d0; }
+  .rvb-signupbox-body, .rvb-signupbox-list { color: var(--g-text-2); }
+  .rvb-signupbox-note { color: var(--g-text-3); }
+  .rvb-topmember { background: linear-gradient(160deg, rgba(8, 47, 73, .45), rgba(15, 34, 64, .40)); border-color: rgba(34, 211, 238, .35); }
+  .rvb-foot { color: var(--g-text-3); }
+
+  /* 有料版の実績バナー（slot で差し込まれる別コンポーネント）も /free/ の中だけガラスに寄せる */
+  .rvb-resultslot :global(.scb-banner) {
+    background: linear-gradient(135deg, rgba(76, 29, 149, .40), rgba(30, 58, 138, .38));
+    border: 1px solid rgba(167, 139, 250, .32);
+    -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07), 0 10px 30px rgba(2, 6, 23, .38);
+  }
+  .rvb-resultslot :global(.scb-arrow) { background: rgba(255, 255, 255, .10); border: 1px solid rgba(255, 255, 255, .18); }
 </style>

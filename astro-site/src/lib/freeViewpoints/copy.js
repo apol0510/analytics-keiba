@@ -192,7 +192,7 @@ export const LIST_COPY = Object.freeze({
   memberMoreLink: '登録について）',
   venueCompare: (venue) => `今日の${venue}のレースを見くらべる`,
   signupHeading: '無料会員登録（メールアドレスだけ・無料）',
-  signupBody: '登録すると、各レースの「詳しく」に次の情報が加わります。',
+  signupBody: '登録すると、各レースの「詳細」に次の情報が加わります。',
   guideSummary: '見どころの読み方（使い方・凡例・かんたん表示）',
 });
 

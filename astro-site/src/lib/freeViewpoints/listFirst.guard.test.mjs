@@ -66,6 +66,9 @@ test('各行の初期表示: 時刻・R・レース名・[メイン]・◎馬番
   }
   assert.equal(LIST_COPY.open, '詳細', '右端の文言は「詳細」');
   assert.equal(LIST_COPY.close, '閉じる');
+  // 旧文言「詳しく」を画面に残さない（コメントは除く）
+  assert.equal(markup.replace(/\{\/\*[\s\S]*?\*\/\}/g, '').includes('詳しく'), false, '画面に「詳しく」が残っている');
+  assert.equal(Object.values(LIST_COPY).filter((v) => typeof v === 'string').some((v) => v.includes('詳しく')), false, '文言に「詳しく」が残っている');
   // 馬名は ◎ だけ（○▲△ は馬番のみ）
   assert.ok(/m\.kind === 'main' && m\.name && <span class="rm-name">/.test(summary), '馬名が ◎ だけになっていない');
 });
