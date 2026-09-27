@@ -1,10 +1,11 @@
 /**
  * listFirst.guard.test.mjs — `/free/` の初期表示は「全レースの予想一覧」（2026-09-27 MK 確定）。
  *
- *   上部（最小）→ 全レース一覧（各行 = 時刻・R・レース名・[メイン]・◎馬番+馬名・○▲△馬番・詳しく）
+ *   上部（囲まれた 1 枚のカード）→ 全レース一覧（各行 = 時刻・R・レース名・[メイン]・◎馬番+馬名・○▲△馬番・詳細）
  *   → 無料登録の案内 1 つ → 見どころの読み方（折りたたみ）→ 実績バナー
  *
- * 分析情報は削除せず「詳しく」の中へ。上部にメインレース専用枠を作らない。
+ * 分析情報は削除せず「詳細」の中へ。上部にメインレース専用枠を作らない。
+ * 2026-09-27 追記（MK 目視）: 副題なし / 会場見出しは範囲表示 / 「詳細」/ 左端の強い色帯なし。
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -22,19 +23,35 @@ const at = (needle, from = 0) => {
   assert.ok(i > -1, `${needle} が無い`);
   return i;
 };
-const header = markup.slice(0, at('</header>'));
+// JSX コメント（{/* … */}）は表示されないので除いて判定する
+const header = markup.slice(0, at('</header>')).replace(/\{\/\*[\s\S]*?\*\/\}/g, '');
 const rowStart = at('<li class={`rvb-row');
 const summary = markup.slice(at('<summary class="rvb-detail-sum">', rowStart), at('</summary>', rowStart));
 const detailBody = markup.slice(at('<div class="rvb-detail-body">', rowStart), at('</details>', rowStart));
 
-test('上部は最小: 使い方・凡例・かんたん表示・会場比較・登録案内を出さない', () => {
-  for (const cls of ['rvb-lead', 'rvb-howto', 'rvb-help-toggle', 'rvb-legend', 'rvb-highlight', 'free-signup', 'rvb-topgate', '/pricing/']) {
+test('上部は最小の囲まれたカード: 使い方・凡例・かんたん表示・会場比較・登録案内を出さない', () => {
+  for (const cls of ['rvb-lead', 'rvb-howto', 'rvb-help-toggle', 'rvb-legend', 'rvb-highlight', 'free-signup', 'rvb-topgate', '/pricing/', 'rvb-subtitle', '今日のレースの見どころ']) {
     assert.equal(header.includes(cls), false, `上部に ${cls} がある`);
   }
-  for (const cls of ['rvb-title', 'rvb-cat', 'rvb-date', 'rvb-freshness', 'rvb-markline']) {
-    assert.ok(header.includes(cls), `上部に ${cls} が無い`);
+  const card = header.slice(header.indexOf('class="rvb-headcard"'));
+  assert.ok(header.includes('class="rvb-headcard"'), '上部がカードになっていない');
+  for (const cls of ['rvb-title', 'rvb-cat', 'rvb-date', 'rvb-freshness', 'LIST_COPY.headFree', 'LIST_COPY.headPaid']) {
+    assert.ok(card.includes(cls), `上部カードに ${cls} が無い`);
   }
-  assert.ok(LIST_COPY.markline.includes('買い目は有料版'), '「印は無料・買い目は有料版」の 1 行が無い');
+  assert.ok(LIST_COPY.headPaid.includes('買い目は有料版'), '「買い目は有料版」の案内が無い');
+  assert.ok(/\.rvb-headcard\s*\{[^}]*border:[^}]*border-radius/.test(board), 'カードに囲み（境界・角丸）が無い');
+});
+
+test('会場見出し・タブを「12R」だけで書かない（最終レース番号に見せない）', () => {
+  assert.ok(markup.includes('raceRangeLabel(venue.races)'), '会場見出しが範囲表示になっていない');
+  assert.equal(/rvb-venue-count">\{venue\.races\.length\}R</.test(markup), false, '見出しが「12R」表記のまま');
+  assert.equal(/rvb-venuetab-count">\{venue\.races\.length\}R</.test(markup), false, 'タブが「12R」表記のまま');
+});
+
+test('各レースの左端に強い色帯を付けない', () => {
+  assert.equal(/\.rvb-row[^{]*\{[^}]*border-left:\s*[3-9]px/.test(board), false, '行の左端に色帯がある');
+  assert.equal(/\.rvb-row\.is-(tagged|neutral|nohistory|pending)\s*\{[^}]*border-left/.test(board), false, '状態別の色帯が残っている');
+  assert.equal(/\.rvb-venue-name\s*\{[^}]*border-left/.test(board), false, '会場見出しに色帯がある');
 });
 
 test('上部にメインレース専用枠を作らない（一覧と二重表示しない）', () => {
@@ -42,11 +59,13 @@ test('上部にメインレース専用枠を作らない（一覧と二重表�
   assert.equal(markup.slice(0, rowStart).includes('headlineMarksOf'), false, '一覧より前で印を出している');
 });
 
-test('各行の初期表示: 時刻・R・レース名・[メイン]・◎馬番+馬名・○▲△馬番・詳しく ▾', () => {
+test('各行の初期表示: 時刻・R・レース名・[メイン]・◎馬番+馬名・○▲△馬番・詳細 ▾', () => {
   for (const part of ['rvb-time', 'rvb-r', 'rvb-name', 'rvb-mainbadge', 'isMainRaceIn(venue.races, race)',
     'headlineMarksOf(race.horseRows)', 'rm-mark', 'rm-num', 'rvb-more', 'LIST_COPY.open', '▾']) {
     assert.ok(summary.includes(part), `行に ${part} が無い`);
   }
+  assert.equal(LIST_COPY.open, '詳細', '右端の文言は「詳細」');
+  assert.equal(LIST_COPY.close, '閉じる');
   // 馬名は ◎ だけ（○▲△ は馬番のみ）
   assert.ok(/m\.kind === 'main' && m\.name && <span class="rm-name">/.test(summary), '馬名が ◎ だけになっていない');
 });
@@ -59,10 +78,10 @@ test('初期表示に条件タグ・説明・分析を出さない（記号も�
   assert.equal(/rvb-row-tags|rvb-tag-help/.test(rowHead), false, 'details の外にタグがある');
 });
 
-test('分析情報は削除せず「詳しく」の中にある', () => {
+test('分析情報は削除せず「詳細」の中にある', () => {
   for (const cls of ['rvb-row-tags', 'rvb-tag-help', 'rvb-sentence', 'rvb-cov', 'rvb-horses', 'rvb-horse-chips',
     'rvb-member-row', 'rvb-mhist', 'rvb-member', 'rvb-cta', 'rvb-closebtn', 'rvb-meta']) {
-    assert.ok(detailBody.includes(cls), `詳しくの中に ${cls} が無い`);
+    assert.ok(detailBody.includes(cls), `詳細の中に ${cls} が無い`);
   }
 });
 
@@ -76,8 +95,8 @@ test('無料登録の主 CTA は一覧の後ろに 1 つだけ。レースごと
   const ctas = markup.match(/href="\/free-signup\/"/g) || [];
   assert.equal(ctas.length, 1, `登録 CTA が ${ctas.length} か所ある`);
   assert.ok(markup.indexOf('href="/free-signup/"') > at('</ol>'), '登録 CTA が一覧より前');
-  assert.equal(detailBody.includes('/free-signup/'), false, '詳しくの中に登録 CTA がある');
-  assert.ok(detailBody.includes('rvb-signup-mini'), '詳しくの中の短い案内が無い');
+  assert.equal(detailBody.includes('/free-signup/'), false, '詳細の中に登録 CTA がある');
+  assert.ok(detailBody.includes('rvb-signup-mini'), '詳細の中の短い案内が無い');
 });
 
 test('並び: 一覧 → 登録案内 → 読み方（折りたたみ）→ 実績バナー', () => {
@@ -92,13 +111,13 @@ test('並び: 一覧 → 登録案内 → 読み方（折りたたみ）→ 実�
 });
 
 test('一覧の文言に役割名・評価語を書かない', () => {
-  const words = Object.entries(LIST_COPY).filter(([k]) => k !== 'markline')
-    .map(([, v]) => (typeof v === 'function' ? v('浦和') : v)).join(' ');
+  const words = Object.entries(LIST_COPY).filter(([k]) => k !== 'headPaid')
+    .map(([, v]) => (typeof v === 'function' ? v(12) : v)).join(' ');
   for (const w of [...BANNED_PAID_TERMS, ...BANNED_JUDGEMENT_WORDS]) {
     assert.equal(words.includes(w), false, `文言に「${w}」がある`);
   }
   for (const w of ['本命', '対抗', '単穴', '連下', ...BANNED_JUDGEMENT_WORDS]) {
-    assert.equal(LIST_COPY.markline.includes(w), false, `markline に「${w}」がある`);
+    assert.equal(LIST_COPY.headPaid.includes(w), false, `headPaid に「${w}」がある`);
   }
 });
 

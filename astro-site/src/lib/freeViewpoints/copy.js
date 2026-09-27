@@ -178,12 +178,14 @@ export const MEMBER_EXTRAS = Object.freeze({
 /**
  * 全レースの予想一覧（初期表示）の文言（2026-09-27 MK 確定）。
  * ⚠️ 役割名（BANNED_PAID_TERMS の本命・対抗 等）と評価語（BANNED_JUDGEMENT_WORDS）は書かない。
- *    markline だけは「買い目は有料版」の案内を持つ（「無料予想」の見出しと必ず一緒に出す約束）。
+ *    headPaid だけは「買い目は有料版」の案内を持つ（「無料予想」の見出しと必ず一緒に出す約束）。
  */
 export const LIST_COPY = Object.freeze({
-  markline: 'AIの印（◎○▲△）は全レース無料です。買い目は有料版で公開しています。',
+  headFree: 'AIの印（◎○▲△）は全レース無料',
+  headPaid: '買い目は有料版で公開',
+  raceCount: (n) => `${n}レース`,
   mainBadge: 'メイン',
-  open: '詳しく',
+  open: '詳細',
   close: '閉じる',
   noMarks: '印の準備中',
   memberMore: '無料会員で追加情報あり（',

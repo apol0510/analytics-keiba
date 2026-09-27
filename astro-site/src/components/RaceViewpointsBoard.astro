@@ -22,7 +22,7 @@ import {
   HIGHLIGHT_LABEL, HORSE_CHANGE_CHIP, PAID_CTA, HORSE_SECTION, MEMBER_EXTRAS, coverageNote,
   TERM_HELP, CHIP_HELP, INTERVAL_HELP, HOW_TO_USE, HELP_TOGGLE, LAYOFF_LABEL, LIST_COPY,
 } from '../lib/freeViewpoints/copy.js';
-import { headlineMarksOf, isMainRaceIn } from '../lib/freeViewpoints/listView.js';
+import { headlineMarksOf, isMainRaceIn, raceRangeLabel } from '../lib/freeViewpoints/listView.js';
 
 interface Props { view: any; categoryLabel: string; freeUrl: string; }
 const { view, categoryLabel, freeUrl } = Astro.props;
@@ -93,21 +93,27 @@ const LEGEND = [
 <section class="rvb">
   <header class="rvb-head">
     {/* H1 は nav の文字（無料予想）と一致させる。押した先に来たことを確定させるため。
-        「今日のレースの見どころ」は内容の説明として直下に残す（情報は落とさない）。
-        ⚠️「無料予想」は買い目を期待させる語なので、説明行と「買い目は有料版」の案内を
-           必ず一緒に出すこと。単独で置かない。 */}
-    <h1 class="rvb-title">無料予想<span class="rvb-cat">{categoryLabel}</span></h1>
-    <p class="rvb-subtitle">今日のレースの見どころ</p>
-    <p class="rvb-date">{fmtDate(view.date)}</p>
-    {freshness !== 'today' && (
-      <p class={`rvb-freshness rvb-freshness-${freshness}`}>
-        <span class="rvb-freshness-ic" aria-hidden="true">{freshness === 'past' ? '📅' : '⏩'}</span>
-        {freshness === 'past'
-          ? `今日（${fmtDate(todayJst)}）ぶんはまだありません。表示しているのは前回の開催（${fmtDate(view.date)}）の内容です。`
-          : `${fmtDate(view.date)}（次回の開催）ぶんを先に出しています。今日の開催ではありません。`}
-      </p>
-    )}
-    <p class="rvb-markline">{LIST_COPY.markline}</p>
+        2026-09-27 MK: 上部は囲まれた 1 枚のカード。副題「今日のレースの見どころ」は出さない（不採用）。
+        ⚠️「無料予想」は買い目を期待させる語なので、「買い目は有料版で公開」の案内を
+           必ずカード内に一緒に出すこと。単独で置かない。 */}
+    <div class="rvb-headcard">
+      <div class="rvb-headtop">
+        <h1 class="rvb-title">無料予想<span class="rvb-cat">{categoryLabel}</span></h1>
+        <p class="rvb-date"><span class="rvb-date-ic" aria-hidden="true">📅</span>{fmtDate(view.date)}</p>
+      </div>
+      {freshness !== 'today' && (
+        <p class={`rvb-freshness rvb-freshness-${freshness}`}>
+          <span class="rvb-freshness-ic" aria-hidden="true">{freshness === 'past' ? '⚠️' : '⏩'}</span>
+          {freshness === 'past'
+            ? `今日（${fmtDate(todayJst)}）ぶんはまだありません。表示しているのは前回の開催（${fmtDate(view.date)}）の内容です。`
+            : `${fmtDate(view.date)}（次回の開催）ぶんを先に出しています。今日の開催ではありません。`}
+        </p>
+      )}
+      <ul class="rvb-headnotes">
+        <li class="rvb-headnote rvb-headnote-free"><span class="rvb-headnote-ic" aria-hidden="true">◎</span>{LIST_COPY.headFree}</li>
+        <li class="rvb-headnote rvb-headnote-paid"><span class="rvb-headnote-ic" aria-hidden="true">🔒</span>{LIST_COPY.headPaid}</li>
+      </ul>
+    </div>
   </header>
 
   {/* 会場タブ。複数開催（JRA 3 場 / 南関 2 場）で全会場を縦に並べると 10 画面ぶんになるため、
@@ -125,7 +131,7 @@ const LEGEND = [
           aria-selected={vi === 0 ? 'true' : 'false'}
         >
           <span class="rvb-venuetab-name">{venue.venue}</span>
-          <span class="rvb-venuetab-count">{venue.races.length}R</span>
+          <span class="rvb-venuetab-count">{LIST_COPY.raceCount(venue.races.length)}</span>
         </button>
       ))}
     </div>
@@ -139,7 +145,8 @@ const LEGEND = [
       role={view.venues.length > 1 ? 'tabpanel' : undefined}
       aria-labelledby={view.venues.length > 1 ? `rvb-venuetab-${vi}` : undefined}
     >
-      <h2 class="rvb-venue-name">{venue.venue}<span class="rvb-venue-count">{venue.races.length}R</span></h2>
+      {/* 2026-09-27 MK: 「阪神 12R」は最終レース番号に見えるので不採用。会場名＋範囲で示す。 */}
+      <h2 class="rvb-venue-name">{venue.venue}<span class="rvb-venue-count">{raceRangeLabel(venue.races)}</span></h2>
 
       <ol class="rvb-list">
         {venue.races.map((race: any) => (
@@ -653,7 +660,6 @@ const LEGEND = [
      事故を防ぐため変数で共有する（狭い画面では下の media query が 8px に下げる）。 */
   .rvb { max-width: 1040px; margin: 0 auto; padding: 24px 16px 64px; color: #e2e8f0; --rvb-body-pad: 12px; }
   .rvb-head { text-align: center; margin-bottom: 24px; }
-  .rvb-subtitle { font-size: 1rem; font-weight: 700; color: #7dd3fc; margin: 0 0 6px; letter-spacing: .02em; }
   .rvb-title { font-size: 1.9rem; font-weight: 800; color: #f8fafc; margin: 0 0 6px; line-height: 1.3; }
   .rvb-cat { display: inline-block; margin-left: 10px; padding: 3px 10px; border-radius: 999px; background: #7c3aed; color: #fff; font-size: .78rem; vertical-align: middle; }
   .rvb-date { color: #cbd5e1; margin: 0 0 12px; font-size: .95rem; }
@@ -741,7 +747,8 @@ const LEGEND = [
   .rvb-resultslot:not(:empty) { margin: 20px 0 0; }
 
   .rvb-venue { margin-top: 34px; }
-  .rvb-venue-name { font-size: 1.3rem; font-weight: 800; color: #f8fafc; border-left: 5px solid #7c3aed; padding-left: 10px; margin: 0 0 12px; }
+  /* 2026-09-27 MK: 強い縦の色帯はやめる（行と同じ判断）。会場名＋範囲だけで見出しにする。 */
+  .rvb-venue-name { font-size: 1.3rem; font-weight: 800; color: #f8fafc; margin: 0 0 12px; padding-left: 2px; }
   .rvb-venue-count { color: #c4b5fd; font-size: .8rem; margin-left: 8px; }
 
   /* 当日相対: 絶対タグと視覚的に別物にする（紫の枠・破線） */
@@ -754,11 +761,8 @@ const LEGEND = [
   .rvb-highlight-note { margin: 0; font-size: .74rem; color: #ddd6fe; line-height: 1.7; }
 
   .rvb-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
-  .rvb-row { border-left: 5px solid #64748b; border-radius: 10px; background: rgba(15,23,42,.6); padding: 10px 12px; border-top: 1px solid rgba(148,163,184,.2); border-right: 1px solid rgba(148,163,184,.2); border-bottom: 1px solid rgba(148,163,184,.2); }
-  .rvb-row.is-tagged { border-left-color: #0ea5e9; }
-  .rvb-row.is-neutral { border-left-color: #94a3b8; }
-  .rvb-row.is-nohistory { border-left-color: #6b7280; background: rgba(15,23,42,.4); }
-  .rvb-row.is-pending { border-left-color: #fb923c; background: rgba(251,146,60,.07); }
+  /* 2026-09-27 MK: 左端の強い色帯は不採用。弱いガラス調の囲みにする（状態別の色帯も付けない）。 */
+  .rvb-row { border: 1px solid rgba(148,163,184,.18); border-radius: 12px; background: rgba(30,41,59,.42); padding: 10px 12px; -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); box-shadow: 0 1px 0 rgba(255,255,255,.04) inset; }
 
   .rvb-row-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
   .rvb-time { color: #cbd5e1; font-variant-numeric: tabular-nums; font-size: .85rem; }
@@ -875,8 +879,7 @@ const LEGEND = [
 
   @media (max-width: 640px) {
     .rvb-title { font-size: 1.35rem; }
-    .rvb-subtitle { font-size: .88rem; }
-    .rvb-meta { margin-left: 0; width: 100%; }
+      .rvb-meta { margin-left: 0; width: 100%; }
     .rvb-horse { grid-template-columns: 24px 26px 1fr; grid-template-areas: 'mark num name' 'sub sub sub' 'meta meta meta' 'prev prev prev' 'chips chips chips' 'member member member'; }
     .rvb-horse-sub { text-align: left; }
   }
@@ -998,10 +1001,28 @@ const LEGEND = [
   :root[data-rvb-help="off"] .rvb-mchip-help { display: none; }
 
   /* ── 2026-09-27 MK 確定: 初期表示は全レースの予想一覧（行全体が summary）── */
-  .rvb-markline { margin: 8px auto 0; max-width: 660px; font-size: .9rem; line-height: 1.7; color: #cbd5e1; }
+  .rvb-headcard {
+    max-width: 720px; margin: 0 auto; text-align: left; padding: 16px 18px;
+    border: 1px solid rgba(148,163,184,.22); border-radius: 16px;
+    background: linear-gradient(160deg, rgba(30,41,59,.72), rgba(15,23,42,.72));
+    box-shadow: 0 8px 24px rgba(2,6,23,.35), 0 1px 0 rgba(255,255,255,.05) inset;
+  }
+  .rvb-headtop { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; }
+  .rvb-headcard .rvb-title { margin: 0; font-size: 1.6rem; }
+  .rvb-headcard .rvb-cat { background: rgba(124,58,237,.85); font-size: .85rem; }
+  .rvb-headcard .rvb-date { margin: 0; font-size: .95rem; color: #cbd5e1; font-variant-numeric: tabular-nums; }
+  .rvb-date-ic { margin-right: 5px; }
+  .rvb-headcard .rvb-freshness { margin: 12px 0 0; justify-content: flex-start; text-align: left; }
+  .rvb-headnotes { list-style: none; margin: 14px 0 0; padding: 12px 0 0; border-top: 1px solid rgba(148,163,184,.2); display: flex; flex-wrap: wrap; gap: 8px 18px; }
+  .rvb-headnote { display: inline-flex; align-items: center; gap: 7px; font-size: .92rem; line-height: 1.5; }
+  .rvb-headnote-ic { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 1.6em; height: 1.6em; border-radius: 999px; font-size: .9rem; }
+  .rvb-headnote-free { color: #e2e8f0; font-weight: 700; }
+  .rvb-headnote-free .rvb-headnote-ic { color: #f87171; background: rgba(248,113,113,.14); font-weight: 900; }
+  .rvb-headnote-paid { color: #94a3b8; }
+  .rvb-headnote-paid .rvb-headnote-ic { background: rgba(148,163,184,.14); }
   .rvb-row { padding: 0; }
-  .rvb-row > .rvb-detail { margin: 0; border: 0; border-radius: 0 9px 9px 0; }
-  .rvb-row > .rvb-detail:not([open]) { background: linear-gradient(180deg, rgba(56,189,248,.10), rgba(3,105,161,.08)); }
+  .rvb-row > .rvb-detail { margin: 0; border: 0; border-radius: 11px; }
+  .rvb-row > .rvb-detail:not([open]) { background: linear-gradient(180deg, rgba(255,255,255,.035), rgba(255,255,255,0)); }
   .rvb-row > .rvb-detail > .rvb-detail-sum { display: block; padding: 10px 12px; color: #f1f5f9; font-size: 1rem; font-weight: 400; }
   .rvb-row > .rvb-detail > .rvb-detail-sum:focus-visible { outline: 3px solid #22d3ee; outline-offset: -3px; border-radius: 8px; }
   .rvb-sum-line { display: flex; align-items: baseline; gap: 4px 10px; min-width: 0; }
@@ -1044,5 +1065,7 @@ const LEGEND = [
   .rvb-guide-body { padding: 12px 12px 14px; text-align: center; }
   @media (max-width: 640px) {
     .rvb-row > .rvb-detail > .rvb-detail-sum { padding: 10px 10px; }
+    .rvb-headcard { padding: 14px 14px; border-radius: 14px; }
+    .rvb-headcard .rvb-title { font-size: 1.4rem; }
   }
 </style>

@@ -40,4 +40,17 @@ export function isMainRaceIn(races, race) {
   return main === race;
 }
 
-export default { headlineMarksOf, isMainRaceIn };
+/**
+ * 会場のレース番号の範囲（例「1R〜12R」）。見出しを「阪神 12R」のように
+ * 最終レース番号に見える書き方にしないため（2026-09-27 MK）。
+ * @param {Array} races
+ */
+export function raceRangeLabel(races) {
+  const nums = (Array.isArray(races) ? races : []).map((r) => Number(r?.raceNumber)).filter((n) => Number.isInteger(n) && n > 0);
+  if (nums.length === 0) return '';
+  const lo = Math.min(...nums);
+  const hi = Math.max(...nums);
+  return lo === hi ? `${lo}R` : `${lo}R〜${hi}R`;
+}
+
+export default { headlineMarksOf, isMainRaceIn, raceRangeLabel };

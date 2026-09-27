@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { headlineMarksOf, isMainRaceIn } from './listView.js';
+import { headlineMarksOf, isMainRaceIn, raceRangeLabel } from './listView.js';
 
 const row = (n, kind, extra = {}) => ({
   number: n, name: `ウマ${n}`, isHeadline: !!kind,
@@ -29,4 +29,12 @@ test('メインレースは会場のレース数で決める（12R→11R / 10R�
     assert.deepEqual(flagged, [main], `${len}R 開催`);
   }
   assert.equal(isMainRaceIn([], { raceNumber: 1 }), false);
+});
+
+test('会場のレース範囲は「1R〜12R」（最終レース番号だけにしない）', () => {
+  const mk = (a, b) => Array.from({ length: b - a + 1 }, (_, i) => ({ raceNumber: a + i }));
+  assert.equal(raceRangeLabel(mk(1, 12)), '1R〜12R');
+  assert.equal(raceRangeLabel(mk(1, 10)), '1R〜10R');
+  assert.equal(raceRangeLabel([{ raceNumber: 5 }]), '5R');
+  assert.equal(raceRangeLabel([]), '');
 });
