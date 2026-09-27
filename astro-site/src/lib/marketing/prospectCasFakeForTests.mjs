@@ -4,12 +4,10 @@
  * ⚠️ `*.test.mjs` ではないので `node --test` の対象にはならない。本番コードから import しないこと。
  * ⚠️ 本物の Lua 文字列の動作は別途 Lua VM で確かめている（PR 記載）。ここは各テストの
  *    偽 Redis が EVAL を受けられるようにするためのもの。判定の要点は本物と同じ:
- *    期待値（`ABSENT` / 読んだ値の SHA1）が今も成り立つときだけ、その相手の書き込みを全部行う。
+ *    期待値（`ABSENT` / `V:` ＋ 読んだ生の値）が今も成り立つときだけ、その相手の書き込みを全部行う。
  */
-import { createHash } from 'node:crypto';
 import { PROSPECT_CAS_LUA } from './prospectStore.js';
 
-const sha1 = (s) => createHash('sha1').update(String(s), 'utf8').digest('hex');
 
 /** EVAL の引数が prospect の CAS スクリプトか */
 export function isProspectCasEval(args) {
@@ -35,7 +33,7 @@ export function emulateProspectCas(args, io) {
     const a = 1 + i * 7;
     const [hash, expect, recOp, newRaw, act, eng, blk] = ARGV.slice(a, a + 7);
     const cur = io.get(kp);
-    const ok = expect === 'ABSENT' ? (cur === null || cur === undefined) : (cur !== null && cur !== undefined && sha1(cur) === expect);
+    const ok = expect === 'ABSENT' ? (cur === null || cur === undefined) : (cur !== null && cur !== undefined && expect === `V:${cur}`);
     if (!ok) { out.push(0); continue; }
     if (recOp === 'SET') io.set(kp, newRaw);
     else if (recOp === 'DEL') io.del(kp);

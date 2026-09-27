@@ -485,12 +485,19 @@ test('イベント ID が欠けた相手は「重複を防げない」と記録�
 });
 
 // ── スクリプトと配線 ─────────────────────────────────────────────
-test('CAS スクリプトは鍵を KEYS でだけ受け取り、TTL を付けず、SHA1 で比べる', () => {
-  assert.match(PROSPECT_CAS_LUA, /redis\.sha1hex\(cur\) == expect/);
+test('CAS スクリプトは鍵を KEYS でだけ受け取り、TTL を付けず、読んだ値そのもので比べる', () => {
+  assert.match(PROSPECT_CAS_LUA, /ok = \(expect == \('V:' \.\. cur\)\)/);
+  // 本番で使えることを確かめられない関数に依存しない（2026-09-27: 本番 Upstash の redis.sha1hex は未確認）
+  assert.equal(/sha1hex|redis\.sha|cjson|struct|bit\./.test(PROSPECT_CAS_LUA), false, '本番未確認の関数に依存している');
+  // 使う redis.call は GET / SET / DEL / SADD / SREM だけ
+  const ops = [...PROSPECT_CAS_LUA.matchAll(/redis\.call\('([A-Z]+)'/g)].map((m) => m[1]);
+  assert.deepEqual([...new Set(ops)].sort(), ['DEL', 'GET', 'SADD', 'SET', 'SREM']);
   assert.match(PROSPECT_CAS_LUA, /expect == 'ABSENT'/);
   assert.equal(/EXPIRE|'EX'|PEXPIRE/.test(PROSPECT_CAS_LUA), false);
   // 鍵を文字列連結で組み立てない（全部 KEYS）
   assert.equal(/\.\.\s*hash|'ak:prospect:/.test(PROSPECT_CAS_LUA), false);
+  // 比較は完全一致（部分一致・前方一致で通さない）
+  assert.equal(/string\.find|string\.sub|string\.match/.test(PROSPECT_CAS_LUA), false);
 });
 
 test('store は prospect の record / 索引 / 台帳へ EVAL 以外で書かない', () => {

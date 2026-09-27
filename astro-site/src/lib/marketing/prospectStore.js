@@ -142,14 +142,19 @@ export function blockKindForState(state) {
  * 2. **後勝ち（lost update）**: 「読む → JS で計算 → 書く」の間に同じ相手へ別の書き込み
  *    （例: delivered と open を別々の webhook が同時に処理）が入ると、後から書いた方が
  *    先の更新を**黙って消す**。Upstash REST では WATCH が使えないので、
- *    **読んだ値の SHA1 が今も同じときだけ書く**ことで防ぐ。違えば 1 件も書かずに 0 を返し、
+ *    **読んだ値が今も同じときだけ書く**ことで防ぐ。違えば 1 件も書かずに 0 を返し、
  *    呼び出し側が読み直して計算し直す（`updateWithCas` / `prospectEventBatch`）。
  *
  * ## 引数
  *
  * KEYS = [送信候補索引, 反応済み索引, 抑止索引, (レコード鍵, 抑止台帳鍵) × N]
  * ARGV = [N, (hash, 期待値, レコード操作, 新しい値, 送信候補, 反応済み, 抑止台帳の値) × N]
- *   - 期待値: `ABSENT`（無いこと）または読んだ値の SHA1（`redis.sha1hex` と同じ 16 進）
+ *   - 期待値: `ABSENT`（無いこと）または `V:` ＋ 読んだ生の値（**文字列として完全一致**を比べる）
+ *
+ * ⚠️ 2026-09-27: 当初は SHA1（`redis.sha1hex`）で比べていたが、本番 Upstash で `redis.sha1hex` が
+ *    使えることを確かめる手段が無かった（本番の Redis 認証情報は secret で手元から使えない）。
+ *    **本番で既に動いている命令（GET / SET / SADD / SREM / DEL と文字列比較）だけ**で書き直した。
+ *    比較に使うのは読んだ値そのもの（1 人 1〜2KB・50 人で 100KB 前後）。
  *   - レコード操作: `SET` / `KEEP`（索引だけ直す）/ `DEL`
  *   - 送信候補・反応済み: `1`（入れる）/ `0`（外す）/ `-`（触らない）
  *   - 抑止台帳の値: 空文字なら触らない
@@ -180,7 +185,7 @@ export const PROSPECT_CAS_LUA = [
   "  if expect == 'ABSENT' then",
   '    ok = (not cur)',
   '  elseif cur then',
-  '    ok = (redis.sha1hex(cur) == expect)',
+  "    ok = (expect == ('V:' .. cur))",
   '  end',
   '  if ok then',
   '    local moved = 0',
@@ -202,8 +207,8 @@ export const PROSPECT_CAS_LUA = [
   'return out',
 ].join('\n');
 
-/** 読んだ値 → Lua の `redis.sha1hex` と同じ SHA1（UTF-8 のバイト列に対して） */
-export const casDigest = (raw) => createHash('sha1').update(String(raw), 'utf8').digest('hex');
+/** 読んだ値 → CAS の期待値（`V:` ＋ 生の値。Lua 側で `'V:' .. cur` と完全一致を比べる） */
+export const casExpect = (raw) => (raw === null || raw === undefined ? 'ABSENT' : `V:${String(raw)}`);
 
 /** 読み直しの上限（同じ相手へ書き込みが集中しても無限に回らない） */
 export const CAS_ATTEMPTS = 8;
@@ -283,7 +288,7 @@ export function createProspectStore({ cmd, pipeline } = {}) {
     const block = (!del && !onlyChanges) ? blockEntryFor(hash, basis, nowMs) : null;
     return {
       hash,
-      expect: expectRaw === null || expectRaw === undefined ? 'ABSENT' : casDigest(expectRaw),
+      expect: casExpect(expectRaw),
       recOp: del ? 'DEL' : (d ? 'SET' : 'KEEP'),
       newRaw: d ? JSON.stringify(d) : '',
       act: flag(active),
