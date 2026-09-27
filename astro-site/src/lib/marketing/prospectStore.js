@@ -73,7 +73,16 @@ export const PROSPECT_FIELDS = Object.freeze([
   'lastSentAt', 'lastDeliveredAt', 'lastRunId',
   'engagedAt', 'engagedKind', 'promotedAt', 'promotedRecordId', 'suppressedAt', 'suppressedReason',
   'addedAt', 'batchId', 'source',
+  /**
+   * 反映済みの provider イベント ID（`sg_event_id`）。**レコードと同じ書き込み**で残すので、
+   * 「反映した」と「反映済みの印」が片方だけになることが無い（2026-09-27 の部分書き込み対策）。
+   * 上限は `APPLIED_EVENT_IDS_CAP`（古いものから落とす）。
+   */
+  'appliedEventIds',
 ]);
+
+/** 1 レコードに残す反映済みイベント ID の上限（再送の窓より十分長く・レコードを太らせない） */
+export const APPLIED_EVENT_IDS_CAP = 50;
 
 export class ProspectStoreError extends Error {
   constructor(code, detail) {
@@ -84,6 +93,9 @@ export class ProspectStoreError extends Error {
 }
 export const STORE_FAIL = Object.freeze({
   OUT_OF_NAMESPACE: 'out_of_namespace',
+  /** まとめて 1 回で書く手段（transaction）が無い。**ばらばらに書いて不整合を作らない** */
+  TRANSACTION_UNAVAILABLE: 'transaction_unavailable',
+  TRANSACTION_FAILED: 'transaction_failed',
   UNREACHABLE: 'unreachable',
   UNKNOWN_RESULT: 'unknown_result',
   DATA_CORRUPT: 'data_corrupt',
@@ -119,9 +131,50 @@ export function blockKindForState(state) {
 }
 
 /**
- * @param {{ cmd: (args: string[]) => Promise<any> }} deps Upstash REST 相当
+ * レコード・送信候補索引・反応済み索引・抑止台帳を **state に合わせて揃える**コマンド列（純粋）。
+ *
+ * ⚠️ 2026-09-27: `write()` がこれらを**別々の往復**で書いていたため、Function が途中で止まると
+ *    「レコードは EXHAUSTED なのに送信候補索引に残る」「どの索引にも居ない」が本番で 23 件できた。
+ *    このコマンド列を **1 回の transaction（Upstash `/multi-exec`）** で送れば、全部か何も無いかになる。
+ *
+ * @param {string} hash
+ * @param {object|null} record  書くレコード（`null` なら**索引と台帳だけ**を state に合わせる）
+ * @param {string} stateForIndex 索引を合わせる state
+ * @param {{blockEntry?: object|null}} [opts]
+ * @returns {Array<string[]>}
  */
-export function createProspectStore({ cmd, pipeline } = {}) {
+export function buildProspectWriteCommands(hash, record, stateForIndex, { blockEntry } = {}) {
+  const cmds = [];
+  if (record) cmds.push(['SET', prospectKey(hash), JSON.stringify(pick(record, PROSPECT_FIELDS))]);
+  cmds.push([isSendableState(stateForIndex) ? 'SADD' : 'SREM', ACTIVE_INDEX, hash]);
+  cmds.push([stateForIndex === PROSPECT_STATE.ENGAGED ? 'SADD' : 'SREM', ENGAGED_INDEX, hash]);
+  if (blockEntry) {
+    cmds.push(['SET', blockedKey(hash), JSON.stringify(pick(blockEntry, BLOCKED_FIELDS))]);
+    cmds.push(['SADD', BLOCKED_INDEX, hash]);
+  }
+  return cmds;
+}
+
+/** 抑止台帳に載せる中身（**アドレスなし**）。載せない state なら `null` */
+export function blockEntryFor(hash, d, nowMs = Date.now()) {
+  const kind = blockKindForState(d && d.state);
+  if (!kind) return null;
+  return {
+    hash,
+    kind,
+    reason: d.suppressedReason || (kind === BLOCK_KIND.EXHAUSTED ? PROSPECT_CUTOFF_REASON : 'unknown'),
+    at: d.suppressedAt || d.lastDeliveredAt || d.lastSentAt || new Date(Number(nowMs) || 0).toISOString(),
+    sends: d.sends,
+    delivered: d.delivered,
+    source: 'prospect',
+  };
+}
+
+/**
+ * @param {{ cmd: (args: string[]) => Promise<any>, pipeline?: Function, transaction?: Function }} deps
+ *   Upstash REST 相当。`transaction` は `/multi-exec`（**全部か何も無いか**）。
+ */
+export function createProspectStore({ cmd, pipeline, transaction } = {}) {
   if (typeof cmd !== 'function') throw new Error('createProspectStore: cmd が必要です');
   const state = { commands: 0, keysTouched: new Set() };
 
@@ -213,8 +266,45 @@ export function createProspectStore({ cmd, pipeline } = {}) {
     return changed;
   };
 
+  /**
+   * コマンド列を **1 回の transaction** で書く。全コマンドの鍵が `ak:prospect:` 配下であることを
+   * 送る前に確かめる（1 つでも外れていれば 1 つも送らない）。
+   */
+  const ATOMIC_OPS = ['SET', 'SADD', 'SREM'];
+  const commitAtomic = async (commands) => {
+    const list = (commands || []).filter(Boolean);
+    if (list.length === 0) return [];
+    if (typeof transaction !== 'function') {
+      throw new ProspectStoreError(STORE_FAIL.TRANSACTION_UNAVAILABLE);
+    }
+    for (const c of list) {
+      const op = String(c[0] || '').toUpperCase();
+      if (!ATOMIC_OPS.includes(op)) throw new ProspectStoreError(STORE_FAIL.OUT_OF_NAMESPACE, `unsupported_op:${op}`);
+      assertKey(c[1]);
+      state.keysTouched.add(String(c[1]));
+    }
+    state.commands += 1;
+    let res;
+    try { res = await transaction(list); }
+    catch (e) { throw new ProspectStoreError(STORE_FAIL.TRANSACTION_FAILED, e && e.message); }
+    if (!Array.isArray(res) || res.length !== list.length) {
+      throw new ProspectStoreError(STORE_FAIL.TRANSACTION_FAILED, 'result_shape');
+    }
+    return res;
+  };
+
   const write = async (hash, next) => {
     const d = pick(next, PROSPECT_FIELDS);
+    /**
+     * transaction があれば**全部を 1 回で**書く（途中で止まっても片方だけ残らない）。
+     * 無い呼び出し元（移行・管理 API の一部）は従来どおり順に書く。
+     */
+    if (typeof transaction === 'function') {
+      await commitAtomic(buildProspectWriteCommands(hash, d, d.state, {
+        blockEntry: blockEntryFor(hash, d),
+      }));
+      return d;
+    }
     // ⚠️ TTL は付けない（消えると再取り込みで復活する）
     await call(['SET', prospectKey(hash), JSON.stringify(d)]);
     await syncIndexes(hash, d);
@@ -235,6 +325,9 @@ export function createProspectStore({ cmd, pipeline } = {}) {
 
   return {
     state, assertKey: assertKeyName,
+    /** 1 回の transaction で書けるか（webhook は無ければ書かない） */
+    hasTransaction: typeof transaction === 'function',
+    commitAtomic,
 
     async load(email) {
       return parse(await call(['GET', prospectKey(emailHash(email))], STORE_FAIL.DATA_CORRUPT));

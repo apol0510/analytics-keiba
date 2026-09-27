@@ -301,3 +301,39 @@ export function makeRedisPipeline(env = process.env) {
     });
   };
 }
+
+/**
+ * Upstash の transaction 呼び出し（`/multi-exec`）。**全コマンドが 1 つの MULTI/EXEC** で
+ * 実行されるので、途中の 1 つだけが反映された状態にならない（`/pipeline` は非原子）。
+ *
+ * 2026-09-27: prospect の「レコード → 索引 → 抑止台帳」を別往復で書いていたため、
+ * Function が途中で止まると 23 件が不整合になった。これを 1 回で書くために使う。
+ *
+ * ⚠️ URL / token は例外にもログにも出さない。
+ * ⚠️ 応答の形が想定と違う・どれか 1 つでも error なら throw（**fail closed**）。
+ *    呼び出し側は「書けていない」として扱い、処理済みにしない。
+ * ⚠️ Upstash の仕様（REST API docs / Transactions）: 全体が破棄されたときは単一の `{error}`、
+ *    個々のコマンドのエラーは配列の中の `{error}`。後者は Redis の MULTI/EXEC と同じく
+ *    **他のコマンドは実行済みになり得る**（巻き戻しは無い）。ここで使うのは正しい型の鍵への
+ *    SET / SADD / SREM だけなので実務上は起きないが、起きても失敗として扱い再送で揃え直す。
+ */
+export function makeRedisTransaction(env = process.env) {
+  const url = env && env.UPSTASH_REDIS_REST_URL;
+  const token = env && env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) throw new DeliveryKeyStoreError('redis_not_configured');
+  const endpoint = `${String(url).replace(/\/+$/, '')}/multi-exec`;
+  return async (commands) => {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(commands),
+    });
+    if (!res.ok) throw new Error(`upstash ${res.status}`); // 値は載せない
+    const j = await res.json();
+    if (!Array.isArray(j) || j.length !== commands.length) throw new DeliveryKeyStoreError('unexpected_response');
+    return j.map((entry) => {
+      if (!entry || entry.error) throw new DeliveryKeyStoreError('unexpected_response');
+      return entry.result;
+    });
+  };
+}

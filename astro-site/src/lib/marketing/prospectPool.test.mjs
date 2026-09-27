@@ -541,10 +541,10 @@ test('guard: write ゲートは Redis / Airtable 初期化より前', () => {
 });
 
 test('guard: webhook の prospect 反映は既定 OFF で、失敗しても 200 を返す', () => {
-  assert.match(HOOK, /MARKETING_PROSPECT_EVENTS_ENABLED !== 'true'\) return out/);
-  assert.match(HOOK, /prospect = await applyProspectEvents/);
+  assert.match(HOOK, /MARKETING_PROSPECT_EVENTS_ENABLED !== 'true'\) return \{ result: empty, guarded: false \}/);
+  assert.match(HOOK, /const r = await applyProspectEvents/);
   // 例外を握って全体を落とさない
-  const at = HOOK.indexOf('prospect = await applyProspectEvents');
+  const at = HOOK.indexOf('const r = await applyProspectEvents');
   assert.match(HOOK.slice(at, at + 200), /catch/);
 });
 
