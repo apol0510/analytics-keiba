@@ -1346,4 +1346,16 @@ const LEGEND = [
     text-shadow: 0 0 10px rgba(190, 242, 100, .30);
     line-height: 1.25;
   }
+
+  /* ═══ 2026-09-27 不具合修正: 長いレース名でスマホ幅を超えない ═══
+     .rvb-list は grid。grid／flex の子は既定で min-width:auto のため、折り返さないレース名の
+     最小内容幅がそのまま列幅になり、/free/nankan/ が 437px まで広がっていた（例: 船橋 3R
+     「船橋デビュー馬未勝利選抜馬」）。列の最小幅を 0 にし、行の中の子も縮められるようにする。
+     レース名は 1 行のまま「…」で省略する。 */
+  .rvb-list { grid-template-columns: minmax(0, 1fr); }
+  .rvb-row, .rvb-row > .rvb-detail, .rvb-row > .rvb-detail > .rvb-detail-sum,
+  .rvb-row > .rvb-detail > .rvb-detail-body, .rvb-sum-line, .rvb-marks { min-width: 0; }
+  .rvb-sum-line .rvb-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rvb-marks .rm, .rvb-marks .rm-rest { max-width: 100%; min-width: 0; }
+  .rvb-marks .rm-name { overflow-wrap: anywhere; }
 </style>

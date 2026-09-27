@@ -1621,6 +1621,7 @@ URL を変える場合は **301 リダイレクトが必要**になる点に注�
 | メインレース判定は会場ごとのレース数（`race-config.js` の `getMainRaceNumber`、無ければ最終レース）| `listView.js` |
 | 初期表示に条件タグ・説明・記号を出さない。分析は削除せず「詳細」の中 | `listFirst.guard.test.mjs` |
 | 登録 CTA（`/free-signup/`）はページに 1 つ、一覧の後ろ。詳細内は短い案内だけ | `listFirst.guard.test.mjs` / `memberGateStrength.guard.test.mjs` |
+| 長いレース名でもスマホ幅を超えない（一覧 grid の列は `minmax(0, 1fr)`、行の子に `min-width:0`、レース名は 1 行で「…」省略）| `listOverflow.guard.test.mjs` |
 | 行の開閉は details / summary の既定動作（`preventDefault` しない・`:focus-visible` を出す）| `listFirst.guard.test.mjs` / `accordionClose.guard.test.mjs` |
 
 ### `/results-showcase/` との関係（既存の例外を変えない）
