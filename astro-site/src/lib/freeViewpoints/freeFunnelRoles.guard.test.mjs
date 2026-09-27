@@ -21,10 +21,10 @@ test('/free/ は無料登録の入口を持つ（無料獲得の主入口）', (
   for (const c of ['jra', 'nankan']) {
     assert.ok(read(`src/pages/free/${c}.astro`).includes('<RaceViewpointsBoard'), `/free/${c}/ が無料予想ボードを使っていない`);
   }
-  // レースを開かなくても辿れる登録入口がある（アコーディオンの外）
-  const topgate = markup.indexOf('class="rvb-topgate"');
-  assert.ok(topgate > -1, '登録入口が無い');
-  assert.match(markup.slice(topgate, topgate + 800), /href="\/free-signup\/"/);
+  // レースを開かなくても辿れる登録入口がある（アコーディオンの外・一覧の後に 1 つ / 2026-09-27 #600）
+  const box = markup.indexOf('class="rvb-signupbox"');
+  assert.ok(box > -1, '登録入口が無い');
+  assert.match(markup.slice(box, box + 900), /href="\/free-signup\/"/);
 });
 
 test('/free-prediction/ は有料版プレビュー: 有料導線を持ち、無料登録 CTA を置かない', () => {
