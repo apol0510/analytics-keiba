@@ -18,7 +18,7 @@ import {
   summarizeNativeWindow, drmCampaignIds, primaryBucket,
 } from './nativeMemberMailAudit.js';
 import { IMPORT_SOURCE_PREFIX } from './importCohort.js';
-import { SEG_EXCLUDE } from '../crm/audienceSegments.js';
+import { SEG_EXCLUDE, BASE_EXCLUSION_CODES } from '../crm/audienceSegments.js';
 
 const SECRET = 'test-cursor-secret-0123456789abcdef';
 const AT_KEY = 'fake-airtable-key-for-tests-only';
@@ -281,7 +281,7 @@ test('定義: Source が空・別文字列の人は元々の会員として数�
 
 // ─── 集計（件数だけ・除外理由は単一源）─────────────────────────
 
-test('customers: 除外理由は resolveSegmentExclusion のコードで数え、合計が母数と一致', async () => {
+test('customers: 基本的な送信可否は resolveBaseExclusion のコードで数え、合計が母数と一致', async () => {
   const cs = [
     customer(1),
     customer(2, { UnsubscribedAnalyticsKeiba: true }),
@@ -290,32 +290,95 @@ test('customers: 除外理由は resolveSegmentExclusion のコードで数え�
     customer(5),
     customer(6, { Email: '' }),
     customer(7, { WithdrawalRequested: true }),
+    customer(8),
   ];
   const world = fakeWorld({
     customers: cs,
-    blacklist: [{ id: rid(80001), fields: { Email: 'user0005@example.jp', Status: 'HARD_BOUNCE' } }],
+    blacklist: [
+      { id: rid(80001), fields: { Email: 'user0005@example.jp', Status: 'HARD_BOUNCE' } },
+      { id: rid(80002), fields: { Email: 'user0008@example.jp', Status: 'SOFT_BOUNCE' } },
+    ],
   });
   const [r] = await walk('customers', world, {}, 5);
   assert.equal(r.status, 200, JSON.stringify(r.body));
-  const s = r.body.sendability;
+  const s = r.body.baseSendability;
   assert.equal(s.balanced, true);
   assert.equal(r.body.noEmail, 1);
   assert.equal(s.byReason[SEG_EXCLUDE.UNSUBSCRIBED], 1);
   assert.equal(s.byReason[SEG_EXCLUDE.SUSPENDED_OR_TEST], 1);
   assert.equal(s.byReason[SEG_EXCLUDE.INVALID_EMAIL], 1);
   assert.equal(s.byReason[SEG_EXCLUDE.BLACKLIST_HARD], 1);
+  assert.equal(s.byReason[SEG_EXCLUDE.BLACKLIST_SOFT], 1);
   assert.equal(s.sendable, 2, '1 と 7（退会は除外しない）');
   assert.equal(r.body.withdrawn.total, 1);
-  assert.equal(r.body.withdrawn.sendable, 1);
+  assert.equal(r.body.withdrawn.baseSendable, 1);
   assert.equal(r.body.breakdown.withdrawn, 1);
-  for (const code of Object.keys(s.byReason)) assert.ok(Object.values(SEG_EXCLUDE).includes(code), code);
+  for (const code of Object.keys(s.byReason)) assert.ok(BASE_EXCLUSION_CODES.includes(code), code);
+  assert.equal(r.body.sendability, undefined, '曖昧な sendability を出さない');
+});
+
+const PREMIUM = { 'プラン': 'Premium', '有効期限': '2027-06-01', Status: 'active' };
+const LIGHT = { 'プラン': 'Light', '有効期限': '2027-06-01', Status: 'active' };
+
+test('customers: 現役 Premium / Light は基本的な送信可否で除外されず、施策側の制約へ別計上', async () => {
+  const world = fakeWorld({ customers: [customer(1, PREMIUM), customer(2, LIGHT), customer(3)] });
+  const [r] = await walk('customers', world);
+  const base = r.body.baseSendability;
+  assert.equal(base.sendable, 3, '有料会員も基本的には送信可能');
+  assert.equal(base.byReason[SEG_EXCLUDE.PAID_MEMBER], undefined, 'paid_member を基本側へ入れない');
+  const p = r.body.policyRestrictions.activePaidMember;
+  assert.deepEqual(p, { total: 2, amongBaseSendable: 2, premium: 1, light: 1 });
+  assert.equal(r.body.breakdown.premium, 1);
+  assert.equal(r.body.breakdown.light, 1);
+});
+
+test('customers: 反応なし（engagement blocked）は基本的な送信可否と混ぜず、施策側で数える', async () => {
+  const redis = fakeRedis({ members: ['user0002@example.jp'], meta: String(NOW - 3600 * 1000) });
+  const world = fakeWorld({ customers: [customer(1), customer(2)] });
+  const [r] = await walk('customers', world, { redisCmd: redis.cmd });
+  assert.equal(r.body.baseSendability.sendable, 2);
+  assert.equal(r.body.baseSendability.byReason[SEG_EXCLUDE.ENGAGEMENT_BLOCKED], undefined);
+  assert.deepEqual(r.body.policyRestrictions.engagementBlocked, { applied: true, total: 1, amongBaseSendable: 1 });
+  assert.equal(r.body.inputs.engagementBlocklist.applied, true);
+});
+
+test('customers: 反応なしリストが使えなければ「未適用」と明示する（0 と混同しない）', async () => {
+  const [r] = await walk('customers', fakeWorld({ customers: [customer(1)] }));
+  assert.deepEqual(r.body.policyRestrictions.engagementBlocked, { applied: false, total: null, amongBaseSendable: null });
+});
+
+test('customers: 直近の接触・既送信は campaign 依存なので未計測と明示する', async () => {
+  const [r] = await walk('customers', fakeWorld({ customers: [customer(1)] }));
+  const p = r.body.policyRestrictions;
+  assert.deepEqual(p.recentContact, { measured: false, reason: 'campaign_specific_not_measured' });
+  assert.deepEqual(p.alreadyDelivered, { measured: false, reason: 'campaign_specific_not_measured' });
+  for (const code of [SEG_EXCLUDE.RECENT_CONTACT, SEG_EXCLUDE.ALREADY_DELIVERED, SEG_EXCLUDE.PAID_MEMBER, SEG_EXCLUDE.ENGAGEMENT_BLOCKED]) {
+    assert.ok(!BASE_EXCLUSION_CODES.includes(code), code);
+  }
+});
+
+test('customers: 有料会員でも配信停止・blacklist・停止リストなら基本側で除外される', async () => {
+  const world = fakeWorld({
+    customers: [
+      customer(1, { ...PREMIUM, UnsubscribedAnalyticsKeiba: true }),
+      customer(2, LIGHT),
+      customer(3, PREMIUM),
+    ],
+    blacklist: [{ id: rid(80003), fields: { Email: 'user0002@example.jp', Status: 'COMPLAINT' } }],
+  });
+  const [r] = await walk('customers', world);
+  const base = r.body.baseSendability;
+  assert.equal(base.byReason[SEG_EXCLUDE.UNSUBSCRIBED], 1);
+  assert.equal(base.byReason[SEG_EXCLUDE.BLACKLIST_HARD], 1);
+  assert.equal(base.sendable, 1);
+  assert.deepEqual(r.body.policyRestrictions.activePaidMember, { total: 3, amongBaseSendable: 1, premium: 2, light: 1 });
 });
 
 test('customers: 配信基盤の停止リストが読めなければ全員 provider_unknown（fail closed）', async () => {
   const world = fakeWorld({ customers: [customer(1), customer(2)] });
   const [r] = await walk('customers', world, { sendgridKey: '' });
-  assert.equal(r.body.sendability.sendable, 0);
-  assert.equal(r.body.sendability.byReason[SEG_EXCLUDE.PROVIDER_UNKNOWN], 2);
+  assert.equal(r.body.baseSendability.sendable, 0);
+  assert.equal(r.body.baseSendability.byReason[SEG_EXCLUDE.PROVIDER_UNKNOWN], 2);
   assert.equal(r.body.inputs.providerSuppression.available, false);
 });
 
@@ -427,7 +490,7 @@ test('summarizeNativeWindow は件数だけを返す（アドレスの配列・S
   const { carryOut, ...rest } = s;
   walkValues(rest);
   assert.match(carryOut, /^[a-f0-9]{24}$/);
-  assert.equal(s.sendability.sendable, 2);
+  assert.equal(s.baseSendability.sendable, 2);
 });
 
 test('primaryBucket: 退会 → 判定不能 → 期限切れ → premium → light → free の順に畳む', () => {
@@ -438,4 +501,15 @@ test('primaryBucket: 退会 → 判定不能 → 期限切れ → premium → li
   assert.equal(primaryBucket({ contract: 'expiring_soon', plan: 'light' }), 'light');
   assert.equal(primaryBucket({ contract: 'none', plan: 'free' }), 'free');
   assert.equal(primaryBucket({ contract: 'none', plan: '???' }), 'undeterminable');
+});
+
+test('summarizeNativeWindow: 配信基盤の停止リストに居る人は有料会員でも基本側で除外', () => {
+  const s = summarizeNativeWindow({
+    records: [customer(1, PREMIUM), customer(2)], nowMs: NOW, hard: new Set(), soft: new Set(),
+    providerSuppressed: new Set(['user0001@example.jp']), engagementBlocked: null,
+    sinceRows: [], drmRows: [], carryIn: null, secret: SECRET,
+  });
+  assert.equal(s.baseSendability.byReason[SEG_EXCLUDE.PROVIDER_SUPPRESSED], 1);
+  assert.equal(s.baseSendability.sendable, 1);
+  assert.deepEqual(s.policyRestrictions.activePaidMember, { total: 1, amongBaseSendable: 0, premium: 1, light: 0 });
 });

@@ -923,8 +923,21 @@ C（SendGrid Marketing Campaigns へ投入）の**どれを採るかを決める
 | 本体 | `src/lib/marketing/nativeMemberMailAudit.js`（判定と I/O 制限はここだけ）|
 | クライアント | `netlify dev:exec --context production -- node astro-site/scripts/native-mail-audit.mjs`（秘密値を取り出さない・結果をファイルへ書かない）|
 | 元々の会員の定義 | `importCohort.resolveCohort(fields) === 'existing'`（`Source` が `customer-import:` で始まらない）。formula はここから組み立て、読んだ全件を同関数で再確認（食い違えば `cohort_formula_mismatch`）|
-| 除外理由 | `audienceSegments.resolveSegmentExclusion`（`evaluateSegment` と同じ順序・同じコード。今回この関数を切り出して共有した）|
+| 送信可否 | **2 層に分けて返す**（下記）。基本層は `audienceSegments.resolveBaseExclusion`（`evaluateSegment` と同じ順序・同じコード。今回切り出して共有）|
 | phase | `baseline`（母数と集合 digest）/ `customers`（内訳・送信可否・9/24 以降の受信・DRM 重複）/ `deliveries`（旧 AK 経路の日別・campaign 別）/ `sendgrid`（GET で見える状態）/ `policy`（頻度上限の事実）|
+
+### 送信可否は 2 層（**1 つの数字へ潰さない**）
+
+| 層 | 出力 | 中身 |
+|---|---|---|
+| ① 基本的な送信可否（配信安全）| `baseSendability` | 重複アドレス / アドレス不正・欠落 / 停止・テスト / 強制ログアウト / 配信停止 / blacklist hard・soft / 配信基盤の停止リスト（読めなければ `provider_unknown` で全員除外＝fail closed）|
+| ② 施策側の制約 | `policyRestrictions` | 現役有料会員（`activePaidMember`）/ 反応なし（`engagementBlocked`。リストが使えなければ `applied:false`・件数 `null`）/ 直近の接触・既送信（campaign 依存なので `measured:false`）|
+
+- **② は「送信不可」の意味ではない。** 契約状態とメール送信可否は別概念（`customerMarketingAudience.js` の正本）で、
+  現役の Premium / Light であること自体は配信停止でも抑止でもない。
+- ② の各数は ① と**独立に**数える（`amongBaseSendable` は ① を通った人のうちの数）。
+- A/B/C で対象条件が違うので、「この案で何人送れるか」はこの監査では出さない。
+- セグメント配信（`evaluateSegment`）は従来どおり ①→② の順で 1 つの理由に畳む（挙動不変・全組み合わせで旧判定と一致をテストで固定）。
 
 ### 読み取り専用の担保（テストで固定）
 

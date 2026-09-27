@@ -102,12 +102,25 @@ async function main() {
       breakdown: w.breakdown,
       planContract: w.planContract,
       withdrawn: w.withdrawn,
-      sendability: { ...w.sendability, balanced: undefined },
+      baseSendability: w.baseSendability,
+      policyRestrictions: w.policyRestrictions,
       since: w.since,
       drm: w.drm,
     });
   }
-  customers.balanced = cw.every((w) => w.sendability && w.sendability.balanced === true);
+  customers.baseSendability.balanced = cw.every((w) => w.baseSendability && w.baseSendability.balanced === true);
+  // 施策側の制約は「数えられたか」を最後の窓の状態で示す（数値以外は合算しない）
+  const lastPolicy = cw[cw.length - 1].policyRestrictions || {};
+  const appliedStates = new Set(cw.map((w) => Boolean(w.policyRestrictions?.engagementBlocked?.applied)));
+  // 窓ごとに適用状態が割れたら（途中で除外リストが古くなった等）部分の合計を全体として出さない
+  customers.policyRestrictions.engagementBlocked = appliedStates.size > 1
+    ? { applied: 'inconsistent_across_windows', total: null, amongBaseSendable: null }
+    : appliedStates.has(true)
+      ? { applied: true, ...customers.policyRestrictions.engagementBlocked }
+      : lastPolicy.engagementBlocked;
+  customers.policyRestrictions.recentContact = lastPolicy.recentContact;
+  customers.policyRestrictions.alreadyDelivered = lastPolicy.alreadyDelivered;
+  customers.note = 'baseSendability は基本的な送信可否。policyRestrictions は施策ごとの制約で送信不可の意味ではない。案ごとの送信数は 1 つに潰さない。';
   customers.inputs = cw[cw.length - 1].inputs;
 
   const [deliveries, sendgrid, policy] = [await call({ phase: 'deliveries' }), await call({ phase: 'sendgrid' }), await call({ phase: 'policy' })];

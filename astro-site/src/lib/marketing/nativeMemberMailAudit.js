@@ -19,7 +19,10 @@
  *  - **元々の会員の定義は `importCohort.resolveCohort(fields) === 'existing'` だけ**
  *    （＝ `Source` が `customer-import:` で始まらない）。formula はそこから組み立て、
  *    読んだ全レコードを `resolveCohort` で再確認する（食い違えば fail closed）。
- *  - **除外理由は `audienceSegments.resolveSegmentExclusion` の順序・コードをそのまま使う**。
+ *  - **基本的な送信可否は `audienceSegments.resolveBaseExclusion`**（セグメント配信と同じ順序・コード）。
+ *    現役有料会員・反応なし・直近の接触・既送信は**施策側の制約**として別に数え、
+ *    基本的な送信可否へ混ぜない（契約状態とメール送信可否は別概念）。
+ *    A/B/C で対象条件が違うので、「この案で何人送れるか」を 1 つの数字へ潰さない。
  *  - 1 リクエストで全件を読まない。窓（最大 5 ページ = 500 件）＋ cursor で進め、
  *    上限に当たったら黙って打ち切らず fail closed。
  *  - 判断できないもの（SendGrid contacts に native が居るか）は測らず理由コードで返す。
@@ -28,7 +31,7 @@
 import crypto from 'node:crypto';
 import { IMPORT_SOURCE_PREFIX, resolveCohort, COHORT } from './importCohort.js';
 import { resolveCustomerMarketing, MK_CONTRACT, MK_PLAN } from './customerMarketingAudience.js';
-import { resolveSegmentExclusion, SEG_EXCLUDE } from '../crm/audienceSegments.js';
+import { resolveBaseExclusion } from '../crm/audienceSegments.js';
 import { buildBlacklistEmailSet } from '../newsletter/airtable-fetch.js';
 import { fetchProviderSuppression } from './providerSuppression.js';
 import { createEngagementBlocklistStore } from './engagementBlocklistStore.js';
@@ -375,10 +378,16 @@ export function summarizeNativeWindow({
 }) {
   const breakdown = {};
   const planContract = {};
-  const withdrawn = { total: 0, sendable: 0 };
+  const withdrawn = { total: 0, baseSendable: 0 };
   const byReason = {};
   let sendable = 0;
-  let paidMember = 0;
+  const engagementApplied = engagementBlocked instanceof Set;
+  const policy = {
+    activePaidMember: { total: 0, amongBaseSendable: 0, premium: 0, light: 0 },
+    engagementBlocked: engagementApplied
+      ? { applied: true, total: 0, amongBaseSendable: 0 }
+      : { applied: false, total: null, amongBaseSendable: null },
+  };
   let noEmail = 0;
   let duplicateInWindow = 0;
   let boundaryDuplicate = false;
@@ -427,17 +436,28 @@ export function summarizeNativeWindow({
     inc(breakdown, primaryBucket(mk));
     inc(planContract, `${mk.plan}|${mk.contract}`);
 
-    const reason = resolveSegmentExclusion({
+    // ① 基本的な送信可否（どの施策でも送ってはいけない理由だけ）
+    const reason = resolveBaseExclusion({
       fields: f, email: e, marketing: mk, duplicate: counts.get(e) > 1,
       blacklistHard: hard, blacklistSoft: soft, providerSuppressed,
-      engagementBlockedEmails: engagementBlocked, nowMs,
     });
     if (reason) inc(byReason, reason);
     else sendable += 1;
-    if (reason === SEG_EXCLUDE.PAID_MEMBER) paidMember += 1;
     if (mk.withdrawn === true) {
       withdrawn.total += 1;
-      if (!reason || reason === SEG_EXCLUDE.PAID_MEMBER) withdrawn.sendable += 1;
+      if (!reason) withdrawn.baseSendable += 1;
+    }
+    // ② 施策側の制約（**除外ではない**。①とは独立に数える）
+    const paid = mk.premiumActive === true || mk.lightActive === true;
+    if (paid) {
+      policy.activePaidMember.total += 1;
+      if (!reason) policy.activePaidMember.amongBaseSendable += 1;
+      if (mk.premiumActive === true) policy.activePaidMember.premium += 1;
+      else policy.activePaidMember.light += 1;
+    }
+    if (engagementApplied && engagementBlocked.has(e)) {
+      policy.engagementBlocked.total += 1;
+      if (!reason) policy.engagementBlocked.amongBaseSendable += 1;
     }
 
     const stage = resolveFunnelStage(mk) || 'undeterminable';
@@ -474,14 +494,21 @@ export function summarizeNativeWindow({
     breakdown,
     planContract,
     withdrawn,
-    sendability: {
+    /** ① 基本的な送信可否（配信安全）。現役有料会員・反応なし等は含まない */
+    baseSendability: {
       sendable,
       excluded,
       byReason,
-      /** 有料会員は割引・カムバック系の除外に当たるだけで、配信拒否ではない（B 案の対象になり得る） */
-      paidMember,
-      sendableIncludingPaid: sendable + paidMember,
       balanced: unique === sendable + excluded,
+    },
+    /**
+     * ② 施策（campaign / policy）ごとの制約。**送信不可の意味ではない**。
+     * どれを除外に使うかは A/B/C の対象条件で変わるので、ここでは数えるだけ。
+     */
+    policyRestrictions: {
+      ...policy,
+      recentContact: { measured: false, reason: 'campaign_specific_not_measured' },
+      alreadyDelivered: { measured: false, reason: 'campaign_specific_not_measured' },
     },
     since,
     drm,
@@ -518,7 +545,6 @@ async function phaseCustomers({ ctx, rf, redis, sendgridKey, nowMs, pages, curso
       engagementBlocklist: inputs.engagement.usable
         ? { applied: true, size: inputs.engagement.count }
         : { applied: false, reason: str(inputs.engagement.reason) || 'unavailable' },
-      recentContactAndAlreadyDelivered: 'not_evaluated_campaign_specific',
     },
     next: w.next ? sealCursor({ phase: NATIVE_AUDIT_PHASE.CUSTOMERS, offset: w.next, carry: carryOut }, secret) : null,
     done: !w.next,

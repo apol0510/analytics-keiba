@@ -180,22 +180,19 @@ export function computeConditionHash(segment, options = {}) {
 }
 
 /**
- * 共通の絶対除外を**1 人ぶん**判定する（順序は固定。最初に当たった理由を 1 つだけ返す）。
- * 送ってよければ `null`。
+ * **基本的な送信可否**（配信安全）を 1 人ぶん判定する。送ってよければ `null`。
  *
- * `evaluateSegment` と、元々の会員の読み取り監査（`nativeMemberMailAudit.js`）が
- * **同じ順序・同じ理由コード**で数えるための単一源。ここ以外に除外の順序を書かない。
+ * どの施策でも送ってはいけない理由だけを持つ:
+ * 重複アドレス / アドレス不正・欠落 / 停止・テスト / 強制ログアウト / 配信停止 /
+ * blacklist（hard / soft）/ 配信基盤の停止リスト（確認できないときも含む）。
  *
- * @param {{
- *   fields: object, email: string, marketing: object, duplicate?: boolean,
- *   blacklistHard?: Set<string>, blacklistSoft?: Set<string>,
- *   providerSuppressed?: Set<string>|null,
- *   deliveredEmails?: Set<string>, lastContactAtMs?: Map<string, number>,
- *   engagementBlockedEmails?: Set<string>, nowMs?: number,
- * }} input
+ * ⚠️ 現役の有料会員であること・反応なし・直近の接触・既送信は**ここに入れない**。
+ *    それらは施策（campaign / policy）ごとの制約で、`resolveSegmentExclusion` が後段で見る。
+ *    契約状態とメール送信可否は別概念（`customerMarketingAudience.js` の正本）。
+ *
  * @returns {string|null} `SEG_EXCLUDE` の値
  */
-export function resolveSegmentExclusion(input = {}) {
+export function resolveBaseExclusion(input = {}) {
   const f = input.fields || {};
   const e = em(input.email);
   const mk = input.marketing || {};
@@ -204,11 +201,6 @@ export function resolveSegmentExclusion(input = {}) {
   const soft = input.blacklistSoft instanceof Set ? input.blacklistSoft : new Set();
   // Set 以外（null / 未指定）は「確認できない」＝ fail closed
   const provider = input.providerSuppressed instanceof Set ? input.providerSuppressed : null;
-  const delivered = input.deliveredEmails instanceof Set ? input.deliveredEmails : new Set();
-  const contact = input.lastContactAtMs instanceof Map ? input.lastContactAtMs : new Map();
-  const engagementBlocked = input.engagementBlockedEmails instanceof Set
-    ? input.engagementBlockedEmails : new Set();
-  const now = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
 
   if (input.duplicate === true) return SEG_EXCLUDE.DUPLICATE_EMAIL;
   if (reasons.includes('invalid_email')) return SEG_EXCLUDE.INVALID_EMAIL;
@@ -224,6 +216,44 @@ export function resolveSegmentExclusion(input = {}) {
   // 配信基盤の停止リストを確認できないまま送らない（fail closed）
   if (provider === null) return SEG_EXCLUDE.PROVIDER_UNKNOWN;
   if (provider.has(e)) return SEG_EXCLUDE.PROVIDER_SUPPRESSED;
+  return null;
+}
+
+/** `resolveBaseExclusion` が返し得る理由コード（基本的な送信可否） */
+export const BASE_EXCLUSION_CODES = Object.freeze([
+  SEG_EXCLUDE.DUPLICATE_EMAIL, SEG_EXCLUDE.INVALID_EMAIL, SEG_EXCLUDE.SUSPENDED_OR_TEST,
+  SEG_EXCLUDE.FORCE_LOGOUT, SEG_EXCLUDE.UNSUBSCRIBED, SEG_EXCLUDE.BLACKLIST_HARD,
+  SEG_EXCLUDE.BLACKLIST_SOFT, SEG_EXCLUDE.PROVIDER_UNKNOWN, SEG_EXCLUDE.PROVIDER_SUPPRESSED,
+]);
+
+/**
+ * セグメント配信の除外を 1 人ぶん判定する（順序は固定。最初に当たった理由を 1 つだけ返す）。
+ * 送ってよければ `null`。
+ *
+ * = 基本的な送信可否（`resolveBaseExclusion`）→ 施策側の制約
+ *   （現役有料会員 / 既送信 / 直近の接触 / 反応なし）。`evaluateSegment` はこれを使う。
+ *
+ * @param {{
+ *   fields: object, email: string, marketing: object, duplicate?: boolean,
+ *   blacklistHard?: Set<string>, blacklistSoft?: Set<string>,
+ *   providerSuppressed?: Set<string>|null,
+ *   deliveredEmails?: Set<string>, lastContactAtMs?: Map<string, number>,
+ *   engagementBlockedEmails?: Set<string>, nowMs?: number,
+ * }} input
+ * @returns {string|null} `SEG_EXCLUDE` の値
+ */
+export function resolveSegmentExclusion(input = {}) {
+  const base = resolveBaseExclusion(input);
+  if (base) return base;
+
+  const e = em(input.email);
+  const mk = input.marketing || {};
+  const delivered = input.deliveredEmails instanceof Set ? input.deliveredEmails : new Set();
+  const contact = input.lastContactAtMs instanceof Map ? input.lastContactAtMs : new Map();
+  const engagementBlocked = input.engagementBlockedEmails instanceof Set
+    ? input.engagementBlockedEmails : new Set();
+  const now = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
+
   if (mk.premiumActive || mk.lightActive) return SEG_EXCLUDE.PAID_MEMBER;
   if (delivered.has(e)) return SEG_EXCLUDE.ALREADY_DELIVERED;
   if (isRecentMarketingContact({ lastSentAtMs: contact.get(e) ?? null, nowMs: now })) {

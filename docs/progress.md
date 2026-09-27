@@ -2301,7 +2301,8 @@ Netlify production deploy ready（merge から約 80 秒）。GA 遮断・非 GE
 ## 足りない数（この監査で取る）
 
 1. 元々の会員の実数 2. プラン・契約内訳（free / light / premium / expired / withdrawn / 判定不能）
-3. 送信可能数と除外理由（配信停止・blacklist・provider suppression・停止/テスト・アドレス不正/欠落）
+3. 基本的な送信可否と除外理由（配信停止・blacklist・provider suppression・停止/テスト・強制ログアウト・アドレス不正/欠落）。
+   現役有料会員・反応なし・直近の接触・既送信は**施策側の制約として別に数える**（送信不可の意味ではない）
 4. 9/24 以降の旧 AK 経路の送信数（日別・campaign 別・状態別）
 5. DRM 対象との重複（段の判定 `resolveFunnelStage` と、DRM 育成 campaign の受信者）
 6. SendGrid の GET で見える状態（lists / segments / singlesends / 予約 / suppression）。
@@ -2312,7 +2313,9 @@ Netlify production deploy ready（merge から約 80 秒）。GA 遮断・非 GE
 `admin-marketing` `action: 'nativeMailAudit'` ＋ クライアント `astro-site/scripts/native-mail-audit.mjs`。
 仕様は [`CUSTOMER_MARKETING.md` §7-4](../astro-site/docs/CUSTOMER_MARKETING.md)。
 GET だけ・件数だけ・窓＋封をした cursor・集合 digest 3 回照合・未知の入力は 400・境目の重複は停止。
-除外理由は `audienceSegments.resolveSegmentExclusion`（`evaluateSegment` から切り出して共有）。
+送信可否は 2 層: ① `baseSendability`（`audienceSegments.resolveBaseExclusion`。`evaluateSegment` から切り出して共有）/
+② `policyRestrictions`（現役有料会員・反応なし・直近の接触・既送信）。A/B/C ごとの送信数は 1 つの数字へ潰さない。
+2026-09-27 MK 指摘で修正（初版は ② を ① に混ぜ「現役有料会員＝送信不可」と読める出力だった）。
 
 ### 判断材料として記録する事実（**直さない**）
 
