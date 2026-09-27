@@ -6,6 +6,9 @@
   （2026-09-27 本番 read-only で id・名前の一致を確認。他は `テストグループ` 28368 / `KEIBA Intelligence メルマガ` 29174）。
 - SendGrid → AK は `asm_group_id` が AK Marketing のときだけ。KI・テスト・不明 group は AK を変えない。
   再開（`group_resubscribe`）も同じ分離で、**AK 側の停止より新しい再開だけ**解除する。
+- （2026-09-28 追加確定）AK 側で利用者が**明示的に再開**したら、SendGrid の **AK Marketing の group suppression からだけ**外す。
+  Customers が RECORDED / ALREADY のとき・34108 で停止中のときだけ DELETE。global・KI 29174・テスト 28368 は外さない。
+  SendGrid 側の解除に失敗しても AK 側の再開は巻き戻さない（固定コードで不一致を観測する）。
 - AK → SendGrid は **group suppression**（global unsubscribe は使わない）。contact 検索はしない。
 - DRM 新規登録育成の受信中は週次から一時除外（単一源 `sequenceProgress`）。受信歴だけで永久除外しない。
 - 複数 list の重複を SendGrid が 1 通にまとめることは**未検証の安全仕様にしない**。canary 実測を本番有効化の条件にする。

@@ -2470,6 +2470,7 @@ premium|active 13 / premium_sanrenpuku|active 5 / light|active 2 / light|expirin
 | SendGrid → AK | `asm_group_id=34108` の `group_unsubscribe` → Customers 停止（既に停止中でも新しい停止なら停止時刻を進める）。`group_resubscribe` は **再開 ＞ AK の停止時刻** のときだけ解除（時刻なし・同時刻以前は解除しない）。KI・テスト・不明 group は変えない | ✅ 実装・テスト（本番未反映）|
 | 見込み客 | `group_unsubscribe` の抑止を **34108 のときだけ**へ限定（KI・テスト・不明は影響なし）。単一源 `akMarketingGroup.js` | ✅ 実装・テスト（本番未反映）|
 | AK → SendGrid | Customers の停止を記録できたら `AK Marketing` の group suppression へ追加（GET で id・名前を照合してから。global は使わない）| ✅ 実装・テスト（本番未反映）|
+| AK → SendGrid（再開）| 利用者の明示的な再開で Customers が RECORDED / ALREADY なら、34108 で停止中のときだけ group suppression から外す（global・KI・テストは外さない／失敗しても AK 側は巻き戻さない）| ✅ 実装・テスト（本番未反映）|
 | gate | `AK_MARKETING_UNSUBSCRIBE_BRIDGE_ENABLED=true` のときだけ書く（既定は判定と件数だけ）| 未設定（本番 env 変更は未実施）|
 | Phase 2 準備 | 週次の対象判定 `nativeWeeklyAudience.js`（現役有料・受信中・基本除外・進行不明は対象外）。**まだどこからも呼ばない** | ✅ 実装・テスト |
 
@@ -2480,7 +2481,6 @@ premium|active 13 / premium_sanrenpuku|active 5 / light|active 2 / light|expirin
 - gate env の投入＋redeploy
 - 既存の group 停止 34 件: 2026-09-28 read-only 分類で **Customers 一致 0 / 重複 0 / 停止済み 0 / 不一致 34**（Customers への反映対象は 0）。
   見込み客側は本番 Redis が masked secret でローカルから**未計測**（測るには本番 Function 経由の read-only 経路が要る）
-- AK 側で配信再開したときに SendGrid の group suppression から外すか（現状は外さない・MK 判断）
 - Phase 2: 元々の会員の list の作成と週次への追加 / 月間通数と契約枠の確認 / 複数 list 重複の canary
 
 ## 次作業

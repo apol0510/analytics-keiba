@@ -72,9 +72,15 @@ test('配信停止 Function はメールを 1 通も送らない', () => {
   }
   // SendGrid へ触るのは橋渡しモジュール経由だけ（Function 本体に API の URL を直書きしない）
   assert.ok(!/api\.sendgrid\.com/i.test(FN), '配信停止 Function に SendGrid の URL を直書きしている');
-  // 橋渡しが SendGrid へ書くのは AK Marketing の group suppression だけ
-  const posts = BRIDGE.match(/https:\/\/api\.sendgrid\.com[^`'"]*/g) || [];
-  assert.ok(posts.every((u) => u.startsWith('https://api.sendgrid.com/v3/asm/groups/')), posts.join(','));
+  // 橋渡しが SendGrid で触るのは配信停止（ASM）だけ:
+  //   AK Marketing の group（照合・追加・削除）と、1 人ぶんの group 所属の読み取り（GET）
+  const urls = BRIDGE.match(/https:\/\/api\.sendgrid\.com[^`'"]*/g) || [];
+  assert.ok(urls.length > 0);
+  for (const u of urls) {
+    const ok = u.startsWith('https://api.sendgrid.com/v3/asm/groups/${AK_MARKETING_GROUP.id}')
+      || u === 'https://api.sendgrid.com/v3/asm/suppressions/${encodeURIComponent(e)}';
+    assert.ok(ok, u);
+  }
 });
 
 // ── 4. 他人を止められない ───────────────────────────────────────

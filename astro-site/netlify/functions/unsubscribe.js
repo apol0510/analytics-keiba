@@ -26,7 +26,9 @@ import {
 import { createProspectStore } from '../../src/lib/marketing/prospectStore.js';
 import { makeRedisCmd } from '../../src/lib/marketing/deliveryKeyStore.js';
 import { SUPPRESS_REASON } from '../../src/lib/marketing/prospectPolicy.js';
-import { addToAkMarketingGroupSuppression } from '../../src/lib/unsubscribe/akMarketingGroupBridge.js';
+import {
+  addToAkMarketingGroupSuppression, removeFromAkMarketingGroupSuppression, planAkGroupSync,
+} from '../../src/lib/unsubscribe/akMarketingGroupBridge.js';
 import {
   resolveUnsubscribeSigningKeys, verifyUnsubscribeSignature,
   isLegacyUnsignedAllowed, decideSignatureAcceptance,
@@ -351,17 +353,21 @@ export default async function handler(request) {
       console.log(`📮 unsubscribe sinks: ${JSON.stringify(sinkResults)} ok=${outcome.ok} trace=${trace}`);
 
       if (outcome.ok) {
-        // ── AK → SendGrid: AK Marketing group suppression へ加える（既定 OFF）──────
-        //    Customers の停止を**記録できたときだけ**。global unsubscribe は使わない
-        //    （KI 等の配信まで止めてしまう）。再開（resubscribe）では SendGrid 側を触らない
-        //    （解除の向きは未確定。止め続ける側に倒す）。
-        //    ⚠️ 同期に失敗しても**利用者への応答は変えない**（AK が単一源で、
-        //       週次の宛先は AK の判定から毎回作り直すため送られない）。件数・状態だけ残す。
+        // ── AK → SendGrid: AK Marketing group suppression の同期（既定 OFF）──────────
+        //    停止: Customers の停止を**記録できたときだけ** group suppression へ加える。
+        //    再開: 利用者が**明示的に再開**し Customers が再開済み（RECORDED / ALREADY）なら、
+        //          AK Marketing の group suppression から**だけ**外す（2026-09-28 MK 確定）。
+        //          ALREADY も対象（AK は再開済みなのに SendGrid だけ停止中、の不整合を直す）。
+        //    global unsubscribe・KI・テスト group は触らない（単一源 akMarketingGroupBridge.js）。
+        //    ⚠️ 同期に失敗しても**利用者への応答も AK 側の状態も変えない**。固定の状態コードだけ残す。
         let akMarketingGroup = 'not_applicable';
-        if (brand === 'analytics-keiba' && requestedAction === 'unsubscribe'
-          && sinkResults[SINK.CUSTOMER] === SINK_RESULT.RECORDED) {
+        const syncPlan = planAkGroupSync({ brand, action: requestedAction, customerSink: sinkResults[SINK.CUSTOMER] });
+        if (syncPlan === 'add') {
           const r = await addToAkMarketingGroupSuppression({ email: postEmail, env: process.env, fetchImpl: fetch });
           akMarketingGroup = r.status;
+        } else if (syncPlan === 'remove') {
+          const r = await removeFromAkMarketingGroupSuppression({ email: postEmail, env: process.env, fetchImpl: fetch });
+          akMarketingGroup = `resubscribe:${r.status}`;
         }
         console.log(`✅ unsubscribe ok: kind=${parsed.kind} brand=${brand} action=${requestedAction}`
           + ` recorded=${outcome.recorded.join('+')} akMarketingGroup=${akMarketingGroup} trace=${trace}`);

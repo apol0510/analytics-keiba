@@ -17,7 +17,9 @@ import {
   AK_MARKETING_GROUP, BRIDGE_GATE_ENV, CUSTOMER_UNSUBSCRIBE_FIELDS, BRIDGE_IGNORE, BRIDGE_NOOP,
   classifyGroupEvent, planGroupEvents, decideCustomerChange,
   applyGroupEventsToCustomers, addToAkMarketingGroupSuppression, isBridgeEnabled,
+  removeFromAkMarketingGroupSuppression, RESUBSCRIBE_SYNC, planAkGroupSync,
 } from './akMarketingGroupBridge.js';
+import { planUnsubscribeSinks, SINK_RESULT } from './unsubscribeOutcome.js';
 
 const AK = AK_MARKETING_GROUP.id;
 const KI = 29174;          // KEIBA Intelligence メルマガ（2026-09-27 read-only 実測）
@@ -308,4 +310,145 @@ test('webhook: 同じバッチで同時刻の停止と再開が来たら停止�
   });
   assert.equal(s.written.resubscribe, 0);
   assert.equal(at.state[0].fields[FLAG], true);
+});
+
+// ─── AK → SendGrid: 明示的な再開（2026-09-28 MK 確定）─────────────────
+
+/**
+ * 状態を持つ偽 SendGrid（ASM）。group ごとの停止集合と global を持ち、呼ばれた method/URL を記録する。
+ * 実 API の形: GET /v3/asm/suppressions/{email} → { suppressions: [{ id, name, suppressed }] }
+ */
+function fakeAsm({ inGroups = [AK], global = false, groupName = 'AK Marketing', groupId = AK, lookupOk = true, deleteOk = true, lookupBody = null } = {}) {
+  const calls = [];
+  const groups = new Map([[AK, new Set()], [KI, new Set()], [TEST_GROUP, new Set()]]);
+  const globalSet = new Set();
+  const EMAIL = 'member@example.jp';
+  for (const g of inGroups) groups.get(g).add(EMAIL);
+  if (global) globalSet.add(EMAIL);
+  const fetchImpl = async (url, init = {}) => {
+    const method = String(init.method || 'GET').toUpperCase();
+    calls.push({ method, url: String(url) });
+    const u = new URL(url);
+    assert.equal(u.hostname, 'api.sendgrid.com');
+    const p = u.pathname;
+    if (method === 'GET' && p === `/v3/asm/groups/${AK}`) return { ok: true, json: async () => ({ id: groupId, name: groupName }) };
+    let m = /^\/v3\/asm\/suppressions\/([^/]+)$/.exec(p);
+    if (method === 'GET' && m) {
+      if (!lookupOk) return { ok: false, json: async () => ({}) };
+      const e = decodeURIComponent(m[1]);
+      const body = lookupBody || { suppressions: [...groups.entries()].map(([id, set]) => ({ id, name: String(id), suppressed: set.has(e) })) };
+      return { ok: true, json: async () => body };
+    }
+    m = /^\/v3\/asm\/groups\/(\d+)\/suppressions\/([^/]+)$/.exec(p);
+    if (method === 'DELETE' && m) {
+      if (!deleteOk) return { ok: false, json: async () => ({}) };
+      groups.get(Number(m[1])).delete(decodeURIComponent(m[2]));
+      return { ok: true, status: 204, json: async () => ({}) };
+    }
+    if (method === 'POST' && p === `/v3/asm/groups/${AK}/suppressions`) {
+      for (const e of JSON.parse(init.body).recipient_emails) groups.get(AK).add(e);
+      return { ok: true, json: async () => ({}) };
+    }
+    return { ok: false, json: async () => ({}) };
+  };
+  return { fetchImpl, calls, groups, globalSet, EMAIL };
+}
+
+const resub = (sg, env = ENV_ON) => removeFromAkMarketingGroupSuppression({ email: sg.EMAIL, env, fetchImpl: sg.fetchImpl });
+
+test('再開 → AK Marketing の group suppression だけから外す（KI・テスト・global は残る）', async () => {
+  const sg = fakeAsm({ inGroups: [AK, KI, TEST_GROUP], global: true });
+  const r = await resub(sg);
+  assert.equal(r.status, RESUBSCRIBE_SYNC.SYNCED);
+  assert.equal(sg.groups.get(AK).has(sg.EMAIL), false);
+  assert.equal(sg.groups.get(KI).has(sg.EMAIL), true, 'KI は外さない');
+  assert.equal(sg.groups.get(TEST_GROUP).has(sg.EMAIL), true, 'テストは外さない');
+  assert.equal(sg.globalSet.has(sg.EMAIL), true, 'global は外さない');
+  const deletes = sg.calls.filter((c) => c.method === 'DELETE');
+  assert.equal(deletes.length, 1);
+  assert.ok(deletes[0].url.startsWith(`https://api.sendgrid.com/v3/asm/groups/${AK}/suppressions/`));
+  for (const c of sg.calls) {
+    assert.ok(!c.url.includes('/suppressions/global') && !c.url.includes('/v3/suppression/unsubscribes'), c.url);
+    assert.ok(!c.url.includes(`/groups/${KI}`) && !c.url.includes(`/groups/${TEST_GROUP}`), c.url);
+    assert.ok(!c.url.includes('/contacts'), 'contact 検索をしない');
+  }
+});
+
+test('再開: AK Marketing に居なければ何もしない（already_synced）', async () => {
+  const sg = fakeAsm({ inGroups: [KI], global: true });
+  const r = await resub(sg);
+  assert.equal(r.status, RESUBSCRIBE_SYNC.ALREADY_SYNCED);
+  assert.equal(sg.calls.filter((c) => c.method === 'DELETE').length, 0);
+  assert.equal(sg.groups.get(KI).has(sg.EMAIL), true);
+});
+
+test('再開: 同じ操作を繰り返しても冪等（2 回目は already_synced・DELETE は 1 回）', async () => {
+  const sg = fakeAsm({ inGroups: [AK] });
+  assert.equal((await resub(sg)).status, RESUBSCRIBE_SYNC.SYNCED);
+  assert.equal((await resub(sg)).status, RESUBSCRIBE_SYNC.ALREADY_SYNCED);
+  assert.equal(sg.calls.filter((c) => c.method === 'DELETE').length, 1);
+});
+
+test('再開: gate が閉じていれば SendGrid へ 1 回も出ない', async () => {
+  for (const env of [{}, { ...ENV_ON, [BRIDGE_GATE_ENV]: 'false' }]) {
+    const sg = fakeAsm({ inGroups: [AK] });
+    // eslint-disable-next-line no-await-in-loop
+    assert.equal((await resub(sg, env)).status, RESUBSCRIBE_SYNC.SKIPPED_GATE);
+    assert.equal(sg.calls.length, 0);
+    assert.equal(sg.groups.get(AK).has(sg.EMAIL), true);
+  }
+});
+
+test('再開: group の id / 名前が違えば DELETE しない', async () => {
+  for (const over of [{ groupName: 'KEIBA Intelligence メルマガ' }, { groupId: KI }]) {
+    const sg = fakeAsm({ inGroups: [AK], ...over });
+    // eslint-disable-next-line no-await-in-loop
+    assert.equal((await resub(sg)).status, RESUBSCRIBE_SYNC.GROUP_MISMATCH);
+    assert.equal(sg.calls.filter((c) => c.method === 'DELETE').length, 0, JSON.stringify(over));
+  }
+});
+
+test('再開: 所属が読めない・形が違うときは外さない（lookup_failed）', async () => {
+  for (const over of [{ lookupOk: false }, { lookupBody: { unexpected: true } }, { lookupBody: [] }]) {
+    const sg = fakeAsm({ inGroups: [AK], ...over });
+    // eslint-disable-next-line no-await-in-loop
+    assert.equal((await resub(sg)).status, RESUBSCRIBE_SYNC.LOOKUP_FAILED, JSON.stringify(over));
+    assert.equal(sg.calls.filter((c) => c.method === 'DELETE').length, 0);
+  }
+});
+
+test('再開: provider の DELETE 失敗は failed（固定コード・アドレスを含まない）', async () => {
+  const sg = fakeAsm({ inGroups: [AK], deleteOk: false });
+  const r = await resub(sg);
+  assert.deepEqual(r, { status: RESUBSCRIBE_SYNC.FAILED });
+});
+
+test('停止側（POST）は再開の追加で変わっていない', async () => {
+  const sg = fakeAsm({ inGroups: [] });
+  const r = await addToAkMarketingGroupSuppression({ email: sg.EMAIL, env: ENV_ON, fetchImpl: sg.fetchImpl });
+  assert.equal(r.status, 'synced');
+  assert.deepEqual(sg.calls.map((c) => `${c.method} ${new URL(c.url).pathname}`),
+    [`GET /v3/asm/groups/${AK}`, `POST /v3/asm/groups/${AK}/suppressions`]);
+});
+
+test('再開でも見込み客の抑止は解除しない（prospect へは書きにいかない）', () => {
+  assert.equal(planUnsubscribeSinks({ action: 'resubscribe' }).prospect, false);
+  assert.equal(planUnsubscribeSinks({ action: 'unsubscribe' }).prospect, true);
+});
+
+test('同期の判定: 再開は Customers が RECORDED / ALREADY の両方で remove、停止は RECORDED だけ add', () => {
+  const B = 'analytics-keiba';
+  assert.equal(planAkGroupSync({ brand: B, action: 'resubscribe', customerSink: SINK_RESULT.RECORDED }), 'remove');
+  assert.equal(planAkGroupSync({ brand: B, action: 'resubscribe', customerSink: SINK_RESULT.ALREADY }), 'remove');
+  assert.equal(planAkGroupSync({ brand: B, action: 'unsubscribe', customerSink: SINK_RESULT.RECORDED }), 'add');
+  assert.equal(planAkGroupSync({ brand: B, action: 'unsubscribe', customerSink: SINK_RESULT.ALREADY }), null, '停止側の既存条件は不変');
+  for (const sink of [SINK_RESULT.NOT_FOUND, SINK_RESULT.UNAVAILABLE, SINK_RESULT.ERROR, undefined]) {
+    assert.equal(planAkGroupSync({ brand: B, action: 'resubscribe', customerSink: sink }), null, String(sink));
+    assert.equal(planAkGroupSync({ brand: B, action: 'unsubscribe', customerSink: sink }), null, String(sink));
+  }
+  // 他ブランドは触らない
+  for (const brand of ['keiba-intelligence', '', undefined]) {
+    assert.equal(planAkGroupSync({ brand, action: 'resubscribe', customerSink: SINK_RESULT.RECORDED }), null, String(brand));
+    assert.equal(planAkGroupSync({ brand, action: 'unsubscribe', customerSink: SINK_RESULT.RECORDED }), null, String(brand));
+  }
 });

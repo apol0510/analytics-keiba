@@ -24,6 +24,9 @@
  *     group suppression へメールアドレスを直接追加する（contact 検索は不要）。
  *   - 追加の前に group を GET で読み、**id と名前が両方一致したときだけ**書く（fail closed）。
  *   - KI の group には触らない（このモジュールは AK Marketing の id しか持たない）。
+ *   - **利用者が AK 側で明示的に配信再開したら**、AK Marketing の group suppression からだけ外す
+ *     （2026-09-28 MK 確定）。現在の所属を GET で確かめ、**34108 に居るときだけ** DELETE する。
+ *     global suppression・KI・テスト group は**外さない**。
  *
  * ## gate
  *
@@ -33,6 +36,7 @@
 
 import { formulaString } from '../webhooks/airtableFormula.js';
 import { AK_MARKETING_GROUP, parseAsmGroupId } from './akMarketingGroup.js';
+import { SINK_RESULT } from './unsubscribeOutcome.js';
 
 /**
  * AK 用の unsubscribe group（単一源は `akMarketingGroup.js`）。
@@ -281,6 +285,100 @@ export async function addToAkMarketingGroupSuppression({ email, env, fetchImpl }
     return { status: r.ok ? 'synced' : 'failed' };
   } catch {
     return { status: 'failed' };
+  }
+}
+
+/**
+ * `unsubscribe.js` で SendGrid 側を同期するか（純粋）。
+ *
+ * - 停止: brand が analytics-keiba・Customers の停止を**記録できた**（RECORDED）→ `add`
+ * - 再開: brand が analytics-keiba・Customers が再開済み（**RECORDED または ALREADY**）→ `remove`
+ *   （ALREADY も対象: AK は再開済みなのに SendGrid だけ停止中、の不整合を直せる）
+ * - それ以外（他 brand・見込み客だけ・記録失敗）→ `null`（SendGrid を触らない）
+ *
+ * ⚠️ gate はここでは見ない（同期関数の側が見る。閉じていれば `skipped_gate`）。
+ * ⚠️ 呼び出しは署名検証を通ったあとだけ（`unsubscribe.js` 側で固定）。
+ *
+ * @param {{brand?: string, action?: string, customerSink?: string}} [input]
+ * @returns {'add'|'remove'|null}
+ */
+export function planAkGroupSync({ brand, action, customerSink } = {}) {
+  if (brand !== 'analytics-keiba') return null;
+  if (action === BRIDGE_ACTION.UNSUBSCRIBE) return customerSink === SINK_RESULT.RECORDED ? 'add' : null;
+  if (action === BRIDGE_ACTION.RESUBSCRIBE) {
+    return customerSink === SINK_RESULT.RECORDED || customerSink === SINK_RESULT.ALREADY ? 'remove' : null;
+  }
+  return null;
+}
+
+/** SendGrid 側を触る前に、AK Marketing の id と名前を GET で照合する（共通） */
+async function verifyAkGroup(fetchImpl, auth) {
+  const g = await fetchImpl(`https://api.sendgrid.com/v3/asm/groups/${AK_MARKETING_GROUP.id}`, { method: 'GET', headers: auth });
+  if (!g.ok) return 'failed';
+  const group = await g.json();
+  if (!group || Number(group.id) !== AK_MARKETING_GROUP.id || str(group.name) !== AK_MARKETING_GROUP.name) {
+    return 'group_mismatch';
+  }
+  return 'ok';
+}
+
+/** 再開同期の状態コード（固定。アドレスを含めない） */
+export const RESUBSCRIBE_SYNC = Object.freeze({
+  SKIPPED_GATE: 'skipped_gate',
+  CONFIG_MISSING: 'config_missing',
+  GROUP_MISMATCH: 'group_mismatch',
+  /** AK Marketing の group suppression に居なかった（既に揃っている）*/
+  ALREADY_SYNCED: 'already_synced',
+  /** AK Marketing の group suppression から外した */
+  SYNCED: 'synced',
+  /** 現在の所属を読めなかった（読めないまま外さない）*/
+  LOOKUP_FAILED: 'lookup_failed',
+  FAILED: 'failed',
+});
+
+/**
+ * 利用者が AK 側で明示的に配信を再開したとき、SendGrid の **AK Marketing の group suppression からだけ**外す。
+ *
+ * 1. AK Marketing の id と名前を GET で照合（違えば何もしない）
+ * 2. `GET /v3/asm/suppressions/{email}` でこの人の group ごとの停止状態を読む
+ * 3. **34108 で停止中のときだけ** `DELETE /v3/asm/groups/34108/suppressions/{email}`
+ * 4. 34108 で停止していなければ `already_synced`（成功扱い・何も書かない）
+ *
+ * ⚠️ global suppression・KI・テスト group は**外さない**（このモジュールは 34108 以外の id を持たない）。
+ * ⚠️ 失敗しても AK 側の再開は巻き戻さない。呼び出し側は状態コードだけ残す。
+ *
+ * @returns {Promise<{status:string}>} `RESUBSCRIBE_SYNC` の値
+ */
+export async function removeFromAkMarketingGroupSuppression({ email, env, fetchImpl }) {
+  if (!isBridgeEnabled(env)) return { status: RESUBSCRIBE_SYNC.SKIPPED_GATE };
+  const apiKey = str((env || {}).SENDGRID_API_KEY);
+  const e = normEmail(email);
+  if (!apiKey || typeof fetchImpl !== 'function') return { status: RESUBSCRIBE_SYNC.CONFIG_MISSING };
+  if (!EMAIL_RE.test(e)) return { status: RESUBSCRIBE_SYNC.FAILED };
+  const auth = { Authorization: `Bearer ${apiKey}` };
+  try {
+    const v = await verifyAkGroup(fetchImpl, auth);
+    if (v === 'group_mismatch') return { status: RESUBSCRIBE_SYNC.GROUP_MISMATCH };
+    if (v !== 'ok') return { status: RESUBSCRIBE_SYNC.FAILED };
+
+    const cur = await fetchImpl(`https://api.sendgrid.com/v3/asm/suppressions/${encodeURIComponent(e)}`, {
+      method: 'GET', headers: auth,
+    });
+    if (!cur.ok) return { status: RESUBSCRIBE_SYNC.LOOKUP_FAILED };
+    const body = await cur.json();
+    const groups = body && Array.isArray(body.suppressions) ? body.suppressions : null;
+    // 形が読めないなら外さない（推測で DELETE しない）
+    if (!groups) return { status: RESUBSCRIBE_SYNC.LOOKUP_FAILED };
+    const ak = groups.find((x) => x && Number(x.id) === AK_MARKETING_GROUP.id);
+    if (!ak || ak.suppressed !== true) return { status: RESUBSCRIBE_SYNC.ALREADY_SYNCED };
+
+    const del = await fetchImpl(
+      `https://api.sendgrid.com/v3/asm/groups/${AK_MARKETING_GROUP.id}/suppressions/${encodeURIComponent(e)}`,
+      { method: 'DELETE', headers: auth },
+    );
+    return { status: del.ok ? RESUBSCRIBE_SYNC.SYNCED : RESUBSCRIBE_SYNC.FAILED };
+  } catch {
+    return { status: RESUBSCRIBE_SYNC.FAILED };
   }
 }
 

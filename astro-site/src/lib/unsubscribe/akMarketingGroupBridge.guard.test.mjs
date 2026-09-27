@@ -39,14 +39,21 @@ test('webhook: ログへ出すのは件数の要約だけ', () => {
   assert.ok(!/console\.[a-z]+\([^)]*event\.email/.test(WEBHOOK));
 });
 
-test('unsubscribe: Customers の停止を記録できたときだけ SendGrid へ伝える', () => {
+test('unsubscribe: SendGrid の同期は planAkGroupSync の判定どおり・署名検証の後だけ', () => {
   const start = UNSUB.indexOf('── AK → SendGrid');
+  assert.ok(start > 0);
   const block = UNSUB.slice(start, UNSUB.indexOf('console.log(`✅ unsubscribe ok', start));
-  assert.match(block, /brand === 'analytics-keiba'/);
-  assert.match(block, /requestedAction === 'unsubscribe'/, '再開では SendGrid を触らない');
-  assert.match(block, /sinkResults\[SINK\.CUSTOMER\] === SINK_RESULT\.RECORDED/);
+  assert.match(block, /planAkGroupSync\(\{ brand, action: requestedAction, customerSink: sinkResults\[SINK\.CUSTOMER\] \}\)/);
+  assert.match(block, /if \(syncPlan === 'add'\) \{\s*const r = await addToAkMarketingGroupSuppression/);
+  assert.match(block, /else if \(syncPlan === 'remove'\) \{\s*const r = await removeFromAkMarketingGroupSuppression/);
+  // 同期の結果で応答や AK 側の状態を変えない（状態コードを残すだけ）
+  assert.ok(!/return new Response/.test(block), '同期の結果で応答を分岐している');
+  assert.ok(!/updateUnsubscribeStatus/.test(block), '同期の結果で AK 側を書き戻している');
   // 署名検証の後
   assert.ok(UNSUB.indexOf('verifyUnsubscribeSignature({') < start);
+  // 呼び出しはこの 1 箇所だけ
+  assert.equal((UNSUB.match(/removeFromAkMarketingGroupSuppression\(/g) || []).length, 1);
+  assert.equal((UNSUB.match(/addToAkMarketingGroupSuppression\(/g) || []).length, 1);
 });
 
 test('Customers の列名は unsubscribe.js の analytics-keiba 設定と同じ', () => {
@@ -58,9 +65,20 @@ test('Customers の列名は unsubscribe.js の analytics-keiba 設定と同じ'
 test('橋渡しモジュールは AK Marketing 以外の group id・全体停止 API を持たない', () => {
   const ids = (BRIDGE.match(/\b\d{5}\b/g) || []).filter((n) => n !== String(AK_MARKETING_GROUP.id));
   assert.deepEqual(ids, [], `AK Marketing 以外の group id: ${ids}`);
-  for (const banned of ['/v3/asm/suppressions/global', '/v3/suppression/unsubscribes', "'/contacts/search", '`/contacts/search', "method: 'DELETE'"]) {
+  for (const banned of ['/v3/asm/suppressions/global', '/v3/suppression/unsubscribes', "'/contacts/search", '`/contacts/search', '/v3/marketing/contacts']) {
     assert.ok(!BRIDGE.includes(banned), banned);
   }
+  // DELETE は 1 箇所だけで、宛先は AK Marketing の group suppression（id は単一源から）
+  const deletes = BRIDGE.match(/method: 'DELETE'/g) || [];
+  assert.equal(deletes.length, 1);
+  const delAt = BRIDGE.indexOf("method: 'DELETE'");
+  const delCall = BRIDGE.slice(BRIDGE.lastIndexOf('fetchImpl(', delAt), delAt);
+  assert.match(delCall, /`https:\/\/api\.sendgrid\.com\/v3\/asm\/groups\/\$\{AK_MARKETING_GROUP\.id\}\/suppressions\/\$\{encodeURIComponent\(e\)\}`/);
+  // DELETE の前に、所属の確認で 34108 に停止中であることを見ている
+  const fn = BRIDGE.slice(BRIDGE.indexOf('export async function removeFromAkMarketingGroupSuppression'), delAt);
+  assert.match(fn, /verifyAkGroup\(/);
+  assert.match(fn, /Number\(x\.id\) === AK_MARKETING_GROUP\.id/);
+  assert.match(fn, /ak\.suppressed !== true/);
   assert.ok(!/console\./.test(BRIDGE), 'モジュール内でログを出さない（呼び出し側が件数だけ出す）');
 });
 

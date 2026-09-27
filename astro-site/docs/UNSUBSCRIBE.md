@@ -177,7 +177,30 @@ SendGrid Marketing Campaigns の配信（選別・週次）は、配信停止を
 - 書く前に `GET /v3/asm/groups/34108` で **id と名前の両方**を照合し、違えば書かない。contact 検索はしない。
 - 同じアドレスを何度加えても 1 件（冪等）。
 - **利用者への応答は同期の成否で変えない**（AK が正本で、週次の宛先は AK の判定から作るため送られない）。
-- **AK 側の配信再開（resubscribe）では SendGrid 側を触らない**（止め続ける側に倒す。解除の向きは未確定・下記）。
+
+### AK → SendGrid の配信再開（2026-09-28 MK 確定）
+
+利用者が AK 側で**明示的に**配信再開したら、SendGrid の **AK Marketing の group suppression からだけ**外す。
+
+| 条件（すべて満たすときだけ）| |
+|---|---|
+| brand | `analytics-keiba` |
+| 経路 | 署名検証済みの既存ワンクリック / 確認ページ（`unsubscribe.js`）|
+| 操作 | `resubscribe` |
+| Customers の結果 | **RECORDED または ALREADY**（ALREADY も対象: AK は再開済みなのに SendGrid だけ停止中、の不整合を直す）|
+| gate | `AK_MARKETING_UNSUBSCRIBE_BRIDGE_ENABLED=true` |
+
+1. `GET /v3/asm/groups/34108` で **id と名前**を照合（違えば `group_mismatch`・何もしない）
+2. `GET /v3/asm/suppressions/{email}` で group ごとの停止状態を読む（読めない・形が違えば `lookup_failed`・外さない）
+3. **34108 で停止中のときだけ** `DELETE /v3/asm/groups/34108/suppressions/{email}` → `synced`
+4. 34108 で停止していなければ `already_synced`（成功扱い・何も書かない）
+
+- **global suppression・KI（29174）・テスト（28368）は外さない**。contact 検索はしない。他ブランドへ副作用なし。
+- **SendGrid 側の解除に失敗しても AK 側の再開は巻き戻さない**。応答の `akMarketingGroup` に
+  固定コード（`resubscribe:failed` 等）を残し、不一致を観測できるようにする（アドレスはログへ出さない）。
+- 判定の単一源: `planAkGroupSync()`（停止は RECORDED だけ `add`、再開は RECORDED / ALREADY で `remove`）。
+- 見込み客の抑止は再開でも解除しない（`planUnsubscribeSinks` は再開で prospect へ書かない・従来どおり）。
+
 
 ### gate
 
@@ -192,9 +215,6 @@ SendGrid Marketing Campaigns の配信（選別・週次）は、配信停止を
 3. 既に `AK Marketing` で止まっている 34 件の扱い（2026-09-28 read-only 分類: **Customers 一致 0・重複 0・停止済み 0・不一致 34**
    ＝ Customers へ反映する対象は 0 件。見込み客側は本番 Redis が masked secret のためローカルから未計測。一括反映は別承認）
 
-### 未確定（MK 判断待ち）
-
-- AK 側で配信再開したとき、SendGrid の group suppression から外すか（現状は外さない）。
 
 ### 見込み客（prospect）も AK Marketing に限る（2026-09-27 MK 確定・#609 で修正）
 
