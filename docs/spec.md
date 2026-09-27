@@ -18,7 +18,8 @@
 
 - **AK が正本**（Customers `UnsubscribedAnalyticsKeiba` / `EmailBlacklist` / 配信基盤の停止リスト）。
 - SendGrid の group suppression（`AK Marketing`）は**送信時の最後の砦**。
-- SendGrid → AK は `asm_group_id` が AK Marketing のイベントだけ。KI・テスト・不明 group は AK を変えない。
+- SendGrid → AK は `asm_group_id` が AK Marketing のイベントだけ。KI・テスト・不明 group は AK を変えない（Customers・見込み客とも）。
+- 再開は **再開の時刻 ＞ AK の停止時刻** のときだけ。時刻が無い・読めない・同時刻以前は解除しない。同時刻は停止を優先。
 - AK → SendGrid は global unsubscribe ではなく **AK Marketing の group suppression** へ加える。
 
 ## 本番有効化の完成条件（週次を元々の会員へ開ける前）

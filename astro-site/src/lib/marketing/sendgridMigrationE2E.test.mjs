@@ -258,7 +258,7 @@ test('E2E: bounce / 配信停止は即時除外で、投入対象に戻らない
   const { updates } = planProspectEventUpdates({
     events: [
       { email: 'bounced@example.test', event: 'bounce' },
-      { email: 'unsub@example.test', event: 'group_unsubscribe' },
+      { email: 'unsub@example.test', event: 'group_unsubscribe', asm_group_id: 34108 },
     ],
     classify: classifyEvent,
   });

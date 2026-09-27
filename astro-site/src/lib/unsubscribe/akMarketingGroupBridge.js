@@ -31,14 +31,14 @@
  * （Customers にも SendGrid にも書かない）。本番の有効化は env 変更＋redeploy（要承認）。
  */
 
-import { UNSUBSCRIBE_GROUP_NAME } from '../marketing/sendgridAutomationPlan.js';
 import { formulaString } from '../webhooks/airtableFormula.js';
+import { AK_MARKETING_GROUP, parseAsmGroupId } from './akMarketingGroup.js';
 
 /**
- * AK 用の unsubscribe group（2026-09-27 に本番 read-only で id・名前の一致を確認）。
+ * AK 用の unsubscribe group（単一源は `akMarketingGroup.js`）。
  * ⚠️ id だけで信用しない。SendGrid へ書く前に GET で名前も照合する。
  */
-export const AK_MARKETING_GROUP = Object.freeze({ id: 34108, name: UNSUBSCRIBE_GROUP_NAME });
+export { AK_MARKETING_GROUP };
 
 export const BRIDGE_GATE_ENV = 'AK_MARKETING_UNSUBSCRIBE_BRIDGE_ENABLED';
 
@@ -97,9 +97,8 @@ export function classifyGroupEvent(event) {
     return { kind: 'ignore', reason: BRIDGE_IGNORE.NOT_GROUP_EVENT };
   }
   // group が分からないものは**AK のものとみなさない**（fail closed）
-  const raw = e.asm_group_id;
-  const groupId = typeof raw === 'number' ? raw : (/^\d+$/.test(str(raw)) ? Number(str(raw)) : NaN);
-  if (!Number.isInteger(groupId)) return { kind: 'ignore', reason: BRIDGE_IGNORE.UNKNOWN_GROUP };
+  const groupId = parseAsmGroupId(e.asm_group_id);
+  if (groupId === null) return { kind: 'ignore', reason: BRIDGE_IGNORE.UNKNOWN_GROUP };
   if (groupId !== AK_MARKETING_GROUP.id) return { kind: 'ignore', reason: BRIDGE_IGNORE.FOREIGN_GROUP };
   const email = normEmail(e.email);
   if (!EMAIL_RE.test(email)) return { kind: 'ignore', reason: BRIDGE_IGNORE.INVALID_EMAIL };
@@ -139,29 +138,47 @@ export function planGroupEvents(events) {
 
 /**
  * Customers をどう変えるか（純粋）。
+ *
+ * **時系列は AK 側の停止時刻（`UnsubscribedAtAnalyticsKeiba`）を基準にする。**
+ * webhook のバッチは到着順が入れ替わり得る（停止 9/1 → 停止 9/10 → 遅れて再開 9/5）ので、
+ *   - 停止: 未停止なら立てる。**既に停止中でも、より新しい停止なら停止時刻を進める**
+ *     （後から古い再開が届いても解除されないようにする）
+ *   - 再開: **再開の時刻と AK の停止時刻が両方読めて、再開のほうが厳密に新しいときだけ**解除する。
+ *     時刻が無い・読めない・同時刻以前は解除しない（止め続ける側に倒す）
+ *
  * @param {{fields: object, action: string, atMs: number|null, nowMs: number}} input
  * @returns {{write: object|null, noop: string|null}}
  */
 export function decideCustomerChange({ fields, action, atMs, nowMs }) {
   const f = fields || {};
   const flagged = f[CUSTOMER_UNSUBSCRIBE_FIELDS.flag] === true;
+  const stoppedAt = Date.parse(str(f[CUSTOMER_UNSUBSCRIBE_FIELDS.at]));
+  const hasStoppedAt = Number.isFinite(stoppedAt);
+  const hasEventAt = Number.isFinite(atMs);
+
   if (action === BRIDGE_ACTION.UNSUBSCRIBE) {
-    if (flagged) return { write: null, noop: BRIDGE_NOOP.ALREADY_UNSUBSCRIBED };
-    const at = Number.isFinite(atMs) ? atMs : nowMs;
-    return {
-      write: {
-        [CUSTOMER_UNSUBSCRIBE_FIELDS.flag]: true,
-        [CUSTOMER_UNSUBSCRIBE_FIELDS.at]: new Date(at).toISOString(),
-      },
-      noop: null,
-    };
+    if (!flagged) {
+      const at = hasEventAt ? atMs : nowMs;
+      return {
+        write: {
+          [CUSTOMER_UNSUBSCRIBE_FIELDS.flag]: true,
+          [CUSTOMER_UNSUBSCRIBE_FIELDS.at]: new Date(at).toISOString(),
+        },
+        noop: null,
+      };
+    }
+    // 既に停止中: より新しい停止なら時刻だけ進める（停止時刻が読めない場合も、時刻のある停止で埋める）
+    if (hasEventAt && (!hasStoppedAt || atMs > stoppedAt)) {
+      return { write: { [CUSTOMER_UNSUBSCRIBE_FIELDS.at]: new Date(atMs).toISOString() }, noop: null };
+    }
+    return { write: null, noop: BRIDGE_NOOP.ALREADY_UNSUBSCRIBED };
   }
+
   if (action === BRIDGE_ACTION.RESUBSCRIBE) {
     if (!flagged) return { write: null, noop: BRIDGE_NOOP.ALREADY_SUBSCRIBED };
-    // 再開の時刻が分からない、または AK 側の停止のほうが新しい → 解除しない（安全側）
-    const stoppedAt = Date.parse(str(f[CUSTOMER_UNSUBSCRIBE_FIELDS.at]));
-    if (!Number.isFinite(atMs)) return { write: null, noop: BRIDGE_NOOP.STALE_RESUBSCRIBE };
-    if (Number.isFinite(stoppedAt) && stoppedAt > atMs) return { write: null, noop: BRIDGE_NOOP.STALE_RESUBSCRIBE };
+    if (!hasEventAt || !hasStoppedAt || atMs <= stoppedAt) {
+      return { write: null, noop: BRIDGE_NOOP.STALE_RESUBSCRIBE };
+    }
     return {
       write: { [CUSTOMER_UNSUBSCRIBE_FIELDS.flag]: false, [CUSTOMER_UNSUBSCRIBE_FIELDS.at]: null },
       noop: null,
@@ -182,7 +199,7 @@ export async function applyGroupEventsToCustomers({ events, env, fetchImpl, nowM
     enabled: isBridgeEnabled(env),
     targeted: ops.length,
     ignored,
-    written: { unsubscribe: 0, resubscribe: 0 },
+    written: { unsubscribe: 0, resubscribe: 0, stopTimeAdvanced: 0 },
     noop: {},
     errors: 0,
   };
@@ -221,7 +238,10 @@ export async function applyGroupEventsToCustomers({ events, env, fetchImpl, nowM
         body: JSON.stringify({ fields: d.write }),
       });
       if (!p.ok) { summary.errors += 1; continue; }
-      summary.written[op.action] += 1;
+      const advancedOnly = op.action === BRIDGE_ACTION.UNSUBSCRIBE
+        && !(CUSTOMER_UNSUBSCRIBE_FIELDS.flag in d.write);
+      if (advancedOnly) summary.written.stopTimeAdvanced += 1;
+      else summary.written[op.action] += 1;
     } catch {
       summary.errors += 1;
     }

@@ -144,11 +144,12 @@ test('SendGrid 未設定なら何もしない / env 1 つで止められる（�
 });
 
 test('group_unsubscribe を安全に処理できる（トグルを ON にしてよい）', () => {
-  // classifyEvent は group_unsubscribe を抑止として扱う
-  assert.deepEqual(classifyEvent('group_unsubscribe').kind, 'suppress');
+  // classifyEvent は AK Marketing（34108）の group_unsubscribe を抑止として扱う
+  // （KI・テスト・不明 group は触らない: prospectGroupUnsubscribe.test.mjs）
+  assert.deepEqual(classifyEvent('group_unsubscribe', { asm_group_id: 34108 }).kind, 'suppress');
   const { updates } = planProspectEventUpdates({
     events: [
-      { email: 'g@example.test', event: 'group_unsubscribe' },
+      { email: 'g@example.test', event: 'group_unsubscribe', asm_group_id: 34108 },
       { email: 'h@example.test', event: 'unsubscribe' },
       { email: 'i@example.test', event: 'spamreport' },
       { email: 'j@example.test', event: 'bounce' },

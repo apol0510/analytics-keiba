@@ -29,6 +29,7 @@
  */
 
 import { isProspectCutOff, PROSPECT_CUTOFF_REASON } from './prospectEngagement.js';
+import { isAkMarketingGroupId } from '../unsubscribe/akMarketingGroup.js';
 
 /**
  * 同じ相手へ続けて送らない最小間隔（JST 暦日）。
@@ -93,8 +94,11 @@ export const normalizeEmail = (raw) => str(raw).toLowerCase();
 /**
  * SendGrid のイベント種別を prospect の扱いへ翻訳する。
  * **知らない種別は「何もしない」**（勝手に除外も反応扱いもしない）。
+ *
+ * @param {string} eventType SendGrid の `event`
+ * @param {object} [event] イベント本体。`group_unsubscribe` の group 判定にだけ使う
  */
-export function classifyEvent(eventType) {
+export function classifyEvent(eventType, event = null) {
   const t = str(eventType).toLowerCase();
   /**
    * ⚠️ **`delivered` を数えるのがこの経路の要**（2026-09-14 追加）。
@@ -109,7 +113,18 @@ export function classifyEvent(eventType) {
   if (t === 'bounce' || t === 'blocked') return { kind: 'suppress', reason: SUPPRESS_REASON.BOUNCE };
   if (t === 'dropped') return { kind: 'suppress', reason: SUPPRESS_REASON.DROPPED };
   if (t === 'spamreport') return { kind: 'suppress', reason: SUPPRESS_REASON.COMPLAINT };
-  if (t === 'unsubscribe' || t === 'group_unsubscribe') return { kind: 'suppress', reason: SUPPRESS_REASON.UNSUBSCRIBE };
+  if (t === 'unsubscribe') return { kind: 'suppress', reason: SUPPRESS_REASON.UNSUBSCRIBE };
+  /**
+   * ⚠️ **group 単位の配信停止は AK Marketing のものだけ**（2026-09-27 MK 確定）。
+   *    同じ SendGrid アカウントを KI と共用しているため、KI・テスト・不明 group の停止で
+   *    AK の見込み客を止めない。group が読めないイベントも止めない（fail closed＝AK の状態を変えない）。
+   *    判定は単一源 `akMarketingGroup.js`。`group_resubscribe` は扱わない（抑止は不可逆のまま）。
+   */
+  if (t === 'group_unsubscribe') {
+    return isAkMarketingGroupId(event && event.asm_group_id)
+      ? { kind: 'suppress', reason: SUPPRESS_REASON.UNSUBSCRIBE }
+      : { kind: 'ignore', reason: null };
+  }
   return { kind: 'ignore', reason: null };
 }
 

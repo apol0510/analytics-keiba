@@ -158,14 +158,16 @@ SendGrid Marketing Campaigns の配信（選別・週次）は、配信停止を
 
 | イベント | `asm_group_id` | Customers |
 |---|---|---|
-| `group_unsubscribe` | **34108（AK Marketing）** | `UnsubscribedAnalyticsKeiba=true`（既に true なら何もしない）|
-| `group_resubscribe` | **34108** | **AK 側の停止より新しいときだけ** false へ戻す。時刻が無い・古い再開では戻さない |
+| `group_unsubscribe` | **34108（AK Marketing）** | `UnsubscribedAnalyticsKeiba=true`。**既に停止中でも、より新しい停止なら停止時刻（`UnsubscribedAtAnalyticsKeiba`）を進める** |
+| `group_resubscribe` | **34108** | **再開の時刻 ＞ AK の停止時刻 のときだけ** false へ戻す。再開の時刻が無い・停止時刻が無い/読めない・同時刻以前は戻さない |
 | 上記 2 種 | KI（29174）・テスト（28368）・その他 | **変えない**（`foreign_group`）|
 | 上記 2 種 | 無い・数値でない | **変えない**（`unknown_group` / fail closed）|
 | `unsubscribe`（global）・bounce・spam 等 | — | 橋渡しは関与しない（既存の `EmailBlacklist` 処理のまま）|
 
 - 署名検証を通ったあとにだけ動く（guard テストで順序を固定）。独立した try/catch で、失敗しても他の段を止めない。
 - 同じ人の複数イベントは**新しいほう**、同時刻は**停止を優先**。同じアドレスが Customers に 2 件ある場合は書かない。
+- **バッチをまたいだ到着順の逆転に耐える**: 停止 9/1 → 停止 9/10 → 遅れて再開 9/5 の順に届いても、
+  9/10 の停止で停止時刻が進んでいるので 9/5 の再開では解除されない（テストで固定）。
 - 失敗しても SendGrid に再送は求めない（他の段の書き込みまで重ねて走るため）。件数だけ残す。
 
 ### AK → SendGrid（`unsubscribe.js`）
@@ -187,10 +189,18 @@ SendGrid Marketing Campaigns の配信（選別・週次）は、配信停止を
 1. Event Webhook で `group_unsubscribe` / `group_resubscribe` を受け取る設定（SendGrid 設定変更・要承認。
    2026-09-18 時点で `group_unsubscribe: false`）
 2. gate env の投入＋redeploy
-3. 既に `AK Marketing` で止まっている 34 件（2026-09-27 実測）を Customers へ反映するかの判断（一括反映は別承認）
+3. 既に `AK Marketing` で止まっている 34 件の扱い（2026-09-28 read-only 分類: **Customers 一致 0・重複 0・停止済み 0・不一致 34**
+   ＝ Customers へ反映する対象は 0 件。見込み客側は本番 Redis が masked secret のためローカルから未計測。一括反映は別承認）
 
 ### 未確定（MK 判断待ち）
 
 - AK 側で配信再開したとき、SendGrid の group suppression から外すか（現状は外さない）。
-- 見込み客（prospect）経路は `group_unsubscribe` を **group を問わず**停止扱いにしている（`prospectPolicy.classifyEvent`）。
-  KI の group 停止で AK の見込み客が止まり得る（安全側だが分離の原則とは合わない）。今回は変更していない。
+
+### 見込み客（prospect）も AK Marketing に限る（2026-09-27 MK 確定・#609 で修正）
+
+`prospectPolicy.classifyEvent` は以前 `group_unsubscribe` を **group を問わず**抑止していた。
+Event Webhook で `group_unsubscribe` を ON にすると KI・テスト group の停止で AK の見込み客が止まるため、
+**`asm_group_id=34108` のときだけ**抑止する。KI・テスト・不明・欠落は**変えない**（fail closed）。
+通常の `unsubscribe`・bounce・dropped・spamreport は従来どおり（group を見ない）。
+見込み客の抑止は不可逆のまま（`group_resubscribe` で復活させない）。
+group の判定は単一源 `src/lib/unsubscribe/akMarketingGroup.js`（id・名前を他へ直書きしない。guard で固定）。

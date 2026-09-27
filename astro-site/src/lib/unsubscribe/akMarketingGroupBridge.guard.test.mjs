@@ -63,3 +63,24 @@ test('橋渡しモジュールは AK Marketing 以外の group id・全体停止
   }
   assert.ok(!/console\./.test(BRIDGE), 'モジュール内でログを出さない（呼び出し側が件数だけ出す）');
 });
+
+test('AK Marketing の id・名前は akMarketingGroup.js だけに書く（直書きしない）', async () => {
+  const { readdirSync, statSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const root = fileURLToPath(new URL('../../../', import.meta.url));
+  const walk = (d) => readdirSync(d).flatMap((n) => {
+    if (n === 'node_modules' || n.startsWith('.')) return [];
+    const p = join(d, n);
+    return statSync(p).isDirectory() ? walk(p) : (/\.(m?js|ts|astro)$/.test(n) && !/\.test\.|\.guard\./.test(n) ? [p] : []);
+  });
+  const hits = [];
+  for (const dir of ['src', 'netlify', 'scripts']) {
+    for (const f of walk(join(root, dir))) {
+      if (f.endsWith('src/lib/unsubscribe/akMarketingGroup.js')) continue;
+      const code = readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+      if (/\b34108\b|['"`]AK Marketing['"`]/.test(code)) hits.push(f.slice(root.length));
+    }
+  }
+  assert.deepEqual(hits, []);
+});

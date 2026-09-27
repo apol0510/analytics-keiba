@@ -82,23 +82,44 @@ test('同じ人の複数イベントは新しいほう、同時刻は停止を�
 
 // ─── Customers への反映 ────────────────────────────────────────────
 
-test('停止: 未停止なら立てる / 既に停止なら何もしない（冪等）', () => {
+const AT = CUSTOMER_UNSUBSCRIBE_FIELDS.at;
+const FLAG = CUSTOMER_UNSUBSCRIBE_FIELDS.flag;
+const iso = (sec) => new Date(sec * 1000).toISOString();
+const stoppedAt = (sec) => ({ [FLAG]: true, [AT]: iso(sec) });
+
+test('停止: 未停止なら立てる / 同じ時刻・古い停止は何もしない（冪等）', () => {
   const on = decideCustomerChange({ fields: {}, action: 'unsubscribe', atMs: T0 * 1000, nowMs: 0 });
-  assert.deepEqual(on.write, { [CUSTOMER_UNSUBSCRIBE_FIELDS.flag]: true, [CUSTOMER_UNSUBSCRIBE_FIELDS.at]: new Date(T0 * 1000).toISOString() });
-  const again = decideCustomerChange({ fields: on.write, action: 'unsubscribe', atMs: T0 * 1000 + 1, nowMs: 0 });
-  assert.equal(again.write, null);
-  assert.equal(again.noop, BRIDGE_NOOP.ALREADY_UNSUBSCRIBED);
+  assert.deepEqual(on.write, { [FLAG]: true, [AT]: iso(T0) });
+  for (const sec of [T0, T0 - 60]) {
+    const again = decideCustomerChange({ fields: stoppedAt(T0), action: 'unsubscribe', atMs: sec * 1000, nowMs: 0 });
+    assert.equal(again.write, null, String(sec));
+    assert.equal(again.noop, BRIDGE_NOOP.ALREADY_UNSUBSCRIBED);
+  }
 });
 
-test('再開: AK 側の停止より新しいときだけ解除する', () => {
-  const stopped = { [CUSTOMER_UNSUBSCRIBE_FIELDS.flag]: true, [CUSTOMER_UNSUBSCRIBE_FIELDS.at]: new Date(T0 * 1000).toISOString() };
-  const newer = decideCustomerChange({ fields: stopped, action: 'resubscribe', atMs: T0 * 1000 + 60000, nowMs: 0 });
-  assert.deepEqual(newer.write, { [CUSTOMER_UNSUBSCRIBE_FIELDS.flag]: false, [CUSTOMER_UNSUBSCRIBE_FIELDS.at]: null });
-  const older = decideCustomerChange({ fields: stopped, action: 'resubscribe', atMs: T0 * 1000 - 60000, nowMs: 0 });
-  assert.equal(older.write, null);
-  assert.equal(older.noop, BRIDGE_NOOP.STALE_RESUBSCRIBE);
-  const noTime = decideCustomerChange({ fields: stopped, action: 'resubscribe', atMs: null, nowMs: 0 });
-  assert.equal(noTime.write, null, '時刻の無い再開では解除しない');
+test('停止: 既に停止中でも、より新しい停止なら停止時刻を進める（旗は触らない）', () => {
+  const d = decideCustomerChange({ fields: stoppedAt(T0), action: 'unsubscribe', atMs: (T0 + 600) * 1000, nowMs: 0 });
+  assert.deepEqual(d.write, { [AT]: iso(T0 + 600) });
+  const noTime = decideCustomerChange({ fields: { [FLAG]: true }, action: 'unsubscribe', atMs: T0 * 1000, nowMs: 0 });
+  assert.deepEqual(noTime.write, { [AT]: iso(T0) }, '停止時刻が読めなければ時刻のある停止で埋める');
+});
+
+test('再開: AK の停止時刻が無い・読めないなら解除しない', () => {
+  for (const f of [{ [FLAG]: true }, { [FLAG]: true, [AT]: '' }, { [FLAG]: true, [AT]: 'not-a-date' }]) {
+    const d = decideCustomerChange({ fields: f, action: 'resubscribe', atMs: (T0 + 600) * 1000, nowMs: 0 });
+    assert.equal(d.write, null, JSON.stringify(f));
+    assert.equal(d.noop, BRIDGE_NOOP.STALE_RESUBSCRIBE);
+  }
+});
+
+test('再開: 同時刻・より古い・時刻なしは解除しない／厳密に新しいときだけ解除', () => {
+  for (const at of [T0 * 1000, (T0 - 60) * 1000, null, NaN]) {
+    const d = decideCustomerChange({ fields: stoppedAt(T0), action: 'resubscribe', atMs: at, nowMs: 0 });
+    assert.equal(d.write, null, String(at));
+    assert.equal(d.noop, BRIDGE_NOOP.STALE_RESUBSCRIBE);
+  }
+  const newer = decideCustomerChange({ fields: stoppedAt(T0), action: 'resubscribe', atMs: T0 * 1000 + 1, nowMs: 0 });
+  assert.deepEqual(newer.write, { [FLAG]: false, [AT]: null });
   const notStopped = decideCustomerChange({ fields: {}, action: 'resubscribe', atMs: T0 * 1000, nowMs: 0 });
   assert.equal(notStopped.noop, BRIDGE_NOOP.ALREADY_SUBSCRIBED);
 });
@@ -259,4 +280,32 @@ test('AK → SendGrid: 戻り値は状態コードだけ（アドレス・鍵を
   const sg = fakeSendgrid();
   const r = await addToAkMarketingGroupSuppression({ email: 'member@example.jp', env: ENV_ON, fetchImpl: sg.fetchImpl });
   assert.deepEqual(Object.keys(r), ['status']);
+});
+
+test('webhook: バッチをまたいだ到着順の逆転でも新しい停止が勝つ（停止 9/1 → 停止 9/10 → 遅れて再開 9/5）', async () => {
+  const d = (m, day) => Date.UTC(2026, m - 1, day) / 1000;
+  const at = fakeAirtable({ records: [member()] });
+  const run = (e) => applyGroupEventsToCustomers({ events: [e], env: ENV_ON, fetchImpl: at.fetchImpl });
+  await run(ev('group_unsubscribe', AK, 'member@example.jp', d(9, 1)));
+  const adv = await run(ev('group_unsubscribe', AK, 'member@example.jp', d(9, 10)));
+  assert.equal(adv.written.stopTimeAdvanced, 1);
+  assert.equal(at.state[0].fields[AT], iso(d(9, 10)));
+  const late = await run(ev('group_resubscribe', AK, 'member@example.jp', d(9, 5)));
+  assert.equal(late.written.resubscribe, 0);
+  assert.equal(late.noop[BRIDGE_NOOP.STALE_RESUBSCRIBE], 1);
+  assert.equal(at.state[0].fields[FLAG], true, '古い再開で解除されない');
+  // その後、本当に新しい再開なら解除できる
+  const fresh = await run(ev('group_resubscribe', AK, 'member@example.jp', d(9, 12)));
+  assert.equal(fresh.written.resubscribe, 1);
+  assert.equal(at.state[0].fields[FLAG], false);
+});
+
+test('webhook: 同じバッチで同時刻の停止と再開が来たら停止が勝つ', async () => {
+  const at = fakeAirtable({ records: [member('member@example.jp', stoppedAt(T0 - 100))] });
+  const s = await applyGroupEventsToCustomers({
+    events: [ev('group_resubscribe', AK, 'member@example.jp', T0), ev('group_unsubscribe', AK, 'member@example.jp', T0)],
+    env: ENV_ON, fetchImpl: at.fetchImpl,
+  });
+  assert.equal(s.written.resubscribe, 0);
+  assert.equal(at.state[0].fields[FLAG], true);
 });

@@ -186,7 +186,8 @@ test('【最重要】EXHAUSTED は delivered を積んでも戻らない', () =>
 test('【重要】bounce / 苦情 / 配信停止は従来どおり即 SUPPRESSED', () => {
   // webhook の event 種別が「抑止」に分類されること（分類の単一源）
   for (const type of ['bounce', 'dropped', 'spamreport', 'unsubscribe', 'group_unsubscribe']) {
-    const k = classifyEvent(type);
+    // group 単位の停止は AK Marketing（34108）のものだけが抑止になる
+    const k = classifyEvent(type, type === 'group_unsubscribe' ? { asm_group_id: 34108 } : null);
     assert.equal(k && k.kind, 'suppress', `${type} が抑止に分類されない: ${JSON.stringify(k)}`);
   }
   // 抑止を適用したら SUPPRESSED（delivered の回数によらない）
