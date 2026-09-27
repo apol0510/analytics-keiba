@@ -110,6 +110,25 @@ test('並び: 一覧 → 登録案内 → 読み方（折りたたみ）→ 実�
   assert.ok(/<details class="rvb-venuecmp">[\s\S]{0,300}rvb-highlight/.test(markup), '会場比較が折りたたまれていない');
 });
 
+test('行カードは開閉とも同じネイビー／シアン系。開閉は強弱だけで示す', () => {
+  const rule = (sel) => {
+    const esc = sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const m = board.match(new RegExp(`${esc}\\s*(?:,[^{]*)?\\{([^}]*)\\}`));
+    assert.ok(m, `${sel} の指定が無い`);
+    return m[1];
+  };
+  const closed = rule('.rvb-row > .rvb-detail:not([open])');
+  const open = rule('.rvb-row > .rvb-detail[open]');
+  const base = rule('.rvb-row > .rvb-detail');
+  for (const [name, css] of [['閉', closed], ['開', open]]) {
+    assert.ok(css.includes('rgba(8,47,73'), `${name}: ネイビー系の背景でない`);
+    assert.equal(/rgba\((30,41,59|255,255,255)/.test(css), false, `${name}: グレー／白寄りに戻っている`);
+  }
+  const alpha = (css) => Number((css.match(/border(?:-color)?:[^;]*rgba\(34,211,238,([0-9.]+)\)/) || [])[1]);
+  assert.ok(alpha(base) > 0 && alpha(open) > alpha(base), '開いた状態の border が閉じた状態より明るくない');
+  assert.equal(/border-left:/.test(base + closed + open), false, '左端の色帯がある');
+});
+
 test('一覧の文言に役割名・評価語を書かない', () => {
   const words = Object.entries(LIST_COPY).filter(([k]) => k !== 'headPaid')
     .map(([, v]) => (typeof v === 'function' ? v(12) : v)).join(' ');

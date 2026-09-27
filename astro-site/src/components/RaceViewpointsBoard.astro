@@ -762,7 +762,7 @@ const LEGEND = [
 
   .rvb-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
   /* 2026-09-27 MK: 左端の強い色帯は不採用。弱いガラス調の囲みにする（状態別の色帯も付けない）。 */
-  .rvb-row { border: 1px solid rgba(148,163,184,.18); border-radius: 12px; background: rgba(30,41,59,.42); padding: 10px 12px; -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); box-shadow: 0 1px 0 rgba(255,255,255,.04) inset; }
+  .rvb-row { border: 0; border-radius: 12px; background: transparent; padding: 10px 12px; }
 
   .rvb-row-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
   .rvb-time { color: #cbd5e1; font-variant-numeric: tabular-nums; font-size: .85rem; }
@@ -1021,8 +1021,24 @@ const LEGEND = [
   .rvb-headnote-paid { color: #94a3b8; }
   .rvb-headnote-paid .rvb-headnote-ic { background: rgba(148,163,184,.14); }
   .rvb-row { padding: 0; }
-  .rvb-row > .rvb-detail { margin: 0; border: 0; border-radius: 11px; }
-  .rvb-row > .rvb-detail:not([open]) { background: linear-gradient(180deg, rgba(255,255,255,.035), rgba(255,255,255,0)); }
+  /* 2026-09-27 MK（2 版目の目視）: 開いた状態のネイビー／シアンの方が AK に合う。
+     閉じた状態も同じ色相にそろえ、開閉は border の明るさと背景の濃さ（強弱）だけで示す。
+     状態ごとに別の色相へ変えない。左端の色帯は付けない。 */
+  .rvb-row > .rvb-detail {
+    margin: 0; border-radius: 12px;
+    border: 1px solid rgba(34,211,238,.22);
+    background: rgba(8,47,73,.46);
+    -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+    box-shadow: none;
+    transition: border-color .15s, background-color .15s;
+  }
+  .rvb-row > .rvb-detail:not([open]) { background: linear-gradient(180deg, rgba(8,47,73,.52), rgba(8,47,73,.40)); }
+  .rvb-row > .rvb-detail:not([open]):hover { border-color: rgba(34,211,238,.36); }
+  .rvb-row > .rvb-detail[open], .rvb-row > .rvb-detail.is-open {
+    border-color: rgba(34,211,238,.58);
+    background: rgba(8,47,73,.66);
+    box-shadow: 0 0 0 1px rgba(34,211,238,.10) inset;
+  }
   .rvb-row > .rvb-detail > .rvb-detail-sum { display: block; padding: 10px 12px; color: #f1f5f9; font-size: 1rem; font-weight: 400; }
   .rvb-row > .rvb-detail > .rvb-detail-sum:focus-visible { outline: 3px solid #22d3ee; outline-offset: -3px; border-radius: 8px; }
   .rvb-sum-line { display: flex; align-items: baseline; gap: 4px 10px; min-width: 0; }
