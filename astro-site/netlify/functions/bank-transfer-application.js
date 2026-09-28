@@ -38,6 +38,7 @@ import { shapeRaceCalendar } from '../../src/lib/premiumPlus/premiumPlusRaceCale
 import { isSaleDateFieldEnabled, SALE_TARGET_DATE_FIELD } from '../../src/lib/payments/bankPaymentFlow.js';
 import raceCalendarRaw from '../../src/data/premiumPlusRaceCalendar.json' with { type: 'json' };
 import { recordPlusCheckoutStart } from '../../src/lib/premiumPlus/premiumPlusFunnelServer.js';
+import { recordPaymentApplication } from '../../src/lib/payments/paymentFunnelServer.js';
 import { normalizeSalePaused, PP_SALE_PAUSE_FIELDS } from '../../src/lib/premiumPlus/premiumPlusRelease.js';
 
 /**
@@ -790,6 +791,13 @@ exports.handler = async (event, context) => {
      *    （実際に ReferenceError で申込が 500 になった）。
      */
     let campaignApplied = null;
+    /**
+     * 決済ファネル（全プラン）の計測用。**Airtable への保存が成功した分岐でだけ**埋める。
+     * 識別子は recordId だけ（メール・氏名は載せない）。if ブロックの外で宣言する理由は campaignApplied と同じ。
+     */
+    let paymentFunnelRecord = isPremiumPlusOrder && plusCustomerRecordId
+      ? { recordId: plusCustomerRecordId, planName: 'Premium Plus', planType: null }
+      : null;
     if (!isPremiumPlusProductName(productName)) {
       // ⚠️ 商品名の読み替えは**共有の単一源**を使う（`payments/productName.js`）。
       //    ここに自前で書くと、画面（/api/campaign.json）と食い違い、
@@ -1036,6 +1044,7 @@ exports.handler = async (event, context) => {
           }
 
           console.log('✅ Airtable updated (existing customer):', email);
+          paymentFunnelRecord = { recordId, planName, planType };
         } else {
           // ─────────────────────────────────────────────
           // 🔁 2026-05-12 修正: 同時リクエストでの重複作成防止（race-safe re-check）
@@ -1092,6 +1101,7 @@ exports.handler = async (event, context) => {
               console.error('❌ Airtable update (race fallback) error details:', errorText);
               throw new Error(`Airtable update failed (race fallback): ${updateResponse.status} - ${errorText}`);
             }
+            paymentFunnelRecord = { recordId, planName, planType };
           } else {
             // 新規顧客 - Create
             const createUrl = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/Customers`;
@@ -1132,6 +1142,13 @@ exports.handler = async (event, context) => {
             }
 
             console.log('✅ Airtable created (new customer):', email);
+            // 新規作成の recordId はレスポンスからしか取れない。読めなくても申込は通す
+            try {
+              const created = await createResponse.json();
+              if (created && typeof created.id === 'string') {
+                paymentFunnelRecord = { recordId: created.id, planName, planType };
+              }
+            } catch { /* 計測しないだけ */ }
           }
         }
       } catch (airtableError) {
@@ -1276,6 +1293,19 @@ exports.handler = async (event, context) => {
       }
       // ⚠️ 識別子（メール / recordId）を載せない。何が起きたかだけを残す
       console.log('🎟 [bank-transfer] クーポン利用予約:', { outcome: reservationOutcome });
+    }
+
+    // ========================================
+    // 決済ファネルの計測（全プラン・サーバー側）
+    // ========================================
+    // 「振込完了の報告を受理した」件数。GA4 の application_submitted は広告ブロック等で欠けるため
+    // サーバー側の確定値として Redis に件数だけを残す（正本 src/lib/payments/paymentFunnel.js）。
+    // ⚠️ 計測の失敗・遅延で申込を止めない（recordPaymentApplication は例外を投げない・700ms で諦める）。
+    if (paymentFunnelRecord) {
+      const fm = await recordPaymentApplication({ ...paymentFunnelRecord, env: process.env, nowMs: Date.now() });
+      console.log('📊 [bank-transfer] 決済ファネル（申込受理）:', { counted: fm.counted, reason: fm.reason });
+    } else {
+      console.log('📊 [bank-transfer] 決済ファネル（申込受理）: 記録なし（recordId 未確定）');
     }
 
     console.log('✅ Bank transfer completion report submitted:', {
