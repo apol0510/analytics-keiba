@@ -42,6 +42,7 @@ import {
 } from '../../src/lib/premiumPlus/premiumPlusCouponReservationStore.js';
 import { readReopenCoupon } from '../../src/lib/premiumPlus/premiumPlusReopenCoupon.js';
 import { recordPlusPurchase } from '../../src/lib/premiumPlus/premiumPlusFunnelServer.js';
+import { recordPaymentConfirmation } from '../../src/lib/payments/paymentFunnelServer.js';
 import { buildV2ConfirmationFields } from '../../src/lib/payments/promotionV2.js';
 import { parseGatesFromEnv, shouldConfirmUseV2 } from '../../src/lib/payments/paymentEmailState.js';
 import {
@@ -282,6 +283,22 @@ exports.handler = async (event) => {
     } catch (metricError) {
       console.error('⚠️ [confirm-bank-payment] 購入計測に失敗（昇格は成功）:', metricError.message);
     }
+
+    // ── 決済ファネル（全プラン）: 入金確認で昇格した件数と、報告からの日数 ──────────
+    // 正本 src/lib/payments/paymentFunnel.js。識別子は recordId だけ。
+    // プランは申込内容（RequestedPlan・PATCH 前に読んだ値）で数える
+    // （三連複の買い切りは プラン 欄を書き換えないため、昇格後の プラン では商品が分からない）。
+    // ⚠️ 例外を投げない・700ms で諦める。計測の失敗で昇格を巻き戻さない。
+    const paymentFunnelMetric = await recordPaymentConfirmation({
+      recordId,
+      planName: fields['RequestedPlan'],
+      planType: fields['RequestedPlanType'],
+      env: process.env,
+      nowMs: Date.now(),
+    });
+    console.log('📊 [confirm-bank-payment] 決済ファネル（入金確認）:', {
+      counted: paymentFunnelMetric.counted, reason: paymentFunnelMetric.reason, lead: paymentFunnelMetric.lead,
+    });
 
     console.log('✅ [confirm-bank-payment] 昇格完了:', {
       email,

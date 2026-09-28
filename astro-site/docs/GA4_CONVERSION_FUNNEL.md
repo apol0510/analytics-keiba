@@ -214,8 +214,48 @@ GA4 の探索でイベント パラメータに使う「次の正規表現に一
 
 ## 9. 将来課題（今回やらないこと）
 
-- **入金確認（課金の確定）の計測**。Airtable で `PaymentConfirmed` が付いた時点は
-  ブラウザに無いので、GA4 Measurement Protocol でサーバーから送る必要がある。
-  `client_id` の保管が要るため別タスク。
+- **入金確認を GA4 に載せること**（Measurement Protocol・`client_id` の保管が要る）。
+  件数と日数はサーバー側で取れるようになった（§10）。GA4 上で流入元と結びつける必要が出たら別タスク。
 - **click 計測**。メール側の click 計測はアカウント全体で有効にすると
   マジックリンクが壊れるため禁止（`docs/progress.md`）。GA4 のサイト内計測とは別問題。
+
+## 10. サーバー側の決済ファネル（申込受理 → 入金確認 / 2026-09-29 追加）
+
+### なぜ要るか（2026-09-29 棚卸し・8/31〜9/28 実測）
+
+| 段 | 取れていた値 | 問題 |
+|---|---|---|
+| pricing 閲覧 | GA4 page_view | 取れている |
+| 申込開始 | GA4 `application_start` 10 件（9 人）| 取れている（ブラウザ計測なので欠けはあり得る）|
+| 申込成功 | GA4 `application_submitted` **1 件** | 同期間の入金確認は Airtable 実測 **4 件**＝広告ブロック等で**大きく欠ける** |
+| 入金確認 | Airtable `PaidAt`（1 人 1 行・上書き）| 件数は後から数えられるが、**申込日時・報告→確認の日数・放置件数は残らない**（`Requested*` は確認でクリア）|
+
+### 何を記録するか（正本 `src/lib/payments/paymentFunnel.js`）
+
+Airtable の列は増やさず、Redis（Upstash）に**件数だけ**を残す。識別子は recordId のみ（メール・氏名・金額は入れない）。
+
+| event | 記録点 | 条件 |
+|---|---|---|
+| `application_received` | `bank-transfer-application.js` の成功応答の直前 | Airtable 保存が成功した分岐（既存更新／競合時の更新／新規作成）と Premium Plus（会員 recordId 確定時）だけ |
+| `payment_confirmed` | `confirm-bank-payment.js` の昇格 PATCH 成功後 | プランは `RequestedPlan`（三連複買い切りは プラン 欄が変わらないため）|
+| `confirm_lead` | 同上 | 報告→入金確認の日数区分 `d0/d1/d2-3/d4-7/d8plus`。計測開始前の申込は日数を推測しない |
+
+- 同じ日・同じ人・同じ商品は 1 回だけ数える（再送・Automation 再発火で水増ししない）。
+- 報告済みで入金確認待ちの人は `open` に残り、経過日数の分布が見える（`d8plus` は放置の疑い）。
+- **計測の失敗・Redis 未設定・遅延（700ms 超）で申込も昇格も止めない**（例外を投げない）。Redis 未設定は「0 件」ではなく `measurement_unavailable`。
+- Premium Plus の既存ファネル（`ak:pp:funnel:v1`）とは別名前空間。あちらの集計は変えない。
+
+### 読み方
+
+`POST /.netlify/functions/admin-payment-funnel` `{action:'summary', days:30}`（`x-admin-secret`・読み取り専用）。
+計測は本番反映日から。**反映前の申込には日数が付かない**ので、比較は反映後 30 日以降に行う。
+
+### rollback
+
+両 Function の `recordPaymentApplication` / `recordPaymentConfirmation` の呼び出しを外すだけ（申込・昇格の処理は 1 行も変えていない）。
+Redis の `ak:pay:funnel:v1:*` は消しても業務に影響しない。
+
+### テスト
+
+`src/lib/payments/paymentFunnel.test.mjs`（`test:bank-payment` → `check:safety`）: 語彙が閉じている・PII を入れない・同日重複・日数区分の境界・
+確認待ちの経過日数・障害/遅延で例外を投げない・配線位置（保存成功後／昇格 PATCH 成功後）・admin API が書き込まない。
