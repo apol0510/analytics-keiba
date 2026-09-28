@@ -2475,6 +2475,20 @@ Issue「[自動測定] seo-date-archive-2026-10」へ記録する。失敗時は
 | read-only 実測 | 2026-08-30〜09-26: 212 クリック / 3,293 表示 / CTR 6.4% / 10.2 位（画面の 3,290 と確定処理の差のみ）。URL 検査: トップ PASS・南関 9/25 は「Google に未認識」|
 | rollback | Search Console の「ユーザーと権限」から削除 → GCP で鍵を削除 → `gh secret delete GSC_SERVICE_ACCOUNT_JSON` |
 
+**GitHub 上の動作確認（2026-09-28）**:
+| 確認 | 結果 |
+|---|---|
+| merge 直後の自動実行（push）| success。登録簿 OK・`seo-date-archive-2026-10` は **wait**（9/28 < 10/28）|
+| 10/28 想定の成功経路（`dry_run`）| success。Issue #629「[自動測定 検証] …」に比較表。実 API で反映前 28 日 212 / 3,293・URL 検査 195 件を取得 |
+| 10/28 想定の失敗経路（`dry_run` + `simulate_failure`）| job **failure（赤）**・Issue #631「[自動測定 検証 失敗] …」に理由 `credentials_missing` と最小作業 |
+| 本番の完了判定への混入 | なし（label `scheduled-check` の Issue 0 件＝10/28 の本番実行はスキップされない）|
+| 追加の防御 | 評価期間の表示が 0（GSC 未確定）なら 0 を記録せず `data_not_ready` で失敗 → 翌日再試行 |
+
+検証用 Issue #629 / #631 は確認後に close した。
+
+**追加ベースライン（URL 検査・2026-09-28 時点）**: 南関 日付ページ 126 件はすべて「Google に未認識」/
+中央 日付ページ 69 件は 登録済み 8・検出-未登録 48・クロール済み-未登録 7・未認識 6。
+
 検証実行: `scheduled-checks.yml` を `dry_run=true`（＋ `simulate_failure=true` で失敗経路）で手動実行すると、
 「[自動測定 検証] …」の題名・label `scheduled-check-dryrun` で記録し、本番の完了扱いにしない。
 
