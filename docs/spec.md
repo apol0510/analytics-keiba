@@ -24,6 +24,25 @@
 - 利用者が AK 側で**明示的に再開**したら（Customers が RECORDED / ALREADY）、**AK Marketing の group suppression からだけ**外す
   （34108 で停止中のときだけ。global・KI・テストは外さない。失敗しても AK 側は巻き戻さない）。
 
+## Phase 2: 週次へ元々の会員を足す仕組み（2026-09-28 確定・実装）
+
+| 項目 | 仕様 |
+|---|---|
+| 宛先 | 枠（水・土 19:00 JST）ごとの日付付き list `ak-native-weekly-YYYY-MM-DD`。週次 Single Send の `list_ids` に `ak-drm-engaged` と並べる |
+| 対象 | 元々の会員 ∧ 基本的に送信可能 ∧ 現役 Premium/Light でない ∧ DRM 育成の受信中でない ∧ **これから育成が始まる新規登録でない**（自動開始の窓 14 日）∧ **`ak-drm-engaged` に居ない** |
+| 判定の単一源 | `nativeWeeklyAudience` / `audienceSegments.resolveBaseExclusion` / `customerMarketingAudience` / `sequenceProgress` / `importCohort` / `sendgridContinuation.CONTINUATION_STATES` |
+| 手順 | 枠の 12 時間前から: 判定 → list 作成 → upsert → **job completed かつ list 人数 = AK の判定人数** で ready → ready の枠だけ宛先へ足す |
+| fail closed | 判定材料（停止リスト・進行・反応済み）が 1 つでも読めない／upsert 失敗／枠の 2 時間前までに ready でない → **native を足さずに**予約（`ak-drm-engaged` の週次は止めない）|
+| 冪等 | 状態は Redis `ak:native-weekly:v1:`（件数・id・digest だけ）。同名 list が状態なしで残っていれば作り直す。Single Send は名前で 1 枠 1 通 |
+| 片付け | 7 日より前の native list を削除（**contact は消さない**。予約中・下書きが参照する list は残す）|
+| gate | `SENDGRID_WEEKLY_NATIVE_ENABLED=true`（既定は閉＝従来の週次と同じ）＋ 既存の `SENDGRID_WEEKLY_ENABLED=true` |
+| 実行 | `cron-sendgrid-weekly` を**毎時 5 分**へ（1 枠 1 通は名前で担保）|
+| 監視 | 管理画面「メール配信」タブの週次カード（AK の判定人数 / list 人数 / 一致 / 除外内訳）|
+| rollback | `SENDGRID_WEEKLY_NATIVE_ENABLED` を外して redeploy（次の枠から native を足さない）。予約済みの Single Send は SendGrid で unschedule |
+
+⚠️ `ak-drm-engaged` の人は native list へ入れないので、**SendGrid の重複排除に頼らない**。
+下の canary は、それでも同じアドレスが両方の list に入ったときの**二次の安全**を実測するもの。
+
 ## 本番有効化の完成条件（週次を元々の会員へ開ける前）
 
 1. 配信停止の橋渡しが両方向で本番確認できている（Event Webhook で `group_unsubscribe` / `group_resubscribe` を受け取れる設定を含む）

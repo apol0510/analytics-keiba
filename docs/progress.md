@@ -2656,7 +2656,23 @@ premium|active 13 / premium_sanrenpuku|active 5 / light|active 2 / light|expirin
 ---
 
 <!-- 常設ブロック: 元々の会員への週次（A を SendGrid MC で実現）。本番有効化まで消さない -->
-# 📨 元々の会員への週次 — A を SendGrid MC で実現（2026-09-27 MK 確定）— **Phase 1 配信停止の橋渡し：#609 `741b3d34` 本番反映済み / gate 閉（本番 write 0）**
+# 📨 元々の会員への週次 — A を SendGrid MC で実現（2026-09-27 MK 確定）— **任務継続中（完成＝初回実配信後の実測まで）/ Phase 1 本番反映済み・gate 閉 / Phase 2 実装・Draft PR**
+
+## 任務と完成条件（2026-09-28 MK 確定・**途中の監査・PR・docs を完了と扱わない**）
+
+元々の会員への週 2 回メールを SendGrid で**安全に本番稼働**させ、**初回実配信後の実測**まで確認して初めて完成。
+止まるのは高リスク操作の直前だけ（merge / deploy / env / SendGrid 設定 / production write / canary・実送信 / 週次有効化）。
+
+| # | 段階 | 状態 |
+|---|---|---|
+| 1 | 2026-09-28 10:00Z 配信後の read-only 監査（Single Send 実績・webhook 健全性・errors・PII・誤 suppression）| ⏳ 10:45Z に実施予定 |
+| 2 | Event Webhook `group_resubscribe` だけ ON（bridge gate は閉のまま）→ read-only 確認 | ⏸ **承認待ち**（1 の後）|
+| 3 | `AK_MARKETING_UNSUBSCRIBE_BRIDGE_ENABLED=true` → redeploy → 両方向の整合を read-only 確認 | ⏸ 承認待ち（2 の後）|
+| 4 | Phase 2（週次へ元々の会員の list を足す）実装 → Draft PR → CI | 🔄 実装・テスト済み・Draft PR へ |
+| 5 | merge / deploy → read-only preflight（対象人数・list 人数・除外・contact 数・月間見込み・契約枠）| ⏸ 承認待ち |
+| 6 | canary（同一の運営確認用アドレスを 2 list へ → 1 Single Send で delivered 1 件）| ⏸ 承認待ち（実送信）|
+| 7 | 本番週次有効化（`SENDGRID_WEEKLY_ENABLED=true` ＋ `SENDGRID_WEEKLY_NATIVE_ENABLED=true`）→ 次回予約・宛先人数・group・CTA・重複の確認 | ⏸ 承認待ち |
+| 8 | 初回実配信後の実測（対象人数・processed・delivered・bounce・unsubscribe・duplicate・有料誤送信 0・DRM 受信中誤送信 0・24h 衝突 0・list 人数 = AK 判定人数・webhook errors 0）| ⏸ |
 
 ## 新たに確定した方針（正本: `docs/spec.md` 先頭 / `docs/decisions.md` 2026-09-27 追記 9）
 
@@ -2702,21 +2718,55 @@ premium|active 13 / premium_sanrenpuku|active 5 / light|active 2 / light|expirin
 | AK → SendGrid | Customers の停止を記録できたら `AK Marketing` の group suppression へ追加（GET で id・名前を照合してから。global は使わない）| ✅ 本番反映済み（gate 閉）|
 | AK → SendGrid（再開）| 利用者の明示的な再開で Customers が RECORDED / ALREADY なら、34108 で停止中のときだけ group suppression から外す（global・KI・テストは外さない／失敗しても AK 側は巻き戻さない）| ✅ 本番反映済み（gate 閉）|
 | gate | `AK_MARKETING_UNSUBSCRIBE_BRIDGE_ENABLED=true` のときだけ書く（既定は判定と件数だけ）| 未設定（本番 env 変更は未実施）|
-| Phase 2 準備 | 週次の対象判定 `nativeWeeklyAudience.js`（現役有料・受信中・基本除外・進行不明は対象外）。**まだどこからも呼ばない** | ✅ 実装・テスト |
+| Phase 2 準備 | 週次の対象判定 `nativeWeeklyAudience.js`（現役有料・受信中・基本除外・進行不明は対象外）| ✅ 本番反映済み（#609）|
+
+## Phase 2: 週次へ元々の会員を足す（2026-09-28 実装・**Draft PR・未 merge**）
+
+仕様の正本: `docs/spec.md` 先頭「Phase 2」。
+
+| 部品 | 中身 |
+|---|---|
+| `nativeWeeklyAudience.js` | 判定に「これから育成が始まる新規登録（自動開始の窓 14 日）」「`ak-drm-engaged` に居る」を追加 |
+| `nativeWeeklySync.js` | 宛先の判定・段階（wait / build / check / schedule）・ready の条件（job completed ∧ list 人数 = AK 判定人数）・片付け |
+| `nativeWeeklyIo.js` | Airtable GET / native list だけの SendGrid 口（作成・upsert・人数・削除。400 のときだけ割る）/ Redis は状態と見込み客の読み取りだけ |
+| `nativeWeeklyRunner.js` | 1 枠を 1 歩ずつ進める。読めない・失敗は native を足さない（`ak-drm-engaged` の週次は止めない）|
+| `cron-sendgrid-weekly.js` | gate `SENDGRID_WEEKLY_NATIVE_ENABLED` が開いているときだけ native を足す。**毎時 5 分**へ |
+| 管理画面 | 「メール配信」タブの週次に AK 判定人数 / list 人数 / 一致 / 除外内訳 |
+
+## 現在地（2026-09-28 01:10Z）
+
+- Phase 1: 本番反映済み・bridge gate 閉・Event Webhook は `group_unsubscribe` ON / `group_resubscribe` OFF。
+- 反映後の webhook は実イベントを処理済み（2026-09-27 23:14Z〜 00:17Z の 7 回・prospect errors 0・incomplete false・
+  selectionExit criticalFailure false・akMarketingGroup errors 0 / enabled false）。`EmailEvents` が 0 行なのは台帳が **Blob 保存**
+  （`sink.mode: 'blob'`, airtable `skipped`）だから。
+- Phase 2: 実装・テスト済み。Draft PR（本 PR）。
+
+## 完了済み
+
+- #607 監査 / #608 実測 / #609 Phase 1 本番反映 / #610 記録。
+
+## 承認待ち操作（上から順）
+
+1. Event Webhook `group_resubscribe` ON（bridge gate は閉のまま）— 10:45Z の監査が正常なら提示
+2. `AK_MARKETING_UNSUBSCRIBE_BRIDGE_ENABLED=true` ＋ redeploy
+3. Phase 2 PR の merge / production deploy
+4. canary（実送信）
+5. `SENDGRID_WEEKLY_ENABLED=true` ＋ `SENDGRID_WEEKLY_NATIVE_ENABLED=true` ＋ redeploy
 
 ## 未完了
 
 - Event Webhook の `group_resubscribe` を ON（SendGrid 設定変更・要承認。`group_unsubscribe` は既に ON）
 - gate env（`AK_MARKETING_UNSUBSCRIBE_BRIDGE_ENABLED=true`）の投入＋redeploy（要承認）
-- 反映後の最初の実イベント（2026-09-28 10:00Z の選別配信）で webhook が正常に処理しているかの read-only 確認
+- 2026-09-28 10:00Z の選別配信後の read-only 監査（10:45Z 予定）
 - 既存の group 停止 34 件: 2026-09-28 read-only 分類で **Customers 一致 0 / 重複 0 / 停止済み 0 / 不一致 34**（Customers への反映対象は 0）。
   見込み客側は本番 Redis が masked secret でローカルから**未計測**（測るには本番 Function 経由の read-only 経路が要る）
-- Phase 2: 元々の会員の list の作成と週次への追加 / 月間通数と契約枠の確認 / 複数 list 重複の canary
+- Phase 2: merge・deploy / 月間通数と契約枠の確認 / 複数 list 重複の canary / 週次の有効化 / 初回実配信後の実測
 
 ## 次作業
 
-① 10:00Z 配信後に webhook の処理を read-only で確認 → ② **次の高リスク作業: Event Webhook `group_resubscribe` ON ＋ gate 有効化**（MK 承認）→ 本番で両方向を確認
-→ ③ Phase 2（元々の会員の list・週次への追加）の設計確定と実装。
+① 10:45Z に 10:00Z 配信後の read-only 監査 → 結果をここへ記録
+② 承認待ち操作 1（`group_resubscribe` ON）を提示 → 承認後 read-only 確認 → ③ 2（bridge gate）→ ④ Phase 2 merge/deploy → preflight
+→ ⑤ canary → ⑥ 週次有効化 → ⑦ 初回実配信後の実測で完成判定。
 
 ## 本番未反映 / 高リスク未実施
 
