@@ -163,8 +163,11 @@ test('workflow: 毎日の定期実行・登録簿検査・成功/失敗の記録
   assert.match(wf, /cron: '0 1 \* \* \*'/);
   assert.match(wf, /scheduled-checks\.mjs validate/);
   assert.match(wf, /secrets\.GSC_SERVICE_ACCOUNT_JSON/);
-  assert.match(wf, /\[自動測定\] \$id/);
-  assert.match(wf, /\[自動測定 失敗\] \$id/);
+  assert.match(wf, /TITLE_PREFIX: .*'\[自動測定 検証\]' \|\| '\[自動測定\]'/);
+  assert.match(wf, /FAIL_PREFIX: .*'\[自動測定 検証 失敗\]' \|\| '\[自動測定 失敗\]'/);
+  assert.match(wf, /gh issue create --title "\$TITLE_PREFIX \$id"/);
+  // 本番の完了判定は「[自動測定] 」で始まる題名だけ（検証実行は数えない）
+  assert.match(wf, /startswith\("\[自動測定\] "\)/);
   assert.match(wf, /exit 1/);
   assert.match(wf, /permissions:\s*\n\s*contents: read\s*\n\s*issues: write/);
 });
@@ -174,4 +177,9 @@ test('正本: CLAUDE.md に恒久ルール、progress は「○月○日に確�
   assert.match(cm, /未来の確認は自動化する/);
   assert.match(cm, /ops\/scheduled-checks\.json/);
   assert.match(read('docs/progress.md'), /seo-date-archive-2026-10/);
+});
+
+test('workflow: 失敗経路の検証では鍵を渡さない（`cond && \'\' || x` は常に x になる罠を避ける）', () => {
+  const wf = read('.github/workflows/scheduled-checks.yml');
+  assert.match(wf, /GSC_SERVICE_ACCOUNT_JSON: \$\{\{ !inputs\.simulate_failure && secrets\.GSC_SERVICE_ACCOUNT_JSON \|\| '' \}\}/);
 });

@@ -16,6 +16,14 @@ on:
       today:
         description: '判定に使う日付（YYYY-MM-DD・検証用。空なら今日 JST）'
         required: false
+      dry_run:
+        description: '検証実行（結果は「[自動測定 検証]」で記録し、本番の完了扱いにしない）'
+        type: boolean
+        default: false
+      simulate_failure:
+        description: '失敗経路の検証（鍵を渡さずに実行する。dry_run と併用）'
+        type: boolean
+        default: false
   push:
     branches: [main]
     paths:
@@ -37,7 +45,13 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
-      GSC_SERVICE_ACCOUNT_JSON: ${{ secrets.GSC_SERVICE_ACCOUNT_JSON }}
+      # 失敗経路の検証（simulate_failure）では鍵を渡さない
+      GSC_SERVICE_ACCOUNT_JSON: ${{ !inputs.simulate_failure && secrets.GSC_SERVICE_ACCOUNT_JSON || '' }}
+      # 検証実行は別の題名・ラベルで記録し、本番の「完了」判定（題名が「[自動測定] 」で始まる）に混ぜない
+      TITLE_PREFIX: ${{ inputs.dry_run && '[自動測定 検証]' || '[自動測定]' }}
+      FAIL_PREFIX: ${{ inputs.dry_run && '[自動測定 検証 失敗]' || '[自動測定 失敗]' }}
+      OK_LABEL: ${{ inputs.dry_run && 'scheduled-check-dryrun' || 'scheduled-check' }}
+      FAIL_LABEL: ${{ inputs.dry_run && 'scheduled-check-dryrun' || 'scheduled-check-failed' }}
     steps:
       - uses: actions/checkout@v5
 
@@ -54,6 +68,7 @@ jobs:
         run: |
           gh label create scheduled-check --color 0E8A16 --description '未来の確認の自動実行結果' --force
           gh label create scheduled-check-failed --color B60205 --description '未来の確認の自動実行に失敗' --force
+          gh label create scheduled-check-dryrun --color C5DEF5 --description '未来の確認の検証実行（本番の完了扱いにしない）' --force
 
       - name: 今日の扱いを決める
         id: plan
@@ -73,13 +88,13 @@ jobs:
           mkdir -p /tmp/results
           for id in $(jq -r '.plan[] | select(.action=="run") | .id' /tmp/plan.json); do
             echo "::group::run $id"
-            fail_title="[自動測定 失敗] $id"
-            fail_no=$(gh issue list --state open --label scheduled-check-failed --search "\"$fail_title\" in:title" --json number,title \
+            fail_title="$FAIL_PREFIX $id"
+            fail_no=$(gh issue list --state open --label "$FAIL_LABEL" --search "\"$fail_title\" in:title" --json number,title \
               --jq ".[] | select(.title==\"$fail_title\") | .number" | head -1)
             if node scripts/scheduled-checks.mjs run "$id" --out "/tmp/results/$id.json" --md "/tmp/results/$id.md" --fail-md "/tmp/results/$id.fail.md"; then
-              gh issue create --title "[自動測定] $id" --label scheduled-check --body-file "/tmp/results/$id.md"
+              gh issue create --title "$TITLE_PREFIX $id" --label "$OK_LABEL" --body-file "/tmp/results/$id.md"
               if [ -n "$fail_no" ]; then
-                gh issue comment "$fail_no" --body "✅ $(date -u +%FT%TZ) に実行が成功しました（結果は「[自動測定] $id」）。"
+                gh issue comment "$fail_no" --body "✅ $(date -u +%FT%TZ) に実行が成功しました（結果は「$TITLE_PREFIX $id」）。"
                 gh issue close "$fail_no"
               fi
               cat "/tmp/results/$id.md" >> "$GITHUB_STEP_SUMMARY"
@@ -88,7 +103,7 @@ jobs:
               if [ -n "$fail_no" ]; then
                 gh issue edit "$fail_no" --body-file "/tmp/results/$id.fail.md"
               else
-                gh issue create --title "$fail_title" --label scheduled-check-failed --body-file "/tmp/results/$id.fail.md"
+                gh issue create --title "$fail_title" --label "$FAIL_LABEL" --body-file "/tmp/results/$id.fail.md"
               fi
               cat "/tmp/results/$id.fail.md" >> "$GITHUB_STEP_SUMMARY"
             fi
