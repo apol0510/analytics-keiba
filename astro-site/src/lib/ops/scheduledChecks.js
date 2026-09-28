@@ -75,3 +75,12 @@ export function planToday(checks, today, completedIds = new Set()) {
 
 export const issueTitle = (id) => `[自動測定] ${id}`;
 export const failureIssueTitle = (id) => `[自動測定 失敗] ${id}`;
+
+/**
+ * 「失敗」ではなく「まだ起きていない / まだ確定していない」ことを表す理由。
+ * 赤にせず（毎日の失敗通知を出さず）、待機中 Issue を 1 つだけ更新して翌日また確認する。
+ * 期限（runUntil）を過ぎても成功しなければ、期限切れとして Issue に必ず残す。
+ */
+export const PENDING_CODES = Object.freeze(['no_conversion_yet', 'data_not_ready']);
+export const EXIT = Object.freeze({ OK: 0, REGISTRY: 1, FAILED: 2, PENDING: 3 });
+export const exitCodeFor = (code) => (PENDING_CODES.includes(code) ? EXIT.PENDING : EXIT.FAILED);

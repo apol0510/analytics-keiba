@@ -241,3 +241,25 @@ test('workflow: Airtable の読み取りトークンも失敗経路の検証で�
   const wf = read('.github/workflows/scheduled-checks.yml');
   assert.match(wf, /AIRTABLE_READONLY_TOKEN: \$\{\{ !inputs\.simulate_failure && secrets\.AIRTABLE_READONLY_TOKEN \|\| '' \}\}/);
 });
+
+test('待機中（まだ起きていない・未確定）は失敗と分ける: exit 3・赤にしない・待機中 Issue を 1 つだけ更新', async () => {
+  const { exitCodeFor, EXIT, PENDING_CODES } = await import('./scheduledChecks.js');
+  assert.deepEqual([...PENDING_CODES].sort(), ['data_not_ready', 'no_conversion_yet']);
+  assert.equal(exitCodeFor('no_conversion_yet'), EXIT.PENDING);
+  assert.equal(exitCodeFor('data_not_ready'), EXIT.PENDING);
+  assert.equal(exitCodeFor('credentials_missing'), EXIT.FAILED);
+  assert.equal(exitCodeFor('airtable_auth_failed'), EXIT.FAILED);
+  const wf = read('.github/workflows/scheduled-checks.yml');
+  assert.match(wf, /elif \[ "\$rc" = 3 \]; then/);
+  assert.match(wf, /PEND_PREFIX: .*'\[自動測定 検証 待機中\]' \|\| '\[自動測定 待機中\]'/);
+  // 待機中の分岐では failed=1 にしない（赤にしない）
+  const pend = wf.slice(wf.indexOf('elif [ "$rc" = 3 ]'), wf.indexOf('            else\n              failed=1'));
+  assert.equal(pend.includes('failed=1'), false);
+});
+
+test('期限切れは必ず Issue に残す（失敗・待機中 Issue が無くても作る）', () => {
+  const wf = read('.github/workflows/scheduled-checks.yml');
+  const exp = wf.slice(wf.indexOf('期限切れで未完了のものを知らせる'), wf.indexOf('actions/upload-artifact'));
+  assert.match(exp, /"\$FAIL_PREFIX \$id" "\$PEND_PREFIX \$id"/);
+  assert.match(exp, /gh issue create --title "\$FAIL_PREFIX \$id"/);
+});

@@ -5,12 +5,12 @@
  *   node scripts/scheduled-checks.mjs plan --completed id1,id2       → 今日の扱い（JSON）
  *   node scripts/scheduled-checks.mjs run <id> --out r.json --md r.md --fail-md f.md
  *
- * 終了コード: 0 = 成功 / 1 = 登録簿の不備 / 2 = 実行失敗（--fail-md に理由と最小作業を書く）
+ * 終了コード: 0 = 成功 / 1 = 登録簿の不備 / 2 = 実行失敗 / 3 = 待機中（まだ起きていない・未確定）。2・3 は --fail-md に理由と最小作業を書く
  * 読むだけ。GSC は読み取り専用スコープ。本番の Redis / Airtable / 送信には一切触れない。
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { validateRegistry, planToday, jstToday } from '../src/lib/ops/scheduledChecks.js';
+import { validateRegistry, planToday, jstToday, exitCodeFor, EXIT } from '../src/lib/ops/scheduledChecks.js';
 import { createGscClient, GscError } from '../src/lib/ops/gscClient.js';
 import { runGscDateArchive, renderMarkdown } from '../src/lib/ops/gscDateArchiveMeasurement.js';
 import { runPremiumConversionCheck, renderConversionMarkdown } from '../src/lib/ops/premiumConversionCheck.js';
@@ -86,8 +86,9 @@ if (cmd === 'run') {
     process.exit(0);
   } catch (e) {
     const code = e?.code || 'unknown';
+    const exitCode = exitCodeFor(code);
     const body = [
-      `## ${check.title} — 実行失敗`,
+      `## ${check.title} — ${exitCode === EXIT.PENDING ? '待機中（まだ起きていない・未確定）' : '実行失敗'}`,
       '',
       `- 理由: \`${code}\`${e?.detail ? `（${e.detail}）` : ''}`,
       `- 実行: ${new Date().toISOString()}（GitHub Actions scheduled-checks）`,
@@ -97,7 +98,7 @@ if (cmd === 'run') {
     ].join('\n');
     if (arg('--fail-md')) writeFileSync(arg('--fail-md'), body);
     console.error(body);
-    process.exit(2);
+    process.exit(exitCode);
   }
 }
 
