@@ -1,0 +1,121 @@
+---
+/**
+ * DateArchiveHub.astro — 開催日一覧（中央・南関 共通の表示）
+ *
+ * 2026-09-28 MK 指摘: 上部の余白が大きく、同系色（紺地に青文字）で読みにくい → ガラスモーフィズムへ。
+ * 色は `/free/` で MK 確定済みのガラス用パレット（RaceViewpointsBoard の --g-* / --t-*）に合わせ、
+ * 情報ごとに**色相を分ける**（日付=アイスブルー / 競馬場=シアン / 的中=ライム / 補助=ブルーグレー）。
+ * 中央・南関で同じ部品を使う（片方だけ見た目が違う状態を作らない）。
+ */
+interface Item { href: string; dateLabel: string; weekday?: string; venue: string; races?: string; stat: string; hasResult: boolean }
+interface Month { label: string; count: number; items: Item[] }
+interface Props { title: string; crumb: string; lead: string; links: Array<{ href: string; label: string }>; months: Month[] }
+const { title, crumb, lead, links, months } = Astro.props;
+---
+
+<section class="dah">
+  <div class="dah-inner">
+    <nav class="dah-crumbs" aria-label="パンくず"><a href="/">トップ</a><span>›</span><span aria-current="page">{crumb}</span></nav>
+    <header class="dah-head">
+      <p class="dah-kicker">AI予想アーカイブ</p>
+      <h1 class="dah-title">{title}</h1>
+      <p class="dah-lead">{lead}</p>
+      <nav class="dah-links" aria-label="関連ページ">
+        {links.map((l) => <a href={l.href}>{l.label}</a>)}
+      </nav>
+    </header>
+
+    {months.map((m) => (
+      <section class="dah-month">
+        <h2 class="dah-month-title">{m.label}<span class="dah-count">{m.count}開催日</span></h2>
+        <ul class="dah-grid">
+          {m.items.map((it) => (
+            <li>
+              <a href={it.href} class="dah-card">
+                <span class="dah-date">{it.dateLabel}{it.weekday && <small>（{it.weekday}）</small>}</span>
+                <span class="dah-venue">{it.venue}</span>
+                <span class="dah-meta">
+                  {it.races && <span class="dah-races">{it.races}</span>}
+                  <span class={it.hasResult ? 'dah-stat' : 'dah-stat is-wait'}>{it.stat}</span>
+                </span>
+              </a>
+            </li>
+          ))}
+        </ul>
+      </section>
+    ))}
+  </div>
+</section>
+
+<style>
+  .dah {
+    --g-bg: rgba(15, 34, 64, .46);
+    --g-line: rgba(125, 211, 252, .20);
+    --g-line-strong: rgba(103, 232, 249, .50);
+    --g-hi: inset 0 1px 0 rgba(255, 255, 255, .07);
+    --g-shadow: 0 10px 30px rgba(2, 6, 23, .38);
+    --g-blur: blur(12px) saturate(140%);
+    --t-hero: #b9e5ff;
+    --t-name: #c9ecff;
+    --t-main: #b8d9f0;
+    --t-sub: #94adc8;
+    --t-action: #7fe0f2;
+    --t-hit: #bef264;
+    position: relative;
+    isolation: isolate;
+    padding: 12px 0 56px;
+    background:
+      radial-gradient(900px 420px at 12% 0%, rgba(56, 189, 248, .14), transparent 60%),
+      radial-gradient(700px 380px at 95% 18%, rgba(129, 140, 248, .12), transparent 60%);
+  }
+  .dah-inner { max-width: 1040px; margin: 0 auto; padding: 0 16px; }
+
+  .dah-crumbs { display: flex; gap: .4rem; margin: 0 0 10px; font-size: .8rem; color: var(--t-sub); }
+  .dah-crumbs a { color: var(--t-action); text-decoration: none; }
+  .dah-head {
+    margin: 0 0 22px; padding: 18px 20px; border-radius: 18px;
+    background: var(--g-bg); border: 1px solid var(--g-line); box-shadow: var(--g-hi), var(--g-shadow);
+    -webkit-backdrop-filter: var(--g-blur); backdrop-filter: var(--g-blur);
+  }
+  .dah-kicker { margin: 0 0 4px; font-size: .78rem; letter-spacing: .06em; color: var(--t-action); }
+  .dah-title { margin: 0 0 6px; font-size: clamp(1.3rem, 4vw, 1.75rem); font-weight: 600; color: var(--t-hero); line-height: 1.35; text-shadow: 0 0 12px rgba(125, 211, 252, .22); }
+  .dah-lead { margin: 0 0 12px; font-size: .9rem; color: var(--t-main); }
+  .dah-links { display: flex; flex-wrap: wrap; gap: 8px; }
+  .dah-links a {
+    padding: 6px 12px; border-radius: 999px; font-size: .84rem; text-decoration: none;
+    color: var(--t-action); background: rgba(34, 211, 238, .08); border: 1px solid var(--g-line);
+  }
+  .dah-links a:hover { border-color: var(--g-line-strong); background: rgba(34, 211, 238, .14); }
+
+  .dah-month { margin: 0 0 24px; }
+  .dah-month-title {
+    display: flex; align-items: baseline; gap: 10px; margin: 0 0 10px; padding: 0 2px;
+    font-size: 1.05rem; font-weight: 600; color: var(--t-hero);
+  }
+  .dah-count { font-size: .78rem; font-weight: 400; color: var(--t-sub); }
+  .dah-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 10px; }
+  .dah-card {
+    display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border-radius: 14px; text-decoration: none;
+    background: var(--g-bg); border: 1px solid var(--g-line); box-shadow: var(--g-hi);
+    -webkit-backdrop-filter: var(--g-blur); backdrop-filter: var(--g-blur);
+    transition: border-color .15s, transform .15s, background .15s;
+  }
+  .dah-card:hover { border-color: var(--g-line-strong); background: rgba(15, 34, 64, .62); transform: translateY(-1px); }
+  .dah-date { font-size: 1.05rem; font-weight: 600; color: var(--t-name); }
+  .dah-date small { font-size: .74rem; font-weight: 400; color: var(--t-sub); }
+  .dah-venue { font-size: .85rem; font-weight: 500; color: var(--t-action); }
+  .dah-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 2px; }
+  .dah-races { font-size: .75rem; color: var(--t-sub); }
+  .dah-stat {
+    font-size: .75rem; font-weight: 500; color: var(--t-hit);
+    padding: 1px 8px; border-radius: 999px; background: rgba(190, 242, 100, .08); border: 1px solid rgba(190, 242, 100, .28);
+  }
+  .dah-stat.is-wait { color: var(--t-sub); background: rgba(148, 173, 200, .08); border-color: rgba(148, 173, 200, .25); }
+
+  @media (max-width: 640px) {
+    .dah { padding-top: 4px; }
+    .dah-head { padding: 14px 14px; border-radius: 14px; }
+    .dah-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .dah-card { padding: 10px 11px; }
+  }
+</style>
