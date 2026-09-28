@@ -10,8 +10,14 @@
       "trigger": "毎日 10:00 JST（scheduled-checks.yml）。runFrom〜runUntil の間、成功記録（Issue）が無ければ実行。GSC のデータ遅延（約 2〜3 日）を見て、評価期間の終了 10/25 の 3 日後から",
       "compare": {
         "siteUrl": "https://analytics.keiba.link/",
-        "evalWindow": { "start": "2026-09-28", "end": "2026-10-25" },
-        "baselineWindow": { "start": "2026-08-30", "end": "2026-09-26" },
+        "evalWindow": {
+          "start": "2026-09-28",
+          "end": "2026-10-25"
+        },
+        "baselineWindow": {
+          "start": "2026-08-30",
+          "end": "2026-09-26"
+        },
         "baselineSnapshot": {
           "$source": "2026-09-28 GSC 画面の read-only 実測（docs/progress.md 🔎 新規検索流入（SEO）監査）",
           "siteClicks": 212,
@@ -27,6 +33,20 @@
       },
       "record": "GitHub Issue「[自動測定] seo-date-archive-2026-10」（label: scheduled-check）に結果表と JSON。Actions の artifact にも JSON を残す",
       "onFailure": "workflow を赤にし、Issue「[自動測定 失敗] seo-date-archive-2026-10」に理由と必要な最小作業を書く。runUntil まで毎日再試行し、期限を過ぎても成功しなければ Issue に期限切れを追記する"
+    },
+    {
+      "id": "premium-conversion-first-record-2026",
+      "title": "Light→Premium 転換履歴が本番の入金確認で記録されたか（最初の 1 件）",
+      "kind": "airtable-premium-conversions",
+      "runFrom": "2026-09-30",
+      "runUntil": "2026-12-31",
+      "trigger": "毎日 10:00 JST（scheduled-checks.yml）。2026-09-29 の本番反映（#634 b8ecce2f）以降、最初の Light→Premium 入金確認が起きるまで毎日確認",
+      "compare": {
+        "since": "2026-09-29",
+        "baseline": "反映時点で PremiumConvertedAt が入ったレコード 0 件（2026-09-28 meta/records API で確認）。反映時の Light 会員 18 名（有効 4・期限切れ 14）"
+      },
+      "record": "GitHub Issue「[自動測定] premium-conversion-first-record-2026」（label: scheduled-check）に件数と元プランの内訳",
+      "onFailure": "転換がまだ無い（no_conversion_yet）ときは翌日再確認。トークン未設定・認証失敗は job 赤＋Issue「[自動測定 失敗] …」に最小作業。2026-12-31 まで 0 件なら期限切れを追記（転換が無かったのか記録漏れかを人が確認）"
     }
   ]
 }

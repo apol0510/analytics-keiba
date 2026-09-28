@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { validateRegistry, planToday, jstToday } from '../src/lib/ops/scheduledChecks.js';
 import { createGscClient, GscError } from '../src/lib/ops/gscClient.js';
 import { runGscDateArchive, renderMarkdown } from '../src/lib/ops/gscDateArchiveMeasurement.js';
+import { runPremiumConversionCheck, renderConversionMarkdown } from '../src/lib/ops/premiumConversionCheck.js';
 
 const REGISTRY = fileURLToPath(new URL('../../ops/scheduled-checks.json', import.meta.url));
 const arg = (name) => { const i = process.argv.indexOf(name); return i > 0 ? process.argv[i + 1] : null; };
@@ -41,6 +42,12 @@ function humanActionFor(code, check) {
       return 'GitHub の repository secret `GSC_SERVICE_ACCOUNT_JSON` にサービスアカウントの JSON 鍵を登録する（Claude が作成・登録できる。必要なのは Google アカウントでの権限付与の承認だけ）。';
     case 'no_property_access':
       return `Search Console の ${site} の「ユーザーと権限」に、サービスアカウントのメールアドレスを「制限付き」で追加する（1 操作）。`;
+    case 'airtable_token_missing':
+      return 'GitHub の repository secret `AIRTABLE_READONLY_TOKEN` に、analytics-keiba ベースだけを読める Airtable トークン（data.records:read）を登録する。';
+    case 'airtable_auth_failed':
+      return 'Airtable トークンが無効（削除・権限不足）の可能性。読み取り専用トークンを作り直して secret を更新する。';
+    case 'no_conversion_yet':
+      return 'なし（まだ Light→Premium の入金確認が無い）。翌日の定期実行で自動的に再確認する。';
     case 'data_not_ready':
       return 'なし（GSC のデータ確定待ち）。翌日の定期実行で自動的に取り直す。';
     case 'auth_failed':
@@ -56,7 +63,11 @@ if (cmd === 'run') {
   if (!check) { console.error(`✖ 未登録の id: ${id}`); process.exit(1); }
   try {
     let result;
-    if (check.kind === 'gsc-date-archive') {
+    let md;
+    if (check.kind === 'airtable-premium-conversions') {
+      result = await runPremiumConversionCheck({ check, token: process.env.AIRTABLE_READONLY_TOKEN });
+      md = renderConversionMarkdown({ check, result });
+    } else if (check.kind === 'gsc-date-archive') {
       const client = createGscClient({ credentials: process.env.GSC_SERVICE_ACCOUNT_JSON, siteUrl: check.compare.siteUrl });
       result = await runGscDateArchive({
         check,
@@ -68,7 +79,7 @@ if (cmd === 'run') {
         },
       });
     }
-    const md = renderMarkdown({ check, result });
+    if (!md) md = renderMarkdown({ check, result });
     if (arg('--out')) writeFileSync(arg('--out'), JSON.stringify({ id, result }, null, 2));
     if (arg('--md')) writeFileSync(arg('--md'), md);
     console.log(md);
