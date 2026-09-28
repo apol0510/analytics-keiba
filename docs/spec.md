@@ -109,6 +109,25 @@ DRM 接触 → pricing / 有料版プレビュー到達 → application（申込
 
 ---
 
+# 南関「日付 × 競馬場 × 予想・結果」恒久ページ（2026-09-28）
+
+> 目的: 検索資産の積み上げ（新規検索流入の母数を増やす）。根拠は `progress.md` 🔎 新規検索流入（SEO）監査。
+
+| 項目 | 仕様 |
+|---|---|
+| URL | `/free-prediction/nankan/YYYY-MM-DD/`（JRA の `/free-prediction/jra/YYYY-MM-DD/` と対称）／一覧 `/free-prediction/nankan/archive/` |
+| 対象日 | 予想（`src/data/predictions/YYYY-MM-DD-*.json`）か結果（`archiveResults.json`）のどちらかがある日すべて。**一度出した日付は消さない（恒久 URL）** |
+| 生成 | ビルド時の静的生成（`prerender = true`）。取込コミット → ビルドで翌日分が自動で増える |
+| 公開範囲 | **既存の無料公開と同じ範囲だけ**: 印（◎○▲△・馬番・馬名）= `/free/` の公開 DTO（`freePublicView.js`）／着順 1〜3 着・各レースの的中 ✅✗・メインレースの買い目（抑えは伏せる）= `/results-showcase/` と同じ `buildShowcaseDay()` |
+| 出さない | AI総合指数（raw も raw−1 も）・pt・役割名・特徴量・メイン以外の買い目・抑え |
+| 単一源 | `src/lib/nankanDateArchive.js`（予想ロジック・抑え/不要馬判定・買い目生成を import しない）|
+| SEO | canonical は自己 URL（末尾スラッシュ）・noindex なし・sitemap 掲載・パンくず（BreadcrumbList）・前後日リンク |
+| 旧 URL | 旧 `/free-prediction/archive/` は一覧へ 301。旧形式 `/free-prediction/YYYY/MM/DD/` は 404（旧テンプレートは表示ルールに合わないため復活させない）|
+
+検証: `npm run test:seo`（`check:safety` に組込）。料金・権利・販売条件には影響しない。
+
+---
+
 # 有料化ファネルを GA4 で確認できる状態にする（2026-09-18 MK 確定）
 
 既存 GA4（測定 ID は `src/layouts/BaseLayout.astro` が唯一持つ。**変更・新規作成しない**）で、

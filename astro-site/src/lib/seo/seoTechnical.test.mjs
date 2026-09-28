@@ -81,11 +81,11 @@ test('/free-prediction/[...slug] は SSR で 500 にせず 404 を返す', () =>
   assert.match(src.slice(guard, guard + 300), /status:\s*404/);
 });
 
-test('旧 南関無料予想アーカイブは /archive/nankan/ へ 301（内部リンクも直接そちらへ）', () => {
+test('旧 南関無料予想アーカイブは後継の開催日別一覧へ 301（内部リンクも直接そちらへ）', () => {
   const src = read('src/pages/free-prediction/archive.astro');
   // netlify.toml の force 301 は SSR 関数（path:/* + preferStatic）配下の静的ファイルに負けるので、ページ自身が SSR で返す
   assert.match(src, /export const prerender = false;/);
-  assert.match(src, /return Astro\.redirect\('\/archive\/nankan\/', 301\)/);
+  assert.match(src, /return Astro\.redirect\('\/free-prediction\/nankan\/archive\/', 301\)/);
   assert.equal(read('src/pages/free-prediction/nankan.astro').includes('href="/free-prediction/archive/"'), false);
 });
 
