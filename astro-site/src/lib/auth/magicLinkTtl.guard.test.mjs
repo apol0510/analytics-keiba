@@ -47,7 +47,8 @@ test('メール文面の分数も定数から出す（直書きしない）', ()
 });
 
 test('期限切れ画面の分数も定数から出す', () => {
-  assert.match(verifyPage, /define:vars=\{\{\s*TTL_MIN:\s*MAGIC_LINK_TTL_MINUTES\s*\}\}/);
+  // 2026-09-29: ログイン後の戻り先（loginNext.js の許可リスト）も同じ define:vars で渡す。TTL は引き続き定数から
+  assert.match(verifyPage, /define:vars=\{\{\s*TTL_MIN:\s*MAGIC_LINK_TTL_MINUTES\s*[,}]/);
   assert.match(verifyPage, /有効期限（\$\{TTL_MIN\}分）/);
   assert.doesNotMatch(verifyPage, /有効期限（15分）/, '15 分が直書きで残っている');
 });

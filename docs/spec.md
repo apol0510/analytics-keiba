@@ -24,6 +24,24 @@
 | 書き方 | `confirm-bank-payment` の昇格 PATCH 成功**後**に 2 項目だけの別 PATCH（best effort。失敗しても昇格は巻き戻さない）。単一源 `src/lib/payments/premiumConversion.js` |
 | 集計 | Airtable で `PremiumConvertedAt` が入っているレコードを期間で数える（`PremiumConvertedFrom` に「Light」を含む＝Light→Premium）|
 
+## Light 月払い会員の更新・乗り換え導線（2026-09-29 MK 確定 / 新しい販売条件）
+
+| 状態 | /pricing/ で実行できる選択肢 | Premium 年額 |
+|---|---|---|
+| 有効な有料 Light 会員 | ① **Light を継続**（Light カード ¥4,980/30日）② Premium 年額へアップグレード | **¥44,820**（乗り換え特典）|
+| 失効後 30 日以内の有料 Light 会員（期限日 D 当日〜 D+30 日の終わり・JST）| ① **Light を再開** ② Premium 年額へアップグレード | **¥44,820**（乗り換え特典）|
+| 失効後 31 日以降 | 通常条件（全プランを通常価格で表示）| ¥49,800 |
+| 無料付与だけの Light・支払い実績の無い Light | 通常条件（会員向け価格なし）| ¥49,800 |
+
+- 「有料 Light 会員」＝ プランが Light（旧 Standard 含む）で **`PaidAt` がある**（実際に支払った）。無料付与（grant）では資格にならない。**無期限特典にはしない**。
+- 価格資格の単一源は `src/lib/pricing/pricingEligibility.js`（`resolvePaidPricingTierFromFields` / `isWithinLightSwitchGrace` / `LIGHT_SWITCH_GRACE_DAYS = 30`）。
+  **`/pricing/` の表示（tier）と申込時のサーバー判定（`checkMemberOnlyPricing`）は同じ関数・同じ境界**。
+- 失効後の会員は無料ログインになるため、`auth-user` の無料ログイン応答に `pricingTier` を載せる。
+  **契約終了を既に伝える場合（`previousPlanEnded`）だけ計算し、それ以外は常に 0**（無料ログインは本人確認なしのため新たな情報を出さない）。
+- `/pricing/` は Light 会員（tier 1）に**無料カードだけ隠し、Light カードは出す**（旧仕様では Light カードも隠していて更新できなかった）。
+- メールのリンクは **`/login/?next=/pricing/`**（未ログインだと会員向け価格が出ないため）。戻り先は許可リストの完全一致だけ（`src/lib/auth/loginNext.js`・オープンリダイレクトにしない）。
+- 料金・既存商品（Light ¥4,980・Premium 年額 ¥49,800・30 日 ¥18,000・買い切り ¥78,000 等）は変えない。
+
 ## 是正の完成条件（AK）
 
 | # | 問題 | 是正して実測すること |

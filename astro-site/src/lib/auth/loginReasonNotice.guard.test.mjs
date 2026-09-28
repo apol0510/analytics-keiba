@@ -89,7 +89,8 @@ test('ログインメールに別ブラウザの案内を戻していない', ()
 // ブラウザ差の説明は成功画面からも外した（旧: 「このブラウザへのログインが完了しました」）。
 test('/auth/verify 成功画面は結果だけを伝える', () => {
   assert.match(verifyPage, /status\.textContent = 'ログインしました'/);
-  assert.match(verifyPage, /msg\.textContent = 'まもなくマイページへ移動します。'/);
+  // 2026-09-29: 戻り先が /pricing/（Light 月払いメール経由）のときだけ移動先の名前を変える。内容は結果だけのまま
+  assert.match(verifyPage, /msg\.textContent = redirectTo === '\/pricing\/' \? 'まもなく料金ページへ移動します。' : 'まもなくマイページへ移動します。'/);
   assert.doesNotMatch(verifyPage, /このブラウザへのログインが完了しました/);
   assert.doesNotMatch(verifyPage, /次回から同じブラウザのブックマークからアクセスできます/);
 });

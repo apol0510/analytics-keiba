@@ -3,6 +3,7 @@ export const prerender = true;
 import BaseLayout from '../layouts/BaseLayout.astro';
 import CampaignBanner from '../components/CampaignBanner.astro';
 import { buildPlanTierByToken } from '../lib/pricing/planTiers.js';
+import { LIGHT_SWITCH_GRACE_DAYS } from '../lib/pricing/pricingEligibility.js';
 
 // 正規化済みプラン名 → tier。インライン script へ焼き込む（別名表の単一源は planNormalization.js）
 const planTierByToken = buildPlanTierByToken();
@@ -20,14 +21,18 @@ const planTierByToken = buildPlanTierByToken();
             出さない。無料特典の顧客へ特別価格を出したいときは PromotionalOffer で
             明示的に発行する（/offer/ 経路）。判定の単一源は
             src/lib/pricing/pricingEligibility.js（サーバーで算出して user-plan.pricingTier に渡す）。 -->
-    <script define:vars={{ planTierByToken }}>
+    <script define:vars={{ planTierByToken, graceDays: LIGHT_SWITCH_GRACE_DAYS }}>
       (function () {
         try {
-          // 退会申請 / 有効期限切れは無料相当。出し分けせず全プランを見せる（fail-open）
+          // 退会申請は無料相当。出し分けせず全プランを見せる（fail-open）
           if (localStorage.getItem('isWithdrawalRequested') === 'true') return;
-          if (localStorage.getItem('isExpired') === 'true') return;
+          // 2026-09-29 MK 確定: 有効期限の終わり + graceDays（30）日を過ぎたら会員向け価格は出さない
+          // （サーバー判定 pricingEligibility.js の LIGHT_SWITCH_GRACE_DAYS と同じ値。古いセッションの tier を使い続けない）
           const validUntil = localStorage.getItem('validUntil');
-          if (validUntil && validUntil !== 'null' && new Date(validUntil) < new Date()) return;
+          const vuMs = validUntil && validUntil !== 'null'
+            ? (/^\d{4}-\d{2}-\d{2}$/.test(validUntil) ? Date.parse(validUntil + 'T23:59:59.999+09:00') : Date.parse(validUntil))
+            : NaN;
+          if (Number.isFinite(vuMs) && Date.now() > vuMs + graceDays * 86400000) return;
 
           // dashboard.astro / AccessControl.astro と同じ取得順
           let raw = '';
@@ -46,6 +51,9 @@ const planTierByToken = buildPlanTierByToken();
             }
             return; // サーバー判定があるならプラン名からの推測はしない
           }
+          // サーバー判定が無い古いセッション: 期限切れは従来どおり出し分けない
+          if (localStorage.getItem('isExpired') === 'true') return;
+          if (Number.isFinite(vuMs) && vuMs < Date.now()) return;
           // 🔒 pricingTier が無い応答でも、根拠が無料特典と分かっているなら出し分けない
           if (up && up.entitlementSource === 'promotional_grant') return;
 
@@ -91,8 +99,8 @@ const planTierByToken = buildPlanTierByToken();
             </p>
             <!-- Light 会員のときだけ CSS で表示（上位プランのみに絞っている旨の説明） -->
             <p class="pricing-upgrade-note">
-                現在 <strong>Light</strong> プランをご利用中です。アップグレード可能なプランのみ表示しています。<br>
-                Light会員さま限定の<strong>乗り換え特典 ¥4,980 OFF</strong>を適用した価格を表示しています。
+                <strong>Light</strong> 会員さま（有効期限の終了から30日以内の方を含む）向けの表示です。<br>
+                <strong>Light の更新・再開</strong>と、Light会員さま限定の<strong>乗り換え特典 ¥4,980 OFF</strong>を適用した Premium 年額をお選びいただけます。
             </p>
         </div>
 
@@ -876,8 +884,9 @@ const planTierByToken = buildPlanTierByToken();
         display: block;
     }
 
-    :global(:root[data-plan-tier="1"]) .plan-card[data-plan-tier="0"],
-    :global(:root[data-plan-tier="1"]) .plan-card[data-plan-tier="1"] {
+    /* 2026-09-29 MK 確定: Light 会員にも Light カードを出す（Light の更新・再開を実行できるように）。
+       隠すのは無料カードだけ。 */
+    :global(:root[data-plan-tier="1"]) .plan-card[data-plan-tier="0"] {
         display: none;
     }
 
