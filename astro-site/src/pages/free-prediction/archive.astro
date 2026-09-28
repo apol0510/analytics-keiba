@@ -4,11 +4,11 @@
 // （JSON が増えるのは deploy 時なので SSR である必要がない）。
 // 認可も Astro.request も使っていない。**出力される HTML は同一。**
 // 【2026-09-28】一覧先（旧形式 `/free-prediction/YYYY/MM/DD/`）が 404 になったため、
-// 現行の南関アーカイブ（的中実績）へ **301**。netlify.toml の force 301 は SSR 関数（path:/* + preferStatic）
+// 後継の開催日別一覧 /free-prediction/nankan/archive/ へ **301**。netlify.toml の force 301 は SSR 関数（path:/* + preferStatic）
 // 配下の静的ファイルに負けて効かなかったので、ページ自身が返す（SSR）。
 export const prerender = false;
 import BaseLayout from '../../layouts/BaseLayout.astro';
-if (true) return Astro.redirect('/archive/nankan/', 301);
+if (true) return Astro.redirect('/free-prediction/nankan/archive/', 301);
 
 // src/data/free-predictions/ 内の全JSONファイルを取得
 const freePredictions = import.meta.glob('/src/data/free-predictions/*.json', { eager: true });

@@ -1,0 +1,210 @@
+---
+/**
+ * 南関「日付 × 競馬場 × 予想・結果」恒久ページ（2026-09-28）
+ *
+ * データの組み立ては単一源 `src/lib/nankanDateArchive.js`。公開範囲は既存の無料公開と同じ:
+ *   印（◎○▲△）= `/free/` の公開 DTO / 着順・的中 ✅✗・メインの買い目 = `/results-showcase/` と同じ。
+ * AI総合指数・pt・役割名・特徴量・メイン以外の買い目・抑えは出さない（有料版の価値）。
+ * ビルド時に静的生成する（検索エンジンが本文を読める・SSR のデータ間引きの影響を受けない）。
+ */
+import BaseLayout from '../../../layouts/BaseLayout.astro';
+import {
+  buildAllNankanDatePages, formatJpDate, neighborDates, nankanDatePath, NANKAN_ARCHIVE_HUB_PATH,
+} from '../../../lib/nankanDateArchive.js';
+
+export const prerender = true;
+
+export function getStaticPaths() {
+  const pages = buildAllNankanDatePages();
+  const dates = pages.map((p) => p.date);
+  return pages.map((page) => ({
+    params: { date: page.date },
+    props: { page, neighbors: neighborDates(dates, page.date) },
+  }));
+}
+
+const { page, neighbors } = Astro.props;
+const jpDate = formatJpDate(page.date);
+const { summary } = page;
+const mainNames = page.venues
+  .filter((v) => v.mainRace)
+  .map((v) => `${v.venue}${v.mainRace.raceNumber}R${v.mainRace.raceName ? ` ${v.mainRace.raceName}` : ''}`);
+
+const title = `${jpDate} ${summary.venueLabel}競馬 AI予想と結果（全${summary.totalRaces}R）`;
+const description = summary.hasResults
+  ? `${jpDate}の${summary.venueLabel}競馬 全${summary.totalRaces}レースのAI予想の印と結果（着順）。的中${summary.hitRaces}/${summary.resultRaces}レース。${mainNames.length ? `メイン ${mainNames.join('・')} の買い目と結果も掲載。` : ''}`
+  : `${jpDate}の${summary.venueLabel}競馬 全${summary.totalRaces}レースのAI予想の印。結果は確定後にこのページへ反映します。`;
+
+const SITE = 'https://analytics.keiba.link';
+const breadcrumbLd = {
+  '@context': 'https://schema.org',
+  '@type': 'BreadcrumbList',
+  itemListElement: [
+    { '@type': 'ListItem', position: 1, name: 'トップ', item: `${SITE}/` },
+    { '@type': 'ListItem', position: 2, name: '南関競馬 AI予想と結果 一覧', item: `${SITE}${NANKAN_ARCHIVE_HUB_PATH}` },
+    { '@type': 'ListItem', position: 3, name: `${jpDate} ${summary.venueLabel}`, item: `${SITE}${nankanDatePath(page.date)}` },
+  ],
+};
+const markRow = (marks) => marks.filter((m) => m.kind !== 'main');
+---
+
+<BaseLayout title={title} description={description}>
+  <script type="application/ld+json" set:html={JSON.stringify(breadcrumbLd)} />
+  <main class="nda-page">
+    <nav class="nda-crumbs" aria-label="パンくず">
+      <a href="/">トップ</a><span>›</span>
+      <a href={NANKAN_ARCHIVE_HUB_PATH}>南関 予想と結果 一覧</a><span>›</span>
+      <span aria-current="page">{jpDate}</span>
+    </nav>
+
+    <header class="nda-hero">
+      <p class="nda-kicker">南関競馬 AI予想アーカイブ</p>
+      <h1 class="nda-title">{jpDate} {summary.venueLabel}競馬<br class="sp-only" /> AI予想と結果</h1>
+      <p class="nda-summary">
+        全{summary.totalRaces}レース
+        {summary.hasResults
+          ? <> ／ 有料版の買い目（馬単）で<strong>的中 {summary.hitRaces}/{summary.resultRaces}レース</strong></>
+          : <> ／ 結果は確定後にこのページへ反映します</>}
+      </p>
+    </header>
+
+    {page.venues.map((v) => (
+      <section class="nda-venue">
+        <h2 class="nda-venue-title">{v.venue}競馬 {jpDate}</h2>
+
+        {v.mainRace && (
+          <div class={`nda-main ${v.mainRace.isHit ? 'is-hit' : 'is-miss'}`}>
+            <p class="nda-main-head">
+              🎯 メインレース {v.mainRace.raceNumber}R{v.mainRace.raceName && <span> {v.mainRace.raceName}</span>}
+            </p>
+            <p class="nda-main-bet">
+              有料版の買い目（馬単 {v.mainRace.betPoints}点）:
+              <strong> {v.mainRace.honmei} {v.mainRace.displayArrow} {v.mainRace.displayPartners.join('・')}</strong>
+            </p>
+            <p class="nda-main-result">
+              {v.mainRace.isHit
+                ? <>✅ 的中{v.mainRace.combination && <> 馬単 {v.mainRace.combination}</>}{v.mainRace.payout && <> ／ 払戻 ¥{v.mainRace.payout.toLocaleString()}（100円あたり）</>}</>
+                : <>✗ 不的中{v.mainRace.combination && <> （結果 馬単 {v.mainRace.combination}）</>}</>}
+            </p>
+          </div>
+        )}
+
+        <div class="nda-table-wrap">
+          <table class="nda-table">
+            <thead>
+              <tr>
+                <th scope="col">R</th>
+                <th scope="col">レース</th>
+                <th scope="col">AIの印</th>
+                <th scope="col">結果（1〜3着）</th>
+                <th scope="col">的中</th>
+              </tr>
+            </thead>
+            <tbody>
+              {v.races.map((r) => {
+                const honmei = r.marks.find((m) => m.kind === 'main');
+                return (
+                  <tr class={r.isMain ? 'is-main' : ''}>
+                    <td class="nda-rno">{r.raceNumber}R</td>
+                    <td class="nda-race">
+                      <span class="nda-race-name">{r.raceName || `${r.raceNumber}R`}</span>
+                      {r.isMain && <span class="nda-main-tag">メイン</span>}
+                      <span class="nda-race-meta">
+                        {r.startTime && <>{r.startTime}発走</>}{r.distance && <> ・{r.distance}m</>}{r.horseCount && <> ・{r.horseCount}頭</>}
+                      </span>
+                    </td>
+                    <td class="nda-marks">
+                      {honmei
+                        ? <span class="nda-honmei">◎ {honmei.number} {honmei.name}</span>
+                        : <span class="nda-muted">—</span>}
+                      {markRow(r.marks).length > 0 && (
+                        <span class="nda-others">{markRow(r.marks).map((m) => <span class="nda-mark">{m.mark}{m.number}</span>)}</span>
+                      )}
+                    </td>
+                    <td class="nda-top3">
+                      {r.top3
+                        ? r.top3.map((t, i) => t && <span class="nda-place">{i + 1}着 {t.number} {t.name}</span>)
+                        : <span class="nda-muted">未確定</span>}
+                    </td>
+                    <td class="nda-hit">
+                      {r.hasResult ? (r.isHit ? <span class="hit">✅</span> : <span class="miss">✗</span>) : <span class="nda-muted">—</span>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    ))}
+
+    <aside class="nda-note">
+      <p>
+        印（◎本命・○対抗・▲単穴・△連下）は当日の無料予想で公開したものです。的中は有料版の買い目（馬単）での判定です。
+        メインレース以外の買い目・抑え・AI総合指数は有料版でご覧いただけます。
+      </p>
+      <p class="nda-cta">
+        <a href="/free/nankan/" class="nda-btn primary">今日の南関 無料予想を見る</a>
+        <a href="/free-prediction/nankan/" class="nda-btn">有料版の予想を見る</a>
+        <a href="/pricing/" class="nda-btn">料金プラン</a>
+      </p>
+    </aside>
+
+    <nav class="nda-pager" aria-label="前後の開催日">
+      {neighbors.older
+        ? <a href={nankanDatePath(neighbors.older)} rel="prev">← {formatJpDate(neighbors.older)}</a>
+        : <span></span>}
+      <a href={NANKAN_ARCHIVE_HUB_PATH}>開催日一覧</a>
+      {neighbors.newer
+        ? <a href={nankanDatePath(neighbors.newer)} rel="next">{formatJpDate(neighbors.newer)} →</a>
+        : <span></span>}
+    </nav>
+    <p class="nda-links">
+      <a href="/archive/nankan/">南関 的中実績アーカイブ</a>
+      <a href="/results-showcase/nankan/">昨日の買い目（南関）</a>
+      <a href="/free-prediction/jra/archive/">中央競馬の予想アーカイブ</a>
+    </p>
+  </main>
+</BaseLayout>
+
+<style>
+  .nda-page { max-width: 1040px; margin: 0 auto; padding: 1.5rem 1rem 3rem; color: #e2e8f0; }
+  .nda-crumbs { display: flex; flex-wrap: wrap; gap: .4rem; font-size: .82rem; color: #94a3b8; margin-bottom: 1rem; }
+  .nda-crumbs a { color: #7dd3fc; text-decoration: none; }
+  .nda-hero { margin-bottom: 1.5rem; }
+  .nda-kicker { color: #7dd3fc; font-size: .85rem; margin: 0 0 .3rem; }
+  .nda-title { font-size: clamp(1.4rem, 4.5vw, 2rem); font-weight: 600; margin: 0 0 .6rem; line-height: 1.35; }
+  .nda-summary { color: #cbd5e1; margin: 0; }
+  .nda-summary strong { color: #86efac; font-weight: 600; }
+  .nda-venue { margin: 1.8rem 0; }
+  .nda-venue-title { font-size: 1.15rem; font-weight: 600; margin: 0 0 .8rem; border-left: 3px solid #38bdf8; padding-left: .6rem; }
+  .nda-main { border: 1px solid rgba(56,189,248,.35); border-radius: 12px; padding: .9rem 1rem; margin-bottom: 1rem; background: rgba(15,23,42,.6); }
+  .nda-main.is-hit { border-color: rgba(134,239,172,.55); }
+  .nda-main p { margin: .2rem 0; }
+  .nda-main-head { font-weight: 600; }
+  .nda-main-bet strong { color: #fde68a; }
+  .nda-table-wrap { overflow-x: auto; border-radius: 10px; border: 1px solid rgba(148,163,184,.2); }
+  .nda-table { width: 100%; border-collapse: collapse; font-size: .9rem; min-width: 640px; }
+  .nda-table th, .nda-table td { padding: .55rem .6rem; border-bottom: 1px solid rgba(148,163,184,.15); text-align: left; vertical-align: top; }
+  .nda-table th { background: rgba(30,41,59,.8); color: #94a3b8; font-weight: 500; font-size: .8rem; }
+  .nda-table tr.is-main { background: rgba(56,189,248,.07); }
+  .nda-rno { white-space: nowrap; color: #86efac; font-weight: 600; }
+  .nda-race-name { display: block; }
+  .nda-race-meta { display: block; color: #94a3b8; font-size: .78rem; }
+  .nda-main-tag { display: inline-block; font-size: .7rem; padding: 0 .4rem; border-radius: 999px; border: 1px solid #38bdf8; color: #7dd3fc; margin: .15rem 0; }
+  .nda-honmei { display: block; font-weight: 500; }
+  .nda-others { display: flex; gap: .5rem; color: #cbd5e1; font-size: .85rem; }
+  .nda-place { display: block; font-size: .85rem; }
+  .nda-hit { text-align: center; }
+  .hit { color: #86efac; } .miss { color: #94a3b8; }
+  .nda-muted { color: #64748b; }
+  .nda-note { margin: 2rem 0 1rem; padding: 1rem; border-radius: 12px; background: rgba(15,23,42,.6); color: #cbd5e1; font-size: .88rem; }
+  .nda-cta { display: flex; flex-wrap: wrap; gap: .6rem; margin-top: .8rem; }
+  .nda-btn { display: inline-block; padding: .5rem .9rem; border-radius: 999px; border: 1px solid rgba(148,163,184,.4); color: #e2e8f0; text-decoration: none; font-size: .85rem; }
+  .nda-btn.primary { border-color: #38bdf8; color: #7dd3fc; }
+  .nda-pager { display: flex; justify-content: space-between; gap: .6rem; margin: 1.5rem 0 .8rem; font-size: .9rem; }
+  .nda-pager a, .nda-links a { color: #7dd3fc; text-decoration: none; }
+  .nda-links { display: flex; flex-wrap: wrap; gap: 1rem; font-size: .85rem; }
+  .sp-only { display: none; }
+  @media (max-width: 640px) { .sp-only { display: inline; } }
+</style>

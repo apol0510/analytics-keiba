@@ -1,0 +1,76 @@
+---
+/**
+ * 南関「日付 × 競馬場 × 予想・結果」恒久ページの一覧（2026-09-28）
+ * 単一源 `src/lib/nankanDateArchive.js`。各日付ページへの内部リンクの起点（ハブ）。
+ */
+import BaseLayout from '../../../layouts/BaseLayout.astro';
+import { buildAllNankanDatePages, formatJpDate, nankanDatePath } from '../../../lib/nankanDateArchive.js';
+
+export const prerender = true;
+
+const pages = buildAllNankanDatePages();
+const byMonth = new Map();
+for (const p of pages) {
+  const key = p.date.slice(0, 7);
+  if (!byMonth.has(key)) byMonth.set(key, []);
+  byMonth.get(key).push(p);
+}
+const months = [...byMonth.entries()];
+const monthLabel = (ym) => { const [y, m] = ym.split('-').map(Number); return `${y}年${m}月`; };
+const first = pages[pages.length - 1];
+const last = pages[0];
+const description = pages.length
+  ? `南関競馬（大井・船橋・川崎・浦和）のAI予想の印と結果を開催日ごとに掲載。${formatJpDate(first.date)}〜${formatJpDate(last.date)}の${pages.length}開催日。`
+  : '南関競馬のAI予想の印と結果を開催日ごとに掲載。';
+---
+
+<BaseLayout title="南関競馬 AI予想と結果 開催日一覧" description={description}>
+  <main class="nah-page">
+    <nav class="nah-crumbs" aria-label="パンくず"><a href="/">トップ</a><span>›</span><span aria-current="page">南関 予想と結果 一覧</span></nav>
+    <h1 class="nah-title">南関競馬 AI予想と結果 開催日一覧</h1>
+    <p class="nah-lead">
+      大井・船橋・川崎・浦和の各開催日について、当日公開したAIの印（◎○▲△）と着順・的中をまとめています（{pages.length}開催日）。
+    </p>
+    <p class="nah-links">
+      <a href="/free/nankan/">今日の南関 無料予想</a>
+      <a href="/archive/nankan/">南関 的中実績アーカイブ</a>
+      <a href="/free-prediction/jra/archive/">中央競馬の予想アーカイブ</a>
+    </p>
+
+    {months.map(([ym, list]) => (
+      <section class="nah-month">
+        <h2 class="nah-month-title">{monthLabel(ym)}</h2>
+        <ul class="nah-list">
+          {list.map((p) => (
+            <li>
+              <a href={nankanDatePath(p.date)}>
+                <span class="nah-date">{formatJpDate(p.date)}</span>
+                <span class="nah-venue">{p.summary.venueLabel}</span>
+                <span class="nah-stat">
+                  {p.summary.hasResults ? `的中 ${p.summary.hitRaces}/${p.summary.resultRaces}R` : `全${p.summary.totalRaces}R・結果待ち`}
+                </span>
+              </a>
+            </li>
+          ))}
+        </ul>
+      </section>
+    ))}
+  </main>
+</BaseLayout>
+
+<style>
+  .nah-page { max-width: 960px; margin: 0 auto; padding: 1.5rem 1rem 3rem; color: #e2e8f0; }
+  .nah-crumbs { display: flex; gap: .4rem; font-size: .82rem; color: #94a3b8; margin-bottom: 1rem; }
+  .nah-crumbs a, .nah-links a { color: #7dd3fc; text-decoration: none; }
+  .nah-title { font-size: clamp(1.4rem, 4.5vw, 1.9rem); font-weight: 600; margin: 0 0 .6rem; }
+  .nah-lead { color: #cbd5e1; margin: 0 0 .8rem; }
+  .nah-links { display: flex; flex-wrap: wrap; gap: 1rem; font-size: .88rem; margin-bottom: 1.2rem; }
+  .nah-month { margin: 1.4rem 0; }
+  .nah-month-title { font-size: 1.1rem; font-weight: 600; border-left: 3px solid #38bdf8; padding-left: .6rem; margin: 0 0 .6rem; }
+  .nah-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: .5rem; }
+  .nah-list a { display: flex; flex-direction: column; gap: .15rem; padding: .7rem .8rem; border-radius: 10px; border: 1px solid rgba(148,163,184,.2); background: rgba(15,23,42,.55); color: #e2e8f0; text-decoration: none; }
+  .nah-list a:hover { border-color: #38bdf8; }
+  .nah-date { font-weight: 600; }
+  .nah-venue { color: #7dd3fc; font-size: .88rem; }
+  .nah-stat { color: #94a3b8; font-size: .8rem; }
+</style>
