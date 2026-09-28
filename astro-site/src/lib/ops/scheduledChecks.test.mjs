@@ -244,7 +244,7 @@ test('workflow: Airtable の読み取りトークンも失敗経路の検証で�
 
 test('待機中（まだ起きていない・未確定）は失敗と分ける: exit 3・赤にしない・待機中 Issue を 1 つだけ更新', async () => {
   const { exitCodeFor, EXIT, PENDING_CODES } = await import('./scheduledChecks.js');
-  assert.deepEqual([...PENDING_CODES].sort(), ['data_not_ready', 'no_conversion_yet', 'no_reminder_sent_yet']);
+  assert.deepEqual([...PENDING_CODES].sort(), ['data_not_ready', 'no_application_yet', 'no_confirmation_yet', 'no_conversion_yet', 'no_reminder_sent_yet']);
   assert.equal(exitCodeFor('no_conversion_yet'), EXIT.PENDING);
   assert.equal(exitCodeFor('data_not_ready'), EXIT.PENDING);
   assert.equal(exitCodeFor('credentials_missing'), EXIT.FAILED);
@@ -297,4 +297,61 @@ test('送信記録があれば更新率・転換率を記録する（読むの�
   const cust = new URL(urls.find((u) => u.includes('/Customers'))).searchParams.getAll('fields[]');
   assert.equal(cust.includes('Email'), false, 'メールを読まない');
   assert.match(renderLightRenewalOutcomesMarkdown({ check: lr, result: r }), /Light 更新率\*\* \| \*\*100%/);
+});
+
+// ── kind: payment-funnel-first-record（決済ファネルのサーバー側計測が本番で記録されたか）──
+const { runPaymentFunnelCheck, judgePaymentFunnel, countPaidSince } = await import('./paymentFunnelCheck.js');
+const pf = registry.checks.find((c) => c.id === 'payment-funnel-first-record-2026');
+
+test('決済ファネルの自動確認が登録され、5 要素・待機コードがそろっている', async () => {
+  const { KNOWN_KINDS, exitCodeFor, EXIT } = await import('./scheduledChecks.js');
+  assert.ok(pf);
+  assert.ok(KNOWN_KINDS.includes('payment-funnel-first-record'));
+  assert.equal(exitCodeFor('no_application_yet'), EXIT.PENDING);
+  assert.equal(exitCodeFor('no_confirmation_yet'), EXIT.PENDING);
+  // 記録漏れは待機ではなく失敗（赤）
+  assert.equal(exitCodeFor('funnel_missing_confirmation'), EXIT.FAILED);
+  assert.equal(pf.compare.siteUrl, 'https://analytics.keiba.link/');
+  assert.deepEqual(validateRegistry(registry), []);
+});
+
+test('判定: 未発生は待機・Airtable に入金確認があるのに計測 0 は記録漏れ・両端そろえば成功', () => {
+  const code = (fn) => { try { fn(); return 'ok'; } catch (e) { return e.code; } };
+  assert.equal(code(() => judgePaymentFunnel({ funnel: { received: 0, confirmed: 0 }, paidSince: 0 })), 'no_application_yet');
+  assert.equal(code(() => judgePaymentFunnel({ funnel: { received: 2, confirmed: 0 }, paidSince: 0 })), 'no_confirmation_yet');
+  assert.equal(code(() => judgePaymentFunnel({ funnel: { received: 2, confirmed: 0 }, paidSince: 1 })), 'funnel_missing_confirmation');
+  assert.equal(code(() => judgePaymentFunnel({ funnel: { received: 0, confirmed: 0 }, paidSince: 3 })), 'funnel_missing_confirmation');
+  assert.equal(code(() => judgePaymentFunnel({ funnel: { received: 1, confirmed: 1 }, paidSince: 1 })), 'ok');
+  assert.equal(countPaidSince([{ fields: { PaidAt: '2026-09-28T22:00:00.000Z' } }, { fields: { PaidAt: '2026-09-30T01:00:00.000Z' } }, { fields: {} }], '2026-09-28T22:45:03Z'), 1);
+});
+
+test('鍵は専用の読み取り鍵だけを送る（強い管理 secret は使わない）・Airtable は PaidAt だけ読む', async () => {
+  const calls = [];
+  const fetchImpl = async (u, init) => {
+    calls.push({ u: String(u), init });
+    if (String(u).includes('admin-payment-funnel')) {
+      return { ok: true, status: 200, json: async () => ({ received: 1, confirmed: 1, receivedByPlan: { 'premium/Annual': 1 }, confirmedByPlan: {}, confirmLead: { d1: 1 }, open: { count: 0 } }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ records: [{ fields: { PaidAt: '2026-09-30T00:00:00.000Z' } }] }) };
+  };
+  const r = await runPaymentFunnelCheck({ check: pf, token: 't', secret: 's', fetchImpl });
+  assert.equal(r.confirmed, 1);
+  const api = calls.find((c) => c.u.includes('admin-payment-funnel'));
+  assert.equal(api.init.headers['x-funnel-read-secret'], 's');
+  assert.equal('x-admin-secret' in api.init.headers, false);
+  const at = new URL(calls.find((c) => c.u.includes('airtable')).u);
+  assert.deepEqual(at.searchParams.getAll('fields[]'), ['PaidAt']);
+  await assert.rejects(runPaymentFunnelCheck({ check: pf, token: 't', secret: '', fetchImpl }), (e) => e.code === 'funnel_secret_missing');
+});
+
+test('workflow: 決済ファネルの読み取り鍵も失敗経路の検証では渡さない', () => {
+  const wf = read('.github/workflows/scheduled-checks.yml');
+  assert.match(wf, /PAYMENT_FUNNEL_READ_SECRET: \$\{\{ !inputs\.simulate_failure && secrets\.PAYMENT_FUNNEL_READ_SECRET \|\| '' \}\}/);
+});
+
+test('admin-payment-funnel: 読み取り鍵は専用ヘッダでだけ通る・書き込みを持たない', () => {
+  const src = read('astro-site/netlify/functions/admin-payment-funnel.js');
+  assert.match(src, /providedRead === READ_SECRET/);
+  assert.match(src, /Boolean\(READ_SECRET\)/);
+  assert.equal(/HSET|HINCRBY|HDEL|recordPayment/.test(src), false);
 });

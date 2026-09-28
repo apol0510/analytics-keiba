@@ -16,7 +16,7 @@
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /** 実装済みの確認の種類（kind）。ここに無い kind は登録できない */
-export const KNOWN_KINDS = Object.freeze(['gsc-date-archive', 'airtable-premium-conversions', 'airtable-light-renewal-outcomes']);
+export const KNOWN_KINDS = Object.freeze(['gsc-date-archive', 'airtable-premium-conversions', 'airtable-light-renewal-outcomes', 'payment-funnel-first-record']);
 
 export const REQUIRED_FIELDS = Object.freeze(['id', 'title', 'kind', 'runFrom', 'runUntil', 'trigger', 'compare', 'record', 'onFailure']);
 
@@ -81,6 +81,6 @@ export const failureIssueTitle = (id) => `[自動測定 失敗] ${id}`;
  * 赤にせず（毎日の失敗通知を出さず）、待機中 Issue を 1 つだけ更新して翌日また確認する。
  * 期限（runUntil）を過ぎても成功しなければ、期限切れとして Issue に必ず残す。
  */
-export const PENDING_CODES = Object.freeze(['no_conversion_yet', 'data_not_ready', 'no_reminder_sent_yet']);
+export const PENDING_CODES = Object.freeze(['no_conversion_yet', 'data_not_ready', 'no_reminder_sent_yet', 'no_application_yet', 'no_confirmation_yet']);
 export const EXIT = Object.freeze({ OK: 0, REGISTRY: 1, FAILED: 2, PENDING: 3 });
 export const exitCodeFor = (code) => (PENDING_CODES.includes(code) ? EXIT.PENDING : EXIT.FAILED);

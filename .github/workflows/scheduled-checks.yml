@@ -49,6 +49,8 @@ jobs:
       GSC_SERVICE_ACCOUNT_JSON: ${{ !inputs.simulate_failure && secrets.GSC_SERVICE_ACCOUNT_JSON || '' }}
       # Airtable Customers を読むだけのトークン（analytics-keiba ベース・data.records:read のみ）
       AIRTABLE_READONLY_TOKEN: ${{ !inputs.simulate_failure && secrets.AIRTABLE_READONLY_TOKEN || '' }}
+      # 決済ファネルの集計値だけを読む専用の鍵（admin-payment-funnel の読み取りにしか使えない）
+      PAYMENT_FUNNEL_READ_SECRET: ${{ !inputs.simulate_failure && secrets.PAYMENT_FUNNEL_READ_SECRET || '' }}
       # 検証実行は別の題名・ラベルで記録し、本番の「完了」判定（題名が「[自動測定] 」で始まる）に混ぜない
       TITLE_PREFIX: ${{ inputs.dry_run && '[自動測定 検証]' || '[自動測定]' }}
       FAIL_PREFIX: ${{ inputs.dry_run && '[自動測定 検証 失敗]' || '[自動測定 失敗]' }}
