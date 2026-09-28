@@ -2418,6 +2418,13 @@ MK が示した完成の目安（`/free/`）: スマホで開いたとき、長�
 
 検証: `npm run test:seo`（`check:safety` に組込）。
 
+**本番反映: #621 squash `07b4ed71`・2026-09-28 production deploy ready。** 本番で確認済み:
+`/free-prediction/2026/03/10/`・`/free-prediction/nankan/2026-09-26/` → **404**（旧 500）/ `/free-prediction/archive/` → **301 `/archive/nankan/`** /
+`ooi-1650m`・`ooi-1000m` canonical = 自分自身（スラッシュ付き）/ トップ title 更新 / sitemap 142 URL・lastmod なし /
+主要 11 ページ 200（`/premium-prediction/nankan/` は従来どおり 302）。
+- `netlify.toml` の force 301 は SSR 関数（`path:/*` + `preferStatic`）配下の**静的ファイルに負けて効かない**ことを Deploy Preview で確認 → ページ自身の SSR 301 に変更。
+- GSC の sitemap は 9/18 送信・9/26 読込済み（自動で再読込されるので再送信していない）。5xx の「修正を検証」は外部サービスへの送信操作のため未実施（押さなくても再クロールで解消する）。
+
 ### 今後比較する KPI（第 1 弾の反映日を起点に 28 日比較）
 
 | KPI | ベースライン（2026-09-28）| 見る場所 |
