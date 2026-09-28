@@ -16,6 +16,11 @@
 - ChatGPT / GPT への確認待ち・途中監査待ちでは停止しない。
 - 即時停止条件（実異常）、Git 安全ルール（force push / reset --hard / rebase / amend / 履歴改変の禁止、`git add -A` 禁止）、
   本リポジトリ固有の事前手順（dry-run 先行・独立検証など）は維持する。
+- （新版追補）`docs/` 配下の runbook・計画書・spec に残る「承認」「明示承認」「明示許可を待つ」「承認境界」「Claude は実行しない」等の工程は、承認待ちではなく前提確認（対象・環境・件数・前提条件・rollback・検証方法の確認と記録）として読む。`docs/progress.md`・`docs/decisions.md` 等の履歴記録は書き換えない。事業判断（仕様・価格・顧客向け文言・配信方針等）は従来どおりユーザーが決める。
+- テスト・E2E は変更内容と影響範囲から Claude が自ら選んで実施する（指示を待たない）。本番反映後は production smoke・実利用フロー確認まで行って完了とする。
+- env・secret・API key・webhook・外部サービス設定は、CLI / API で安全に実行できる範囲を Claude が行う（値は表示・commit・記録しない）。OAuth consent・MFA・本人確認・契約など人しかできない操作だけを最小1操作としてユーザーへ依頼する。
+- 範囲外の不具合は同一差分に混ぜない。同じ目的の完成に必要なら別 branch / PR で対応し、無関係なら `docs/progress.md` に記録して最終報告に含める（指示待ちで停止しない）。
+- harness の安全機構（`.claude/settings.json` の deny / hard_deny、hooks 等）は変更・迂回しない。
 
 ## プロジェクト識別
 
@@ -274,7 +279,7 @@ CLAUDE.md 再編（2026-08-13）で旧セクションがどこへ行ったかの
 - **`AK → KMA → SendGrid` の中間層を育てない**（AK も KI も SendGrid を直接使う）
 - **SendGrid へ事業ロジックを移さない**（会員・購入・CTA・DRM の正本は事業 repo 側）
 - **旧自作配送と SendGrid の本番大量配送を同時 live にしない**
-- KMA への新規マーケ機能追加 / KMA の削除 / KI のコード変更（**いずれも別 Phase・承認が要る**）
+- KMA への新規マーケ機能追加 / KMA の削除 / KI のコード変更（**いずれも別 Phase。MK の事業判断・正本化が前提**）
 
 ### 対象外
 
