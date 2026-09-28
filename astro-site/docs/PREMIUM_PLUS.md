@@ -557,7 +557,7 @@ deploy `6a62eadd`（`99d7b15`）への **rollback（Netlify restore）で復旧*
 | 表示 / クリック | ブラウザ → `/api/pp-funnel.json` | クライアント発火・サーバー検証 |
 | 商品ページ到達 | 商品ページ SSR | サーバー |
 | **決済開始** | `bank-transfer-application` | **サーバー**。申込が Function へ到達した時点 |
-| **購入完了** | `confirm-bank-payment` | **サーバー側の確定イベントのみ** |
+| **購入完了** | **Plus 管理画面の「入金確認」**（2026-09-29〜 / 注文台帳 `ak:pp:orders:v1`）| **サーバー側の確定イベントのみ**。`confirm-bank-payment` は Plus 申込を通らない |
 
 #### ⚠️ 購入完了は「確定」でしか記録しない
 
@@ -619,7 +619,7 @@ deploy `6a62eadd`（`99d7b15`）への **rollback（Netlify restore）で復旧*
 | 個別検索の式 | `src/lib/premiumPlus/premiumPlusAdminSearch.js` |
 | **段階・並び順・転換率（純粋）** | `src/lib/premiumPlus/premiumPlusFunnelAnalytics.js` |
 | **決済開始・購入完了の記録** | `src/lib/premiumPlus/premiumPlusFunnelServer.js`（`recordPlusCheckoutStart` / `recordPlusPurchase`）|
-| 購入の確定点 | `netlify/functions/confirm-bank-payment.js` |
+| 購入の確定点 | Plus 管理画面「🧾 Premium Plus 注文」→ `premium-plus-eligibility` action `plusOrderConfirm`（`src/lib/premiumPlus/premiumPlusOrderService.js`）|
 | 決済開始の記録点 | `netlify/functions/bank-transfer-application.js` |
 | テスト | `src/lib/premiumPlus/premiumPlusFunnel*.test.mjs`（`npm run test:premium-plus-media` / `check:safety` に組込済み） |
 

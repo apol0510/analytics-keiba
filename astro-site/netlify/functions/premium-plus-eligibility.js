@@ -77,6 +77,11 @@ import { describeSanrenpukuHolding } from '../../src/lib/entitlements/sanrenpuku
 import { createFunnelStore, describeFunnelRow, funnelJst } from '../../src/lib/premiumPlus/premiumPlusFunnelStore.js';
 import { makeRedisCmd } from '../../src/lib/premiumPlus/premiumPlusFunnelServer.js';
 import {
+  createOrderStore, confirmOrder, repairOrder, cancelOrder, revokeOrder, createCanaryOrder, deleteCanaryOrder,
+} from '../../src/lib/premiumPlus/premiumPlusOrderService.js';
+import { describeOrder } from '../../src/lib/premiumPlus/premiumPlusOrders.js';
+import { makeOrderDeps } from '../../src/lib/premiumPlus/premiumPlusOrderDeps.js';
+import {
   buildPlusDeliveryFormula,
   indexPlusDeliveries,
   describePlusNotified,
@@ -224,6 +229,13 @@ exports.handler = async (event) => {
     // **会員ごとに**「販売再開 ＋ 再募集期間の開始」を 1 操作で行う
     // （**サーバー時刻で first-write-wins**。上書き経路は持たない）
     if (action === 'reopenStart') return await handleReopenStart({ KEY, BASE, now, req });
+    // Premium Plus 注文（入金確認は Plus 専用 / 2026-09-29 MK 決定 B）
+    if (action === 'plusOrders') return await handlePlusOrders({ req });
+    if (action === 'plusOrderConfirm' || action === 'plusOrderRepair'
+        || action === 'plusOrderCancel' || action === 'plusOrderRevoke'
+        || action === 'plusOrderCanaryCreate' || action === 'plusOrderCanaryDelete') {
+      return await handlePlusOrderOp({ action, now, req });
+    }
     return json(400, { error: `未知の action: ${action}` });
   } catch (e) {
     console.error('❌ [premium-plus-eligibility]', e.message);
@@ -2048,5 +2060,89 @@ async function handlePreview({ KEY, BASE, now, req }) {
     options: { times: PP_PREVIEW_TIMES, phases: PP_PREVIEW_PHASES },
     // 管理者が誤解しないための明示
     notice: '管理者プレビュー / 実顧客には影響しません',
+  });
+}
+
+// ─────────────────────────────────────────────────────────────
+// Premium Plus 注文（2026-09-29 MK 決定 B）
+//
+// Plus の購入確定は **Plus 管理画面の「入金確認」だけ**で行う（Customers の PaymentConfirmed /
+// Requested* は使わない）。会員の プラン・tier・権利・Customers には触らない。
+// 正本: docs/spec.md「Premium Plus の入金確認（Plus 専用の注文）」
+// ─────────────────────────────────────────────────────────────
+
+/** 注文一覧（読むだけ）。recordId を渡すとその会員の注文だけ */
+async function handlePlusOrders({ req }) {
+  const cmd = makeRedisCmd(process.env);
+  if (!cmd) return json(503, { error: 'store_unavailable', sideEffects: 'none' });
+  let orders;
+  try {
+    orders = await createOrderStore({ redisCmd: cmd }).list();
+  } catch {
+    return json(503, { error: 'read_failed', sideEffects: 'none' });
+  }
+  const rid = String(req.recordId || '').trim();
+  const rows = orders
+    .filter((o) => !rid || o.recordId === rid)
+    .sort((a, b) => (Number(b.receivedAt) || 0) - (Number(a.receivedAt) || 0))
+    .map(describeOrder);
+  const count = (st) => rows.filter((o) => o.status === st).length;
+  return json(200, {
+    orders: rows,
+    counts: {
+      awaiting: count('awaiting_payment'), confirmed: count('confirmed'),
+      cancelled: count('cancelled'), revoked: count('revoked'),
+      needsRepair: rows.filter((o) => o.needsRepair).length,
+    },
+    sideEffects: 'none',
+  });
+}
+
+/** 入金確認 / 修復 / 取消 / 訂正。**クライアントの申告（金額・状態）は使わず、台帳を読み直して判定する** */
+async function handlePlusOrderOp({ action, now, req }) {
+  const cmd = makeRedisCmd(process.env);
+  if (!cmd) return json(503, { error: 'store_unavailable', sideEffects: 'none' });
+  const store = createOrderStore({ redisCmd: cmd });
+  // 本番の実操作確認用（env PP_ORDER_CANARY_ENABLED=1 のときだけ。通常は 403）
+  if (action === 'plusOrderCanaryCreate') {
+    const out = await createCanaryOrder({ store, env: process.env, recordId: String(req.recordId || '').trim(), nowMs: now });
+    return json(out.status, { ok: out.ok, code: out.code, order: out.order || null, error: out.ok ? undefined : out.code });
+  }
+  const orderId = String(req.orderId || '').trim();
+  if (!orderId) return json(400, { error: 'orderId が必要です', sideEffects: 'none' });
+  if (action === 'plusOrderCanaryDelete') {
+    const out = await deleteCanaryOrder({ store, env: process.env, orderId, nowMs: now });
+    return json(out.status, { ok: out.ok, code: out.code, error: out.ok ? undefined : out.code });
+  }
+  const deps = makeOrderDeps(process.env);
+  const actor = String(req.actor || '').trim();
+  const reason = String(req.reason || '').trim();
+  let out;
+  if (action === 'plusOrderConfirm') {
+    out = await confirmOrder({ store, deps, orderId, recordId: String(req.recordId || '').trim(), actor, nowMs: now });
+  } else if (action === 'plusOrderRepair') {
+    out = await repairOrder({ store, deps, orderId, nowMs: now });
+  } else if (action === 'plusOrderCancel') {
+    out = await cancelOrder({ store, deps, orderId, actor, reason, nowMs: now });
+  } else {
+    out = await revokeOrder({ store, deps, orderId, actor, reason, nowMs: now });
+  }
+  // ⚠️ 識別子を載せない
+  console.log('🧾 [premium-plus-eligibility] 注文操作:', { action, code: out.code, ok: out.ok });
+  const ORDER_ERROR = {
+    order_not_found: '注文が見つかりません（一意に確認できないため何もしていません）',
+    order_mismatch: '注文を一意に確認できません（何もしていません）',
+    record_mismatch: '注文と会員が一致しません（何もしていません）',
+    missing_actor: '操作者名を入力してください',
+    missing_reason: '理由を入力してください',
+    in_progress: '同じ注文を処理中です。少し待ってから再読み込みしてください',
+    store_unavailable: '注文台帳を読めません（何もしていません）',
+  };
+  const code = String(out.code || '');
+  const error = out.ok || out.idempotent ? undefined
+    : (ORDER_ERROR[code] || (code.startsWith('not_awaiting') ? 'この注文は未確認ではありません（状態が変わっています）'
+      : code.startsWith('not_confirmed') ? 'この注文は確認済みではありません（状態が変わっています）' : `操作できません（${code}）`));
+  return json(out.status || (out.ok ? 200 : 409), {
+    ok: out.ok, code: out.code, idempotent: out.idempotent === true, order: out.order || null, error,
   });
 }

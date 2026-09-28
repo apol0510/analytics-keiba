@@ -1,3 +1,15 @@
+# 2026-09-29 — Premium Plus の購入確定は Plus 管理画面の「入金確認」で行う（MK 確定 / B）
+
+- Plus の申込は Customers の申込列（`RequestedPlan` / `PaymentConfirmed`）を**使わない**（1 人 1 行で他商品の申込と衝突する・Plus は会員のプランを変えない）。
+- 振込完了の報告を受理したら Plus 専用の**注文**（`recordId:対象日`・Redis `ak:pp:orders:v1`）を作り、Plus 管理画面の「入金確認」で確定する。
+- 入金確認で行うこと: 新系列の購入を 1 件だけ記録（`recordId:premium-plus:対象日`）→ クーポンがあれば使用済み。
+  クーポン・計測の失敗で確定は巻き戻さず「要修復」を残し、「修復」で未完了分だけ再実行する（どちらも冪等）。
+- 取消（未入金・誤申込）は未確認の注文だけ・理由必須・クーポン予約を解除。訂正（誤って確定）は確認済みだけ・理由必須・購入件数から外す（使用済みクーポンは自動では戻さない）。
+- 会員のプラン・tier・権利・Customers には触らない。対象が一意に確認できないときは何もしない（fail closed）。
+- 前の決定（同日「購入件数を Plus だけの新系列へ」）の「未決」はこれで解消。仕様の正本: `spec.md`「Premium Plus の入金確認（Plus 専用の注文）」。
+
+---
+
 # 2026-09-29 — Premium Plus 購入件数を Plus だけの新系列へ切り替える／旧系列は「他商品混入の参考値」（MK 確定 / A）
 
 - 旧系列（Redis `ak:pp:funnel:v1:purchase` と日次 `YYYYMMDD|purchase|…`、2026-08-13〜09-28）は、`confirm-bank-payment` が
@@ -7,8 +19,7 @@
 - 新系列（`ak:pp:funnel:v1:purchase:s2` / 日次 `purchase_plus`、2026-09-29〜）は **申込内容 `RequestedPlan` が Premium Plus の入金確認だけ**を、
   昇格 PATCH 成功後に `orderKey`（`recordId:premium-plus:対象日`）で 1 注文 1 回だけ数える。商品が分からなければ数えない（fail closed）。
 - 他の段階（表示・クリック・到達・決済開始）と決済ファネル（`ak:pay:funnel:v1`）は変えない。
-- ⚠️ **未決（別判断）**: 現在の Plus 申込は Airtable に申込内容を書かないため、Plus の入金確認が `confirm-bank-payment` へ届く経路が無い。
-  新系列は**正しいが、このままでは 0 件のまま**。成立地点の作り方は MK 判断（`progress.md` 参照）。
+- ~~未決~~ → 同日の決定 B（Plus 管理画面の「入金確認」）で解消。Plus 申込は `confirm-bank-payment` を通らない。
 - 仕様の正本: `spec.md`「Premium Plus 購入件数の系列」／`astro-site/docs/PREMIUM_PLUS.md`「決済まで計測する」。
 
 ---

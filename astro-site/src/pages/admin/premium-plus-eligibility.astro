@@ -68,6 +68,24 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       ⚠️ サイト全体で一括開始するボタンを再び置かないこと。
     -->
     <div class="reopen" id="reopenPanel" hidden></div>
+
+    <!--
+      Premium Plus 注文（入金確認）— 2026-09-29 MK 決定 B。
+      Plus の購入確定は**ここだけ**で行う（Airtable の PaymentConfirmed は使わない）。
+      会員のプラン・有効期限・権利には触らない。二度押しは 2 段階ボタンで防ぎ、
+      サーバーも注文台帳を読み直して 1 注文 1 回しか確定しない。
+    -->
+    <section class="pp-orders" id="ppOrders" aria-labelledby="ppOrdersH">
+      <div class="pp-orders-head">
+        <h2 id="ppOrdersH">🧾 Premium Plus 注文（入金確認）</h2>
+        <button type="button" id="ppOrdersReload" class="btn-ghost">注文を再読み込み</button>
+      </div>
+      <p class="pp-orders-lead">振込完了の報告を受けた Plus の注文です。入金を確認したら「入金確認」を 2 回押して確定します
+        （購入件数に 1 件だけ入り、クーポンがあれば使用済みになります）。未入金・誤申込は「取消」、誤って確定したときは「確認を取消」。</p>
+      <div class="pp-orders-counts" id="ppOrdersCounts"></div>
+      <div class="pp-orders-msg" id="ppOrdersMsg" role="status" aria-live="polite"></div>
+      <div class="pp-orders-list" id="ppOrdersList"></div>
+    </section>
     <div class="sumbar" id="summary"></div>
     <div class="sumsub" id="summarySub"></div>
 
@@ -2567,6 +2585,24 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   @media (min-width: 901px) and (max-width: 1100px) {
     .ppe .toolbar > * { flex: 1 1 46%; }
   }
+
+  /* ── Premium Plus 注文（入金確認）── */
+  .ppe .pp-orders { margin: 12px 0 16px; padding: 12px 14px; border: 1px solid rgba(148,163,184,.35); border-radius: 12px; background: rgba(15,23,42,.35); }
+  .ppe .pp-orders-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+  .ppe .pp-orders-head h2 { font-size: 1rem; margin: 0; }
+  .ppe .pp-orders-lead { font-size: .82rem; opacity: .85; margin: 6px 0; }
+  .ppe .pp-orders-counts { font-size: .85rem; margin: 4px 0; }
+  .ppe .pp-orders-msg { font-size: .85rem; min-height: 1.2em; }
+  .ppe .pp-orders-msg.err { color: #fca5a5; }
+  .ppe .pp-orders-msg.ok { color: #86efac; }
+  .ppe .pp-order { display: grid; gap: 4px; padding: 8px 10px; margin: 6px 0; border-radius: 8px; background: rgba(30,41,59,.6); font-size: .85rem; }
+  .ppe .pp-order.st-awaiting_payment { border-left: 4px solid #fbbf24; }
+  .ppe .pp-order.st-confirmed { border-left: 4px solid #22c55e; }
+  .ppe .pp-order.st-cancelled, .ppe .pp-order.st-revoked { border-left: 4px solid #94a3b8; opacity: .85; }
+  .ppe .pp-order .repair { color: #fca5a5; font-weight: 600; }
+  .ppe .pp-order-ops { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .ppe .pp-order-ops input { min-width: 12em; }
+  .ppe .pp-order-ops button.armed { background: #b91c1c; color: #fff; }
 </style>
 
 <script>
@@ -3877,6 +3913,117 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
      *   keepMessage=true … 直前の結果表示を消さない（保存直後の「更新しました」を上書きしない）
      *   auto=true       … 自動更新（メッセージを出さない・既読にしない）
      */
+    // ── Premium Plus 注文（入金確認）──────────────────────────────────
+    // ⚠️ 判定はサーバー（premiumPlusOrders.js）。ここは表示とボタンだけ。金額・状態を送らない。
+    const ordYen = (n) => (Number.isFinite(n) ? '¥' + Number(n).toLocaleString('ja-JP') : '—');
+    const ordJst = (ms) => (Number.isFinite(ms) ? new Date(ms).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '—');
+    function orderMemberLabel(recordId) {
+      const r = ((lastData && lastData.rows) || []).find((x) => x.recordId === recordId);
+      return r ? ((r.name || r.fullName || '') + ' ' + (r.email || '')).trim() || recordId : recordId;
+    }
+    function ordersMsg(text, kind) {
+      const el = $('ppOrdersMsg');
+      el.textContent = text || '';
+      el.className = 'pp-orders-msg' + (kind ? ' ' + kind : '');
+    }
+    /** 2 段階ボタン: 1 回目で「本当に〜」に変わり、5 秒以内の 2 回目で実行（ダイアログを出さない） */
+    function armButton(btn, armedText, run) {
+      const label = btn.textContent;
+      let armed = false; let timer = null;
+      btn.addEventListener('click', async () => {
+        if (!armed) {
+          armed = true; btn.classList.add('armed'); btn.textContent = armedText;
+          timer = setTimeout(() => { armed = false; btn.classList.remove('armed'); btn.textContent = label; }, 5000);
+          return;
+        }
+        clearTimeout(timer); btn.disabled = true;
+        try { await run(); } finally { btn.disabled = false; armed = false; btn.classList.remove('armed'); btn.textContent = label; }
+      });
+    }
+    async function orderOp(action, order, extra) {
+      const actor = currentActor();
+      if ((action !== 'plusOrderRepair') && !actor) { ordersMsg('操作者名を入力してください（変更履歴に残ります）', 'err'); $('connBody').hidden = false; return; }
+      ordersMsg('処理中…');
+      const out = await call({ action, orderId: order.orderId, recordId: order.recordId, actor, ...(extra || {}) });
+      if (!out) { ordersMsg('操作できませんでした（理由は画面上部のメッセージ）。何も変更していません。', 'err'); await loadOrders({ keepMessage: true }); return; }
+      if (out.__unknown) { ordersMsg('通信が切れました。確定したかどうかは分かりません。再読み込みで確認してください。', 'err'); return; }
+      const text = {
+        confirmed: '✅ 入金確認しました（購入件数に 1 件・クーポンは使用済み／なし）',
+        confirmed_needs_repair: '⚠️ 入金確認は確定しました。ただし計測かクーポンが未完了です（「修復」を押してください）',
+        already_confirmed: 'この注文は既に入金確認済みです（二重には数えません）',
+        repaired: '✅ 修復しました', repair_incomplete: '⚠️ まだ修復できていない項目があります',
+        nothing_to_repair: '修復が必要な項目はありません',
+        cancelled: '注文を取り消しました', already_cancelled: '既に取消済みです',
+        revoked: '入金確認を取り消しました（購入件数から外しました）', already_revoked: '既に取消済みです',
+      }[out.code] || ('結果: ' + out.code);
+      ordersMsg(text, out.ok && !String(out.code).includes('needs_repair') && out.code !== 'repair_incomplete' ? 'ok' : (out.ok || out.idempotent ? '' : 'err'));
+      await loadOrders({ keepMessage: true });
+    }
+    function renderOrders(data) {
+      const list = $('ppOrdersList');
+      list.textContent = '';
+      const c = data.counts || {};
+      $('ppOrdersCounts').textContent = `未確認 ${c.awaiting || 0} 件 / 確認済み ${c.confirmed || 0} 件 / 取消 ${(c.cancelled || 0) + (c.revoked || 0)} 件`
+        + (c.needsRepair ? ` / ⚠️ 要修復 ${c.needsRepair} 件` : '');
+      const orders = data.orders || [];
+      if (!orders.length) {
+        const p = document.createElement('p');
+        p.className = 'pp-orders-lead';
+        p.textContent = 'まだ注文はありません（2026-09-29 以降に振込完了の報告を受けた Plus 注文だけが並びます）。';
+        list.appendChild(p);
+        return;
+      }
+      for (const o of orders) {
+        const box = document.createElement('div');
+        box.className = 'pp-order st-' + o.status;
+        box.dataset.orderId = o.orderId;
+        const line = (t) => { const d = document.createElement('div'); d.textContent = t; box.appendChild(d); return d; };
+        line(`【${o.statusLabel}】 対象日 ${o.saleDate}${o.saleLabel ? '（' + o.saleLabel + '）' : ''} ／ ${ordYen(o.amount)}`);
+        line(`会員: ${orderMemberLabel(o.recordId)}`);
+        line(`受付: ${ordJst(o.receivedAt)}${o.reportCount > 1 ? `（報告 ${o.reportCount} 回）` : ''}`
+          + (o.confirmedAt ? ` ／ 入金確認: ${ordJst(o.confirmedAt)}（${o.confirmedBy || '—'}）` : '')
+          + (o.cancelledAt ? ` ／ 取消: ${ordJst(o.cancelledAt)}（${o.cancelReason || ''}）` : '')
+          + (o.revokedAt ? ` ／ 確認取消: ${ordJst(o.revokedAt)}（${o.revokeReason || ''}）` : ''));
+        line(`クーポン: ${o.couponLabel}`);
+        line(`購入件数: ${{ not_yet: '未計上', counted: '計上済み（1 件）', needs_repair: '⚠️ 未計上（要修復）', removed: '計上から外した' }[o.metricState] || o.metricState}`);
+        if (o.needsRepair) { const r = line('⚠️ 要修復: 「修復」を押すと未完了の処理だけをやり直します'); r.className = 'repair'; }
+        if (o.lastAction) line(`最終操作: ${o.lastAction.action} → ${o.lastAction.result}（${ordJst(o.lastAction.at)}）`);
+        const ops = document.createElement('div');
+        ops.className = 'pp-order-ops';
+        const mkOrderBtn = (t) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = t; ops.appendChild(b); return b; };
+        const mkReason = (ph) => { const i = document.createElement('input'); i.type = 'text'; i.placeholder = ph; i.maxLength = 120; ops.appendChild(i); return i; };
+        if (o.status === 'awaiting_payment') {
+          armButton(mkOrderBtn('入金確認'), `本当に確定（${ordYen(o.amount)}）`, () => orderOp('plusOrderConfirm', o));
+          const why = mkReason('取消の理由（未入金・誤申込など）');
+          armButton(mkOrderBtn('取消'), '本当に取消', async () => {
+            if (!why.value.trim()) { ordersMsg('取消の理由を入力してください', 'err'); return; }
+            await orderOp('plusOrderCancel', o, { reason: why.value.trim() });
+          });
+        }
+        if (o.needsRepair && o.status === 'confirmed') armButton(mkOrderBtn('修復'), '本当に修復', () => orderOp('plusOrderRepair', o));
+        if (o.status === 'confirmed') {
+          const why = mkReason('確認を取り消す理由（誤って確定した等）');
+          armButton(mkOrderBtn('確認を取消'), '本当に確認を取消', async () => {
+            if (!why.value.trim()) { ordersMsg('理由を入力してください', 'err'); return; }
+            await orderOp('plusOrderRevoke', o, { reason: why.value.trim() });
+          });
+        }
+        if (ops.childNodes.length) box.appendChild(ops);
+        list.appendChild(box);
+      }
+    }
+    async function loadOrders(opts = {}) {
+      const data = await call({ action: 'plusOrders' }, { quiet: true });
+      if (!data || data.__unknown) {
+        ordersMsg('注文を読み取れませんでした（0 件という意味ではありません）。再読み込みしてください。', 'err');
+        return false;
+      }
+      if (!opts.keepMessage) ordersMsg('');
+      renderOrders(data);
+      return true;
+    }
+    $('ppOrdersReload').addEventListener('click', () => loadOrders());
+
     async function load(opts = {}) {
       const auto = !!opts.auto;
       const silent = auto || !!opts.keepMessage;
@@ -3895,6 +4042,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       if (!auto) markFunnelSeen();
       render();
       renderRefreshNote(Date.now(), auto);
+      // 注文（入金確認）は手動の読み込みでだけ更新する（自動更新で操作中のボタンを作り替えない）
+      if (!auto) await loadOrders({ keepMessage: true });
       return true;
     }
 

@@ -2023,6 +2023,26 @@ sent（＝provider 受理）/ skipped / failed / ジョブ状態（SENT / PARTIA
 - 新旧を足した数字を出さない。管理画面は新系列だけを表示し、系列の注記を常設する。
 - テスト: `src/lib/premiumPlus/premiumPlusPurchaseSeries.test.mjs`（`test:premium-plus-media` → `check:safety`）。
 
+## Premium Plus の入金確認（Plus 専用の注文 / 2026-09-29 MK 確定 B）
+
+| 段 | どこで | 何が起きるか |
+|---|---|---|
+| 振込完了の報告 | `bank-transfer-application.js` | 会員を特定できたら注文 `recordId:対象日` を作る（状態 `awaiting_payment`）。再送は同じ注文にまとめ、金額・クーポン・状態は最初の受理のまま |
+| 入金確認 | Plus 管理画面「🧾 Premium Plus 注文」→「入金確認」（2 段階ボタン）| ロック → 読み直して判定 → `confirmed` を保存（確定）→ 新系列の購入 1 件 → クーポン使用済み |
+| 修復 | 同「修復」| 確定済みで計測／クーポンが未完了のものだけ再実行（冪等）|
+| 取消 | 同「取消」| 未確認の注文だけ（未入金・誤申込）。理由必須。クーポン予約を解除（取得済みは残るので申し込み直せる）|
+| 訂正 | 同「確認を取消」| 確認済みだけ（誤って確定）。理由必須。購入件数から外す。**使用済みクーポンは自動で戻さない**（戻すならクーポン管理の訂正で）|
+
+- 判定の単一源: `src/lib/premiumPlus/premiumPlusOrders.js`（純粋）／I/O と順番: `premiumPlusOrderService.js`／外部 I/O: `premiumPlusOrderDeps.js`。
+- fail closed: 注文が無い・会員が一致しない・操作者名なし・処理中（ロック）・台帳を読めない → 何もしない。
+- 二重計上しない: 注文の状態（`confirmed` 以降は確定不可）＋ ロック（`SET NX EX 120`）＋ 計測の orderKey（1 注文 1 回）。
+- 影響範囲: Customers・プラン・tier・権利・`PaymentConfirmed` / `Requested*` には書かない。クーポン予約台帳（`PromotionalOffers` の Plus 予約行）だけを更新する。
+- 注文台帳ができる前（〜2026-09-29 反映前）の申込には注文が無い＝この画面では確定できない（推測で作らない）。
+- rollback: 機能ごと戻すなら PR を revert。個々の誤操作は「取消」「確認を取消」で戻す（履歴は注文に残る）。Redis の `ak:pp:orders:v1` は Plus 専用で他機能は読まない。
+- 本番の実操作確認用のテスト注文: env `PP_ORDER_CANARY_ENABLED=1` のときだけ action `plusOrderCanaryCreate` で作れる（対象日 `2000-01-01` 固定・金額なし・クーポンなし・【テスト】表示）。
+  確認後は「確認を取消」で購入件数から外し、`plusOrderCanaryDelete` で削除（テスト注文かつ取消・訂正済みで計上から外れたものだけ消せる。実注文は消せない）。**使い終わったら env を外して redeploy**。
+- テスト: `src/lib/premiumPlus/premiumPlusOrders.test.mjs`（`test:premium-plus-media` → `check:safety`）。
+
 ## Premium Plus の「即時販売」（2026-08-07 明文化）
 
 管理画面の**「今すぐ販売可」＝即時販売**は、**その会員だけ段階公開の待機日数を飛ばして

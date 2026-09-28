@@ -39,6 +39,8 @@ import { isSaleDateFieldEnabled, SALE_TARGET_DATE_FIELD } from '../../src/lib/pa
 import raceCalendarRaw from '../../src/data/premiumPlusRaceCalendar.json' with { type: 'json' };
 import { recordPlusCheckoutStart } from '../../src/lib/premiumPlus/premiumPlusFunnelServer.js';
 import { recordPaymentApplication } from '../../src/lib/payments/paymentFunnelServer.js';
+import { makeRedisCmd } from '../../src/lib/premiumPlus/premiumPlusFunnelServer.js';
+import { createOrderStore, recordOrderOnApplication } from '../../src/lib/premiumPlus/premiumPlusOrderService.js';
 import { normalizeSalePaused, PP_SALE_PAUSE_FIELDS } from '../../src/lib/premiumPlus/premiumPlusRelease.js';
 
 /**
@@ -1293,6 +1295,47 @@ exports.handler = async (event, context) => {
       }
       // ⚠️ 識別子（メール / recordId）を載せない。何が起きたかだけを残す
       console.log('🎟 [bank-transfer] クーポン利用予約:', { outcome: reservationOutcome });
+    }
+
+    // ========================================
+    // Premium Plus 注文台帳（入金確認は Plus 管理画面で行う / 2026-09-29 MK 決定 B）
+    // ========================================
+    // Plus は Customers の申込列を使わない（他商品の申込と衝突させない）。代わりに
+    // Plus 専用の注文（`recordId:対象日`）を Redis に作り、管理画面の「入金確認」で確定させる。
+    // ⚠️ 会員を特定できない申込は注文を作らない（推測の recordId を作らない＝管理画面で確定できない）。
+    // ⚠️ 失敗しても申込は受理する（メールは送信済み）。結果はログに残す。
+    if (isPremiumPlusOrder) {
+      let orderOutcome = 'skipped:no_record_id';
+      if (plusCustomerRecordId && saleOrder && saleOrder.date) {
+        const cmd = makeRedisCmd(process.env);
+        if (!cmd) {
+          orderOutcome = 'store_unavailable';
+        } else {
+          let price = serverPricing && Number.isFinite(serverPricing.finalPrice) ? serverPricing.finalPrice : null;
+          if (price === null) {
+            try {
+              const p0 = resolveOrderPricing({
+                fields: plusCustomerFields, couponId: null, nowMs: Date.now(), def: plusCouponDef || undefined,
+              });
+              price = Number.isFinite(p0.finalPrice) ? p0.finalPrice : null;
+            } catch { price = null; }
+          }
+          const r = await recordOrderOnApplication({
+            store: createOrderStore({ redisCmd: cmd }),
+            input: {
+              recordId: plusCustomerRecordId,
+              saleDate: saleOrder.date,
+              saleLabel: saleOrder.label || null,
+              amount: price,
+              couponId: serverPricing && serverPricing.couponApplied ? serverPricing.couponApplied.couponId : null,
+              nowMs: Date.now(),
+            },
+          });
+          orderOutcome = r.outcome;
+        }
+      }
+      // ⚠️ 識別子を載せない
+      console.log('🧾 [bank-transfer] Premium Plus 注文:', { outcome: orderOutcome });
     }
 
     // ========================================
