@@ -41,6 +41,10 @@ const pageDescription = view
 // ⚠️ このページは Cookie も会員判定も使っていないことが前提
 //    （check-cdn-cache-safety.mjs が CI で検査する）。
 setPublicCdnCache(Astro);
+// 2026-09-28: その日の日付ページ（予想ファイルがある日だけ静的生成）が存在するときだけリンクする。
+// ⚠️ SSR 関数は予想データを直近数日ぶんしか持たないので、見つからなければリンクを出さない（一覧へのリンクは常に出す）。
+const jraDatePageExists = !!(view && view.date && existsSync(join(process.cwd(), 'src', 'data', 'predictions', 'jra',
+  view.date.slice(0, 4), view.date.slice(5, 7), `${view.date}.json`)));
 ---
 
 <BaseLayout title={pageTitle} description={pageDescription}>
@@ -178,6 +182,11 @@ setPublicCdnCache(Astro);
         </section>
       </>
     )}
+    {/* 2026-09-28: 過去の開催日の予想と結果（恒久ページ）への入口（南関と同じ）*/}
+    <p class="sc-archive-link">
+      {jraDatePageExists && <a href={`/free-prediction/jra/${view.date}/`}>この日の予想と結果</a>}
+      <a href="/free-prediction/jra/archive/">過去の開催日の予想と結果 一覧</a>
+    </p>
   </main>
 </BaseLayout>
 
@@ -221,6 +230,8 @@ setPublicCdnCache(Astro);
     margin: 0 0 1.25rem;
     strong { color: #f5c542; }
   }
+  .sc-archive-link { display: flex; flex-wrap: wrap; justify-content: center; gap: 1rem; margin: 1.5rem 0 0; font-size: .88rem; }
+  .sc-archive-link a { color: #7dd3fc; text-decoration: none; }
   .sc-cat-switch {
     display: inline-flex;
     gap: 0.4rem;
