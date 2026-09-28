@@ -1,0 +1,32 @@
+{
+  "$comment": "未来に残る確認作業の登録簿（正本）。人間の記憶や再指示に依存させないため、ここに載せた確認は .github/workflows/scheduled-checks.yml が毎日自動で拾って実行し、結果を GitHub Issue（label: scheduled-check）へ記録する。ルールは CLAUDE.md「🗓️ 未来の確認は自動化する」/ docs/decisions.md 2026-09-28。",
+  "checks": [
+    {
+      "id": "seo-date-archive-2026-10",
+      "title": "南関・中央 日付別恒久ページの GSC 効果測定（反映後 28 日）",
+      "kind": "gsc-date-archive",
+      "runFrom": "2026-10-28",
+      "runUntil": "2026-11-11",
+      "trigger": "毎日 10:00 JST（scheduled-checks.yml）。runFrom〜runUntil の間、成功記録（Issue）が無ければ実行。GSC のデータ遅延（約 2〜3 日）を見て、評価期間の終了 10/25 の 3 日後から",
+      "compare": {
+        "siteUrl": "https://analytics.keiba.link/",
+        "evalWindow": { "start": "2026-09-28", "end": "2026-10-25" },
+        "baselineWindow": { "start": "2026-08-30", "end": "2026-09-26" },
+        "baselineSnapshot": {
+          "$source": "2026-09-28 GSC 画面の read-only 実測（docs/progress.md 🔎 新規検索流入（SEO）監査）",
+          "siteClicks": 212,
+          "siteImpressions": 3290,
+          "siteCtr": 0.064,
+          "sitePosition": 10.2,
+          "nankanDatePagesIndexed": 0,
+          "nankanDatePagesImpressions": 0,
+          "nankanDatePagesClicks": 0,
+          "jraDatePagesDiscoveredNotIndexed": 53,
+          "raceNameQueryImpressions": 0
+        }
+      },
+      "record": "GitHub Issue「[自動測定] seo-date-archive-2026-10」（label: scheduled-check）に結果表と JSON。Actions の artifact にも JSON を残す",
+      "onFailure": "workflow を赤にし、Issue「[自動測定 失敗] seo-date-archive-2026-10」に理由と必要な最小作業を書く。runUntil まで毎日再試行し、期限を過ぎても成功しなければ Issue に期限切れを追記する"
+    }
+  ]
+}

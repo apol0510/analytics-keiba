@@ -1,0 +1,124 @@
+name: 未来の確認を自動実行（scheduled checks）
+
+# 「後日確認」「一定期間後に評価」を人間の記憶に依存させない（2026-09-28 MK 確定の恒久ルール）。
+# 登録簿 ops/scheduled-checks.json の確認を毎日拾い、期間内で未完了のものを実行する。
+#   - 成功: Issue「[自動測定] <id>」（label: scheduled-check）に結果表を記録し、artifact に JSON を残す
+#   - 失敗: job を赤にし、Issue「[自動測定 失敗] <id>」に理由と必要な最小作業を書く（期限まで毎日再試行）
+#   - 期限切れで未完了: 失敗 Issue に期限切れを 1 回だけ追記する
+# 読むだけ（GSC は読み取り専用スコープ）。本番データ・送信には触れない。
+
+on:
+  schedule:
+    # 毎日 10:00 JST（01:00 UTC）
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+    inputs:
+      today:
+        description: '判定に使う日付（YYYY-MM-DD・検証用。空なら今日 JST）'
+        required: false
+  push:
+    branches: [main]
+    paths:
+      - 'ops/scheduled-checks.json'
+      - 'astro-site/scripts/scheduled-checks.mjs'
+      - 'astro-site/src/lib/ops/**'
+      - '.github/workflows/scheduled-checks.yml'
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: scheduled-checks
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GSC_SERVICE_ACCOUNT_JSON: ${{ secrets.GSC_SERVICE_ACCOUNT_JSON }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      # 依存なし（node 標準機能 + fetch）。npm install は不要
+      - name: 登録簿を検査する（必須項目が欠けた登録は落とす）
+        working-directory: astro-site
+        run: node scripts/scheduled-checks.mjs validate
+
+      - name: ラベルを用意する
+        run: |
+          gh label create scheduled-check --color 0E8A16 --description '未来の確認の自動実行結果' --force
+          gh label create scheduled-check-failed --color B60205 --description '未来の確認の自動実行に失敗' --force
+
+      - name: 今日の扱いを決める
+        id: plan
+        working-directory: astro-site
+        run: |
+          completed=$(gh issue list --label scheduled-check --state all --limit 500 --json title \
+            --jq '[.[] | select(.title | startswith("[自動測定] ")) | .title | ltrimstr("[自動測定] ")] | join(",")')
+          today='${{ inputs.today }}'
+          node scripts/scheduled-checks.mjs plan --completed "$completed" ${today:+--today "$today"} > /tmp/plan.json
+          cat /tmp/plan.json
+
+      - name: 期間内・未完了の確認を実行する
+        id: exec
+        working-directory: astro-site
+        run: |
+          failed=0
+          mkdir -p /tmp/results
+          for id in $(jq -r '.plan[] | select(.action=="run") | .id' /tmp/plan.json); do
+            echo "::group::run $id"
+            fail_title="[自動測定 失敗] $id"
+            fail_no=$(gh issue list --state open --label scheduled-check-failed --search "\"$fail_title\" in:title" --json number,title \
+              --jq ".[] | select(.title==\"$fail_title\") | .number" | head -1)
+            if node scripts/scheduled-checks.mjs run "$id" --out "/tmp/results/$id.json" --md "/tmp/results/$id.md" --fail-md "/tmp/results/$id.fail.md"; then
+              gh issue create --title "[自動測定] $id" --label scheduled-check --body-file "/tmp/results/$id.md"
+              if [ -n "$fail_no" ]; then
+                gh issue comment "$fail_no" --body "✅ $(date -u +%FT%TZ) に実行が成功しました（結果は「[自動測定] $id」）。"
+                gh issue close "$fail_no"
+              fi
+              cat "/tmp/results/$id.md" >> "$GITHUB_STEP_SUMMARY"
+            else
+              failed=1
+              if [ -n "$fail_no" ]; then
+                gh issue edit "$fail_no" --body-file "/tmp/results/$id.fail.md"
+              else
+                gh issue create --title "$fail_title" --label scheduled-check-failed --body-file "/tmp/results/$id.fail.md"
+              fi
+              cat "/tmp/results/$id.fail.md" >> "$GITHUB_STEP_SUMMARY"
+            fi
+            echo "::endgroup::"
+          done
+          echo "failed=$failed" >> "$GITHUB_OUTPUT"
+
+      - name: 期限切れで未完了のものを知らせる（1 回だけ）
+        run: |
+          for id in $(jq -r '.plan[] | select(.action=="expired") | .id' /tmp/plan.json); do
+            fail_title="[自動測定 失敗] $id"
+            no=$(gh issue list --state open --label scheduled-check-failed --search "\"$fail_title\" in:title" --json number,title,labels \
+              --jq ".[] | select(.title==\"$fail_title\") | select([.labels[].name] | index(\"expired\") | not) | .number" | head -1)
+            if [ -n "$no" ]; then
+              gh label create expired --color 5319E7 --force
+              gh issue comment "$no" --body "⏰ 登録簿の runUntil を過ぎても成功しませんでした。確認を人が引き取るか、登録簿の期間を延ばしてください。"
+              gh issue edit "$no" --add-label expired
+            fi
+          done
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: scheduled-checks-results
+          path: /tmp/results
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: 失敗があれば赤にする
+        if: steps.exec.outputs.failed == '1'
+        run: |
+          echo "::error::未来の確認の自動実行に失敗しました。Issue「[自動測定 失敗] ...」を確認してください。"
+          exit 1

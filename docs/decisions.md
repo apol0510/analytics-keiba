@@ -1,3 +1,15 @@
+# 2026-09-28 — 未来の確認作業は人間の記憶に依存させず、自動実行まで固定する（MK 確定 / 恒久ルール）
+
+- 「後日確認」「一定期間後に評価」「外部結果待ち」「再確認」を PROGRESS に書くだけで完了扱いしない。
+- 将来確認が完成条件に含まれる場合は、既存の GitHub Actions 等で **実行日時/発火条件・自動実行経路・比較基準・記録先・失敗時の扱い** を実装・固定する。
+- AK の仕組み: 登録簿 `ops/scheduled-checks.json` ＋ 毎日の `.github/workflows/scheduled-checks.yml`。結果は GitHub Issue（label `scheduled-check`）。
+  必須項目の欠けた登録・未実装の kind は検査で落とす（`scheduledChecks.js` の `validateRegistry`）。
+- 技術的に自動化できない場合のみ、理由と最小限の人間作業を明記する。
+- 最初の適用: 南関・中央の日付別恒久ページの GSC 効果測定（`seo-date-archive-2026-10`・2026-10-28 から自動実行）。
+  GSC API の読み取りにはサービスアカウント鍵（secret `GSC_SERVICE_ACCOUNT_JSON`）と Search Console 側の権限付与が要る。
+
+---
+
 # 2026-09-28 — AK は低価格 Stripe 月額モデルへ全面転換しない／まず既存商品構造の摩擦を是正して実測する（MK 確定 / AK と KI の事業境界）
 
 ## 決定

@@ -207,6 +207,25 @@ PR の merge / production deploy / 本番データ書込み / env の変更 / qu
 
 ---
 
+## 🗓️ 未来の確認は自動化する（恒久ルール / 2026-09-28 MK 確定）
+
+「後日確認」「一定期間後に評価」「外部結果待ち」「再確認」など**未来に残る作業を、人間の記憶や再指示に依存させない**。
+
+将来の確認が完成条件に含まれる場合、原則として既存の GitHub Actions・scheduler・監査ジョブを使い、次の 5 つを**実装して固定**する:
+
+| # | 固定するもの | AK での置き場所 |
+|---|---|---|
+| 1 | 実行日時または発火条件 | `ops/scheduled-checks.json` の `runFrom` / `runUntil` / `trigger` |
+| 2 | 自動実行経路 | `.github/workflows/scheduled-checks.yml`（毎日 10:00 JST）→ `astro-site/scripts/scheduled-checks.mjs` → `kind` ごとの実装（`src/lib/ops/`）|
+| 3 | 比較基準 | 登録の `compare`（反映時スナップショット・比較期間）|
+| 4 | 結果の記録先 | GitHub Issue「[自動測定] <id>」（label `scheduled-check`）＋ Actions artifact |
+| 5 | 失敗時の扱い | job を赤にし Issue「[自動測定 失敗] <id>」に理由と最小作業。`runUntil` まで毎日再試行、過ぎたら期限切れを追記 |
+
+- **PROGRESS に「○月○日に確認」と書くだけで完了扱いしない。** 登録簿に載せ、`validate`（必須 5 要素の検査）と CI を通すところまでが作業。
+- 新しい種類の確認は `KNOWN_KINDS` に実装を足してから登録する（未実装の kind は検査で落ちる）。
+- 技術的に自動化できない部分がある場合だけ、**理由と人間の最小作業**を登録の `onFailure` と PROGRESS に明記する（例: 外部サービスの権限付与）。
+- 検証: `npm run test:ops`（`check:safety` に組込）。
+
 ## 📚 ドキュメント索引（**正本はこちら**）
 
 ### 予想・表示
