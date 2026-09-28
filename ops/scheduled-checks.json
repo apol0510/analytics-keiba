@@ -47,6 +47,20 @@
       },
       "record": "GitHub Issue「[自動測定] premium-conversion-first-record-2026」（label: scheduled-check）に件数と元プランの内訳",
       "onFailure": "転換がまだ無い（no_conversion_yet）ときは翌日再確認。トークン未設定・認証失敗は job 赤＋Issue「[自動測定 失敗] …」に最小作業。2026-12-31 まで 0 件なら期限切れを追記（転換が無かったのか記録漏れかを人が確認）"
+    },
+    {
+      "id": "light-renewal-outcomes-2026",
+      "title": "Light 月払い 期限前・失効後リマインドの成果（Light 更新率・Light→Premium 転換率）",
+      "kind": "airtable-light-renewal-outcomes",
+      "runFrom": "2026-11-05",
+      "runUntil": "2026-12-31",
+      "trigger": "毎日 10:00 JST（scheduled-checks.yml）。リマインド開始（live 化）後、最初の周期が失効後 30 日を過ぎて結論が出始める 11 月上旬から。送信記録 0 件の間は待機中",
+      "compare": {
+        "baseline": "開始前は Light 月払いの更新を数える手段が無く、7/1 以降の Light 月払い 失効 8 名・有効 4 名（2026-09-28 read-only 実測）。対象定義（有料 Light 月払い）で 9 名前後",
+        "definition": "会員 × 周期（有効期限）。renewed=有効期限が周期より後で Light のまま / converted=PremiumConvertedAt が最初の送信以降 / lapsed=どちらでもなく失効後 30 日超 / open=結論前"
+      },
+      "record": "GitHub Issue「[自動測定] light-renewal-outcomes-2026」（label: scheduled-check）に更新率・転換率の表",
+      "onFailure": "送信記録 0 件は待機中（赤にしない）。トークン未設定・認証失敗は job 赤＋Issue「[自動測定 失敗] …」。2026-12-31 までに記録できなければ期限切れを追記"
     }
   ]
 }

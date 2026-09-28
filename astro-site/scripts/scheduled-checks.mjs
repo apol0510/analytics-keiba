@@ -14,6 +14,7 @@ import { validateRegistry, planToday, jstToday, exitCodeFor, EXIT } from '../src
 import { createGscClient, GscError } from '../src/lib/ops/gscClient.js';
 import { runGscDateArchive, renderMarkdown } from '../src/lib/ops/gscDateArchiveMeasurement.js';
 import { runPremiumConversionCheck, renderConversionMarkdown } from '../src/lib/ops/premiumConversionCheck.js';
+import { runLightRenewalOutcomesCheck, renderLightRenewalOutcomesMarkdown } from '../src/lib/ops/lightRenewalOutcomesCheck.js';
 
 const REGISTRY = fileURLToPath(new URL('../../ops/scheduled-checks.json', import.meta.url));
 const arg = (name) => { const i = process.argv.indexOf(name); return i > 0 ? process.argv[i + 1] : null; };
@@ -46,6 +47,8 @@ function humanActionFor(code, check) {
       return 'GitHub の repository secret `AIRTABLE_READONLY_TOKEN` に、analytics-keiba ベースだけを読める Airtable トークン（data.records:read）を登録する。';
     case 'airtable_auth_failed':
       return 'Airtable トークンが無効（削除・権限不足）の可能性。読み取り専用トークンを作り直して secret を更新する。';
+    case 'no_reminder_sent_yet':
+      return 'なし（まだ Light 月払いリマインドを送っていない）。翌日の定期実行で自動的に再確認する。';
     case 'no_conversion_yet':
       return 'なし（まだ Light→Premium の入金確認が無い）。翌日の定期実行で自動的に再確認する。';
     case 'data_not_ready':
@@ -64,7 +67,10 @@ if (cmd === 'run') {
   try {
     let result;
     let md;
-    if (check.kind === 'airtable-premium-conversions') {
+    if (check.kind === 'airtable-light-renewal-outcomes') {
+      result = await runLightRenewalOutcomesCheck({ check, token: process.env.AIRTABLE_READONLY_TOKEN });
+      md = renderLightRenewalOutcomesMarkdown({ check, result });
+    } else if (check.kind === 'airtable-premium-conversions') {
       result = await runPremiumConversionCheck({ check, token: process.env.AIRTABLE_READONLY_TOKEN });
       md = renderConversionMarkdown({ check, result });
     } else if (check.kind === 'gsc-date-archive') {
