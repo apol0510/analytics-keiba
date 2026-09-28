@@ -30,6 +30,9 @@
 import { SUPPORT_EMAIL, ADMIN_EMAIL } from './config/email-config.js';
 import { resolveVerifiedSender } from '../../src/lib/payments/senderIdentity.js';
 import { buildConfirmationFields } from '../../src/lib/payments/bankPaymentFlow.js';
+import {
+  buildPremiumConversionFields, assertOnlyConversionFields, PREMIUM_CONVERSION_TAG,
+} from '../../src/lib/payments/premiumConversion.js';
 // クーポンの「利用予約 → 使用済み」。入金確認が正常完了した時点でだけ確定させる
 import {
   findActiveReservation, findRedeemedReservation, buildReservationRedeemFields,
@@ -287,6 +290,39 @@ exports.handler = async (event) => {
       planType: confirmation.fields['PlanType'],
       expiration: confirmation.expiration
     });
+
+    // ── Step 4.4: Light → Premium 転換履歴（best effort・2026-09-28 MK 確定）──────────
+    // 昇格 PATCH が成功した**後**に、転換履歴の 2 項目だけを別 PATCH で書く。
+    //   - 条件: 昇格前 Light → 昇格後 Premium、かつ PremiumConvertedAt が空（最初の転換だけ・冪等）
+    //   - `fields` は昇格 PATCH **前**に読んだ値（元のプランが残っている）
+    // ⚠️ ここが失敗しても昇格・メールを巻き戻さない（決済成功を最優先で保持する）。無言では失敗させない。
+    let conversionOutcome = 'not_applicable';
+    try {
+      const conversion = buildPremiumConversionFields({
+        previousFields: fields, confirmationFields: confirmation.fields, confirmedAt,
+      });
+      if (conversion && assertOnlyConversionFields(conversion)) {
+        const convRes = await fetch(
+          `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${CUSTOMERS_TABLE}/${recordId}`,
+          {
+            method: 'PATCH',
+            headers: {
+              Authorization: `Bearer ${AIRTABLE_API_KEY}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ fields: conversion, typecast: true })
+          }
+        );
+        conversionOutcome = convRes.ok ? 'recorded' : `failed_http_${convRes.status}`;
+      }
+    } catch (e) {
+      conversionOutcome = 'failed_error';
+    }
+    if (conversionOutcome !== 'not_applicable') {
+      // 識別子（recordId / メール / 氏名）は載せない
+      const line = `${PREMIUM_CONVERSION_TAG} ${JSON.stringify({ outcome: conversionOutcome, promotion: 'kept' })}`;
+      if (conversionOutcome === 'recorded') console.log(line); else console.warn(line);
+    }
 
     // ── Step 4.5: Premium Plus 販売資格の初期化（三連複購入時のみ・best effort）──
     // 三連複の昇格が成功した**後**に、Plus 専用フィールドだけを別 PATCH で書く。

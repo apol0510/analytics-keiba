@@ -42,17 +42,19 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                 <div class="plan-badge-secondary">おすすめ</div>
                 <h3 class="plan-card-name">Premium 年払い</h3>
                 <p class="plan-card-subtitle">年間一括でお得に利用</p>
-                <div class="plan-card-price">¥49,800</div>
-                <div class="plan-card-period">/年</div>
+                <!-- 2026-09-28 MK 確定: Light 会員の年払いは乗り換え特典 ¥44,820 に統一（正規導線は /pricing/）-->
+                <div class="plan-card-price-strike">¥49,800</div>
+                <div class="plan-card-price">¥44,820</div>
+                <div class="plan-card-period">/年（Light会員の乗り換え特典）</div>
                 <ul class="plan-card-features">
                     <li>✅ <strong>全12レース</strong>の予想・買い目</li>
                     <li>✅ 高精度AI予想</li>
                     <li>✅ 詳細な投資戦略</li>
                     <li>✅ 優先サポート</li>
                 </ul>
-                <button class="cta-button cta-secondary" onclick="openBankModal('Premium 年払い (Light会員アップグレード)', 49800, 'annual')">
-                    🏦 銀行振込で申し込む
-                </button>
+                <a class="cta-button cta-secondary" href="/pricing/">
+                    乗り換え特典価格で申し込む →
+                </a>
             </div>
 
             <!-- 30日 -->
@@ -138,8 +140,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                         <span class="final-option-note">永久アクセス</span>
                     </div>
                     <div class="final-option">
-                        <span class="final-option-name">年払い</span>
-                        <span class="final-option-price">¥49,800</span>
+                        <span class="final-option-name">年払い（乗り換え特典）</span>
+                        <span class="final-option-price">¥44,820</span>
                         <span class="final-option-note">/年</span>
                     </div>
                     <div class="final-option">
@@ -651,6 +653,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         transition: all 0.3s ease;
         box-shadow: 0 8px 30px rgba(245, 158, 11, 0.4);
     }
+
+    /* 2026-09-28: 年払いはリンク（/pricing/ の乗り換え特典）なので <a> でも同じ見た目にする */
+    a.cta-button { display: block; box-sizing: border-box; text-align: center; text-decoration: none; }
 
     .cta-button:hover {
         transform: translateY(-4px);
