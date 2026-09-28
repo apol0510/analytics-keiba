@@ -41,6 +41,8 @@ function humanActionFor(code, check) {
       return 'GitHub の repository secret `GSC_SERVICE_ACCOUNT_JSON` にサービスアカウントの JSON 鍵を登録する（Claude が作成・登録できる。必要なのは Google アカウントでの権限付与の承認だけ）。';
     case 'no_property_access':
       return `Search Console の ${site} の「ユーザーと権限」に、サービスアカウントのメールアドレスを「制限付き」で追加する（1 操作）。`;
+    case 'data_not_ready':
+      return 'なし（GSC のデータ確定待ち）。翌日の定期実行で自動的に取り直す。';
     case 'auth_failed':
       return 'サービスアカウントの鍵が無効（削除・期限切れ）の可能性。鍵を作り直して secret を更新する。';
     default:

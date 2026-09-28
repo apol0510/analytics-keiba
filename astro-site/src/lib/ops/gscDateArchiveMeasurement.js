@@ -109,6 +109,14 @@ export async function runGscDateArchive({ check, client, fetchSitemap, nowIso = 
     };
   };
   const evalR = await window(evalWindow);
+  // ⚠️ 評価期間のデータがまだ確定していない（表示 0）ときに 0 を「結果」として記録しない。
+  //    失敗扱いにして翌日の定期実行で取り直す（runUntil まで）。
+  if (!(evalR.site.impressions > 0)) {
+    const err = new Error('gsc:data_not_ready');
+    err.code = 'data_not_ready';
+    err.detail = `評価期間 ${evalWindow.start}〜${evalWindow.end} の表示が 0（GSC のデータがまだ確定していない）`;
+    throw err;
+  }
   const baseR = await window(baselineWindow);
 
   const xml = await fetchSitemap();

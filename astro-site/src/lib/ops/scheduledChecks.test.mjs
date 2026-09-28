@@ -183,3 +183,15 @@ test('workflow: 失敗経路の検証では鍵を渡さない（`cond && \'\' ||
   const wf = read('.github/workflows/scheduled-checks.yml');
   assert.match(wf, /GSC_SERVICE_ACCOUNT_JSON: \$\{\{ !inputs\.simulate_failure && secrets\.GSC_SERVICE_ACCOUNT_JSON \|\| '' \}\}/);
 });
+
+test('測定: 評価期間のデータが未確定（表示 0）なら 0 を記録せず data_not_ready で失敗（翌日再試行）', async () => {
+  const client = {
+    searchAnalytics: async (b) => (b.dimensions ? { rows: [] } : { rows: [{ clicks: 0, impressions: 0, ctr: 0, position: 0 }] }),
+    inspect: async () => ({}),
+  };
+  await assert.rejects(
+    () => runGscDateArchive({ check: seo, client, fetchSitemap: async () => '' }),
+    (e) => e.code === 'data_not_ready',
+  );
+  assert.match(read('astro-site/scripts/scheduled-checks.mjs'), /case 'data_not_ready':/);
+});
