@@ -27,6 +27,9 @@ import { createProspectStore } from '../../src/lib/marketing/prospectStore.js';
 import { makeRedisCmd } from '../../src/lib/marketing/deliveryKeyStore.js';
 import { SUPPRESS_REASON } from '../../src/lib/marketing/prospectPolicy.js';
 import {
+  addToAkMarketingGroupSuppression, removeFromAkMarketingGroupSuppression, planAkGroupSync,
+} from '../../src/lib/unsubscribe/akMarketingGroupBridge.js';
+import {
   resolveUnsubscribeSigningKeys, verifyUnsubscribeSignature,
   isLegacyUnsignedAllowed, decideSignatureAcceptance,
 } from '../../src/lib/unsubscribe/unsubscribeSignature.js';
@@ -350,14 +353,31 @@ export default async function handler(request) {
       console.log(`📮 unsubscribe sinks: ${JSON.stringify(sinkResults)} ok=${outcome.ok} trace=${trace}`);
 
       if (outcome.ok) {
+        // ── AK → SendGrid: AK Marketing group suppression の同期（既定 OFF）──────────
+        //    停止: Customers の停止を**記録できたときだけ** group suppression へ加える。
+        //    再開: 利用者が**明示的に再開**し Customers が再開済み（RECORDED / ALREADY）なら、
+        //          AK Marketing の group suppression から**だけ**外す（2026-09-28 MK 確定）。
+        //          ALREADY も対象（AK は再開済みなのに SendGrid だけ停止中、の不整合を直す）。
+        //    global unsubscribe・KI・テスト group は触らない（単一源 akMarketingGroupBridge.js）。
+        //    ⚠️ 同期に失敗しても**利用者への応答も AK 側の状態も変えない**。固定の状態コードだけ残す。
+        let akMarketingGroup = 'not_applicable';
+        const syncPlan = planAkGroupSync({ brand, action: requestedAction, customerSink: sinkResults[SINK.CUSTOMER] });
+        if (syncPlan === 'add') {
+          const r = await addToAkMarketingGroupSuppression({ email: postEmail, env: process.env, fetchImpl: fetch });
+          akMarketingGroup = r.status;
+        } else if (syncPlan === 'remove') {
+          const r = await removeFromAkMarketingGroupSuppression({ email: postEmail, env: process.env, fetchImpl: fetch });
+          akMarketingGroup = `resubscribe:${r.status}`;
+        }
         console.log(`✅ unsubscribe ok: kind=${parsed.kind} brand=${brand} action=${requestedAction}`
-          + ` recorded=${outcome.recorded.join('+')} trace=${trace}`);
+          + ` recorded=${outcome.recorded.join('+')} akMarketingGroup=${akMarketingGroup} trace=${trace}`);
         return new Response(
           JSON.stringify({
             success: true,
             brand,
             action: requestedAction,
             recorded: outcome.recorded,
+            akMarketingGroup,
             message: requestedAction === 'resubscribe'
               ? '配信を再開しました'
               : '配信停止が完了しました',

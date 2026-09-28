@@ -24,6 +24,7 @@ import {
   ACTIVE_INDEX, ENGAGED_INDEX, isSendableState,
 } from './prospectStore.js';
 import { buildProspect, PROSPECT_STATE } from './prospectPolicy.js';
+import { isProspectCasEval, emulateProspectCas } from './prospectCasFakeForTests.mjs';
 
 const NOW = Date.UTC(2026, 7, 27);
 const BATCH = 'imp-2026-08-09-001';
@@ -35,6 +36,7 @@ function fakeRedis() {
   const commands = [];
   const setOf = (k) => { if (!sets.has(k)) sets.set(k, new Set()); return sets.get(k); };
   const cmd = async (args) => {
+    if (isProspectCasEval(args)) { commands.push(args); return emulateProspectCas(args, { get: (k) => (kv.has(k) ? kv.get(k) : null), set: (k, v) => kv.set(k, v), del: (k) => kv.delete(k), sadd: (k, m) => setOf(k).add(m), srem: (k, m) => setOf(k).delete(m), has: (k, m) => setOf(k).has(m) }); }
     commands.push(args);
     const [op, key, ...rest] = args;
     if (op === 'GET') return kv.has(key) ? kv.get(key) : null;

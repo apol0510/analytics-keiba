@@ -65,6 +65,7 @@ import {
 import { buildWeeklyContent } from '../../src/lib/marketing/weeklyNewsletterContent.js';
 import { collectMarketingOverview } from '../../src/lib/marketing/marketingOverview.js';
 import { buildLatestShowcase } from '../../src/lib/resultsShowcase.js';
+import { AK_MARKETING_GROUP } from '../../src/lib/unsubscribe/akMarketingGroup.js';
 
 const BRAND = 'analytics-keiba';
 /** 1 回の import で投入してよい contact 数（**上限を越える指示は拒否**） */
@@ -302,7 +303,7 @@ export const handler = async (event) => {
       } catch { /* 下の判定で弾く */ }
 
       const groups = await api.getUnsubscribeGroups();
-      const group = groups.find((g) => g.name === 'AK Marketing') || null;
+      const group = groups.find((g) => g.name === AK_MARKETING_GROUP.name) || null;
 
       const checks = {
         宛先: {

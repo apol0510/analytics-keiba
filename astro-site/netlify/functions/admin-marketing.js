@@ -170,6 +170,7 @@ import {
 import { compareSequenceParity } from '../../src/lib/marketing/sequenceParity.js';
 import { makeRedisPipeline } from '../../src/lib/marketing/deliveryKeyStore.js';
 import { IMPORT_SOURCE_PREFIX } from '../../src/lib/marketing/importCohort.js';
+import { NATIVE_AUDIT_ACTION, runNativeMailAudit } from '../../src/lib/marketing/nativeMemberMailAudit.js';
 import { EMAIL_EVENTS_TABLE as EMAIL_EVENTS_TABLE_NAME } from '../../src/lib/webhooks/emailEventLedger.js';
 import {
   resolveLedgerReadability,
@@ -911,6 +912,8 @@ export const handler = async (event) => {
 
   try {
     if (action === 'mailOverview') return await handleMailOverview();
+    // 元々の会員へのメール再開 A/B/C 比較用。**読み取り専用**（GET / Redis 読み取りコマンドだけ・件数だけ）
+    if (action === NATIVE_AUDIT_ACTION) return await handleNativeMailAudit({ KEY, BASE, now, req, SECRET });
     if (action === 'campaigns') return handleCampaigns();
     if (action === 'preview') return handlePreview({ req });
     if (action === 'customers') return await handleCustomers({ KEY, BASE, now, req });
@@ -991,6 +994,32 @@ async function handleMailOverview() {
       reason: String((e && e.message) || 'unavailable'),
     });
   }
+}
+
+/**
+ * 元々の会員（native）へのメール再開 A/B/C 比較用の読み取り監査。
+ * 判定と I/O の制限は `nativeMemberMailAudit.js` に閉じている（ここは依存を渡すだけ）。
+ *
+ * - Airtable / SendGrid は **GET だけ**（`createReadOnlyFetch` が GET 以外を送る前に拒否）
+ * - Redis は既存の engagement 除外リストの**読み取りコマンドだけ**（`createReadOnlyRedis`）
+ * - cursor の暗号鍵は認可に使っている secret から導く（新しい env は要らない）
+ */
+async function handleNativeMailAudit({ KEY, BASE, now, req, SECRET }) {
+  let redisCmd = null;
+  try { redisCmd = makeRedisCmd(process.env); } catch { redisCmd = null; }
+  const { status, body } = await runNativeMailAudit({
+    req,
+    deps: {
+      fetchImpl: fetch,
+      redisCmd,
+      airtableKey: KEY,
+      baseId: BASE,
+      sendgridKey: process.env.SENDGRID_API_KEY,
+      cursorSecret: SECRET,
+      nowMs: now,
+    },
+  });
+  return json(status, body);
 }
 
 function handleCampaigns() {

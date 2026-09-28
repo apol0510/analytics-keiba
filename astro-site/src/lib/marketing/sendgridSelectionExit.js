@@ -32,7 +32,12 @@
  *   状態が変わった人だけを対象にし、同じ webhook 内では重複を除く
  * - **失敗しても webhook は 200 を返す**（SendGrid に再送させない。次のイベントか
  *   移行スクリプトの再実行で回収できる）
- * - **1 回の webhook で扱う上限**を決める（大量イベントで実行時間を食い潰さない）
+ * - **件数では切り捨てない。** 対象は `EXIT_CHUNK_SIZE` 件ずつ分けて外し、
+ *   **時間予算**（`deadlineAtMs`）を越えそうなら新しい塊を始めない（実行時間を食い潰さない）
+ *   （2026-09-26: 旧仕様は 1 回 100 件で**超過分を黙って外さなかった**。打ち切り EXHAUSTED は
+ *   provider 側の suppression が無いので、外れ残ると次の号が実際に届く）
+ * - **優先順**: 反応者（ENGAGED / PROMOTED）→ 打ち切り（EXHAUSTED）→ 抑止（SUPPRESSED）。
+ *   時間切れで残るなら、SendGrid の suppression が独立に効く SUPPRESSED から残す
  * - **ログ・戻り値にアドレスを出さない**（件数だけ）
  * - **止めたいときは env 1 つ**（`SENDGRID_SELECTION_EXIT_DISABLED=true`）。
  *   **既定は有効**（env を足さなくても動く）
@@ -64,8 +69,30 @@ export const REMOVE_ATTEMPTS = 2;
 /** 対象 list の名前（**この名前以外は絶対に触らない**） */
 export const SELECTION_LIST_NAMES = Object.freeze([listNameFor(1), listNameFor(2), listNameFor(3)]);
 
-/** 1 回の webhook で外す上限（実行時間を食い潰さない） */
-export const MAX_EXIT_PER_CALL = 100;
+/**
+ * 1 回の webhook で**受け付ける**対象の安全上限（暴走防止の最後の歯止め）。
+ * ⚠️ 実行時間の制御は件数ではなく**時間予算**で行う。ここは通常のバッチでは届かない値にする
+ *    （2026-09-26 まではここが 100 で、超過分を外さずに捨てていた）。
+ */
+export const MAX_EXIT_PER_CALL = 5000;
+
+/** 1 回の除去（DELETE）で渡す contact 数。対象はこの単位で分けて外す */
+export const EXIT_CHUNK_SIZE = 100;
+
+/**
+ * 時間予算。`deadlineAtMs` が渡されなければ**呼び出し時刻＋既定値**。
+ * 1 塊の見積り（検索 2 回＋ list 3 本の除去）を残せないときは新しい塊を始めない。
+ */
+export const DEFAULT_EXIT_BUDGET_MS = 5000;
+export const EXIT_CHUNK_ESTIMATE_MS = 1500;
+
+/** 優先順（小さいほど先に外す）。反応者は list に残ると翌日の号が届くので最優先 */
+const EXIT_PRIORITY = Object.freeze({
+  [PROSPECT_STATE.ENGAGED]: 0,
+  [PROSPECT_STATE.PROMOTED]: 0,
+  [PROSPECT_STATE.EXHAUSTED]: 1,
+  [PROSPECT_STATE.SUPPRESSED]: 2,
+});
 
 /** 緊急停止（**既定は有効**。env を足さなくても動く） */
 export const EXIT_DISABLE_ENV = 'SENDGRID_SELECTION_EXIT_DISABLED';
@@ -87,8 +114,7 @@ export function planSelectionExit({ changes, max } = {}) {
   const byState = {};
   const skipped = {};
   const seen = new Set();
-  const emails = [];
-  const criticalEmails = [];
+  const picked = [];
   let capped = 0;
 
   for (const c of Array.isArray(changes) ? changes : []) {
@@ -98,11 +124,14 @@ export function planSelectionExit({ changes, max } = {}) {
     if (!allow.has(state)) { skipped[state || 'unknown_state'] = (skipped[state || 'unknown_state'] || 0) + 1; continue; }
     if (seen.has(email)) { skipped.duplicate = (skipped.duplicate || 0) + 1; continue; }
     seen.add(email);
-    if (emails.length >= cap) { capped += 1; continue; }
-    emails.push(email);
-    if (CRITICAL_EXIT_STATES.includes(state)) criticalEmails.push(email);
+    if (picked.length >= cap) { capped += 1; continue; }
+    picked.push({ email, state, i: picked.length });
     byState[state] = (byState[state] || 0) + 1;
   }
+  /** 優先順に並べる（同じ優先度の中では届いた順を保つ） */
+  picked.sort((a, b) => (EXIT_PRIORITY[a.state] - EXIT_PRIORITY[b.state]) || (a.i - b.i));
+  const emails = picked.map((x) => x.email);
+  const criticalEmails = picked.filter((x) => CRITICAL_EXIT_STATES.includes(x.state)).map((x) => x.email);
   return { emails, criticalEmails, byState, skipped, capped };
 }
 
@@ -216,10 +245,14 @@ export function createSelectionExitClient({ apiKey, fetchImpl } = {}) {
  * @param {{changes: Array, client: object, env?: object}} input
  * @returns {Promise<object>} 件数だけ（**アドレスを含まない**）
  */
-export async function applySelectionExit({ changes, client, env = process.env } = {}) {
+export async function applySelectionExit({
+  changes, client, env = process.env, deadlineAtMs, nowFn = Date.now,
+} = {}) {
   const out = {
     enabled: false, 対象: 0, 状態別: {}, 除外した延べ件数: 0,
     list数: 0, 引き当て: 0, 上限超過: 0, errors: 0, reason: null,
+    /** 分けて外した塊の数と、**時間切れで手を付けなかった**対象の数（0 と区別して出す） */
+    塊数: 0, 時間切れ残り: 0,
     /** ⚠️ **握り潰してはいけない失敗**（ENGAGED / PROMOTED を外せなかった） */
     criticalFailure: false,
     criticalTargets: 0,
@@ -254,48 +287,81 @@ export async function applySelectionExit({ changes, client, env = process.env } 
     }
     out.list数 = listIds.length;
 
-    const looked = typeof client.contactIdsChecked === 'function'
-      ? await client.contactIdsChecked(plan.emails)
-      : { byEmail: new Map((await client.contactIds(plan.emails)).map((id) => [id, id])), lookupFailed: false };
-    const byEmail = looked.byEmail instanceof Map ? looked.byEmail : new Map();
-    out.引き当て = byEmail.size;
+    const deadline = Number.isFinite(deadlineAtMs) ? deadlineAtMs : nowFn() + DEFAULT_EXIT_BUDGET_MS;
+    /** 外せた（全 list で成功した）人。継続 list へ渡すのはこの人たちだけ */
+    const removedEmails = new Set();
+    let anyFound = false;
+    let criticalLeft = 0;
 
-    /**
-     * ⚠️ **引き当てに失敗した（HTTP エラー）ときは「居ない」と見なさない。**
-     *    居るのに外せていない可能性があるので、反応者が対象なら失敗として扱う。
-     *    一方「検索できたが見つからない」＝ **まだ投入していない人**なので失敗ではない。
-     */
-    if (looked.lookupFailed && critical.size > 0) {
-      out.criticalFailure = true;
-      out.reason = 'contact_lookup_failed';
+    for (let i = 0; i < plan.emails.length; i += EXIT_CHUNK_SIZE) {
+      const chunk = plan.emails.slice(i, i + EXIT_CHUNK_SIZE);
+      /**
+       * ⚠️ **時間予算を越えそうなら新しい塊を始めない。**
+       *    途中で打ち切られると「外したのか分からない」状態が残るので、始める前に判断する。
+       *    最初の塊だけは必ず処理する（予算 0 でも 1 件も外さない、にはしない）。
+       */
+      if (i > 0 && nowFn() + EXIT_CHUNK_ESTIMATE_MS > deadline) {
+        const rest = plan.emails.slice(i);
+        out.時間切れ残り = rest.length;
+        criticalLeft = rest.filter((e) => critical.has(e)).length;
+        break;
+      }
+      out.塊数 += 1;
+
+      // eslint-disable-next-line no-await-in-loop -- 塊を順に処理する（SendGrid へ押し寄せない）
+      const looked = typeof client.contactIdsChecked === 'function'
+        ? await client.contactIdsChecked(chunk)
+        // eslint-disable-next-line no-await-in-loop -- 同上
+        : { byEmail: new Map((await client.contactIds(chunk)).map((id) => [id, id])), lookupFailed: false };
+      const byEmail = looked.byEmail instanceof Map ? looked.byEmail : new Map();
+      out.引き当て += byEmail.size;
+
+      /**
+       * ⚠️ **引き当てに失敗した（HTTP エラー）ときは「居ない」と見なさない。**
+       *    居るのに外せていない可能性があるので、反応者が対象なら失敗として扱う。
+       *    一方「検索できたが見つからない」＝ **まだ投入していない人**なので失敗ではない。
+       */
+      const chunkCritical = chunk.filter((e) => critical.has(e));
+      if (looked.lookupFailed && chunkCritical.length > 0) {
+        out.criticalFailure = true;
+        out.reason = out.reason || 'contact_lookup_failed';
+      }
+
+      const ids = [...byEmail.values()];
+      if (ids.length === 0) continue;
+      anyFound = true;
+
+      /** list ごとに**上限つきで再試行**（新しい queue を作らずに一時障害を吸収する） */
+      let allListsOk = true;
+      for (const listId of listIds) {
+        let ok = false;
+        for (let attempt = 0; attempt < REMOVE_ATTEMPTS && !ok; attempt += 1) {
+          // eslint-disable-next-line no-await-in-loop -- list は最大 3 本 × 2 回
+          const r = await client.removeFromList({ listId, contactIds: ids });
+          ok = r.status >= 200 && r.status < 300;
+          if (ok) out.除外した延べ件数 += r.removed;
+        }
+        if (!ok) { out.errors += 1; allListsOk = false; }
+      }
+      if (allListsOk) {
+        for (const e of chunk) if (byEmail.has(e)) removedEmails.add(e);
+        out.criticalRemoved += chunkCritical.filter((e) => byEmail.has(e)).length;
+      } else if (chunkCritical.length > 0) {
+        out.criticalFailure = true;
+        out.reason = out.reason || 'remove_failed';
+      }
     }
 
-    const ids = [...byEmail.values()];
-    const criticalIds = new Set([...critical].map((e) => byEmail.get(e)).filter(Boolean));
-    out.criticalRemoved = 0;
-    if (ids.length === 0) {
+    /** 反応者を時間切れで残したら**握り潰さない** */
+    if (criticalLeft > 0) {
+      out.criticalFailure = true;
+      out.reason = out.reason || 'time_budget_exhausted';
+    } else if (out.時間切れ残り > 0 && !out.reason) {
+      out.reason = 'time_budget_exhausted';
+    }
+    if (!anyFound) {
       if (!out.reason) out.reason = 'contacts_not_found';
       return out;
-    }
-
-    /** list ごとに**上限つきで再試行**（新しい queue を作らずに一時障害を吸収する） */
-    const removedPerList = [];
-    for (const listId of listIds) {
-      let ok = false;
-      for (let attempt = 0; attempt < REMOVE_ATTEMPTS && !ok; attempt += 1) {
-        // eslint-disable-next-line no-await-in-loop -- list は最大 3 本 × 2 回
-        const r = await client.removeFromList({ listId, contactIds: ids });
-        ok = r.status >= 200 && r.status < 300;
-        if (ok) out.除外した延べ件数 += r.removed;
-      }
-      removedPerList.push(ok);
-      if (!ok) out.errors += 1;
-    }
-    const allListsOk = removedPerList.every(Boolean);
-    if (allListsOk && criticalIds.size > 0) out.criticalRemoved = criticalIds.size;
-    if (!allListsOk && criticalIds.size > 0) {
-      out.criticalFailure = true;
-      out.reason = out.reason || 'remove_failed';
     }
 
     /**
@@ -307,7 +373,11 @@ export async function applySelectionExit({ changes, client, env = process.env } 
      * ⚠️ ここが失敗しても webhook 全体は失敗させない（選別の停止のほうが重い）。
      *    件数と理由だけ残す。
      */
-    const cont = planContinuation({ changes });
+    /** ⚠️ 外せた人だけを渡す（選別 list と継続 list の両方に居る状態を作らない） */
+    const cont = planContinuation({
+      changes: (Array.isArray(changes) ? changes : [])
+        .filter((c) => removedEmails.has(normalize(c && c.email))),
+    });
     out.continuation.対象 = cont.emails.length;
     if (cont.emails.length > 0 && typeof client.continuationListId === 'function') {
       const contListId = await client.continuationListId();

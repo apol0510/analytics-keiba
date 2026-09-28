@@ -216,6 +216,7 @@ test('guard: Customers は 1 ページずつ・取り込み由来だけを名指
 
 import { createProspectStore, emailHash, PROSPECT_ROOT } from './prospectStore.js';
 import { buildProspect, PROSPECT_STATE as PS, applySuppression } from './prospectPolicy.js';
+import { isProspectCasEval, emulateProspectCas } from './prospectCasFakeForTests.mjs';
 
 /** MGET / SET / SADD / SREM / EXISTS だけを持つ fake Redis */
 function fakeRedis({ failOn = null } = {}) {
@@ -224,6 +225,7 @@ function fakeRedis({ failOn = null } = {}) {
   const cmd = async (args) => {
     const op = String(args[0]).toUpperCase();
     if (failOn === op) throw new Error('redis down');
+    if (isProspectCasEval(args)) return emulateProspectCas(args, { get: (k) => (kv.has(k) ? kv.get(k) : null), set: (k, v) => kv.set(k, v), del: (k) => kv.delete(k), sadd: (k, m) => setOf(k).add(m), srem: (k, m) => setOf(k).delete(m), has: (k, m) => setOf(k).has(m) });
     if (op === 'MGET') return args.slice(1).map((k) => (kv.has(k) ? kv.get(k) : null));
     if (op === 'GET') return kv.has(args[1]) ? kv.get(args[1]) : null;
     if (op === 'SET') { kv.set(args[1], args[2]); return 'OK'; }
@@ -283,7 +285,8 @@ test('⚠️ まとめ書き: 抑止台帳に載っている相手は復活さ�
 });
 
 test('⚠️ まとめ書き: 読めない・書けないときは throw（部分結果を成功にしない）', async () => {
-  for (const failOn of ['MGET', 'SADD']) {
+  // 2026-09-27: 書き込みは「比較して書く」（EVAL）1 回。読めない（MGET）・書けない（EVAL）どちらも throw
+  for (const failOn of ['MGET', 'EVAL']) {
     const r = fakeRedis({ failOn });
     const store = createProspectStore({ cmd: r.cmd, pipeline: r.pipeline });
     // eslint-disable-next-line no-await-in-loop
