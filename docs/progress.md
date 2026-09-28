@@ -39,6 +39,21 @@
 | 4 | 自動点検が **09-27 20:20 JST にも通知した理由**の確認 | 次の点検結果を見て | 未確認。点検は通知の理由（finding）を保存しないので記録から特定できない。**推定**: 09-27 12:09〜13:39 JST の手動除去（4,791 名）で、前日に控えた list 人数と当日の送信人数がずれ、`RECIPIENT_GAP` が出た |
 | 5 | **監査の死角**: 全レコードを横断して「レコードの state と 索引 / 抑止台帳 が一致しているか」を数える read-only の手段が無い | 次の改修 | **手段を追加（PR 参照）**: `admin-marketing` の `prospectStateAudit`（SCAN `ak:prospect:*` ＋ 3 索引 SSCAN から出発・2 回読んで同じズレだけ確定・書き込みコマンドは送る前に弾く）＋ `ADMIN_SECRET=... node astro-site/scripts/audit-prospect-state.mjs --json out.json`（exit 0=異常0 / 1=読み切れず / 2=異常あり / 3=アドレス混入で中止）。項目 3 の最終監査で使う。本番の初回実測結果は下に追記 |
 
+## 🔎 全レコード監査（`prospectStateAudit`）初回実測 — 2026-09-28 本番 read-only・書き込み 0
+
+#614（`4e1081d3`）本番反映後に `node astro-site/scripts/audit-prospect-state.mjs` を実行（全窓を読み切り・約 82 秒・exit 2＝異常あり）。
+
+- 走査: レコード **11,976** / 抑止台帳 10,033（台帳のみ 0）/ 索引: 送信候補 1,163・反応済み 803・抑止 10,031
+- state: EXHAUSTED 9,600 / SUPPRESSED 412 / SENDING 1,161 / ENGAGED 803
+- 異常 **7 名（全員 SUPPRESSED・理由 dropped・source csv・suppressedAt 09-20〜09-21）**。#601（09-27）より前の部分書き込みの残り。**#601 以降に新しく起きたものは 0**。読み直しで消えたズレも 0
+  - 抑止台帳が無い（critical `BLOCK_STATE_WITHOUT_LEDGER`）5 名。うち 2 名は送信候補索引にも残っている（09-28 監査の「list 外の既知 2 名」と同じ人）
+  - 台帳はあるが抑止索引に居ない 2 名
+- 実害の評価: dropped は SendGrid 側の suppression に載っているので、**送られることはない**。
+  リスクは **CSV を取り込み直したときに復活する**ことだけ（取り込みの照合は台帳の鍵を見る）。9/29 の配信には影響しない
+- info `LATE_REACTION` 26 名（打ち切りの後に開封して ENGAGED。仕様どおり）
+- **修復はしていない**（台帳の書き込みは本番 write。既存の `prospectIndexRepair` は索引しか直せず、台帳は作れない）。
+  直す場合は、この 7 名だけを対象に「state に合わせて台帳と抑止索引を書く」経路を用意する（CAS の KEEP＋blk で書けるので、レコードは不変）
+
 ## ⏰ （実施済み・手順として残す）2026-09-28 08:07 JST の read-only 監査（**セッションの予約に依存しない**）
 
 > Claude のセッション内予約は閉じると消える。**ここに書いた手順で、誰が実行しても同じ監査になる**ようにする。
