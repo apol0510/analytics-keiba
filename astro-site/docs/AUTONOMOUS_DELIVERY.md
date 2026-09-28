@@ -173,7 +173,7 @@ Claudeは本プロジェクトにおいて、単なる調査担当や途中監�
 - force push / reset / rebase / amend / 履歴改変
 - 課金・契約・会員権限への本番変更
 
-高リスク操作に到達する前の安全な工程は完了させる。
+前提確認を満たした高リスク操作は完成工程として続行する（到達前の工程で止めない）。
 
 本リポジトリでの具体例: 入金確認メール v2 の cutover、`PAYMENT_CONFIRM_SECRET` 等の env 投入・解除、
 Netlify Build Hook 実行、Airtable Automation の変更、Netlify Blobs への本番アップロード、
@@ -207,7 +207,7 @@ git status --short
 
 別リポジトリの変更が必要な場合は、現在のリポジトリから勝手に移動して同時変更せず、
 依存変更として `docs/progress.md` へ記録する。
-横断変更が明示的に承認されたタスクでは、リポジトリごとに独立したbranch・commit・Draft PRを作成する。
+別リポジトリの変更が完成条件に必要な場合は、そのリポジトリの正本・CLAUDE.md に従い、リポジトリごとに独立した branch・commit・PR で完成させる（`~/.claude/CLAUDE.md` §15）。
 
 これは §keiba-intelligence との関係（独立運用、2026-05-23〜）の「自動的に横展開しない」方針と同一の考え方である。
 
@@ -251,8 +251,8 @@ Open Questions に記録する。**独断で削除しない。**
 同節の必須項目（判定 / 実施内容 / 変更ファイル / テスト結果 / Git状態 / 異常・未確定事項 / 次工程案）に加えて、
 自律完遂運用では次の3点を必ず含める。
 
-1. 未実施の高リスク操作
+1. 未実施の前提確認必須操作とその理由（実異常のみ）
 2. 次の自動作業（ユーザー操作が不可避な場合のみ最小1操作）
 3. `docs/progress.md` の現在地
 
-「Git状態」には branch / commit / Draft PR URL を含める。「異常・未確定事項」には blocker を含める。
+「Git状態」には branch / commit / PR URL（merge・deploy・本番確認の状態） を含める。「異常・未確定事項」には blocker を含める。
