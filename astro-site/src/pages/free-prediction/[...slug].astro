@@ -23,6 +23,15 @@ export async function getStaticPaths() {
 
 const { allRacesData } = Astro.props;
 
+// 【2026-09-28】SSR（output:'server'）では getStaticPaths の props が渡らないため、
+// ここへ来るリクエストは常に allRacesData が空で下の throw により **500** になっていた
+// （GSC で 5xx 22 件・`/free-prediction/archive/` から 69 件の内部リンク先が全部 500）。
+// 旧南関アーカイブ（2026-01〜04）は現行の表示ルール（指数 raw-1・根拠のない的中率/回収率を出さない）に
+// 合わないため復活させず、**404 を返す**。`/free-prediction/nankan/2026-09-26/` 等の未知パスも同じ。
+if (!allRacesData) {
+  return new Response('Not Found', { status: 404, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+}
+
 // 共有ロジックを使用してデータを処理
 const { mainRace, race12R: originalRace12R, sortedRaces } = processRaceData(allRacesData);
 

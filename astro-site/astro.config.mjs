@@ -2,6 +2,7 @@
 import { defineConfig } from 'astro/config';
 import sitemap from '@astrojs/sitemap';
 import netlify from '@astrojs/netlify';
+import { isSitemapExcluded } from './src/lib/seo/sitemapPolicy.mjs';
 
 // https://astro.build/config
 export default defineConfig({
@@ -27,7 +28,7 @@ export default defineConfig({
         // /premium-predictions/ は旧stub(noindex→/premium-prediction/nankan/)のため customPages から除去（2026-06-25 旧URL整理）
         // /standard-predictions/ は実ページ不在(404)のため customPages から除去（2026-06-25 URL正規化）
         // 高優先ページ（週1回更新）
-        'https://analytics.keiba.link/free-prediction/archive/',
+        // /free-prediction/archive/ は 2026-09-28 から /archive/nankan/ へ 301（旧形式の一覧先が 404 のため）
         'https://analytics.keiba.link/dark-horse-picks/',
         // 中優先ページ（月1回更新）
         'https://analytics.keiba.link/',
@@ -38,6 +39,8 @@ export default defineConfig({
         'https://analytics.keiba.link/archive/nankan/',
       ],
       filter: (page) => {
+        // 2026-09-28: 301/302・noindex・会員限定・個人向けページは単一源 sitemapPolicy で除外
+        if (isSitemapExcluded(page)) return false;
         // 管理画面・プロトタイプページを除外
         if (page.includes('/admin/')) return false;
         // Premium Plus は Premium Sanrenpuku 会員限定の非公開商品。存在を知らせないため常に除外する
@@ -65,7 +68,8 @@ export default defineConfig({
       },
       changefreq: 'daily',
       priority: 0.7,
-      lastmod: new Date(),
+      // 2026-09-28: lastmod: new Date() を削除。bot の日次ビルドで**全ページの lastmod が毎日「今」**になり、
+      // 実際に変わっていないページまで更新扱いになる（Google が lastmod を信用しなくなる）。
     })
   ],
 
