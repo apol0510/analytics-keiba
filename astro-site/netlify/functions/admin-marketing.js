@@ -157,6 +157,9 @@ import {
   auditProspectIndex, normalizeHashes, safeRecordView,
 } from '../../src/lib/marketing/prospectIndexAudit.js';
 import {
+  createStateAuditReader, auditStateWindow, AUDIT_SOURCE, MAX_WINDOW_COUNT,
+} from '../../src/lib/marketing/prospectStateAudit.js';
+import {
   planCustomerDeletion, canDeleteCustomers, reconcileDeletionTargets,
   DELETE_CONFIRM, DELETE_MAX_PER_CALL,
 } from '../../src/lib/marketing/customerDeletionPlan.js';
@@ -933,6 +936,7 @@ export const handler = async (event) => {
     if (action === 'prospectClaimRelease') return await handleProspectClaimRelease({ KEY, BASE, now, req });
     if (action === 'prospectClaimRestore') return await handleProspectClaimRestore({ req });
     if (action === 'prospectIndexAudit') return await handleProspectIndexAudit({ req });
+    if (action === 'prospectStateAudit') return await handleProspectStateAudit({ req });
     if (action === 'prospectIndexRepair') return await handleProspectIndexRepair({ req });
     if (action === 'customerDeletionPlan') return await handleCustomerDeletionPlan({ KEY, BASE, req });
     if (action === 'customerDeletionApply') return await handleCustomerDeletionApply({ KEY, BASE, req });
@@ -4839,6 +4843,62 @@ async function handleProspectIndexAudit({ req }) {
     unexpectedActive: audit.unexpectedActive.slice(0, 50),
     details,
     truncated: audit.notActive.length > detailFor.length,
+    notice: 'これは読み取りのみです（Redis の実状態）。アドレスは含みません。',
+  });
+}
+
+/**
+ * prospect の**全レコード**で「state と 索引 / 抑止台帳」が一致しているかを 1 窓ぶん数える（**読み取りのみ**）。
+ *
+ * `prospectIndexAudit` / `prospectSequenceCheck` は「list に居る人」「送信候補索引に居る人」から出発するので、
+ * **どちらにも居ないレコード**（EXHAUSTED なのに台帳が無い 等）を数えられなかった。
+ * ここは Redis の鍵（`SCAN ak:prospect:*`）と 3 索引（`SSCAN`）から出発する。
+ *
+ * 入力: `{ source: 'keys'|'active'|'engaged'|'blocked', cursor: '0', count: 1000 }`
+ * 出力: 次の cursor（`'0'` で終わり）・見た hash・異常（2 回読んで同じだったものだけ）
+ *
+ * ⚠️ 出すのは SCAN / SSCAN / MGET / SMISMEMBER だけ（`createStateAuditReader` が送る前に弾く）。
+ * ⚠️ アドレスは返さない（hash と safeRecordView だけ）。全窓は `scripts/audit-prospect-state.mjs` が回す。
+ */
+async function handleProspectStateAudit({ req }) {
+  const source = String(req.source || '');
+  if (!Object.values(AUDIT_SOURCE).includes(source)) {
+    return json(400, { error: `source は ${Object.values(AUDIT_SOURCE).join(' / ')} のどれか`, sideEffects: 'none' });
+  }
+  const cursor = String(req.cursor ?? '0');
+  if (!/^\d+$/.test(cursor)) return json(400, { error: 'cursor は数字の文字列', sideEffects: 'none' });
+
+  let reader;
+  try {
+    reader = createStateAuditReader({
+      cmd: makeRedisCmd(process.env), pipeline: makeRedisPipeline(process.env),
+    });
+  } catch {
+    return json(503, { error: 'Redis へ接続できません', sideEffects: 'none' });
+  }
+
+  let r;
+  try {
+    r = await auditStateWindow(reader, {
+      source, cursor, count: Math.min(MAX_WINDOW_COUNT, Number(req.count) || MAX_WINDOW_COUNT),
+    });
+  } catch (e) {
+    // ⚠️ 読めなかった窓を「異常 0」と混同しない
+    return json(500, {
+      error: '読み取りに失敗しました', reason: (e && e.code) || 'read_failed', sideEffects: 'none',
+    });
+  }
+
+  return json(200, {
+    mode: 'prospect-state-audit',
+    sideEffects: 'none',
+    source,
+    cursor: r.cursor,
+    done: r.done,
+    seen: r.seen,
+    states: r.states,
+    findings: r.findings,
+    transient: r.transient,
     notice: 'これは読み取りのみです（Redis の実状態）。アドレスは含みません。',
   });
 }

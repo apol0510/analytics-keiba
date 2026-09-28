@@ -37,7 +37,7 @@
 | 2 | 配信 **s1 m10**（最終通）| 2026-09-29 19:00 JST | 予約済み（同上）|
 | 3 | 全配信終了後の read-only 最終監査: 最終人数・反応者・無反応除外（EXHAUSTED）・bounce / 配信停止 / 苦情（SUPPRESSED）・除外済み list 残存・索引の不整合 | 09-29 の配信後（webhook の遅延を見て 09-30 朝）| 未実施。手順は下の「⏰ 明朝の未完了任務」と同じ道具（reconcile excluded の下見 / list export＋`prospectIndexAudit` / `prospectSequenceCheck` の全窓 / `mailOverview` / Single Send stats）|
 | 4 | 自動点検が **09-27 20:20 JST にも通知した理由**の確認 | 次の点検結果を見て | 未確認。点検は通知の理由（finding）を保存しないので記録から特定できない。**推定**: 09-27 12:09〜13:39 JST の手動除去（4,791 名）で、前日に控えた list 人数と当日の送信人数がずれ、`RECIPIENT_GAP` が出た |
-| 5 | **監査の死角**: 全レコードを横断して「レコードの state と 索引 / 抑止台帳 が一致しているか」を数える read-only の手段が無い | 次の改修 | 現在の検出は「list に居る人」と「送信候補索引に居る人」だけ。**list にも送信候補索引にも居ないレコード**（例: EXHAUSTED なのに抑止台帳が無い）は数えられない |
+| 5 | **監査の死角**: 全レコードを横断して「レコードの state と 索引 / 抑止台帳 が一致しているか」を数える read-only の手段が無い | 次の改修 | **手段を追加（PR 参照）**: `admin-marketing` の `prospectStateAudit`（SCAN `ak:prospect:*` ＋ 3 索引 SSCAN から出発・2 回読んで同じズレだけ確定・書き込みコマンドは送る前に弾く）＋ `ADMIN_SECRET=... node astro-site/scripts/audit-prospect-state.mjs --json out.json`（exit 0=異常0 / 1=読み切れず / 2=異常あり / 3=アドレス混入で中止）。項目 3 の最終監査で使う。本番の初回実測結果は下に追記 |
 
 ## ⏰ （実施済み・手順として残す）2026-09-28 08:07 JST の read-only 監査（**セッションの予約に依存しない**）
 
