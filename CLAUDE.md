@@ -219,7 +219,7 @@ PR の merge / production deploy / 本番データ書込み / env の変更 / qu
 | 2 | 自動実行経路 | `.github/workflows/scheduled-checks.yml`（毎日 10:00 JST）→ `astro-site/scripts/scheduled-checks.mjs` → `kind` ごとの実装（`src/lib/ops/`）|
 | 3 | 比較基準 | 登録の `compare`（反映時スナップショット・比較期間）|
 | 4 | 結果の記録先 | GitHub Issue「[自動測定] <id>」（label `scheduled-check`）＋ Actions artifact |
-| 5 | 失敗時の扱い | job を赤にし Issue「[自動測定 失敗] <id>」に理由と最小作業。`runUntil` まで毎日再試行、過ぎたら期限切れを追記 |
+| 5 | 失敗時の扱い | job を赤にし Issue「[自動測定 失敗] <id>」に理由と最小作業。`runUntil` まで毎日再試行、過ぎたら期限切れを追記。**まだ起きていない・未確定（`PENDING_CODES`）は失敗と分け、赤にせず Issue「[自動測定 待機中] <id>」を 1 つだけ更新**（毎日の失敗通知を出さない）|
 
 - **PROGRESS に「○月○日に確認」と書くだけで完了扱いしない。** 登録簿に載せ、`validate`（必須 5 要素の検査）と CI を通すところまでが作業。
 - 新しい種類の確認は `KNOWN_KINDS` に実装を足してから登録する（未実装の kind は検査で落ちる）。
