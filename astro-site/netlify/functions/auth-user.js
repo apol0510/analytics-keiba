@@ -141,6 +141,13 @@ exports.handler = async (event) => {
           memberType: 'free',
           user: { email, plan: 'free' },
           previousPlanEnded,
+          // 2026-09-29 MK 確定: 失効後 30 日以内の有料 Light 会員には乗り換え特典（¥44,820）の価格資格を残す。
+          // 価格の出し分けだけに使う数値（閲覧権限ではない）。判定は単一源 pricingEligibility.js
+          // （申込時のサーバー判定 checkMemberOnlyPricing と同じ関数）。
+          // ⚠️ 契約終了を既に伝えている場合（previousPlanEnded）だけ計算し、それ以外は常に 0（新たな情報を出さない）。
+          pricingTier: previousPlanEnded
+            ? (await import('../../src/lib/pricing/pricingEligibility.js')).resolvePaidPricingTierFromFields(record.fields)
+            : 0,
           message: previousPlanEnded
             ? '以前のご契約は終了しています。無料会員としてログインしました。'
             : 'ログインしました。',

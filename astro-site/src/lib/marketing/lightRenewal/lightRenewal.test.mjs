@@ -68,10 +68,19 @@ test('JST で日付を切る（UTC 15:00 以降は翌日扱い）', () => {
   assert.equal(evaluateCandidate(PAID({ '有効期限': '2026-10-10' }), Date.parse('2026-10-02T14:30:00Z')).reason, SKIP.OUT_OF_WINDOW);
 });
 
-test('pricingEligibility の境界と同じ値（30 日）であること', () => {
+test('乗り換え特典の期限は pricingEligibility（表示と申込判定の単一源）と同じ値・再定義しない', async () => {
+  const pricing = await import('../../pricing/pricingEligibility.js');
+  const policy = await import('./lightRenewalPolicy.js');
+  assert.equal(policy.LIGHT_SWITCH_GRACE_DAYS, pricing.LIGHT_SWITCH_GRACE_DAYS);
+  assert.equal(policy.LIGHT_SWITCH_GRACE_DAYS, 30);
   const src = readFileSync(`${ROOT}src/lib/marketing/lightRenewal/lightRenewalPolicy.js`, 'utf8');
-  assert.match(src, /LIGHT_SWITCH_GRACE_DAYS = 30;/);
-  // TODO: pricingEligibility.js 側に同名の境界が入ったら、値の一致をここで import して検証する
+  assert.equal(/LIGHT_SWITCH_GRACE_DAYS\s*=\s*\d/.test(src), false, 'ここで値を再定義している');
+  // メールの「◯月◯日まで」とサーバーの価格資格の最終日が一致する（D+30 の終わりまで資格あり・D+31 は通常条件）
+  const f = { 'プラン': 'Light', 'PlanType': 'Monthly', 'Status': 'active', 'PaidAt': '2026-08-01T00:00:00.000Z', '有効期限': '2026-09-01' };
+  const last = policy.switchDeadlineFor('2026-09-01');
+  assert.equal(pricing.resolvePaidPricingTierFromFields(f, Date.parse(`${last}T23:59:00+09:00`)), pricing.PRICING_TIER.LIGHT);
+  const dayAfter = new Date(Date.parse(`${last}T00:00:00+09:00`) + 86400000 + 1000);
+  assert.equal(pricing.resolvePaidPricingTierFromFields(f, dayAfter.getTime()), pricing.PRICING_TIER.NONE);
 });
 
 // ── 冪等性・送信直前の停止 ───────────────────────────────

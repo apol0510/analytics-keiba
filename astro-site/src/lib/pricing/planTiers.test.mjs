@@ -55,14 +55,18 @@ test('guard: pricing.astro のインライン正規化が normalizePlanToken と
 });
 
 // Light 会員に無料/Light カードを出さない CSS ルールが消えていないこと（デザイン修正での事故防止）
-test('guard: pricing.astro に Light 会員向けの下位カード非表示ルールがある', () => {
+// 2026-09-29 MK 確定: Light 会員には無料カードだけを隠し、Light カードは出す（Light の更新・再開を実行できるように）
+test('guard: pricing.astro は Light 会員に無料カードだけ隠し、Light カード（更新・再開）は出す', () => {
   const src = readFileSync(PRICING_ASTRO, 'utf8');
-  for (const tier of ['0', '1']) {
-    assert.ok(
-      src.includes(`:global(:root[data-plan-tier="1"]) .plan-card[data-plan-tier="${tier}"]`),
-      `非表示ルールが無い: .plan-card[data-plan-tier="${tier}"]`,
-    );
-  }
+  assert.ok(
+    src.includes(':global(:root[data-plan-tier="1"]) .plan-card[data-plan-tier="0"]'),
+    '無料カードの非表示ルールが無い',
+  );
+  assert.equal(
+    src.includes(':global(:root[data-plan-tier="1"]) .plan-card[data-plan-tier="1"]'),
+    false,
+    'Light 会員に Light カードを隠している（Light の更新ができなくなる）',
+  );
   assert.ok(/class="plan-card" data-plan-tier="1"/.test(src), 'Light カードに tier 属性が無い');
   assert.ok(/class="plan-card" data-plan-tier="0"/.test(src), '無料カードに tier 属性が無い');
 });

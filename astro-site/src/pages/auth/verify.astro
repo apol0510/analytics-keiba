@@ -1,5 +1,6 @@
 ---
 import { MAGIC_LINK_TTL_MINUTES } from '../../lib/auth/constants.js';
+import { LOGIN_NEXT_ALLOWED, LOGIN_NEXT_STORAGE_KEY, LOGIN_NEXT_TTL_MS } from '../../lib/auth/loginNext.js';
 import BaseLayout from '../../layouts/BaseLayout.astro';
 
 export const prerender = false;
@@ -90,7 +91,7 @@ export const prerender = false;
      **誰もログインできなくなる**（2026-08-09 14:11 JST 〜 2026-08-10 の本番障害の真因）。
      再発は `src/lib/auth/inlineScriptNoTs.guard.test.mjs` が検知する。
 */}
-<script define:vars={{ TTL_MIN: MAGIC_LINK_TTL_MINUTES }}>
+<script define:vars={{ TTL_MIN: MAGIC_LINK_TTL_MINUTES, NEXT_ALLOWED: LOGIN_NEXT_ALLOWED, NEXT_KEY: LOGIN_NEXT_STORAGE_KEY, NEXT_TTL_MS: LOGIN_NEXT_TTL_MS }}>
   (() => {
     const params = new URLSearchParams(window.location.search);
     const token = params.get('token');
@@ -116,7 +117,7 @@ export const prerender = false;
       spinner.hidden = true;
       btn.hidden = true;
       status.textContent = 'ログインしました';
-      msg.textContent = 'まもなくマイページへ移動します。';
+      msg.textContent = redirectTo === '/pricing/' ? 'まもなく料金ページへ移動します。' : 'まもなくマイページへ移動します。';
       setTimeout(() => { window.location.replace(redirectTo); }, REDIRECT_DELAY_MS);
     }
 
@@ -173,7 +174,15 @@ export const prerender = false;
             console.warn('localStorage write failed', e);
           }
         }
-        ok(data.redirectTo || '/dashboard/');
+        // ログイン前に ?next= で指定された戻り先（許可リスト・短時間だけ）。単一源 loginNext.js と同じ判定
+        let nextPath = null;
+        try {
+          const o = JSON.parse(localStorage.getItem(NEXT_KEY) || 'null');
+          if (o && Number.isFinite(o.at) && Date.now() - o.at <= NEXT_TTL_MS && NEXT_ALLOWED.includes(o.path)) nextPath = o.path;
+          localStorage.removeItem(NEXT_KEY);
+        } catch (_) {}
+        // サーバーは常に /dashboard/ を返すため、許可リストの戻り先があればそちらを優先する
+        ok(nextPath || data.redirectTo || '/dashboard/');
       } catch (e) {
         console.error(e);
         // 通信エラーはトークンを消費していない可能性が高い。もう一度押せるようにする。

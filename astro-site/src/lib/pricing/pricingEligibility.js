@@ -18,7 +18,20 @@
  */
 
 import { resolveEntitlements, fromAirtableFields } from '../entitlements/resolveEntitlements.js';
+import { normalizePlan } from '../auth/planNormalization.js';
 import { PLAN_TIER_BY_CANONICAL } from './planTiers.js';
+
+/**
+ * 失効後も Light 会員向けの乗り換え特典（¥44,820）を案内・適用する日数（2026-09-29 MK 確定）。
+ *
+ * 有効期限日 D（JST の暦日）に対し、**D+30 日の終わりまで**は Light 会員向け価格の資格を残す。
+ * D+31 日以降は通常条件（会員向け価格なし）へ戻す。**無期限特典にはしない**。
+ * 対象は**実際に Light を支払った人**（`PaidAt` がある有料 Light 契約）だけ。無料特典の Light は含めない。
+ *
+ * ⚠️ 表示（`/pricing/`）とサーバー側の購入条件（`checkMemberOnlyPricing`）は**どちらもこの値**を使う。
+ */
+export const LIGHT_SWITCH_GRACE_DAYS = 30;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** 価格の出し分けに使う tier（planTiers と同じ尺度。無料特典では上がらない） */
 export const PRICING_TIER = Object.freeze({
@@ -46,9 +59,42 @@ export function resolvePaidPricingTier(entitlements) {
   return PRICING_TIER.NONE;
 }
 
+/** 有効期限の終わり（ms）。'YYYY-MM-DD' は JST のその日の終わり。解釈できなければ null */
+export function expiryEndMs(expiresAt) {
+  if (expiresAt === undefined || expiresAt === null || expiresAt === '') return null;
+  const s = String(expiresAt).trim();
+  const ms = /^\d{4}-\d{2}-\d{2}$/.test(s) ? Date.parse(`${s}T23:59:59.999+09:00`) : Date.parse(s);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/**
+ * 失効後 30 日以内の**有料** Light 会員か（乗り換え特典の猶予）。
+ *
+ * - プランが Light（旧 Standard 含む）で、`PaidAt` がある（実際に支払った）
+ * - ログインできるアカウント（停止・テスト・強制ログアウト等ではない）で、入金待ち（pending）ではない
+ * - 有効ではなく（期限切れ）、期限日の終わりから `LIGHT_SWITCH_GRACE_DAYS` 日以内（D+30 日の終わりまで）
+ */
+export function isWithinLightSwitchGrace(fields, nowMs = Date.now()) {
+  const f = fields || {};
+  if (normalizePlan(f['プラン'] ?? f.Plan) !== 'light') return false;
+  if (!f.PaidAt || String(f.PaidAt).trim() === '') return false;
+  const e = resolveEntitlements(fromAirtableFields(f), nowMs);
+  if (e.canLogin !== true) return false;
+  if (Array.isArray(e.reasons) && e.reasons.includes('PENDING')) return false;
+  if (e.paidLightActive === true) return false; // まだ有効（猶予ではなく通常の Light 会員）
+  const end = expiryEndMs(f['有効期限'] ?? f.ValidUntil ?? f.ExpiryDate ?? f.ExpirationDate);
+  if (end === null) return false;
+  // ⚠️ 期限日 D 当日は既存の判定で既に「期限切れ」になる時間帯がある（日付のみの値の解釈差）。
+  //    D 当日を含めて「有効でない ∧ D の終わり + 30 日以内」を猶予とし、隙間を作らない。
+  return nowMs <= end + LIGHT_SWITCH_GRACE_DAYS * DAY_MS;
+}
+
 /** Airtable の Customers fields から直接求める（サーバー側の入口） */
 export function resolvePaidPricingTierFromFields(fields, nowMs = Date.now()) {
-  return resolvePaidPricingTier(resolveEntitlements(fromAirtableFields(fields || {}), nowMs));
+  const tier = resolvePaidPricingTier(resolveEntitlements(fromAirtableFields(fields || {}), nowMs));
+  if (tier > PRICING_TIER.NONE) return tier;
+  // 2026-09-29 MK 確定: 失効後 30 日以内の有料 Light 会員には Light 会員向け価格の資格を残す
+  return isWithinLightSwitchGrace(fields, nowMs) ? PRICING_TIER.LIGHT : PRICING_TIER.NONE;
 }
 
 /**

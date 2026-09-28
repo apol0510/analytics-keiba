@@ -245,6 +245,25 @@ export const prerender = true;
 </style>
 
 <script>
+  import { resolveLoginNext, encodeLoginNext, decodeLoginNext, LOGIN_NEXT_STORAGE_KEY } from '../lib/auth/loginNext.js';
+
+  // ── ログイン後の戻り先（2026-09-29: Light 月払いメール → ログイン → /pricing/）──
+  // 許可リストの完全一致だけ受け付ける（オープンリダイレクトにしない）。マジックリンクは
+  // 別タブで開かれるので localStorage に短時間だけ置き、/auth/verify/ 側でも読む。
+  (function rememberLoginNext() {
+    try {
+      const next = resolveLoginNext(new URLSearchParams(window.location.search).get('next') || '');
+      if (next) localStorage.setItem(LOGIN_NEXT_STORAGE_KEY, encodeLoginNext(next) || '');
+    } catch (_) {}
+  })();
+  function takeLoginNext(): string | null {
+    try {
+      const v = decodeLoginNext(localStorage.getItem(LOGIN_NEXT_STORAGE_KEY) || '');
+      localStorage.removeItem(LOGIN_NEXT_STORAGE_KEY);
+      return v;
+    } catch (_) { return null; }
+  }
+
   // ── 有料ページから飛ばされてきた理由の表示（paidPageGate の `?r=`）──
   //
   // ⚠️ URL の値を**そのまま描画しない**。allow-list に一致したときだけ、
@@ -366,7 +385,10 @@ export const prerender = true;
       // 期限切れ・退会申請の元有料会員もここに来る（サーバー判定が free を返した場合のみ）。
       if (data.success && data.user && data.memberType === 'free') {
         try {
-          localStorage.setItem('user-plan', JSON.stringify({ email, plan: 'free', nonAuthoritative: true }));
+          // pricingTier: 失効後 30 日以内の有料 Light 会員だけ 1（乗り換え特典 ¥44,820 の価格資格）。
+          // 価格の出し分けにだけ使う（閲覧権限ではない）。サーバー判定が無ければ 0。
+          const pricingTier = Number.isInteger(data.pricingTier) && data.pricingTier > 0 ? data.pricingTier : 0;
+          localStorage.setItem('user-plan', JSON.stringify({ email, plan: 'free', nonAuthoritative: true, pricingTier }));
           localStorage.setItem('isLoggedIn', 'true');
           localStorage.setItem('userPlan', 'free');
           localStorage.setItem('userEmail', email);
@@ -388,7 +410,8 @@ export const prerender = true;
             : 'ログインしました。マイページへ移動します。',
           'success',
         );
-        setTimeout(() => { window.location.href = '/dashboard/'; }, data.previousPlanEnded ? 3000 : 1500);
+        const nextPath = takeLoginNext();
+        setTimeout(() => { window.location.href = nextPath || '/dashboard/'; }, data.previousPlanEnded ? 3000 : 1500);
         return;
       }
       showMessage('エラーが発生しました。もう一度お試しください。', 'error');

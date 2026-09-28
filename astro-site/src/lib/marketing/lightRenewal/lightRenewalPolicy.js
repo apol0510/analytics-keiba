@@ -22,6 +22,7 @@
  */
 import { createHash } from 'node:crypto';
 import { normalizePlan } from '../../auth/planNormalization.js';
+import { LIGHT_SWITCH_GRACE_DAYS } from '../../pricing/pricingEligibility.js';
 
 export const LIGHT_RENEWAL_CAMPAIGN_ID = 'light-renewal';
 export const LIGHT_RENEWAL_VERSION = 1;
@@ -35,10 +36,10 @@ export const POST_WINDOW = Object.freeze({ min: 3, max: 30 });
 
 /**
  * 失効後に Premium 年額の乗り換え特典（¥44,820）を使える日数。
- * ⚠️ `src/lib/pricing/pricingEligibility.js` の境界と**必ず同じ値**にする
- *    （D+30 まで対象・D+31 から通常条件）。POST の窓の上限もこの値。
+ * 単一源は `src/lib/pricing/pricingEligibility.js`（/pricing/ の表示と申込時のサーバー判定が使う値）。
+ * ここで再定義しない（D+30 まで対象・D+31 から通常条件）。POST の窓の上限もこの値。
  */
-export const LIGHT_SWITCH_GRACE_DAYS = 30;
+export { LIGHT_SWITCH_GRACE_DAYS } from '../../pricing/pricingEligibility.js';
 export const SWITCH_PRICE_YEN = 44820;
 export const REGULAR_PREMIUM_ANNUAL_YEN = 49800;
 export const LIGHT_MONTHLY_YEN = 4980;
