@@ -1,3 +1,15 @@
+# 2026-09-28 — Light 会員の Premium 導線は /pricing/・年払い ¥44,820 に統一／転換履歴は Customers に残す（MK 確定）
+
+- 1-A: Light 会員の Premium アップグレード導線は `/pricing/` を正規とし、既存の Light 会員向け切替価格 **¥44,820** に統一する。
+  Premium 30 日 ¥18,000 等の既存商品の廃止は意味しない。目的は Light 会員のアップグレード CTA で異なる価格を見せないこと。
+- 2-A: Light→Premium 転換履歴は Redis ではなく **Airtable Customers（正本）** に残す。最小の 2 項目
+  `PremiumConvertedFrom`（元プラン）/ `PremiumConvertedAt`（転換日時）。既存レコード・料金・権利・販売条件を壊さない。
+- 背景: Light ページの CTA が `/premium-upgrade/`（年払い ¥49,800・特典なし）を指し、`/pricing/` の Light 表示（¥44,820）と価格が分かれていた。
+  昇格でプランが上書きされ転換数を後から数えられなかった。
+- 仕様の正本: `spec.md`「Light 会員の Premium アップグレード導線と転換履歴」。
+
+---
+
 # 2026-09-28 — 待ち時間は止まらず、安全に分離できる作業を並行する（MK 確定 / 恒久ルール）
 
 - CI・deploy・外部 API・scheduled job・将来日付・長時間 run の待ちで**待機・停止だけして終わらない**。

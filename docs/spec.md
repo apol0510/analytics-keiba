@@ -12,6 +12,18 @@
 - KI の検証結果を AK へ**自動で持ち込まない**。AK へ取り込むときは AK の実測を根拠に AK 側で確定する（2026-05-23 の独立運用方針と同じ）。
 - 是正作業は、価格・商品内容・会員権利・販売条件を変えない範囲で行う（案内・導線・計測・決済の手間の改善）。
 
+## Light 会員の Premium アップグレード導線と転換履歴（2026-09-28 MK 確定）
+
+| 項目 | 仕様 |
+|---|---|
+| 正規導線 | **`/pricing/`**。Light ページ（`/light-predictions/`・`/light-predictions-jra/`）の CTA「⬆️ Premiumにアップグレード」は `/pricing/` を指す |
+| Light 会員の年払い価格 | **乗り換え特典 ¥44,820 に統一**（申込は `/pricing/` の `Premium Annual - Campaign`）。`/premium-upgrade/` の年払いも ¥44,820 表示で `/pricing/` へ案内 |
+| 既存商品 | 廃止しない（Premium 30 日 ¥18,000・買い切り ¥78,000 などはそのまま）。目的は「Light 会員のアップグレード CTA で異なる価格を見せない」こと |
+| 転換履歴 | Customers の正本に残す（Redis にしない）。`PremiumConvertedFrom`（1 行テキスト・例 `Light/Monthly`、期限切れなら `（期限切れ）`）/ `PremiumConvertedAt`（日時・PaidAt と同形式）|
+| 書く条件 | 入金確認で 昇格前 Light → 昇格後 Premium、かつ `PremiumConvertedAt` が空のときだけ（最初の転換だけ・再実行や再購入で上書きしない）|
+| 書き方 | `confirm-bank-payment` の昇格 PATCH 成功**後**に 2 項目だけの別 PATCH（best effort。失敗しても昇格は巻き戻さない）。単一源 `src/lib/payments/premiumConversion.js` |
+| 集計 | Airtable で `PremiumConvertedAt` が入っているレコードを期間で数える（`PremiumConvertedFrom` に「Light」を含む＝Light→Premium）|
+
 ## 是正の完成条件（AK）
 
 | # | 問題 | 是正して実測すること |
