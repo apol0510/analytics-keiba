@@ -158,7 +158,7 @@ test('sitemap: 日付ページと一覧は載る（除外されない）', () =>
 });
 
 test('内部リンク: 一覧→全日付、日付→前後・一覧、既存ページ→一覧', () => {
-  assert.match(read(HUB), /href=\{nankanDatePath\(p\.date\)\}/);
+  assert.match(read(HUB), /href: nankanDatePath\(p\.date\)/);
   const page = read(PAGE);
   assert.match(page, /href=\{NANKAN_ARCHIVE_HUB_PATH\}/);
   assert.match(page, /rel="prev"/);

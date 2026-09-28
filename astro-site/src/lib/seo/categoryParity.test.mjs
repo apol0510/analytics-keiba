@@ -74,3 +74,13 @@ test('結果表示の単一源は dayResultsView（中央・南関で同じ関�
     }
   }
 });
+
+test('一覧の見た目は中央・南関で同じ共通部品（DateArchiveHub・ガラスモーフィズム）', () => {
+  for (const f of ['src/pages/free-prediction/jra/archive.astro', 'src/pages/free-prediction/nankan/archive.astro']) {
+    assert.match(read(f), /<DateArchiveHub/, f);
+  }
+  const c = read('src/components/DateArchiveHub.astro');
+  assert.match(c, /backdrop-filter/);
+  // 同系色で潰さない: 日付・競馬場・的中で色を分ける
+  for (const v of ['--t-name', '--t-action', '--t-hit']) assert.ok(c.includes(v), v);
+});

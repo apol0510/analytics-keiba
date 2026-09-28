@@ -89,3 +89,9 @@ export function neighborDates(dates, date) {
   if (i < 0) return { newer: null, older: null };
   return { newer: i > 0 ? dates[i - 1] : null, older: i < dates.length - 1 ? dates[i + 1] : null };
 }
+
+/** 曜日（日本語 1 文字）。2026-09-28 → 月 */
+export function weekdayJa(date) {
+  const [y, m, d] = String(date).split('-').map(Number);
+  return '日月火水木金土'[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];
+}
