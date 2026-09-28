@@ -226,6 +226,7 @@ PR の merge / production deploy / 本番データ書込み / env の変更 / qu
 - 技術的に自動化できない部分がある場合だけ、**理由と人間の最小作業**を登録の `onFailure` と PROGRESS に明記する（例: 外部サービスの権限付与）。
 - 検証: `npm run test:ops`（`check:safety` に組込）。
 - 動作の検証は `scheduled-checks.yml` を `dry_run=true`（失敗経路は `simulate_failure=true` も）で手動実行する。検証結果は「[自動測定 検証] …」で記録され、本番の完了扱いにならない。
+- Airtable の読み取りは `AIRTABLE_READONLY_TOKEN`（トークン名 `ak-scheduled-checks-readonly`・analytics-keiba ベースの data.records:read のみ）。書き込み可能な鍵は GitHub に置かない。
 - GSC の読み取りはサービスアカウント `ak-gsc-readonly@analytics-keiba-ops.iam.gserviceaccount.com`（Search Console は制限付き・GCP ロールなし）と secret `GSC_SERVICE_ACCOUNT_JSON`。
 
 ## ⏳ 待ち時間は止まらず並行する（恒久ルール / 2026-09-28 MK 確定）

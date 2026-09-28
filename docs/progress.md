@@ -8,8 +8,8 @@
 **並行可能な未完了作業**（正本 `spec.md`「AK の商品・価格の事業境界」是正 4 項目 ほか）:
 | # | 作業 | 分類 |
 |---|---|---|
-| 1 | 是正 3「Light→Premium 案内不足」＋ 価格不一致 | **MK 決定 1-A（2026-09-28）→ 実装中**（CTA を `/pricing/` へ・年払い ¥44,820 に統一）|
-| 2 | 是正 4「転換履歴の計測」| **MK 決定 2-A（2026-09-28）→ 実装中**。Airtable Customers に `PremiumConvertedFrom`（1 行テキスト）/ `PremiumConvertedAt`（日時・PaidAt と同形式）を**作成済み**（95→97 列・既存レコードの値は 0 件で不変）。rollback: 2 列を削除（コードは列が無くても昇格を止めない）|
+| 1 | 是正 3「Light→Premium 案内不足」＋ 価格不一致 | **完了（#634 `b8ecce2f` 本番反映・2026-09-29）**: Light ページの CTA → `/pricing/`、`/premium-upgrade/` の年払い ¥44,820（¥49,800 は取消線のみ・申込ボタン 0）|
+| 2 | 是正 4「転換履歴の計測」| **本番反映（#634 `b8ecce2f`）**。Customers に `PremiumConvertedFrom` / `PremiumConvertedAt` を作成済み（既存値 0 件）。本番の実 Light 会員 18 名で読み取りのみの試算: 転換時に `Light/Monthly` 4 名・`Light/Monthly（期限切れ）` 14 名と記録される。**最初の実際の転換で記録されるかは scheduled-checks `premium-conversion-first-record-2026` が 2026-09-30〜12-31 に毎日自動確認**（読み取り専用トークン `AIRTABLE_READONLY_TOKEN`・analytics-keiba ベースの data.records:read のみ・書き込みは 403 を確認）|
 | 3 | 是正 1「月払い更新導線」: 期限前・失効後の案内を月払い会員へ | MK 判断待ち（元々の会員への配信 A/B/C）→ 提案 |
 | 4 | SEO: `/free/` から日付ページへの導線・レース名で辿れるページ | 設計判断あり → 提案 |
 

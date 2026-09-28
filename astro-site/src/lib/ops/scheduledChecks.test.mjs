@@ -195,3 +195,49 @@ test('測定: 評価期間のデータが未確定（表示 0）なら 0 を記�
   );
   assert.match(read('astro-site/scripts/scheduled-checks.mjs'), /case 'data_not_ready':/);
 });
+
+// ── kind: airtable-premium-conversions（Light→Premium 転換履歴の本番記録を確認）──
+const { summarizeConversions, runPremiumConversionCheck, renderConversionMarkdown } = await import('./premiumConversionCheck.js');
+const conv = registry.checks.find((c) => c.id === 'premium-conversion-first-record-2026');
+
+test('転換履歴の確認が登録され、5 要素がそろっている', () => {
+  assert.ok(conv);
+  assert.equal(conv.kind, 'airtable-premium-conversions');
+  assert.equal(conv.compare.since, '2026-09-29');
+  assert.ok(conv.runFrom <= '2026-10-01' && conv.runUntil >= '2026-12-01');
+});
+
+test('転換履歴の集計: 件数・Light 由来・期間内・最初/最新', () => {
+  const s = summarizeConversions([
+    { fields: { PremiumConvertedFrom: 'Light/Monthly', PremiumConvertedAt: '2026-10-03T01:00:00.000Z' } },
+    { fields: { PremiumConvertedFrom: 'Light/Monthly（期限切れ）', PremiumConvertedAt: '2026-10-10T01:00:00.000Z' } },
+    { fields: {} },
+  ], { since: '2026-09-29' });
+  assert.equal(s.total, 2); assert.equal(s.fromLight, 2); assert.equal(s.sinceCount, 2);
+  assert.equal(s.first, '2026-10-03T01:00:00.000Z'); assert.equal(s.last, '2026-10-10T01:00:00.000Z');
+});
+
+test('転換がまだ 0 件なら no_conversion_yet（成功として記録しない）・トークン無しは明示のコード', async () => {
+  const fetchImpl = async () => new Response(JSON.stringify({ records: [] }), { status: 200 });
+  await assert.rejects(() => runPremiumConversionCheck({ check: conv, token: 't', fetchImpl }), (e) => e.code === 'no_conversion_yet');
+  await assert.rejects(() => runPremiumConversionCheck({ check: conv, token: '', fetchImpl }), (e) => e.code === 'airtable_token_missing');
+  const denied = async () => new Response('{}', { status: 401 });
+  await assert.rejects(() => runPremiumConversionCheck({ check: conv, token: 't', fetchImpl: denied }), (e) => e.code === 'airtable_auth_failed');
+});
+
+test('転換が記録されていれば成功し、取得するのは転換履歴の 2 項目だけ', async () => {
+  let url = '';
+  const fetchImpl = async (u) => { url = String(u); return new Response(JSON.stringify({ records: [
+    { fields: { PremiumConvertedFrom: 'Light/Monthly', PremiumConvertedAt: '2026-10-03T01:00:00.000Z' } },
+  ] }), { status: 200 }); };
+  const r = await runPremiumConversionCheck({ check: conv, token: 't', fetchImpl, nowIso: '2026-10-04T01:00:00Z' });
+  assert.equal(r.total, 1);
+  const fields = new URL(url).searchParams.getAll('fields[]');
+  assert.deepEqual(fields.sort(), ['PremiumConvertedAt', 'PremiumConvertedFrom']);
+  assert.match(renderConversionMarkdown({ check: conv, result: r }), /転換履歴が記録されたレコード \| \*\*1\*\*/);
+});
+
+test('workflow: Airtable の読み取りトークンも失敗経路の検証では渡さない', () => {
+  const wf = read('.github/workflows/scheduled-checks.yml');
+  assert.match(wf, /AIRTABLE_READONLY_TOKEN: \$\{\{ !inputs\.simulate_failure && secrets\.AIRTABLE_READONLY_TOKEN \|\| '' \}\}/);
+});
