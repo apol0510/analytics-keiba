@@ -75,6 +75,21 @@
       },
       "record": "GitHub Issue「[自動測定] light-renewal-first-send-2026」（label: scheduled-check）",
       "onFailure": "送信 0 件の間は待機中 Issue を更新して翌日再確認。トークン・API の失敗は job 赤＋Issue「[自動測定 失敗] …」。10-15 まで 0 件なら期限切れ（cron の実行・env・dispatch を人が確認）"
+    },
+    {
+      "id": "payment-funnel-first-record-2026",
+      "title": "決済ファネルのサーバー側計測が本番の申込受理・入金確認で記録されたか",
+      "kind": "payment-funnel-first-record",
+      "runFrom": "2026-09-30",
+      "runUntil": "2026-12-31",
+      "trigger": "毎日 10:00 JST（scheduled-checks.yml）。2026-09-29 の本番反映（#644 8de927bd・公開 2026-09-28T22:45Z）以降、申込受理と入金確認の両方が記録されるまで毎日確認",
+      "compare": {
+        "since": "2026-09-28T22:45:03Z",
+        "siteUrl": "https://analytics.keiba.link/",
+        "baseline": "反映時点の計測値 0 件（申込受理 0・入金確認 0・確認待ち 0 を本番 API で確認）。反映前 8/31〜9/28 は GA4 application_submitted 1 件・Airtable 入金確認 4 件"
+      },
+      "record": "GitHub Issue「[自動測定] payment-funnel-first-record-2026」（label: scheduled-check）に件数・商品別・報告→確認の日数",
+      "onFailure": "まだ起きていない（no_application_yet / no_confirmation_yet）は待機中 Issue を更新して翌日再確認。Airtable に入金確認があるのに計測 0 件（funnel_missing_confirmation）・鍵未設定/不一致は job 赤＋失敗 Issue に最小作業。2026-12-31 まで未完了なら期限切れを追記"
     }
   ]
 }

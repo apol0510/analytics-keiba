@@ -14,6 +14,7 @@ import { validateRegistry, planToday, jstToday, exitCodeFor, EXIT } from '../src
 import { createGscClient, GscError } from '../src/lib/ops/gscClient.js';
 import { runGscDateArchive, renderMarkdown } from '../src/lib/ops/gscDateArchiveMeasurement.js';
 import { runPremiumConversionCheck, renderConversionMarkdown } from '../src/lib/ops/premiumConversionCheck.js';
+import { runPaymentFunnelCheck, renderPaymentFunnelMarkdown } from '../src/lib/ops/paymentFunnelCheck.js';
 import { runLightRenewalOutcomesCheck, renderLightRenewalOutcomesMarkdown } from '../src/lib/ops/lightRenewalOutcomesCheck.js';
 
 const REGISTRY = fileURLToPath(new URL('../../ops/scheduled-checks.json', import.meta.url));
@@ -51,6 +52,15 @@ function humanActionFor(code, check) {
       return 'なし（まだ Light 月払いリマインドを送っていない）。翌日の定期実行で自動的に再確認する。';
     case 'no_conversion_yet':
       return 'なし（まだ Light→Premium の入金確認が無い）。翌日の定期実行で自動的に再確認する。';
+    case 'no_application_yet':
+    case 'no_confirmation_yet':
+      return 'なし（まだ本番の申込受理または入金確認が無い）。翌日の定期実行で自動的に再確認する。';
+    case 'funnel_missing_confirmation':
+      return 'Airtable では入金確認があるのに計測が 0 件。confirm-bank-payment の Function ログで「決済ファネル（入金確認）」の reason を確認する（Claude が調査できる）。';
+    case 'funnel_secret_missing':
+      return 'GitHub の repository secret `PAYMENT_FUNNEL_READ_SECRET` を登録する（Netlify production の同名 env と同じ値。Claude が設定できる）。';
+    case 'funnel_auth_failed':
+      return 'GitHub secret と Netlify production の `PAYMENT_FUNNEL_READ_SECRET` が一致していない。両方を同じ新しい値に揃えて redeploy する（Claude が実施できる）。';
     case 'data_not_ready':
       return 'なし（GSC のデータ確定待ち）。翌日の定期実行で自動的に取り直す。';
     case 'auth_failed':
@@ -73,6 +83,9 @@ if (cmd === 'run') {
     } else if (check.kind === 'airtable-premium-conversions') {
       result = await runPremiumConversionCheck({ check, token: process.env.AIRTABLE_READONLY_TOKEN });
       md = renderConversionMarkdown({ check, result });
+    } else if (check.kind === 'payment-funnel-first-record') {
+      result = await runPaymentFunnelCheck({ check, token: process.env.AIRTABLE_READONLY_TOKEN, secret: process.env.PAYMENT_FUNNEL_READ_SECRET });
+      md = renderPaymentFunnelMarkdown({ check, result });
     } else if (check.kind === 'gsc-date-archive') {
       const client = createGscClient({ credentials: process.env.GSC_SERVICE_ACCOUNT_JSON, siteUrl: check.compare.siteUrl });
       result = await runGscDateArchive({

@@ -168,6 +168,7 @@ test('配線: 入金確認は昇格 PATCH 成功（!patchRes.ok で return）の
 
 test('admin API は読み取り専用・secret 必須', () => {
   const src = fnSrc('admin-payment-funnel.js');
-  assert.ok(src.includes("provided !== SECRET"));
+  assert.ok(src.includes('provided === SECRET'));
+  assert.ok(src.includes("if (!okAdmin && !okRead) return json(403"));
   assert.ok(!/recordPayment(Application|Confirmation)|HSET|HINCRBY|HDEL/.test(src));
 });
