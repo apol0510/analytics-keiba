@@ -2733,6 +2733,21 @@ premium|active 13 / premium_sanrenpuku|active 5 / light|active 2 / light|expirin
 | `cron-sendgrid-weekly.js` | gate `SENDGRID_WEEKLY_NATIVE_ENABLED` が開いているときだけ native を足す。**毎時 5 分**へ |
 | 管理画面 | 「メール配信」タブの週次に AK 判定人数 / list 人数 / 一致 / 除外内訳 |
 
+### 宛先の見積り（2026-09-28 01:11Z / 本番 read-only・書込み 0・新しい判定をそのまま使用）
+
+| | 人数 |
+|---|---|
+| 元々の会員（レコード）| 1,538 |
+| **週次の対象（見積り）** | **1,401** |
+| 基本的な送信可否で除外 | 80（停止リスト 38 / soft 22 / hard 11 / 停止・テスト 6 / 配信停止 3）|
+| 現役 Premium / Light | 20（有料 22 のうち 2 は基本除外側）|
+| DRM 育成がこれから始まる（窓 14 日）| 24 |
+| DRM 育成の受信中 | 13 |
+
+⚠️ `ak-drm-engaged` との重複除外は**未適用**（本番 Redis は masked secret でローカルから読めない）。本番の cron では適用される。
+月間の見込み: 1,401 × 約 8.7 回 ≒ **約 12,200 通** ＋ `ak-drm-engaged` 808 × 約 8.7 ≒ 約 7,000 通 ＝ **約 19,200 通/月**
+（Advanced 20K の月間送信枠は未確認。有効化の前に契約画面で確認する）。
+
 ## 現在地（2026-09-28 01:10Z）
 
 - Phase 1: 本番反映済み・bridge gate 閉・Event Webhook は `group_unsubscribe` ON / `group_resubscribe` OFF。
