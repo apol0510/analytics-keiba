@@ -61,6 +61,20 @@
       },
       "record": "GitHub Issue「[自動測定] light-renewal-outcomes-2026」（label: scheduled-check）に更新率・転換率の表",
       "onFailure": "送信記録 0 件は待機中（赤にしない）。トークン未設定・認証失敗は job 赤＋Issue「[自動測定 失敗] …」。2026-12-31 までに記録できなければ期限切れを追記"
+    },
+    {
+      "id": "light-renewal-first-send-2026",
+      "title": "Light 月払い 期限前・失効後リマインドが本番で送られたか（live 化後の最初の送信記録）",
+      "kind": "airtable-light-renewal-outcomes",
+      "runFrom": "2026-09-30",
+      "runUntil": "2026-10-15",
+      "trigger": "毎日 10:00 JST（scheduled-checks.yml）。2026-09-29 に LIGHT_RENEWAL_REMINDER_MODE=live を本番設定（最初の送信は 09-29 10:00 JST の定期実行・dry-run 実測で期限前 1・失効後 3 の予定）。送信記録が 1 件以上あれば成功",
+      "compare": {
+        "baseline": "live 化直前の本番 dry-run（2026-09-29）: 対象候補 5・予定 期限前 1 / 失効後 3・送信 0",
+        "definition": "CampaignDeliveries の light-renewal 送信行（会員 × 周期）。1 件以上で成功。0 件の間は待機中（no_reminder_sent_yet）"
+      },
+      "record": "GitHub Issue「[自動測定] light-renewal-first-send-2026」（label: scheduled-check）",
+      "onFailure": "送信 0 件の間は待機中 Issue を更新して翌日再確認。トークン・API の失敗は job 赤＋Issue「[自動測定 失敗] …」。10-15 まで 0 件なら期限切れ（cron の実行・env・dispatch を人が確認）"
     }
   ]
 }
