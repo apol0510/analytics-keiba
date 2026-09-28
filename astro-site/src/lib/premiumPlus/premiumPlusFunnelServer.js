@@ -221,4 +221,21 @@ export async function recordPlusPurchase({
   }
 }
 
+/**
+ * 購入の取消（Plus 管理画面の「確認を取消」専用）。例外を投げない。
+ * 新系列からその注文ぶんだけ外す。記録が無ければ `not_found`（二重取消でも壊さない）。
+ */
+export async function revokePlusPurchase({ recordId, env, orderKey, timeoutMs, redisCmd } = {}) {
+  const cmd = redisCmd !== undefined ? redisCmd : makeRedisCmd(env);
+  if (!cmd) return { removed: false, reason: 'measurement_unavailable' };
+  try {
+    const store = createFunnelStore({ redisCmd: cmd });
+    const out = await withTimeout(store.revoke_purchase({ recordId, orderKey }),
+      typeof timeoutMs === 'number' ? timeoutMs : RECORD_TIMEOUT_MS);
+    return { removed: out.removed === true, reason: out.reason || null };
+  } catch {
+    return { removed: false, reason: 'revoke_failed' };
+  }
+}
+
 export { FUNNEL_EVENT };

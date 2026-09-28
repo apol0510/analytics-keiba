@@ -746,6 +746,8 @@ export function createFunnelStore({ redisCmd } = {}) {
           sv: FUNNEL_SOURCE_SCHEMA,
           legacy: num(cur.sv) !== null ? (num(cur.legacy) ?? 0) : (num(cur.count) ?? 0),
           orders: { ...orders, [slot]: now },
+          // 注文ごとの帰属（取消で正しい内訳から引くため）
+          orderSources: { ...(cur.orderSources && typeof cur.orderSources === 'object' ? cur.orderSources : {}), [slot]: src ?? null },
           attributedSource: src,
         };
         if (src && src !== FUNNEL_SOURCE_AMBIGUOUS) {
@@ -781,6 +783,53 @@ export function createFunnelStore({ redisCmd } = {}) {
         return { ok: true, counted: true, source: src };
       } catch {
         return { ok: false, counted: false, reason: 'write_failed' };
+      }
+    },
+
+    /**
+     * 購入の取消（**誤って入金確認した訂正専用**）。その注文ぶんだけ新系列から外す。
+     *
+     * - 注文が記録されていなければ何もしない（`not_found`。二重取消でも数を壊さない）
+     * - 内訳（導線別 / 導線なし / 導線不明）と日次カウンタからも同じ 1 件を引く
+     * - 残りが 0 件になればその会員の購入記録を消す（「購入なし」に戻す）
+     */
+    async revoke_purchase({ recordId, orderKey } = {}) {
+      if (!RECORD_ID_RE.test(String(recordId || ''))) return { removed: false, reason: 'bad_record_id' };
+      const slot = String(orderKey || '').trim();
+      if (!slot) return { removed: false, reason: 'missing_order_key' };
+      const key = FUNNEL_KEY.PURCHASE;
+      try {
+        const cur = await readOne(key, recordId);
+        const orders = cur && cur.orders && typeof cur.orders === 'object' ? cur.orders : {};
+        if (!cur || !orders[slot]) return { removed: false, reason: 'not_found' };
+        const at = num(orders[slot]);
+        const src = cur.orderSources && Object.prototype.hasOwnProperty.call(cur.orderSources, slot)
+          ? cur.orderSources[slot] : (cur.attributedSource ?? null);
+        const rest = { ...orders };
+        delete rest[slot];
+        const restAt = Object.values(rest).map(num).filter((v) => v !== null);
+        if (restAt.length === 0) {
+          await redisCmd(['HDEL', key, recordId]);
+        } else {
+          const dec = (b) => (b ? { ...b, count: Math.max(0, (num(b.count) ?? 0) - 1) } : b);
+          const next = { ...cur, orders: rest, count: Math.max(0, (num(cur.count) ?? 0) - 1),
+            firstAt: Math.min(...restAt), lastAt: Math.max(...restAt) };
+          if (cur.orderSources) { next.orderSources = { ...cur.orderSources }; delete next.orderSources[slot]; }
+          if (src && src !== FUNNEL_SOURCE_AMBIGUOUS && cur.bySource && cur.bySource[src]) {
+            next.bySource = { ...cur.bySource, [src]: dec(cur.bySource[src]) };
+          } else if (src === FUNNEL_SOURCE_AMBIGUOUS) next.ambiguous = dec(cur.ambiguous);
+          else if (!src) next.noSource = dec(cur.noSource);
+          await redisCmd(['HSET', key, recordId, JSON.stringify(next)]);
+        }
+        const day = at !== null ? funnelDayKey(at) : null;
+        if (day) {
+          try {
+            await redisCmd(['HINCRBY', FUNNEL_KEY.DAILY, dailyField(day, PURCHASE_DAILY_EVENT, src), '-1']);
+          } catch { /* 日次は補助。本体の取消は保持する */ }
+        }
+        return { removed: true, reason: null };
+      } catch {
+        return { removed: false, reason: 'write_failed' };
       }
     },
 
