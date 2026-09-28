@@ -25,6 +25,15 @@
 import {
   createFunnelStore, FUNNEL_EVENT, normalizeEntrySource,
 } from './premiumPlusFunnelStore.js';
+import { normalizePlan } from '../auth/planNormalization.js';
+
+/**
+ * 入金確認された申込が Premium Plus か（購入件数へ入れてよいか）。
+ * 申込内容（`RequestedPlan`）で判定する。昇格後の `プラン` は Plus で変わらないので使わない。
+ */
+export function isPlusPurchaseProduct(productPlan) {
+  return normalizePlan(productPlan) === 'premium-plus';
+}
 
 /** これを超えたら記録を諦めてページを返す（計測のために顧客を待たせない） */
 export const RECORD_TIMEOUT_MS = 700;
@@ -191,8 +200,12 @@ export async function recordPlusCheckoutStart({
  * 二重計上は `orderKey` で潰す（Webhook 再送・Automation 再実行・再読込）。
  */
 export async function recordPlusPurchase({
-  recordId, env, nowMs, orderKey, timeoutMs, redisCmd,
+  recordId, env, nowMs, orderKey, timeoutMs, redisCmd, productPlan,
 } = {}) {
+  // ⚠️ **Premium Plus の確定だけを数える**（2026-09-29〜）。入金確認は全商品の共通経路なので、
+  //    商品を確かめずに呼ぶと Light / Premium / 三連複 が Plus 購入に混入する（実際に 3 件混入した）。
+  //    商品が分からない・Plus 以外なら**書かない**（fail closed）。
+  if (!isPlusPurchaseProduct(productPlan)) return { counted: false, reason: 'not_plus_product' };
   const cmd = redisCmd !== undefined ? redisCmd : makeRedisCmd(env);
   if (!cmd) return { counted: false, reason: 'measurement_unavailable' };
   try {

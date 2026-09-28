@@ -15,6 +15,7 @@
 | 2 | 是正 4「転換履歴の計測」| **本番反映（#634 `b8ecce2f`）**。Customers に `PremiumConvertedFrom` / `PremiumConvertedAt` を作成済み（既存値 0 件）。本番の実 Light 会員 18 名で読み取りのみの試算: 転換時に `Light/Monthly` 4 名・`Light/Monthly（期限切れ）` 14 名と記録される。**最初の実際の転換で記録されるかは scheduled-checks `premium-conversion-first-record-2026` が 2026-09-30〜12-31 に毎日自動確認**（読み取り専用トークン `AIRTABLE_READONLY_TOKEN`・analytics-keiba ベースの data.records:read のみ・書き込みは 403 を確認）|
 | 3 | 是正 1「月払い更新導線」: 期限前・失効後の案内を月払い会員へ | **MK 決定 1-B（2026-09-29）→ 実装 PR 作成（Light 月払い 期限前・失効後リマインド）**。対象 9 名（有効 4・失効 30 日以内 3・30 日超 2）。本番は `LIGHT_RENEWAL_REMINDER_MODE` 未設定のまま（merge 後に dry-run → live）|
 | 4 | SEO: `/free/` から日付ページへの導線・レース名で辿れるページ | 設計判断あり → 提案 |
+| 6 | Premium Plus 購入件数の他商品混入（MK 決定 A・2026-09-29）| **実装 PR**: 入金確認は Plus の申込だけを新系列へ記録、旧系列は参考値として読まない（`decisions.md`）。**未決**: Plus の入金確認が `confirm-bank-payment` へ届く経路が無い（Plus 申込は Airtable に申込内容を書かない）＝新系列は 0 件のまま・Plus のクーポン利用予約も使用済みにならない。成立地点の作り方を MK へ提示 |
 | 5 | 決済摩擦の計測（pricing → 申込開始 → 報告 → 入金確認のどこで落ちるか）| **本番反映（#644 `8de927bd`・2026-09-29）・本番 API 200/認可なし 403 を確認**: GA4 `application_submitted` 1 件 vs 入金確認 4 件で GA4 が欠けることを実測 → サーバー側で申込受理・入金確認・報告→確認の日数・確認待ち件数を Redis に記録（Airtable schema 変更なし）。正本 `astro-site/docs/GA4_CONVERSION_FUNNEL.md` §10 |
 
 **着手中の並行作業**: 1（read-only 調査まで完了。結果は下）。

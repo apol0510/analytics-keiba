@@ -2011,6 +2011,18 @@ sent（＝provider 受理）/ skipped / failed / ジョブ状態（SENT / PARTIA
 `showPurchaseCta` は公開判定の値として確認してよいが、
 **「三連複ページに強い CTA が即座に出ること」は完成条件にしない**。
 
+## Premium Plus 購入件数の系列（2026-09-29 MK 確定）
+
+| 系列 | 期間 | 何を数えたか | 扱い |
+|---|---|---|---|
+| 旧系列 `ak:pp:funnel:v1:purchase` / 日次 `purchase` | 2026-08-13〜09-28 | **全商品**の入金確認（Light / Premium / 三連複 が混入・Plus は 0 件）| **他商品混入の参考値**。読まない・書かない・消さない。KPI にしない |
+| 新系列 `ak:pp:funnel:v1:purchase:s2` / 日次 `purchase_plus` | 2026-09-29〜 | `RequestedPlan` が Premium Plus の入金確認だけ | Plus 購入件数の正本 |
+
+- 判定の単一源: `isPlusPurchaseProduct`（`src/lib/premiumPlus/premiumPlusFunnelServer.js`）。商品不明は数えない。
+- 二重計上防止: `orderKey = recordId:premium-plus:対象日（SaleTargetDate。無ければ PaidAt）`。
+- 新旧を足した数字を出さない。管理画面は新系列だけを表示し、系列の注記を常設する。
+- テスト: `src/lib/premiumPlus/premiumPlusPurchaseSeries.test.mjs`（`test:premium-plus-media` → `check:safety`）。
+
 ## Premium Plus の「即時販売」（2026-08-07 明文化）
 
 管理画面の**「今すぐ販売可」＝即時販売**は、**その会員だけ段階公開の待機日数を飛ばして
