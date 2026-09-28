@@ -2446,6 +2446,13 @@ MK が示した完成の目安（`/free/`）: スマホで開いたとき、長�
 | sitemap の URL 数 | 142 | **268**（+126）|
 | 一覧への内部リンク元 | — | `/free-prediction/nankan/`・`/free-prediction/jra/archive/`・`/archive/nankan/`・`/results-showcase/nankan/`（＋日付ページ同士の前後・パンくず）|
 
+**本番反映: #623 squash `ca433d24`・2026-09-28 production deploy ready。** 本番で確認済み:
+- 日付ページ **125/125 が Googlebot UA で HTTP 200**。canonical = 自己 URL（末尾スラッシュ）・robots meta なし・BreadcrumbList あり・本文（印・着順）が HTML に入っている（静的生成）
+- sitemap: 全 **268** URL・日付ページ **125** 件・一覧 1 件を掲載
+- 内部リンク: 一覧 → 125 日付すべて。`/free-prediction/nankan/`・`/free-prediction/jra/archive/`・`/archive/nankan/`・`/results-showcase/nankan/` → 一覧
+- `/free-prediction/archive/` → 301 一覧 / 存在しない日付 `/free-prediction/nankan/2026-01-01/` → 404 / `/free/nankan/`・`/pricing/` 200
+- 料金・権利・販売条件の変更なし
+
 **2026-10-26 前後に比較する KPI**（第 2 弾の反映日を起点に 28 日）:
 | KPI | ベースライン（2026-09-28）| 見る場所 |
 |---|---|---|
