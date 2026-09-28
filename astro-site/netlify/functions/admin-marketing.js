@@ -938,6 +938,7 @@ export const handler = async (event) => {
     if (action === 'prospectIndexAudit') return await handleProspectIndexAudit({ req });
     if (action === 'prospectStateAudit') return await handleProspectStateAudit({ req });
     if (action === 'prospectIndexRepair') return await handleProspectIndexRepair({ req });
+    if (action === 'prospectLedgerRepair') return await handleProspectLedgerRepair({ req });
     if (action === 'customerDeletionPlan') return await handleCustomerDeletionPlan({ KEY, BASE, req });
     if (action === 'customerDeletionApply') return await handleCustomerDeletionApply({ KEY, BASE, req });
     if (action === 'customerDeletionRestore') return await handleCustomerDeletionRestore({ KEY, BASE, req });
@@ -4497,6 +4498,63 @@ async function handleProspectIndexRepair({ req }) {
 }
 
 
+
+/** 抑止台帳の修復を許す確認文字列 */
+const LEDGER_REPAIR_CONFIRM = 'REPAIR PROSPECT LEDGER';
+
+/**
+ * 名指しした hash の**抑止台帳・抑止索引**を state（EXHAUSTED / SUPPRESSED）に合わせて直す。
+ * `prospectStateAudit` の `BLOCK_STATE_WITHOUT_LEDGER` / `BLOCK_STATE_NOT_IN_BLOCKED_INDEX` /
+ * `LEDGER_NOT_IN_BLOCKED_INDEX` / `NOT_SENDABLE_IN_ACTIVE` を解消する経路。
+ *
+ * ⚠️ 止める方向にしか動かない（送信候補へは戻さない）。レコード・Customers・送信は触らない。
+ * ⚠️ 既定は**下見**。`apply: true` ＋ 確認文字列が揃ったときだけ書く。1 回 10 件まで。
+ */
+async function handleProspectLedgerRepair({ req }) {
+  const hashes = normalizeHashes(req.hashes);
+  if (hashes.length === 0) {
+    return json(400, { error: 'hashes（64 桁 hex）を渡してください', sideEffects: 'none' });
+  }
+  if (hashes.length > INDEX_REPAIR_MAX) {
+    return json(400, { error: `一度に直せるのは ${INDEX_REPAIR_MAX} 件までです`, sideEffects: 'none' });
+  }
+  const confirmed = String(req.confirm || '') === LEDGER_REPAIR_CONFIRM;
+  const apply = req.apply === true && confirmed;
+
+  let store;
+  try {
+    store = createProspectStore({
+      cmd: makeRedisCmd(process.env), pipeline: makeRedisPipeline(process.env),
+    });
+  } catch {
+    return json(503, { error: 'Redis へ接続できません', sideEffects: 'none' });
+  }
+
+  let res;
+  try {
+    res = await store.reconcileBlockedByHash(hashes, { apply });
+  } catch (e) {
+    return json(500, {
+      error: '抑止台帳を直せませんでした',
+      detail: String((e && e.message) || '').slice(0, 120),
+      sideEffects: apply ? 'partial_unconfirmed' : 'none',
+    });
+  }
+
+  return json(200, {
+    mode: apply ? 'prospect-ledger-repair' : 'prospect-ledger-repair-dry-run',
+    sideEffects: apply && res.applied > 0 ? 'redis_written' : 'none',
+    confirmed,
+    checked: res.checked,
+    planned: res.planned,
+    applied: res.applied,
+    skipped: res.skipped,
+    customersDeleted: 0,
+    notice: apply
+      ? '抑止台帳と索引の所属だけを直しました。**レコード・Customers・送信は一切触っていません**。'
+      : 'これは下見です。**1 バイトも書いていません**（apply と確認文字列が要ります）。',
+  });
+}
 
 /**
  * prospect の **予約だけが焼けた step** を剥がして、配信対象へ戻す（C2）。

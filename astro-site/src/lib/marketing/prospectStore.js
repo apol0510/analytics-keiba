@@ -556,6 +556,70 @@ export function createProspectStore({ cmd, pipeline } = {}) {
     },
 
     /**
+     * 名指しした hash の **抑止台帳・抑止索引**を、保存済みレコードの state（EXHAUSTED / SUPPRESSED）に
+     * 合わせて書き直す（修復用）。送信候補・反応済み索引からも外す。
+     *
+     * ## なぜ要るか（2026-09-28 `prospectStateAudit` 初回実測）
+     * #601（比較して書く）より前の部分書き込みで、SUPPRESSED なのに台帳が無い / 抑止索引に居ない
+     * レコードが残っていた。台帳が無いと **CSV 再取り込みで配信対象に復活する**。
+     * `reindexByHash` は台帳に載っている相手を触らず、台帳も作れないので別経路にする。
+     *
+     * ⚠️ **レコードは触らない**（CAS の `KEEP`）。書くのは台帳・抑止索引・送信候補/反応済みの所属だけ。
+     * ⚠️ state が EXHAUSTED / SUPPRESSED 以外・レコードが無い hash には**何もしない**（止める側にしか動かない）。
+     * ⚠️ 既に揃っていれば**0 コマンド**。読んだ後に誰かが書いていれば触らない（比較して書く）。
+     *
+     * @param {string[]} hashes
+     * @param {{apply?: boolean}} opts `apply` が true でなければ**下見**（1 バイトも書かない）
+     */
+    async reconcileBlockedByHash(hashes, { apply = false } = {}) {
+      const list = [...new Set((hashes || []).map((h) => String(h || '').trim().toLowerCase()))]
+        .filter((h) => /^[0-9a-f]{64}$/.test(h));
+      const out = {
+        checked: list.length, planned: [], applied: 0, skipped: [],
+      };
+      if (list.length === 0) return out;
+
+      const curRaw = await call(['MGET', ...list.map(prospectKey)], STORE_FAIL.DATA_CORRUPT);
+      const ledRaw = await call(['MGET', ...list.map(blockedKey)], STORE_FAIL.DATA_CORRUPT);
+      if (!Array.isArray(curRaw) || !Array.isArray(ledRaw)
+        || curRaw.length !== list.length || ledRaw.length !== list.length) {
+        throw new ProspectStoreError(STORE_FAIL.DATA_CORRUPT, 'ledger_repair_mget');
+      }
+
+      for (let i = 0; i < list.length; i += 1) {
+        const hash = list[i];
+        const rec = parse(curRaw[i]);
+        if (!rec) { out.skipped.push({ hash, reason: 'no_record' }); continue; }
+        const kind = blockKindForState(rec.state);
+        if (!kind) { out.skipped.push({ hash, reason: 'not_block_state', state: rec.state }); continue; }
+        let led = null;
+        try { led = parse(ledRaw[i]); } catch { led = null; }
+        /* eslint-disable no-await-in-loop -- 修復対象は上限つき（通常 1 桁） */
+        const inBlocked = Number(await call(['SISMEMBER', BLOCKED_INDEX, hash])) === 1;
+        const inActive = Number(await call(['SISMEMBER', ACTIVE_INDEX, hash])) === 1;
+        const inEngaged = Number(await call(['SISMEMBER', ENGAGED_INDEX, hash])) === 1;
+        const changes = [];
+        if (!led) changes.push('ledger_create');
+        else if (led.kind !== kind) changes.push('ledger_kind');
+        if (!inBlocked) changes.push('blocked_index_add');
+        if (inActive) changes.push('active_remove');
+        if (inEngaged) changes.push('engaged_remove');
+        out.planned.push({
+          hash, state: rec.state, kind, hadLedger: !!led, inBlocked, inActive, inEngaged, changes,
+        });
+        if (changes.length === 0) { out.skipped.push({ hash, reason: 'already_consistent' }); continue; }
+        if (apply) {
+          // KEEP（レコード不変）＋ state に合わせた索引 ＋ 台帳。読んだ値のままのときだけ書く
+          const [cr] = await casMany([casItem({ hash, expectRaw: String(curRaw[i]) })]);
+          if (cr.ok) out.applied += 1;
+          else out.skipped.push({ hash, reason: 'changed_concurrently' });
+        }
+        /* eslint-enable no-await-in-loop */
+      }
+      return out;
+    },
+
+    /**
      * 指定 hash が **送信候補の索引に居るか**をまとめて調べる（**読み取りのみ**）。
      *
      * ⚠️ `SMEMBERS` で 1 万件超を毎回引くと帯域を食うので、`SISMEMBER` を
