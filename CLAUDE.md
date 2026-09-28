@@ -228,6 +228,20 @@ PR の merge / production deploy / 本番データ書込み / env の変更 / qu
 - 動作の検証は `scheduled-checks.yml` を `dry_run=true`（失敗経路は `simulate_failure=true` も）で手動実行する。検証結果は「[自動測定 検証] …」で記録され、本番の完了扱いにならない。
 - GSC の読み取りはサービスアカウント `ak-gsc-readonly@analytics-keiba-ops.iam.gserviceaccount.com`（Search Console は制限付き・GCP ロールなし）と secret `GSC_SERVICE_ACCOUNT_JSON`。
 
+## ⏳ 待ち時間は止まらず並行する（恒久ルール / 2026-09-28 MK 確定）
+
+CI・deploy・外部 API・scheduled job・将来日付・長時間 run 等の**待ちが発生しても、単に待機・停止しない**。
+
+1. 現在の処理を壊さず並行できる未完了作業を、正本と PROGRESS から確認する。
+2. 優先順位が明確で安全に分離できる作業は、**別 branch / worktree** で自律的に並行実行する。
+3. 候補が複数あり事業優先順位・仕様判断が要る場合は、**何を待っているか / 待ち時間中に何ができるか / 最も価値が高い候補**を短く提案する。
+4. 「run 完了待ちなので停止」「○日まで待機」だけで終了しない。
+5. 次の並行は**禁止**（実異常につながる）: 同一 branch / worktree の競合、同一 production 状態への競合 write、別セッションの差分・branch・worktree への干渉。
+6. 明確な次作業が正本にある場合は、提案だけして承認待ちにせず**自律着手**する。
+
+待ち状態があるときは PROGRESS 先頭の「⏳ 待ち状態と並行作業」に
+**何を待っているか / 並行可能な未完了作業 / 着手中の並行作業 / 次の提案** を残す（ターミナルが閉じても再開できるように）。
+
 ## 📚 ドキュメント索引（**正本はこちら**）
 
 ### 予想・表示
