@@ -50,8 +50,11 @@
   - 台帳はあるが抑止索引に居ない 2 名
 - 実害の評価: dropped は SendGrid 側の suppression に載っているので、**送られることはない**。
   リスクは **CSV を取り込み直したときに復活する**ことだけ（取り込みの照合は台帳の鍵を見る）。9/29 の配信には影響しない
+- **2026-09-28 修復済み**（#616 `9a967b62`・`prospectLedgerRepair` で 7 名だけ・下見→apply）: applied 7 / skipped 0。
+  再監査は **critical 0 / integrity 0**（exit 0）。台帳 10,033→10,038（+5）/ 抑止索引 10,031→10,038（+7）/ 送信候補索引 1,163→1,161（−2）。
+  レコード（state 内訳）は不変・送信 / Customers 0。rollback 用の修復前状態は `~/.analytics-keiba-ops/prospect-ledger-repair-2026-09-28.json`
 - info `LATE_REACTION` 26 名（打ち切りの後に開封して ENGAGED。仕様どおり）
-- **修復はしていない**（台帳の書き込みは本番 write。既存の `prospectIndexRepair` は索引しか直せず、台帳は作れない）。
+- ~~修復はしていない~~ → 上のとおり修復済み（台帳の書き込みは本番 write。既存の `prospectIndexRepair` は索引しか直せず、台帳は作れない）。
   直す場合は、この 7 名だけを対象に「state に合わせて台帳と抑止索引を書く」経路を用意する（CAS の KEEP＋blk で書けるので、レコードは不変）
 
 ## ⏰ （実施済み・手順として残す）2026-09-28 08:07 JST の read-only 監査（**セッションの予約に依存しない**）
