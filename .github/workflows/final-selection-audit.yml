@@ -13,6 +13,11 @@ on:
   schedule:
     - cron: '7 23 29 9 *'    # 2026-09-30 08:07 JST（本番）
     - cron: '37 1 30 9 *'    # 2026-09-30 10:37 JST（GitHub の schedule が落ちたときの予備。読むだけなので 2 回走っても無害）
+  # ⚠️ TEMP（検証用・merge 前に戻す）: この branch への push で 1 回だけ本番 read-only 監査を走らせ、
+  #    GitHub のランナー上で完走することを確かめる
+  push:
+    branches: [ci/final-selection-audit]
+    paths: ['.github/workflows/final-selection-audit.yml']
   workflow_dispatch:
     inputs:
       force:
@@ -36,7 +41,7 @@ jobs:
         id: guard
         run: |
           today="$(TZ=Asia/Tokyo date +%F)"
-          if [ "$today" = "2026-09-30" ] || [ "${{ github.event_name }}" = "workflow_dispatch" -a "${{ inputs.force }}" = "true" ]; then
+          if [ "$today" = "2026-09-30" ] || [ "${{ github.event_name }}" = "push" ] || [ "${{ github.event_name }}" = "workflow_dispatch" -a "${{ inputs.force }}" = "true" ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
             echo "run=false" >> "$GITHUB_OUTPUT"
