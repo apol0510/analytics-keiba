@@ -1,0 +1,98 @@
+# 選別配信（27 通）終了後の最終 read-only 監査 — 2026-09-30 朝に 1 回だけ
+#
+# Claude のセッションや手元の Mac に依存しないよう GitHub Actions で動かす。
+# - 本番の管理 secret / SendGrid key は `netlify dev:exec --context production` が子プロセスへ注入する
+#   （既存の repo secret NETLIFY_AUTH_TOKEN / NETLIFY_SITE_ID だけを使う。新しい secret は作らない）
+# - **読むだけ**。本番 write・list 変更・env 変更・メール送信・再送・予約変更をしない
+#   （`astro-site/scripts/final-selection-audit.mjs` と guard テストで固定）
+# - 結果は Job Summary と artifact（件数のみ・アドレスなし）。異常があっても直さず、job を失敗にして知らせる
+# - 2026-09-30（JST）以外は何もしない（毎年 9/29 の cron が来ても日付ガードで止まる）
+name: Final selection audit (read-only / 2026-09-30)
+
+on:
+  schedule:
+    - cron: '7 23 29 9 *'    # 2026-09-30 08:07 JST（本番）
+    - cron: '37 1 30 9 *'    # 2026-09-30 10:37 JST（GitHub の schedule が落ちたときの予備。読むだけなので 2 回走っても無害）
+  workflow_dispatch:
+    inputs:
+      force:
+        description: '日付ガードを無視して今すぐ実行する（読むだけ）'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: final-selection-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: 日付ガード（2026-09-30 JST だけ実行）
+        id: guard
+        run: |
+          today="$(TZ=Asia/Tokyo date +%F)"
+          if [ "$today" = "2026-09-30" ] || [ "${{ github.event_name }}" = "workflow_dispatch" -a "${{ inputs.force }}" = "true" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "今日は ${today}（JST）。2026-09-30 ではないので何もしません。" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.guard.outputs.run == 'true'
+
+      - uses: actions/setup-node@v4
+        if: steps.guard.outputs.run == 'true'
+        with:
+          node-version: '22'
+
+      - name: Netlify CLI
+        if: steps.guard.outputs.run == 'true'
+        run: npm install -g netlify-cli@25.3.0 >/dev/null 2>&1 && netlify --version
+
+      - name: 最終 read-only 監査
+        if: steps.guard.outputs.run == 'true'
+        id: audit
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+        run: |
+          set +e
+          # ⚠️ 注入される env の「名前」は CLI が表示するが、値は表示しない。スクリプトも値を出さない
+          netlify dev:exec --context production -- node astro-site/scripts/final-selection-audit.mjs \
+            --out final-selection-audit.json --summary final-selection-audit.md > audit.stdout 2> audit.stderr
+          code=$?
+          echo "exit=$code" >> "$GITHUB_OUTPUT"
+          # 進捗ログは件数と時刻だけ（アドレス・secret を含まない）。念のため @ を含む行は落とす
+          grep -v '@' audit.stderr | grep -v '^⬥ Injected' | tail -40 || true
+          exit 0
+
+      - name: 結果を Job Summary へ
+        if: steps.guard.outputs.run == 'true'
+        run: |
+          if [ -s final-selection-audit.md ]; then
+            if grep -q '@' final-selection-audit.md; then echo "⚠️ 出力にアドレスらしき文字列 → 表示しません" >> "$GITHUB_STEP_SUMMARY"; else cat final-selection-audit.md >> "$GITHUB_STEP_SUMMARY"; fi
+          else
+            echo "⚠️ 監査が最後まで走りませんでした（exit=${{ steps.audit.outputs.exit }}）。本番には何も書いていません。" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: 結果を保存（件数のみ）
+        if: steps.guard.outputs.run == 'true' && hashFiles('final-selection-audit.json') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-selection-audit-${{ github.run_id }}
+          path: |
+            final-selection-audit.json
+            final-selection-audit.md
+          retention-days: 90
+
+      - name: 異常なら失敗として知らせる（直さない）
+        if: steps.guard.outputs.run == 'true' && steps.audit.outputs.exit != '0'
+        run: |
+          echo "監査の結果に異常がある、または監査が完走しませんでした（exit=${{ steps.audit.outputs.exit }}）。自動修正はしていません。"
+          exit 1
