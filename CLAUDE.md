@@ -225,6 +225,8 @@ PR の merge / production deploy / 本番データ書込み / env の変更 / qu
 - 新しい種類の確認は `KNOWN_KINDS` に実装を足してから登録する（未実装の kind は検査で落ちる）。
 - 技術的に自動化できない部分がある場合だけ、**理由と人間の最小作業**を登録の `onFailure` と PROGRESS に明記する（例: 外部サービスの権限付与）。
 - 検証: `npm run test:ops`（`check:safety` に組込）。
+- 動作の検証は `scheduled-checks.yml` を `dry_run=true`（失敗経路は `simulate_failure=true` も）で手動実行する。検証結果は「[自動測定 検証] …」で記録され、本番の完了扱いにならない。
+- GSC の読み取りはサービスアカウント `ak-gsc-readonly@analytics-keiba-ops.iam.gserviceaccount.com`（Search Console は制限付き・GCP ロールなし）と secret `GSC_SERVICE_ACCOUNT_JSON`。
 
 ## 📚 ドキュメント索引（**正本はこちら**）
 

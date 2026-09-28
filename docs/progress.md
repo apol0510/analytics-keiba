@@ -2464,6 +2464,20 @@ MK が示した完成の目安（`/free/`）: スマホで開いたとき、長�
 `scheduled-checks.yml` が実行し、評価期間 2026-09-28〜10-25 を反映時スナップショット・反映前 28 日と比べて
 Issue「[自動測定] seo-date-archive-2026-10」へ記録する。失敗時は job が赤になり Issue「[自動測定 失敗] …」に理由と最小作業が出る。
 
+**GSC の自動取得の設定（2026-09-28 完了）**:
+| 項目 | 値 |
+|---|---|
+| GCP プロジェクト | `analytics-keiba-ops`（AK 専用に新規作成。既存の別用途プロジェクトは使わない）|
+| サービスアカウント | `ak-gsc-readonly@analytics-keiba-ops.iam.gserviceaccount.com`（GCP の IAM ロールは付与しない）|
+| Search Console 権限 | `https://analytics.keiba.link/` に **制限付き**（オーナー nankan.analytics@gmail.com が付与）|
+| 有効化した API | Search Console API（`searchconsole.googleapis.com`）|
+| GitHub secret | `GSC_SERVICE_ACCOUNT_JSON`（値は表示・ログ出力していない。手元にダウンロードした鍵ファイルは登録後に削除）|
+| read-only 実測 | 2026-08-30〜09-26: 212 クリック / 3,293 表示 / CTR 6.4% / 10.2 位（画面の 3,290 と確定処理の差のみ）。URL 検査: トップ PASS・南関 9/25 は「Google に未認識」|
+| rollback | Search Console の「ユーザーと権限」から削除 → GCP で鍵を削除 → `gh secret delete GSC_SERVICE_ACCOUNT_JSON` |
+
+検証実行: `scheduled-checks.yml` を `dry_run=true`（＋ `simulate_failure=true` で失敗経路）で手動実行すると、
+「[自動測定 検証] …」の題名・label `scheduled-check-dryrun` で記録し、本番の完了扱いにしない。
+
 **2026-10-26 前後に比較する KPI**（第 2 弾の反映日を起点に 28 日）:
 | KPI | ベースライン（2026-09-28）| 見る場所 |
 |---|---|---|
