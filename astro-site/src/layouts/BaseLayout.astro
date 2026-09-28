@@ -1,6 +1,7 @@
 ---
 import '../styles/global.css';
 import BankApplicationEmailLock from '../components/BankApplicationEmailLock.astro';
+import { buildFullTitle } from '../lib/seo/pageTitle.mjs';
 
 export const prerender = true;
 
@@ -23,10 +24,8 @@ const { title, description = DEFAULT_DESCRIPTION, image, type = 'website', canon
 const canonicalURL = new URL(canonical ?? Astro.url.pathname, Astro.site);
 
 // 最終タイトル: ページタイトル + ブランド (ページタイトルが未指定ならブランドのみ)
-const pageTitle = title && title.trim().length > 0 ? title : '';
-const fullTitle = pageTitle
-  ? `${pageTitle}｜${SITE_BRAND}｜${SITE_BRAND_JA}`
-  : `${SITE_BRAND}｜${SITE_BRAND_JA}`;
+// 2026-09-28: ページ側の末尾ブランド（「- KEIBA Analytics」等）を落としてから付ける（二重ブランド防止）
+const fullTitle = buildFullTitle(title);
 ---
 
 <!DOCTYPE html>

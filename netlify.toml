@@ -57,6 +57,21 @@
   status = 301
   force = true
 
+# --- 旧 南関 無料予想アーカイブ（2026-09-28）---
+# `/free-prediction/archive/` は旧形式 `/free-prediction/YYYY/MM/DD/`（69 件・全部 404 化）への一覧だった。
+# 一覧先が消えたので、現行の南関アーカイブ（的中実績）へ恒久移動する。静的ファイルより優先させるため force。
+[[redirects]]
+  from = "/free-prediction/archive"
+  to = "/archive/nankan/"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "/free-prediction/archive/"
+  to = "/archive/nankan/"
+  status = 301
+  force = true
+
 # --- プレミアム予想 (南関) ---
 # trailingSlash:'always' で正規形は末尾スラッシュ有。no-slash は Netlify 正規化で slash へ寄るため、
 # slash 形にも force 301 を置き、正規形 URL から新URLへサーバ301を発火させる（旧stubページをフォールバックに残す）。
