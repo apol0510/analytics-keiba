@@ -756,6 +756,8 @@ Single Send は**本文を自分で持つ**ので、期間が終わって `isCam
 
 > 2026-09-27: AK ⇄ `AK Marketing` の配信停止の橋渡しを実装（`astro-site/docs/UNSUBSCRIBE.md` §8）。
 > Event Webhook の `group_unsubscribe` / `group_resubscribe` が OFF のままでは AK へは届かない（設定変更は要承認・未実施）。
+> ⚠️ 2026-09-28 read-only 実測: **`group_unsubscribe` は既に ON**・`group_resubscribe` は OFF（上表の `group_unsubscribe: false` は 2026-09-18 時点の記録）。
+> #609（`741b3d34`）本番反映済み・gate 閉。
 
 ### なぜ外れないのか（構造）
 

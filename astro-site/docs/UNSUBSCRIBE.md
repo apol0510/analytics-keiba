@@ -146,7 +146,7 @@ MK が明示的に開ける運用とする（既定では閉じている）。
 恒久対応が要る場合は「受信メールを解析する基盤」が必要になるが、**既存 HTTPS 経路で
 解決できる範囲を超える**ため、必要になった時点で別途判断する（現時点では未実装）。
 
-## 8. AK ⇄ SendGrid unsubscribe group `AK Marketing` の橋渡し（2026-09-27 MK 確定 / **実装済み・本番未有効**）
+## 8. AK ⇄ SendGrid unsubscribe group `AK Marketing` の橋渡し（2026-09-27 MK 確定 / **#609 `741b3d34` 本番反映済み・gate 閉**）
 
 SendGrid Marketing Campaigns の配信（選別・週次）は、配信停止を SendGrid の unsubscribe group
 **`AK Marketing`（id 34108）**で扱う。旧 AK 経路は §1 の HTTPS ワンクリック → Customers。
@@ -209,8 +209,8 @@ SendGrid Marketing Campaigns の配信（選別・週次）は、配信停止を
 
 ### 有効化の前提（未実施）
 
-1. Event Webhook で `group_unsubscribe` / `group_resubscribe` を受け取る設定（SendGrid 設定変更・要承認。
-   2026-09-18 時点で `group_unsubscribe: false`）
+1. Event Webhook で `group_resubscribe` を受け取る設定（SendGrid 設定変更・要承認）。
+   ⚠️ 2026-09-28 read-only 実測では **`group_unsubscribe` は既に ON**（2026-09-18 記録の false から変わっている）・`group_resubscribe` は OFF
 2. gate env の投入＋redeploy
 3. 既に `AK Marketing` で止まっている 34 件の扱い（2026-09-28 read-only 分類: **Customers 一致 0・重複 0・停止済み 0・不一致 34**
    ＝ Customers へ反映する対象は 0 件。見込み客側は本番 Redis が masked secret のためローカルから未計測。一括反映は別承認）
