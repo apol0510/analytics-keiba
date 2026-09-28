@@ -93,6 +93,7 @@ import {
   SOURCE_TOTAL_NOTE,
   summarizePurchaseBySource,
   PURCHASE_ENTRY_ONLY_NOTE,
+  PURCHASE_SERIES_NOTE,
   extractNotPurchased,
   summarizeDaily,
 } from '../../src/lib/premiumPlus/premiumPlusFunnelAnalytics.js';
@@ -496,6 +497,8 @@ async function attachRealViews(rows) {
       // 決済開始 → 購入完了の導線別転換（人数）
       purchaseBySource: summarizePurchaseBySource(rows),
       purchaseEntryOnlyNote: PURCHASE_ENTRY_ONLY_NOTE,
+      // 購入完了は新系列（Plus だけ）。旧系列は他商品混入のため出さない
+      purchaseSeriesNote: PURCHASE_SERIES_NOTE,
       // 抽出: クリック済み未購入 / 到達済み未購入（購入を確認できない人は別枠）
       notPurchased: (() => {
         const x = extractNotPurchased(rows);

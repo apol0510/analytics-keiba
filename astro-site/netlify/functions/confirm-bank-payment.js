@@ -265,16 +265,21 @@ exports.handler = async (event) => {
     // 二重計上は orderKey（この確定の識別子）で潰す。Automation の再実行・
     // Webhook 再送で何度呼ばれても 1 回しか数えない。
     // 計測が失敗しても昇格は巻き戻さない（決済成功を最優先で保持する）。
+    // ⚠️ **Premium Plus の申込だけ**を数える（2026-09-29〜）。以前は全商品の入金確認を数えていて、
+    //    Plus 購入件数に Light / Premium / 三連複が混入していた。商品は申込内容（RequestedPlan）で見る。
+    //    判定は recordPlusPurchase 側（isPlusPurchaseProduct）が持つ。Plus 以外は書かない。
     try {
       const purchaseMetric = await recordPlusPurchase({
         recordId,
         env: process.env,
         nowMs: Date.now(),
-        // 確定した内容から作る安定した鍵（同じ確定は同じ鍵になる）
+        productPlan: fields['RequestedPlan'],
+        // 確定した内容から作る安定した鍵（同じ確定は同じ鍵になる）。
+        // Plus は 1 日 1 鞍の単品なので、対象日があれば対象日で注文を区別する。
         orderKey: [
           recordId,
-          confirmation.fields['プラン'] || '',
-          confirmation.fields['PaidAt'] || confirmation.expiration || '',
+          'premium-plus',
+          fields['SaleTargetDate'] || confirmation.fields['PaidAt'] || '',
         ].join(':'),
       });
       console.log('📊 [confirm-bank-payment] 購入計測:', {

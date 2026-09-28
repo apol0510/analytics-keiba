@@ -47,8 +47,17 @@ export const FUNNEL_KEY = Object.freeze({
   PAGE: `${FUNNEL_NAMESPACE}:page`,
   /** 決済開始（申込フォームが Function へ到達した時点。サーバー側イベント） */
   CHECKOUT: `${FUNNEL_NAMESPACE}:checkout`,
-  /** 購入完了（入金確認の確定。**サーバー側の確定イベントのみ**） */
-  PURCHASE: `${FUNNEL_NAMESPACE}:purchase`,
+  /**
+   * 購入完了（**Premium Plus の**入金確認の確定。サーバー側の確定イベントのみ）。
+   *
+   * ⚠️ **系列 s2（2026-09-29〜）**。旧キー `…:purchase`（下の PURCHASE_LEGACY）には
+   *    Light / Premium / 三連複の入金確認が混入していた（Plus の購入は 0 件）。
+   *    旧系列は**読まない・書かない・消さない**（参考値として残すだけ）。新系列と混ぜない。
+   *    正本: docs/decisions.md「Premium Plus 購入件数の系列切替」
+   */
+  PURCHASE: `${FUNNEL_NAMESPACE}:purchase:s2`,
+  /** 旧系列（他商品混入の参考値・2026-08-13〜09-28）。**どこからも読まない** */
+  PURCHASE_LEGACY: `${FUNNEL_NAMESPACE}:purchase`,
   META: `${FUNNEL_NAMESPACE}:meta`,
   /** 期間集計用の日次カウンタ（**recordId を含まない**集計値のみ） */
   DAILY: `${FUNNEL_NAMESPACE}:daily`,
@@ -78,6 +87,25 @@ export const FUNNEL_EVENT_LABEL = Object.freeze({
   checkout_start: '決済開始',
   purchase: '購入完了',
 });
+
+/**
+ * 日次カウンタでの購入の event 名（系列 s2・Plus だけ）。旧系列の `purchase` フィールドは
+ * 他商品混入の参考値なので `readDaily` で捨て、s2 だけを `purchase` として返す。
+ */
+export const PURCHASE_DAILY_EVENT = 'purchase_plus';
+export const PURCHASE_LEGACY_DAILY_EVENT = 'purchase';
+
+/** 日次の生フィールドから旧系列の購入を除き、s2 を `purchase` として返す（純粋）*/
+export function selectCurrentPurchaseSeries(entries) {
+  const out = {};
+  for (const [field, v] of Object.entries(entries || {})) {
+    const parts = String(field).split('|');
+    if (parts[1] === PURCHASE_LEGACY_DAILY_EVENT) continue;
+    if (parts[1] === PURCHASE_DAILY_EVENT) parts[1] = FUNNEL_EVENT.PURCHASE;
+    out[parts.join('|')] = v;
+  }
+  return out;
+}
 
 const KEY_OF = Object.freeze({
   [FUNNEL_EVENT.CTA_VIEW]: FUNNEL_KEY.CTA,
@@ -749,7 +777,7 @@ export function createFunnelStore({ redisCmd } = {}) {
 
         await redisCmd(['HSET', key, recordId, JSON.stringify(next)]);
         await redisCmd(['HSETNX', FUNNEL_KEY.META, META_FIELD.STARTED_AT, String(now)]);
-        await bumpDaily(now, FUNNEL_EVENT.PURCHASE, src);
+        await bumpDaily(now, PURCHASE_DAILY_EVENT, src);
         return { ok: true, counted: true, source: src };
       } catch {
         return { ok: false, counted: false, reason: 'write_failed' };
@@ -763,7 +791,7 @@ export function createFunnelStore({ redisCmd } = {}) {
     async readDaily({ nowMs, windows = FUNNEL_WINDOW_DAYS } = {}) {
       try {
         const all = await redisCmd(['HGETALL', FUNNEL_KEY.DAILY]);
-        return { available: true, entries: normalizeHgetall(all), windows, nowMs };
+        return { available: true, entries: selectCurrentPurchaseSeries(normalizeHgetall(all)), windows, nowMs };
       } catch {
         return { available: false, reason: 'read_failed', entries: null, windows, nowMs };
       }

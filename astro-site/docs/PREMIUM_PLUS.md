@@ -561,6 +561,10 @@ deploy `6a62eadd`（`99d7b15`）への **rollback（Netlify restore）で復旧*
 
 #### ⚠️ 購入完了は「確定」でしか記録しない
 
+> **2026-09-29 系列切替（MK 決定 A）**: 購入完了は **Premium Plus の申込（`RequestedPlan`）の入金確認だけ**を数える。
+> 旧系列（〜09-28・`…:purchase`）は全商品の入金確認が混入した参考値で、読まない・新系列（`…:purchase:s2` / 日次 `purchase_plus`）と混ぜない。
+> 正本は `docs/spec.md`「Premium Plus 購入件数の系列」。
+
 記録するのは、`PaymentConfirmed=true` を Airtable から**再読込して検証**し、
 昇格 PATCH が**成功した後**だけ。**画面の成功表示では記録しない**
 （客が見た画面は確定ではない）。記録 API（クライアント経路）は

@@ -306,6 +306,14 @@ export function extractNotPurchased(rows) {
 }
 
 /**
+ * 購入完了の系列についての常設注記（2026-09-29〜）。画面がそのまま出せる文言。
+ * 旧系列（〜2026-09-28）は他商品の入金確認が混入していたため表示しない。
+ */
+export const PURCHASE_SERIES_NOTE =
+  '購入完了は 2026-09-29 からの新しい集計です（Premium Plus の入金確認だけ）。'
+  + 'それ以前の購入件数には Light / Premium / 三連複の入金確認が混ざっていたため、ここには出しません。';
+
+/**
  * 購入の帰属に商品ページ内の導線を並べない理由。画面がそのまま出せる文言。
  */
 export const PURCHASE_ENTRY_ONLY_NOTE =
@@ -390,6 +398,7 @@ export function summarizeDaily(daily, nowMs, windows = FUNNEL_WINDOW_DAYS) {
     windows: out,
     eventLabels: FUNNEL_EVENT_LABEL,
     note: '期間集計は**件数**です（上の人数とは単位が違います）。',
+    purchaseSeriesNote: PURCHASE_SERIES_NOTE,
   };
 }
 

@@ -1,3 +1,18 @@
+# 2026-09-29 — Premium Plus 購入件数を Plus だけの新系列へ切り替える／旧系列は「他商品混入の参考値」（MK 確定 / A）
+
+- 旧系列（Redis `ak:pp:funnel:v1:purchase` と日次 `YYYYMMDD|purchase|…`、2026-08-13〜09-28）は、`confirm-bank-payment` が
+  **全商品の入金確認**を Plus 購入として数えていたため、Light / Premium / 三連複 が混入していた。
+  2026-09-29 read-only 実測: 記録 2 名 3 件 = Premium Annual 1・Premium Monthly 1・三連複 1。**本物の Plus 購入は 0 件**。
+  → 旧系列は**正しい KPI として扱わない**。消さずに残すが、画面・集計からは読まない。新系列と足さない。
+- 新系列（`ak:pp:funnel:v1:purchase:s2` / 日次 `purchase_plus`、2026-09-29〜）は **申込内容 `RequestedPlan` が Premium Plus の入金確認だけ**を、
+  昇格 PATCH 成功後に `orderKey`（`recordId:premium-plus:対象日`）で 1 注文 1 回だけ数える。商品が分からなければ数えない（fail closed）。
+- 他の段階（表示・クリック・到達・決済開始）と決済ファネル（`ak:pay:funnel:v1`）は変えない。
+- ⚠️ **未決（別判断）**: 現在の Plus 申込は Airtable に申込内容を書かないため、Plus の入金確認が `confirm-bank-payment` へ届く経路が無い。
+  新系列は**正しいが、このままでは 0 件のまま**。成立地点の作り方は MK 判断（`progress.md` 参照）。
+- 仕様の正本: `spec.md`「Premium Plus 購入件数の系列」／`astro-site/docs/PREMIUM_PLUS.md`「決済まで計測する」。
+
+---
+
 # 2026-09-29 — 失効後 30 日以内の元 Light 月払い会員にも ¥44,820 を案内・適用／Light 会員が /pricing/ で更新できるようにする（MK 確定 / 新しい販売条件）
 
 - 1-B: 月払い会員の期限前・失効後メールを再開する（対象は**実際に Light 月払いを支払った人**＝`PaidAt` あり。実測 9 名を基準に正本条件で再計算）。
