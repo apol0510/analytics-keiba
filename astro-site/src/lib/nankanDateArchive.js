@@ -29,6 +29,7 @@ import { buildFreePublicRows } from './freePublicView.js';
 import { headlineMarksOf } from './freeViewpoints/listView.js';
 import { cleanRaceName } from './freeViewpoints/loadRaceViewpoints.js';
 import { buildShowcaseDay } from './resultsShowcase.js';
+import { loadResultsByDate, topThree } from './dayResultsView.js';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const PRED_FILE_RE = /^(\d{4}-\d{2}-\d{2})-[a-z]+\.json$/;
@@ -56,14 +57,9 @@ function predictionFilesByDate(root) {
   return out;
 }
 
-/** 結果アーカイブ（日付 → エントリ）。読めなければ空 */
+/** 結果アーカイブ（日付 → エントリ）。単一源は dayResultsView.js（中央と共通）*/
 export function loadNankanResultsByDate(root) {
-  const arr = readJson(join(root, 'src', 'data', 'archiveResults.json'));
-  const out = new Map();
-  for (const e of Array.isArray(arr) ? arr : []) {
-    if (e && DATE_RE.test(String(e.date)) && Array.isArray(e.races) && !out.has(e.date)) out.set(e.date, e);
-  }
-  return out;
+  return loadResultsByDate('nankan', root);
 }
 
 /**
@@ -74,13 +70,6 @@ export function listNankanArchiveDates(root = process.cwd()) {
   const set = new Set([...predictionFilesByDate(root).keys(), ...loadNankanResultsByDate(root).keys()]);
   return [...set].filter((d) => DATE_RE.test(d)).sort((a, b) => (a < b ? 1 : -1));
 }
-
-const topThree = (result) => {
-  if (!result) return null;
-  const pick = (x) => (x && x.number != null ? { number: Number(x.number), name: String(x.name || '') } : null);
-  const rows = [pick(result.first), pick(result.second), pick(result.third)];
-  return rows.some(Boolean) ? rows : null;
-};
 
 /**
  * 1 日ぶんのページビュー（純粋な組み立て。I/O は root から読むだけ）。
@@ -170,15 +159,5 @@ export function buildAllNankanDatePages(root = process.cwd()) {
   return dates.map((d) => buildNankanDatePage(d, root, cache)).filter(Boolean);
 }
 
-/** 日付の日本語表記（2026-09-25 → 2026年9月25日） */
-export function formatJpDate(date) {
-  const [y, m, d] = String(date).split('-').map(Number);
-  return `${y}年${m}月${d}日`;
-}
-
-/** 前後の開催日（新しい順配列の中で） */
-export function neighborDates(dates, date) {
-  const i = dates.indexOf(date);
-  if (i < 0) return { newer: null, older: null };
-  return { newer: i > 0 ? dates[i - 1] : null, older: i < dates.length - 1 ? dates[i + 1] : null };
-}
+// 日付表記・前後日は中央と共通（dayResultsView.js が単一源）
+export { formatJpDate, neighborDates } from './dayResultsView.js';

@@ -2,6 +2,8 @@
 import BaseLayout from '../../../layouts/BaseLayout.astro';
 import AccordionClickClose from '../../../components/AccordionClickClose.astro';
 import RaceAccordionClickClose from '../../../components/RaceAccordionClickClose.astro';
+import DayResultsSummary from '../../../components/DayResultsSummary.astro';
+import { loadResultsByDate, buildDayResultsView, formatJpDate, neighborDates } from '../../../lib/dayResultsView.js';
 // 旧 KI 由来コンポーネント (詳細は astro-site/docs/FREE_JRA_RULES.md) は本ファイルで import しない。
 import { readdirSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
@@ -188,11 +190,14 @@ export function getStaticPaths() {
     }
   }
 
+  // 2026-09-28: 前後の開催日リンク（南関の日付ページと同じ）
+  const dates = paths.map((p) => p.params.date).sort((a, b) => (a < b ? 1 : -1));
+  for (const p of paths) p.props.neighbors = neighborDates(dates, p.params.date);
   return paths;
 }
 
 const { date } = Astro.params;
-const { jraData } = Astro.props;
+const { jraData, neighbors } = Astro.props;
 
 // Normalize data structure
 let venues = [];
@@ -221,12 +226,31 @@ try {
   // 注入失敗時は既存表示にフォールバック。ビルドは止めない。
 }
 
+// 2026-09-28: 結果（着順・的中・メインの買い目）を南関の日付ページと同じ単一源で付ける
+const resultsView = buildDayResultsView(loadResultsByDate('jra').get(date) || null);
+const jpDate = formatJpDate(date);
+const venueLabel = venues.map(v => v.venue || v.eventInfo?.venue).filter(Boolean).join('・');
+const pageTitle = `${jpDate} 中央競馬（${venueLabel}）AI予想と結果`;
+const pageDescription = resultsView
+  ? `${jpDate}の中央競馬（${venueLabel}）のAI予想と結果（着順）。有料版の買い目で的中${resultsView.hitRaces}/${resultsView.totalRaces}レース。メインレースの買い目と結果も掲載。`
+  : `${jpDate}の中央競馬（${venueLabel}）のAI予想。結果は確定後にこのページへ反映します。`;
+const SITE = 'https://analytics.keiba.link';
+const breadcrumbLd = {
+  '@context': 'https://schema.org',
+  '@type': 'BreadcrumbList',
+  itemListElement: [
+    { '@type': 'ListItem', position: 1, name: 'トップ', item: `${SITE}/` },
+    { '@type': 'ListItem', position: 2, name: '中央競馬 AI予想と結果 一覧', item: `${SITE}/free-prediction/jra/archive/` },
+    { '@type': 'ListItem', position: 3, name: `${jpDate} ${venueLabel}`, item: `${SITE}/free-prediction/jra/${date}/` },
+  ],
+};
 ---
 
 <BaseLayout
-  title={`${date} 中央競馬 AI予想 - KEIBA Analytics`}
-  description={`${date} 中央競馬（JRA）${venueNames} のAI予想アーカイブ。KEIBA Analytics の過去予想データを閲覧できます。`}
+  title={pageTitle}
+  description={pageDescription}
 >
+  <script type="application/ld+json" set:html={JSON.stringify(breadcrumbLd)} />
   <section class="prediction-section">
     <div class="container">
 
@@ -236,16 +260,32 @@ try {
         <span class="archive-text">この予想は過去のアーカイブです</span>
       </div>
 
+      <nav class="jda-crumbs" aria-label="パンくず">
+        <a href="/">トップ</a><span>›</span>
+        <a href="/free-prediction/jra/archive/">中央 予想と結果 一覧</a><span>›</span>
+        <span aria-current="page">{jpDate}</span>
+      </nav>
+
       <!-- ページヘッダー -->
       <div class="page-header">
         <h1 class="page-title">
-          {date} 中央競馬（JRA）{isMultiVenue && venues.length > 1 ? ` - ${venueNames}` : ` - ${venueNames}`}
+          {jpDate} 中央競馬（{venueLabel}）AI予想と結果
         </h1>
         <p class="page-subtitle">
           analytics-keiba 中央競馬予想アーカイブ
         </p>
         <div class="scan-line"></div>
       </div>
+
+      <DayResultsSummary view={resultsView} heading={`${jpDate} の結果`} />
+
+      <nav class="jda-pager" aria-label="前後の開催日">
+        {neighbors?.older ? <a href={`/free-prediction/jra/${neighbors.older}/`} rel="prev">← {formatJpDate(neighbors.older)}</a> : <span></span>}
+        <a href="/free-prediction/jra/archive/">開催日一覧</a>
+        {neighbors?.newer ? <a href={`/free-prediction/jra/${neighbors.newer}/`} rel="next">{formatJpDate(neighbors.newer)} →</a> : <span></span>}
+      </nav>
+
+      <h2 class="jda-pred-title">{jpDate} のAI予想</h2>
 
       <!-- 会場タブ（複数会場の場合のみ表示）-->
       {isMultiVenue && venues.length > 1 && (
@@ -784,7 +824,7 @@ try {
           <span class="nav-icon">&#128202;</span>
           <span>最新の中央競馬予想を見る</span>
         </a>
-        <a href="/free-prediction-jra/archive/" class="nav-link">
+        <a href="/free-prediction/jra/archive/" class="nav-link">
           <span class="nav-icon">&#128218;</span>
           <span>過去予想一覧に戻る</span>
         </a>
@@ -2037,7 +2077,12 @@ try {
         gap: 15px;
       }
     }
-  </style>
+    /* 2026-09-28: パンくず・前後日リンク（南関の日付ページと同じ導線）*/
+  .jda-crumbs { display: flex; flex-wrap: wrap; gap: .4rem; font-size: .82rem; color: #94a3b8; margin: 0 0 1rem; }
+  .jda-crumbs a, .jda-pager a { color: #7dd3fc; text-decoration: none; }
+  .jda-pager { display: flex; justify-content: space-between; gap: .6rem; margin: 0 0 1.5rem; font-size: .9rem; }
+  .jda-pred-title { font-size: 1.2rem; font-weight: 600; border-left: 3px solid #38bdf8; padding-left: .6rem; margin: 1rem 0; color: #e2e8f0; }
+</style>
 
   <script is:inline>
     function selectVenue(event, button) {

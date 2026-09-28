@@ -1,0 +1,81 @@
+---
+/**
+ * DayResultsSummary.astro — 開催日の結果（着順 1〜3 着・的中 ✅✗・メインの買い目）を表示する
+ *
+ * データは単一源 `src/lib/dayResultsView.js` の `buildDayResultsView()`。
+ * 公開範囲は `/results-showcase/` と同じ（メイン以外の買い目・抑え・指数は出さない）。
+ * 2026-09-28: 中央の日付ページに結果が無かった（南関だけにあった）非対称の解消用。
+ */
+interface Props { view: any; heading: string; }
+const { view, heading } = Astro.props;
+---
+
+{view ? (
+  <section class="drs" aria-label={heading}>
+    <h2 class="drs-title">{heading}</h2>
+    <p class="drs-summary">全{view.totalRaces}レース ／ 有料版の買い目（馬単）で<strong>的中 {view.hitRaces}/{view.totalRaces}レース</strong></p>
+    {view.venues.map((v) => (
+      <div class="drs-venue">
+        <h3 class="drs-venue-title">{v.venue}　的中 {v.hitRaces}/{v.totalRaces}R</h3>
+        {v.mainRace && (
+          <div class={`drs-main ${v.mainRace.isHit ? 'is-hit' : 'is-miss'}`}>
+            <p class="drs-main-head">🎯 メインレース {v.mainRace.raceNumber}R{v.mainRace.raceName && <span> {v.mainRace.raceName}</span>}</p>
+            <p>有料版の買い目（馬単 {v.mainRace.betPoints}点）:<strong class="drs-bet"> {v.mainRace.honmei} {v.mainRace.displayArrow} {v.mainRace.displayPartners.join('・')}</strong></p>
+            <p>
+              {v.mainRace.isHit
+                ? <>✅ 的中{v.mainRace.combination && <> 馬単 {v.mainRace.combination}</>}{v.mainRace.payout && <> ／ 払戻 ¥{v.mainRace.payout.toLocaleString()}（100円あたり）</>}</>
+                : <>✗ 不的中{v.mainRace.combination && <> （結果 馬単 {v.mainRace.combination}）</>}</>}
+            </p>
+          </div>
+        )}
+        <div class="drs-table-wrap">
+          <table class="drs-table">
+            <thead><tr><th scope="col">R</th><th scope="col">レース</th><th scope="col">結果（1〜3着）</th><th scope="col">的中</th></tr></thead>
+            <tbody>
+              {v.races.map((r) => (
+                <tr class={r.isMain ? 'is-main' : ''}>
+                  <td class="drs-rno">{r.raceNumber}R</td>
+                  <td>{r.raceName || `${r.raceNumber}R`}{r.isMain && <span class="drs-tag">メイン</span>}</td>
+                  <td>{r.top3 ? r.top3.map((t, i) => t && <span class="drs-place">{i + 1}着 {t.number} {t.name}</span>) : <span class="drs-muted">—</span>}</td>
+                  <td class="drs-hit">{r.isHit ? <span class="hit">✅</span> : <span class="miss">✗</span>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    ))}
+    <p class="drs-note">的中は有料版の買い目（馬単）での判定です。メインレース以外の買い目は有料版でご覧いただけます。</p>
+  </section>
+) : (
+  <section class="drs" aria-label={heading}>
+    <h2 class="drs-title">{heading}</h2>
+    <p class="drs-summary">結果は確定後にこのページへ反映します。</p>
+  </section>
+)}
+
+<style>
+  .drs { margin: 1.5rem 0 2rem; color: #e2e8f0; }
+  .drs-title { font-size: 1.2rem; font-weight: 600; border-left: 3px solid #38bdf8; padding-left: .6rem; margin: 0 0 .5rem; }
+  .drs-summary { color: #cbd5e1; margin: 0 0 1rem; }
+  .drs-summary strong { color: #86efac; font-weight: 600; }
+  .drs-venue { margin: 1rem 0 1.5rem; }
+  .drs-venue-title { font-size: 1rem; font-weight: 600; margin: 0 0 .6rem; color: #7dd3fc; }
+  .drs-main { border: 1px solid rgba(56,189,248,.35); border-radius: 12px; padding: .8rem 1rem; margin-bottom: .8rem; background: rgba(15,23,42,.6); }
+  .drs-main.is-hit { border-color: rgba(134,239,172,.55); }
+  .drs-main p { margin: .2rem 0; }
+  .drs-main-head { font-weight: 600; }
+  .drs-bet { color: #fde68a; }
+  .drs-table-wrap { overflow-x: auto; border-radius: 10px; border: 1px solid rgba(148,163,184,.2); }
+  .drs-table { width: 100%; border-collapse: collapse; font-size: .88rem; min-width: 520px; }
+  .drs-table th, .drs-table td { padding: .5rem .6rem; border-bottom: 1px solid rgba(148,163,184,.15); text-align: left; vertical-align: top; }
+  .drs-table th { background: rgba(30,41,59,.8); color: #94a3b8; font-weight: 500; font-size: .8rem; }
+  .drs-table tr.is-main { background: rgba(56,189,248,.07); }
+  .drs-rno { color: #86efac; font-weight: 600; white-space: nowrap; }
+  .drs-tag { display: inline-block; margin-left: .4rem; font-size: .7rem; padding: 0 .4rem; border-radius: 999px; border: 1px solid #38bdf8; color: #7dd3fc; }
+  .drs-place { display: block; }
+  .drs-hit { text-align: center; }
+  .hit { color: #86efac; } .miss { color: #94a3b8; }
+  .drs-muted { color: #64748b; }
+  .drs-note { color: #94a3b8; font-size: .82rem; margin-top: .6rem; }
+</style>
