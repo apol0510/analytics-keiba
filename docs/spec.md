@@ -42,6 +42,20 @@
 - メールのリンクは **`/login/?next=/pricing/`**（未ログインだと会員向け価格が出ないため）。戻り先は許可リストの完全一致だけ（`src/lib/auth/loginNext.js`・オープンリダイレクトにしない）。
 - 料金・既存商品（Light ¥4,980・Premium 年額 ¥49,800・30 日 ¥18,000・買い切り ¥78,000 等）は変えない。
 
+## Light 月払い 期限前・失効後リマインド（2026-09-29 MK 確定 / 1-B）
+
+| 項目 | 仕様 |
+|---|---|
+| 対象 | **実際に Light 月払いを支払った人だけ**: プラン Light（旧 Standard 含む）かつ PlanType=Monthly かつ **PaidAt あり**。無料付与だけの人・Status test/pending/suspended/inactive/banned/disabled・ForceLogout・退会申請・配信停止・`PremiumConvertedAt` あり・メール不正は対象外。2026-09-29 実測 **9 名**（有効 4・失効 30 日以内 3・30 日超 2）|
+| 送る時期（JST 暦日）| **期限前**: 有効期限の 1〜7 日前 / **失効後**: 有効期限の 3〜30 日後。周期（＝有効期限の日付）× 段ごとに 1 回。窓の外は送らない |
+| 本文の導線（2 つに分ける）| ① Light をそのまま続ける（期限前）/ Light を再開する（失効後）② Premium 年額 **¥44,820**（Light 会員の乗り換え特典・通常 ¥49,800）。どちらも `https://analytics.keiba.link/login/?next=/pricing/`。失効後の通には特典の最終日（有効期限 + 30 日）と翌日から通常価格であることを書く |
+| 二重送信防止・冪等性 | 会員 × 周期 × 段で 1 つの DeliveryKey。送る前に Redis で予約（SET NX）。予約の結果が分からなければ送らない。配信行（CampaignDeliveries・CampaignType `light-renewal:v1`・EmailType campaign・StepNumber 1=期限前/2=失効後）が sent なら送らない。送信失敗時は配信行を failed にして予約を外す（翌日再試行）|
+| 更新・乗り換え後の停止 | 送信直前に Customers を読み直し、有効期限が変わった（更新）・Premium に変わった・`PremiumConvertedAt` がある・対象外になった場合は送らない |
+| 配信停止・バウンス・suppression | 送信直前に `verifyBeforeSend`（provider suppression・EmailBlacklist（HARD/SOFT）・配信停止・停止アカウント・キャンペーン横断 24 時間）。provider suppression を読めなければ 1 通も送らない。配信停止リンクと List-Unsubscribe を必ず付ける |
+| 実行 | `cron-light-renewal-reminder`（毎日 JST 10:00）。ゲート `LIGHT_RENEWAL_REMINDER_MODE` = 未設定/off（何もしない）・dry-run（件数だけ）・live。1 回 20 通まで。既存の自動化（cron-marketing-automation・cron-expiry-check）のゲートは使わない |
+| 計測 | 会員 × 周期を 1 件。更新（有効期限が周期より後で Light のまま）/ 乗り換え（`PremiumConvertedAt` が最初の送信以降）/ 失効（失効後 30 日を過ぎた）/ 結論前。**Light 更新率・Light→Premium 転換率**＝ 各件数 ÷ 結論が出た件数。`admin-light-renewal`（action `report`）と scheduled-checks `light-renewal-outcomes-2026`（2026-11-05〜12-31・Issue に記録）|
+| 単一源 | `src/lib/marketing/lightRenewal/`（policy / email / runner / report）|
+
 ## 是正の完成条件（AK）
 
 | # | 問題 | 是正して実測すること |

@@ -244,7 +244,7 @@ test('workflow: Airtable の読み取りトークンも失敗経路の検証で�
 
 test('待機中（まだ起きていない・未確定）は失敗と分ける: exit 3・赤にしない・待機中 Issue を 1 つだけ更新', async () => {
   const { exitCodeFor, EXIT, PENDING_CODES } = await import('./scheduledChecks.js');
-  assert.deepEqual([...PENDING_CODES].sort(), ['data_not_ready', 'no_conversion_yet']);
+  assert.deepEqual([...PENDING_CODES].sort(), ['data_not_ready', 'no_conversion_yet', 'no_reminder_sent_yet']);
   assert.equal(exitCodeFor('no_conversion_yet'), EXIT.PENDING);
   assert.equal(exitCodeFor('data_not_ready'), EXIT.PENDING);
   assert.equal(exitCodeFor('credentials_missing'), EXIT.FAILED);
@@ -262,4 +262,39 @@ test('期限切れは必ず Issue に残す（失敗・待機中 Issue が無く
   const exp = wf.slice(wf.indexOf('期限切れで未完了のものを知らせる'), wf.indexOf('actions/upload-artifact'));
   assert.match(exp, /"\$FAIL_PREFIX \$id" "\$PEND_PREFIX \$id"/);
   assert.match(exp, /gh issue create --title "\$FAIL_PREFIX \$id"/);
+});
+
+// ── kind: airtable-light-renewal-outcomes（Light 月払いリマインドの更新率・転換率）──
+const { runLightRenewalOutcomesCheck, renderLightRenewalOutcomesMarkdown } = await import('./lightRenewalOutcomesCheck.js');
+const lr = registry.checks.find((c) => c.id === 'light-renewal-outcomes-2026');
+
+test('Light 月払いリマインドの成果確認が登録され、5 要素がそろっている', async () => {
+  const { KNOWN_KINDS, PENDING_CODES, exitCodeFor, EXIT } = await import('./scheduledChecks.js');
+  assert.ok(lr);
+  assert.ok(KNOWN_KINDS.includes('airtable-light-renewal-outcomes'));
+  assert.ok(PENDING_CODES.includes('no_reminder_sent_yet'));
+  assert.equal(exitCodeFor('no_reminder_sent_yet'), EXIT.PENDING);
+  assert.deepEqual(validateRegistry(registry), []);
+});
+
+test('送信記録 0 件は待機中（no_reminder_sent_yet）・トークン無しは明示のコード', async () => {
+  const empty = async () => new Response(JSON.stringify({ records: [] }), { status: 200 });
+  await assert.rejects(() => runLightRenewalOutcomesCheck({ check: lr, token: 't', fetchImpl: empty }), (e) => e.code === 'no_reminder_sent_yet');
+  await assert.rejects(() => runLightRenewalOutcomesCheck({ check: lr, token: '', fetchImpl: empty }), (e) => e.code === 'airtable_token_missing');
+});
+
+test('送信記録があれば更新率・転換率を記録する（読むのは必要な項目だけ）', async () => {
+  const urls = [];
+  const fetchImpl = async (u) => {
+    urls.push(String(u));
+    if (String(u).includes('CampaignDeliveries')) {
+      return new Response(JSON.stringify({ records: [{ id: 'recD', fields: { CampaignType: 'light-renewal:v1', Status: 'sent', CustomerRecordId: 'recAAAAAAAAAAAAAA', SentAt: '2026-10-01T01:00:00Z', Metadata: '{"cycle":"2026-10-05","stage":"pre"}' } }] }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ records: [{ id: 'recAAAAAAAAAAAAAA', fields: { 'プラン': 'Light', '有効期限': '2026-11-07' } }] }), { status: 200 });
+  };
+  const r = await runLightRenewalOutcomesCheck({ check: lr, token: 't', fetchImpl, nowIso: '2026-11-10T01:00:00Z' });
+  assert.equal(r.cycles, 1); assert.equal(r.renewed, 1); assert.equal(r.renewalRatePct, 100);
+  const cust = new URL(urls.find((u) => u.includes('/Customers'))).searchParams.getAll('fields[]');
+  assert.equal(cust.includes('Email'), false, 'メールを読まない');
+  assert.match(renderLightRenewalOutcomesMarkdown({ check: lr, result: r }), /Light 更新率\*\* \| \*\*100%/);
 });
