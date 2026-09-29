@@ -15,6 +15,7 @@ import { createGscClient, GscError } from '../src/lib/ops/gscClient.js';
 import { runGscDateArchive, renderMarkdown } from '../src/lib/ops/gscDateArchiveMeasurement.js';
 import { runPremiumConversionCheck, renderConversionMarkdown } from '../src/lib/ops/premiumConversionCheck.js';
 import { runPaymentFunnelCheck, renderPaymentFunnelMarkdown } from '../src/lib/ops/paymentFunnelCheck.js';
+import { runPremiumRenewalOutcomesCheck, renderPremiumRenewalOutcomesMarkdown } from '../src/lib/ops/premiumRenewalOutcomesCheck.js';
 import {
   runPlusFirstOrderCheck, renderPlusFirstOrderMarkdown, runPlusOfferOutcomeCheck, renderPlusOfferOutcomeMarkdown,
 } from '../src/lib/ops/plusOrderCheck.js';
@@ -103,6 +104,9 @@ if (cmd === 'run') {
     } else if (check.kind === 'premium-plus-offer-outcome') {
       result = await runPlusOfferOutcomeCheck({ check, secret: process.env.PAYMENT_FUNNEL_READ_SECRET });
       md = renderPlusOfferOutcomeMarkdown({ check, result });
+    } else if (check.kind === 'airtable-premium-renewal-outcomes') {
+      result = await runPremiumRenewalOutcomesCheck({ check, token: process.env.AIRTABLE_READONLY_TOKEN });
+      md = renderPremiumRenewalOutcomesMarkdown({ check, result });
     } else if (check.kind === 'gsc-date-archive') {
       const client = createGscClient({ credentials: process.env.GSC_SERVICE_ACCOUNT_JSON, siteUrl: check.compare.siteUrl });
       result = await runGscDateArchive({

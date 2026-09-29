@@ -68,7 +68,17 @@ export function summarizeLightRenewalOutcomes({ deliveries, customersById, nowMs
  * 集計に要るデータを**読むだけ**で集める（Airtable。読み取り専用トークンでも動く）。
  * 取得するのは配信行の 6 項目と、該当会員の 4 項目だけ（メール・氏名は読まない）。
  */
-export async function loadLightRenewalReportData({ token, baseId = 'apptmQUPAlgZMmBC9', fetchImpl = fetch }) {
+export function loadLightRenewalReportData({ token, baseId, fetchImpl } = {}) {
+  return loadRenewalReportData({
+    token, baseId, fetchImpl, campaignType: LIGHT_RENEWAL_CAMPAIGN_TYPE,
+    customerFields: ['プラン', '有効期限', 'PremiumConvertedAt', 'PremiumConvertedFrom'],
+  });
+}
+
+/** 共通: キャンペーンの送信済み配信行と、該当会員の指定項目だけを読む（Premium 月払いでも使う） */
+export async function loadRenewalReportData({
+  token, baseId = 'apptmQUPAlgZMmBC9', fetchImpl = fetch, campaignType, customerFields,
+}) {
   const h = { Authorization: `Bearer ${token}` };
   const list = async (table, formula, fields) => {
     const out = [];
@@ -94,7 +104,7 @@ export async function loadLightRenewalReportData({ token, baseId = 'apptmQUPAlgZ
     const err = new Error('too_many_pages'); err.code = 'too_many_pages'; throw err;
   };
   const deliveries = await list('CampaignDeliveries',
-    `AND({CampaignType}='${LIGHT_RENEWAL_CAMPAIGN_TYPE}',{Status}='sent')`,
+    `AND({CampaignType}='${campaignType}',{Status}='sent')`,
     ['CampaignType', 'Status', 'Metadata', 'CustomerRecordId', 'SentAt', 'StepNumber']);
   const ids = [...new Set(deliveries.map((r) => String(r.fields?.CustomerRecordId || '')).filter((x) => /^rec[A-Za-z0-9]{14}$/.test(x)))];
   const customersById = new Map();
@@ -102,7 +112,7 @@ export async function loadLightRenewalReportData({ token, baseId = 'apptmQUPAlgZ
     const part = ids.slice(i, i + 20);
     // eslint-disable-next-line no-await-in-loop -- 20 件ずつ名指し
     const rows = await list('Customers', `OR(${part.map((id) => `RECORD_ID()='${id}'`).join(',')})`,
-      ['プラン', '有効期限', 'PremiumConvertedAt', 'PremiumConvertedFrom']);
+      customerFields);
     for (const r of rows) customersById.set(r.id, r.fields || {});
   }
   return { deliveries, customersById };

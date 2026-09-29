@@ -42,6 +42,24 @@
 - メールのリンクは **`/login/?next=/pricing/`**（未ログインだと会員向け価格が出ないため）。戻り先は許可リストの完全一致だけ（`src/lib/auth/loginNext.js`・オープンリダイレクトにしない）。
 - 料金・既存商品（Light ¥4,980・Premium 年額 ¥49,800・30 日 ¥18,000・買い切り ¥78,000 等）は変えない。
 
+## Premium 月払い 期限前・失効後リマインド（2026-09-29 MK 確定 / ①）
+
+Light 月払いのリマインド（下の節）と**同じ考え方・同じ送信の流れ**を Premium 月払いへ適用する。
+
+| 項目 | 内容 |
+|---|---|
+| 対象 | プランが Premium・PlanType が Monthly・**PaidAt あり**（実際に支払った人だけ）。test / pending / 停止・強制ログアウト・退会申請・配信停止・メール不正は除外 |
+| 時期 | 期限の 1〜7 日前（PRE）と失効後 3〜30 日（POST）。周期（有効期限）× 段ごとに 1 回 |
+| 送らない | 更新・再開（有効期限が延びた）・年払い等への切替（PlanType が変わった）・Premium 以外への変更の後（送信直前に読み直して判定）／ provider suppression・EmailBlacklist・配信停止・横断 24 時間上限 |
+| 本文 | /pricing/ の **Premium 月払い ¥18,000／30日** と銀行振込の事実だけ。割引・特典は書かない。ボタンは `/login/?next=/pricing/` |
+| 二重送信・冪等 | DeliveryKey（`premium-renewal:v1`・会員×周期×段）＋ Redis 予約 `ak:premium-renewal:v1:claim:*`（SET NX・結果不明なら送らない・送信失敗は予約を外して翌日再試行）|
+| 実行 | `cron-premium-renewal-reminder`（毎日 JST 10:05）。env `PREMIUM_RENEWAL_REMINDER_MODE`（off / dry-run / live・**Light とは別**）|
+| 計測 | 会員×周期で **期限内更新 / 失効後の復帰 / 失効 / 結論前**。更新率・復帰率（分母は結論が出た周期）。scheduled-checks `premium-renewal-first-send-2026`・`premium-renewal-outcomes-2026` が自動記録 |
+
+- 判定の正本: `src/lib/marketing/premiumRenewal/`（policy / email / runner / report）。送信の流れは Light と共通の `runRenewalReminder`（`lightRenewalRunner.js`）。
+- 料金・権利・販売条件は変えない。Customers へは書かない（書くのは CampaignDeliveries と Redis の予約だけ）。
+- テスト: `premiumRenewal.test.mjs`（`test:premium-renewal` → `check:safety`）。
+
 ## Light 月払い 期限前・失効後リマインド（2026-09-29 MK 確定 / 1-B）
 
 | 項目 | 仕様 |
