@@ -280,10 +280,14 @@ test('操作 ID が無ければ何も組み立てない（fail closed）', () =>
 });
 
 // ── 5. Premium Plus は別概念 ──────────────────────────────────────
-test('【要件】Light 永久無料でも、明示指定すれば Premium Plus の販売対象にできる', () => {
+// ⚠️ 2026-09-29 MK 決定 A で変更: Premium Plus は**三連複の権利を持つ会員だけ**に表示・販売する（CLAUDE.md 正本）。
+//    旧三連複会員を Light 永久無料へ正規化した会員は三連複の権利が無いので、明示指定しても売らない。
+//    （2026-08-25 の「会員ランクを条件にしない」はこの決定で廃止。2026-09-29 本番実測で該当者 0 名）
+test('【要件】Light 永久無料（三連複の権利なし）は、明示指定しても Premium Plus を売らない', () => {
   const member = { ...applied(ACTIVE_LEGACY), UpsellTarget: 'plus' };
   const v = resolveUpsellForCustomer({ fields: member, nowMs: NOW });
-  assert.equal(v.plus.showPurchaseCta, true, 'Light 永久無料だから、を理由に Plus を塞いでいる');
+  assert.equal(v.plus.showPurchaseCta, false, '三連複の権利が無いのに Plus を売っている');
+  assert.equal(v.plus.purchaseEnabled, false);
 });
 
 test('【要件】指定が無ければ Plus は出ない（自動的に配らない）', () => {

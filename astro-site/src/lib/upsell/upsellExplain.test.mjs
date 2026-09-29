@@ -66,25 +66,21 @@ test(`Premium ${PREMIUM_30D_DAYS - 1}日・三連複未購入 → auto で三連
   assert.equal(e.daysSincePremium, PREMIUM_30D_DAYS - 1);
 });
 
-test(`Premium ${PREMIUM_30D_DAYS}日以上・三連複未購入・販売可 → ROUTE B / Plus`, () => {
-  const fields = premiumMember(40, {
-    PremiumPlusEligibility: 'eligible',
-    PremiumPlusEligibleAt: daysAgo(40),
-  });
+test(`三連複なしの Premium ${PREMIUM_30D_DAYS}日以上・販売可 → Plus ではなく三連複を案内する（2026-09-29 MK 決定 A: Plus は三連複会員だけ）`, () => {
+  const fields = premiumMember(40, { PremiumPlusEligibility: 'eligible', PremiumPlusEligibleAt: daysAgo(40) });
   const e = explainUpsell({ fields, nowMs: NOW });
-  assert.equal(e.route, PP_ROUTE.PREMIUM_30D);
-  assert.equal(e.autoChannel, UPSELL_CHANNEL.PLUS);
-  assert.equal(e.channel, UPSELL_CHANNEL.PLUS);
-  assert.equal(e.daysSincePremium, 40);
+  assert.equal(e.route, PP_ROUTE.NONE);
+  assert.notEqual(e.autoChannel, UPSELL_CHANNEL.PLUS);
+  assert.notEqual(e.channel, UPSELL_CHANNEL.PLUS);
+  assert.equal(e.daysSincePremium, 40, '経過日数は事実として残す');
 });
 
-test(`ROUTE B ちょうど ${PREMIUM_30D_DAYS} 日で成立する（境界を動かしていない）`, () => {
-  const mk = (d) => explainUpsell({
-    fields: premiumMember(d, { PremiumPlusEligibility: 'eligible', PremiumPlusEligibleAt: daysAgo(d) }),
-    nowMs: NOW,
-  });
-  assert.equal(mk(PREMIUM_30D_DAYS - 1).route, PP_ROUTE.NONE);
-  assert.equal(mk(PREMIUM_30D_DAYS).route, PP_ROUTE.PREMIUM_30D);
+test('三連複なしは 30 日ちょうどでも Plus の route にならない（ROUTE B は廃止）（2026-09-29 MK 決定 A: Plus は三連複会員だけ）', () => {
+  for (const d of [PREMIUM_30D_DAYS - 1, PREMIUM_30D_DAYS, PREMIUM_30D_DAYS + 30]) {
+    const e = explainUpsell({ fields: premiumMember(d, { PremiumPlusEligibility: 'eligible', PremiumPlusEligibleAt: daysAgo(d) }), nowMs: NOW });
+    assert.equal(e.route, PP_ROUTE.NONE, `${d} 日`);
+    assert.notEqual(e.channel, UPSELL_CHANNEL.PLUS);
+  }
 });
 
 test('三連複保有済み → 三連複の再購入 CTA を出さない', () => {
@@ -117,9 +113,10 @@ test('auto でも 2 商品を同時に表示しない（channel は常に 1 つ�
 
 // ── 3. 手動指定が排他的に反映される ────────────────────────────
 test('manual sanrenpuku / plus / none が排他的に反映される', () => {
-  const base = premiumMember(40, {
+  const base = sanrenpukuMember({
     PremiumPlusEligibility: 'eligible',
     PremiumPlusEligibleAt: daysAgo(40),
+    PremiumPlusReleaseOverride: 'phase4',
   });
 
   const none = explainUpsell({ fields: { ...base, UpsellTarget: 'none' }, nowMs: NOW });
@@ -128,8 +125,10 @@ test('manual sanrenpuku / plus / none が排他的に反映される', () => {
   assert.equal(none.autoChannel, UPSELL_CHANNEL.PLUS, '自動判定は手動指定に影響されない');
   assert.equal(none.differsFromAuto, true);
 
+  // 三連複保有者（Plus を買えるのは三連複会員だけ・2026-09-29）に「三連複」を指定すると、
+  // 保有済みなので三連複の CTA は出ず、Plus も出さない（指定どおり Plus を抑える）
   const srp = explainUpsell({ fields: { ...base, UpsellTarget: 'sanrenpuku' }, nowMs: NOW });
-  assert.equal(srp.channel, UPSELL_CHANNEL.SANRENPUKU);
+  assert.notEqual(srp.channel, UPSELL_CHANNEL.PLUS);
   assert.equal(srp.autoChannel, UPSELL_CHANNEL.PLUS);
 
   const plus = explainUpsell({ fields: { ...base, UpsellTarget: 'plus' }, nowMs: NOW });
@@ -201,29 +200,19 @@ test('targetOverride を渡さない既定動作は従来と完全に同じ', ()
 });
 
 // ── 5. ROUTE B の理由は具体的に出す ────────────────────────────
-test('ROUTE B の Plus 表示は「30日以上経過・三連複未購入」を理由に明示する', () => {
-  const fields = premiumMember(42, {
-    PremiumPlusEligibility: 'eligible',
-    PremiumPlusEligibleAt: daysAgo(42),
-  });
+test('三連複なしの Premium への自動表示理由は「三連複を購入できるため」で、Plus の日数条件を出さない（2026-09-29 MK 決定 A: Plus は三連複会員だけ）', () => {
+  const fields = premiumMember(42, { PremiumPlusEligibility: 'eligible', PremiumPlusEligibleAt: daysAgo(42) });
   const e = explainUpsell({ fields, nowMs: NOW });
-  assert.equal(e.route, PP_ROUTE.PREMIUM_30D);
-  assert.match(e.autoReasonText, new RegExp(`${PREMIUM_30D_DAYS}日以上経過`));
-  assert.match(e.autoReasonText, /三連複未購入/);
-  assert.match(e.autoReasonText, /42/, '実際の経過日数を出す');
-  // 「自動（Plus 販売対象）」だけで終わらせない
-  assert.notEqual(e.autoReasonText, '自動（Plus 販売対象）');
-  assert.ok(e.autoReasonText.length > 20, '説明が短すぎる');
+  assert.match(e.autoReasonText, /三連複を購入できる/);
+  assert.doesNotMatch(e.autoReasonText, /30日以上/);
 });
 
 // ── 6. 経過日数を捏造しない ────────────────────────────────────
-test('PaidAt 未記録なら日数を作らず「未記録」と明示する', () => {
+test('PaidAt 未記録なら日数を作らず「未記録」と明示する（理由文でも捏造しない）', () => {
   const e = explainUpsell({ fields: premiumMember(null, { PremiumPlusEligibility: 'eligible' }), nowMs: NOW });
   assert.equal(e.daysSincePremium, null);
   assert.match(e.daysSincePremiumText, /未記録/);
   assert.doesNotMatch(e.daysSincePremiumText, /\d+\s*日/, '存在しない日数を出している');
-  // 理由文でも「加入から N 日」を捏造しない（しきい値 30 日の言及は可）
-  assert.match(e.autoReasonText, /未記録/);
   assert.doesNotMatch(e.autoReasonText, /加入から\s*\d+\s*日/, '存在しない経過日数を出している');
 });
 
@@ -279,13 +268,10 @@ test('ROUTE B + PaidAtなし → 「未記録」を維持する', () => {
   assert.doesNotMatch(e.daysSincePremiumText, /判定対象外/);
 });
 
-test('ROUTE B + PaidAtあり → 経過日数を表示する', () => {
-  const fields = premiumMember(42, {
-    PremiumPlusEligibility: 'eligible',
-    PremiumPlusEligibleAt: daysAgo(42),
-  });
+test('三連複なし + PaidAt あり → route は none・経過日数は事実として表示する（2026-09-29 MK 決定 A: Plus は三連複会員だけ）', () => {
+  const fields = premiumMember(42, { PremiumPlusEligibility: 'eligible', PremiumPlusEligibleAt: daysAgo(42) });
   const e = explainUpsell({ fields, nowMs: NOW });
-  assert.equal(e.route, PP_ROUTE.PREMIUM_30D);
+  assert.equal(e.route, PP_ROUTE.NONE);
   assert.equal(e.hasPaidAt, true);
   assert.equal(e.daysSincePremiumText, '42 日');
 });
@@ -319,36 +305,24 @@ test('この修正で顧客側 resolver の結果は変わらない（説明レ�
   }
 });
 
-test('Plus 非対象の理由は「PaidAt 未記録」と「30日未達」を区別する', () => {
+test('Plus 非対象（route なし）の理由は「三連複の権利が無い」と明示し、日数を捏造しない（2026-09-29 MK 決定 A: Plus は三連複会員だけ）', () => {
   const view = { reason: UPSELL_REASON.PLUS_NOT_ELIGIBLE, reasonLabel: '' };
-
-  const missing = describeUpsellReasonText(view, { route: PP_ROUTE.NONE, daysSincePremium: null, phase: 0 });
-  assert.match(missing, /未記録/);
-  assert.doesNotMatch(missing, /加入から\s*\d+\s*日/, '存在しない経過日数を出している');
-
-  const short = describeUpsellReasonText(view, { route: PP_ROUTE.NONE, daysSincePremium: 12, phase: 0 });
-  assert.match(short, /12日/);
-  assert.doesNotMatch(short, /未記録/);
+  for (const days of [null, 12, 40]) {
+    const t = describeUpsellReasonText(view, { route: PP_ROUTE.NONE, daysSincePremium: days, phase: 0 });
+    assert.match(t, /三連複の権利が無い/);
+    assert.doesNotMatch(t, /加入から\s*\d+\s*日/);
+  }
 });
 
-test('手動 plus の Premium 会員は ROUTE C で救済される（PaidAt 空でも塞がない）', () => {
-  // 既存仕様: 管理者が Plus を明示指定した有効 Premium は、PaidAt が無くても販売対象になる。
-  // ここを変えないことを固定する（30 日ルールは auto の話であって、明示指定を縛らない）。
+test('手動 plus でも三連複なしの Premium には Plus を出さない（ROUTE C は廃止）・日数は捏造しない（2026-09-29 MK 決定 A: Plus は三連複会員だけ）', () => {
   const e = explainUpsell({
-    fields: premiumMember(null, {
-      PremiumPlusEligibility: 'eligible',
-      PremiumPlusEligibleAt: daysAgo(40),
-      UpsellTarget: 'plus',
-    }),
+    fields: premiumMember(null, { PremiumPlusEligibility: 'eligible', PremiumPlusEligibleAt: daysAgo(40), UpsellTarget: 'plus' }),
     nowMs: NOW,
   });
-  assert.equal(e.route, PP_ROUTE.PREMIUM_ADMIN);
-  assert.equal(e.channel, UPSELL_CHANNEL.PLUS);
+  assert.equal(e.route, PP_ROUTE.NONE);
+  assert.notEqual(e.channel, UPSELL_CHANNEL.PLUS);
   assert.equal(e.daysSincePremium, null);
   assert.match(e.daysSincePremiumText, /未記録/, '経過日数を捏造しない');
-  // 自動判定では Plus にならない（手動指定との差を管理者に見せる）
-  assert.notEqual(e.autoChannel, UPSELL_CHANNEL.PLUS);
-  assert.equal(e.differsFromAuto, true);
 });
 
 // ── 7. auto の意味の明記 ───────────────────────────────────────

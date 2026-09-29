@@ -203,8 +203,9 @@ test('会員レコードを引けず判定不能 → 申込拒否・副作用ゼ
     return new Response('blocked', { status: 403 });
   };
   const r = await post({ transferAmount: 58000, couponId: ID });
-  assert.equal(r.status, 409);
-  assert.equal(r.body.code, 'coupon_unavailable');
+  // 2026-09-29〜 会員を特定できない Plus 申込は、クーポン判定より前の購入可否ゲートで止まる（fail closed）
+  assert.equal(r.status, 403);
+  assert.equal(r.body.code, 'plus_not_purchasable');
   assert.deepEqual(calls, [], `副作用が出ている: ${calls.join(',')}`);
 });
 
@@ -234,4 +235,31 @@ test('申込では PromotionalOffers を作らない・使用済みにしない�
   await post({ transferAmount: 58000, couponId: ID });
   assert.equal(calls.filter((c) => c.startsWith('AIRTABLE_')).some((c) => c === 'AIRTABLE_POST'), false,
     'offer 台帳へ行を作っている');
+});
+
+// ── 三連複の権利が無い会員は直接 POST でも Plus を申し込めない（2026-09-29 MK 決定 A）──
+test('【重要】三連複なしの Premium（eligible・今すぐ販売可）が直接 POST しても 403・副作用ゼロ', async () => {
+  for (const over of [
+    { 'プラン': 'Premium', PlanType: 'Lifetime' },
+    { 'プラン': 'Premium', PlanType: 'Annual', UpsellTarget: 'plus' },
+    { 'プラン': 'Light', PlanType: 'Lifetime', UpsellTarget: 'plus' },
+  ]) {
+    const f = SELLING(over);
+    delete f.SanrenpukuPaidAt;
+    delete f[PP_REOPEN_COUPON_FIELDS.CLAIMED_AT];
+    stub(f);
+    calls = [];
+    const r = await post({ transferAmount: 68000 });
+    assert.equal(r.status, 403, JSON.stringify(over));
+    assert.equal(r.body.code, 'plus_not_purchasable');
+    assert.deepEqual(calls, [], `副作用が出ている: ${calls.join(',')}`);
+  }
+});
+
+test('三連複会員（購入可能）はゲートを通って従来どおり受理される', async () => {
+  const f = SELLING();
+  delete f[PP_REOPEN_COUPON_FIELDS.CLAIMED_AT];
+  stub(f);
+  const r = await post({ transferAmount: 68000 });
+  assert.equal(r.status, 200);
 });

@@ -95,16 +95,12 @@ test('【恒久回帰条件】PHASE 3 の三連複会員 → 今すぐ販売可 
   assert.equal(after.showPurchaseCta, true);
 });
 
-test('Premium 会員（加入 5 日 = 30 日未達）でも 即時販売で買える', () => {
-  const before = view(premium());
-  assert.equal(before.purchaseEnabled, false, '前提: まだ売らない');
-
+test('三連複を持たない Premium 会員は 即時販売を指定しても買えない（2026-09-29 MK 決定 A: Plus は三連複会員だけ）', () => {
   const after = view(immediateFields(premium()));
-  assert.equal(after.phase, PP_PHASE.SALE);
-  assert.equal(after.showProductPage, true);
-  assert.equal(after.purchaseEnabled, true);
-  // 管理者が明示指定したときの route（三連複ではないので premium 側）
-  assert.equal(after.route, PP_ROUTE.PREMIUM_ADMIN);
+  assert.equal(after.route, PP_ROUTE.NONE);
+  assert.equal(after.showProductPage, false);
+  assert.equal(after.showPurchaseCta, false);
+  assert.equal(after.purchaseEnabled, false);
 });
 
 test('即時販売は EligibleAt / PaidAt の待機より優先される', () => {

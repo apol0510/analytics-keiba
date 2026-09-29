@@ -1,3 +1,19 @@
+# 2026-09-29 — Premium Plus は三連複の権利を持つ会員にだけ表示・販売する（MK 確定 A / CLAUDE.md 正本を正とする）
+
+- 三連複の権利（`resolveEntitlements().canViewSanrenpuku`＝買い切り永久権 or 三連複プラン）が無い会員には、
+  予告・商品ページ・購入 CTA・案内メール・申込のすべてで Plus を出さない／売らない。
+- **ROUTE B（Premium 加入 30 日）と ROUTE C（管理者の明示指定・会員ランクを条件にしない＝2026-08-25 決定）は廃止**。
+  `UpsellTarget=plus` / 今すぐ販売可 / eligible でも三連複が無ければ開かない。販売資格の設定値自体は消さない（管理一覧に「売れない理由」を出す）。
+- 判定の入口は `resolvePlusRoute`（`premiumPlusRelease.js`）の 1 か所。dashboard・premium-sanrenpuku・premium-plus（旧 URL → v2）・premium-plus-v2・
+  案内メールの対象・管理一覧はすべてこれを通る。
+- **申込 Function（bank-transfer-application）に購入可否ゲートを追加**（それまで Plus の申込には販売停止しか確認していなかった＝直接 POST で申込を作れた）。
+  商品ページと同じ `resolveUpsellForCustomer().plus.purchaseEnabled` で判定し、メール・Airtable・注文台帳・計測より前に 403。会員を特定できなければ拒否（fail closed）。
+- 本番影響（2026-09-29 read-only で新旧比較）: 購入可能 6 → 5。変わるのは三連複なしの Premium 買い切り 1 名だけ（案内は送っていない）。
+  案内を送った 5 名は購入可能のまま。Light 永久無料へ正規化した旧三連複会員で影響を受ける人は 0 名。料金・権利・計測は不変。
+- 仕様の正本: `spec.md`「Premium Plus の販売対象は三連複会員だけ」。
+
+---
+
 # 2026-09-29 — Premium Plus を購入可能な未案内の会員へ既存の案内を送る（MK 確定）／SEO 内部リンクは測定後まで保留
 
 - 対象: 購入可能（eligible・停止なし・案内チャネル Plus）で**未案内**の 6 名。既存フロー（admin-marketing dryRun → send・キャンペーン `premium-plus-offer` v3）で送る。

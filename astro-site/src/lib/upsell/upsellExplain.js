@@ -133,13 +133,8 @@ export function describeUpsellReasonText(view, release) {
       return `三連複を販売できない会員で Plus が予告段階（PHASE ${phase}）のため、Plus の予告のみ自動表示`;
 
     case UPSELL_REASON.AUTO_SANRENPUKU:
-      if (route === PP_ROUTE.PREMIUM_30D) {
-        return `三連複を購入できるため三連複を自動表示（Plus は ROUTE B 成立済みだが販売条件が未成立）`;
-      }
-      if (typeof days === 'number' && Number.isFinite(days)) {
-        return `三連複を購入できるため三連複を自動表示（Premium加入から${days}日／Plus は${PREMIUM_30D_DAYS}日以上で対象）`;
-      }
-      return `三連複を購入できるため三連複を自動表示（Plus は加入日（PaidAt）が未記録のため${PREMIUM_30D_DAYS}日判定ができません）`;
+      // 2026-09-29〜 Plus は三連複会員だけ。三連複を持たない会員への説明に Plus の日数条件は出さない
+      return '三連複を購入できるため三連複を自動表示（Plus は三連複の購入後に対象になります）';
 
     // ── 何も出ない ──────────────────────────────────────────
     case UPSELL_REASON.NOT_LOGGED_IN:
@@ -166,10 +161,8 @@ function describePlusBlockReason(rel) {
   const route = rel.route || PP_ROUTE.NONE;
   const days = rel.daysSincePremium;
   if (route === PP_ROUTE.NONE) {
-    if (typeof days !== 'number' || !Number.isFinite(days)) {
-      return `Plus の販売対象外（加入日（PaidAt）が未記録のため ROUTE B の${PREMIUM_30D_DAYS}日判定ができません）`;
-    }
-    return `Plus の販売対象外（Premium加入から${days}日で${PREMIUM_30D_DAYS}日に未達）`;
+    // 2026-09-29 MK 決定 A: Plus は三連複の権利を持つ会員だけに販売する（ROUTE B / C は廃止）
+    return 'Plus の販売対象外（三連複の権利が無いため。Plus は三連複会員だけに販売します）';
   }
   const elig = rel.eligibility;
   if (elig && elig !== PP_ELIGIBILITY.ELIGIBLE) {

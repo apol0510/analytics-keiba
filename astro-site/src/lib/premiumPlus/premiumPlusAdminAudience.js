@@ -114,12 +114,15 @@ export const PP_RELEASE_BLOCKER = Object.freeze({
   WAIT_30D: 'wait_30d',
   /** 加入日（PaidAt）が無く経過日数を判定できない（データ補正が必要） */
   ANCHOR_MISSING: 'anchor_missing',
+  /** 三連複の権利が無い（2026-09-29 MK 確定: Plus は三連複会員だけに表示・販売する） */
+  NO_SANRENPUKU: 'no_sanrenpuku',
 });
 
 /** ブロッカーの説明文（管理者向け・そのまま画面に出す） */
 export const PP_RELEASE_BLOCKER_NOTE = Object.freeze({
   wait_30d: '加入から 30 日に到達していないため、販売可にしても顧客側にはまだ表示されません。',
   anchor_missing: '加入日（PaidAt）が未記録のため、販売可にしても顧客側には表示されません。Airtable の PaidAt を実際の入金確認日で補正してください。',
+  no_sanrenpuku: '三連複の権利が無いため、Premium Plus は表示も販売もされません（2026-09-29 決定: Plus は三連複会員だけ）。販売資格の設定は残していますが効きません。',
 });
 
 function hasValue(v) {
@@ -168,6 +171,20 @@ export function resolveAdminCandidate({ fields, member, release } = {}) {
   });
 
   if (r.route === PP_ROUTE.SANRENPUKU) return out(PP_CANDIDATE.ROUTE_A);
+
+  // ⚠️ 2026-09-29 MK 確定（A）: **三連複の権利が無い会員には Plus を売らない**。
+  //    ROUTE B（Premium 30 日）/ ROUTE C（管理者の明示指定）はこの決定で廃止。
+  //    管理者が既に資格を設定した相手は痕跡を消さず一覧に残すが、「売れない理由」を明示する。
+  //    それ以外の三連複なし会員は候補にしない（空振りの販売判断をさせない）。
+  if (m.hasSanrenpuku !== true) {
+    if (hasValue(f[PP_ELIGIBILITY_FIELDS.STATUS])) {
+      return out(PP_CANDIDATE.EXPLICIT, {
+        releaseBlockedBy: PP_RELEASE_BLOCKER.NO_SANRENPUKU,
+        note: PP_RELEASE_BLOCKER_NOTE.no_sanrenpuku,
+      });
+    }
+    return out(PP_CANDIDATE.NONE);
+  }
   // ROUTE C（管理者が UpsellTarget=plus / 今すぐ販売可 を指定した有効 Premium）も
   // ROUTE B と同じ「販売対象」として一覧に出す。加入日条件を免除しているだけで扱いは同じ。
   if (r.route === PP_ROUTE.PREMIUM_30D || r.route === PP_ROUTE.PREMIUM_ADMIN) return out(PP_CANDIDATE.ROUTE_B);

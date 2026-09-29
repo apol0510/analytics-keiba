@@ -132,15 +132,16 @@ test('override 解除後、日数が進んでいれば その時点の PHASE に
   assert.equal(r.phase, PP_PHASE.PREVIEW);
 });
 
-test('ROUTE B でも override は同じ優先順位で効く', () => {
+test('三連複なしの Premium は override（phase4）でも開かない（2026-09-29 MK 決定 A: Plus は三連複会員だけ）', () => {
   const r = resolvePremiumPlusRelease({
     hasSanrenpuku: false, premiumActive: true, premiumPaidAtMs: daysAgo(31),
     eligibility: PP_ELIGIBILITY.ELIGIBLE, eligibleAtMs: daysAgo(0),
     releaseOverride: 'phase4', nowMs: NOW,
   });
-  assert.equal(r.route, PP_ROUTE.PREMIUM_30D);
-  assert.equal(r.phase, PP_PHASE.SALE);
-  assert.equal(r.overrideApplied, true);
+  assert.equal(r.route, PP_ROUTE.NONE);
+  assert.equal(r.allowed, false);
+  assert.equal(r.purchaseEnabled, false);
+  assert.equal(r.overrideApplied, false);
 });
 
 // ── 受付時間帯（OPEN/CLOSING/CLOSED）との整合 ───────────────────
