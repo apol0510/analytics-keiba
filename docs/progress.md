@@ -84,7 +84,7 @@
 |---|---|---|---|
 | 1 | 配信 **s2 m10 / s1 m09** | 2026-09-28 19:00 JST | 予約済み（SendGrid が送る。触らない）|
 | 2 | 配信 **s1 m10**（最終通）| 2026-09-29 19:00 JST | 予約済み（同上）|
-| 3 | 全配信終了後の read-only 最終監査: 最終人数・反応者・無反応除外（EXHAUSTED）・bounce / 配信停止 / 苦情（SUPPRESSED）・除外済み list 残存・索引の不整合 | 09-29 の配信後（webhook の遅延を見て 09-30 朝）| 未実施。手順は下の「⏰ 明朝の未完了任務」と同じ道具（reconcile excluded の下見 / list export＋`prospectIndexAudit` / `prospectSequenceCheck` の全窓 / `mailOverview` / Single Send stats）|
+| 3 | 全配信終了後の read-only 最終監査: 最終人数・反応者・無反応除外（EXHAUSTED）・bounce / 配信停止 / 苦情（SUPPRESSED）・除外済み list 残存・索引の不整合 | 09-29 の配信後（webhook の遅延を見て 09-30 朝）| **自動実行・自動報告に固定（2026-09-29）**: `.github/workflows/final-selection-audit.yml` が 09-30 08:07 JST（予備 10:37）に GitHub Actions で 1 回実行（読むだけ）。結果は Issue「[選別配信 最終監査] 2026-09-30」（label `selection-audit`）へ自動投稿（✅ 異常なし / ❌ 異常あり / ⚠️ 未完走は予備で再実行）。未 merge の旧 branch `ci/final-selection-audit` は変数名の衝突で未完走だった（修正して main へ）|
 | 4 | 自動点検が **09-27 20:20 JST にも通知した理由**の確認 | 2026-09-29 確認 | **解消**: 09-28 20:20 JST の点検は実行済み・**通知なし**（`mailOverview` read-only: 最終実行 09-28 11:20Z / 最後に知らせた 09-27 11:20Z / 不整合 1）。09-27 の通知は、同日 12:09〜13:39 JST の手動除去（4,791 名）で前日控えた list 人数と当日の送信人数が 1 回だけずれた `RECIPIENT_GAP` と判断（毎日発火する旧不具合は #596 で是正済み）|
 | 5 | **監査の死角**: 全レコードを横断して「レコードの state と 索引 / 抑止台帳 が一致しているか」を数える read-only の手段が無い | 次の改修 | **手段を追加（PR 参照）**: `admin-marketing` の `prospectStateAudit`（SCAN `ak:prospect:*` ＋ 3 索引 SSCAN から出発・2 回読んで同じズレだけ確定・書き込みコマンドは送る前に弾く）＋ `ADMIN_SECRET=... node astro-site/scripts/audit-prospect-state.mjs --json out.json`（exit 0=異常0 / 1=読み切れず / 2=異常あり / 3=アドレス混入で中止）。項目 3 の最終監査で使う。本番の初回実測結果は下に追記 |
 
@@ -3186,7 +3186,7 @@ page_size=50  → 200
 |---|---|---|
 | `sendgridContinuation`（webhook 内）| 反応した人を `ak-drm-engaged` へ**自動で渡す**（止めて終わりにしない）| 有効（list が無ければ何もしない）|
 | `cron-sendgrid-selection-watch`（毎日 20:20 JST）| 配信・二重送信・停止設定・乖離を**毎日点検**し、異常時だけ通知 | 有効（read-only ＋ 通知だけ）|
-| `cron-sendgrid-weekly`（毎日 12:00 JST 判定）| 選別後の**週 2 回**（水・土 19:00 JST）を自動で組む | **不活性**（`SENDGRID_WEEKLY_ENABLED` 待ち）|
+| `cron-sendgrid-weekly`（毎日 12:00 JST 判定）| 選別後の**週 2 回**（水・土 19:00 JST）を自動で組む | **開始（2026-09-29・確定仕様 2026-09-19 決定 4/7 に従う）**: `SENDGRID_WEEKLY_ENABLED=true`・`SENDGRID_SELECTION_ENDS_AT=2026-09-30T03:30:00Z`（最終監査の後）。初回の自動予約は 10-01 12:00 JST・初回送信は 10-03（土）19:00 JST。対象は `ak-drm-engaged`（反応者 823 名）|
 
 - 週次の文面は**前日の実績から自動生成**し、`emailCopyStandard` を通らなければ**送らない**
 - 週次は**選別期間中は動かない**／**1 週 2 通まで**／**同名があれば作らない**
