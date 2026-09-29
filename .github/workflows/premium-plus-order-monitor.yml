@@ -30,7 +30,8 @@ jobs:
         with:
           node-version: '22'
       - name: ラベルを用意する
-        run: gh label create plus-order-alert --color D93F0B --description 'Premium Plus 注文: 運営者の対応が必要' --force
+        run: |
+          gh label create plus-order-alert --color D93F0B --description 'Premium Plus 注文: 運営者の対応が必要' --force
       - name: 注文を確認して Issue を開閉する
         working-directory: astro-site
         run: |
