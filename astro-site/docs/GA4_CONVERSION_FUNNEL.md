@@ -65,6 +65,17 @@ URL で確実に判別できるからである。イベントを増やすと同�
 | 発火点 | `openBankModal()` の呼び出し後 | 申込 API の成功分岐（成功画面の表示 / `result.success`）|
 | パラメータ | `plan`, `plan_type` | `plan`, `plan_type` |
 
+### `sign_up`（無料会員登録の完了 / 2026-09-29 追加）
+
+| | `sign_up`（GA4 推奨イベント）|
+|---|---|
+| 意味 | **サーバーが無料会員の新規登録を返した**（`auth-user` が `isNewUser: true`）|
+| 発火点 | `/free-signup/` の成功分岐の中の `if (data.isNewUser === true)` だけ（既存会員のログイン・失敗・クリックでは出ない）|
+| パラメータ | `method: 'email'` のみ（メール・会員 ID は送らない）|
+
+`/free/` → `/free-signup/` → **登録完了** を同じセッションで数えられるようにするための段（それまで「登録完了は未計測」）。
+登録数そのものの正本は Airtable（Customers の作成日時）。GA4 は流入元と同じセッションで結びつける用途。
+
 ### `plan`（閉じた語彙。これ以外は出ない）
 
 `Premium Plus` / `Premium Sanrenpuku` / `Premium` / `Light` / `other`

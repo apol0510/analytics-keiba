@@ -17,6 +17,7 @@
  * | 無料予想 / results-showcase / pricing 到達 | **page_view**（URL で判別できるのでイベントを増やさない）|
  * | 申込開始 | `application_start`（申込モーダルが開いた）|
  * | 申込成功 | `application_submitted`（**サーバーが受理を返した後だけ**）|
+ * | 無料会員登録の完了 | `sign_up`（GA4 推奨イベント。**サーバーが新規登録を返したときだけ**・2026-09-29 追加）|
  *
  * ## なぜページごとに書かないのか
  *
@@ -140,6 +141,24 @@
     return send('application_submitted', planName, planType);
   }
 
+  /**
+   * 無料会員の新規登録が完了した（GA4 推奨イベント `sign_up`）。
+   *
+   * ⚠️ **必ず** `auth-user` が `isNewUser: true` を返した後からだけ呼ぶこと
+   *    （既存会員のログイン・ボタンのクリック・送信失敗では呼ばない）。
+   * ⚠️ 送るのは `method: 'email'` だけ（閉じた語彙）。メール・会員 ID は送らない。
+   */
+  function signUpCompleted() {
+    if (!shouldSend('sign_up', Date.now())) return null;
+    var params = { method: 'email' };
+    try {
+      if (typeof global.gtag === 'function') global.gtag('event', 'sign_up', params);
+    } catch (e) {
+      // 計測の失敗で登録を止めない
+    }
+    return { event: 'sign_up', params: params };
+  }
+
   // ── ページ側のコードを触らずに拾う ──────────────────────────
 
   /**
@@ -219,6 +238,7 @@
     planTypeLabel: planTypeLabel,
     applicationStart: applicationStart,
     applicationSubmitted: applicationSubmitted,
+    signUpCompleted: signUpCompleted,
     _install: install,
     _reset: _reset
   };

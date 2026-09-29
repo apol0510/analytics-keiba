@@ -232,3 +232,34 @@ test('gtag が投げても申込を止めない', () => {
   win.gtag = () => { throw new Error('blocked'); };
   assert.doesNotThrow(() => win.openBankModal('Premium Lifetime', 78000, 'lifetime'));
 });
+
+// ── 無料会員登録の完了（sign_up・2026-09-29 追加）────────────────────
+test('sign_up は method=email だけを送る（メール・会員 ID を送らない）', () => {
+  const { AkFunnel, sent } = load();
+  const out = AkFunnel.signUpCompleted();
+  assert.deepEqual(out, { event: 'sign_up', params: { method: 'email' } });
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].name, 'sign_up');
+  assert.deepEqual(Object.keys(sent[0].params), ['method']);
+});
+
+test('sign_up の事故の二重送信は落とす・gtag が無くても例外を投げない', () => {
+  const { AkFunnel, sent } = load();
+  AkFunnel.signUpCompleted();
+  AkFunnel.signUpCompleted();
+  assert.equal(sent.length, 1);
+  const noGtag = load({ withGtag: false });
+  assert.doesNotThrow(() => noGtag.AkFunnel.signUpCompleted());
+});
+
+test('配線: /free-signup/ はサーバーが新規登録を返したときだけ sign_up を送る', () => {
+  const page = readFileSync(fileURLToPath(new URL('../../pages/free-signup.astro', import.meta.url)), 'utf8');
+  const at = page.indexOf('window.AkFunnel.signUpCompleted()');
+  assert.ok(at > 0, '呼び出しが無い');
+  assert.equal(page.split('signUpCompleted(').length - 1, 1, '呼び出しは 1 か所だけ');
+  const before = page.slice(Math.max(0, at - 300), at);
+  assert.match(before, /if \(data\.isNewUser === true\) \{/);
+  // 成功分岐（data.success）の中にある
+  assert.ok(page.lastIndexOf('if (data.success) {', at) > 0);
+  assert.ok(page.lastIndexOf('} else {', at) < page.lastIndexOf('if (data.success) {', at));
+});
