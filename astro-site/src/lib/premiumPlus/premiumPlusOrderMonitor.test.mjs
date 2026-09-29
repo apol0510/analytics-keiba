@@ -18,7 +18,7 @@ const confirmed = (rec, day, over = {}) => order(rec, day, { status: 'confirmed'
 const purchase = (rec, days) => [rec, { count: days.length, orders: Object.fromEntries(days.map((d) => [`${rec}:premium-plus:${d}`, NOW])) }];
 const code = (fn) => { try { fn(); return 'ok'; } catch (e) { return e.code; } };
 
-test('販売停止中（注文 0）は待機中・対応不要', () => {
+test('注文 0 件は待機中・対応不要', () => {
   const s = summarizePlusOrders({ orders: [], purchaseRows: [], nowMs: NOW });
   assert.equal(code(() => judgeFirstPlusOrder(s)), 'no_plus_order_yet');
   assert.deepEqual(operatorActions(s), []);
@@ -96,6 +96,6 @@ test('自動確認が登録されている（販売を再開しない・未来�
   const c = reg.checks.find((x) => x.id === 'premium-plus-first-order-2026');
   assert.ok(c);
   assert.equal(c.kind, 'premium-plus-first-order');
-  assert.match(c.trigger, /販売は再開しない/);
+  assert.match(c.trigger, /販売状態は変えない/);
   for (const k of ['runFrom', 'runUntil', 'trigger', 'compare', 'record', 'onFailure']) assert.ok(c[k], k);
 });
