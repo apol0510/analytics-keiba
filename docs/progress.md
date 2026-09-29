@@ -7,6 +7,7 @@
 | 選別配信の最終通（s1 m10）と最終監査 | 2026-09-29 19:00 JST 配信（SendGrid 予約済み）→ 09-30 朝に read-only 監査（下の常設ブロック）| なし（別セッションの最終監査 branch `ci/final-selection-audit` には触らない）|
 | 決済ファネルのサーバー側計測が本番の申込受理・入金確認で記録されること（`payment-funnel-first-record-2026`）| 2026-09-30〜12-31 毎日 10:00 JST に自動確認（#644 `8de927bd` 本番反映・公開 2026-09-28T22:45Z・反映時 0 件）。Airtable `PaidAt` と突き合わせ、入金確認があるのに計測 0 件なら赤。鍵は `PAYMENT_FUNNEL_READ_SECRET`（集計の読み取り専用・Netlify production と GitHub secret に設定済み）| なし |
 | Premium Plus の最初の本物の注文（`premium-plus-first-order-2026`）| 注文が来るまで待機中（2026-09-29 実測: 購入可能 6 名・販売停止 0 名・Plus 案内は全員未送信・注文 0 件）。毎日 10:00 JST に自動確認し、入金確認後に新系列ちょうど 1 件・二重計上なしで完了。未確認注文は毎時の監視 Issue「[Plus 注文] 要対応」で通知（**確認のために販売状態・案内は変えない**）| なし（注文が来たら管理画面で入金確認）|
+| Premium Plus 案内（2026-09-29 送信 5 名）の成果（`premium-plus-offer-2026-09-29-outcome`）| 2026-10-06 10:00 JST に自動で 1 回記録（送信→配信→開封→Plus ページ到達→決済開始→注文→入金確認→新系列）。送信: job `mkt-premium-plus-offer-v3-319f0bd7-1` sent 5 / failed 0・配信行 5・重複 0 | なし |
 | Light 月払い 期限前・失効後リマインドの最初の本番送信（`light-renewal-first-send-2026`）と成果（`light-renewal-outcomes-2026`）| 2026-09-29 `LIGHT_RENEWAL_REMINDER_MODE=live` 本番設定（#642 `24a55cfe`・再デプロイ済み）。最初の送信は 09-29 10:00 JST の定期実行（dry-run 実測: 期限前 1・失効後 3）。送信記録は 09-30〜10-15 に、成果（更新率・転換率）は 11-05〜12-31 に scheduled-checks が自動確認 | なし |
 
 **並行可能な未完了作業**（正本 `spec.md`「AK の商品・価格の事業境界」是正 4 項目 ほか）:
@@ -15,7 +16,8 @@
 | 1 | 是正 3「Light→Premium 案内不足」＋ 価格不一致 | **完了（#634 `b8ecce2f` 本番反映・2026-09-29）**: Light ページの CTA → `/pricing/`、`/premium-upgrade/` の年払い ¥44,820（¥49,800 は取消線のみ・申込ボタン 0）|
 | 2 | 是正 4「転換履歴の計測」| **本番反映（#634 `b8ecce2f`）**。Customers に `PremiumConvertedFrom` / `PremiumConvertedAt` を作成済み（既存値 0 件）。本番の実 Light 会員 18 名で読み取りのみの試算: 転換時に `Light/Monthly` 4 名・`Light/Monthly（期限切れ）` 14 名と記録される。**最初の実際の転換で記録されるかは scheduled-checks `premium-conversion-first-record-2026` が 2026-09-30〜12-31 に毎日自動確認**（読み取り専用トークン `AIRTABLE_READONLY_TOKEN`・analytics-keiba ベースの data.records:read のみ・書き込みは 403 を確認）|
 | 3 | 是正 1「月払い更新導線」: 期限前・失効後の案内を月払い会員へ | **MK 決定 1-B（2026-09-29）→ 実装 PR 作成（Light 月払い 期限前・失効後リマインド）**。対象 9 名（有効 4・失効 30 日以内 3・30 日超 2）。本番は `LIGHT_RENEWAL_REMINDER_MODE` 未設定のまま（merge 後に dry-run → live）|
-| 4 | SEO: `/free/` から日付ページへの導線・レース名で辿れるページ | 設計判断あり → 提案 |
+| 4 | SEO: `/free/` から日付ページへの導線・レース名で辿れるページ | **保留（MK 2026-09-29）**: `seo-date-archive-2026-10`（10/28〜11/11）の測定条件を汚さないため評価後に着手 |
+| 7 | Premium Plus 案内（MK 決定・2026-09-29）| **送信済み 5 名**（購入可能 6 名のうち 1 名＝Premium Lifetime・三連複なしはキャンペーン対象プラン外で既存フローが除外）。**別判断**: この 1 名は Plus の販売資格（eligible・購入可能）とキャンペーンの対象条件（三連複のみ）が食い違う。どちらを正にするかは MK 判断（販売条件のため自律で変えない）|
 | 6 | Premium Plus 購入件数の他商品混入（MK 決定 A）＋ 購入確定の地点（MK 決定 B・2026-09-29）| **本番反映・実操作確認済み**: A #649 `d31c09ed`、B #650 `bf972fef`。2026-09-29 本番の管理画面で運営者本人のテスト注文を 入金確認（2 段階）→ 要修復 → 修復 → 新系列ちょうど 1 件・再確定は already_confirmed・会員不一致は拒否 → 確認を取消で 0 件 → テスト注文削除、「9/29 からの新しい集計」注記を目視。env `PP_ORDER_CANARY_ENABLED` は unset 済み。実操作で計測が 700ms を超え要修復になったため管理操作の待ち上限を 8 秒に（本 PR）。本物の Plus 注文は 0 件（購入可能 6 名はいるが Plus 案内は未送信）|
 | 5 | 決済摩擦の計測（pricing → 申込開始 → 報告 → 入金確認のどこで落ちるか）| **本番反映（#644 `8de927bd`・2026-09-29）・本番 API 200/認可なし 403 を確認**: GA4 `application_submitted` 1 件 vs 入金確認 4 件で GA4 が欠けることを実測 → サーバー側で申込受理・入金確認・報告→確認の日数・確認待ち件数を Redis に記録（Airtable schema 変更なし）。正本 `astro-site/docs/GA4_CONVERSION_FUNNEL.md` §10 |
 

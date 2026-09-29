@@ -105,6 +105,21 @@
       },
       "record": "GitHub Issue「[自動測定] premium-plus-first-order-2026」（label: scheduled-check）に注文数・新系列の件数・不一致の有無",
       "onFailure": "注文なし・入金確認待ちは待機中 Issue を更新して翌日再確認（未確認注文の通知は毎時の監視 Issue「[Plus 注文] 要対応」）。不一致・要修復は job 赤＋失敗 Issue に最小作業。2027-03-31 まで未完了なら期限切れを追記（販売を再開していないのか、記録漏れかを人が確認）"
+    },
+    {
+      "id": "premium-plus-offer-2026-09-29-outcome",
+      "title": "Premium Plus 案内（2026-09-29 送信・5 名）の成果: 開封 → Plus ページ到達 → 注文 → 入金確認",
+      "kind": "premium-plus-offer-outcome",
+      "runFrom": "2026-10-06",
+      "runUntil": "2026-10-20",
+      "trigger": "送信 7 日後の 2026-10-06 10:00 JST（scheduled-checks.yml）に 1 回記録して完了。読めなければ翌日再試行",
+      "compare": {
+        "since": "2026-09-29T01:25:14Z",
+        "siteUrl": "https://analytics.keiba.link/",
+        "baseline": "2026-09-29 01:25Z 送信 5 通（job mkt-premium-plus-offer-v3-319f0bd7-1・sent 5 / failed 0・配信行 5・重複 0）。送信前: 購入可能 6 名・案内 0 名・注文 0 件・新系列 0。1 名はキャンペーン対象プラン外（Premium Lifetime・三連複なし）で既存フローが除外"
+      },
+      "record": "GitHub Issue「[自動測定] premium-plus-offer-2026-09-29-outcome」に段ごとの件数と前段比",
+      "onFailure": "計測を読めない（開封・到達が null）は失敗 Issue と翌日再試行（0 件とは書かない）。2026-10-20 まで未完了なら期限切れを追記"
     }
   ]
 }

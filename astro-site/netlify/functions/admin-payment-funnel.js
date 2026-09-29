@@ -1,6 +1,7 @@
 /**
  * admin-payment-funnel.js — 決済ファネル（申込受理 → 入金確認）の集計 API（**読み取り専用**）
  *
+ *   POST {action:'plusOfferOutcome'}                 … Plus 案内メールの成果（送信→開封→到達→注文→購入・件数のみ）
  *   POST {action:'plusOrdersSummary'}                … Premium Plus 注文と新系列の購入の突き合わせ（件数のみ）
  *   POST {action:'summary', days?:number}  … 期間内の申込受理・入金確認の件数（商品別・日別）、
  *                                              報告→入金確認の日数分布、いま入金確認待ちの件数と経過日数
@@ -13,6 +14,9 @@ import { makeRedisCmd } from '../../src/lib/premiumPlus/premiumPlusFunnelServer.
 import { createOrderStore } from '../../src/lib/premiumPlus/premiumPlusOrderService.js';
 import { FUNNEL_KEY } from '../../src/lib/premiumPlus/premiumPlusFunnelStore.js';
 import { summarizePlusOrders } from '../../src/lib/premiumPlus/premiumPlusOrderMonitor.js';
+import { summarizeOfferOutcome } from '../../src/lib/premiumPlus/premiumPlusOfferOutcome.js';
+import { createFunnelStore } from '../../src/lib/premiumPlus/premiumPlusFunnelStore.js';
+import { createDeliveryEventIndex } from '../../src/lib/webhooks/deliveryEventIndex.js';
 
 function json(statusCode, body) {
   return {
@@ -52,7 +56,41 @@ export const handler = async (event) => {
       return json(500, { error: 'read_failed', sideEffects: 'none' });
     }
   }
-  if (req.action !== 'summary') return json(400, { error: 'action は summary / plusOrdersSummary' });
+  // Premium Plus 案内メール（premium-plus-offer）の成果: 送信→配信→開封→到達→注文→購入（件数だけ）
+  if (req.action === 'plusOfferOutcome') {
+    const cmd = makeRedisCmd(process.env);
+    const KEY = process.env.AIRTABLE_API_KEY; const BASE = process.env.AIRTABLE_BASE_ID;
+    if (!cmd || !KEY || !BASE) return json(503, { error: 'measurement_unavailable', sideEffects: 'none' });
+    try {
+      const deliveries = [];
+      let offset;
+      let pages = 0;
+      do {
+        const q = new URLSearchParams({ filterByFormula: "FIND('premium-plus-offer:',{CampaignType}&'')=1", pageSize: '100' });
+        for (const f of ['Status', 'SentAt', 'CustomerRecordId', 'DeliveryKey']) q.append('fields[]', f);
+        if (offset) q.set('offset', offset);
+        const res = await fetch(`https://api.airtable.com/v0/${BASE}/CampaignDeliveries?${q}`, { headers: { Authorization: `Bearer ${KEY}` } });
+        if (!res.ok) return json(503, { error: 'deliveries_unreadable', sideEffects: 'none' });
+        const data = await res.json();
+        for (const r of data.records || []) deliveries.push(r.fields || {});
+        offset = data.offset;
+        pages += 1;
+        if (pages > 20) return json(503, { error: 'deliveries_too_many', sideEffects: 'none' });
+      } while (offset);
+      const idx = await createDeliveryEventIndex({ cmd }).read(deliveries.map((d) => d.DeliveryKey).filter(Boolean));
+      const fr = await createFunnelStore({ redisCmd: cmd }).readMany({ recordIds: deliveries.map((d) => d.CustomerRecordId) });
+      const orders = await createOrderStore({ redisCmd: cmd }).list();
+      return json(200, {
+        ...summarizeOfferOutcome({
+          deliveries, events: idx.ok ? idx.byKey : null, funnel: fr.available ? fr.rows : null, orders,
+        }),
+        sideEffects: 'none',
+      });
+    } catch {
+      return json(500, { error: 'read_failed', sideEffects: 'none' });
+    }
+  }
+  if (req.action !== 'summary') return json(400, { error: 'action は summary / plusOrdersSummary / plusOfferOutcome' });
   const days = Number.isInteger(req.days) && req.days >= 1 && req.days <= 365 ? req.days : 30;
   try {
     const summary = await readPaymentFunnelSummary({ env: process.env, days, nowMs: Date.now() });
