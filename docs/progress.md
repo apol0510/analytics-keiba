@@ -6,6 +6,7 @@
 | Light→Premium 転換履歴が本番で最初に記録されること（`premium-conversion-first-record-2026`）| 2026-09-30〜12-31 毎日 10:00 JST に自動確認。0 件の間は赤にせず Issue「[自動測定 待機中] …」を 1 つだけ更新。記録されたら「[自動測定] …」に内訳 | なし |
 | 選別配信の最終通（s1 m10）と最終監査 | 2026-09-29 19:00 JST 配信（SendGrid 予約済み）→ 09-30 朝に read-only 監査（下の常設ブロック）| なし（別セッションの最終監査 branch `ci/final-selection-audit` には触らない）|
 | 決済ファネルのサーバー側計測が本番の申込受理・入金確認で記録されること（`payment-funnel-first-record-2026`）| 2026-09-30〜12-31 毎日 10:00 JST に自動確認（#644 `8de927bd` 本番反映・公開 2026-09-28T22:45Z・反映時 0 件）。Airtable `PaidAt` と突き合わせ、入金確認があるのに計測 0 件なら赤。鍵は `PAYMENT_FUNNEL_READ_SECRET`（集計の読み取り専用・Netlify production と GitHub secret に設定済み）| なし |
+| Premium Plus の最初の本物の注文（`premium-plus-first-order-2026`）| 販売停止中は待機中。毎日 10:00 JST に自動確認し、入金確認後に新系列ちょうど 1 件・二重計上なしで完了。未確認注文は毎時の監視 Issue「[Plus 注文] 要対応」で通知（**確認のために販売は再開しない**）| なし（注文が来たら管理画面で入金確認）|
 | Light 月払い 期限前・失効後リマインドの最初の本番送信（`light-renewal-first-send-2026`）と成果（`light-renewal-outcomes-2026`）| 2026-09-29 `LIGHT_RENEWAL_REMINDER_MODE=live` 本番設定（#642 `24a55cfe`・再デプロイ済み）。最初の送信は 09-29 10:00 JST の定期実行（dry-run 実測: 期限前 1・失効後 3）。送信記録は 09-30〜10-15 に、成果（更新率・転換率）は 11-05〜12-31 に scheduled-checks が自動確認 | なし |
 
 **並行可能な未完了作業**（正本 `spec.md`「AK の商品・価格の事業境界」是正 4 項目 ほか）:

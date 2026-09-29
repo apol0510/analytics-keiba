@@ -2044,6 +2044,16 @@ sent（＝provider 受理）/ skipped / failed / ジョブ状態（SENT / PARTIA
   確認後は「確認を取消」で購入件数から外し、`plusOrderCanaryDelete` で削除（テスト注文かつ取消・訂正済みで計上から外れたものだけ消せる。実注文は消せない）。**使い終わったら env を外して redeploy**。
 - テスト: `src/lib/premiumPlus/premiumPlusOrders.test.mjs`（`test:premium-plus-media` → `check:safety`）。
 
+### 未確認注文の見落とし防止と、最初の本物の注文の自動確認（2026-09-29）
+
+- **毎時の監視** `.github/workflows/premium-plus-order-monitor.yml`: 未確認・要修復・注文と新系列の購入の不一致・テスト注文の残りがあれば
+  Issue「[Plus 注文] 要対応」（label `plus-order-alert`）を 1 つだけ開き、**状態が変わったときだけ**コメントで通知。解消すれば自動でクローズ。
+  読み取りに失敗したら「[Plus 注文] 監視できません」を 1 つ開く（初回だけ job 赤）。
+- **自動確認** scheduled-checks `premium-plus-first-order-2026`（毎日・〜2027-03-31）: 最初の本物の注文が入金確認で新系列にちょうど 1 件入り、
+  二重計上・計上漏れ・混入が無いことを確かめて完了。販売停止中は待機中のまま（**確認のために販売を再開しない**）。
+- どちらも読むのは `admin-payment-funnel` の `plusOrdersSummary`（件数だけ・識別子なし・読み取り専用鍵 `PAYMENT_FUNNEL_READ_SECRET`）。
+- 判定の単一源: `src/lib/premiumPlus/premiumPlusOrderMonitor.js`（突き合わせ）／`src/lib/ops/plusOrderCheck.js`（自動確認）。
+
 ## Premium Plus の「即時販売」（2026-08-07 明文化）
 
 管理画面の**「今すぐ販売可」＝即時販売**は、**その会員だけ段階公開の待機日数を飛ばして
