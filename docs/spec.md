@@ -2050,7 +2050,7 @@ sent（＝provider 受理）/ skipped / failed / ジョブ状態（SENT / PARTIA
   Issue「[Plus 注文] 要対応」（label `plus-order-alert`）を 1 つだけ開き、**状態が変わったときだけ**コメントで通知。解消すれば自動でクローズ。
   読み取りに失敗したら「[Plus 注文] 監視できません」を 1 つ開く（初回だけ job 赤）。
 - **自動確認** scheduled-checks `premium-plus-first-order-2026`（毎日・〜2027-03-31）: 最初の本物の注文が入金確認で新系列にちょうど 1 件入り、
-  二重計上・計上漏れ・混入が無いことを確かめて完了。販売停止中は待機中のまま（**確認のために販売を再開しない**）。
+  二重計上・計上漏れ・混入が無いことを確かめて完了。注文が来るまでは待機中のまま（**確認のために販売状態・案内を変えない**）。
 - どちらも読むのは `admin-payment-funnel` の `plusOrdersSummary`（件数だけ・識別子なし・読み取り専用鍵 `PAYMENT_FUNNEL_READ_SECRET`）。
 - 判定の単一源: `src/lib/premiumPlus/premiumPlusOrderMonitor.js`（突き合わせ）／`src/lib/ops/plusOrderCheck.js`（自動確認）。
 

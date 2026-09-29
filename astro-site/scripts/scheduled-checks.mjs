@@ -54,7 +54,7 @@ function humanActionFor(code, check) {
     case 'no_conversion_yet':
       return 'なし（まだ Light→Premium の入金確認が無い）。翌日の定期実行で自動的に再確認する。';
     case 'no_plus_order_yet':
-      return 'なし（Premium Plus は販売停止中で本物の注文がまだ無い）。確認のために販売を再開しない。翌日の定期実行で自動的に再確認する。';
+      return 'なし（本物の Premium Plus 注文がまだ無い）。確認のために販売状態・案内は変えない。翌日の定期実行で自動的に再確認する。';
     case 'no_plus_confirmation_yet':
       return 'なし（注文はあるが入金確認待ち）。未確認の注文は毎時の監視 Issue「[Plus 注文] 要対応」で知らせる。入金を確認したら Plus 管理画面で「入金確認」。';
     case 'plus_order_needs_repair':

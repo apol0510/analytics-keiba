@@ -97,7 +97,7 @@
       "kind": "premium-plus-first-order",
       "runFrom": "2026-09-30",
       "runUntil": "2027-03-31",
-      "trigger": "毎日 10:00 JST（scheduled-checks.yml）。販売停止中は注文が来ないので待機中のまま毎日確認する（確認のために販売は再開しない）。販売再開後の最初の本物の注文の入金確認で完了",
+      "trigger": "毎日 10:00 JST（scheduled-checks.yml）。本物の注文が来るまで待機中のまま毎日確認する（確認のために販売状態は変えない）。2026-09-29 時点で購入可能 6 名・停止 0 名・全員未案内・注文 0 件。最初の本物の注文の入金確認で完了",
       "compare": {
         "since": "2026-09-29",
         "siteUrl": "https://analytics.keiba.link/",

@@ -1,7 +1,7 @@
 /**
  * plusOrderCheck.js — Premium Plus の最初の本物の注文を自動で確かめる（kind: premium-plus-first-order）
  *
- * 販売停止中は注文が来ない。**確認のためだけに販売を再開しない**（2026-09-29 MK）。
+ * 注文が来るまでは確かめられない。**確認のためだけに販売状態・案内を変えない**（2026-09-29 MK）。
  * 販売再開後に最初の本物の注文が来て、入金確認で新系列にちょうど 1 件入ったことを毎日読むだけで確かめる。
  *
  *   - 本物の注文 0 件 → `no_plus_order_yet`（待機中）
@@ -36,7 +36,7 @@ export function judgeFirstPlusOrder(s) {
     throw new PlusOrderCheckError('plus_purchase_mismatch', `計上漏れ ${p.missing} / 注文に無い計上 ${p.unexpected} / 二重計上 ${p.duplicated ? 'あり' : 'なし'}`);
   }
   if (s.real.needsRepair > 0) throw new PlusOrderCheckError('plus_order_needs_repair', `要修復 ${s.real.needsRepair} 件`);
-  if (s.real.total === 0) throw new PlusOrderCheckError('no_plus_order_yet', '本物の Plus 注文がまだ 0 件（販売停止中）');
+  if (s.real.total === 0) throw new PlusOrderCheckError('no_plus_order_yet', '本物の Plus 注文がまだ 0 件');
   if (s.real.confirmed === 0) {
     throw new PlusOrderCheckError('no_plus_confirmation_yet', `注文 ${s.real.total} 件・未確認 ${s.real.awaiting} 件（入金確認待ち）`);
   }
