@@ -244,7 +244,7 @@ test('workflow: Airtable の読み取りトークンも失敗経路の検証で�
 
 test('待機中（まだ起きていない・未確定）は失敗と分ける: exit 3・赤にしない・待機中 Issue を 1 つだけ更新', async () => {
   const { exitCodeFor, EXIT, PENDING_CODES } = await import('./scheduledChecks.js');
-  assert.deepEqual([...PENDING_CODES].sort(), ['data_not_ready', 'no_application_yet', 'no_confirmation_yet', 'no_conversion_yet', 'no_reminder_sent_yet']);
+  assert.deepEqual([...PENDING_CODES].sort(), ['data_not_ready', 'no_application_yet', 'no_confirmation_yet', 'no_conversion_yet', 'no_plus_confirmation_yet', 'no_plus_order_yet', 'no_reminder_sent_yet']);
   assert.equal(exitCodeFor('no_conversion_yet'), EXIT.PENDING);
   assert.equal(exitCodeFor('data_not_ready'), EXIT.PENDING);
   assert.equal(exitCodeFor('credentials_missing'), EXIT.FAILED);

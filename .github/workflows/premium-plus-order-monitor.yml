@@ -1,0 +1,74 @@
+name: Premium Plus 注文の監視
+
+# 未確認・要修復・注文と購入件数の不一致を毎時確認し、運営者が見落とさないよう Issue で知らせる。
+# 状態が変わったときだけコメント（通知）する。対応が済めば自動でクローズする。
+# 読むのは件数だけ（admin-payment-funnel plusOrdersSummary・読み取り専用の鍵）。書き込みはしない。
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: premium-plus-order-monitor
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PAYMENT_FUNNEL_READ_SECRET: ${{ secrets.PAYMENT_FUNNEL_READ_SECRET }}
+      ALERT_TITLE: '[Plus 注文] 要対応'
+      FAIL_TITLE: '[Plus 注文] 監視できません'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - name: ラベルを用意する
+        run: gh label create plus-order-alert --color D93F0B --description 'Premium Plus 注文: 運営者の対応が必要' --force
+      - name: 注文を確認して Issue を開閉する
+        working-directory: astro-site
+        run: |
+          find_open() { gh issue list --state open --label plus-order-alert --search "\"$1\" in:title" --json number,title \
+            --jq ".[] | select(.title==\"$1\") | .number" | head -1; }
+          set +e
+          node scripts/premium-plus-order-monitor.mjs --out /tmp/m.json
+          rc=$?
+          set -e
+          fail_no=$(find_open "$FAIL_TITLE")
+          if [ "$rc" != 0 ]; then
+            # 監視できない状態は 1 つの Issue にまとめる（毎時の赤い job で通知を溢れさせない）
+            code=$(jq -r '.code' /tmp/m.json)
+            if [ -z "$fail_no" ]; then
+              gh issue create --title "$FAIL_TITLE" --label plus-order-alert \
+                --body "Premium Plus 注文の監視が読み取りに失敗しました（理由: \`$code\`）。毎時再試行します。Claude が調査する。"
+              exit 1
+            fi
+            echo "既に報告済み（#$fail_no）: $code"
+            exit 0
+          fi
+          if [ -n "$fail_no" ]; then gh issue comment "$fail_no" --body "✅ 監視が復旧しました。"; gh issue close "$fail_no"; fi
+          n=$(jq '.actions | length' /tmp/m.json)
+          fp=$(jq -r '.fingerprint' /tmp/m.json)
+          jq -r '.body' /tmp/m.json > /tmp/body.md
+          no=$(find_open "$ALERT_TITLE")
+          if [ "$n" -gt 0 ]; then
+            if [ -z "$no" ]; then
+              gh issue create --title "$ALERT_TITLE" --label plus-order-alert --body-file /tmp/body.md
+            else
+              old=$(gh issue view "$no" --json body --jq '.body' | grep -o 'fingerprint:[^ ]*' | head -1 || true)
+              gh issue edit "$no" --body-file /tmp/body.md
+              if [ "$old" != "fingerprint:$fp" ]; then
+                gh issue comment "$no" --body "🔔 状態が変わりました: $(jq -r '[.actions[].text] | join(" / ")' /tmp/m.json)"
+              fi
+            fi
+          elif [ -n "$no" ]; then
+            gh issue comment "$no" --body "✅ 対応が必要な注文はなくなりました（$(date -u +%FT%TZ)）。"
+            gh issue close "$no"
+          fi
+          cat /tmp/body.md >> "$GITHUB_STEP_SUMMARY"

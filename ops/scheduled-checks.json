@@ -90,6 +90,21 @@
       },
       "record": "GitHub Issue「[自動測定] payment-funnel-first-record-2026」（label: scheduled-check）に件数・商品別・報告→確認の日数",
       "onFailure": "まだ起きていない（no_application_yet / no_confirmation_yet）は待機中 Issue を更新して翌日再確認。Airtable に入金確認があるのに計測 0 件（funnel_missing_confirmation）・鍵未設定/不一致は job 赤＋失敗 Issue に最小作業。2026-12-31 まで未完了なら期限切れを追記"
+    },
+    {
+      "id": "premium-plus-first-order-2026",
+      "title": "Premium Plus の最初の本物の注文が入金確認で新系列にちょうど 1 件入ったか（二重計上なし）",
+      "kind": "premium-plus-first-order",
+      "runFrom": "2026-09-30",
+      "runUntil": "2027-03-31",
+      "trigger": "毎日 10:00 JST（scheduled-checks.yml）。販売停止中は注文が来ないので待機中のまま毎日確認する（確認のために販売は再開しない）。販売再開後の最初の本物の注文の入金確認で完了",
+      "compare": {
+        "since": "2026-09-29",
+        "siteUrl": "https://analytics.keiba.link/",
+        "baseline": "反映時点（#650 bf972fef / #651 ce4c26ea）: 本物の注文 0・新系列の購入 0・テスト注文 0（実操作確認のテスト注文は確認後に削除済み）。旧系列（…:purchase）は他商品混入の参考値で比較に使わない"
+      },
+      "record": "GitHub Issue「[自動測定] premium-plus-first-order-2026」（label: scheduled-check）に注文数・新系列の件数・不一致の有無",
+      "onFailure": "注文なし・入金確認待ちは待機中 Issue を更新して翌日再確認（未確認注文の通知は毎時の監視 Issue「[Plus 注文] 要対応」）。不一致・要修復は job 赤＋失敗 Issue に最小作業。2027-03-31 まで未完了なら期限切れを追記（販売を再開していないのか、記録漏れかを人が確認）"
     }
   ]
 }

@@ -15,6 +15,7 @@ import { createGscClient, GscError } from '../src/lib/ops/gscClient.js';
 import { runGscDateArchive, renderMarkdown } from '../src/lib/ops/gscDateArchiveMeasurement.js';
 import { runPremiumConversionCheck, renderConversionMarkdown } from '../src/lib/ops/premiumConversionCheck.js';
 import { runPaymentFunnelCheck, renderPaymentFunnelMarkdown } from '../src/lib/ops/paymentFunnelCheck.js';
+import { runPlusFirstOrderCheck, renderPlusFirstOrderMarkdown } from '../src/lib/ops/plusOrderCheck.js';
 import { runLightRenewalOutcomesCheck, renderLightRenewalOutcomesMarkdown } from '../src/lib/ops/lightRenewalOutcomesCheck.js';
 
 const REGISTRY = fileURLToPath(new URL('../../ops/scheduled-checks.json', import.meta.url));
@@ -52,6 +53,14 @@ function humanActionFor(code, check) {
       return 'なし（まだ Light 月払いリマインドを送っていない）。翌日の定期実行で自動的に再確認する。';
     case 'no_conversion_yet':
       return 'なし（まだ Light→Premium の入金確認が無い）。翌日の定期実行で自動的に再確認する。';
+    case 'no_plus_order_yet':
+      return 'なし（Premium Plus は販売停止中で本物の注文がまだ無い）。確認のために販売を再開しない。翌日の定期実行で自動的に再確認する。';
+    case 'no_plus_confirmation_yet':
+      return 'なし（注文はあるが入金確認待ち）。未確認の注文は毎時の監視 Issue「[Plus 注文] 要対応」で知らせる。入金を確認したら Plus 管理画面で「入金確認」。';
+    case 'plus_order_needs_repair':
+      return 'Plus 管理画面「🧾 Premium Plus 注文」で要修復の注文の「修復」を押す（未完了の処理だけやり直す・二重には数えない）。';
+    case 'plus_purchase_mismatch':
+      return '注文と新系列の購入件数が一致しない（計上漏れ・混入・二重計上）。Claude が調査する（admin-payment-funnel plusOrdersSummary で件数を確認できる）。';
     case 'no_application_yet':
     case 'no_confirmation_yet':
       return 'なし（まだ本番の申込受理または入金確認が無い）。翌日の定期実行で自動的に再確認する。';
@@ -86,6 +95,9 @@ if (cmd === 'run') {
     } else if (check.kind === 'payment-funnel-first-record') {
       result = await runPaymentFunnelCheck({ check, token: process.env.AIRTABLE_READONLY_TOKEN, secret: process.env.PAYMENT_FUNNEL_READ_SECRET });
       md = renderPaymentFunnelMarkdown({ check, result });
+    } else if (check.kind === 'premium-plus-first-order') {
+      result = await runPlusFirstOrderCheck({ check, secret: process.env.PAYMENT_FUNNEL_READ_SECRET });
+      md = renderPlusFirstOrderMarkdown({ check, result });
     } else if (check.kind === 'gsc-date-archive') {
       const client = createGscClient({ credentials: process.env.GSC_SERVICE_ACCOUNT_JSON, siteUrl: check.compare.siteUrl });
       result = await runGscDateArchive({
