@@ -15,7 +15,9 @@ import { createGscClient, GscError } from '../src/lib/ops/gscClient.js';
 import { runGscDateArchive, renderMarkdown } from '../src/lib/ops/gscDateArchiveMeasurement.js';
 import { runPremiumConversionCheck, renderConversionMarkdown } from '../src/lib/ops/premiumConversionCheck.js';
 import { runPaymentFunnelCheck, renderPaymentFunnelMarkdown } from '../src/lib/ops/paymentFunnelCheck.js';
-import { runPlusFirstOrderCheck, renderPlusFirstOrderMarkdown } from '../src/lib/ops/plusOrderCheck.js';
+import {
+  runPlusFirstOrderCheck, renderPlusFirstOrderMarkdown, runPlusOfferOutcomeCheck, renderPlusOfferOutcomeMarkdown,
+} from '../src/lib/ops/plusOrderCheck.js';
 import { runLightRenewalOutcomesCheck, renderLightRenewalOutcomesMarkdown } from '../src/lib/ops/lightRenewalOutcomesCheck.js';
 
 const REGISTRY = fileURLToPath(new URL('../../ops/scheduled-checks.json', import.meta.url));
@@ -98,6 +100,9 @@ if (cmd === 'run') {
     } else if (check.kind === 'premium-plus-first-order') {
       result = await runPlusFirstOrderCheck({ check, secret: process.env.PAYMENT_FUNNEL_READ_SECRET });
       md = renderPlusFirstOrderMarkdown({ check, result });
+    } else if (check.kind === 'premium-plus-offer-outcome') {
+      result = await runPlusOfferOutcomeCheck({ check, secret: process.env.PAYMENT_FUNNEL_READ_SECRET });
+      md = renderPlusOfferOutcomeMarkdown({ check, result });
     } else if (check.kind === 'gsc-date-archive') {
       const client = createGscClient({ credentials: process.env.GSC_SERVICE_ACCOUNT_JSON, siteUrl: check.compare.siteUrl });
       result = await runGscDateArchive({

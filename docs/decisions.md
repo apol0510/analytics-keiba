@@ -1,3 +1,15 @@
+# 2026-09-29 — Premium Plus を購入可能な未案内の会員へ既存の案内を送る（MK 確定）／SEO 内部リンクは測定後まで保留
+
+- 対象: 購入可能（eligible・停止なし・案内チャネル Plus）で**未案内**の 6 名。既存フロー（admin-marketing dryRun → send・キャンペーン `premium-plus-offer` v3）で送る。
+  料金・権利・販売条件・キャンペーンの対象条件は変えない。
+- 結果: 既存フローの対象条件（プラン = 三連複）で 1 名（Premium Lifetime・三連複なし）が除外され **5 名へ送信**（sent 5 / failed 0 / 配信行 5・重複 0）。
+  除外された 1 名は Plus の販売資格（eligible）とキャンペーンの対象条件が食い違っている＝**別判断**（`progress.md`）。
+- 計測: 開封 → Plus ページ到達 → 決済開始 → 注文 → 入金確認 → 新系列。送信 7 日後に `premium-plus-offer-2026-09-29-outcome` が自動記録。
+  最初の実注文・購入は `premium-plus-first-order-2026` と毎時の監視が確かめる。
+- SEO: `/free/` → 日付ページの内部リンク変更は、`seo-date-archive-2026-10`（10/28〜11/11）の測定条件を汚さないため**評価後まで保留**。
+
+---
+
 # 2026-09-29 — Premium Plus の購入確定は Plus 管理画面の「入金確認」で行う（MK 確定 / B）
 
 - Plus の申込は Customers の申込列（`RequestedPlan` / `PaymentConfirmed`）を**使わない**（1 人 1 行で他商品の申込と衝突する・Plus は会員のプランを変えない）。

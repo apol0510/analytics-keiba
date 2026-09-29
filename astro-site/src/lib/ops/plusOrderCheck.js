@@ -66,3 +66,45 @@ export function renderPlusFirstOrderMarkdown({ check, result }) {
     '→ 本物の Plus 注文が入金確認で新系列に 1 注文 1 件だけ入ったことを本番で確認できた。以後の未確認・不一致は毎時の監視（premium-plus-order-monitor.yml）が知らせる。',
   ].join('\n');
 }
+
+// ── Premium Plus 案内メールの成果（kind: premium-plus-offer-outcome）──────────────
+/** 送信 7 日後に 1 回だけ成果を記録する。計測を読めなければ失敗（0 件と書かない） */
+export async function runPlusOfferOutcomeCheck({ check, secret, fetchImpl = fetch, nowIso = new Date().toISOString() }) {
+  if (!secret || !String(secret).trim()) throw new PlusOrderCheckError('funnel_secret_missing');
+  const res = await fetchImpl(new URL('/.netlify/functions/admin-payment-funnel', check.compare.siteUrl), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-funnel-read-secret': secret },
+    body: JSON.stringify({ action: 'plusOfferOutcome' }),
+  });
+  if (res.status === 401 || res.status === 403) throw new PlusOrderCheckError('funnel_auth_failed', `HTTP ${res.status}`);
+  if (!res.ok) throw new PlusOrderCheckError('plus_order_api_error', `HTTP ${res.status}`);
+  const o = await res.json();
+  if (!o || !Number.isFinite(o.sent)) throw new PlusOrderCheckError('plus_order_api_error', '応答の形が違う');
+  if (o.opened === null || o.reachedPlusPage === null) {
+    throw new PlusOrderCheckError('plus_order_api_error', '開封またはページ到達を読めない（0 件とは書かない）');
+  }
+  return { ranAt: nowIso, ...o };
+}
+
+export function renderPlusOfferOutcomeMarkdown({ check, result: o }) {
+  const pct = (a, b) => (b > 0 ? `${Math.round((a / b) * 1000) / 10}%` : '—');
+  return [
+    `## ${check.title}`,
+    '',
+    `- 実行: ${o.ranAt}（GitHub Actions scheduled-checks）`,
+    `- 基準: ${check.compare.baseline}`,
+    `- ${o.note}`,
+    '',
+    '| 段 | 件数 | 前段比 |',
+    '|---|---|---|',
+    `| 送信（人）| ${o.recipients}（通 ${o.sent}）| — |`,
+    `| 配信 | ${o.delivered} | ${pct(o.delivered, o.sent)} |`,
+    `| 開封 | ${o.opened} | ${pct(o.opened, o.delivered)} |`,
+    `| Plus ページ到達（送信後）| ${o.reachedPlusPage} | ${pct(o.reachedPlusPage, o.recipients)} |`,
+    `| 決済開始（振込報告）| ${o.checkoutStarted} | ${pct(o.checkoutStarted, o.reachedPlusPage)} |`,
+    `| 注文 | ${o.orders} | — |`,
+    `| 入金確認（新系列に計上）| ${o.ordersConfirmed}（新系列 ${o.purchasedNewSeries}）| ${pct(o.ordersConfirmed, o.orders)} |`,
+    '',
+    '→ 注文の入金確認と二重計上の有無は `premium-plus-first-order-2026` と毎時の監視が別に確かめる。',
+  ].join('\n');
+}
