@@ -52,13 +52,23 @@ export async function releasePlusCoupon({ env, recordId, nowMs, reason }) {
   }
 }
 
+/**
+ * 管理画面の操作で計測を待つ上限。
+ * ⚠️ 既定の RECORD_TIMEOUT_MS（700ms）は**顧客のページ表示を待たせないため**の値。
+ *    購入の記録は Redis を 5〜6 往復するので本番では 700ms を超え、2026-09-29 の実操作確認で
+ *    入金確認が必ず「要修復」になった。管理者の操作は顧客を待たせないので長く待つ。
+ */
+export const ORDER_METRIC_TIMEOUT_MS = 8000;
+
 /** 本番の依存一式 */
 export function makeOrderDeps(env) {
   return {
     recordPurchase: ({ recordId, orderKey, productPlan, nowMs }) => recordPlusPurchase({
-      recordId, orderKey, productPlan, nowMs, env,
+      recordId, orderKey, productPlan, nowMs, env, timeoutMs: ORDER_METRIC_TIMEOUT_MS,
     }),
-    revokePurchase: ({ recordId, orderKey }) => revokePlusPurchase({ recordId, orderKey, env }),
+    revokePurchase: ({ recordId, orderKey }) => revokePlusPurchase({
+      recordId, orderKey, env, timeoutMs: ORDER_METRIC_TIMEOUT_MS,
+    }),
     redeemCoupon: ({ recordId, nowMs }) => redeemPlusCoupon({ env, recordId, nowMs }),
     releaseCoupon: ({ recordId, nowMs, reason }) => releasePlusCoupon({ env, recordId, nowMs, reason }),
   };
