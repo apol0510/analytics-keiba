@@ -61,40 +61,39 @@ test('ROUTE A（三連複保有）は従来どおり一覧に出る', () => {
   assert.equal(candidate.releaseBlockedBy, null);
 });
 
-test('ROUTE B（有効 Premium・加入 30 日以上）は従来どおり一覧に出る', () => {
+test('三連複なしの有効 Premium（加入 30 日以上）は候補に出ない（2026-09-29 MK 決定 A: Plus は三連複会員だけ）', () => {
   const { candidate, release } = classify(premiumFields({ PaidAt: iso(daysAgo(PREMIUM_30D_DAYS)) }));
-  assert.equal(release.route, PP_ROUTE.PREMIUM_30D);
-  assert.equal(candidate.kind, PP_CANDIDATE.ROUTE_B);
-  assert.equal(candidate.listed, true);
-  assert.equal(candidate.releaseBlockedBy, null);
+  assert.equal(release.route, PP_ROUTE.NONE);
+  assert.equal(release.purchaseEnabled, false);
+  assert.equal(candidate.listed, false);
 });
 
-test('【本件の中核】有効 Premium だが PaidAt が空な旧会員も一覧に出る（route は none のまま）', () => {
+test('三連複なしでも管理者が資格を設定済みなら一覧に残し「売れない理由」を出す（痕跡を消さない）', () => {
+  const { candidate, release } = classify(premiumFields({ PaidAt: iso(daysAgo(60)), PremiumPlusEligibility: 'eligible' }));
+  assert.equal(release.purchaseEnabled, false);
+  assert.equal(candidate.listed, true);
+  assert.equal(candidate.kind, PP_CANDIDATE.EXPLICIT);
+  assert.equal(candidate.releaseBlockedBy, PP_RELEASE_BLOCKER.NO_SANRENPUKU);
+  assert.match(candidate.note, /三連複/);
+});
+
+test('有効 Premium で PaidAt が空な旧会員も、三連複が無ければ候補にしない（2026-09-29 MK 決定 A: Plus は三連複会員だけ）', () => {
   const { candidate, release, member } = classify(premiumFields()); // PaidAt なし
   assert.equal(member.premiumActive, true);
-  assert.equal(member.premiumPaidAtMs, null);
-  // 公開判定は従来どおり対象外（顧客側は何も変わらない）
   assert.equal(release.route, PP_ROUTE.NONE);
   assert.equal(release.allowed, false);
-  // 管理画面には出す
-  assert.equal(candidate.listed, true);
-  assert.equal(candidate.kind, PP_CANDIDATE.ANCHOR_MISSING);
-  assert.equal(candidate.releaseBlockedBy, PP_RELEASE_BLOCKER.ANCHOR_MISSING);
-  assert.ok(candidate.note.includes('PaidAt'), '不足しているフィールド名を管理者に伝える');
+  assert.equal(candidate.listed, false);
 });
 
-test('有効 Premium・加入 30 日未満は「待機中（あと N 日）」として一覧に出る', () => {
+test('有効 Premium・加入 30 日未満も三連複が無ければ候補にしない（待機中は廃止）（2026-09-29 MK 決定 A: Plus は三連複会員だけ）', () => {
   const { candidate, release } = classify(premiumFields({ PaidAt: iso(daysAgo(18)) }));
   assert.equal(release.route, PP_ROUTE.NONE);
-  assert.equal(candidate.kind, PP_CANDIDATE.WAITING_30D);
-  assert.equal(candidate.listed, true);
-  assert.equal(candidate.daysUntilRouteB, PREMIUM_30D_DAYS - 18);
-  assert.equal(candidate.releaseBlockedBy, PP_RELEASE_BLOCKER.WAIT_30D);
+  assert.equal(candidate.listed, false);
 });
 
-test('待機中は 30 日到達で自動的に ROUTE B へ移る（境界 29 / 30 日）', () => {
-  assert.equal(classify(premiumFields({ PaidAt: iso(daysAgo(29)) })).candidate.kind, PP_CANDIDATE.WAITING_30D);
-  assert.equal(classify(premiumFields({ PaidAt: iso(daysAgo(30)) })).candidate.kind, PP_CANDIDATE.ROUTE_B);
+test('三連複なしの Premium は 29 / 30 日のどちらでも候補にならない（ROUTE B は廃止）（2026-09-29 MK 決定 A: Plus は三連複会員だけ）', () => {
+  assert.equal(classify(premiumFields({ PaidAt: iso(daysAgo(29)) })).candidate.kind, PP_CANDIDATE.NONE);
+  assert.equal(classify(premiumFields({ PaidAt: iso(daysAgo(30)) })).candidate.kind, PP_CANDIDATE.NONE);
 });
 
 test('PremiumPlusEligibility 設定済みなら route が崩れても一覧から消えない', () => {
@@ -139,10 +138,10 @@ test('fields / member / release が欠けても落ちず、非表示へ倒れる
 // 3. 表示を広げても販売資格は付かない（この機能の安全条件）
 // ──────────────────────────────────────────────────────────────
 
-test('一覧に出しただけでは eligibility は保留のまま（自動 eligible が起きない）', () => {
+test('三連複なしの Premium は資格未設定なら候補にならず、eligibility も保留のまま（自動 eligible が起きない）', () => {
   for (const fields of [premiumFields(), premiumFields({ PaidAt: iso(daysAgo(18)) })]) {
     const { member, candidate } = classify(fields);
-    assert.equal(candidate.listed, true);
+    assert.equal(candidate.listed, false);
     assert.equal(member.eligibility, PP_ELIGIBILITY.REVIEW, '未設定は review（fail closed）のまま');
   }
 });

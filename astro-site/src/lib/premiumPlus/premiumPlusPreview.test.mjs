@@ -147,19 +147,16 @@ test('PHASE シミュレーション: 1/2/3/4 の表示を確認できる', () =
   }
 });
 
-test('PHASE シミュレーションは route を変えない（ROUTE B の 30 日判定に触れない）', () => {
-  const routeB = {
+test('PHASE シミュレーションでも三連複なしの Premium は route が開かない（2026-09-29 MK 決定 A: Plus は三連複会員だけ）', () => {
+  const premiumOnly = {
     'プラン': 'Premium', 'PlanType': 'Annual', 'Status': 'active', '有効期限': '2027-07-14',
     'PaidAt': iso(NOW - 40 * DAY),
     'PremiumPlusEligibility': 'eligible',
     'PremiumPlusEligibleAt': iso(NOW - 40 * DAY),
   };
-  const base = buildPreviewSnapshot({ fields: routeB, nowMs: NOW }).preview;
-  assert.equal(base.route, 'premium_30d');
-  for (const daysAgo of [0, 3, 6, 10]) {
-    const p = buildPreviewSnapshot({ fields: routeB, nowMs: NOW, phaseDaysAgo: daysAgo }).preview;
-    assert.equal(p.route, 'premium_30d', `daysAgo=${daysAgo} で route が変わった`);
-    assert.equal(p.daysSincePremium, 40, 'Premium 加入経過日数を書き換えていない');
+  for (const daysAgo of [undefined, 0, 3, 6, 10]) {
+    const p = buildPreviewSnapshot({ fields: premiumOnly, nowMs: NOW, phaseDaysAgo: daysAgo }).preview;
+    assert.equal(p.route, 'none', `daysAgo=${daysAgo} で route が開いた`);
   }
 });
 

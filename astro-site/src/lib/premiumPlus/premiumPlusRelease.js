@@ -491,6 +491,13 @@ export function resolvePlusRoute({ hasSanrenpuku, premiumActive, premiumPaidAtMs
   if (hasSanrenpuku === true) return { route: PP_ROUTE.SANRENPUKU, daysSincePremium: null };
 
   const days = isFiniteNumber(premiumPaidAtMs) ? jstDayDiff(premiumPaidAtMs, nowMs) : null;
+
+  // ⚠️ **2026-09-29 MK 確定（A）: Premium Plus は三連複の権利を持つ会員にだけ表示・販売する**（CLAUDE.md の正本）。
+  //    三連複を持たない会員は ROUTE B（Premium 加入 30 日）でも ROUTE C（管理者の明示指定）でも**開かない**。
+  //    2026-08-25 の「会員ランクを条件にしない（C-2）」と ROUTE B はこの決定で廃止。
+  //    この関数は表示・商品ページ・購入 CTA・申込の**すべての判定の入口**なので、ここで閉じれば全面で揃う。
+  //    下の B / C の分岐は過去の判定を説明するために残すが、到達しない（テストで固定）。
+  if (hasSanrenpuku !== true) return { route: PP_ROUTE.NONE, daysSincePremium: days };
   // ROUTE C-1: 管理者が Plus を明示指定した**有効 Premium 会員**。
   // 「PaidAt が無い / 30 日未満」だけを理由に塞がない（PaidAt は 2026-07-10 の
   // 入金確認フロー刷新以降しか書かれておらず、旧会員は構造的に空のため）。

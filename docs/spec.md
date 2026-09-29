@@ -2011,6 +2011,18 @@ sent（＝provider 受理）/ skipped / failed / ジョブ状態（SENT / PARTIA
 `showPurchaseCta` は公開判定の値として確認してよいが、
 **「三連複ページに強い CTA が即座に出ること」は完成条件にしない**。
 
+## Premium Plus の販売対象は三連複会員だけ（2026-09-29 MK 確定 A）
+
+| 会員 | 予告・商品ページ・購入 CTA・案内メール・申込 |
+|---|---|
+| 三連複の権利あり（`canViewSanrenpuku`）＋ 販売資格・段階公開・受付の条件を満たす | 出す・売る（ROUTE A） |
+| 三連複の権利なし（Premium・Premium 買い切り・Light 永久無料 など）| **出さない・売らない**。eligible / 今すぐ販売可 / `UpsellTarget=plus` でも同じ |
+
+- 判定の入口: `resolvePlusRoute`（三連複なしは常に `none`）。ROUTE B / C は廃止（定数は過去データの説明用に残す）。
+- 申込 Function のゲート: `bank-transfer-application.js` が商品ページと同じ `resolveUpsellForCustomer().plus.purchaseEnabled` で判定し、副作用の前に 403（`plus_not_purchasable`）。
+- 管理一覧: 三連複なしは候補にしない。販売資格が設定済みの人だけ「三連複の権利が無いため売れない」と出して残す。
+- テスト: `src/lib/premiumPlus/plusSanrenpukuOnly.test.mjs` ほか（`check:safety`）。
+
 ## Premium Plus 購入件数の系列（2026-09-29 MK 確定）
 
 | 系列 | 期間 | 何を数えたか | 扱い |

@@ -35,6 +35,9 @@ const MEMBER = {
   'Email': 'synthetic@example.invalid', '氏名': 'テスト',
   'プラン': 'Premium Sanrenpuku', 'Status': 'active', '有効期限': '2099-12-31',
   'SanrenpukuPaidAt': '2020-01-01T00:00:00.000Z',
+  // 三連複の買い切り権。Plus は三連複会員だけが買える（2026-09-29 MK 決定 A）ので、
+  // 入金確認で プラン が書き換わっても権利が残る形にしておく（ここではクーポンの判定を確かめる）
+  'LifetimeSanrenpuku': true,
   'PremiumPlusEligibility': 'eligible', 'PremiumPlusReleaseOverride': 'phase4',
   // ⚠️ 販売停止中は申込自体ができない（403）。実際の流れは
   //    「停止中にクーポンを取得 → MK が再募集を開始（＝販売再開）→ 申し込む」

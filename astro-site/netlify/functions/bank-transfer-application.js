@@ -42,6 +42,7 @@ import { recordPaymentApplication } from '../../src/lib/payments/paymentFunnelSe
 import { makeRedisCmd } from '../../src/lib/premiumPlus/premiumPlusFunnelServer.js';
 import { createOrderStore, recordOrderOnApplication } from '../../src/lib/premiumPlus/premiumPlusOrderService.js';
 import { normalizeSalePaused, PP_SALE_PAUSE_FIELDS } from '../../src/lib/premiumPlus/premiumPlusRelease.js';
+import { resolveUpsellForCustomer } from '../../src/lib/upsell/upsellTarget.js';
 
 /**
  * 検証済みセッション（ak_session Cookie）から Customers の Email を引く。
@@ -375,6 +376,43 @@ exports.handler = async (event, context) => {
         };
       }
     }
+    // ── Premium Plus: 購入できる会員かを**サーバーで**確認する（2026-09-29 MK 決定 A）──────
+    // 画面（商品ページの 404 / CTA 非表示）は URL 直打ち・古いタブ・フォームの直接 POST で回避できる。
+    // **申込を止められるのはここだけ**なので、商品ページと**同じ単一源**
+    // （resolveUpsellForCustomer().plus.purchaseEnabled）で判定する。ここに条件を書き足さない。
+    //   - 三連複の権利が無い / 販売資格なし / 段階公開前 / 停止中 / 受付外 → 申込を受け付けない
+    //   - 会員レコードを読めない・特定できない → 受け付けない（fail closed。Plus の申込だけを止める）
+    // メール送信・Airtable・注文台帳・計測のどれにも触れる前に打ち切る（副作用ゼロ）。
+    if (isPremiumPlusOrder) {
+      let plusPurchasable = false;
+      try {
+        if (plusCustomerFields) {
+          const up = resolveUpsellForCustomer({
+            fields: plusCustomerFields,
+            nowMs: Date.now(),
+            fallbackAnchor: process.env.PREMIUM_PLUS_FUNNEL_ANCHOR,
+          });
+          plusPurchasable = up && up.plus && up.plus.purchaseEnabled === true;
+        }
+      } catch (e) {
+        plusPurchasable = false;
+      }
+      if (!plusPurchasable) {
+        console.warn('🚫 [bank-transfer] Premium Plus 申込を拒否（購入できる会員ではない）:', {
+          recordFound: Boolean(plusCustomerFields),
+        });
+        return {
+          statusCode: 403,
+          headers,
+          body: JSON.stringify({
+            error: '現在お申し込みを受け付けていません。',
+            code: 'plus_not_purchasable',
+            sideEffects: 'none',
+          }),
+        };
+      }
+    }
+
     // ── クーポン検証（**副作用ゼロの地点で行う**）───────────────────
     // ⚠️ 本人が couponId を**明示的に選んだ**申込で検証に失敗したときは、
     //    黙って通常価格へ落として受理してはいけない。

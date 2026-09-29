@@ -1,5 +1,10 @@
 # Premium Plus 販売対象と段階公開（ROUTE A / B × 販売資格 × PHASE 1〜4）
 
+> ⚠️ **2026-09-29 MK 決定 A: ROUTE B（Premium 加入 30 日）と ROUTE C（管理者の明示指定・会員ランク不問）は廃止。**
+> Premium Plus は三連複の権利を持つ会員（ROUTE A）にだけ表示・販売する。以下の ROUTE B / C の記述は過去の設計の記録。
+> 正本は `docs/spec.md`「Premium Plus の販売対象は三連複会員だけ」。
+
+
 `/premium-plus-v2/`（商品ページ）への導線を、**販売してよいと管理者が判断した会員に対してだけ、
 時間差で開いていく**方式。購入直後に ¥68,000 の購入 CTA を見せない。
 

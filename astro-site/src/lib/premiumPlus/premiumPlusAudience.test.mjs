@@ -131,11 +131,10 @@ test('ROUTE B: Premium 29 日 + eligible → まだ Plus 対象外', () => {
   assert.equal(r.showPurchaseCta, false);
 });
 
-test('ROUTE B: Premium 30 日 + eligible → Plus 段階公開へ進む', () => {
+test('三連複なしの Premium 30 日 + eligible でも Plus は開かない（2026-09-29 MK 決定 A: Plus は三連複会員だけ）', () => {
   const r = routeB({ premiumPaidAtMs: daysAgo(PREMIUM_30D_DAYS) });
-  assert.equal(r.route, PP_ROUTE.PREMIUM_30D);
-  assert.equal(r.allowed, true);
-  assert.equal(r.daysSincePremium, PREMIUM_30D_DAYS);
+  assert.equal(r.route, PP_ROUTE.NONE);
+  assert.equal(r.allowed, false);
 });
 
 test('ROUTE B: Premium 30 日 + review / blocked → 購入 CTA なし', () => {
@@ -147,11 +146,11 @@ test('ROUTE B: Premium 30 日 + review / blocked → 購入 CTA なし', () => {
   }
 });
 
-test('ROUTE B: Premium 60 日 + eligible → 正常（PHASE 4 まで進む）', () => {
+test('三連複なしの Premium 60 日 + eligible でも購入 CTA・申込は出ない（2026-09-29 MK 決定 A: Plus は三連複会員だけ）', () => {
   const r = routeB({ premiumPaidAtMs: daysAgo(60) });
-  assert.equal(r.route, PP_ROUTE.PREMIUM_30D);
-  assert.equal(r.phase, PP_PHASE.SALE);
-  assert.equal(r.showPurchaseCta, true);
+  assert.equal(r.showPurchaseCta, false);
+  assert.equal(r.purchaseEnabled, false);
+  assert.equal(r.showProductPage, false);
 });
 
 test('ROUTE B: Premium が無効（期限切れ等）なら 30 日超でも対象外', () => {
@@ -183,26 +182,24 @@ test('route 切替: Premium 30 日超でも Sanrenpuku 購入済なら ROUTE A �
   assert.equal(r.daysSincePremium, null, 'ROUTE A では Premium 経過日数を使わない');
 });
 
-test('route 切替: ROUTE B 中に Sanrenpuku を購入すると ROUTE A へ移り二重にならない', () => {
+test('route 切替: 三連複を買うと初めて ROUTE A が開く（それまでは none）（2026-09-29 MK 決定 A: Plus は三連複会員だけ）', () => {
   const before = resolvePremiumPlusRelease({
     hasSanrenpuku: false, premiumActive: true, premiumPaidAtMs: daysAgo(40),
     eligibility: PP_ELIGIBILITY.ELIGIBLE, nowMs: NOW,
   });
-  assert.equal(before.route, PP_ROUTE.PREMIUM_30D);
-
+  assert.equal(before.route, PP_ROUTE.NONE);
   const after = resolvePremiumPlusRelease({
     hasSanrenpuku: true, sanrenpukuPaidAtMs: NOW, premiumActive: true, premiumPaidAtMs: daysAgo(40),
     eligibility: PP_ELIGIBILITY.ELIGIBLE, nowMs: NOW,
   });
   assert.equal(after.route, PP_ROUTE.SANRENPUKU);
-  assert.notEqual(before.route, after.route);
-  // route は常に単一値（両方が同時に立つ構造にしない）
-  assert.ok([PP_ROUTE.SANRENPUKU, PP_ROUTE.PREMIUM_30D, PP_ROUTE.NONE].includes(after.route));
 });
 
-test('resolvePlusRoute: 単体でも同じ優先順位', () => {
+test('resolvePlusRoute: 三連複保有者だけが route を持つ（2026-09-29 MK 決定 A: Plus は三連複会員だけ）', () => {
   assert.equal(resolvePlusRoute({ hasSanrenpuku: true, premiumActive: true, premiumPaidAtMs: daysAgo(99), nowMs: NOW }).route, PP_ROUTE.SANRENPUKU);
-  assert.equal(resolvePlusRoute({ hasSanrenpuku: false, premiumActive: true, premiumPaidAtMs: daysAgo(30), nowMs: NOW }).route, PP_ROUTE.PREMIUM_30D);
+  assert.equal(resolvePlusRoute({ hasSanrenpuku: false, premiumActive: true, premiumPaidAtMs: daysAgo(30), nowMs: NOW }).route, PP_ROUTE.NONE);
+  assert.equal(resolvePlusRoute({ hasSanrenpuku: false, premiumActive: true, premiumPaidAtMs: daysAgo(99), nowMs: NOW, adminPlusTarget: true }).route, PP_ROUTE.NONE);
+  assert.equal(resolvePlusRoute({ hasSanrenpuku: false, premiumActive: false, nowMs: NOW, adminPlusAuthorized: true }).route, PP_ROUTE.NONE);
   assert.equal(resolvePlusRoute({ hasSanrenpuku: false, premiumActive: false, premiumPaidAtMs: daysAgo(99), nowMs: NOW }).route, PP_ROUTE.NONE);
 });
 
@@ -240,9 +237,10 @@ test('anchor: blocked 解除直後は PHASE 1 から段階的に見せる（late
   assert.equal(r.daysSincePurchase, 0);
 });
 
-test('anchor: ROUTE B は Premium 加入日を anchor に使う', () => {
+test('anchor: 三連複なしの Premium は route が開かないので anchor も持たない（2026-09-29 MK 決定 A: Plus は三連複会員だけ）', () => {
   const r = routeB({ premiumPaidAtMs: daysAgo(40) });
-  assert.equal(r.anchorMs, daysAgo(40));
+  assert.equal(r.anchorMs, null);
+  assert.equal(r.allowed, false);
 });
 
 // ── 予告文言（route ごとの文脈）───────────────────────────────
@@ -277,16 +275,16 @@ test('アダプタ: LifetimeSanrenpuku=true → ROUTE A（Premium 期限切れ�
   assert.equal(r.route, PP_ROUTE.SANRENPUKU);
 });
 
-test('アダプタ: 通常 Premium（有効・三連複なし）→ ROUTE B の材料が揃う', () => {
+test('アダプタ: 通常 Premium（有効・三連複なし）は eligible でも route が開かない（2026-09-29 MK 決定 A: Plus は三連複会員だけ）', () => {
   const m = resolvePlusMemberFromFields(
     { 'プラン': 'Premium', 'PlanType': 'Annual', 'Status': 'active', '有効期限': FUTURE, 'PaidAt': new Date(daysAgo(40)).toISOString() },
     { nowMs: NOW }
   );
   assert.equal(m.hasSanrenpuku, false);
   assert.equal(m.premiumActive, true);
-  assert.equal(m.premiumPaidAtMs, daysAgo(40));
   const r = resolvePremiumPlusRelease({ ...m, eligibility: PP_ELIGIBILITY.ELIGIBLE, nowMs: NOW });
-  assert.equal(r.route, PP_ROUTE.PREMIUM_30D);
+  assert.equal(r.route, PP_ROUTE.NONE);
+  assert.equal(r.purchaseEnabled, false);
 });
 
 test('アダプタ: PremiumPlusEligibility / EligibleAt を読む', () => {
