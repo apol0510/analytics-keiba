@@ -2036,6 +2036,7 @@ sent（＝provider 受理）/ skipped / failed / ジョブ状態（SENT / PARTIA
 - 判定の単一源: `src/lib/premiumPlus/premiumPlusOrders.js`（純粋）／I/O と順番: `premiumPlusOrderService.js`／外部 I/O: `premiumPlusOrderDeps.js`。
 - fail closed: 注文が無い・会員が一致しない・操作者名なし・処理中（ロック）・台帳を読めない → 何もしない。
 - 二重計上しない: 注文の状態（`confirmed` 以降は確定不可）＋ ロック（`SET NX EX 120`）＋ 計測の orderKey（1 注文 1 回）。
+- 管理操作の計測待ちは 8 秒（`ORDER_METRIC_TIMEOUT_MS`）。顧客ページ用の 700ms では本番で必ず要修復になった（2026-09-29 実操作確認）。途中で関数が止まっても確定は保存済みで、「修復」で再実行できる。
 - 影響範囲: Customers・プラン・tier・権利・`PaymentConfirmed` / `Requested*` には書かない。クーポン予約台帳（`PromotionalOffers` の Plus 予約行）だけを更新する。
 - 注文台帳ができる前（〜2026-09-29 反映前）の申込には注文が無い＝この画面では確定できない（推測で作らない）。
 - rollback: 機能ごと戻すなら PR を revert。個々の誤操作は「取消」「確認を取消」で戻す（履歴は注文に残る）。Redis の `ak:pp:orders:v1` は Plus 専用で他機能は読まない。

@@ -15,7 +15,7 @@
 | 2 | 是正 4「転換履歴の計測」| **本番反映（#634 `b8ecce2f`）**。Customers に `PremiumConvertedFrom` / `PremiumConvertedAt` を作成済み（既存値 0 件）。本番の実 Light 会員 18 名で読み取りのみの試算: 転換時に `Light/Monthly` 4 名・`Light/Monthly（期限切れ）` 14 名と記録される。**最初の実際の転換で記録されるかは scheduled-checks `premium-conversion-first-record-2026` が 2026-09-30〜12-31 に毎日自動確認**（読み取り専用トークン `AIRTABLE_READONLY_TOKEN`・analytics-keiba ベースの data.records:read のみ・書き込みは 403 を確認）|
 | 3 | 是正 1「月払い更新導線」: 期限前・失効後の案内を月払い会員へ | **MK 決定 1-B（2026-09-29）→ 実装 PR 作成（Light 月払い 期限前・失効後リマインド）**。対象 9 名（有効 4・失効 30 日以内 3・30 日超 2）。本番は `LIGHT_RENEWAL_REMINDER_MODE` 未設定のまま（merge 後に dry-run → live）|
 | 4 | SEO: `/free/` から日付ページへの導線・レース名で辿れるページ | 設計判断あり → 提案 |
-| 6 | Premium Plus 購入件数の他商品混入（MK 決定 A）＋ 購入確定の地点（MK 決定 B・2026-09-29）| A は #649 `d31c09ed` 本番反映（旧系列は参考値・読まない）。B（Plus 管理画面の「入金確認」＝ Plus 専用の注文台帳）を実装 PR。正本 `spec.md`「Premium Plus の入金確認（Plus 専用の注文）」|
+| 6 | Premium Plus 購入件数の他商品混入（MK 決定 A）＋ 購入確定の地点（MK 決定 B・2026-09-29）| **本番反映・実操作確認済み**: A #649 `d31c09ed`、B #650 `bf972fef`。2026-09-29 本番の管理画面で運営者本人のテスト注文を 入金確認（2 段階）→ 要修復 → 修復 → 新系列ちょうど 1 件・再確定は already_confirmed・会員不一致は拒否 → 確認を取消で 0 件 → テスト注文削除、「9/29 からの新しい集計」注記を目視。env `PP_ORDER_CANARY_ENABLED` は unset 済み。実操作で計測が 700ms を超え要修復になったため管理操作の待ち上限を 8 秒に（本 PR）。本物の Plus 注文は 0 件（販売停止中）|
 | 5 | 決済摩擦の計測（pricing → 申込開始 → 報告 → 入金確認のどこで落ちるか）| **本番反映（#644 `8de927bd`・2026-09-29）・本番 API 200/認可なし 403 を確認**: GA4 `application_submitted` 1 件 vs 入金確認 4 件で GA4 が欠けることを実測 → サーバー側で申込受理・入金確認・報告→確認の日数・確認待ち件数を Redis に記録（Airtable schema 変更なし）。正本 `astro-site/docs/GA4_CONVERSION_FUNNEL.md` §10 |
 
 **着手中の並行作業**: 1（read-only 調査まで完了。結果は下）。

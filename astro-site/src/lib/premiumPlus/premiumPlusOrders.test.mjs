@@ -267,3 +267,12 @@ test('【重要】テスト注文は実注文と衝突せず、訂正で計上�
   await cancelOrder({ store, deps, orderId: OID, actor: 'MK', reason: 'x', nowMs: T0 });
   assert.equal((await deleteCanaryOrder({ store, env, orderId: OID, nowMs: T0 })).code, 'not_canary');
 });
+
+test('管理画面の計測待ちは顧客ページ用の 700ms ではなく長い上限（本番で 700ms を超えて要修復になった）', async () => {
+  const { ORDER_METRIC_TIMEOUT_MS, makeOrderDeps } = await import('./premiumPlusOrderDeps.js');
+  const { RECORD_TIMEOUT_MS } = await import('./premiumPlusFunnelServer.js');
+  assert.ok(ORDER_METRIC_TIMEOUT_MS >= 5000 && ORDER_METRIC_TIMEOUT_MS > RECORD_TIMEOUT_MS);
+  const src = read('./premiumPlusOrderDeps.js');
+  assert.equal((src.match(/timeoutMs: ORDER_METRIC_TIMEOUT_MS/g) || []).length, 2);
+  assert.equal(typeof makeOrderDeps({}).recordPurchase, 'function');
+});
