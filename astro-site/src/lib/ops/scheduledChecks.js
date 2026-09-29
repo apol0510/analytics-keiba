@@ -16,7 +16,7 @@
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /** 実装済みの確認の種類（kind）。ここに無い kind は登録できない */
-export const KNOWN_KINDS = Object.freeze(['gsc-date-archive', 'airtable-premium-conversions', 'airtable-light-renewal-outcomes', 'payment-funnel-first-record', 'premium-plus-first-order', 'premium-plus-offer-outcome']);
+export const KNOWN_KINDS = Object.freeze(['gsc-date-archive', 'airtable-premium-conversions', 'airtable-light-renewal-outcomes', 'payment-funnel-first-record', 'premium-plus-first-order', 'premium-plus-offer-outcome', 'airtable-premium-renewal-outcomes']);
 
 export const REQUIRED_FIELDS = Object.freeze(['id', 'title', 'kind', 'runFrom', 'runUntil', 'trigger', 'compare', 'record', 'onFailure']);
 

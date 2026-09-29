@@ -56,7 +56,7 @@ export const CANDIDATE_FORMULA = "AND(OR(LOWER({プラン})='light',LOWER({プ�
 
 const esc = (s) => String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 
-function airtable({ KEY, BASE, fetchImpl }) {
+function airtable({ KEY, BASE, fetchImpl, Err = LightRenewalError }) {
   const h = { Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' };
   const base = `https://api.airtable.com/v0/${BASE}`;
   return {
@@ -64,14 +64,14 @@ function airtable({ KEY, BASE, fetchImpl }) {
       const out = [];
       let offset;
       for (let page = 0; ; page += 1) {
-        if (page >= MAX_PAGES) throw new LightRenewalError(`too_many_pages:${table}`); // 打ち切らない
+        if (page >= MAX_PAGES) throw new Err(`too_many_pages:${table}`); // 打ち切らない
         const u = new URL(`${base}/${encodeURIComponent(table)}`);
         if (formula) u.searchParams.set('filterByFormula', formula);
         (fields || []).forEach((f) => u.searchParams.append('fields[]', f));
         if (offset) u.searchParams.set('offset', offset);
         // eslint-disable-next-line no-await-in-loop -- ページ送り
         const res = await fetchImpl(u, { headers: h });
-        if (!res.ok) throw new LightRenewalError(`airtable_http_${res.status}:${table}`);
+        if (!res.ok) throw new Err(`airtable_http_${res.status}:${table}`);
         // eslint-disable-next-line no-await-in-loop
         const j = await res.json();
         out.push(...(j.records || []));
@@ -82,7 +82,7 @@ function airtable({ KEY, BASE, fetchImpl }) {
     async get(table, id) {
       const res = await fetchImpl(`${base}/${encodeURIComponent(table)}/${id}`, { headers: h });
       if (res.status === 404) return null;
-      if (!res.ok) throw new LightRenewalError(`airtable_http_${res.status}:${table}`);
+      if (!res.ok) throw new Err(`airtable_http_${res.status}:${table}`);
       return res.json();
     },
     async upsertDelivery(fields) {
@@ -90,10 +90,10 @@ function airtable({ KEY, BASE, fetchImpl }) {
         method: 'PATCH', headers: h,
         body: JSON.stringify({ performUpsert: { fieldsToMergeOn: ['DeliveryKey'] }, records: [{ fields }], typecast: true }),
       });
-      if (!res.ok) throw new LightRenewalError(`delivery_upsert_http_${res.status}`);
+      if (!res.ok) throw new Err(`delivery_upsert_http_${res.status}`);
       const j = await res.json();
       const rec = (j.records || [])[0];
-      if (!rec || !rec.id) throw new LightRenewalError('delivery_upsert_no_id');
+      if (!rec || !rec.id) throw new Err('delivery_upsert_no_id');
       return rec;
     },
     async patchDelivery(id, fields) {
@@ -139,30 +139,58 @@ export function buildRecentContact(rows, ownKeys) {
 function bump(obj, k) { obj[k] = (obj[k] || 0) + 1; }
 
 /**
- * 実行する。
+ * 商品ごとの差分（対象判定・本文・配信の名前空間）。流れ（読み取り → 再判定 → 予約 → 配信行 → 送信）は共通。
+ * 2026-09-29: Premium 月払いへ同じ考え方を適用するため、Light の実装から差分だけを外へ出した。
+ * ⚠️ Light の挙動は変えない（LIGHT_PROFILE は元の値そのまま・既存テストで固定）。
+ */
+export const LIGHT_PROFILE = Object.freeze({
+  campaignId: LIGHT_RENEWAL_CAMPAIGN_ID,
+  version: LIGHT_RENEWAL_VERSION,
+  campaignType: LIGHT_RENEWAL_CAMPAIGN_TYPE,
+  candidateFormula: CANDIDATE_FORMULA,
+  customerFields: CUSTOMER_FIELDS,
+  evaluateCandidate,
+  stillSendable,
+  deliveryKeyFor,
+  claimKeyFor,
+  render: renderLightRenewalEmail,
+  jobPrefix: 'lr',
+  offNotice: 'off（LIGHT_RENEWAL_REMINDER_MODE 未設定）。何もしていません。',
+  ErrorClass: LightRenewalError,
+});
+
+/**
+ * 実行する（Light 月払い）。
  * @param {{mode: string, env: object, nowMs?: number, fetchImpl?: Function, redisCmd?: Function|null,
  *          maxSends?: number}} input
  */
-export async function runLightRenewal({
-  mode, env, nowMs = Date.now(), fetchImpl = fetch, redisCmd = null, maxSends = MAX_SENDS_PER_RUN,
+export function runLightRenewal(input) {
+  return runRenewalReminder({ ...input, profile: LIGHT_PROFILE });
+}
+
+/** 共通の実行（profile で商品を切り替える） */
+export async function runRenewalReminder({
+  profile, mode, env, nowMs = Date.now(), fetchImpl = fetch, redisCmd = null, maxSends = MAX_SENDS_PER_RUN,
 }) {
+  const P = profile;
+  const Err = P.ErrorClass;
   const summary = {
     mode, today: jstDate(nowMs), candidates: 0, planned: { pre: 0, post: 0 }, excludedByReason: {},
     sent: 0, failed: 0, skippedByReason: {},
   };
-  if (mode === MODE.OFF) return { ...summary, notice: 'off（LIGHT_RENEWAL_REMINDER_MODE 未設定）。何もしていません。' };
+  if (mode === MODE.OFF) return { ...summary, notice: P.offNotice };
 
   const KEY = env.AIRTABLE_API_KEY;
   const BASE = env.AIRTABLE_BASE_ID;
-  if (!KEY || !BASE) throw new LightRenewalError('airtable_not_configured');
-  const at = airtable({ KEY, BASE, fetchImpl });
+  if (!KEY || !BASE) throw new Err('airtable_not_configured');
+  const at = airtable({ KEY, BASE, fetchImpl, Err });
 
   // 1-2) 候補と今日の段
-  const rows = await at.list('Customers', { formula: CANDIDATE_FORMULA, fields: CUSTOMER_FIELDS });
+  const rows = await at.list('Customers', { formula: P.candidateFormula, fields: P.customerFields });
   const planned = [];
   for (const r of rows) {
     summary.candidates += 1;
-    const ev = evaluateCandidate(r.fields, nowMs);
+    const ev = P.evaluateCandidate(r.fields, nowMs);
     if (!ev.eligible) { bump(summary.excludedByReason, ev.reason); continue; }
     summary.planned[ev.stage] += 1;
     planned.push({
@@ -171,7 +199,7 @@ export async function runLightRenewal({
       name: r.fields['氏名'] || '',
       cycle: ev.cycle,
       stage: ev.stage,
-      deliveryKey: deliveryKeyFor({ recordId: r.id, cycle: ev.cycle, stage: ev.stage }),
+      deliveryKey: P.deliveryKeyFor({ recordId: r.id, cycle: ev.cycle, stage: ev.stage }),
     });
   }
   if (mode === MODE.DRY_RUN) return { ...summary, notice: 'dry-run。送信も書き込みもしていません。' };
@@ -179,10 +207,10 @@ export async function runLightRenewal({
 
   // 3) 送信前の材料（読めなければ 1 通も送らない）
   const SG = env.SENDGRID_API_KEY;
-  if (!SG) throw new LightRenewalError('sendgrid_not_configured');
-  if (typeof redisCmd !== 'function') throw new LightRenewalError('redis_not_configured');
+  if (!SG) throw new Err('sendgrid_not_configured');
+  if (typeof redisCmd !== 'function') throw new Err('redis_not_configured');
   const provider = await fetchProviderSuppression({ apiKey: SG, fetchImpl, now: nowMs });
-  if (!provider.ok) throw new LightRenewalError('provider_suppression_unavailable');
+  if (!provider.ok) throw new Err('provider_suppression_unavailable');
   // EmailBlacklist は**宛先ぶんだけ**名指しで読む（全件は読まない）
   let blRecords = [];
   try {
@@ -195,7 +223,7 @@ export async function runLightRenewal({
       }));
     }
   } catch { blRecords = null; }
-  if (!blRecords) throw new LightRenewalError('blacklist_unavailable');
+  if (!blRecords) throw new Err('blacklist_unavailable');
   const blocked = new Set(buildBlacklistEmailSet(blRecords));
   for (const r of blRecords) {
     const e = String(r?.fields?.Email || '').trim().toLowerCase();
@@ -219,7 +247,7 @@ export async function runLightRenewal({
     // eslint-disable-next-line no-await-in-loop -- 送信直前に読み直す
     const fresh = await at.get('Customers', p.recordId);
     const f = (fresh && fresh.fields) || null;
-    const again = stillSendable(p, f, nowMs);
+    const again = P.stillSendable(p, f, nowMs);
     if (!again.ok) { bump(summary.skippedByReason, again.reason); continue; }
     const unsubscribed = new Set(f.UnsubscribedAnalyticsKeiba === true ? [p.email] : []);
     const suspended = new Set(['suspended', 'inactive', 'banned', 'disabled']
@@ -233,22 +261,22 @@ export async function runLightRenewal({
     // 予約（SET NX）。結果が分からなければ送らない
     let claim;
     // eslint-disable-next-line no-await-in-loop
-    try { claim = await redisCmd(['SET', claimKeyFor(p.deliveryKey), 'sending', 'NX']); } catch { claim = undefined; }
-    if (claim === undefined) throw new LightRenewalError('redis_claim_unknown');
+    try { claim = await redisCmd(['SET', P.claimKeyFor(p.deliveryKey), 'sending', 'NX']); } catch { claim = undefined; }
+    if (claim === undefined) throw new Err('redis_claim_unknown');
     if (claim !== 'OK') { bump(summary.skippedByReason, 'already_claimed'); continue; }
-    const release = async () => { try { await redisCmd(['DEL', claimKeyFor(p.deliveryKey)]); } catch { /* 次回 NX で止まる側に倒れる */ } };
+    const release = async () => { try { await redisCmd(['DEL', P.claimKeyFor(p.deliveryKey)]); } catch { /* 次回 NX で止まる側に倒れる */ } };
 
     let row;
     try {
       // eslint-disable-next-line no-await-in-loop
       row = await at.upsertDelivery({
         DeliveryKey: p.deliveryKey,
-        CampaignType: LIGHT_RENEWAL_CAMPAIGN_TYPE,
+        CampaignType: P.campaignType,
         EmailType: 'campaign',
         StepNumber: STEP_NUMBER[p.stage],
         RecipientEmail: p.email,
         CustomerRecordId: p.recordId,
-        ScheduledEmailJobId: `lr-${p.cycle}-${p.stage}`,
+        ScheduledEmailJobId: `${P.jobPrefix}-${p.cycle}-${p.stage}`,
         Status: 'queued',
         QueuedAt: new Date(nowMs).toISOString(),
         Metadata: JSON.stringify({ cycle: p.cycle, stage: p.stage }),
@@ -262,9 +290,9 @@ export async function runLightRenewal({
     const args = buildCampaignCustomArgs({
       delivery: {
         recordId: row.id, deliveryKey: p.deliveryKey, customerRecordId: p.recordId,
-        campaignType: LIGHT_RENEWAL_CAMPAIGN_TYPE, status: 'queued',
+        campaignType: P.campaignType, status: 'queued',
       },
-      customerRecordId: p.recordId, campaignId: LIGHT_RENEWAL_CAMPAIGN_ID, campaignVersion: String(LIGHT_RENEWAL_VERSION),
+      customerRecordId: p.recordId, campaignId: P.campaignId, campaignVersion: String(P.version),
     });
     if (!args.ok) {
       // eslint-disable-next-line no-await-in-loop
@@ -274,7 +302,7 @@ export async function runLightRenewal({
       summary.failed += 1; continue;
     }
 
-    const mail = renderLightRenewalEmail({ stage: p.stage, cycle: p.cycle, name: p.name });
+    const mail = P.render({ stage: p.stage, cycle: p.cycle, name: p.name });
     const unsubscribeUrl = buildUnsubscribeUrl({ email: p.email, env });
     const html = applyUnsubscribeUrl(mail.html, unsubscribeUrl);
     const text = applyUnsubscribeUrl(mail.text, unsubscribeUrl);
@@ -309,7 +337,7 @@ export async function runLightRenewal({
       // eslint-disable-next-line no-await-in-loop
       await at.patchDelivery(row.id, { Status: 'sent', SentAt: at2, ...(messageId ? { ProviderMessageId: messageId } : {}) });
       // eslint-disable-next-line no-await-in-loop
-      try { await redisCmd(['SET', claimKeyFor(p.deliveryKey), 'sent']); } catch { /* NX 予約は残っている */ }
+      try { await redisCmd(['SET', P.claimKeyFor(p.deliveryKey), 'sent']); } catch { /* NX 予約は残っている */ }
       summary.sent += 1;
     } else {
       // eslint-disable-next-line no-await-in-loop

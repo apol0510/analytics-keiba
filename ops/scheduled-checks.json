@@ -120,6 +120,36 @@
       },
       "record": "GitHub Issue「[自動測定] premium-plus-offer-2026-09-29-outcome」に段ごとの件数と前段比",
       "onFailure": "計測を読めない（開封・到達が null）は失敗 Issue と翌日再試行（0 件とは書かない）。2026-10-20 まで未完了なら期限切れを追記"
+    },
+    {
+      "id": "premium-renewal-first-send-2026",
+      "title": "Premium 月払い 期限前・失効後リマインドが本番で送られたか（live 化後の最初の送信記録）",
+      "kind": "airtable-premium-renewal-outcomes",
+      "runFrom": "2026-09-30",
+      "runUntil": "2026-11-30",
+      "trigger": "毎日 10:00 JST（scheduled-checks.yml）。PREMIUM_RENEWAL_REMINDER_MODE=live（2026-09-29）以降、最初の送信記録が CampaignDeliveries に入るまで毎日確認",
+      "compare": {
+        "since": "2026-09-29",
+        "baseline": "反映時点の送信記録 0 件。Premium 月払い: 有効 1 名・7/1 以降の期限切れ 3 名（2026-09-28 実測）",
+        "definition": "CampaignDeliveries の premium-renewal:v1 送信行（会員 × 周期）。1 件以上で成功。0 件の間は待機中（no_reminder_sent_yet）"
+      },
+      "record": "GitHub Issue「[自動測定] premium-renewal-first-send-2026」（label: scheduled-check）",
+      "onFailure": "送信記録 0 件（対象の窓に入る会員がいない）は待機中 Issue を更新して翌日再確認。トークン未設定・認証失敗は赤＋最小作業。2026-11-30 まで 0 件なら期限切れを追記"
+    },
+    {
+      "id": "premium-renewal-outcomes-2026",
+      "title": "Premium 月払いリマインドの成果（更新率・復帰率）",
+      "kind": "airtable-premium-renewal-outcomes",
+      "runFrom": "2026-11-10",
+      "runUntil": "2026-12-31",
+      "trigger": "毎日 10:00 JST（scheduled-checks.yml）。最初の送信から失効後 30 日が経ち、結論が出た周期が 1 つ以上になった日に記録して完了",
+      "compare": {
+        "since": "2026-09-29",
+        "requireDecided": true,
+        "baseline": "是正前（7/1〜9/28）: Premium 月払いの期限切れ 3 名・更新 0（2026-09-28 実測。リマインドなし）"
+      },
+      "record": "GitHub Issue「[自動測定] premium-renewal-outcomes-2026」に更新率・復帰率の表",
+      "onFailure": "送信 0 件・結論前は待機中（翌日再確認）。トークン異常は赤＋最小作業。2026-12-31 まで結論が出なければ期限切れを追記"
     }
   ]
 }
