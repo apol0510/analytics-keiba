@@ -52,6 +52,15 @@
 > **この節は完成するまで `docs/progress.md` の先頭に置く。** 個別キャンペーンの
 > 2 通・3 通を配り切っても**完了にしない**。他の作業を差し込むときも、この節を下へ動かさない。
 
+## 🗑️ computer 取り込みに prune を追加（2026-10-01・会場単位の異常を下流に残さない）
+
+- **背景**: `importComputer.js` は shared から取得して保存するだけで、shared から消えた computer（例: 2026-09-21 開催中止の中山）を
+  local（`/dark-horse-picks/` の表示元）から消す経路が無かった（keiba-data-shared-admin progress 2026-09-20 別タスク候補 3）。
+  9/21 は手作業で消した。2026-10-01 時点で shared に無い local computer は 0 件（実測）。
+- **変更**: 取り込み日の `${date}-*.json` のうち shared に無いものを削除する。shared の月ディレクトリ一覧を**取得できたときだけ**（404 は消さない）。
+  1 日 1 カテゴリ `PRUNE_LIMIT_PER_DATE`（6）件を超えたら消さずに FAIL。workflow の `git add src/data/computer/` が削除も stage する。
+- **test**: `importComputer.test.mjs` 9〜13 を追加し `check:safety` に組込み。safety-check の paths に `importComputer.js` を追加。
+
 ## 🛡️ JRA 予想 import を会場単位 fail-closed に変更（2026-09-30 MK 決定）
 
 - **事象**: 2026-09-21 中山が開催中止（9/22 へ順延）となり computer にだけ残った。中山 132 頭が「racebook 未対応 ci≥45」となって

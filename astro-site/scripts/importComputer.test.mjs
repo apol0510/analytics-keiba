@@ -5,7 +5,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fetchComputerForDate } from './importComputer.js';
+import { fetchComputerForDate, fetchComputerListingForDate, planComputerPrune, PRUNE_LIMIT_PER_DATE } from './importComputer.js';
 import { createSharedClient, SHARED_FETCH_CODES } from './lib/sharedFetch.mjs';
 
 const SECRET = 'ghp_THIS_IS_A_TEST_SECRET_TOKEN_should_never_leak';
@@ -107,4 +107,31 @@ test('8. token・Bearer が error へ漏れない', async () => {
     const hay = `${e.message}\n${e.stack}`;
     return !hay.includes(SECRET) && !/Bearer\s/i.test(hay);
   });
+});
+
+// ── prune（shared から消えた computer を local からも消す・2026-09-30）──
+test('9. listing 404 → listed:false（prune しない）/ 200 で当日 0 件 → listed:true', async () => {
+  const c404 = clientWith(() => mkRes(404, 'nf'));
+  assert.deepEqual(await fetchComputerListingForDate(CAT, DATE, c404), { listed: false, files: [] });
+  const cOther = clientWith((url) => (pathOf(url) === dir ? mkRes(200, [listing[2]]) : mkRes(404, 'nf')));
+  assert.deepEqual(await fetchComputerListingForDate(CAT, DATE, cOther), { listed: true, files: [] });
+});
+
+test('10. 9/21 再現: shared は阪神だけ → local の中山だけ消す（他日付・他ファイルは触らない）', () => {
+  const d = '2026-09-21';
+  const stale = planComputerPrune({ date: d, listed: true, sharedNames: [`${d}-HAN.json`], localNames: [`${d}-HAN.json`, `${d}-NAK.json`, '2026-09-20-NAK.json', 'README.md'] });
+  assert.deepEqual(stale, [`${d}-NAK.json`]);
+});
+
+test('11. 一覧を取得できていなければ何も消さない', () => {
+  assert.deepEqual(planComputerPrune({ date: DATE, listed: false, sharedNames: [], localNames: [`${DATE}-TOK.json`] }), []);
+});
+
+test('12. shared に当日 0 件（一覧は取得済み）→ 当日の local は消す（上限内）', () => {
+  assert.deepEqual(planComputerPrune({ date: DATE, listed: true, sharedNames: [], localNames: [`${DATE}-TOK.json`, `${DATE}-KYO.json`] }), [`${DATE}-KYO.json`, `${DATE}-TOK.json`]);
+});
+
+test('13. 上限を超える prune は消さずに FAIL', () => {
+  const many = Array.from({ length: PRUNE_LIMIT_PER_DATE + 1 }, (_, i) => `${DATE}-V${i}.json`);
+  assert.throws(() => planComputerPrune({ date: DATE, listed: true, sharedNames: [], localNames: many }), /上限/);
 });

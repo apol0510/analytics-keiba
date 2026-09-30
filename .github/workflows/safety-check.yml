@@ -48,6 +48,8 @@ on:
       # 変更しても safety check が起動していなかった（2026-08-21 に判明）。
       - 'astro-site/scripts/importPrediction.js'
       - 'astro-site/scripts/importPredictionJra.js'
+      - 'astro-site/scripts/importComputer.js'
+      - 'astro-site/scripts/importComputer.test.mjs'
       - 'astro-site/scripts/importResults.js'
       - 'astro-site/scripts/importResultsJra.js'
   push:
@@ -92,6 +94,8 @@ on:
       # 変更しても safety check が起動していなかった（2026-08-21 に判明）。
       - 'astro-site/scripts/importPrediction.js'
       - 'astro-site/scripts/importPredictionJra.js'
+      - 'astro-site/scripts/importComputer.js'
+      - 'astro-site/scripts/importComputer.test.mjs'
       - 'astro-site/scripts/importResults.js'
       - 'astro-site/scripts/importResultsJra.js'
   workflow_dispatch:
