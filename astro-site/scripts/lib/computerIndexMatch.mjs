@@ -101,6 +101,8 @@ export function injectSourceComputerIndexRaceScoped(sharedJSON, venueMap, opts =
   const stats = {
     injected: 0, recentInjected: 0, nameRecovered: 0, unmatched: 0,
     ambiguous: 0, nameMismatch: 0, matchedByName: 0, uncoveredHighCi: [],
+    // 馬番重複が起きた会場（会場単位 fail-closed の判定に使う・2026-09-30）
+    ambiguousVenues: [],
   };
   if (!sharedJSON || !venueMap) return stats;
 
@@ -127,6 +129,7 @@ export function injectSourceComputerIndexRaceScoped(sharedJSON, venueMap, opts =
         if (num != null) {
           if (per.dupNumbers.has(num)) {
             stats.ambiguous++;
+            if (!stats.ambiguousVenues.includes(venueName)) stats.ambiguousVenues.push(venueName);
             onWarn(`[JOIN-FAIL] ${venueName} R${rn} 馬番${num}: computer 側で馬番重複（曖昧）。注入スキップ`, { venueName, rn, num });
             continue; // 黙って 0 にせず、注入しないことを記録
           }
@@ -245,4 +248,45 @@ export function classifyInjectionProblems(stats) {
   const ambiguous = Number(stats?.ambiguous) > 0 ? Number(stats.ambiguous) : 0;
   const ok = uncovered === 0 && ambiguous === 0;
   return { ok, staleSuspect: !ok && ambiguous === 0 && uncovered > 0, uncovered, ambiguous };
+}
+
+/**
+ * 【会場単位 fail-closed】注入結果に問題のある会場だけを外す（MK 決定 2026-09-30）。
+ *
+ * ⚠️ 2026-09-21: 中山（開催中止）が computer にだけ残り、中山の真ci>=45 が racebook 未対応となって
+ *   assertInjectionSafe が日単位で throw し、健全な阪神まで Premium 予想が未生成になった。
+ *   異常の範囲を会場単位に限定する: 問題のある会場は生成・公開対象から除外し、健全な会場は通常どおり生成する。
+ *   健全な会場が 1 つも残らなければ呼び出し側が従来どおり日単位で FAIL させる（推測補完・強制注入はしない）。
+ *
+ * 問題の判定は assertInjectionSafe と同じ（真ci>=45 の racebook 未対応・computer 馬番重複）。
+ *
+ * @returns {{ sharedJSON: object, kept: string[], excluded: Array<{ venue: string, reasons: string[] }> }}
+ */
+export function isolateUnsafeVenues(sharedJSON, stats) {
+  const reasons = new Map();
+  const add = (venue, r) => { if (!reasons.has(venue)) reasons.set(venue, []); if (!reasons.get(venue).includes(r)) reasons.get(venue).push(r); };
+  for (const u of (stats?.uncoveredHighCi || [])) add(u.venue, 'uncovered_high_ci');
+  for (const v of (stats?.ambiguousVenues || [])) add(v, 'computer_number_duplicate');
+  if (stats?.ambiguous > 0 && (stats?.ambiguousVenues || []).length === 0) add('(不明)', 'computer_number_duplicate');
+
+  const isMulti = Array.isArray(sharedJSON?.venues);
+  const venues = isMulti ? sharedJSON.venues : (sharedJSON ? [sharedJSON] : []);
+  const nameOf = (v) => v?.venue || v?.name || v?.track || null;
+  // 会場名が取れない問題（'(不明)'）があれば、どの会場が健全か判定できないので全会場を外す（fail-closed）
+  const unknown = reasons.has('(不明)');
+  const keptVenues = venues.filter((v) => !unknown && nameOf(v) && !reasons.has(nameOf(v)));
+  const excluded = [...reasons.entries()].map(([venue, rs]) => ({ venue, reasons: rs }));
+  const next = isMulti ? { ...sharedJSON, venues: keptVenues, totalVenues: keptVenues.length } : (keptVenues.length ? sharedJSON : null);
+  return { sharedJSON: next, kept: keptVenues.map(nameOf), excluded };
+}
+
+/** 除外会場（isolateUnsafeVenues の excluded）を除いた会場について、stats の安全条件を検証する。 */
+export function assertInjectionSafeExcept(stats, excludedVenues, opts = {}) {
+  const skip = new Set(excludedVenues);
+  const rest = {
+    ...stats,
+    uncoveredHighCi: (stats.uncoveredHighCi || []).filter((u) => !skip.has(u.venue)),
+    ambiguous: (stats.ambiguousVenues || []).some((v) => !skip.has(v)) ? stats.ambiguous : 0,
+  };
+  assertInjectionSafe(rest, opts);
 }

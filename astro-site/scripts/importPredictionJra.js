@@ -14,7 +14,7 @@
  *   KEIBA_DATA_SHARED_TOKEN: keiba-data-shared 読取用トークン（必須・匿名 fallback 禁止）
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import crypto from 'crypto';
@@ -40,6 +40,8 @@ import {
   buildRaceScopedComputerMap,
   injectSourceComputerIndexRaceScoped,
   assertInjectionSafe,
+  assertInjectionSafeExcept,
+  isolateUnsafeVenues,
   classifyInjectionProblems,
   parseRaceNumber,
   toHorseNumber,
@@ -342,7 +344,19 @@ export async function resolveSharedJsonWithComputerIndex(date, category = 'jra',
     } else {
       console.error(`❌ [STALE-RETRY] ${date}: ${attempt} 回の再取得後も未対応ci≥45 が ${verdict.uncovered} 件のため中止します`);
     }
-    assertInjectionSafe(stats, { label: `IMPORT-JRA ${date}` });
+    // 【会場単位 fail-closed】問題のある会場だけを生成・公開対象から外す（MK 決定 2026-09-30）。
+    //   健全な会場が 1 つも残らなければ従来どおり日単位で FAIL（assertInjectionSafe が throw）。
+    const iso = isolateUnsafeVenues(sharedJSON, stats);
+    if (iso.kept.length === 0) {
+      assertInjectionSafe(stats, { label: `IMPORT-JRA ${date}` });
+    }
+    // 残した会場に問題が残っていないことを確かめる（残っていれば throw・推測で通さない）
+    assertInjectionSafeExcept(stats, iso.excluded.map((x) => x.venue), { label: `IMPORT-JRA ${date}` });
+    for (const x of iso.excluded) {
+      console.error(`🛑 [VENUE-ISOLATE] ${date} ${x.venue}: Premium 予想の生成・公開対象から除外（${x.reasons.join(', ')}）`);
+    }
+    console.warn(`⚠️ [VENUE-ISOLATE] ${date}: 生成 ${iso.kept.length} 会場（${iso.kept.join(', ')}）/ 除外 ${iso.excluded.length} 会場`);
+    return { sharedJSON: iso.sharedJSON, stats, excludedVenues: iso.excluded };
   }
 
   // 到達しない（ループ内で必ず return / throw する）が、無言成功を防ぐための保険
@@ -466,6 +480,10 @@ export async function importPrediction(date, venue = 'jra', client = sharedClien
     return null;
   }
   const sharedJSON = resolved.sharedJSON;
+  // 会場単位で除外した会場と理由（audit）。保存する予想 file の importAudit に残す
+  const importAudit = resolved.excludedVenues?.length
+    ? { excludedVenues: resolved.excludedVenues, rule: 'venue-scoped fail-closed (MK 2026-09-30)' }
+    : null;
 
   // 複数会場対応：venues配列がある場合
   if (sharedJSON.venues && Array.isArray(sharedJSON.venues)) {
@@ -492,7 +510,8 @@ export async function importPrediction(date, venue = 'jra', client = sharedClien
       date: sharedJSON.date,
       totalVenues: normalizedVenues.length,
       totalRaces: normalizedVenues.reduce((sum, v) => sum + v.totalRaces, 0),
-      venues: normalizedVenues
+      venues: normalizedVenues,
+      ...(importAudit ? { importAudit } : {}),
     };
 
     console.log(`✅ 正規化完了`);
@@ -506,6 +525,7 @@ export async function importPrediction(date, venue = 'jra', client = sharedClien
   // 単一会場の場合（従来フォーマット）
   console.log(`⚙️  正規化 + 調整ルール適用中...`);
   const normalizedAndAdjusted = normalizeAndAdjust(sharedJSON);
+  if (importAudit) normalizedAndAdjusted.importAudit = importAudit;
 
   console.log(`✅ 正規化完了`);
   console.log(`   - 開催日: ${normalizedAndAdjusted.date}`);
@@ -652,12 +672,22 @@ function savePrediction(date, normalizedAndAdjusted) {
       date: date,
       totalVenues: normalizedAndAdjusted.totalVenues,
       totalRaces: normalizedAndAdjusted.totalRaces,
-      venues: venuesConverted
+      venues: venuesConverted,
+      ...(normalizedAndAdjusted.importAudit ? { importAudit: normalizedAndAdjusted.importAudit } : {}),
     };
     console.log(`   ✅ ${venuesConverted.length}会場の変換完了`);
   } else {
     // 単一会場の場合（従来フォーマット）
     convertedData = convertToLegacyFormat(normalizedAndAdjusted, date);
+    if (normalizedAndAdjusted.importAudit) convertedData.importAudit = normalizedAndAdjusted.importAudit;
+  }
+
+  // 会場単位の除外を GitHub Actions の run summary にも残す（audit・値は会場名と理由のみ）
+  if (convertedData.importAudit && process.env.GITHUB_STEP_SUMMARY) {
+    try {
+      const lines = convertedData.importAudit.excludedVenues.map((x) => `- ${date} ${x.venue}: ${x.reasons.join(', ')}`);
+      appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### JRA import: 会場単位で除外\n${lines.join('\n')}\n`);
+    } catch { /* summary は補助。失敗しても import は止めない（ログと importAudit が正） */ }
   }
 
   // 【再発防止】データ検証を実行（印1ロジック適用後は警告のみ）
