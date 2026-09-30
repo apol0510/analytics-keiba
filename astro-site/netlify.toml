@@ -162,7 +162,7 @@
   schedule = "20 11 * * *"   # 毎日 20:20 JST（配信 19:00 の後に見る）
 
 [functions."cron-sendgrid-weekly"]
-  schedule = "0 3 * * *"     # 毎日 12:00 JST（枠が無ければ何もしない）
+  schedule = "5 * * * *"     # 毎時 5 分（枠が無ければ何もしない。元々の会員の list を段階的に作るため）
 
 [dev]
   command = "npm run dev"

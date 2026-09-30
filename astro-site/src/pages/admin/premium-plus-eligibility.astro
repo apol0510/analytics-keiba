@@ -5485,6 +5485,22 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     // ⚠️ 画面からは**マーケ API**を叩く（管理画面に送信基盤の固有名詞を持ち込まない）
     const MAIL_API = MKT_API;
     let mailLoading = false;
+    /**
+     * 元々の会員を週次へ足す状態（読むだけ）。
+     * 「AK が判定した人数」と「配信基盤の list 人数」が一致して初めて宛先へ足される。
+     * 読めなかった値は — で出す（0 と混同しない）。
+     */
+    function nativeWeeklyHtml(n, esc) {
+      if (!n) return '<p class="note">元々の会員: 状態を読めませんでした</p>';
+      if (!n['有効']) return '<p>元々の会員: <b>停止中（不活性）</b></p>';
+      const match = n['一致'] === true ? '一致' : n['一致'] === false ? '<b>不一致</b>' : '未確認';
+      const skip = n['除外内訳'] ? Object.entries(n['除外内訳']).map(([k, v]) => `${esc(k)} ${esc(v)}`).join(' / ') : '—';
+      return [
+        `<p>元々の会員: <b>有効</b>（枠 ${esc(n['枠'])} / 状態 <b>${esc(n['状態'])}</b>${n['理由'] ? ` / 理由 ${esc(n['理由'])}` : ''}）</p>`,
+        `<p>AK が判定した人数 <b>${esc(n['AK判定人数'])}</b> / list 人数 <b>${esc(n['list人数'])}</b>（${match}）/ 受理されなかった ${esc(n['受理されなかった'])}</p>`,
+        `<p class="note">対象外の内訳: ${skip}</p>`,
+      ].join('');
+    }
     async function mailLoad() {
       if (mailLoading) return;
       const secret = secretEl.value.trim();
@@ -5534,6 +5550,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           `<p>状態: <b>${wk['有効'] ? '有効' : '停止中（不活性）'}</b></p>`,
           `<p>次の配信: <b>${esc(jst(wk['次の配信']))}</b>（予約 ${esc(wk['予約'])} / 送信済み ${esc(wk['送信済み'])}）</p>`,
           `<p>実績: 到達 ${metric(wk['実績'], 'delivered')} / 開封 ${metric(wk['実績'], '開封')} / 配信停止 ${metric(wk['実績'], '配信停止')}</p>`,
+          nativeWeeklyHtml(wk['元々の会員'] || null, esc),
         ].join('');
 
         // ⚠️ 点検が**動いていないこと**に気づけるようにする（空欄で流さない）
