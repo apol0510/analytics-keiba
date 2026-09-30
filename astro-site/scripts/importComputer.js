@@ -15,7 +15,7 @@
  *   GITHUB_TOKEN: GitHub API レート制限緩和のため推奨
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { createSharedClient, resolveSharedToken, SharedFetchError, SHARED_FETCH_CODES } from './lib/sharedFetch.mjs';
@@ -55,15 +55,23 @@ function shiftDate(yyyymmdd, deltaDays) {
 }
 
 export async function fetchComputerForDate(category, date, client = sharedClient) {
+  return (await fetchComputerListingForDate(category, date, client)).files;
+}
+
+/**
+ * fetchComputerForDate と同じ取得に加え、shared の月ディレクトリ一覧を**取得できたか**（`listed`）を返す。
+ * `listed: false`（一覧 404）のときは prune しない（ディレクトリ不在を「全削除」と解釈しない）。
+ */
+export async function fetchComputerListingForDate(category, date, client = sharedClient) {
   const [year, month] = date.split('-');
   const dirPath = `${category}/predictions/computer/${year}/${month}`;
 
   // ディレクトリ一覧（任意）: 404 は当該カテゴリ未投入として []。
   // 認証/権限/レート/5xx/timeout は SharedFetchError として throw（fatal・匿名 fallback なし）。
   const files = await client.listDirectory(dirPath, { ref: SHARED_REF, required: false });
-  if (files === null) return [];
+  if (files === null) return { listed: false, files: [] };
   const targets = files.filter(f => f.name.startsWith(`${date}-`) && f.name.endsWith('.json'));
-  if (targets.length === 0) return [];
+  if (targets.length === 0) return { listed: true, files: [] };
 
   const results = [];
   for (const f of targets) {
@@ -71,7 +79,43 @@ export async function fetchComputerForDate(category, date, client = sharedClient
     const content = await client.fetchText(`${dirPath}/${f.name}`, { ref: SHARED_REF, required: true });
     results.push({ name: f.name, content, year, month });
   }
-  return results;
+  return { listed: true, files: results };
+}
+
+/** 1 日 1 カテゴリで prune してよい上限。超えたら消さずに FAIL させる（大量削除の誤作動を止める）。 */
+export const PRUNE_LIMIT_PER_DATE = 6;
+
+/**
+ * 【prune 計画】shared から消えた computer ファイル（例: 開催中止の会場）を local からも消す（2026-09-30）。
+ *
+ * ⚠️ 2026-09-21: 中止の中山の computer が shared から手動で消された後も、この経路には削除が無く、
+ *   local（/dark-horse-picks/ の表示元）に残りうる状態だった（keiba-data-shared-admin progress 2026-09-20 別タスク候補 3）。
+ *
+ * - 対象はその日付（`${date}-*.json`）だけ。shared 一覧を取得できた（`listed`）ときだけ計画する。
+ * - 件数が PRUNE_LIMIT_PER_DATE を超えたら消さずに throw（fail-closed）。
+ *
+ * @returns {string[]} 削除する local ファイル名
+ */
+export function planComputerPrune({ date, listed, sharedNames, localNames, limit = PRUNE_LIMIT_PER_DATE }) {
+  if (!listed) return [];
+  const keep = new Set(sharedNames);
+  const stale = localNames.filter(n => n.startsWith(`${date}-`) && n.endsWith('.json') && !keep.has(n)).sort();
+  if (stale.length > limit) {
+    throw new Error(`[${LABEL}] prune 対象が ${stale.length} 件（上限 ${limit}）: ${stale.join(', ')}。誤作動の疑いがあるため削除しない`);
+  }
+  return stale;
+}
+
+function pruneLocal(category, date, listed, sharedNames) {
+  const [year, month] = date.split('-');
+  const dir = join(projectRoot, 'src', 'data', 'computer', category, year, month);
+  if (!existsSync(dir)) return [];
+  const stale = planComputerPrune({ date, listed, sharedNames, localNames: readdirSync(dir) });
+  for (const name of stale) {
+    unlinkSync(join(dir, name));
+    console.log(`🗑️  ${category}/${year}/${month}/${name}（shared に無いため削除）`);
+  }
+  return stale;
 }
 
 function saveLocal(category, year, month, name, content) {
@@ -88,10 +132,11 @@ function saveLocal(category, year, month, name, content) {
 }
 
 async function importDate(date) {
-  const summary = { jra: 0, nankan: 0, skipped: 0 };
+  const summary = { jra: 0, nankan: 0, skipped: 0, pruned: 0 };
   for (const category of ['jra', 'nankan']) {
     try {
-      const files = await fetchComputerForDate(category, date);
+      const { listed, files } = await fetchComputerListingForDate(category, date);
+      summary.pruned += pruneLocal(category, date, listed, files.map(f => f.name)).length;
       for (const f of files) {
         const r = saveLocal(category, f.year, f.month, f.name, f.content);
         if (r.saved) {
@@ -126,15 +171,16 @@ async function main() {
   for (let i = 0; i < days; i++) dates.push(shiftDate(baseDate, -i));
 
   console.log(`📡 Importing computer JSONs for: ${dates.join(', ')}`);
-  const total = { jra: 0, nankan: 0, skipped: 0 };
+  const total = { jra: 0, nankan: 0, skipped: 0, pruned: 0 };
   for (const d of dates) {
     const s = await importDate(d);
     total.jra += s.jra;
     total.nankan += s.nankan;
     total.skipped += s.skipped;
+    total.pruned += s.pruned;
   }
   console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-  console.log(`✅ JRA: ${total.jra} files / Nankan: ${total.nankan} files / Skipped(same): ${total.skipped}`);
+  console.log(`✅ JRA: ${total.jra} files / Nankan: ${total.nankan} files / Skipped(same): ${total.skipped} / Pruned: ${total.pruned}`);
   console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
 }
 
