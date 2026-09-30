@@ -141,29 +141,27 @@ await t('1. 初回 racebook=札幌のみ・computer=3会場 → retry 後 3 会�
   assert.deepStrictEqual(waits, [STALE_JOIN_RETRY.backoffMs[0]], '待機は 1 回目の backoff のみ');
 });
 
-// 2. retry 後も racebook が不足したまま → 従来どおり FAIL（fail-closed）
-await t('2. retry 後も racebook 不足 → FAIL（未対応ci≥45 を報告）', async () => {
+// 2. retry 後も racebook が不足したまま → 【会場単位 fail-closed・MK 2026-09-30】不足会場だけ除外し、健全な札幌は生成
+//    （2026-09-21: 中止の中山が computer にだけ残り、日単位 FAIL で健全な阪神まで未生成になった）
+await t('2. retry 後も racebook 不足 → 不足会場（中京・新潟）だけ除外し札幌は生成', async () => {
   const { client, calls } = makeFakeClient([{ racebook: [SAP], computer: ALL3 }]); // 永続的に不足
   const { waits, sleepImpl } = makeSleepRecorder();
-  await assert.rejects(
-    () => resolveSharedJsonWithComputerIndex(DATE, 'jra', client, { sleepImpl }),
-    /真コンピ指数>=45 の racebook 未対応 6 件/,
-    '解消しない不足は FAIL させる',
-  );
-  assert.strictEqual(calls.attempts, STALE_JOIN_RETRY.maxRetries + 1, '初回 + maxRetries 回で打ち切る');
+  const res = await resolveSharedJsonWithComputerIndex(DATE, 'jra', client, { sleepImpl });
+  assert.deepStrictEqual(res.sharedJSON.venues.map(v => v.track || v.venue), ['札幌'], '健全な札幌だけを生成対象に残す');
+  assert.deepStrictEqual(res.excludedVenues.map(x => [x.venue, x.reasons]).sort(), [['中京', ['uncovered_high_ci']], ['新潟', ['uncovered_high_ci']]]);
+  assert.strictEqual(calls.attempts, STALE_JOIN_RETRY.maxRetries + 1, 'stale retry は従来どおり上限まで試してから会場単位で切り離す');
   assert.strictEqual(waits.length, STALE_JOIN_RETRY.maxRetries);
 });
 
 // 3. racebook は 3 会場そろっているが馬番が join しない → 真の不整合として FAIL
-await t('3. racebook は存在するが馬番 join 不一致 → FAIL', async () => {
+await t('3. racebook は存在するが馬番 join 不一致 → その会場（中京）だけ除外', async () => {
   const shiftedCHU = venue('CHU', '中京', [{ rn: 1, horses: [[7, '中京馬7', 50], [8, '中京馬8', 51], [9, '中京馬9', 52]] }]);
   const { client } = makeFakeClient([{ racebook: [shiftedCHU, NII, SAP], computer: ALL3 }]);
   const { sleepImpl } = makeSleepRecorder();
-  await assert.rejects(
-    () => resolveSharedJsonWithComputerIndex(DATE, 'jra', client, { sleepImpl }),
-    /真コンピ指数>=45 の racebook 未対応 3 件/,
-    '馬番が対応しない馬を黙って不要馬化しない',
-  );
+  const res = await resolveSharedJsonWithComputerIndex(DATE, 'jra', client, { sleepImpl });
+  // 馬番が対応しない中京は黙って不要馬化せず、会場ごと除外する。新潟・札幌は生成する
+  assert.deepStrictEqual(res.sharedJSON.venues.map(v => v.track || v.venue).sort(), ['新潟', '札幌'].sort());
+  assert.deepStrictEqual(res.excludedVenues, [{ venue: '中京', reasons: ['uncovered_high_ci'] }]);
 });
 
 // 4. computer 側が丸ごと欠落 → 既存挙動維持（注入せず PASS。FAIL させない）
@@ -208,7 +206,8 @@ await t('6. retry 回数・累計待機が上限を超えない', async () => {
 
   const { client, calls } = makeFakeClient([{ racebook: [SAP], computer: ALL3 }]);
   const { waits, sleepImpl } = makeSleepRecorder();
-  await assert.rejects(() => resolveSharedJsonWithComputerIndex(DATE, 'jra', client, { sleepImpl }));
+  const res = await resolveSharedJsonWithComputerIndex(DATE, 'jra', client, { sleepImpl });
+  assert.strictEqual(res.excludedVenues.length, 2, '上限到達後は会場単位で除外（無制限に待たない）');
   assert.strictEqual(calls.attempts, STALE_JOIN_RETRY.maxRetries + 1, '取得回数は初回 + maxRetries が上限');
   assert.strictEqual(calls.racebookList, STALE_JOIN_RETRY.maxRetries + 1, '毎回 racebook を再取得している（sleep だけの空回りではない）');
   assert.strictEqual(calls.computerList, STALE_JOIN_RETRY.maxRetries + 1, '毎回 computer も再取得している');
@@ -290,6 +289,28 @@ await t('10. racebook 内容が古い版（頭数不足）→ 再取得で完全
   assert.strictEqual(res.stats.uncoveredHighCi.length, 0);
   assert.strictEqual(res.stats.injected, 3);
   assert.strictEqual(calls.attempts, 2);
+});
+
+// 11. 【会場単位 fail-closed】1 会場の馬番重複 → その会場だけ除外・健全な会場は生成（retry しない）
+await t('11. 中京だけ computer 馬番重複 → 中京を除外し新潟・札幌は生成（retry しない）', async () => {
+  const dupCHU = venue('CHU', '中京', [{ rn: 1, horses: [[1, '中京馬1', 60], [1, '中京馬X', 55], [2, '中京馬2', 51]] }]);
+  const rbCHU = venue('CHU', '中京', [{ rn: 1, horses: [[1, '中京馬1', 60], [2, '中京馬2', 51]] }]);
+  const { client, calls } = makeFakeClient([{ racebook: [rbCHU, NII, SAP], computer: [dupCHU, NII, SAP] }]);
+  const { waits, sleepImpl } = makeSleepRecorder();
+  const res = await resolveSharedJsonWithComputerIndex(DATE, 'jra', client, { sleepImpl });
+  assert.deepStrictEqual(res.sharedJSON.venues.map(v => v.track || v.venue).sort(), ['新潟', '札幌'].sort());
+  assert.deepStrictEqual(res.excludedVenues.map(x => x.venue), ['中京']);
+  assert.ok(res.excludedVenues[0].reasons.includes('computer_number_duplicate'));
+  assert.strictEqual(calls.attempts, 1, '馬番重複は再取得しても変わらないため retry しない');
+  assert.deepStrictEqual(waits, []);
+});
+
+// 12. 全会場に問題 → 健全な会場が無いので従来どおり日単位 FAIL
+await t('12. 全会場が racebook 未対応 → 日単位で FAIL（生成しない）', async () => {
+  const shifted = (v) => venue(v.code, v.track, [{ rn: 1, horses: [[7, 'x7', 50], [8, 'x8', 51], [9, 'x9', 52]] }]);
+  const { client } = makeFakeClient([{ racebook: ALL3.map(shifted), computer: ALL3 }]);
+  const { sleepImpl } = makeSleepRecorder();
+  await assert.rejects(() => resolveSharedJsonWithComputerIndex(DATE, 'jra', client, { sleepImpl }), /racebook 未対応/);
 });
 
 console.log(`\n結果: ${pass} passed, ${fail} failed`);

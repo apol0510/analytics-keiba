@@ -4,7 +4,7 @@
  * AK のテスト規約（node + assert、CI は check:safety 集約）に従う。
  */
 import assert from 'node:assert';
-import { buildRaceScopedComputerMap, injectSourceComputerIndexRaceScoped, normalizeHorseName, parseRaceNumber, toHorseNumber, assertInjectionSafe, classifyInjectionProblems } from './computerIndexMatch.mjs';
+import { buildRaceScopedComputerMap, injectSourceComputerIndexRaceScoped, normalizeHorseName, parseRaceNumber, toHorseNumber, assertInjectionSafe, classifyInjectionProblems, isolateUnsafeVenues, assertInjectionSafeExcept } from './computerIndexMatch.mjs';
 import { isHorseNameBroken } from '../../src/utils/normalizePrediction.js';
 import { isIneligibleHorse } from '../../src/utils/osaeClassification.js';
 
@@ -215,6 +215,27 @@ t('17. classifyInjectionProblems: ambiguous を含むと staleSuspect にしな�
   assert.strictEqual(onlyDup.staleSuspect, false);
   const both = classifyInjectionProblems({ ambiguous: 1, uncoveredHighCi: [{ ci: 60 }] });
   assert.strictEqual(both.staleSuspect, false, '馬番重複を伴う場合は再取得で救済しない');
+});
+
+// 18. 【会場単位 fail-closed・2026-09-30】isolateUnsafeVenues
+t('18. isolateUnsafeVenues: 問題のある会場だけ外し、理由を残す', () => {
+  const shared = { date: 'd', venues: [{ venue: '阪神', races: [] }, { venue: '中山', races: [] }, { venue: '京都', races: [] }] };
+  const stats = { ambiguous: 1, ambiguousVenues: ['京都'], uncoveredHighCi: [{ venue: '中山', raceNumber: 1, number: 1, name: 'x', ci: 50 }, { venue: '中京', raceNumber: 1, number: 2, name: 'y', ci: 60 }] };
+  const r = isolateUnsafeVenues(shared, stats);
+  assert.deepStrictEqual(r.kept, ['阪神']);
+  assert.deepStrictEqual(r.sharedJSON.venues.map(v => v.venue), ['阪神']);
+  assert.strictEqual(r.sharedJSON.totalVenues, 1);
+  assert.deepStrictEqual(r.excluded, [
+    { venue: '中山', reasons: ['uncovered_high_ci'] }, { venue: '中京', reasons: ['uncovered_high_ci'] }, { venue: '京都', reasons: ['computer_number_duplicate'] },
+  ]);
+  assert.doesNotThrow(() => assertInjectionSafeExcept(stats, r.excluded.map(x => x.venue)));
+  assert.throws(() => assertInjectionSafeExcept(stats, ['中山']), /安全条件/);
+});
+
+t('19. isolateUnsafeVenues: 会場名の分からない馬番重複は全会場を外す（fail-closed）', () => {
+  const shared = { date: 'd', venues: [{ venue: '阪神', races: [] }] };
+  const r = isolateUnsafeVenues(shared, { ambiguous: 2, ambiguousVenues: [], uncoveredHighCi: [] });
+  assert.deepStrictEqual(r.kept, []);
 });
 
 console.log(`\n結果: ${pass} passed, ${fail} failed`);

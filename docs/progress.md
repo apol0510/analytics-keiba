@@ -52,6 +52,19 @@
 > **この節は完成するまで `docs/progress.md` の先頭に置く。** 個別キャンペーンの
 > 2 通・3 通を配り切っても**完了にしない**。他の作業を差し込むときも、この節を下へ動かさない。
 
+## 🛡️ JRA 予想 import を会場単位 fail-closed に変更（2026-09-30 MK 決定）
+
+- **事象**: 2026-09-21 中山が開催中止（9/22 へ順延）となり computer にだけ残った。中山 132 頭が「racebook 未対応 ci≥45」となって
+  `assertInjectionSafe` が日単位で throw し、**健全な阪神まで Premium 予想が未生成**になった（keiba-data-shared-admin progress 2026-09-20）。
+- **MK 決定**: 日単位 fail-closed をやめ、**会場単位 fail-closed** にする。突合異常の会場だけ Premium 予想の生成・公開対象から除外し、
+  健全な会場は通常どおり生成・公開する。異常理由と除外会場は audit に残す（共通原則: 異常の blast radius を会場単位に限定する）。
+- **実装**: `scripts/lib/computerIndexMatch.mjs` の `isolateUnsafeVenues` / `assertInjectionSafeExcept`（stats に `ambiguousVenues` を追加）と、
+  `scripts/importPredictionJra.js` の `resolveSharedJsonWithComputerIndex`。stale read の bounded retry（D: 2026-07-31）は従来どおり先に行い、
+  上限到達後（馬番重複は即時）に問題会場だけを外す。**健全な会場が 0 なら従来どおり日単位で FAIL**。推測補完・強制注入はしない。
+- **audit**: 除外会場と理由を ① ログ `[VENUE-ISOLATE]` ② 保存する日ファイルの `importAudit.excludedVenues` ③ GitHub Actions の run summary に残す。
+- **test**: `importJraStaleRetry.test.mjs`（2・3・6 を会場単位の期待値へ更新、11・12 追加）、`computerIndexMatch.test.mjs` 18・19。`npm run check:safety` 全通過。
+- 本番確認: 次の JRA 開催日（10/3・10/4）の `import-on-dispatch` で除外が起きたときに `importAudit` とログを確認する（起きなければ通常どおり全会場生成）。
+
 ## 任務（2026-09-14 MK 確定）
 
 正本 [`ENGAGEMENT_SUPPRESSION.md`](../astro-site/docs/ENGAGEMENT_SUPPRESSION.md) /
