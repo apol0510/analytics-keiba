@@ -23,8 +23,18 @@
  * 含まれていないことを CI で検査する。
  */
 
-/** エッジ保持 5 分＋その後 1 日は「古いものを返しつつ裏で更新」。 */
-export const PUBLIC_CDN_CACHE = 'public, s-maxage=300, stale-while-revalidate=86400';
+/**
+ * エッジ保持 5 分＋その後 1 日は「古いものを返しつつ裏で更新」。
+ *
+ * `durable` は 2026-10-01 に追加。無いとキャッシュがエッジ拠点ごとに分かれ、
+ * 拠点ごとの初回が毎回 SSR Function を起動していた（本番実測で
+ * `cache-status: "Netlify Durable"; fwd=bypass`）。AK は月 約16万回の起動で
+ * 無料枠 125,000 を超え、2026-08・09 の請求に Functions $25 が乗っていた。
+ * `durable` があると全拠点で 1 つのキャッシュを共有する。deploy で無効化される点は変わらない。
+ * keiba-data で 2026-06 に同じ対策を入れ効果を確認済み（keiba-data `docs/netlify-billing-incident-keiba-data.md`）。
+ * ⚠️ 削除しない（請求が $19 → $44 に戻る）。
+ */
+export const PUBLIC_CDN_CACHE = 'public, durable, s-maxage=300, stale-while-revalidate=86400';
 
 /**
  * 公開 SSR ページの応答をエッジへ載せる。

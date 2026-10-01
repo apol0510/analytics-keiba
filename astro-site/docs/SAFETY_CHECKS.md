@@ -113,6 +113,20 @@ Customers は 15,962 件。先頭 N 件だけ読んで黙って打ち切ると**
 
 検証: `npm run test:email-identity`（正本: [`EMAIL_ADDRESSES.md`](./EMAIL_ADDRESSES.md)）
 
+## ルール 8: 公開 SSR ページの CDN キャッシュは非個人化ページだけ・`durable` 必須
+
+**根拠**: AK の SSR Function 起動が月 約16万回になり、サイト単位の無料枠 125,000 を超えて
+2026-08・09 の Netlify 請求に Functions $25 が乗った（$19 → $44）。公開ページには
+`Netlify-CDN-Cache-Control` を付けていたが `durable` が無く、キャッシュがエッジ拠点ごとに分かれて
+本番でも `cache-status: "Netlify Durable"; fwd=bypass` だった（2026-10-01 実測）。
+
+- CDN キャッシュは `src/lib/cdnCache.mjs` の `setPublicCdnCache()` だけで付ける。
+  Cookie・会員判定を使うページには付けない（別の利用者へ HTML を配信し得る）
+- `PUBLIC_CDN_CACHE` から `durable` を外さない
+- 内容がリクエストに依存しない応答（例: `rss.xml`）は SSR にせず `prerender = true`
+
+検証: `npm run check:cdn-cache`
+
 ## ローカル確認コマンド
 
 ```bash
