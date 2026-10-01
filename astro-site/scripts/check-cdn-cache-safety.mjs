@@ -23,7 +23,7 @@
  */
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { join, dirname, relative } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ASTRO_SITE = join(__dirname, '..');
@@ -100,6 +100,16 @@ if (existsSync(tomlPath)) {
         '（2026-08-31 実測）、ページ側の setPublicCdnCache() を使うこと'
     );
   }
+}
+
+// ── 4. 全エッジ共有（durable）を外さない ────────────────────────
+// 無いとエッジ拠点ごとに SSR Function が起動し、Functions 無料枠 125,000/月 を超えて
+// 請求に $25 が乗る（2026-08・09 に発生。2026-10-01 に durable を追加して対策）。
+const { PUBLIC_CDN_CACHE } = await import(pathToFileURL(HELPER).href);
+if (!/(^|,\s*)durable(\s*,|$)/.test(PUBLIC_CDN_CACHE)) {
+  fail(`PUBLIC_CDN_CACHE に durable が無い（"${PUBLIC_CDN_CACHE}"）。拠点ごとに Function が起動し請求が増える`);
+} else {
+  console.log('✅ PUBLIC_CDN_CACHE は durable（全エッジで共有）');
 }
 
 if (failed) {
