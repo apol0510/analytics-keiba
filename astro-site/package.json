@@ -71,6 +71,7 @@
     "test:sanrenpuku-cta": "node --test src/lib/sanrenpuku/*.test.mjs",
     "test:pricing-tiers": "node --test src/lib/pricing/*.test.mjs",
     "test:bank-payment": "node --test src/lib/payments/*.test.mjs",
+    "test:revenue": "node --test scripts/revenueMonthly.test.mjs",
     "test:entitlements": "node --test src/lib/entitlements/*.test.mjs",
     "test:netlify-deploy": "bash ../.github/actions/netlify-deploy/tests/run-tests.sh",
     "test:dedupe": "node --test scripts/dedupeCustomers.test.mjs",

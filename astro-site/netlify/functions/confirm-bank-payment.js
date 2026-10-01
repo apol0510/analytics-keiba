@@ -298,6 +298,8 @@ exports.handler = async (event) => {
       recordId,
       planName: fields['RequestedPlan'],
       planType: fields['RequestedPlanType'],
+      // 月間売上（KAO D-158）: 申込時のサーバー確定値。承認 PATCH でクリアされる前に読んだ値を使う
+      amountYen: fields['RequestedAmount'],
       env: process.env,
       nowMs: Date.now(),
     });

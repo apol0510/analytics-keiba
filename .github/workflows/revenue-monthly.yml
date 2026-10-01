@@ -1,0 +1,52 @@
+# 月間売上の measurement（KAO D-158・kao.revenue-month/v1）
+#
+# - 毎月 1 日 09:30 JST に前月分を集計し、docs/measurements/revenue-YYYY-MM-01.json を main へ commit する。
+# - KAO はこの file を canon（origin/main）から読み、MK report の「事業成果」節に出す。
+# - 読むのは admin-payment-funnel `revenueMonth`（入金確認の件数と金額の合計・識別子なし）。読み取り専用の鍵だけを使う。
+name: Revenue monthly measurement
+
+on:
+  schedule:
+    - cron: '30 0 1 * *'   # 毎月 1 日 00:30 UTC = 09:30 JST
+  workflow_dispatch:
+    inputs:
+      month:
+        description: '対象月 YYYY-MM（省略時は JST の前月）'
+        required: false
+
+concurrency:
+  group: revenue-monthly
+  cancel-in-progress: false
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Build measurement
+        working-directory: astro-site
+        env:
+          PAYMENT_FUNNEL_READ_SECRET: ${{ secrets.PAYMENT_FUNNEL_READ_SECRET }}
+          MONTH_INPUT: ${{ github.event.inputs.month }}
+        run: |
+          MONTH="${MONTH_INPUT:-$(TZ=Asia/Tokyo date -d "$(TZ=Asia/Tokyo date +%Y-%m-01) -1 day" +%Y-%m)}"
+          node scripts/revenueMonthly.mjs --month "$MONTH" --out "../docs/measurements/revenue-${MONTH}-01.json"
+          echo "MONTH=$MONTH" >> "$GITHUB_ENV"
+
+      - name: Commit measurement
+        run: |
+          git add "docs/measurements/revenue-${MONTH}-01.json"
+          if git diff --staged --quiet; then
+            echo "⏭️  変更なし"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -m "measurement: revenue ${MONTH} (KAO D-158)"
+          git push origin HEAD:main
