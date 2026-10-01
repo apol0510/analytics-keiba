@@ -2,6 +2,7 @@
 
 | 何を待っているか | いつ・どう動くか | 人の作業 |
 |---|---|---|
+| Netlify Functions 起動数が無料枠 125,000/月 を下回るペースになること（#674 の効果）| **2026-10-06** に 1 回確認（約 6 日分で月換算。目標 < 90,000/月 ≒ 3,000/日）、**2026-10-30** の請求が $19 であること。⚠️ **自動化は未登録**: 使用量 API（`GET /api/v1/sites/{id}/usage`）は Netlify の個人トークン（アカウント全権・読み取り専用トークンが存在しない）でしか読めず、GitHub secret に置かない判断。代わりにセッション側で確認する | なし（10-30 のカード明細で $44 なら Claude へ渡す）|
 | 南関・中央 日付別恒久ページの GSC 効果測定（`seo-date-archive-2026-10`）| 2026-10-28〜11-11 毎日 10:00 JST に `scheduled-checks.yml` が自動実行し Issue へ記録（GSC 未確定なら待機中 Issue を更新して翌日再試行）| なし |
 | Light→Premium 転換履歴が本番で最初に記録されること（`premium-conversion-first-record-2026`）| 2026-09-30〜12-31 毎日 10:00 JST に自動確認。0 件の間は赤にせず Issue「[自動測定 待機中] …」を 1 つだけ更新。記録されたら「[自動測定] …」に内訳 | なし |
 | 選別配信の最終通（s1 m10）と最終監査 | 2026-09-29 19:00 JST 配信（SendGrid 予約済み）→ 09-30 朝に read-only 監査（下の常設ブロック）| なし（別セッションの最終監査 branch `ci/final-selection-audit` には触らない）|
@@ -51,6 +52,20 @@
 
 > **この節は完成するまで `docs/progress.md` の先頭に置く。** 個別キャンペーンの
 > 2 通・3 通を配り切っても**完了にしない**。他の作業を差し込むときも、この節を下へ動かさない。
+
+## 💸 Netlify Functions 超過課金（$25/月）の対策（2026-10-01・#674）
+
+- **事象**: Netlify 請求が 2026-08・09 に $19 → $44（7,146 円）。Functions の無料枠はサイト単位で 125,000/月。超えると Functions Level 1（$25）が自動で乗る。
+- **特定**: サイト別 usage を実測すると超過ペースは AK だけ（2026-09-30 開始の今期 約 25 時間で 5,590 回 ≒ 月 16 万回。他サイトは最大 月 3.5 万回）。
+  内訳の目安: scheduled functions 約 1,350 回/日（月 約 4 万）＋ SSR ページ・API。
+- **原因**: 公開 SSR ページの `Netlify-CDN-Cache-Control` に `durable` が無く、キャッシュがエッジ拠点ごとに分かれていた（本番 `cache-status: "Netlify Durable"; fwd=bypass`）。
+- **対策（#674 `0412ca0b`・本番反映 2026-10-01T08:53Z）**: `PUBLIC_CDN_CACHE` に `durable`、`rss.xml` を prerender、`check:cdn-cache` に durable 存在検査（正本 `astro-site/docs/SAFETY_CHECKS.md` ルール 8）。
+- **本番確認（2026-10-01）**: `/archive/nankan/2026/09/`・`/archive/jra/2025/03/` は 2 回目で `Netlify Durable; hit`、`/results-showcase/nankan/` も hit。
+  `/rss.xml` は静的配信（Durable 層を通らない＝Function 非経由）。会員ページ・API（`/premium-prediction/*`・`/dashboard/`・`/api/campaign.json`）は `private,no-store`・`fwd=bypass` のまま。
+- **merge 経路**: KAO MEDIUM handoff は AK で `contentAllowed: false`（D-147）のため `content_change_allowed` で REFUSED → MK が手動 merge。
+  理由と今後の扱いは `astro-site/docs/AUTONOMOUS_DELIVERY.md`「merge の経路」。
+- **再確認**: 先頭の待ち状態表（2026-10-06 使用量ペース・2026-10-30 請求額）。
+- 過去の同種事例: keiba-data（2026-04/05・`keiba-data/docs/netlify-billing-incident-keiba-data.md`）。
 
 ## 🗑️ computer 取り込みに prune を追加（2026-10-01・会場単位の異常を下流に残さない）
 
