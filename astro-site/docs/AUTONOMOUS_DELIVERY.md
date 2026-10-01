@@ -43,6 +43,26 @@ Draft PR の作成・更新 / CI 確認 / 差分確認 / 作業 branch の clean
 - DB / schema migration・schema 変更
 - **PR merge**（直前に最新 `origin/main` を取り直す）
 
+### merge の経路：AK のコード・docs 変更は人が merge する（2026-10-01 記録）
+
+Claude（対話セッション）は自分が author の PR を merge できない（harness の Merge Without Review / Self-Approval）。
+無人で merge まで進む唯一の経路は KAO の MEDIUM handoff（`fleet-medium-handoff`・KAO D-143）だが、
+**AK の設定は `allow: ["agent_policy"]`・`contentAllowed: false`**（KAO `config/fleet.yml`・D-147・2026-10-01 MK owner 決定）。
+
+| 変更の種類 | merge する主体 |
+|---|---|
+| `CLAUDE.md` 等の agent_policy だけ | KAO scheduler（verifier 全条件 true のとき自動）|
+| **それ以外（`src/` / `scripts/` / `netlify/` / `docs/` / data）** | **人（MK）**。verifier が `content_change_allowed: false` で拒否する |
+
+- 実例: PR #674（Netlify Functions 超過課金対策・2026-10-01）は CI green・secret/PII なし・conflict なしでも
+  `content_change_allowed` の 1 条件で REFUSED になり、MK が手動 merge した。
+- ⚠️ これは不具合ではなく **owner が決めた範囲**。Claude は `--content on` へ広げない（widening は owner だけ・§41）。
+- 人の merge を不要にしたい場合の owner 操作（1 回）:
+  KAO で `npm run cli -- fleet-medium-handoff-set --project analytics-keiba --enable on --required-checks netlify/analytics-keiba/deploy-preview --content on --reason "…" --as <owner>`。
+  開けた後も CI・secret / PII・conflict・post-check（本番 200）など他の条件はそのまま効く。
+- それまでの運用: PR 作成 → `fleet-medium-handoff` で verdict を確認 → content で拒否なら **merge だけを MK へ 1 操作で依頼**し、
+  merge 後の本番確認・cleanup は Claude が続ける。
+
 ### 停止するもの（実異常）
 
 - rollback 不能または復旧困難な操作
