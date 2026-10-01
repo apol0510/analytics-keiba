@@ -44,3 +44,10 @@ export async function readPaymentFunnelSummary({ env, redisCmd, days, nowMs } = 
   if (!cmd) return null;
   return createPaymentFunnelStore({ redisCmd: cmd }).summary({ days, nowMs });
 }
+
+/** 月（JST）の入金確認の件数と金額（読み取りのみ）。Redis 未設定なら null */
+export async function readPaymentFunnelMonth({ env, redisCmd, month } = {}) {
+  const cmd = redisCmd !== undefined ? redisCmd : makeRedisCmd(env);
+  if (!cmd) return null;
+  return createPaymentFunnelStore({ redisCmd: cmd }).monthSummary({ month });
+}

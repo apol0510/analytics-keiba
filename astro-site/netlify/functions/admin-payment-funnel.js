@@ -3,13 +3,14 @@
  *
  *   POST {action:'plusOfferOutcome'}                 … Plus 案内メールの成果（送信→開封→到達→注文→購入・件数のみ）
  *   POST {action:'plusOrdersSummary'}                … Premium Plus 注文と新系列の購入の突き合わせ（件数のみ）
+ *   POST {action:'revenueMonth', month:'YYYY-MM'}   … 月（JST）の入金確認の件数と金額の合計（KAO D-158・識別子なし）
  *   POST {action:'summary', days?:number}  … 期間内の申込受理・入金確認の件数（商品別・日別）、
  *                                              報告→入金確認の日数分布、いま入金確認待ちの件数と経過日数
  * 認可: x-admin-secret（admin-marketing と同じ secret）または x-funnel-read-secret（自動確認用・この API 専用）。
  *       識別子・アドレスは返さない。
  * 正本: src/lib/payments/paymentFunnel.js
  */
-import { readPaymentFunnelSummary } from '../../src/lib/payments/paymentFunnelServer.js';
+import { readPaymentFunnelMonth, readPaymentFunnelSummary } from '../../src/lib/payments/paymentFunnelServer.js';
 import { makeRedisCmd } from '../../src/lib/premiumPlus/premiumPlusFunnelServer.js';
 import { createOrderStore } from '../../src/lib/premiumPlus/premiumPlusOrderService.js';
 import { FUNNEL_KEY } from '../../src/lib/premiumPlus/premiumPlusFunnelStore.js';
@@ -40,6 +41,17 @@ export const handler = async (event) => {
   if (!okAdmin && !okRead) return json(403, { error: 'Forbidden' });
   let req;
   try { req = JSON.parse(event.body || '{}'); } catch { return json(400, { error: 'Invalid JSON' }); }
+  // 月間売上（KAO D-158）: 入金確認の件数と金額の合計（識別子なし・読み取りのみ）
+  if (req.action === 'revenueMonth') {
+    if (!/^20\d{2}-(0[1-9]|1[0-2])$/.test(String(req.month || ''))) return json(400, { error: 'month must be YYYY-MM' });
+    try {
+      const m = await readPaymentFunnelMonth({ env: process.env, month: req.month });
+      if (!m) return json(503, { error: 'measurement_unavailable', sideEffects: 'none' });
+      return json(200, { ...m, sideEffects: 'none' });
+    } catch {
+      return json(500, { error: 'read_failed', sideEffects: 'none' });
+    }
+  }
   // Premium Plus 注文の監視用（件数だけ・識別子なし・読み取りのみ）
   if (req.action === 'plusOrdersSummary') {
     const cmd = makeRedisCmd(process.env);

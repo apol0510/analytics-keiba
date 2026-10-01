@@ -20,7 +20,9 @@
  * | `ak:pay:funnel:v1:seen` | HASH | `YYYYMMDD|event|recordId|plan` → 1（同じ日の同じ申込を二重に数えない）|
  *
  * event: `application_received`（報告を受理）/ `payment_confirmed`（入金確認で昇格）/
- *        `confirm_lead`（報告→入金確認の日数。planType の位置に日数の区分）
+ *        `confirm_lead`（報告→入金確認の日数。planType の位置に日数の区分）/
+ *        `payment_confirmed_yen`（入金確認した金額の合計・円。KAO D-158 の月間売上）/
+ *        `payment_confirmed_priced`（金額が記録できた入金確認の件数。金額記録の網羅率に使う）
  *
  * ⚠️ 計測の失敗で申込・昇格を止めない（呼び出し側で握りつぶす）。
  * ⚠️ Premium Plus の既存ファネル（`ak:pp:funnel:v1`）とは別の名前空間。あちらの集計を変えない。
@@ -37,7 +39,16 @@ export const PAYMENT_FUNNEL_EVENT = Object.freeze({
   RECEIVED: 'application_received',
   CONFIRMED: 'payment_confirmed',
   LEAD: 'confirm_lead',
+  CONFIRMED_YEN: 'payment_confirmed_yen',
+  CONFIRMED_PRICED: 'payment_confirmed_priced',
 });
+
+/** 1 件の入金額として受け付ける上限（円）。これを超える・整数でない・0 以下は記録しない（誤入力で売上を水増ししない） */
+export const MAX_CONFIRMED_YEN = 10_000_000;
+export function funnelAmountYen(raw) {
+  const n = typeof raw === 'number' ? raw : Number(String(raw ?? '').replace(/[,\s円¥]/g, ''));
+  return Number.isInteger(n) && n > 0 && n <= MAX_CONFIRMED_YEN ? n : null;
+}
 
 /** 閉じた語彙（これ以外は other に畳む。PII・自由文字列を入れない） */
 export const FUNNEL_PLANS = Object.freeze(['light', 'premium', 'premium-sanrenpuku', 'premium-plus', 'other']);
@@ -103,7 +114,7 @@ export function createPaymentFunnelStore({ redisCmd } = {}) {
     },
 
     /** 入金確認で昇格した（報告からの日数も記録し、確認待ちから外す） */
-    async recordConfirmation({ recordId, planName, planType, nowMs = Date.now() }) {
+    async recordConfirmation({ recordId, planName, planType, amountYen, nowMs = Date.now() }) {
       const plan = funnelPlan(planName);
       const type = funnelPlanType(planType);
       const day = jstDay(nowMs);
@@ -111,6 +122,12 @@ export function createPaymentFunnelStore({ redisCmd } = {}) {
         return { counted: false, reason: 'duplicate_today' };
       }
       await cmd(['HINCRBY', PAYMENT_FUNNEL_KEY.DAILY, dailyField(day, PAYMENT_FUNNEL_EVENT.CONFIRMED, plan, type), '1']);
+      // 金額（KAO D-158）: 申込時のサーバー確定値（RequestedAmount）。読めなければ件数だけ数える
+      const yen = funnelAmountYen(amountYen);
+      if (yen !== null) {
+        await cmd(['HINCRBY', PAYMENT_FUNNEL_KEY.DAILY, dailyField(day, PAYMENT_FUNNEL_EVENT.CONFIRMED_YEN, plan, type), String(yen)]);
+        await cmd(['HINCRBY', PAYMENT_FUNNEL_KEY.DAILY, dailyField(day, PAYMENT_FUNNEL_EVENT.CONFIRMED_PRICED, plan, type), '1']);
+      }
       let lead = null;
       if (RECORD_ID_RE.test(String(recordId || ''))) {
         const raw = await cmd(['HGET', PAYMENT_FUNNEL_KEY.OPEN, recordId]);
@@ -126,6 +143,12 @@ export function createPaymentFunnelStore({ redisCmd } = {}) {
         }
       }
       return { counted: true, plan, planType: type, lead };
+    },
+
+    /** 月（JST・'YYYY-MM'）の入金確認の件数と金額（読み取りのみ） */
+    async monthSummary({ month } = {}) {
+      const daily = (await cmd(['HGETALL', PAYMENT_FUNNEL_KEY.DAILY])) || [];
+      return summarizeMonth({ daily, month });
     },
 
     /** 集計を読む（読み取りのみ）。days 日分（JST）の件数と、確認待ちの経過日数分布 */
@@ -176,4 +199,33 @@ export function summarize({ daily, open, days = 30, nowMs = Date.now() }) {
     open: { count: openCount, byAge: openAges },
     byDay,
   };
+}
+
+/**
+ * 月（JST）の入金確認の件数と金額（純粋）。KAO D-158 の月間売上。
+ * `pricedCount < confirmedCount` なら金額が記録されなかった入金確認がある（未計上分）。
+ * `firstPricedDay` は金額の記録が始まった最初の日（それより前の入金確認は金額を持たない）。
+ */
+export function summarizeMonth({ daily, month }) {
+  if (!/^20\d{2}-(0[1-9]|1[0-2])$/.test(String(month))) throw new Error('paymentFunnel: month must be YYYY-MM');
+  const prefix = String(month).replace('-', '');
+  let confirmedCount = 0;
+  let confirmedYen = 0;
+  let pricedCount = 0;
+  let firstPricedDay = null;
+  const yenByPlan = {};
+  for (let i = 0; i + 1 < daily.length; i += 2) {
+    const [day, event, plan, second] = String(daily[i]).split('|');
+    const n = Number(daily[i + 1]) || 0;
+    if (event === PAYMENT_FUNNEL_EVENT.CONFIRMED_PRICED && (firstPricedDay === null || day < firstPricedDay)) firstPricedDay = day;
+    if (!day || !day.startsWith(prefix)) continue;
+    if (event === PAYMENT_FUNNEL_EVENT.CONFIRMED) confirmedCount += n;
+    if (event === PAYMENT_FUNNEL_EVENT.CONFIRMED_PRICED) pricedCount += n;
+    if (event === PAYMENT_FUNNEL_EVENT.CONFIRMED_YEN) {
+      confirmedYen += n;
+      const key = `${plan}/${second}`;
+      yenByPlan[key] = (yenByPlan[key] || 0) + n;
+    }
+  }
+  return { month: String(month), confirmedCount, pricedCount, confirmedYen, yenByPlan, firstPricedDay };
 }

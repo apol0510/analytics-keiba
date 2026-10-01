@@ -172,3 +172,37 @@ test('admin API は読み取り専用・secret 必須', () => {
   assert.ok(src.includes("if (!okAdmin && !okRead) return json(403"));
   assert.ok(!/recordPayment(Application|Confirmation)|HSET|HINCRBY|HDEL/.test(src));
 });
+
+// ── 月間売上（KAO D-158）: 入金確認の金額 ──────────────────────────────
+test('入金確認の金額を記録し、月の合計と網羅率を出す', async () => {
+  const { createPaymentFunnelStore, summarizeMonth, funnelAmountYen } = await import('./paymentFunnel.js');
+  const h = {};
+  const cmd = async ([op, key, field, val]) => {
+    h[key] = h[key] || {};
+    if (op === 'HSETNX') { if (h[key][field] !== undefined) return 0; h[key][field] = val; return 1; }
+    if (op === 'HINCRBY') { h[key][field] = String((Number(h[key][field]) || 0) + Number(val)); return Number(h[key][field]); }
+    if (op === 'HGET') return h[key][field] ?? null;
+    if (op === 'HDEL') { delete h[key][field]; return 1; }
+    if (op === 'HSET') { h[key][field] = val; return 1; }
+    if (op === 'HGETALL') return Object.entries(h[key] || {}).flat();
+    throw new Error(op);
+  };
+  const s = createPaymentFunnelStore({ redisCmd: cmd });
+  const oct = Date.parse('2026-10-05T03:00:00Z');
+  await s.recordConfirmation({ recordId: 'recAAAAAAAAAAAAAA', planName: 'Premium', planType: 'Annual', amountYen: 49800, nowMs: oct });
+  await s.recordConfirmation({ recordId: 'recBBBBBBBBBBBBBB', planName: 'Light', planType: 'Monthly', amountYen: '4,980', nowMs: oct });
+  await s.recordConfirmation({ recordId: 'recCCCCCCCCCCCCCC', planName: 'Light', planType: 'Monthly', amountYen: null, nowMs: oct });
+  // 同じ日の同じ確認の二重送信は金額も足さない
+  await s.recordConfirmation({ recordId: 'recAAAAAAAAAAAAAA', planName: 'Premium', planType: 'Annual', amountYen: 49800, nowMs: oct });
+  const m = await s.monthSummary({ month: '2026-10' });
+  assert.equal(m.confirmedCount, 3);
+  assert.equal(m.pricedCount, 2);
+  assert.equal(m.confirmedYen, 49800 + 4980);
+  assert.equal(m.firstPricedDay, '20261005');
+  assert.deepEqual(summarizeMonth({ daily: Object.entries(h['ak:pay:funnel:v1:daily']).flat(), month: '2026-09' }).confirmedYen, 0);
+  // 不正な金額は記録しない
+  for (const bad of [0, -1, 1.5, 'abc', 10_000_001, undefined]) assert.equal(funnelAmountYen(bad), null);
+  // 既存の集計（summary）は新しい event を数えない
+  const sum = await s.summary({ days: 30, nowMs: oct });
+  assert.equal(sum.confirmed, 3);
+});

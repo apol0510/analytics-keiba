@@ -277,6 +277,10 @@ jobs:
         working-directory: astro-site
         run: npm run test:bank-payment
 
+      - name: Verify 月間売上 measurement（KAO D-158・read-only・集計値だけ）
+        working-directory: astro-site
+        run: npm run test:revenue
+
       # 旧サイト名残のアドレス（旧 Gmail / 旧ドメイン別名）が revert・コピペで復活すると
       # 「返信が旧 Gmail へ飛ぶ」「未 verify の from で SendGrid が無音失敗する」事故に戻る。
       - name: Verify メールアドレスの単一源（旧アドレス再混入なし / support・noreply の役割固定）
