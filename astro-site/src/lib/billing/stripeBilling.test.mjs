@@ -171,3 +171,22 @@ test('支払い待ち・未完了は書かない（期限で自然に止まる�
     assert.equal(decide({ fields: {}, sub: sub({ status }), env: ENV, now: NOW }).action, 'skip');
   }
 });
+
+test('Price ID・ポータル設定は鍵のモードでコードの値を使う（env は秘密 2 つだけで足りる・Lambda 4KB 対策）', async () => {
+  const { STRIPE_IDS, stripeModeOf, portalConfigurationFor } = await import('./stripePlans.js');
+  assert.equal(stripeModeOf({ STRIPE_SECRET_KEY: 'rk_live_x' }), 'live');
+  assert.equal(stripeModeOf({ STRIPE_SECRET_KEY: 'sk_test_x' }), 'test');
+  assert.equal(stripeModeOf({}), null);
+  for (const mode of ['test', 'live']) {
+    const env = { STRIPE_SECRET_KEY: mode === 'live' ? 'sk_live_x' : 'sk_test_x' };
+    for (const p of STRIPE_PLANS) {
+      assert.match(priceIdFor(p, env), /^price_/);
+      assert.equal(planFromPriceId(priceIdFor(p, env), env).id, p.id);
+    }
+    assert.match(portalConfigurationFor(env), /^bpc_/);
+  }
+  // test と live の ID は混ざらない
+  assert.equal(planFromPriceId(STRIPE_IDS.live.prices.premium, { STRIPE_SECRET_KEY: 'sk_test_x' }), null);
+  // 鍵が無ければ何も返さない（推測しない）
+  assert.equal(priceIdFor('premium', {}), null);
+});

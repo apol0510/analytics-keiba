@@ -47,6 +47,50 @@ export const STRIPE_PLANS = Object.freeze([
   }),
 ]);
 
+/**
+ * Price ID・ポータル設定 ID（**秘密ではない**ので env に置かずコードに持つ）。
+ *
+ * ⚠️ 2026-10-02: これらを env（production）に足したところ、関数の環境変数が AWS Lambda の
+ *    上限 4KB を超え、**本番デプロイがすべて失敗**した（予想データの取込も反映されなくなった）。
+ *    env に置くのは秘密鍵と Webhook 署名鍵の 2 つだけにする。
+ *    値は `scripts/stripe-setup.mjs` が Stripe から読んで、ここと一致するかを検査する。
+ * モードは秘密鍵の種類（sk_live / rk_live = live、それ以外 = test）で決める。
+ */
+export const STRIPE_IDS = Object.freeze({
+  test: Object.freeze({
+    prices: Object.freeze({
+      'premium': 'price_1ULyOHQ9vgG2OwCpuQjaTdvX',
+      'premium-jra': 'price_1ULyOIQ9vgG2OwCpf5ymCFVL',
+      'premium-nankan': 'price_1ULyOIQ9vgG2OwCpy1sWO9uH',
+    }),
+    portalConfiguration: 'bpc_1ULyOJQ9vgG2OwCpKk6LwQyB',
+  }),
+  live: Object.freeze({
+    prices: Object.freeze({
+      'premium': 'price_1UM2FmLeaWtQI3ZUPyh3e7DW',
+      'premium-jra': 'price_1UM2FmLeaWtQI3ZU5srPM50x',
+      'premium-nankan': 'price_1UM2FnLeaWtQI3ZU6uW8mvzH',
+    }),
+    portalConfiguration: 'bpc_1UM2FoLeaWtQI3ZUwjrypDK6',
+  }),
+});
+
+/** 秘密鍵の種類から 'live' | 'test'（鍵が無ければ null）*/
+export function stripeModeOf(env = {}) {
+  const k = String(env.STRIPE_SECRET_KEY ?? '').trim();
+  if (/^(sk|rk)_live_/.test(k)) return 'live';
+  if (/^(sk|rk)_test_/.test(k)) return 'test';
+  return null;
+}
+
+/** ポータル設定 ID（env の上書きがあればそれ）*/
+export function portalConfigurationFor(env = {}) {
+  const override = String(env.STRIPE_PORTAL_CONFIGURATION_ID ?? '').trim();
+  if (override) return override;
+  const mode = stripeModeOf(env);
+  return mode ? STRIPE_IDS[mode].portalConfiguration : null;
+}
+
 /** Stripe の秘密鍵・Webhook 署名鍵の env 名 */
 export const STRIPE_ENV = Object.freeze({
   SECRET_KEY: 'STRIPE_SECRET_KEY',
@@ -59,12 +103,14 @@ export function planById(id) {
   return STRIPE_PLANS.find((p) => p.id === key) || null;
 }
 
-/** plan の Price ID を env から引く。未設定は null（推測しない） */
+/** plan の Price ID。env の上書き（STRIPE_PRICE_*）があればそれ、無ければ鍵のモードの既定値。鍵も無ければ null */
 export function priceIdFor(plan, env = {}) {
   const p = typeof plan === 'string' ? planById(plan) : plan;
   if (!p) return null;
   const v = String(env[p.priceEnv] ?? '').trim();
-  return v || null;
+  if (v) return v;
+  const mode = stripeModeOf(env);
+  return mode ? STRIPE_IDS[mode].prices[p.id] || null : null;
 }
 
 /**

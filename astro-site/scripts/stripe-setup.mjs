@@ -22,7 +22,7 @@ import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import Stripe from 'stripe';
-import { STRIPE_PLANS } from '../src/lib/billing/stripePlans.js';
+import { STRIPE_PLANS, STRIPE_IDS } from '../src/lib/billing/stripePlans.js';
 
 export const WEBHOOK_EVENTS = [
   'checkout.session.completed',
@@ -162,9 +162,22 @@ const priceIds = await ensurePrices();
 const portalId = await ensurePortal(priceIds);
 const webhookSecret = await ensureWebhook();
 
-console.log('Netlify env:');
+// ⚠️ Price ID・ポータル設定 ID は env に入れない（関数の環境変数が Lambda の 4KB を超え、
+//    2026-10-02 に本番デプロイが全部失敗した）。コード（stripePlans.js の STRIPE_IDS）と一致するかだけ検査する。
+const mode = live ? 'live' : 'test';
+const mismatch = [];
+for (const plan of STRIPE_PLANS) {
+  if (priceIds[plan.id] && priceIds[plan.id] !== STRIPE_IDS[mode].prices[plan.id]) mismatch.push(`${plan.id}: Stripe=${priceIds[plan.id]} / コード=${STRIPE_IDS[mode].prices[plan.id]}`);
+}
+if (portalId && portalId !== STRIPE_IDS[mode].portalConfiguration) mismatch.push(`portal: Stripe=${portalId} / コード=${STRIPE_IDS[mode].portalConfiguration}`);
+if (mismatch.length) {
+  console.log(`✖ stripePlans.js の STRIPE_IDS.${mode} を次の値に更新して PR を出してください（ID は秘密ではない）:`);
+  for (const m of mismatch) console.log(`  ${m}`);
+} else {
+  console.log(`✔ Price・ポータル設定の ID はコード（STRIPE_IDS.${mode}）と一致`);
+}
+
+console.log('Netlify env（秘密の 2 つだけ）:');
 netlifySet('STRIPE_SECRET_KEY', key);
-for (const plan of STRIPE_PLANS) if (priceIds[plan.id]) netlifySet(plan.priceEnv, priceIds[plan.id]);
-if (portalId) netlifySet('STRIPE_PORTAL_CONFIGURATION_ID', portalId);
 if (webhookSecret) netlifySet('STRIPE_WEBHOOK_SECRET', webhookSecret);
 console.log(apply ? '完了（env の反映には再デプロイが必要）' : '下見のみ（--apply で書き込み）');

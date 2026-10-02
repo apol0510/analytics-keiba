@@ -10,6 +10,7 @@
 import {
   getStripe, corsHeaders, readSessionRecordId, resolveSiteOrigin,
 } from '../../src/lib/billing/stripeRuntime.js';
+import { portalConfigurationFor } from '../../src/lib/billing/stripePlans.js';
 
 exports.handler = async (event) => {
   const env = process.env;
@@ -38,7 +39,8 @@ exports.handler = async (event) => {
       locale: 'ja',
     };
     // scripts/stripe-setup.mjs が作る AK 用の設定（プラン切替・期間末解約）。未設定なら Stripe の既定
-    if (/^bpc_/.test(String(env.STRIPE_PORTAL_CONFIGURATION_ID || ''))) params.configuration = env.STRIPE_PORTAL_CONFIGURATION_ID;
+    const conf = portalConfigurationFor(env);
+    if (/^bpc_/.test(String(conf || ''))) params.configuration = conf;
     const portal = await stripe.billingPortal.sessions.create(params);
     return reply(200, { url: portal.url });
   } catch (e) {

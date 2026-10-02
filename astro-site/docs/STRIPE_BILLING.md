@@ -71,10 +71,13 @@ Live は `--context production --site https://analytics.keiba.link` と `stripe-
 
 | env | 内容 |
 |---|---|
-| `STRIPE_SECRET_KEY` | 秘密鍵（context ごと: production=live / deploy-preview=test）|
+| `STRIPE_SECRET_KEY` | 秘密鍵（context ごと: production=live / deploy-preview=test）。**鍵の種類で live / test を決める** |
 | `STRIPE_WEBHOOK_SECRET` | Webhook 署名鍵（スクリプトが作成時に設定）|
-| `STRIPE_PRICE_PREMIUM` / `_JRA` / `_NANKAN` | Price ID |
-| `STRIPE_PORTAL_CONFIGURATION_ID` | ポータル設定（期間末解約・会場版 ⇄ Premium の切替）|
+
+⚠️ **env はこの 2 つだけ**。Price ID・ポータル設定 ID は秘密ではないので `stripePlans.js` の `STRIPE_IDS`（test / live）に持つ。
+2026-10-02 に 6 つを production の env に入れたところ、関数の環境変数が **AWS Lambda の上限 4KB を超えて本番デプロイが全部失敗**した
+（09:01〜10:17 の自動取込も未反映。env を外して復旧）。`STRIPE_PRICE_*` / `STRIPE_PORTAL_CONFIGURATION_ID` は上書き用として読むが、通常は設定しない。
+production の env を増やすときは本番ビルドが通ることを先に確かめる（env だけ入れて Build Hook で 1 回ビルド）。
 
 Stripe ダッシュボードで人が行うのは: アカウント作成・本人確認・入金口座・（Live）領収書メールの ON。
 
