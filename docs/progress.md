@@ -19,7 +19,8 @@
 | 自動検知 | scheduled-checks `stripe-live-activation-2026`（#679 `fd478947`・毎日 10:00 JST・GET /v1/account を読むだけ）。有効化で Issue「[自動測定] stripe-live-activation-2026」→ #677 merge・本番スモークへ。GitHub secret `STRIPE_ACCOUNT_READ_KEY` 登録済み。Actions 上の検証実行で審査中を正しく判定 |
 | 事業サイト analytics.tirol.link（2026-10-02 決定）| repo `apol0510/analytics-tirol-link`（private・CI green）・Netlify `analytics-tirol-link`（GitHub 連携・`analytics-tirol-link.netlify.app` で 6 ページ 200・build/README は 404）・custom domain 設定済み。390/320px で横スクロールなし・secret/PII scan 0 |
 | 🚨 本番デプロイ失敗（2026-10-02 09:01〜10:17）| Stripe の env 6 件を production に入れた結果、関数 env が Lambda 4KB 上限を超え本番ビルドが全失敗（自動取込 3 件と #679・#683 が未反映）。env を外して Build Hook で復旧（10:17 ready・/refund/ 反映確認）。恒久対策: Price/ポータル ID はコード、env は秘密 2 つだけ（10:21 本番ビルドで収まることを確認）|
-| 人の作業 | ① Cloudflare（tirol.link）に CNAME `analytics` → `analytics-tirol-link.netlify.app`（DNS only）② Xserver で `analytics@tirol.link` を作成 ③ 公開確認後に Stripe のビジネス URL を analytics.tirol.link へ・コンプライアンス確認へ回答 |
+| 事業サイト 公開（2026-10-02）| DNS（Cloudflare CNAME・DNS only）・`analytics@tirol.link`（Xserver）作成済み。HTTPS: Let's Encrypt（〜2026-12-31）・http→https 301・6 ページ + robots/sitemap 200・build/README 404・リンク切れ 0・320/390px 横スクロールなし。`analytics@tirol.link` へテスト 1 通 → SendGrid `delivered`（Xserver 受理）|
+| 人の作業 | Stripe ダッシュボードでビジネス URL を `https://analytics.tirol.link/`・サポートメールを `analytics@tirol.link` に変更し、コンプライアンス確認へ回答（自分のアカウントの事業情報は API から変更できない）|
 | 次（有効化後）| merge #677 → 本番デプロイ → 本番スモーク（/pricing/・Checkout URL 発行・Webhook 署名 400・portal 401）→ cleanup |
 | rollback | STRIPE_BILLING.md §5 |
 
