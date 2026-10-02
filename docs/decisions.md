@@ -1,3 +1,11 @@
+# 2026-10-02（追記 4）— analytics.tirol.link は data.tirol.link と同じ一般的な事業者サイトにする（MK 確定・追記 3 を改訂）
+
+- 追記 3 で本文に載せた個別サービスの内容・料金表を削除し、TIROL DATA LABO の一般的な事業者サイトにする（data.tirol.link の構成・粒度）。
+- 公開ページで競馬固有の語を使わない。再混入は analytics-tirol-link の tests が検査。正本は同 repo の docs/SPEC.md・DECISIONS.md。
+- 本番反映済み（analytics-tirol-link #1 `2c062b1`・HTTPS・全ページ 200・禁止語 0・リンク切れ 0・320/390px 横スクロールなし）。
+
+---
+
 # 2026-10-02（追記 3）— Stripe 登録用の事業サイト analytics.tirol.link を新設／14 日返金保証を廃止（MK 確定）
 
 ## 決定

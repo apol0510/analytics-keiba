@@ -27,15 +27,12 @@
 
 ## 事業サイト analytics.tirol.link（2026-10-02 MK 確定 / Stripe 登録用）
 
-| 項目 | 仕様 |
-|---|---|
-| URL・連絡先 | https://analytics.tirol.link/ ・ analytics@tirol.link（repo `apol0510/analytics-tirol-link`・Netlify `analytics-tirol-link`）|
-| ブランド | tirol data labo / Analytics。サイト名・見出し・主要コピーに「競馬」「KEIBA」を使わない |
-| 一致させるもの | 本文のサービス内容（中央競馬・南関東地方競馬の AI 解析レポート・情報提供のみ・購入代行なし）、サービス名 KEIBA Analytics、価格（Premium ¥4,980／中央版・南関版 ¥2,980／年払い ¥49,800／買い切り ¥78,000）、支払方法、解約・返金条件。**実態を偽装・省略しない** |
-| 必須ページ | トップ・特商法・利用規約・プライバシー・返金キャンセル・サポート（未完成・ダミー・工事中なし）|
-| Stripe 登録 URL | data.tirol.link → analytics.tirol.link への差し替えは、本番公開と必要情報の確認の**後**に行う |
-| 検査 | analytics-tirol-link の `tests/site.test.mjs`（CI）／AK の `stripeDisplayPolicy.guard.test.mjs` |
+**data.tirol.link と同じ位置づけ・構成の一般的な事業者サイト（TIROL DATA LABO）**。正本は repo `apol0510/analytics-tirol-link` の `docs/SPEC.md`。
 
+- 公開ページに競馬固有の語（競馬・KEIBA・JRA・南関・競馬場名・中央版／南関版・予想・料金表 等）を使わない（同 repo の tests が検査）
+- 特商法は一般事業表現（価格は「各商品・サービスの詳細ページに表示する価格」）。返金・キャンセルは本 spec の確定仕様（14 日返金なし）
+- 連絡先 analytics@tirol.link。analytics.keiba.link（サービス画面）とは役割を分離する
+- Stripe 登録 URL の data.tirol.link → analytics.tirol.link 差し替えは公開確認後（MK）
 
 # AK の商品・価格の事業境界（2026-09-28 MK 確定 / **AK と KI を混同しない**）
 
