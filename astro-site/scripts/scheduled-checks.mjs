@@ -56,7 +56,7 @@ function humanActionFor(code, check) {
     case 'no_reminder_sent_yet':
       return 'なし（まだ Light 月払いリマインドを送っていない）。翌日の定期実行で自動的に再確認する。';
     case 'stripe_charges_not_enabled':
-      return 'Stripe の審査待ち。Stripe ダッシュボードの「対応が必要」・Stripe からのメール（コンプライアンス確認）に回答する（本人のみ可能）。有効になれば翌日の定期実行で自動的に完了を記録する。';
+      return 'なし（Stripe 側の審査中。必要情報は送信済み＝2026-10-02 MK 確認）。有効になれば翌日の定期実行で自動的に完了を記録し、#677 の merge・本番確認へ進む。';
     case 'stripe_key_missing':
     case 'stripe_auth_failed':
       return 'GitHub の repository secret `STRIPE_ACCOUNT_READ_KEY`（AK 本番 Stripe の鍵）を登録・更新する（Claude が設定できる）。';
