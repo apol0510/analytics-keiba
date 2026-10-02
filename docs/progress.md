@@ -15,6 +15,7 @@
 | 11/04 と 11/03 の 1 日差 | 意図どおり: 有効中 = 支払い済み期間末（11/02 12:00 JST）+ 猶予 2 日 → 11/04、終了後 = 猶予を外して期間末より前に切れない最小の暦日 → 11/03（有効期限は 09:00 JST に切れる。11/02 だと 3 時間早く切れる）。gate・ログイン判定とも同じ解釈 |
 | 未実施（人の操作が要る）| テストカードでの実決済（決済完了画面→ログインリンク）・ポータル画面の目視 |
 | Stripe（本番）| 2026-10-02 `stripe-setup.mjs --context production --apply` 完了（Price 3 件・ポータル設定・Webhook `https://analytics.keiba.link/.netlify/functions/stripe-webhook`・production env 6 件）。鍵は制限付き鍵（rk_live）で読み取り系は全 OK |
+| Stripe 商品名（2026-10-02 MK 確定）| test / live の Product 名を Analytics Premium（中央＋南関）／中央／南関 に API で更新（ID・Price・金額・metadata 不変を確認）。単一源 productName・再発防止テスト |
 | CTA 横断監査（2026-10-02 MK 確定）| 実装・テスト固定済み（Light 購入 CTA は /pricing/ tier 1 の更新用だけ・キャンペーン割引から Light 除外・申込 Function で Light 新規/Premium 月払いを 409・Premium 会員は購入 CTA の代わりに三連複へ・AccessControl の Light 文言）。**Deploy Preview 実測**: Light / Light - Campaign / Premium Monthly の申込は 409（Customers 書き込み 0）・/light-campaign/ → /pricing/ 301・/pricing/ 状態別（未ログイン=3 プラン+無料 / 有料 Light=3 プラン+Light 更新 / 永久無料 Light=3 プラン（Light 購入なし）/ Premium 契約中=購入 CTA なし+三連複案内 / Premium 期限切れ=3 プラン）|
 | 販売開始条件（2026-10-02 MK 確定）| 審査完了・Payout は待たず、live の決済受付が可能なら開始。2026-10-02 実測: charges_enabled=false・card inactive・payouts_enabled=true・live Checkout 不可 → **決済受付不可のため merge 保留継続**（ビジネス URL は analytics.tirol.link へ変更済み）|
 | **待ち（実異常回避）** | **Stripe 審査中**（disabled_reason=under_review・card_payments inactive・pending_verification 1 件=other_compliance_inquiry）。live の Checkout 作成は `Your account cannot currently make live charges` で失敗。**この状態で merge すると月額が誰も買えなくなるため merge を保留** |

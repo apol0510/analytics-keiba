@@ -120,7 +120,7 @@ exports.handler = async (event) => {
       locale: 'ja',
       client_reference_id: record?.id || undefined,
       metadata,
-      subscription_data: { metadata, description: `KEIBA Analytics ${plan.label}` },
+      subscription_data: { metadata, description: plan.productName },
       allow_promotion_codes: false,
       // ⚠️ custom_text（決済ボタン下の追加文言）は付けない（2026-10-02 MK 確定の表示方針）。
       //    プラン名・月額・定期購読であることは Stripe が標準で表示する。解約条件は FAQ / legal に記載する。

@@ -67,6 +67,15 @@ STRIPE_KEY_FILE=~/.analytics-keiba-ops/stripe-test-key \
 ```
 
 Live は `--context production --site https://analytics.keiba.link` と `stripe-live-key`（`sk_live_`）。
+
+**商品名だけを揃える**（Product 名は `stripePlans.js` の `productName` が単一源。Price・Webhook・ポータル・env には触れない）:
+
+```bash
+STRIPE_KEY_FILE=~/.analytics-keiba-ops/stripe-live-key node <worktree>/astro-site/scripts/stripe-setup.mjs \
+  --context production --site https://analytics.keiba.link --products-only [--apply]
+```
+
+⚠️ `--products-only` を付けずに `--apply` すると Webhook を作り直し、署名鍵が変わる（env 更新と再デプロイが要る）。
 スクリプトは test 鍵を production に、live 鍵を production 以外に入れると止まる。
 
 | env | 内容 |

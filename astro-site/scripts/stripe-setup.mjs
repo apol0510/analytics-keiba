@@ -44,6 +44,8 @@ function arg(name) {
   return i >= 0 ? process.argv[i + 1] : null;
 }
 const apply = process.argv.includes('--apply');
+// Product 名だけを stripePlans.js の productName に揃える（Price・Webhook・ポータル・env には一切触れない）
+const productsOnly = process.argv.includes('--products-only');
 const context = arg('context');
 const site = String(arg('site') || '').replace(/\/$/, '');
 
@@ -88,7 +90,7 @@ async function ensurePrices() {
     console.log(`＋ Price ${plan.id}: ¥${plan.amountYen}/月 を作成${apply ? '' : '（下見）'}`);
     if (!apply) continue;
     const product = await stripe.products.create({
-      name: `KEIBA Analytics ${plan.label}`,
+      name: plan.productName,
       metadata: { ak_plan: plan.id },
       statement_descriptor: 'KEIBA ANALYTICS',
     });
@@ -158,7 +160,27 @@ async function ensureWebhook() {
 const acct = await stripe.accounts.retrieve();
 console.log(`Stripe: ${live ? 'LIVE' : 'TEST'} / アカウント ${acct.settings?.dashboard?.display_name || acct.business_profile?.name || '(名称未設定)'} / Netlify context: ${context} / ${apply ? '書き込み' : '下見'}`);
 
+/** 既存 Price の Product 名を productName に揃える（名前以外は変えない）*/
+async function syncProductNames() {
+  for (const plan of STRIPE_PLANS) {
+    const found = await stripe.prices.list({ lookup_keys: [LOOKUP_KEY[plan.id]], active: true, limit: 1, expand: ['data.product'] });
+    const price = found.data[0];
+    if (!price) { console.log(`- ${plan.id}: Price が無い（--apply で作成）`); continue; }
+    const product = price.product;
+    if (product.name === plan.productName) { console.log(`✔ ${plan.id}: Product 名は一致（${plan.productName}）`); continue; }
+    console.log(`＋ ${plan.id}: Product 名「${product.name}」→「${plan.productName}」${apply ? '' : '（下見）'}`);
+    if (apply) await stripe.products.update(product.id, { name: plan.productName });
+  }
+}
+
+if (productsOnly) {
+  await syncProductNames();
+  console.log(apply ? '完了（Product 名のみ）' : '下見のみ（--apply で書き込み）');
+  process.exit(0);
+}
+
 const priceIds = await ensurePrices();
+await syncProductNames();
 const portalId = await ensurePortal(priceIds);
 const webhookSecret = await ensureWebhook();
 

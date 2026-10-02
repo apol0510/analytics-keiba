@@ -15,6 +15,9 @@
  *   `VenueAccess` 空 = 両会場（既存の全会員はこれ）。
  * - 三連複買い切りの購入資格・Premium Plus は**両会場の Premium だけ**（会場限定には付けない）。
  *
+ * `productName` は **Stripe の Product 名**（Checkout・領収書・請求書・カード明細の説明に出る）。
+ * 「KEIBA」等の競馬固有の語を入れない（2026-10-02 MK 確定。`scripts/stripe-setup.mjs --products-only` で test/live に反映）。
+ *
  * ⚠️ 金額の正本は Stripe の Price。ここの `amountYen` は**表示と突き合わせ用**で、
  *    Checkout で請求される金額は Stripe 側の Price で決まる（クライアントの言い値は使わない）。
  *    Live の Price 金額を後から編集しない（既存契約者の価格が変わる）。変えるときは新しい Price を作る。
@@ -25,6 +28,7 @@ export const STRIPE_PLANS = Object.freeze([
     id: 'premium',
     label: 'Premium（中央＋南関）',
     shortLabel: 'Premium',
+    productName: 'Analytics Premium（中央＋南関）',
     amountYen: 4980,
     venues: Object.freeze(['jra', 'nankan']),
     priceEnv: 'STRIPE_PRICE_PREMIUM',
@@ -33,6 +37,7 @@ export const STRIPE_PLANS = Object.freeze([
     id: 'premium-jra',
     label: 'Premium 中央版',
     shortLabel: '中央版',
+    productName: 'Analytics Premium 中央',
     amountYen: 2980,
     venues: Object.freeze(['jra']),
     priceEnv: 'STRIPE_PRICE_PREMIUM_JRA',
@@ -41,6 +46,7 @@ export const STRIPE_PLANS = Object.freeze([
     id: 'premium-nankan',
     label: 'Premium 南関版',
     shortLabel: '南関版',
+    productName: 'Analytics Premium 南関',
     amountYen: 2980,
     venues: Object.freeze(['nankan']),
     priceEnv: 'STRIPE_PRICE_PREMIUM_NANKAN',

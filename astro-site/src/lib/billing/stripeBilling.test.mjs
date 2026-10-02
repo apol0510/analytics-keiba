@@ -190,3 +190,19 @@ test('Price ID・ポータル設定は鍵のモードでコードの値を使う
   // 鍵が無ければ何も返さない（推測しない）
   assert.equal(priceIdFor('premium', {}), null);
 });
+
+test('Stripe の Product 名（Checkout・領収書・明細に出る）は productName が単一源で、競馬固有の語を含まない', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { fileURLToPath } = await import('node:url');
+  assert.deepEqual(STRIPE_PLANS.map((p) => p.productName), [
+    'Analytics Premium（中央＋南関）', 'Analytics Premium 中央', 'Analytics Premium 南関',
+  ]);
+  for (const p of STRIPE_PLANS) assert.equal(/KEIBA|keiba|競馬|JRA|予想|馬券/.test(p.productName), false, p.productName);
+  const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
+  // セットアップと Checkout はどちらも productName を使う（文字列を組み立て直さない）
+  assert.match(read('../../../scripts/stripe-setup.mjs'), /name: plan\.productName/);
+  assert.match(read('../../../netlify/functions/stripe-create-checkout.js'), /description: plan\.productName/);
+  for (const f of ['../../../scripts/stripe-setup.mjs', '../../../netlify/functions/stripe-create-checkout.js']) {
+    assert.equal(/KEIBA Analytics \$\{plan/.test(read(f)), false, `${f}: 旧商品名の組み立てが残っている`);
+  }
+});

@@ -1,3 +1,13 @@
+# 2026-10-02（追記 7）— Stripe の商品名から「KEIBA」を外す（MK 確定）
+
+- Product 名を **Analytics Premium（中央＋南関）／ Analytics Premium 中央 ／ Analytics Premium 南関** に統一（Checkout・領収書・請求書・明細に出る名前）。
+- 単一源は `stripePlans.js` の `productName`。`scripts/stripe-setup.mjs`（作成・`--products-only` で名前だけ同期）と Checkout の `subscription_data.description` が参照する。
+- test / live とも API で Product 名だけ更新（2026-10-02）。Product ID・Price ID・金額・metadata・active は変更なし（更新前後のスナップショットで確認）。
+- 再発防止: `stripeBilling.test.mjs`（productName に競馬固有の語を含まない・setup / Checkout が productName を使う）。
+- 対象外: AK サービス（analytics.keiba.link）のメール送信者名「KEIBA Analytics」は Stripe の商品名ではないため変更しない。
+
+---
+
 # 2026-10-02（追記 6）— Light 新規募集停止に伴う CTA 横断監査（MK 確定・PR #677 の一部）
 
 ## 確定仕様
