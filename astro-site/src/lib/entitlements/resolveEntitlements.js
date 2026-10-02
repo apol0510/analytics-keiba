@@ -40,7 +40,7 @@
  * 特典フィールドが 1 つも無いレコードは従来と完全に同じ判定になる（fail closed）。
  */
 
-import { normalizePlan } from '../auth/planNormalization.js';
+import { normalizePlan, normalizeVenueAccess, CANONICAL_VENUES } from '../auth/planNormalization.js';
 import { resolvePromotionalGrants, PROMO_WRITABLE_FIELDS } from './promotionalGrants.js';
 import { honorsGrantDespiteWithdrawal } from './comebackPolicy.js';
 
@@ -163,7 +163,19 @@ export function resolveEntitlements(customer, now = Date.now(), opts = {}) {
 
   const isPremiumTier = PREMIUM_TIERS.has(tier);
   const isLightTier = tier === 'light';
-  const premiumActive = paidEffective && isPremiumTier && !expired;
+  // ── 会場限定 Premium（Stripe の中央版・南関版 / 2026-10-02〜）──────────
+  // `VenueAccess` は**有料 Premium 契約だけ**を会場で絞る（無料特典・三連複買い切りには効かない）。
+  // 空 = 両会場（既存の全会員）。解釈できない値は**どの会場も開けない**（fail closed）。
+  const rawVenue = c.venueAccess;
+  const venueBlank = rawVenue === undefined || rawVenue === null || String(rawVenue).trim() === '';
+  const paidVenues = venueBlank ? [...CANONICAL_VENUES] : (normalizeVenueAccess(rawVenue) || []);
+  const venueLimited = !venueBlank;
+  if (venueLimited) reasons.push('VENUE_LIMITED');
+  // Premium 契約が有効か（会場は問わない）
+  const premiumContractActive = paidEffective && isPremiumTier && !expired;
+  // 両会場の Premium（＝従来の Premium）。ここから下の「Premium」は**両会場**を意味する。
+  const premiumActive = premiumContractActive
+    && paidVenues.includes('jra') && paidVenues.includes('nankan');
   const lightActive = paidEffective && isLightTier && !expired;
   const premiumExpired = isPremiumTier && expired;
   if (premiumExpired) reasons.push('PREMIUM_EXPIRED');
@@ -183,6 +195,9 @@ export function resolveEntitlements(customer, now = Date.now(), opts = {}) {
   // Premium（有料 or 無料期間）は Light を包含。Light 永久無料も Light を開ける。
   const canViewLight = canLogin && (lightActive || premiumActive || promoPremiumActive || promoLightActive);
   const canViewPremium = premiumActive || promoPremiumActive;
+  // 会場別の Premium 閲覧。会場限定契約はその会場だけ。両会場の権利（契約・無料特典）は両方。
+  const canViewPremiumJra = canViewPremium || (premiumContractActive && paidVenues.includes('jra'));
+  const canViewPremiumNankan = canViewPremium || (premiumContractActive && paidVenues.includes('nankan'));
 
   // 三連複閲覧: 原則 active AND LifetimeSanrenpuku=true（tier/Premium期限を見ない）。
   // 移行期のみ旧 tier(premium-sanrenpuku/combo) を Premium 有効中に限り許可。
@@ -201,6 +216,8 @@ export function resolveEntitlements(customer, now = Date.now(), opts = {}) {
     canViewFree,
     canViewLight,
     canViewPremium,
+    canViewPremiumJra,
+    canViewPremiumNankan,
     canPurchaseSanrenpuku,
     canViewSanrenpuku,
     premiumExpired,
@@ -215,6 +232,14 @@ export function resolveEntitlements(customer, now = Date.now(), opts = {}) {
      */
     paidPremiumActive: premiumActive,
     paidLightActive: lightActive,
+    /**
+     * 有料の **会場限定** Premium（中央版・南関版）が有効か。両会場の Premium では false。
+     * `paidPremiumActive`（三連複・Plus の販売資格に使う）は**両会場だけ**なので、
+     * 「有料会員か」を数える側（配信対象の除外など）はこちらも見ること。
+     */
+    paidPremiumVenueActive: premiumContractActive && !premiumActive,
+    /** 有料 Premium 契約で開ける会場（契約が無効なら []） */
+    paidPremiumVenues: premiumContractActive ? paidVenues : [],
     /** カムバック特典の内訳（表示・管理画面用） */
     promo: {
       premiumActive: promoPremiumActive,
@@ -231,7 +256,9 @@ export function resolveEntitlements(customer, now = Date.now(), opts = {}) {
      * ⚠️ 三連複は買い切り権（LifetimeSanrenpuku）で決まり、無料特典の影響を受けない。
      */
     effectiveTier: canViewSanrenpuku ? 'premium-sanrenpuku'
-      : (canViewPremium ? 'premium' : (canViewLight ? 'light' : 'free')),
+      : (canViewPremium ? 'premium'
+        : ((canViewPremiumJra || canViewPremiumNankan) ? 'premium-venue'
+          : (canViewLight ? 'light' : 'free'))),
   };
 }
 
@@ -263,6 +290,7 @@ export function fromAirtableFields(fields) {
     withdrawalRequested: read(['WithdrawalRequested']),
     forceLogout: read(['ForceLogout']),
     planType: read(['PlanType']),
+    venueAccess: read(['VenueAccess']),
     // カムバック特典（未作成なら空 → 従来と同じ判定）
     promoFields: pickPromoFields(f),
   };
@@ -284,6 +312,8 @@ export function fromClientUserPlan(userPlan, flags = {}) {
     withdrawalRequested: flags.isWithdrawalRequested ?? up.withdrawalRequested,
     forceLogout: up.forceLogout,
     planType: up.planType,
+    // verify-magic-link が書く形（'jra' | 'nankan' | 'all'）。'all'・未指定は両会場。
+    venueAccess: (up.venueAccess === 'jra' || up.venueAccess === 'nankan') ? up.venueAccess : undefined,
     forceExpired: flags.isExpired,
   };
 }
@@ -362,8 +392,14 @@ export function viewFromEntitlements(e) {
     // Premium を見られる人には Premium カードを出すので Light は重ねない。
     // 無料特典で Light 相当が有効な会員（契約は期限切れ）にも正しく出る。
     showLightCard: e.canViewLight && !e.canViewPremium,
+    // 会場限定 Premium カード（中央版・南関版）。両会場の Premium を見られる人には出さない。
+    showPremiumVenueCard: !e.canViewPremium && (e.canViewPremiumJra === true || e.canViewPremiumNankan === true),
+    /** 会場限定カードが開く会場（'jra' | 'nankan' | null） */
+    premiumVenue: e.canViewPremium ? null
+      : (e.canViewPremiumJra === true ? 'jra' : (e.canViewPremiumNankan === true ? 'nankan' : null)),
     // 無料予想カード。有料の閲覧権が 1 つも無いときだけ出す。
-    showFreeCard: !e.canViewLight && !e.canViewPremium && !e.canViewSanrenpuku,
+    showFreeCard: !e.canViewLight && !e.canViewPremium && !e.canViewSanrenpuku
+      && e.canViewPremiumJra !== true && e.canViewPremiumNankan !== true,
     entitlements: e,
   };
 }

@@ -1,3 +1,15 @@
+# 💳 Stripe 定期購読の導入（2026-10-02 MK 指示 / 進行中）
+
+| 項目 | 状態 |
+|---|---|
+| 目的 | Premium 月額 ¥4,980・中央版／南関版 各 ¥2,980 を Stripe 定期購読で販売。Light 新規停止・月払い銀行振込停止・年払い／買い切りは控えめに残す |
+| 正本 | `spec.md`「Stripe 定期購読」/ `decisions.md` 2026-10-02 / `astro-site/docs/STRIPE_BILLING.md` |
+| Airtable | Customers に `VenueAccess` / `StripeCustomerId` / `StripeSubscriptionId`（1 行テキスト）を 2026-10-02 作成済み（全件空 = 挙動不変）|
+| 実装 | branch `feat/stripe-subscriptions`（worktree `analytics-keiba-stripe`）。check:safety・build 通過 |
+| 人の作業 | **AK 用 Stripe アカウントの新規作成**（KI と別）→ テスト鍵を `~/.analytics-keiba-ops/stripe-test-key` へ |
+| 次 | `stripe-setup.mjs`（Deploy Preview・test）→ E2E（STRIPE_BILLING.md §4）→ merge → Live 鍵で production 設定 → 本番スモーク |
+| rollback | STRIPE_BILLING.md §5 |
+
 # ⏳ 待ち状態と並行作業（2026-09-28 更新 / ルール: CLAUDE.md「⏳ 待ち時間は止まらず並行する」）
 
 | 何を待っているか | いつ・どう動くか | 人の作業 |

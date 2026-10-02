@@ -33,6 +33,7 @@ import {
 import { loadReopenStart } from '../../src/lib/premiumPlus/premiumPlusReopenStartStore.js';
 import { withReopenStart } from '../../src/lib/premiumPlus/premiumPlusReopenStart.js';
 import { checkMemberOnlyPricing } from '../../src/lib/pricing/pricingEligibility.js';
+import { discontinuedBankProductWarning } from '../../src/lib/payments/discontinuedBankProducts.js';
 import { resolveOrderSaleDate, buildSaleProductName, isPremiumPlusProductName } from '../../src/lib/premiumPlus/premiumPlusSaleDate.js';
 import { shapeRaceCalendar } from '../../src/lib/premiumPlus/premiumPlusRaceCalendar.js';
 import { isSaleDateFieldEnabled, SALE_TARGET_DATE_FIELD } from '../../src/lib/payments/bankPaymentFlow.js';
@@ -529,6 +530,29 @@ exports.handler = async (event, context) => {
       console.warn('⚠️ [bank-transfer] 会員限定価格の裏づけ確認に失敗:', e.message);
     }
 
+    // 販売終了した商品（Premium 月払いの銀行振込 / Light の新規）の振込報告は**受け付けたうえで**管理者へ警告。
+    // 入金後の報告なので拒否しない（お金を受け取ったのに申込が消える方が悪い）。
+    let discontinuedWarning = null;
+    try {
+      const d = derivePlanFromProductName(orderProductName);
+      const plan = String(d.planName || '').toLowerCase();
+      if (plan === 'light' || (plan === 'premium' && d.planType === 'Monthly')) {
+        const KEY = process.env.AIRTABLE_API_KEY;
+        const BASE = process.env.AIRTABLE_BASE_ID;
+        let fields = null;
+        if (KEY && BASE) {
+          const url = `https://api.airtable.com/v0/${BASE}/Customers?filterByFormula=`
+            + encodeURIComponent(`LOWER(TRIM({Email})) = '${email.replace(/'/g, "\\'")}'`)
+            + '&maxRecords=1';
+          const res = await fetch(url, { headers: { Authorization: `Bearer ${KEY}` } });
+          if (res.ok) fields = ((await res.json()).records || [])[0]?.fields || null;
+        }
+        discontinuedWarning = discontinuedBankProductWarning({ planName: d.planName, planType: d.planType, fields });
+      }
+    } catch (e) {
+      console.warn('⚠️ [bank-transfer] 販売終了商品の確認に失敗:', e.message);
+    }
+
     // SendGrid API設定
     const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY;
     // FROM_EMAIL, ADMIN_EMAIL は email-config.js からインポート済み
@@ -616,6 +640,13 @@ exports.handler = async (event, context) => {
       </div>
       ` : ''}
     </div>
+
+    ${discontinuedWarning ? `
+    <div class="alert" style="background:#fee2e2;border-left-color:#ef4444;">
+      <h4 style="margin: 0 0 10px 0; color: #991b1b;">🛑 販売終了した商品の振込報告です</h4>
+      <div style="color:#7f1d1d;">${discontinuedWarning}</div>
+    </div>
+    ` : ''}
 
     ${memberPricingWarning ? `
     <div class="alert" style="background:#fee2e2;border-left-color:#ef4444;">

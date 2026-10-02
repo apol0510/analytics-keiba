@@ -79,7 +79,7 @@ const planTierByToken = buildPlanTierByToken();
                 <source srcset="/images/ak-pricing-pc.webp" type="image/webp" />
                 <img
                     src="/images/ak-pricing-pc.png"
-                    alt="勝負を変える、AI分析。中央・南関どちらも対応。Lightで始めて、Premiumで深く勝負。"
+                    alt="勝負を変える、AI分析。中央・南関どちらも対応。"
                     class="pricing-hero-img"
                     width="1672"
                     height="941"
@@ -95,113 +95,52 @@ const planTierByToken = buildPlanTierByToken();
                 🚀 <span class="gradient-text">AI予想で勝つ</span>
             </h1>
             <p class="pricing-subtitle">
-                中央競馬・南関競馬の両方に対応するAI予想システム。1つのプランでどちらもご利用いただけます。
+                中央だけ・南関だけでも始められます。両方なら Premium がお得です。
             </p>
             <!-- Light 会員のときだけ CSS で表示（上位プランのみに絞っている旨の説明） -->
             <p class="pricing-upgrade-note">
                 <strong>Light</strong> 会員さま（有効期限の終了から30日以内の方を含む）向けの表示です。<br>
-                <strong>Light の更新・再開</strong>と、Light会員さま限定の<strong>乗り換え特典 ¥4,980 OFF</strong>を適用した Premium 年額をお選びいただけます。
+                <strong>Light の更新・再開</strong>のほか、Premium（月額）や、Light会員さま限定の<strong>乗り換え特典 ¥4,980 OFF</strong>を適用した Premium 年払い（下の「銀行振込」）をお選びいただけます。
             </p>
         </div>
 
-        <!-- プラン比較カード -->
-        <div class="plans-container">
-            <!-- プレミアム年払いプラン -->
-            <div class="plan-card plan-card-recommended" data-plan-tier="2">
-                <div class="recommended-badge" data-hide-for="light">
-                    <span>✨ お得</span>
-                </div>
-                <div class="recommended-badge" data-only-for="light">
-                    <span>🔁 乗り換え特典</span>
+        <!-- プラン比較カード（2026-10-02〜 Stripe 定期購読が主導線）
+             金額の正本は src/lib/billing/stripePlans.js（請求は Stripe の Price）。
+             ボタンは data-checkout="<planId>" → 下の startCheckout() → stripe-create-checkout。 -->
+        <p class="plans-lead">中央と南関、どちらで勝負しますか？<br><span>両方なら Premium がお得です。</span></p>
+        <div class="plans-container plans-container--stripe">
+            <!-- Premium（中央＋南関）月額 ¥4,980 -->
+            <div class="plan-card plan-card-recommended" data-plan-tier="2" data-stripe-plan="premium">
+                <div class="recommended-badge">
+                    <span>✨ 両方ならお得</span>
                 </div>
                 <div class="plan-header">
-                    <h3 class="plan-name">プレミアム年払い</h3>
-                    <div class="plan-price" data-hide-for="light">
-                        <span class="price-amount">¥49,800</span>
-                        <span class="price-period">/年</span>
-                    </div>
-                    <!-- Light からの乗り換え価格: ¥49,800 − ¥4,980 = ¥44,820 -->
-                    <div class="plan-price" data-only-for="light">
-                        <div class="price-strike">¥49,800</div>
-                        <span class="price-amount">¥44,820</span>
-                        <span class="price-period">/年</span>
-                        <p class="plan-description">Light会員さま限定 ¥4,980 OFF</p>
-                    </div>
-                </div>
-
-                <div class="plan-venues" aria-label="対応会場">
-                    <span class="plan-venue-pill plan-venue-pill--jra">🏇 中央<small>JRA</small></span>
-                    <span class="plan-venue-pill plan-venue-pill--nankan">🏁 南関</span>
-                    <span class="plan-venue-note">両方対応</span>
-                </div>
-
-                <ul class="plan-features">
-                    <li class="feature-item" data-hide-for="light">
-                        <span class="check-icon">✓</span>
-                        <span><strong>月額換算 ¥4,150/30日</strong></span>
-                    </li>
-                    <li class="feature-item" data-only-for="light">
-                        <span class="check-icon">✓</span>
-                        <span><strong>月額換算 ¥3,735/30日</strong></span>
-                    </li>
-                    <li class="feature-item">
-                        <span class="check-icon">✓</span>
-                        <span><strong>全レース（1R〜12R）の買い目</strong></span>
-                    </li>
-                    <li class="feature-item">
-                        <span class="check-icon">✓</span>
-                        <span>高精度AI予想</span>
-                    </li>
-                    <li class="feature-item">
-                        <span class="check-icon">✓</span>
-                        <span>詳細な投資戦略</span>
-                    </li>
-                    <li class="feature-item">
-                        <span class="check-icon">✓</span>
-                        <span>優先サポート</span>
-                    </li>
-                </ul>
-
-                <button class="plan-button plan-button-annual" data-hide-for="light" onclick="openBankModal('Premium Annual', 49800, 'annual')">
-                    🏦 銀行振込へ進む
-                </button>
-                <!-- 「- Campaign」は bank-transfer-application.js が除去して planName='Premium' /
-                     planType='Annual' に正規化する既存パターン。別の接尾辞にすると Airtable の
-                     Single select が不正値になり登録が落ちる（エラーは握りつぶされる） -->
-                <button class="plan-button plan-button-annual" data-only-for="light" onclick="openBankModal('Premium Annual - Campaign', 44820, 'annual')">
-                    🏦 乗り換え特典価格で申し込む
-                </button>
-            </div>
-
-            <!-- プレミアム月払いプラン（非表示中） -->
-            {false && (
-            <div class="plan-card" data-plan-tier="2">
-                <div class="plan-header">
-                    <h3 class="plan-name">プレミアム月払い</h3>
+                    <h3 class="plan-name">Premium</h3>
                     <div class="plan-price">
-                        <span class="price-amount">¥18,000</span>
-                        <span class="price-period">/30日</span>
+                        <span class="price-amount">¥4,980</span>
+                        <span class="price-period">/月</span>
                     </div>
+                    <p class="plan-description">中央版＋南関版を別々に契約するより<strong>月 ¥980 お得</strong></p>
                 </div>
 
                 <div class="plan-venues" aria-label="対応会場">
                     <span class="plan-venue-pill plan-venue-pill--jra">🏇 中央<small>JRA</small></span>
                     <span class="plan-venue-pill plan-venue-pill--nankan">🏁 南関</span>
-                    <span class="plan-venue-note">両方対応</span>
+                    <span class="plan-venue-note">両方</span>
                 </div>
 
                 <ul class="plan-features">
                     <li class="feature-item">
                         <span class="check-icon">✓</span>
-                        <span><strong>全レース（1R〜12R）の買い目</strong></span>
+                        <span><strong>中央・南関 全レース（1R〜12R）の買い目</strong></span>
                     </li>
                     <li class="feature-item">
                         <span class="check-icon">✓</span>
-                        <span>高精度AI予想</span>
+                        <span>高精度AI予想・詳細な投資戦略</span>
                     </li>
                     <li class="feature-item">
                         <span class="check-icon">✓</span>
-                        <span>詳細な投資戦略</span>
+                        <span>平日（南関）も週末（中央）も</span>
                     </li>
                     <li class="feature-item">
                         <span class="check-icon">✓</span>
@@ -209,22 +148,95 @@ const planTierByToken = buildPlanTierByToken();
                     </li>
                 </ul>
 
-                <button class="plan-button plan-button-monthly" onclick="openBankModal('Premium Monthly', 18000, 'monthly')">
-                    🏦 銀行振込へ進む
+                <button type="button" class="plan-button plan-button-annual" data-checkout="premium">
+                    💳 Premium を申し込む
                 </button>
+                <p class="plan-billing-note">クレジットカード・毎月自動更新・いつでも解約</p>
             </div>
-            )}
 
-            <!-- Lightプラン -->
-            <div class="plan-card" data-plan-tier="1">
+            <!-- Premium 中央版 月額 ¥2,980 -->
+            <div class="plan-card" data-plan-tier="2" data-stripe-plan="premium-jra">
+                <div class="plan-header">
+                    <h3 class="plan-name">Premium 中央版</h3>
+                    <div class="plan-price">
+                        <span class="price-amount">¥2,980</span>
+                        <span class="price-period">/月</span>
+                    </div>
+                    <p class="plan-description">週末の中央競馬だけで勝負したい方に</p>
+                </div>
+
+                <div class="plan-venues" aria-label="対応会場">
+                    <span class="plan-venue-pill plan-venue-pill--jra">🏇 中央<small>JRA</small></span>
+                    <span class="plan-venue-note">中央のみ</span>
+                </div>
+
+                <ul class="plan-features">
+                    <li class="feature-item">
+                        <span class="check-icon">✓</span>
+                        <span><strong>中央 全レースの買い目</strong></span>
+                    </li>
+                    <li class="feature-item">
+                        <span class="check-icon">✓</span>
+                        <span>Premium と同じAI予想・投資戦略</span>
+                    </li>
+                    <li class="feature-item">
+                        <span class="check-icon">✓</span>
+                        <span>あとから Premium へ変更できます</span>
+                    </li>
+                </ul>
+
+                <button type="button" class="plan-button plan-button-monthly" data-checkout="premium-jra">
+                    💳 中央版を申し込む
+                </button>
+                <p class="plan-billing-note">クレジットカード・毎月自動更新・いつでも解約</p>
+            </div>
+
+            <!-- Premium 南関版 月額 ¥2,980 -->
+            <div class="plan-card" data-plan-tier="2" data-stripe-plan="premium-nankan">
+                <div class="plan-header">
+                    <h3 class="plan-name">Premium 南関版</h3>
+                    <div class="plan-price">
+                        <span class="price-amount">¥2,980</span>
+                        <span class="price-period">/月</span>
+                    </div>
+                    <p class="plan-description">平日の南関競馬だけで勝負したい方に</p>
+                </div>
+
+                <div class="plan-venues" aria-label="対応会場">
+                    <span class="plan-venue-pill plan-venue-pill--nankan">🏁 南関</span>
+                    <span class="plan-venue-note">南関のみ</span>
+                </div>
+
+                <ul class="plan-features">
+                    <li class="feature-item">
+                        <span class="check-icon">✓</span>
+                        <span><strong>南関 全レースの買い目</strong></span>
+                    </li>
+                    <li class="feature-item">
+                        <span class="check-icon">✓</span>
+                        <span>Premium と同じAI予想・投資戦略</span>
+                    </li>
+                    <li class="feature-item">
+                        <span class="check-icon">✓</span>
+                        <span>あとから Premium へ変更できます</span>
+                    </li>
+                </ul>
+
+                <button type="button" class="plan-button plan-button-monthly" data-checkout="premium-nankan">
+                    💳 南関版を申し込む
+                </button>
+                <p class="plan-billing-note">クレジットカード・毎月自動更新・いつでも解約</p>
+            </div>
+
+            <!-- Lightプラン（2026-10-02〜 新規募集停止。既存の有料 Light 会員の更新・再開だけ CSS で表示）-->
+            <div class="plan-card" data-plan-tier="1" data-only-for="light">
                 <div class="plan-header">
                     <h3 class="plan-name">Light</h3>
                     <div class="plan-price">
-                        <div class="price-strike">¥5,980</div>
                         <span class="price-amount">¥4,980</span>
                         <span class="price-period">/30日</span>
                     </div>
-                    <p class="plan-description">有料版を試したい方に</p>
+                    <p class="plan-description">Light 会員さまの更新・再開</p>
                 </div>
 
                 <div class="plan-venues" aria-label="対応会場">
@@ -242,18 +254,10 @@ const planTierByToken = buildPlanTierByToken();
                         <span class="check-icon">✓</span>
                         <span>無料予想</span>
                     </li>
-                    <li class="feature-item">
-                        <span class="check-icon">✓</span>
-                        <span>高精度AI予想</span>
-                    </li>
-                    <li class="feature-item">
-                        <span class="check-icon">✓</span>
-                        <span>サポート</span>
-                    </li>
                 </ul>
 
                 <button class="plan-button plan-button-standard" onclick="openBankModal('Light', 4980, 'monthly')">
-                    🏦 銀行振込へ進む
+                    🏦 銀行振込で更新する
                 </button>
             </div>
 
@@ -280,10 +284,6 @@ const planTierByToken = buildPlanTierByToken();
                     </li>
                     <li class="feature-item">
                         <span class="check-icon">✓</span>
-                        <span>基本的な競馬情報</span>
-                    </li>
-                    <li class="feature-item">
-                        <span class="check-icon">✓</span>
                         <span>予想結果の確認</span>
                     </li>
                 </ul>
@@ -292,58 +292,49 @@ const planTierByToken = buildPlanTierByToken();
                     無料会員登録
                 </a>
             </div>
+        </div>
 
-            <!-- プレミアム買い切りプラン（中央・おすすめ）※一時非表示 -->
-            <div class="plan-card plan-card-recommended" data-plan-tier="2" style="display: none;">
-                <!-- 人気バッジ -->
-                <div class="recommended-badge">
-                    <span>🔥 今だけ特別価格</span>
-                </div>
-
-                <div class="plan-header">
-                    <h3 class="plan-name">プレミアム買い切り</h3>
-                    <div class="plan-price">
-                        <div class="price-strike">¥108,000</div>
-                        <span class="price-amount">¥78,000</span>
-                        <div class="price-period-lifetime">永久アクセス</div>
-                    </div>
-                    <p class="plan-description">一度きりの支払いで永久に使える</p>
-                </div>
-
-                <div class="plan-venues" aria-label="対応会場">
-                    <span class="plan-venue-pill plan-venue-pill--jra">🏇 中央<small>JRA</small></span>
-                    <span class="plan-venue-pill plan-venue-pill--nankan">🏁 南関</span>
-                    <span class="plan-venue-note">両方対応</span>
-                </div>
-
-                <ul class="plan-features">
-                    <li class="feature-item">
-                        <span class="check-icon">✓</span>
-                        <span><strong>永久アクセス（追加料金なし）</strong></span>
-                    </li>
-                    <li class="feature-item">
-                        <span class="check-icon">✓</span>
-                        <span><strong>全レース（1R〜12R）の買い目</strong></span>
-                    </li>
-                    <li class="feature-item">
-                        <span class="check-icon">✓</span>
-                        <span>高精度AI予想</span>
-                    </li>
-                    <li class="feature-item">
-                        <span class="check-icon">✓</span>
-                        <span>詳細な投資戦略</span>
-                    </li>
-                    <li class="feature-item">
-                        <span class="check-icon">✓</span>
-                        <span>優先サポート</span>
-                    </li>
-                </ul>
-
-                <button class="plan-button plan-button-lifetime" onclick="openBankModal('Premium Lifetime', 78000, 'lifetime')">
-                    🏦 銀行振込へ進む
-                </button>
+        <!-- 申込前の確認（Stripe へ進む前のメール入力・エラー表示） -->
+        <div class="checkout-panel" id="checkoutPanel" hidden>
+            <div class="checkout-panel-inner">
+                <p class="checkout-panel-title" id="checkoutPanelTitle">お申し込み</p>
+                <form id="checkoutEmailForm" class="checkout-email-form" novalidate>
+                    <label for="checkoutEmail" class="form-label">ご利用になるメールアドレス</label>
+                    <input type="email" id="checkoutEmail" class="form-input" autocomplete="email" required placeholder="example@email.com">
+                    <p class="checkout-hint">お支払い後、このアドレスにログイン用のリンクをお送りします。</p>
+                    <button type="submit" class="plan-button plan-button-annual" id="checkoutSubmit">お支払いへ進む</button>
+                </form>
+                <p class="checkout-message" id="checkoutMessage" role="status" hidden></p>
+                <button type="button" class="checkout-panel-close" id="checkoutPanelClose">閉じる</button>
             </div>
         </div>
+
+        <!-- その他のお支払い方法（銀行振込の年払い・買い切り）。主導線ではないので控えめに出す -->
+        <details class="other-payments" id="otherPayments">
+            <summary>銀行振込（年払い・買い切り）をご希望の方</summary>
+            <div class="other-payments-body">
+                <div class="other-plan" data-plan-tier="2">
+                    <div class="other-plan-head">
+                        <span class="other-plan-name">Premium 年払い（中央＋南関）</span>
+                        <span class="other-plan-price" data-hide-for="light">¥49,800<small>/年</small></span>
+                        <span class="other-plan-price" data-only-for="light"><s>¥49,800</s> ¥44,820<small>/年・Light会員さま乗り換え特典</small></span>
+                    </div>
+                    <button class="other-plan-button" data-hide-for="light" onclick="openBankModal('Premium Annual', 49800, 'annual')">🏦 銀行振込で申し込む</button>
+                    <!-- 「- Campaign」は bank-transfer-application.js が除去して planName='Premium' /
+                         planType='Annual' に正規化する既存パターン。別の接尾辞にすると Airtable の
+                         Single select が不正値になり登録が落ちる（エラーは握りつぶされる） -->
+                    <button class="other-plan-button" data-only-for="light" onclick="openBankModal('Premium Annual - Campaign', 44820, 'annual')">🏦 乗り換え特典価格で申し込む</button>
+                </div>
+                <div class="other-plan" data-plan-tier="2">
+                    <div class="other-plan-head">
+                        <span class="other-plan-name">Premium 買い切り（中央＋南関・期限なし）</span>
+                        <span class="other-plan-price">¥78,000<small>/一度きり</small></span>
+                    </div>
+                    <button class="other-plan-button" onclick="openBankModal('Premium Lifetime', 78000, 'lifetime')">🏦 銀行振込で申し込む</button>
+                </div>
+                <p class="other-payments-note">銀行振込は、お振込み後に報告フォームをご送信いただき、入金確認後にご利用開始となります。</p>
+            </div>
+        </details>
 
         <!-- FAQ -->
         <div class="faq-section">
@@ -362,27 +353,19 @@ const planTierByToken = buildPlanTierByToken();
                     </p>
                 </div>
 
-                <div class="faq-item" data-hide-for="light">
-                    <h3 class="faq-question">Q: Lightプランでは何が見られますか？</h3>
-                    <p class="faq-answer">
-                        メインレースの馬単買い目（最大5点）に加えて、全レースの予想を買い目なしでご覧いただけます。<br>
-                        中央（JRA）・南関の両方に対応しており、1つのプランでどちらもご利用いただけます。
-                    </p>
-                </div>
-
                 <div class="faq-item">
-                    <h3 class="faq-question">Q: プレミアム年払いでは何が見られますか？</h3>
+                    <h3 class="faq-question">Q: Premium では何が見られますか？</h3>
                     <p class="faq-answer">
                         全レース（1R〜12R）の買い目をご覧いただけます。加えて、詳細な投資戦略と優先サポートをご利用いただけます。<br>
-                        中央（JRA）・南関の両方で、すべてのレースが対象です。
+                        Premium は中央（JRA）・南関の両方、中央版・南関版はそれぞれの会場のすべてのレースが対象です。
                     </p>
                 </div>
 
                 <div class="faq-item">
-                    <h3 class="faq-question">Q: 中央（JRA）と南関、両方見られますか？</h3>
+                    <h3 class="faq-question">Q: 中央版・南関版と Premium の違いは？</h3>
                     <p class="faq-answer">
-                        はい。すべてのプランが中央・南関の両方に対応しており、会場ごとに追加料金はかかりません。<br>
-                        中央は主に土日、南関は主に平日に開催されるため、平日・週末どちらもAI予想をご利用いただけます。
+                        内容は同じで、見られる会場だけが違います。中央版は中央（JRA）だけ、南関版は南関だけ、Premium は両方です。<br>
+                        中央は主に土日、南関は主に平日の開催です。両方ご覧になるなら、中央版と南関版を別々に契約するより <strong>Premium（¥4,980/月）の方が月 ¥980 お得</strong>です。
                     </p>
                 </div>
 
@@ -412,7 +395,7 @@ const planTierByToken = buildPlanTierByToken();
                 <div class="faq-item" data-only-for="light">
                     <h3 class="faq-question">Q: Lightからプレミアム年払いへの切り替え手順は？</h3>
                     <p class="faq-answer">
-                        上の「🏦 乗り換え特典価格で申し込む」で口座情報をご確認のうえ <strong>¥44,820</strong> をお振込みいただき、振込完了後に報告フォームをご送信ください。入金確認取れ次第、プレミアムのご利用を開始いただけます。<br>
+                        上の「銀行振込（年払い・買い切り）をご希望の方」を開き、「🏦 乗り換え特典価格で申し込む」で口座情報をご確認のうえ <strong>¥44,820</strong> をお振込みいただき、振込完了後に報告フォームをご送信ください。入金確認取れ次第、プレミアムのご利用を開始いただけます。<br>
                         ご不明な点はお気軽にお問い合わせください。
                     </p>
                 </div>
@@ -420,56 +403,41 @@ const planTierByToken = buildPlanTierByToken();
                 <div class="faq-item">
                     <h3 class="faq-question">Q: 支払い方法は何が利用できますか？</h3>
                     <p class="faq-answer">
-                        現在、銀行振込のみ対応しております。振込後、入金確認取れ次第、即時にログイン情報をメールでお送りいたします。
-                    </p>
-                </div>
-
-                <!-- 買い切り関連FAQ ※一時非表示
-                <div class="faq-item">
-                    <h3 class="faq-question">Q: 買い切りプランと年払い・月払いの違いは？</h3>
-                    <p class="faq-answer">
-                        <strong>【買い切りプラン】</strong><br>
-                        ・¥78,000の一度きりの支払いで永久アクセス<br>
-                        ・追加料金は一切かかりません<br>
-                        ・AIは毎日進化し続けるため、長く使うほどお得<br><br>
-                        <strong>【年払いプラン】</strong><br>
-                        ・¥49,800/年（月額換算¥4,150）<br><br>
-                        <strong>【月払いプラン】</strong><br>
-                        ・¥18,000/30日<br>
-                        ・いつでも解約可能
+                        月額プラン（Premium・中央版・南関版）はクレジットカードでのお支払いです（決済は Stripe を利用しています）。<br>
+                        Premium の年払い・買い切りは銀行振込でお申し込みいただけます。
                     </p>
                 </div>
 
                 <div class="faq-item">
-                    <h3 class="faq-question">Q: 買い切りプランは本当に永久に使えますか？</h3>
+                    <h3 class="faq-question">Q: 解約はできますか？</h3>
                     <p class="faq-answer">
-                        はい。一度ご購入いただければ、追加料金なしで永久にご利用いただけます。AIは毎日進化し続けるため、長く使うほどお得になります。50年間使えば月額換算¥130です。
+                        はい、いつでも解約できます。ログイン後、マイページの「お支払い管理」から手続きいただけます。<br>
+                        解約後も、お支払い済みの期間の終わりまではご利用いただけます。
                     </p>
                 </div>
 
                 <div class="faq-item">
-                    <h3 class="faq-question">Q: 利用期間について教えてください</h3>
+                    <h3 class="faq-question">Q: 年払い・買い切りはありますか？</h3>
                     <p class="faq-answer">
-                        <strong>【買い切りプラン】</strong>永久アクセス（追加料金なし）<br>
-                        <strong>【年払いプラン】</strong>1年間（自動更新）<br>
-                        <strong>【月払いプラン】</strong>1ヶ月ごとの自動更新
+                        銀行振込でお申し込みいただけます（上の「銀行振込（年払い・買い切り）をご希望の方」）。<br>
+                        年払いは ¥49,800/年（1年間）、買い切りは ¥78,000 の一度きりのお支払いで期限なくご利用いただけます。どちらも中央・南関の両方が対象です。
                     </p>
                 </div>
-                -->
 
-                <!-- 手順は銀行振込モーダル内の .bank-steps と必ず一致させること（振込が先） -->
+                <!-- 銀行振込の手順は銀行振込モーダル内の .bank-steps と必ず一致させること（振込が先） -->
                 <div class="faq-item">
                     <h3 class="faq-question">Q: 利用開始までの流れは？</h3>
                     <p class="faq-answer">
-                        ①銀行振込 → ②振込完了後、報告フォームをご送信 → ③入金確認後、ログイン情報をメールでお送りします。<br>
-                        フォームは<strong>お振込みが済んでから</strong>ご送信ください（未入金の状態でのお申し込みフォームではありません）。入金確認取れ次第、即時にご利用開始いただけます。
+                        <strong>【月額プラン】</strong>カード決済が完了するとすぐにご利用いただけます。ご登録のメールアドレスにログイン用のリンクをお送りします。<br>
+                        <strong>【銀行振込】</strong>①お振込み → ②振込完了後、報告フォームをご送信 → ③入金確認後、ご利用開始です。フォームは<strong>お振込みが済んでから</strong>ご送信ください。
                     </p>
                 </div>
 
                 <div class="faq-item">
-                    <h3 class="faq-question">Q: 有効期限が切れたらどうなりますか？</h3>
+                    <h3 class="faq-question">Q: 更新や有効期限はどうなりますか？</h3>
                     <p class="faq-answer">
-                        有効期限が近づきましたらメールでお知らせいたします。継続をご希望の場合は、再度お振込みいただくことでご利用を延長できます。
+                        月額プランは毎月自動で更新されます（お手続きは不要です）。<br>
+                        銀行振込の年払いは、有効期限が近づきましたらメールでお知らせいたします。継続をご希望の場合は、再度お振込みいただくことで延長できます。
                     </p>
                 </div>
 
@@ -477,7 +445,8 @@ const planTierByToken = buildPlanTierByToken();
                 <div class="faq-item" data-hide-for="light">
                     <h3 class="faq-question">Q: プランの変更はできますか？</h3>
                     <p class="faq-answer">
-                        はい、可能です。Lightプランからプレミアムプランへのアップグレードなど、お気軽にご相談ください。
+                        はい。月額プランは、マイページの「お支払い管理」から中央版・南関版と Premium を切り替えられます（差額は日割りで調整されます）。<br>
+                        その他のご相談はお気軽にお問い合わせください。
                     </p>
                 </div>
             </div>
@@ -617,6 +586,119 @@ const planTierByToken = buildPlanTierByToken();
 </BaseLayout>
 
 <script is:inline>
+  // ── Stripe 月額の申込（2026-10-02〜）────────────────────────────
+  // 金額はサーバー（Stripe の Price）が決める。ここから送るのはプラン ID とメールだけ。
+  (function () {
+    var PLAN_NAMES = { 'premium': 'Premium（中央＋南関）', 'premium-jra': 'Premium 中央版', 'premium-nankan': 'Premium 南関版' };
+    var panel = document.getElementById('checkoutPanel');
+    var form = document.getElementById('checkoutEmailForm');
+    var emailInput = document.getElementById('checkoutEmail');
+    var msg = document.getElementById('checkoutMessage');
+    var title = document.getElementById('checkoutPanelTitle');
+    var submitBtn = document.getElementById('checkoutSubmit');
+    var pendingPlan = '';
+    var busy = false;
+
+    function knownEmail() {
+      try {
+        var up = JSON.parse(localStorage.getItem('user-plan') || 'null');
+        return (up && typeof up.email === 'string') ? up.email : '';
+      } catch (_) { return ''; }
+    }
+
+    function showPanel(planId, withForm) {
+      pendingPlan = planId;
+      title.textContent = (PLAN_NAMES[planId] || 'お申し込み') + ' のお申し込み';
+      form.hidden = !withForm;
+      msg.hidden = true;
+      msg.innerHTML = '';
+      if (withForm && !emailInput.value) emailInput.value = knownEmail();
+      panel.hidden = false;
+      if (withForm) setTimeout(function () { emailInput.focus(); }, 0);
+    }
+
+    function showMessage(html) {
+      form.hidden = true;
+      msg.innerHTML = html;
+      msg.hidden = false;
+      panel.hidden = false;
+    }
+
+    async function openPortal() {
+      try {
+        var res = await fetch('/.netlify/functions/stripe-portal', { method: 'POST', credentials: 'include' });
+        var data = await res.json().catch(function () { return {}; });
+        if (res.ok && data.url) { location.href = data.url; return; }
+      } catch (_) {}
+      showMessage('お支払い管理を開けませんでした。<a href="/dashboard/">マイページ</a>からお試しください。');
+    }
+    window.akOpenStripePortal = openPortal;
+
+    async function startCheckout(planId, email) {
+      if (busy) return;
+      busy = true;
+      if (submitBtn) submitBtn.disabled = true;
+      try {
+        var res = await fetch('/.netlify/functions/stripe-create-checkout', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(email ? { plan: planId, email: email } : { plan: planId }),
+        });
+        var data = await res.json().catch(function () { return {}; });
+        if (res.ok && data.url) {
+          if (window.AkFunnel && window.AkFunnel.checkoutStart) window.AkFunnel.checkoutStart(planId);
+          location.href = data.url;
+          return;
+        }
+        var err = data.error || '';
+        if (err === 'email_required') { showPanel(planId, true); return; }
+        if (err === 'already_subscribed' && data.next === 'portal') {
+          showMessage('すでに月額プランをご契約中です。プランの変更（中央版・南関版 ⇄ Premium）や解約は「お支払い管理」から行えます。<br><br><button type="button" class="plan-button plan-button-annual" onclick="akOpenStripePortal()">お支払い管理を開く</button>');
+          return;
+        }
+        if (err === 'already_subscribed') {
+          showMessage('このメールアドレスは、すでに月額プランをご契約中です。<a href="/login/?next=/pricing/">ログイン</a>のうえ、マイページの「お支払い管理」からプランの変更・解約を行えます。');
+          return;
+        }
+        if (err === 'already_premium') {
+          showMessage('すでに Premium（中央＋南関）をご利用中のため、お申し込みは不要です。ご不明な点は<a href="/contact/">お問い合わせ</a>ください。');
+          return;
+        }
+        if (err === 'account_conflict') {
+          showMessage('お客様の登録情報を確認できませんでした。お手数ですが<a href="/contact/">お問い合わせ</a>ください。');
+          return;
+        }
+        if (err === 'billing_not_configured' || err === 'plan_not_configured') {
+          showMessage('ただいまカード決済の準備中です。しばらくしてから再度お試しください。');
+          return;
+        }
+        showMessage('お申し込みを開始できませんでした。時間をおいて再度お試しください。');
+      } catch (_) {
+        showMessage('通信に失敗しました。時間をおいて再度お試しください。');
+      } finally {
+        busy = false;
+        if (submitBtn) submitBtn.disabled = false;
+      }
+    }
+
+    document.querySelectorAll('[data-checkout]').forEach(function (btn) {
+      btn.addEventListener('click', function () { startCheckout(btn.getAttribute('data-checkout')); });
+    });
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var email = String(emailInput.value || '').trim();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        msg.textContent = 'メールアドレスをご確認ください。';
+        msg.hidden = false;
+        return;
+      }
+      startCheckout(pendingPlan, email);
+    });
+    document.getElementById('checkoutPanelClose').addEventListener('click', function () { panel.hidden = true; });
+    panel.addEventListener('click', function (e) { if (e.target === panel) panel.hidden = true; });
+  })();
+
   let currentPlan = '';
   let currentAmount = 0;
   let currentPlanType = 'monthly';
@@ -914,6 +996,178 @@ const planTierByToken = buildPlanTierByToken();
 
     :global(:root[data-plan-tier="1"]) .feature-item[data-only-for="light"] {
         display: flex !important;
+    }
+
+    /* Light カードは 2026-10-02 に新規募集を停止。有料 Light 会員（tier 1）の更新・再開にだけ出す */
+    :global(:root[data-plan-tier="1"]) .plan-card[data-only-for="light"] {
+        display: block !important;
+    }
+
+    :global(:root[data-plan-tier="1"]) .other-plan-price[data-only-for="light"],
+    :global(:root[data-plan-tier="1"]) .other-plan-button[data-only-for="light"] {
+        display: inline-block !important;
+    }
+
+    /* ===== Stripe 月額（主導線） ===== */
+    .plans-lead {
+        text-align: center;
+        color: #e2e8f0;
+        font-size: 1.25rem;
+        font-weight: 700;
+        margin: 0 0 1.5rem;
+        line-height: 1.6;
+    }
+
+    .plans-lead span {
+        color: #34d399;
+        font-size: 1rem;
+    }
+
+    .plan-card-recommended .recommended-badge {
+        white-space: nowrap;
+    }
+
+    .plan-billing-note {
+        margin: 0.6rem 0 0;
+        text-align: center;
+        color: #94a3b8;
+        font-size: 0.8rem;
+    }
+
+    .plan-description strong {
+        color: #34d399;
+    }
+
+    .checkout-panel {
+        position: fixed;
+        inset: 0;
+        z-index: 1000;
+        background: rgba(2, 6, 23, 0.75);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+    }
+
+    .checkout-panel[hidden] {
+        display: none;
+    }
+
+    .checkout-panel-inner {
+        box-sizing: border-box;
+        width: 100%;
+        max-width: 420px;
+        background: #0f172a;
+        border: 1px solid rgba(59, 130, 246, 0.4);
+        border-radius: 1rem;
+        padding: 1.5rem;
+    }
+
+    .checkout-panel-title {
+        color: #f8fafc;
+        font-weight: 700;
+        font-size: 1.1rem;
+        margin: 0 0 1rem;
+    }
+
+    .checkout-email-form .form-input {
+        box-sizing: border-box;
+        width: 100%;
+        margin: 0.4rem 0;
+    }
+
+    .checkout-hint {
+        color: #94a3b8;
+        font-size: 0.85rem;
+        margin: 0 0 1rem;
+    }
+
+    .checkout-message {
+        color: #fbbf24;
+        font-size: 0.9rem;
+        line-height: 1.6;
+        margin: 1rem 0 0;
+    }
+
+    .checkout-message a {
+        color: #60a5fa;
+    }
+
+    .checkout-panel-close {
+        margin-top: 1rem;
+        background: none;
+        border: none;
+        color: #94a3b8;
+        cursor: pointer;
+        width: 100%;
+    }
+
+    /* 銀行振込（年払い・買い切り）は控えめに */
+    .other-payments {
+        max-width: 760px;
+        margin: 2.5rem auto 0;
+        border: 1px solid rgba(51, 65, 85, 0.5);
+        border-radius: 0.75rem;
+        background: rgba(15, 23, 42, 0.5);
+        color: #94a3b8;
+    }
+
+    .other-payments summary {
+        cursor: pointer;
+        padding: 0.9rem 1.2rem;
+        font-size: 0.9rem;
+    }
+
+    .other-payments-body {
+        padding: 0 1.2rem 1.2rem;
+    }
+
+    .other-plan {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.6rem;
+        padding: 0.9rem 0;
+        border-top: 1px solid rgba(51, 65, 85, 0.5);
+    }
+
+    .other-plan-head {
+        display: flex;
+        flex-direction: column;
+        gap: 0.2rem;
+        min-width: 0;
+    }
+
+    .other-plan-name {
+        color: #cbd5e1;
+        font-size: 0.95rem;
+    }
+
+    .other-plan-price {
+        color: #e2e8f0;
+        font-weight: 700;
+    }
+
+    .other-plan-price small {
+        color: #94a3b8;
+        font-weight: 400;
+        margin-left: 0.2rem;
+    }
+
+    .other-plan-button {
+        background: transparent;
+        border: 1px solid rgba(148, 163, 184, 0.5);
+        color: #cbd5e1;
+        border-radius: 0.5rem;
+        padding: 0.5rem 0.9rem;
+        font-size: 0.85rem;
+        cursor: pointer;
+    }
+
+    .other-payments-note {
+        font-size: 0.8rem;
+        margin: 0.6rem 0 0;
     }
 
     /* 残り 1 枚になっても 4 カラムに引き伸ばされないよう中央寄せ

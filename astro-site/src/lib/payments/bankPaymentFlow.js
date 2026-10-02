@@ -238,6 +238,9 @@ export function buildConfirmationFields({ requestedPlan, requestedPlanType, conf
       'Status': 'active',
       '有効期限': expiration,
       'PaidAt': confirmedAt.toISOString(),
+      // 銀行振込の Light / Premium は常に**両会場**。Stripe の中央版・南関版（VenueAccess=jra|nankan）
+      // から年払い等へ移った会員が会場限定のまま残らないよう、空（=両会場）へ戻す（2026-10-02〜）。
+      'VenueAccess': '',
       // 既存 Automation の二重送信ガードを踏ませる（メールは confirm 側で送る）
       'PaymentEmailSent': true,
       // 新規プラン購入時に退会フラグをリセット（申込時ではなく入金確認時に行う）
