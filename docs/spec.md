@@ -23,6 +23,19 @@
 - 解約・カード変更・プラン変更（会場版 ⇄ Premium）は Stripe のカスタマーポータル（マイページ「お支払い管理」）。
 - Stripe 会員には期限前・失効後リマインド（Premium 月払い）を送らない（自動更新のため）。
 - 実装・運用手順の正本: `astro-site/docs/STRIPE_BILLING.md`。
+- **返金**: 決済完了後の返金は行わない（14 日返金保証は 2026-10-02 廃止）。例外は法令上の義務・当方の誤請求・当方の責めによる不提供のみ。
+
+## 事業サイト analytics.tirol.link（2026-10-02 MK 確定 / Stripe 登録用）
+
+| 項目 | 仕様 |
+|---|---|
+| URL・連絡先 | https://analytics.tirol.link/ ・ analytics@tirol.link（repo `apol0510/analytics-tirol-link`・Netlify `analytics-tirol-link`）|
+| ブランド | tirol data labo / Analytics。サイト名・見出し・主要コピーに「競馬」「KEIBA」を使わない |
+| 一致させるもの | 本文のサービス内容（中央競馬・南関東地方競馬の AI 解析レポート・情報提供のみ・購入代行なし）、サービス名 KEIBA Analytics、価格（Premium ¥4,980／中央版・南関版 ¥2,980／年払い ¥49,800／買い切り ¥78,000）、支払方法、解約・返金条件。**実態を偽装・省略しない** |
+| 必須ページ | トップ・特商法・利用規約・プライバシー・返金キャンセル・サポート（未完成・ダミー・工事中なし）|
+| Stripe 登録 URL | data.tirol.link → analytics.tirol.link への差し替えは、本番公開と必要情報の確認の**後**に行う |
+| 検査 | analytics-tirol-link の `tests/site.test.mjs`（CI）／AK の `stripeDisplayPolicy.guard.test.mjs` |
+
 
 # AK の商品・価格の事業境界（2026-09-28 MK 確定 / **AK と KI を混同しない**）
 

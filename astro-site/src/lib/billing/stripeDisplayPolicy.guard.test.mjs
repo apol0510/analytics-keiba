@@ -63,3 +63,20 @@ test('退会処理は Stripe 会員に退会フラグを立てない（判定が
   const dash = read('src/pages/dashboard.astro');
   assert.ok(dash.indexOf('_sa.stripeBilling === true') < dash.indexOf("fetch('/.netlify/functions/process-withdrawal'"));
 });
+
+test('14 日返金保証は廃止（2026-10-02 MK 確定）。refund / terms / legal / pricing に残さない', () => {
+  for (const p of ['src/pages/refund.astro', 'src/pages/terms.astro', 'src/pages/legal.astro', 'src/pages/pricing.astro', 'src/pages/privacy.astro']) {
+    assert.equal(/14[- ]day|14 days|money-back|14日間/i.test(stripComments(read(p))), false, p);
+  }
+});
+
+test('事業者情報は事業サイト analytics.tirol.link と一致（販売事業者名・連絡先）', () => {
+  const legal = read('src/pages/legal.astro');
+  assert.match(legal, /tirol data labo/);
+  assert.match(legal, /analytics@tirol\.link/);
+  assert.match(legal, /https:\/\/analytics\.tirol\.link\/tokushoho\//);
+  for (const p of ['src/pages/refund.astro', 'src/pages/terms.astro', 'src/pages/privacy.astro', 'src/pages/legal.astro']) {
+    assert.equal(/support@tirol\.link/.test(read(p)), false, `${p}: 旧連絡先`);
+  }
+});
+

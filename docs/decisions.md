@@ -1,3 +1,26 @@
+# 2026-10-02（追記 3）— Stripe 登録用の事業サイト analytics.tirol.link を新設／14 日返金保証を廃止（MK 確定）
+
+## 決定
+
+| 項目 | 内容 |
+|---|---|
+| 事業サイト | **https://analytics.tirol.link/**（新設・独立 repo `apol0510/analytics-tirol-link`・Netlify site `analytics-tirol-link`）|
+| 公開連絡先 | **analytics@tirol.link** |
+| 参考元 | https://data.tirol.link/（repo `data-tirol-link`・Netlify・Cloudflare DNS）。**参考元のファイル・設定は変更しない** |
+| ブランド | サイト名・見出し・主要コピーに「競馬」「KEIBA」を使わない（tirol data labo / Analytics）|
+| 実態の一致 | **販売実態を偽装・省略しない**。本文にサービス内容（中央競馬・南関東地方競馬の AI 解析レポート・情報提供のみ）、サービス名 KEIBA Analytics、価格、支払方法、解約・返金条件を正確に書き、Stripe の登録内容・analytics.keiba.link の表示と一致させる |
+| 掲載 | 事業者情報・サービス説明・月額であること・主要価格・問い合わせ先・特商法・利用規約・プライバシーポリシー・返金キャンセル・サポート。未完成・ダミー・工事中を置かない |
+| Stripe 登録 URL | 現在の `https://data.tirol.link/` は、analytics.tirol.link の本番公開と必要情報の確認が**完了してから**差し替える |
+| 返金 | **14 日間・無条件全額返金は廃止**（AK の /refund/ から削除。Premium Plus を含む）|
+
+## 実装（2026-10-02）
+
+- 生成スクリプト `build/pages.py` で共通ヘッダー・フッター・連絡先・価格を全ページ共通化。利用規約・プライバシーは data.tirol.link の原文を置換して作成（API 条項を除き、銀行振込・最低利用期間なしを追記）
+- 公開条件を `tests/site.test.mjs` で固定（見出しに競馬/KEIBA なし・本文に実態・価格一致・全ページ相互リンク・リンク切れ 0・14 日返金なし・工事中なし・旧連絡先なし）。CI は生成物とスクリプト出力の一致も検査
+- AK 側: /legal/ の販売事業者名・所在地・連絡先を事業サイトと一致（tirol data labo / analytics@tirol.link / 日本語の特商法へのリンク）、/refund/ の 14 日返金を削除、/terms/・/privacy/ の連絡先を analytics@tirol.link に。guard テスト追加
+
+---
+
 # 2026-10-02（追記 2）— 解約条件は正確に記載するが、販売画面・決済画面では強調しない（MK 確定の表示方針）
 
 「最低利用期間なし／いつでも解約可／日割り返金なし」は**制度上の確定仕様として維持**する。ただし販売の主役にしない。

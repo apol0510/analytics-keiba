@@ -17,7 +17,8 @@
 | Stripe（本番）| 2026-10-02 `stripe-setup.mjs --context production --apply` 完了（Price 3 件・ポータル設定・Webhook `https://analytics.keiba.link/.netlify/functions/stripe-webhook`・production env 6 件）。鍵は制限付き鍵（rk_live）で読み取り系は全 OK |
 | **待ち（実異常回避）** | **Stripe 審査中**（disabled_reason=under_review・card_payments inactive・pending_verification 1 件=other_compliance_inquiry）。live の Checkout 作成は `Your account cannot currently make live charges` で失敗。**この状態で merge すると月額が誰も買えなくなるため merge を保留** |
 | 自動検知 | scheduled-checks `stripe-live-activation-2026`（#679 `fd478947`・毎日 10:00 JST・GET /v1/account を読むだけ）。有効化で Issue「[自動測定] stripe-live-activation-2026」→ #677 merge・本番スモークへ。GitHub secret `STRIPE_ACCOUNT_READ_KEY` 登録済み。Actions 上の検証実行で審査中を正しく判定 |
-| 人の作業 | Stripe からのコンプライアンス確認への回答／Stripe のビジネス URL が `https://data.tirol.link/` のため AK（analytics.keiba.link）への修正・公開ビジネス名の確認 |
+| 事業サイト analytics.tirol.link（2026-10-02 決定）| repo `apol0510/analytics-tirol-link`（private・CI green）・Netlify `analytics-tirol-link`（GitHub 連携・`analytics-tirol-link.netlify.app` で 6 ページ 200・build/README は 404）・custom domain 設定済み。390/320px で横スクロールなし・secret/PII scan 0 |
+| 人の作業 | ① Cloudflare（tirol.link）に CNAME `analytics` → `analytics-tirol-link.netlify.app`（DNS only）② Xserver で `analytics@tirol.link` を作成 ③ 公開確認後に Stripe のビジネス URL を analytics.tirol.link へ・コンプライアンス確認へ回答 |
 | 次（有効化後）| merge #677 → 本番デプロイ → 本番スモーク（/pricing/・Checkout URL 発行・Webhook 署名 400・portal 401）→ cleanup |
 | rollback | STRIPE_BILLING.md §5 |
 
