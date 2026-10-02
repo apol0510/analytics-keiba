@@ -106,8 +106,8 @@ const planTierByToken = buildPlanTierByToken();
             </p>
             <!-- Light 会員のときだけ CSS で表示（上位プランのみに絞っている旨の説明） -->
             <p class="pricing-upgrade-note">
-                <strong>Light</strong> 会員さま（有効期限の終了から30日以内の方を含む）向けの表示です。<br>
-                <strong>Light の更新・再開</strong>のほか、Premium（月額）や、Light会員さま限定の<strong>乗り換え特典 ¥4,980 OFF</strong>を適用した Premium 年払い（下の「銀行振込」）をお選びいただけます。
+                <strong>Light 会員さまへ：</strong>Light と<strong>同じ ¥4,980/月</strong>で、<strong>中央＋南関の全レース</strong>の買い目が見られる <strong>Premium</strong> へ変更できます。<br>
+                <small>年払いをご希望の方は、下の「銀行振込」から Light会員さま限定の乗り換え特典価格（¥44,820/年）でお申し込みいただけます。</small>
             </p>
         </div>
 
@@ -126,8 +126,11 @@ const planTierByToken = buildPlanTierByToken();
         <div class="plans-container plans-container--stripe">
             <!-- Premium（中央＋南関）月額 ¥4,980 -->
             <div class="plan-card plan-card-recommended" data-plan-tier="2" data-stripe-plan="premium">
-                <div class="recommended-badge">
+                <div class="recommended-badge" data-hide-for="light">
                     <span>✨ 両方ならお得</span>
+                </div>
+                <div class="recommended-badge" data-only-for="light">
+                    <span>⬆️ Light と同額で全レース</span>
                 </div>
                 <div class="plan-header">
                     <h3 class="plan-name">Premium</h3>
@@ -243,39 +246,6 @@ const planTierByToken = buildPlanTierByToken();
                 <p class="plan-billing-note">クレジットカード決済の月額プラン</p>
             </div>
 
-            <!-- Lightプラン（2026-10-02〜 新規募集停止。既存の有料 Light 会員の更新・再開だけ CSS で表示）-->
-            <div class="plan-card" data-plan-tier="1" data-only-for="light">
-                <div class="plan-header">
-                    <h3 class="plan-name">Light</h3>
-                    <div class="plan-price">
-                        <span class="price-amount">¥4,980</span>
-                        <span class="price-period">/30日</span>
-                    </div>
-                    <p class="plan-description">Light 会員さまの更新・再開</p>
-                </div>
-
-                <div class="plan-venues" aria-label="対応会場">
-                    <span class="plan-venue-pill plan-venue-pill--jra">🏇 中央<small>JRA</small></span>
-                    <span class="plan-venue-pill plan-venue-pill--nankan">🏁 南関</span>
-                    <span class="plan-venue-note">両方対応</span>
-                </div>
-
-                <ul class="plan-features">
-                    <li class="feature-item">
-                        <span class="check-icon">✓</span>
-                        <span><strong>メインレースの買い目</strong></span>
-                    </li>
-                    <li class="feature-item">
-                        <span class="check-icon">✓</span>
-                        <span>無料予想</span>
-                    </li>
-                </ul>
-
-                <button class="plan-button plan-button-standard" onclick="openBankModal('Light', 4980, 'monthly')">
-                    🏦 銀行振込で更新する
-                </button>
-            </div>
-
             <!-- 無料プラン -->
             <div class="plan-card" data-plan-tier="0">
                 <div class="plan-header">
@@ -347,6 +317,15 @@ const planTierByToken = buildPlanTierByToken();
                     </div>
                     <button class="other-plan-button" onclick="openBankModal('Premium Lifetime', 78000, 'lifetime')">🏦 銀行振込で申し込む</button>
                 </div>
+                <!-- Light の更新・再開（2026-10-02〜 新規募集停止。既存の有料 Light 会員だけに表示する補助導線。
+                     主に案内するのは同額の Premium ¥4,980/月への変更）-->
+                <div class="other-plan" data-only-for="light">
+                    <div class="other-plan-head">
+                        <span class="other-plan-name">Light の更新・再開（Light 会員さま）</span>
+                        <span class="other-plan-price">¥4,980<small>/30日・メインレースのみ</small></span>
+                    </div>
+                    <button class="other-plan-button" onclick="openBankModal('Light', 4980, 'monthly')">🏦 銀行振込で更新する</button>
+                </div>
                 <p class="other-payments-note">銀行振込は、お振込み後に報告フォームをご送信いただき、入金確認後にご利用開始となります。</p>
             </div>
         </details>
@@ -400,18 +379,17 @@ const planTierByToken = buildPlanTierByToken();
                 </div>
 
                 <div class="faq-item" data-only-for="light">
-                    <h3 class="faq-question">Q: Lightを続けるのと、プレミアム年払いはどちらがお得ですか？</h3>
+                    <h3 class="faq-question">Q: Light と Premium（月額）の違いは？</h3>
                     <p class="faq-answer">
-                        Light は ¥4,980/30日のため、1年間（12回）継続すると <strong>¥59,760</strong> になります。<br>
-                        乗り換え特典価格のプレミアム年払いは <strong>¥44,820/年</strong>（月額換算 ¥3,735）で、<strong>¥14,940 お得</strong>な上に、買い目がメインレースのみから全レースへ広がります。
+                        料金は同じ <strong>¥4,980</strong> です。Light はメインレースの買い目のみですが、Premium は<strong>中央＋南関の全レース（1R〜12R）</strong>の買い目をご覧いただけます。
                     </p>
                 </div>
 
                 <div class="faq-item" data-only-for="light">
-                    <h3 class="faq-question">Q: Lightからプレミアム年払いへの切り替え手順は？</h3>
+                    <h3 class="faq-question">Q: Light から Premium への変更手順は？</h3>
                     <p class="faq-answer">
-                        上の「銀行振込（年払い・買い切り）をご希望の方」を開き、「🏦 乗り換え特典価格で申し込む」で口座情報をご確認のうえ <strong>¥44,820</strong> をお振込みいただき、振込完了後に報告フォームをご送信ください。入金確認取れ次第、プレミアムのご利用を開始いただけます。<br>
-                        ご不明な点はお気軽にお問い合わせください。
+                        上の Premium の「💳 Premium を申し込む」からクレジットカードでお申し込みください。お支払い後すぐに Premium をご利用いただけます。Light は更新のお手続きをしなければ、有効期限で終了します。<br>
+                        年払いをご希望の場合は、下の「銀行振込（年払い・買い切り）をご希望の方」から乗り換え特典価格（¥44,820/年）でお申し込みいただけます。
                     </p>
                 </div>
 
@@ -1013,14 +991,13 @@ const planTierByToken = buildPlanTierByToken();
         display: flex !important;
     }
 
-    /* Light カードは 2026-10-02 に新規募集を停止。有料 Light 会員（tier 1）の更新・再開にだけ出す */
-    :global(:root[data-plan-tier="1"]) .plan-card[data-only-for="light"] {
-        display: block !important;
-    }
-
     :global(:root[data-plan-tier="1"]) .other-plan-price[data-only-for="light"],
     :global(:root[data-plan-tier="1"]) .other-plan-button[data-only-for="light"] {
         display: inline-block !important;
+    }
+
+    :global(:root[data-plan-tier="1"]) .other-plan[data-only-for="light"] {
+        display: flex !important;
     }
 
     /* ===== Premium（両会場）ご契約中: 同じプランの購入ボタンを出さず、次段（三連複）へ ===== */

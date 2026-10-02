@@ -1,3 +1,20 @@
+# 2026-10-02（追記 8）— メール横断監査と、有料 Light 会員は Premium を主導線に（MK 確定・PR #677 の一部）
+
+- **新規・無料向けメールで Light を募集しない**。送信済みの文面は 1 文字も変えない（version を上げると全員へ再送になる）ため、
+  Light を案内する文面の campaign は**文面を凍結したまま送信計画を作らない**（`lightSignupClosedCampaigns.js` → `buildCampaignPlan` が `light_signup_closed`）。
+  対象: campaign-discount-free / campaign-discount-light / campaign-prospect-phase2 / light-trial-to-premium-sequence / light-to-premium-sequence。
+  一部の step だけが該当する free-signup-onboarding は step5 だけを止める（`retiredSequenceSteps.js`・定期 tick が skip）。
+- **再開する campaign は送信前に書き直す**: 新料金（中央版 ¥2,980／南関版 ¥2,980／Premium ¥4,980・CTA は /pricing/）で書き直して version を上げてから停止リストから外す。Light 文面のまま外すと guard テストで落ちる。
+- 無償付与・終了のお知らせ（comeback-light-30d-granted / light-lifetime-restart / light-trial-post-expiry step1）は Light に触れてよいが、購入・継続は案内しない。
+- **既存の有料 Light 会員**: 主導線は「同じ ¥4,980/月で中央＋南関の Premium へ変更」。Light の更新権は残すが会員だけに見える控えめな行（/pricing/ の「その他のお支払い方法」内・tier 1 のみ）とし、Light の継続を勧めない。更新リマインドの CTA は Premium（`/login/?next=/pricing/`）だけ。Premium へ変更後は Light の更新を案内しない（Premium の tier では Light 行が出ない）。
+- 永久無料・無償 Light には Light の購入導線を出さない（既存の権利は変えない）。
+- **Premium 更新リマインド**: Premium ¥4,980（中央＋南関）／中央版・南関版 各 ¥2,980／年払い（銀行振込）を案内し、Light は案内しない。
+- **会場限定 Premium（中央版・南関版）には三連複を売らない**（購入資格は両会場 Premium だけ）: sanrenpuku-offer / sanrenpuku-upsell-sequence / campaign-discount-premium は `matchesCampaignAudience` が `venue_only_premium` で除外。
+- **Stripe live 決済が無効な間は Stripe 月額を案内するメールを実送信しない**: 更新リマインド 2 本は `checkStripeLiveSales`（charges_enabled かつ card_payments=active）で live → dry-run に落とす（読めないときも送らない側）。
+- 固定: `src/lib/marketing/lightSignupClosedEmail.guard.test.mjs`・`lightRenewalEmail.test.mjs`・`premiumRenewalEmail.test.mjs`・`src/lib/pricing/lightSignupClosed.guard.test.mjs`。
+
+---
+
 # 2026-10-02（追記 7）— Stripe の商品名から「KEIBA」を外す（MK 確定）
 
 - Product 名を **Analytics Premium（中央＋南関）／ Analytics Premium 中央 ／ Analytics Premium 南関** に統一（Checkout・領収書・請求書・明細に出る名前）。

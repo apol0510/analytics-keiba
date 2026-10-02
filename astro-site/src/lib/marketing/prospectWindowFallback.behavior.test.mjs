@@ -28,6 +28,11 @@ import { emailHash } from './prospectStore.js';
 import { buildDeliveredSetKey } from './deliveryKeyStore.js';
 import { prospectCursorKey, DEFAULT_PROSPECT_PER_TICK } from './prospectScanWindow.js';
 import { CAMPAIGN_WINDOW } from '../promotions/campaignOffers.js';
+import { __allowLightSignupClosedCampaignsForTests } from './lightSignupClosedCampaigns.js';
+
+// このテストは送信の仕組みを、Light 新規募集停止（2026-10-02）で送信停止にした campaign を題材に検査している。
+// 仕組みの検査なので停止を解除して走らせる（本番では lightSignupClosedCampaigns.js が送信計画を作らせない）。
+__allowLightSignupClosedCampaignsForTests(true);
 
 const BRAND = 'analytics-keiba';
 const FROM = 'noreply@keiba.link';

@@ -25,6 +25,7 @@
 | 事業サイト 公開（2026-10-02）| DNS（Cloudflare CNAME・DNS only）・`analytics@tirol.link`（Xserver）作成済み。HTTPS: Let's Encrypt（〜2026-12-31）・http→https 301・6 ページ + robots/sitemap 200・build/README 404・リンク切れ 0・320/390px 横スクロールなし。`analytics@tirol.link` へテスト 1 通 → SendGrid `delivered`（Xserver 受理）|
 | 事業サイトの方針変更（2026-10-02）| data.tirol.link と同じ一般的な事業者サイトへ変更・競馬固有の語を全削除（analytics-tirol-link #1 `2c062b1` 本番反映・禁止語 0・HTTPS・全ページ 200）|
 | 人の作業 | **なし**（2026-10-02 MK: 必要情報は送信済み・Stripe 側の審査中。ビジネス URL は analytics.tirol.link へ変更済み）|
+| メール横断監査（2026-10-02 MK 確定）| 実装・テスト固定済み: Light を案内する 5 campaign は送信計画を作らない／オンボーディング step5 停止／有料 Light 会員の更新メールと /pricing/ は同額 Premium ¥4,980 を主導線（Light 更新は会員だけの控えめな行）／Premium 更新メールは 3 プラン／会場限定 Premium は三連複 campaign から除外／更新リマインド 2 本は Stripe live 決済が無効な間 dry-run。**有効化後に本番で更新リマインドが live に戻ることを確認する** |
 | 次（有効化後）| merge #677 → 本番デプロイ → 本番スモーク（/pricing/・Checkout URL 発行・Webhook 署名 400・portal 401）→ cleanup |
 | rollback | STRIPE_BILLING.md §5 |
 

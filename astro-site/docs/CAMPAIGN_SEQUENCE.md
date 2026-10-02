@@ -1,5 +1,11 @@
 # 連続配信（キャンペーンシーケンス）
 
+> 🛑 **2026-10-02 Light 新規募集停止に伴う送信停止（`decisions.md` 追記 8）**
+> - 送らない campaign: `src/lib/marketing/lightSignupClosedCampaigns.js`（`buildCampaignPlan` が `light_signup_closed` を返す）。送らない step: `retiredSequenceSteps.js`（定期 tick が skip）。
+> - 再開手順: 新料金（中央版 ¥2,980／南関版 ¥2,980／Premium ¥4,980・CTA /pricing/）で文面を書き直す → version を上げる → 停止リストから外す → `npm run test:marketing`（`lightSignupClosedEmail.guard.test.mjs` が Light 文面・旧価格・月額振込を検査）。
+> - 送信済み step の文面だけを直して version を据え置くことはしない（LOCK テストで落ちる）。
+> - 会場限定 Premium は三連複 campaign の対象外（`SANRENPUKU_SALES_CAMPAIGNS`）。
+
 > 🚚 **2026-09-18 MK 確定 — 大量メール配送は SendGrid Marketing Campaigns へ移す。**
 > 本 doc が説明する **AK 自作の配送経路は「切替が済むまでの現行実装」**であり、
 > **新規強化はしない**（不具合修正と安全側の停止のみ）。現行の責務境界は

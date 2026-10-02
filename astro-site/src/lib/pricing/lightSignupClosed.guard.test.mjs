@@ -25,12 +25,22 @@ test('サイト全体で Light の購入ボタン（openBankModal Light）は /p
   assert.deepEqual(out.map((l) => l.split(':')[0]), ['src/pages/pricing.astro'], out.join('\n'));
 });
 
-test('/pricing/ の Light カードは有料 Light 会員（tier 1）だけに出る', () => {
+test('/pricing/ の Light 更新は有料 Light 会員（tier 1）だけの補助導線（プラン一覧には出さない）', () => {
   const i = pricing.indexOf("openBankModal('Light', 4980, 'monthly')");
-  const cardStart = pricing.lastIndexOf('<div class="plan-card"', i);
-  assert.match(pricing.slice(cardStart, cardStart + 120), /data-only-for="light"/, 'Light カードが全員に見える');
+  const rowStart = pricing.lastIndexOf('<div class="other-plan"', i);
+  assert.match(pricing.slice(rowStart, rowStart + 60), /data-only-for="light"/, 'Light 更新が全員に見える');
+  assert.ok(rowStart > pricing.indexOf('<details class="other-payments"'), 'Light 更新が控えめな銀行振込欄の外にある');
   assert.match(pricing, /\[data-only-for\]\s*\{\s*display:\s*none !important;/);
-  assert.match(pricing, /:root\[data-plan-tier="1"\]\) \.plan-card\[data-only-for="light"\]/);
+  assert.match(pricing, /:root\[data-plan-tier="1"\]\) \.other-plan\[data-only-for="light"\]/);
+});
+
+test('有料 Light 会員には同額の Premium ¥4,980（中央＋南関）への変更を主に案内する（Light 継続を勧めない）', () => {
+  const note = pricing.slice(pricing.indexOf('<p class="pricing-upgrade-note">'), pricing.indexOf('</p>', pricing.indexOf('<p class="pricing-upgrade-note">')));
+  assert.match(note, /同じ ¥4,980\/月/);
+  assert.match(note, /中央＋南関の全レース/);
+  assert.equal(/Light の更新・再開/.test(note), false, '主メッセージで Light 更新を案内している');
+  assert.match(pricing, /data-only-for="light">\s*<span>⬆️ Light と同額で全レース<\/span>/);
+  assert.equal(/Lightを続ける|Light を続ける/.test(pricing), false);
 });
 
 test('新規・無料向けの有料 CTA は中央版・南関版・Premium（Stripe）', () => {

@@ -102,24 +102,32 @@ test('送信直前に更新・乗り換え・プラン変更を検知したら�
 });
 
 // ── 本文 ─────────────────────────────────────────────────
-test('期限前: 2 つの導線（Light を続ける / Premium ¥44,820）が分かれ、どちらもログイン経由の /pricing/', () => {
+test('期限前: 主な案内は同額の Premium ¥4,980/月（ボタンはこれだけ）・Light 更新は 1 行の補足（2026-10-02 MK 確定）', () => {
   const m = renderLightRenewalEmail({ stage: STAGE.PRE, cycle: '2026-10-05', name: 'テスト' });
   assert.equal(LIGHT_RENEWAL_CTA_URL, 'https://analytics.keiba.link/login/?next=/pricing/');
-  assert.match(m.subject, /有効期限が近づいています（10月5日まで）/);
-  assert.match(m.html, /Light を続ける手続きへ/);
-  assert.match(m.html, /Premium 年額 ¥44,820 で申し込む/);
-  assert.equal((m.html.match(/href="https:\/\/analytics\.keiba\.link\/login\/\?next=\/pricing\/"/g) || []).length, 2);
-  assert.match(m.text, /Light を続ける手続きへ:\nhttps:\/\/analytics\.keiba\.link\/login\/\?next=\/pricing\//);
+  assert.match(m.subject, /有効期限が近づいています（10月5日まで）— 同じ ¥4,980\/月で Premium に変更できます/);
+  assert.match(m.html, /Premium へ変更する手続きへ/);
+  assert.match(m.text, /中央＋南関の全レース/);
+  // ボタン（リンク）は 1 つだけ＝Premium への変更
+  assert.equal((m.html.match(/href="https:\/\/analytics\.keiba\.link\/login\/\?next=\/pricing\/"/g) || []).length, 1);
+  assert.match(m.text, /Premium へ変更する手続きへ:\nhttps:\/\/analytics\.keiba\.link\/login\/\?next=\/pricing\//);
+  // Light の更新は権利として 1 行だけ（勧める文言・ボタンは無い）
+  assert.match(m.text, /Light（¥4,980／30日・メインレースのみ）の更新も、料金ページ下部の「銀行振込」から/);
+  assert.equal(/Light を続ける|Light をそのまま続ける|Light を続ける手続き/.test(m.html + m.text), false, 'Light 継続を勧めている');
+  // 年払いの乗り換え特典は補助として残る
+  assert.match(m.text, /乗り換え特典として Premium 年額を ¥44,820（通常 ¥49,800・銀行振込）/);
   assert.ok(m.html.includes('{{unsubscribeUrl}}'), '配信停止の印（共通シェル）');
-  assert.ok(m.html.indexOf('Light を続ける手続きへ') < m.html.indexOf('Premium 年額 ¥44,820 で申し込む'));
+  assert.ok(m.text.indexOf('Premium へ変更する') < m.text.indexOf('Light（¥4,980'), 'Premium の案内が先');
 });
 
-test('失効後: Light を再開 / Premium ¥44,820 と、特典の期限日（失効後 30 日）・翌日から通常価格を書く', () => {
+test('失効後: 同額の Premium を主に案内し、年払い特典の期限日（失効後 30 日）・翌日から通常価格を書く', () => {
   const m = renderLightRenewalEmail({ stage: STAGE.POST, cycle: '2026-09-25' });
-  assert.match(m.subject, /10月25日まで Premium 年額 ¥44,820/);
-  assert.match(m.html, /Light を再開する手続きへ/);
-  assert.match(m.text, /2026年10月25日 までは、Light 会員の乗り換え特典として Premium 年額を ¥44,820（通常 ¥49,800）/);
+  assert.match(m.subject, /有効期限が終了しました — 同じ ¥4,980\/月で Premium をご利用いただけます/);
+  assert.match(m.html, /Premium へ変更する手続きへ/);
+  assert.match(m.text, /2026年10月25日 まで Light 会員の乗り換え特典として Premium 年額を ¥44,820（通常 ¥49,800・銀行振込）/);
   assert.match(m.text, /2026年10月26日 以降は通常の価格/);
+  assert.match(m.text, /再開も、料金ページ下部の「銀行振込」から/);
+  assert.equal(/Light を再開する手続き/.test(m.html), false, 'Light 再開のボタンが残っている');
   assert.ok(m.text.replace(/\s/g, '').length >= 180, '本文 180 字以上');
 });
 
