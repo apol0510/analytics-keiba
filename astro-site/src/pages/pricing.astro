@@ -1054,6 +1054,7 @@ const planTierByToken = buildPlanTierByToken();
     }
 
     :global(:root[data-premium-active="1"]) .plans-lead,
+    :global(:root[data-premium-active="1"]) .plan-card[data-plan-tier="0"],
     :global(:root[data-premium-active="1"]) .plan-card[data-stripe-plan] {
         display: none !important;
     }

@@ -45,6 +45,7 @@ test('Premium（両会場）をご契約中の方には同じプランの購入 
   assert.match(pricing, /data-premium-active/);
   assert.match(pricing, /up\.pricingTier >= 2\s+&& !\(Number\.isFinite\(vuMs\) && vuMs < Date\.now\(\)\)/);
   assert.match(pricing, /:root\[data-premium-active="1"\]\) \.plan-card\[data-stripe-plan\]/);
+  assert.match(pricing, /:root\[data-premium-active="1"\]\) \.plan-card\[data-plan-tier="0"\]/, '無料登録カードも出さない');
   const note = pricing.slice(pricing.indexOf('<div class="premium-member-note">'), pricing.indexOf('<div class="premium-member-note">') + 600);
   assert.match(note, /href="\/sanrenpuku-demo\/"/);
 });
