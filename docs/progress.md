@@ -18,12 +18,12 @@
 | CTA 横断監査（2026-10-02 MK 確定）| 実装・テスト固定済み（Light 購入 CTA は /pricing/ tier 1 の更新用だけ・キャンペーン割引から Light 除外・申込 Function で Light 新規/Premium 月払いを 409・Premium 会員は購入 CTA の代わりに三連複へ・AccessControl の Light 文言）。**Deploy Preview 実測**: Light / Light - Campaign / Premium Monthly の申込は 409（Customers 書き込み 0）・/light-campaign/ → /pricing/ 301・/pricing/ 状態別（未ログイン=3 プラン+無料 / 有料 Light=3 プラン+Light 更新 / 永久無料 Light=3 プラン（Light 購入なし）/ Premium 契約中=購入 CTA なし+三連複案内 / Premium 期限切れ=3 プラン）|
 | 販売開始条件（2026-10-02 MK 確定）| 審査完了・Payout は待たず、live の決済受付が可能なら開始。2026-10-02 実測: charges_enabled=false・card inactive・payouts_enabled=true・live Checkout 不可 → **決済受付不可のため merge 保留継続**（ビジネス URL は analytics.tirol.link へ変更済み）|
 | **待ち（実異常回避）** | **Stripe 審査中**（disabled_reason=under_review・card_payments inactive・pending_verification 1 件=other_compliance_inquiry）。live の Checkout 作成は `Your account cannot currently make live charges` で失敗。**この状態で merge すると月額が誰も買えなくなるため merge を保留** |
-| 自動検知 | scheduled-checks `stripe-live-activation-2026`（#679 `fd478947`・毎日 10:00 JST・GET /v1/account を読むだけ）。有効化で Issue「[自動測定] stripe-live-activation-2026」→ #677 merge・本番スモークへ。GitHub secret `STRIPE_ACCOUNT_READ_KEY` 登録済み。Actions 上の検証実行で審査中を正しく判定 |
+| 自動検知 | scheduled-checks `stripe-live-activation-2026`（#679 `fd478947`・毎日 10:00 JST・GET /v1/account を読むだけ）。有効化で Issue「[自動測定] stripe-live-activation-2026」→ #677 merge・本番スモークへ。GitHub secret `STRIPE_ACCOUNT_READ_KEY` 登録済み。Actions 上の検証実行で審査中を正しく判定 | ／ 対話セッションでも 10 分ごとに `charges_enabled && card_payments=active` を監視し、検知したら #677 merge → 本番確認へ |
 | 事業サイト analytics.tirol.link（2026-10-02 決定）| repo `apol0510/analytics-tirol-link`（private・CI green）・Netlify `analytics-tirol-link`（GitHub 連携・`analytics-tirol-link.netlify.app` で 6 ページ 200・build/README は 404）・custom domain 設定済み。390/320px で横スクロールなし・secret/PII scan 0 |
 | 🚨 本番デプロイ失敗（2026-10-02 09:01〜10:17）| Stripe の env 6 件を production に入れた結果、関数 env が Lambda 4KB 上限を超え本番ビルドが全失敗（自動取込 3 件と #679・#683 が未反映）。env を外して Build Hook で復旧（10:17 ready・/refund/ 反映確認）。恒久対策: Price/ポータル ID はコード、env は秘密 2 つだけ（10:21 本番ビルドで収まることを確認）|
 | 事業サイト 公開（2026-10-02）| DNS（Cloudflare CNAME・DNS only）・`analytics@tirol.link`（Xserver）作成済み。HTTPS: Let's Encrypt（〜2026-12-31）・http→https 301・6 ページ + robots/sitemap 200・build/README 404・リンク切れ 0・320/390px 横スクロールなし。`analytics@tirol.link` へテスト 1 通 → SendGrid `delivered`（Xserver 受理）|
 | 事業サイトの方針変更（2026-10-02）| data.tirol.link と同じ一般的な事業者サイトへ変更・競馬固有の語を全削除（analytics-tirol-link #1 `2c062b1` 本番反映・禁止語 0・HTTPS・全ページ 200）|
-| 人の作業 | Stripe ダッシュボードでビジネス URL を `https://analytics.tirol.link/`・サポートメールを `analytics@tirol.link` に変更し、コンプライアンス確認へ回答（自分のアカウントの事業情報は API から変更できない）|
+| 人の作業 | **なし**（2026-10-02 MK: 必要情報は送信済み・Stripe 側の審査中。ビジネス URL は analytics.tirol.link へ変更済み）|
 | 次（有効化後）| merge #677 → 本番デプロイ → 本番スモーク（/pricing/・Checkout URL 発行・Webhook 署名 400・portal 401）→ cleanup |
 | rollback | STRIPE_BILLING.md §5 |
 
