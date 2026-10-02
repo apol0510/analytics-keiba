@@ -43,6 +43,13 @@ const planTierByToken = buildPlanTierByToken();
             raw = (up && up.plan) || '';
           }
 
+          // Premium（両会場）を**いま**ご契約中の方には、同じプランの購入ボタンを出さない（2026-10-02）。
+          // 期限が読めて過去なら出す＝再契約できる状態を壊さない。
+          if (up && typeof up.pricingTier === 'number' && up.pricingTier >= 2
+            && !(Number.isFinite(vuMs) && vuMs < Date.now())) {
+            document.documentElement.setAttribute('data-premium-active', '1');
+          }
+
           // 🔒 価格資格はサーバーが課金契約だけから決めた pricingTier を最優先で使う。
           //    無料特典しか無い顧客は 0 になり、会員向け価格は出ない。
           if (up && typeof up.pricingTier === 'number') {
@@ -108,6 +115,14 @@ const planTierByToken = buildPlanTierByToken();
              金額の正本は src/lib/billing/stripePlans.js（請求は Stripe の Price）。
              ボタンは data-checkout="<planId>" → 下の startCheckout() → stripe-create-checkout。 -->
         <p class="plans-lead">中央と南関、どちらで勝負しますか？<br><span>両方なら Premium がお得です。</span></p>
+        <!-- Premium（両会場）をご契約中の方にだけ CSS で表示（同じプランの購入ボタンの代わり）-->
+        <div class="premium-member-note">
+            <p>Premium をご利用中です。月額プランの変更・解約はマイページの「お支払い管理」から行えます。</p>
+            <p class="premium-member-links">
+                <a href="/sanrenpuku-demo/" class="plan-button plan-button-annual">次は三連複を見る</a>
+                <a href="/dashboard/" class="plan-button plan-button-free">マイページへ</a>
+            </p>
+        </div>
         <div class="plans-container plans-container--stripe">
             <!-- Premium（中央＋南関）月額 ¥4,980 -->
             <div class="plan-card plan-card-recommended" data-plan-tier="2" data-stripe-plan="premium">
@@ -1006,6 +1021,41 @@ const planTierByToken = buildPlanTierByToken();
     :global(:root[data-plan-tier="1"]) .other-plan-price[data-only-for="light"],
     :global(:root[data-plan-tier="1"]) .other-plan-button[data-only-for="light"] {
         display: inline-block !important;
+    }
+
+    /* ===== Premium（両会場）ご契約中: 同じプランの購入ボタンを出さず、次段（三連複）へ ===== */
+    .premium-member-note {
+        display: none;
+        max-width: 640px;
+        margin: 0 auto 2rem;
+        padding: 1.25rem;
+        border: 1px solid rgba(59, 130, 246, 0.4);
+        border-radius: 0.75rem;
+        background: rgba(59, 130, 246, 0.08);
+        color: #cbd5e1;
+        text-align: center;
+    }
+
+    .premium-member-links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        justify-content: center;
+        margin-top: 0.75rem;
+    }
+
+    .premium-member-links .plan-button {
+        width: auto;
+        min-width: 180px;
+    }
+
+    :global(:root[data-premium-active="1"]) .premium-member-note {
+        display: block;
+    }
+
+    :global(:root[data-premium-active="1"]) .plans-lead,
+    :global(:root[data-premium-active="1"]) .plan-card[data-stripe-plan] {
+        display: none !important;
     }
 
     /* ===== Stripe 月額（主導線） ===== */

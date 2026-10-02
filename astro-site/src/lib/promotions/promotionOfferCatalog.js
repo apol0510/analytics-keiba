@@ -329,6 +329,8 @@ export const PROMOTION_OFFERS = Object.freeze([
     applyPlanName: 'Light',
     applyPlanType: 'Monthly',
     version: 1,
+    // ⚠️ 2026-10-02 Light の新規募集停止: キャンペーンの案内（campaignOffers.resolveCampaignOfferIdsFor）から外し、
+    //    申込はサーバー側（discontinuedBankProducts）で受け付けない。過去キャンペーンの価格記録のため定義は残す。
     enabled: true,
   },
   {

@@ -33,7 +33,7 @@ import {
 import { loadReopenStart } from '../../src/lib/premiumPlus/premiumPlusReopenStartStore.js';
 import { withReopenStart } from '../../src/lib/premiumPlus/premiumPlusReopenStart.js';
 import { checkMemberOnlyPricing } from '../../src/lib/pricing/pricingEligibility.js';
-import { discontinuedBankProductWarning } from '../../src/lib/payments/discontinuedBankProducts.js';
+import { decideBankProductAvailability } from '../../src/lib/payments/discontinuedBankProducts.js';
 import { resolveOrderSaleDate, buildSaleProductName, isPremiumPlusProductName } from '../../src/lib/premiumPlus/premiumPlusSaleDate.js';
 import { shapeRaceCalendar } from '../../src/lib/premiumPlus/premiumPlusRaceCalendar.js';
 import { isSaleDateFieldEnabled, SALE_TARGET_DATE_FIELD } from '../../src/lib/payments/bankPaymentFlow.js';
@@ -530,27 +530,40 @@ exports.handler = async (event, context) => {
       console.warn('⚠️ [bank-transfer] 会員限定価格の裏づけ確認に失敗:', e.message);
     }
 
-    // 販売終了した商品（Premium 月払いの銀行振込 / Light の新規）の振込報告は**受け付けたうえで**管理者へ警告。
-    // 入金後の報告なので拒否しない（お金を受け取ったのに申込が消える方が悪い）。
-    let discontinuedWarning = null;
-    try {
+    // 販売終了した商品は**受け付けない**（2026-10-02 MK 確定・fail closed）:
+    //   - Premium 月払いの銀行振込（月額は Stripe のみ）
+    //   - Light の新規（既存の**有料** Light 会員の更新・再開だけ受け付ける）
+    // ⚠️ メール送信・Airtable への書き込みより**前**で止める（副作用ゼロ）。URL 直打ち・旧ページからの申込も同じ。
+    {
       const d = derivePlanFromProductName(orderProductName);
       const plan = String(d.planName || '').toLowerCase();
-      if (plan === 'light' || (plan === 'premium' && d.planType === 'Monthly')) {
-        const KEY = process.env.AIRTABLE_API_KEY;
-        const BASE = process.env.AIRTABLE_BASE_ID;
-        let fields = null;
-        if (KEY && BASE) {
+      let fields = null;
+      let lookupFailed = false;
+      if (plan === 'light' || plan === 'standard' || plan === 'ライト') {
+        try {
+          const KEY = process.env.AIRTABLE_API_KEY;
+          const BASE = process.env.AIRTABLE_BASE_ID;
+          if (!KEY || !BASE) throw new Error('airtable_env_missing');
           const url = `https://api.airtable.com/v0/${BASE}/Customers?filterByFormula=`
             + encodeURIComponent(`LOWER(TRIM({Email})) = '${email.replace(/'/g, "\\'")}'`)
             + '&maxRecords=1';
           const res = await fetch(url, { headers: { Authorization: `Bearer ${KEY}` } });
-          if (res.ok) fields = ((await res.json()).records || [])[0]?.fields || null;
+          if (!res.ok) throw new Error(`airtable_${res.status}`);
+          fields = ((await res.json()).records || [])[0]?.fields || null;
+        } catch (e) {
+          lookupFailed = true;
+          console.warn('⚠️ [bank-transfer] Light 会員の確認に失敗（受け付けない）:', e.message);
         }
-        discontinuedWarning = discontinuedBankProductWarning({ planName: d.planName, planType: d.planType, fields });
       }
-    } catch (e) {
-      console.warn('⚠️ [bank-transfer] 販売終了商品の確認に失敗:', e.message);
+      const availability = decideBankProductAvailability({ planName: d.planName, planType: d.planType, fields, lookupFailed });
+      if (!availability.ok) {
+        console.log(JSON.stringify({ event: 'bank_application_rejected', code: availability.code }));
+        return {
+          statusCode: 409,
+          headers,
+          body: JSON.stringify({ success: false, error: availability.message, code: availability.code, sideEffects: 'none' }),
+        };
+      }
     }
 
     // SendGrid API設定
@@ -640,13 +653,6 @@ exports.handler = async (event, context) => {
       </div>
       ` : ''}
     </div>
-
-    ${discontinuedWarning ? `
-    <div class="alert" style="background:#fee2e2;border-left-color:#ef4444;">
-      <h4 style="margin: 0 0 10px 0; color: #991b1b;">🛑 販売終了した商品の振込報告です</h4>
-      <div style="color:#7f1d1d;">${discontinuedWarning}</div>
-    </div>
-    ` : ''}
 
     ${memberPricingWarning ? `
     <div class="alert" style="background:#fee2e2;border-left-color:#ef4444;">

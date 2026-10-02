@@ -1,3 +1,26 @@
+# 2026-10-02（追記 6）— Light 新規募集停止に伴う CTA 横断監査（MK 確定・PR #677 の一部）
+
+## 確定仕様
+
+| 状態 | CTA |
+|---|---|
+| 未ログイン・無料 | Light の新規 CTA を出さない。有料 CTA は **Premium 中央版 ¥2,980 / 南関版 ¥2,980 / Premium ¥4,980**（「両方なら Premium がお得」）|
+| 既存の**有料** Light 会員 | 更新・再開の導線を維持（`/pricing/` の Light カードは tier 1 にだけ表示・一般公開の新規募集 CTA にはしない）|
+| 永久無料 Light・無償付与 Light | 既存の閲覧権は変えない。購入導線とは分離（「有料 Light 会員」には含めない）|
+| Premium（両会場）会員 | 同じプランの購入 CTA を出さず、次段（三連複 `/sanrenpuku-demo/`）とマイページへ |
+| URL 直打ち・旧ページ | Light 新規・Premium 月払いの銀行振込は**サーバー側で 409**（メール送信・書き込みより前・fail closed）。旧 `/light-campaign/` は `/pricing/` へ 301 |
+
+## 監査結果（2026-10-02・repo 全体）
+
+- Light の購入ボタン（`openBankModal('Light'…)`）は `/pricing/` の更新用カード 1 か所だけ（tier 1 限定）。他ページの有料 CTA はすべて `/pricing/` 行き・文言も Light を名指ししない
+- キャンペーン割引の案内（`campaignOffers.resolveCampaignOfferIdsFor`）から Light を外した（`campaign-light-monthly-500off` の発行済み 0 件を本番で確認）
+- Light 向けページの未加入案内（AccessControl）を「Light プランが必要」→「有料プラン（Premium 中央版・南関版・Premium）」へ
+- 申込 Function（`bank-transfer-application`）: Light 新規・Premium 月払いを受け付けない（判定 `discontinuedBankProducts.decideBankProductAvailability`・照会失敗も止める）
+- 既存の Light 会員向け表示（マイページの会員表示・Light 予想ページ・Light 更新リマインド）は変更なし
+- テスト固定: `src/lib/pricing/lightSignupClosed.guard.test.mjs` / `src/lib/payments/discontinuedBankProducts.test.mjs` / キャンペーン関連テスト
+
+---
+
 # 2026-10-02（追記 5）— 販売開始の条件は「live の決済受付が可能」だけ（審査完了・Payout は待たない）（MK 確定）
 
 - Stripe の審査中・Payout 保留は、Stripe 月額の販売開始・PR #677 merge の待機条件にしない。

@@ -60,13 +60,18 @@ test('3 つの宛先区分が存在し、連続配信として定義されてい
   assert.equal(validateCampaignSequences().ok, true, JSON.stringify(validateCampaignSequences().errors));
 });
 
-test('【核心】案内する割引は、その会員がマイページで見る割引と完全に一致する', () => {
+test('【核心】案内する割引は、その会員がマイページで見る割引と完全に一致する', async () => {
+  const { isCampaignActive, CAMPAIGN_OFFER_IDS: IDS2 } = await import('../promotions/campaignOffers.js');
   for (const id of IDS) {
     const expected = resolveCampaignOfferIdsFor(ENTITLEMENTS[id]);
-    assert.deepEqual(
-      [...DISCOUNT_SEGMENT_OFFER_IDS[SEGMENT_OF[id]]], expected,
-      `${id}: メールの案内内容が campaignOffers の出し分けと違う`,
-    );
+    let actual = [...DISCOUNT_SEGMENT_OFFER_IDS[SEGMENT_OF[id]]];
+    // 2026-10-02 Light 新規募集停止: 無料向けメール（2026-09-10〜09-24 に送信済み・文面ロック中）には Light が残る。
+    // 送信済み Step の文面は変えられない（version を上げると全員へ再送になる）ため、**期間外に限り**履歴として許す。
+    // キャンペーンを再開する（期間内になる）なら、Light を外して version を上げること＝ここで落ちる。
+    if (!isCampaignActive() && SEGMENT_OF[id] === 'free') {
+      actual = actual.filter((o) => o !== IDS2.LIGHT_MONTHLY);
+    }
+    assert.deepEqual(actual, expected, `${id}: メールの案内内容が campaignOffers の出し分けと違う`);
   }
 });
 

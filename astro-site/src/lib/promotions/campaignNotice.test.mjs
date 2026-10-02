@@ -40,14 +40,13 @@ test('期限の表示は 1 か所から作る（画面ごとにズレない）',
 });
 
 // ── 何が届くか ──────────────────────────────────────────────
-test('無料の方には 3 件。金額はサーバーが文字列で渡す', () => {
+test('無料の方には 2 件（Light は 2026-10-02 新規募集停止で案内しない）。金額はサーバーが文字列で渡す', () => {
   const v = describeCampaignForMember({ entitlements: {}, nowMs: IN });
-  assert.equal(v.offers.length, 3);
-  const light = v.offers.find((o) => o.offerId === CAMPAIGN_OFFER_IDS.LIGHT_MONTHLY);
-  assert.equal(light.regularPriceText, '¥4,980');
-  assert.equal(light.offerPriceText, '¥4,480');
-  assert.equal(light.discountText, '500円OFF');
-  assert.equal(light.applyHref, '/pricing/');
+  assert.equal(v.offers.length, 2);
+  assert.equal(v.offers.some((o) => o.offerId === CAMPAIGN_OFFER_IDS.LIGHT_MONTHLY), false);
+  const annual = v.offers.find((o) => o.offerId === CAMPAIGN_OFFER_IDS.PREMIUM_ANNUAL);
+  assert.equal(annual.regularPriceText, '¥49,800');
+  assert.match(annual.discountText, /円OFF/);
 });
 
 test('Premium の方には三連複（買い切り）だけを案内する', () => {
@@ -124,7 +123,7 @@ test('割引が何本あっても、お知らせは 1 件として数える（�
   const n = describeCampaignNotice(describeCampaignForMember({ entitlements: {}, nowMs: IN }));
   assert.equal(n.show, true);
   assert.equal(n.count, 1);
-  assert.match(n.label, /3 件/);
+  assert.match(n.label, /2 件/);
 });
 
 test('1 本だけのときは商品名をそのまま出す', () => {
