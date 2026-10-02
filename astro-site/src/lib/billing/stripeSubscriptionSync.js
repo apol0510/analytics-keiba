@@ -48,6 +48,17 @@ const LIVE_STATUSES = new Set(['active', 'trialing']);
 /** 終わった状態（閲覧を止める） */
 const ENDED_STATUSES = new Set(['canceled', 'unpaid', 'incomplete_expired']);
 
+/**
+ * Stripe の月額で契約中の会員か（退会フラグではなく Stripe の「次回更新を止める」で解約させる対象）。
+ * 退会フラグ（WithdrawalRequested）は**その場で閲覧を止める**ため、支払い済み期間末まで使える
+ * 解約仕様（2026-10-02 MK 確定）と矛盾し、しかも Stripe の課金は止まらない。
+ */
+export function isStripeSubscriber(fields) {
+  const f = fields || {};
+  return String(f.PaymentMethod || '').trim().toLowerCase() === 'stripe'
+    && /^sub_/.test(String(f.StripeSubscriptionId || ''));
+}
+
 /** Stripe の Subscription オブジェクトを、判定に要る値だけへ正規化する */
 export function snapshotSubscription(sub) {
   const s = sub || {};

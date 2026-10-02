@@ -43,6 +43,13 @@
 - 会場別の有料ページは `gatePaidPage({ requiredPlan: 'premium-jra' | 'premium-nankan' })`。両会場の Premium は両方通る。
 - 銀行振込の入金確認（`buildConfirmationFields`）は `VenueAccess=''` に戻す（会場版から年払いへ移った人を両会場に）。
 
+### 表示方針（2026-10-02 MK 確定）
+
+解約条件（次回更新の停止・支払い済み期間末まで利用可・最低利用期間なし・日割り返金なし）は
+`/refund/`・`/terms/`・`/legal/` に正確に、FAQ に通常の説明として書く。`/pricing/` のカード・見出しと
+Checkout の custom_text では強調しない（guard: `stripeDisplayPolicy.guard.test.mjs`）。
+Stripe 会員の解約は「お支払い管理」だけ。マイページの退会処理は退会フラグを立てず案内する。
+
 ## 3. 初期設定（Stripe アカウント作成後）
 
 **鍵は画面・ログ・commit に出さない。** 鍵ファイルは本人がコピーして作る（1 行・権限 600）:

@@ -5326,7 +5326,7 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
                     <ul class="plan-option-features">
                         <li>✅ <strong>全12レース</strong>の馬単予想</li>
                         <li>✅ 高精度AI予想</li>
-                        <li>✅ いつでも解約できます</li>
+                        <li>✅ 詳細な投資戦略</li>
                     </ul>
                     <a class="btn-plan premium" href="/pricing/">
                         💳 料金ページで申し込む
@@ -5494,6 +5494,16 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
             // ボタンを無効化
             confirmBtn.disabled = true;
             confirmBtn.textContent = '処理中...';
+
+            // Stripe の月額会員は「お支払い管理」で解約する（次回更新の停止・支払い済み期間末まで利用可）。
+            // 退会フラグはその場で閲覧を止め、Stripe の課金も止まらないため使わない（2026-10-02）。
+            const _sa = (typeof getServerAuth === 'function') ? getServerAuth() : null;
+            if (_sa && _sa.stripeBilling === true && typeof window.akOpenStripePortal === 'function') {
+                window.akOpenStripePortal();
+                confirmBtn.disabled = false;
+                confirmBtn.textContent = '退会する';
+                return;
+            }
 
             try {
                 // 退会処理APIを呼び出し

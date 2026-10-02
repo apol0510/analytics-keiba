@@ -122,9 +122,8 @@ exports.handler = async (event) => {
       metadata,
       subscription_data: { metadata, description: `KEIBA Analytics ${plan.label}` },
       allow_promotion_codes: false,
-      custom_text: {
-        submit: { message: '毎月自動で更新されます。マイページの「お支払い管理」からいつでも解約できます（次回更新日まで閲覧可能）。' },
-      },
+      // ⚠️ custom_text（決済ボタン下の追加文言）は付けない（2026-10-02 MK 確定の表示方針）。
+      //    プラン名・月額・定期購読であることは Stripe が標準で表示する。解約条件は FAQ / legal に記載する。
     };
     const existingCustomer = String(fields.StripeCustomerId || '');
     if (/^cus_/.test(existingCustomer)) params.customer = existingCustomer;
