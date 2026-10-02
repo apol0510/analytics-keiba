@@ -23,6 +23,7 @@
 - 解約・カード変更・プラン変更（会場版 ⇄ Premium）は Stripe のカスタマーポータル（マイページ「お支払い管理」）。
 - Stripe 会員には期限前・失効後リマインド（Premium 月払い）を送らない（自動更新のため）。
 - 実装・運用手順の正本: `astro-site/docs/STRIPE_BILLING.md`。
+- **販売開始の条件（2026-10-02 MK 確定）**: live の決済受付が可能（charges_enabled かつ card_payments=active）なこと**だけ**。Stripe の審査完了・Payout 有効化は待たない。
 - **返金**: 決済完了後の返金は行わない（14 日返金保証は 2026-10-02 廃止）。例外は法令上の義務・当方の誤請求・当方の責めによる不提供のみ。
 
 ## 事業サイト analytics.tirol.link（2026-10-02 MK 確定 / Stripe 登録用）

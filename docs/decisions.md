@@ -1,3 +1,13 @@
+# 2026-10-02（追記 5）— 販売開始の条件は「live の決済受付が可能」だけ（審査完了・Payout は待たない）（MK 確定）
+
+- Stripe の審査中・Payout 保留は、Stripe 月額の販売開始・PR #677 merge の待機条件にしない。
+- 条件は **live の決済受付が可能**（`charges_enabled=true` かつ card_payments=active、live Checkout Session が作れる）ことだけ。Payout だけ保留なら正常として進める。
+- 2026-10-02 12:0x JST の実測: `charges_enabled=false` / card_payments=inactive / `disabled_reason=under_review` / `payouts_enabled=true` / live Checkout 作成は `Your account cannot currently make live charges`。
+  → **決済受付ができないため merge は保留**（merge すると月額を誰も買えない＝月払い銀行振込は停止済み）。
+- 決済受付の開始は scheduled-checks `stripe-live-activation-2026`（charges_enabled かつ card active を毎日検知）が拾う。検知したら #677 merge → 本番確認へ進む。
+
+---
+
 # 2026-10-02（追記 4）— analytics.tirol.link は data.tirol.link と同じ一般的な事業者サイトにする（MK 確定・追記 3 を改訂）
 
 - 追記 3 で本文に載せた個別サービスの内容・料金表を削除し、TIROL DATA LABO の一般的な事業者サイトにする（data.tirol.link の構成・粒度）。
