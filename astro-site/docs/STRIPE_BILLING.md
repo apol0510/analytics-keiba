@@ -31,8 +31,10 @@
 
 | 状態 | 書く値 |
 |---|---|
-| 有効（active / trialing）| `プラン=Premium` `PlanType=Monthly` `Status=active` `PaymentMethod=Stripe` `有効期限=請求期間の終わり(JST)+2日` `VenueAccess=''/jra/nankan` `StripeCustomerId` `StripeSubscriptionId`。初回だけ `PaidAt` と退会フラグのリセット、Light からなら `PremiumConvertedFrom/At` |
-| 終了（canceled / unpaid / incomplete_expired）| 自分の購読なら `有効期限` を終了日へ**縮めるだけ** + `CancelledAt` |
+| 有効（active / trialing）| `プラン=Premium` `PlanType=Monthly` `Status=active` `PaymentMethod=Stripe` `有効期限=支払い済み期間の終わり(JST)+2日`（**支払い済み請求書の期間末**。購読の current_period_end は支払い前に進むので使わない） `VenueAccess=''/jra/nankan` `StripeCustomerId` `StripeSubscriptionId`。初回だけ `PaidAt` と退会フラグのリセット、Light からなら `PremiumConvertedFrom/At` |
+| 終了（canceled / unpaid / incomplete_expired）| 自分の購読なら `有効期限` を**支払い済み期間末の翌暦日**へ（縮めるだけ・延ばさない）+ `CancelledAt`。**即時解約でも支払い済み期間は残す**（2026-10-02 MK 確定: 期間末失効・最低利用期間なし・日割り返金なし）|
+| 解約予約（cancel_at_period_end）| 期限は変えない（期間末に終了イベントが来る）|
+| 支払い済み請求書なし（初回決済の処理中）| 書かない（`awaiting_payment`）|
 | 支払い待ち（past_due）・未完了 | 書かない（期限で自然に閉じる。Stripe の再試行で払えれば延びる）|
 | 未登録の人のレコード作成 | **Webhook の `checkout.session.completed` だけ**が作る（Stripe は同じイベントを並行に送らない）。他のイベント・決済完了画面は作成を待つ（`no_record_yet`、画面は「確認中」で再試行）。2026-10-02 の E2E で複数イベントが同時に届き 2 レコード作られたため（Redis の無い Deploy Preview ではロックが効かない）|
 | 書かない＋管理者通知 | 別の購読が生きている（二重課金）／買い切り会員／年払いの残りが長い／未登録 Price／同じメールのレコードが複数 |

@@ -20,7 +20,7 @@
  * ⚠️ 秘密鍵・メールアドレス・レコード内容をログに出さない。
  */
 
-import { snapshotSubscription, decideSubscriptionSync } from './stripeSubscriptionSync.js';
+import { snapshotSubscription, decideSubscriptionSync, paidThroughFromInvoices } from './stripeSubscriptionSync.js';
 import { buildPremiumConversionFields } from '../payments/premiumConversion.js';
 
 const TABLE = 'Customers';
@@ -167,7 +167,11 @@ async function applySubscriptionLocked({ stripe, env, subId, now = new Date(), f
     }
   }
 
-  const decision = decideSubscriptionSync({ fields, sub, env, now, otherSubscriptionLive });
+  // 支払い済み期間の終わり（期限の根拠）。購読の請求書のうち paid のものだけを見る。
+  const invoices = await stripe.invoices.list({ subscription: sub.id, status: 'paid', limit: 10 });
+  const paidThrough = paidThroughFromInvoices(invoices?.data || []);
+
+  const decision = decideSubscriptionSync({ fields, sub, env, now, otherSubscriptionLive, paidThrough });
   if (decision.action === 'skip') {
     return { ok: true, action: 'skip', reason: decision.reason, recordId: record?.id };
   }

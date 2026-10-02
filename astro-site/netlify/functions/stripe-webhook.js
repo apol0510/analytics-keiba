@@ -54,6 +54,11 @@ exports.handler = async (event) => {
     });
     console.log(JSON.stringify({ event: 'stripe_webhook', type: evt.type, action: result.action, reason: result.reason }));
     if (result.action === 'busy') return reply(500, { error: 'busy' });
+    // 作成役（checkout.session.completed）が支払い確定より先に届いたら、Stripe に再送させる
+    // （ここで 200 を返すと、作成役のイベントが二度と来ずレコードが作られない）
+    if (evt.type === 'checkout.session.completed' && result.reason === 'awaiting_payment') {
+      return reply(500, { error: 'awaiting_payment' });
+    }
     return reply(200, { received: true, action: result.action, reason: result.reason });
   } catch (e) {
     console.error(JSON.stringify({ event: 'stripe_webhook_failed', type: evt.type, message: String(e?.message || e).slice(0, 160) }));

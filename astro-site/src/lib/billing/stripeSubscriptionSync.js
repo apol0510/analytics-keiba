@@ -15,6 +15,16 @@
  * 毎月の請求が成功すると期間が延び、`有効期限` も延びる。
  * 請求が止まれば（解約・カード失敗）**何も書かなくても**期限で自然に閲覧できなくなる（fail closed）。
  *
+ * ## 期限の根拠は「支払い済みの請求書」だけ（2026-10-02 MK 確定の解約仕様）
+ *
+ * - **解約は即時失効ではない**。次回の更新が止まるだけで、**支払い済み期間の終わりまで**閲覧できる。
+ *   最低利用期間・日割り返金は設けない。
+ * - そのため期限は購読の `current_period_end` ではなく、**支払い済み請求書の期間の終わり（paidThrough）**から作る。
+ *   `current_period_end` は更新日に**支払い前から**次の期間へ進むので、それで延ばすと
+ *   カード決済が失敗しても 1 か月見られてしまう（実装初版の誤り）。
+ * - 終了（canceled 等）でも期限は paidThrough の終わりまで残す。Stripe 画面で即時解約しても、
+ *   支払い済みの期間は奪わない（実装初版は終了日＝当日で即時失効させていた）。
+ *
  * ## 書かない（conflict）ケース — 二重課金・権利の縮小を起こさない
  *
  * | reason | 状況 | 理由 |
@@ -57,10 +67,36 @@ export function snapshotSubscription(sub) {
   };
 }
 
-/** 請求期間の終わり（unix 秒）→ `有効期限`（JST 暦日 + 猶予） */
+/** 支払い済み期間の終わり（unix 秒）→ 有効中の `有効期限`（JST 暦日 + 猶予 2 日。更新時の決済待ちを吸収）*/
 export function expirationFromPeriodEnd(periodEndSec) {
   if (!Number.isFinite(periodEndSec) || periodEndSec <= 0) return null;
   return jstDateString(new Date(periodEndSec * 1000 + STRIPE_GRACE_MS));
+}
+
+/**
+ * 終了後の `有効期限`: 支払い済み期間の終わりまで見られる最小の暦日。
+ * `有効期限` 'YYYY-MM-DD' は resolveEntitlements で「その日の 00:00 UTC（= 09:00 JST）」に切れるので、
+ * 支払い済みの終わりより前に切れないよう **翌暦日**にする（短く切るより 1 日未満長い方を選ぶ）。
+ */
+export function expirationAfterEnd(paidThroughSec) {
+  if (!Number.isFinite(paidThroughSec) || paidThroughSec <= 0) return null;
+  return jstDateString(new Date(paidThroughSec * 1000 + 24 * 60 * 60 * 1000));
+}
+
+/**
+ * 支払い済みの請求書 → 支払い済み期間の終わり（unix 秒）。無ければ null（＝まだ 1 円も払われていない）。
+ * 請求書の明細ごとの期間（period.end）の最大値。日割りの差額請求書も同じ期間末を持つ。
+ */
+export function paidThroughFromInvoices(invoices) {
+  let max = null;
+  for (const inv of invoices || []) {
+    if (!inv || inv.status !== 'paid') continue;
+    for (const line of inv.lines?.data || []) {
+      const end = Number(line?.period?.end);
+      if (Number.isFinite(end) && (max === null || end > max)) max = end;
+    }
+  }
+  return max;
 }
 
 const blank = (v) => v === undefined || v === null || String(v).trim() === '';
@@ -80,10 +116,11 @@ function endOfJstDayMs(ymd) {
  *   env: object,                    Price ID の対応表（STRIPE_PRICE_*）
  *   now: Date,
  *   otherSubscriptionLive?: boolean 記録済みの別購読がまだ生きているか（呼び出し側が Stripe で確認）
+ *   paidThrough?: number|null       支払い済み期間の終わり（unix 秒・paidThroughFromInvoices）
  * }} input
  * @returns {{ action: 'write'|'skip'|'conflict', reason: string, fields?: object, plan?: object, newlyAttached?: boolean, expiration?: string }}
  */
-export function decideSubscriptionSync({ fields = {}, sub, env = {}, now = new Date(), otherSubscriptionLive = false }) {
+export function decideSubscriptionSync({ fields = {}, sub, env = {}, now = new Date(), otherSubscriptionLive = false, paidThrough = null }) {
   if (!sub || !sub.id) return { action: 'skip', reason: 'no_subscription' };
   const f = fields || {};
   const owned = String(f.StripeSubscriptionId || '') === sub.id;
@@ -91,10 +128,11 @@ export function decideSubscriptionSync({ fields = {}, sub, env = {}, now = new D
   // ── 終了 ────────────────────────────────────────────────
   if (ENDED_STATUSES.has(sub.status)) {
     if (!owned) return { action: 'skip', reason: 'ended_not_owned' };
-    const endedYmd = jstDateString(new Date((sub.endedAt || Math.floor(now.getTime() / 1000)) * 1000));
+    // 支払い済み期間の終わりまでは見られる（即時失効させない）。1 円も払われていなければ今日で終わり。
+    const endYmd = expirationAfterEnd(paidThrough) || jstDateString(now);
     const current = String(f['有効期限'] || '').trim();
-    // 期限は**縮めるだけ**（延ばさない）
-    const expiration = current && current < endedYmd ? current : endedYmd;
+    // 期限は**縮めるだけ**（延ばさない）。猶予 2 日の分だけ縮み、支払い済みの分は残る。
+    const expiration = current && current < endYmd ? current : endYmd;
     return {
       action: 'write',
       reason: 'ended',
@@ -108,7 +146,9 @@ export function decideSubscriptionSync({ fields = {}, sub, env = {}, now = new D
   // ── 有効 ────────────────────────────────────────────────
   const plan = planFromPriceId(sub.priceId, env);
   if (!plan) return { action: 'conflict', reason: 'unknown_price' };
-  const expiration = expirationFromPeriodEnd(sub.currentPeriodEnd);
+  // 期限は**支払い済み**の期間から。未払い（初回決済の処理中など）は書かない（払われてから反映）。
+  if (!Number.isFinite(paidThrough)) return { action: 'skip', reason: 'awaiting_payment' };
+  const expiration = expirationFromPeriodEnd(paidThrough);
   if (!expiration) return { action: 'conflict', reason: 'no_period_end' };
 
   if (!owned) {

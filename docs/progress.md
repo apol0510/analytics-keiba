@@ -8,6 +8,8 @@
 | 実装 | branch `feat/stripe-subscriptions`（worktree `analytics-keiba-stripe`）。check:safety・build 通過 |
 | Stripe（テスト）| AK 用アカウント（サンドボックス）作成済み・2026-10-02 `stripe-setup.mjs --context deploy-preview --apply` で Price 3 件・ポータル設定・Webhook（PR #677 の Deploy Preview 宛）を作成、env は deploy-preview のみ（production 未設定を確認）|
 | E2E（2026-10-02・テストモード・Deploy Preview → 本番 Airtable）| ✅ 決済完了前 0 件 → checkout.session.completed で 1 件作成（中央版・VenueAccess=jra・期限 11/04）✅ Premium へ変更で両会場 ✅ 同じメールの再申込 409 ✅ 2 本目の購読は書かずに要確認 ✅ 解約で期限が終了日へ ✅ 新規メールで Checkout URL 発行・画面表示（日本語・メール固定・自動更新の注記）。**途中で重複作成バグを検出し修正（`028a8888`）**。テストレコード・テスト顧客は削除済み（残 0）|
+| 解約仕様（2026-10-02 MK 確定）| 期間末失効・最低利用期間なし・日割り返金なし。初版の即日失効と「支払い前に期限を延ばす」誤りを修正し、期限の根拠を支払い済み請求書に変更。テスト固定（期間末失効・決済失敗で延ばさない・各プラン・Webhook 冪等・他会員非影響）|
+| 商品方針 | 短期解約をペナルティで抑えない／Premium に履歴・継続利用で価値が蓄積する機能を寄せる。**具体機能は未決定・実装しない** |
 | 未実施（人の操作が要る）| テストカードでの実決済（決済完了画面→ログインリンク）・ポータル画面の目視 |
 | 次 | Live: アカウント有効化（人）→ `stripe-live-key` → `stripe-setup.mjs --context production --apply` → merge（人）→ 本番スモーク |
 | rollback | STRIPE_BILLING.md §5 |

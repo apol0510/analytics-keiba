@@ -99,6 +99,7 @@ exports.handler = async (event) => {
       },
       env,
       now: new Date(),
+      paidThrough: Math.floor(Date.now() / 1000) + 31 * 24 * 3600,
     });
     if (probe.action === 'conflict' && (probe.reason === 'existing_lifetime' || probe.reason === 'existing_longer_contract')) {
       return json(409, headers, { error: 'already_premium', next: sessionRecordId ? 'dashboard' : 'login' });

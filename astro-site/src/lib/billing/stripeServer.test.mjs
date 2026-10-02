@@ -55,10 +55,22 @@ function fakeAirtable(initial = []) {
   return { rows, fetchImpl, log };
 }
 
-function fakeStripe(subs, customers = { cus_1: { email: 'Buyer@Example.com' } }) {
+/**
+ * paid: 購読 ID → 支払い済み期間の終わり（unix 秒）。省略時は購読の current_period_end まで支払い済み。
+ * null を入れると「まだ支払われていない」。
+ */
+function fakeStripe(subs, customers = { cus_1: { email: 'Buyer@Example.com' } }, paid = {}) {
   const updates = [];
   return {
     updates,
+    invoices: {
+      list: async ({ subscription }) => {
+        const end = Object.prototype.hasOwnProperty.call(paid, subscription)
+          ? paid[subscription]
+          : subs[subscription]?.items?.data?.[0]?.current_period_end;
+        return { data: end ? [{ status: 'paid', lines: { data: [{ period: { end } }] } }] : [] };
+      },
+    },
     subscriptions: {
       retrieve: async (id) => {
         await new Promise((r) => setTimeout(r, 1));
@@ -179,12 +191,13 @@ test('別の購読が生きている会員: 書かずに要確認（二重課金
   assert.equal(at.rows.get('recDDDDDDDDDDDDD1').fields.StripeSubscriptionId, 'sub_old');
 });
 
-test('解約後の deleted: 期限を終了日へ', async () => {
+test('解約後の deleted: 支払い済み期間の終わりまで残す（即時失効させない）', async () => {
   const at = fakeAirtable([{ id: 'recEEEEEEEEEEEEE1', fields: { Email: 'buyer@example.com', StripeSubscriptionId: 'sub_1', '有効期限': '2026-11-04' } }]);
   const stripe = fakeStripe({ sub_1: subObj({ status: 'canceled', ended_at: PERIOD_END }) });
   const r = await applySubscription({ stripe, env: ENV, subscription: 'sub_1', now: NOW, fetchImpl: at.fetchImpl });
   assert.equal(r.reason, 'ended');
-  assert.equal(at.rows.get('recEEEEEEEEEEEEE1').fields['有効期限'], '2026-11-02');
+  // 支払い済みの終わり 11/02 12:00 JST → 11/03（09:00 JST に切れる）
+  assert.equal(at.rows.get('recEEEEEEEEEEEEE1').fields['有効期限'], '2026-11-03');
 });
 
 test('Webhook イベント → 購読 ID（対象外は null）', () => {
@@ -195,4 +208,111 @@ test('Webhook イベント → 購読 ID（対象外は null）', () => {
   assert.equal(subscriptionIdFromEvent({ type: 'invoice.payment_succeeded', data: { object: { subscription: 'sub_4' } } }), 'sub_4');
   assert.equal(subscriptionIdFromEvent({ type: 'invoice.payment_failed', data: { object: { subscription: 'sub_5' } } }), null);
   assert.equal(subscriptionIdFromEvent({ type: 'charge.refunded', data: { object: {} } }), null);
+});
+
+
+// ═══ 2026-10-02 MK 確定: 解約は期間末失効・最低利用期間なし・日割り返金なし ═══════════════
+import { resolveEntitlements, fromAirtableFields } from '../entitlements/resolveEntitlements.js';
+import { STRIPE_PLANS } from './stripePlans.js';
+
+const at_ = (iso) => Date.parse(iso);
+/** レコードの fields → いま中央 / 南関の Premium を見られるか */
+function canView(fields, iso) {
+  const e = resolveEntitlements(fromAirtableFields(fields), at_(iso));
+  return { jra: e.canViewPremiumJra, nankan: e.canViewPremiumNankan };
+}
+
+test('期間末失効: 解約予約（cancel_at_period_end）中は支払い済み期間の終わりまで見られる', async () => {
+  const at = fakeAirtable([{ id: 'recFFFFFFFFFFFFF1', fields: { Email: 'buyer@example.com', StripeSubscriptionId: 'sub_1', 'プラン': 'Premium', PlanType: 'Monthly', Status: 'active', PaymentMethod: 'Stripe', '有効期限': '2026-11-04' } }]);
+  const stripe = fakeStripe({ sub_1: subObj({ cancel_at_period_end: true }) });
+  await applySubscription({ stripe, env: ENV, subscription: 'sub_1', now: NOW, fetchImpl: at.fetchImpl });
+  const f = at.rows.get('recFFFFFFFFFFFFF1').fields;
+  assert.equal(f['有効期限'], '2026-11-04', '解約予約で期限を縮めていない');
+  assert.deepEqual(canView(f, '2026-11-02T02:00:00Z'), { jra: true, nankan: true }, '支払い済み期間中は見られる');
+});
+
+test('期間末失効: Stripe 画面で即時解約されても、支払い済みの期間は奪わない（日割り返金もしない）', async () => {
+  const at = fakeAirtable([{ id: 'recFFFFFFFFFFFFF2', fields: { Email: 'buyer@example.com', StripeSubscriptionId: 'sub_1', 'プラン': 'Premium', PlanType: 'Monthly', Status: 'active', PaymentMethod: 'Stripe', '有効期限': '2026-11-04' } }]);
+  // 10/10 に即時解約。支払い済みは 11/02 まで
+  const stripe = fakeStripe({ sub_1: subObj({ status: 'canceled', ended_at: Math.floor(at_('2026-10-10T00:00:00Z') / 1000) }) });
+  const r = await applySubscription({ stripe, env: ENV, subscription: 'sub_1', now: new Date('2026-10-10T00:00:00Z'), fetchImpl: at.fetchImpl });
+  assert.equal(r.reason, 'ended');
+  const f = at.rows.get('recFFFFFFFFFFFFF2').fields;
+  assert.equal(f['有効期限'], '2026-11-03');
+  assert.deepEqual(canView(f, '2026-10-20T00:00:00Z'), { jra: true, nankan: true }, '解約後も支払い済み期間中は見られる');
+  assert.deepEqual(canView(f, '2026-11-02T02:59:00Z'), { jra: true, nankan: true }, '支払い済みの終わりの直前まで見られる');
+  assert.deepEqual(canView(f, '2026-11-03T00:00:00Z'), { jra: false, nankan: false }, '支払い済み期間の後は閉じる');
+});
+
+test('更新日に決済が失敗したら延ばさない（支払い前に次の期間へ進んでも無料で 1 か月見せない）', async () => {
+  const DEC = Math.floor(at_('2026-12-02T03:00:00Z') / 1000);
+  const at = fakeAirtable([{ id: 'recFFFFFFFFFFFFF3', fields: { Email: 'buyer@example.com', StripeSubscriptionId: 'sub_1', 'プラン': 'Premium', PlanType: 'Monthly', Status: 'active', PaymentMethod: 'Stripe', '有効期限': '2026-11-04' } }]);
+  // 購読は 12/02 の期間へ進んだが、支払い済みは 11/02 まで
+  const s = subObj({ items: { data: [{ price: { id: 'price_full' }, current_period_end: DEC }] } });
+  const unpaid = fakeStripe({ sub_1: s }, undefined, { sub_1: PERIOD_END });
+  await applySubscription({ stripe: unpaid, env: ENV, subscription: 'sub_1', now: NOW, fetchImpl: at.fetchImpl });
+  assert.equal(at.rows.get('recFFFFFFFFFFFFF3').fields['有効期限'], '2026-11-04', '未払いで延ばした');
+  // past_due になっても書かない
+  await applySubscription({ stripe: fakeStripe({ sub_1: { ...s, status: 'past_due' } }, undefined, { sub_1: PERIOD_END }), env: ENV, subscription: 'sub_1', now: NOW, fetchImpl: at.fetchImpl });
+  assert.equal(at.rows.get('recFFFFFFFFFFFFF3').fields['有効期限'], '2026-11-04');
+  // 再試行で支払われたら延びる
+  await applySubscription({ stripe: fakeStripe({ sub_1: s }), env: ENV, subscription: 'sub_1', now: NOW, fetchImpl: at.fetchImpl });
+  assert.equal(at.rows.get('recFFFFFFFFFFFFF3').fields['有効期限'], '2026-12-04');
+});
+
+test('初回決済の処理中（支払い済みの請求書なし）は権限を付けない', async () => {
+  const at = fakeAirtable([{ id: 'recFFFFFFFFFFFFF4', fields: { Email: 'buyer@example.com', 'プラン': 'Free' } }]);
+  const r = await applySubscription({ stripe: fakeStripe({ sub_1: subObj() }, undefined, { sub_1: null }), env: ENV, subscription: 'sub_1', now: NOW, fetchImpl: at.fetchImpl });
+  assert.equal(r.reason, 'awaiting_payment');
+  assert.equal(at.rows.get('recFFFFFFFFFFFFF4').fields['プラン'], 'Free');
+});
+
+test('各プラン: 契約中は契約した会場だけ・期間末の後はどの会場も閉じる', async () => {
+  const PRICE = { 'premium': 'price_full', 'premium-jra': 'price_jra', 'premium-nankan': 'price_nankan' };
+  const EXPECT = { 'premium': { jra: true, nankan: true }, 'premium-jra': { jra: true, nankan: false }, 'premium-nankan': { jra: false, nankan: true } };
+  for (const plan of STRIPE_PLANS) {
+    const at = fakeAirtable();
+    const stripe = fakeStripe({ sub_1: subObj({ items: { data: [{ price: { id: PRICE[plan.id] }, current_period_end: PERIOD_END }] } }) });
+    await applySubscription({ stripe, env: ENV, subscription: 'sub_1', now: NOW, fetchImpl: at.fetchImpl, allowCreate: true });
+    const f = [...at.rows.values()][0].fields;
+    assert.deepEqual(canView(f, '2026-10-15T00:00:00Z'), EXPECT[plan.id], `${plan.id} 契約中`);
+    // 解約（期間末）→ 期間後は閉じる
+    stripe.subscriptions.retrieve = async () => subObj({ status: 'canceled', ended_at: PERIOD_END, items: { data: [{ price: { id: PRICE[plan.id] }, current_period_end: PERIOD_END }] } });
+    await applySubscription({ stripe, env: ENV, subscription: 'sub_1', now: new Date('2026-11-02T03:00:00Z'), fetchImpl: at.fetchImpl });
+    const g = [...at.rows.values()][0].fields;
+    assert.deepEqual(canView(g, '2026-11-02T02:00:00Z'), EXPECT[plan.id], `${plan.id} 期間末の直前まで`);
+    assert.deepEqual(canView(g, '2026-11-04T00:00:00Z'), { jra: false, nankan: false }, `${plan.id} 期間後`);
+  }
+});
+
+test('Webhook 冪等: 同じ購読のイベントを何度処理してもレコードは同じ・通知 1 回・作成 1 件', async () => {
+  const at = fakeAirtable();
+  const stripe = fakeStripe({ sub_1: subObj({ items: { data: [{ price: { id: 'price_jra' }, current_period_end: PERIOD_END }] } }) });
+  const notes = [];
+  const notify = async (k) => notes.push(k);
+  await applySubscription({ stripe, env: ENV, subscription: 'sub_1', now: NOW, fetchImpl: at.fetchImpl, notify, allowCreate: true });
+  const first = JSON.stringify([...at.rows.values()][0].fields);
+  for (const allowCreate of [true, false, true, false]) {
+    await applySubscription({ stripe, env: ENV, subscription: 'sub_1', now: NOW, fetchImpl: at.fetchImpl, notify, allowCreate });
+  }
+  assert.equal(at.rows.size, 1);
+  assert.equal(JSON.stringify([...at.rows.values()][0].fields), first);
+  assert.deepEqual(notes, ['attached']);
+});
+
+test('他会員に影響しない: 対象以外のレコードは 1 バイトも変わらない', async () => {
+  const others = [
+    { id: 'recOTHERAAAAAAAA1', fields: { Email: 'other1@example.com', 'プラン': 'Premium', PlanType: 'Annual', Status: 'active', '有効期限': '2027-05-01' } },
+    { id: 'recOTHERAAAAAAAA2', fields: { Email: 'other2@example.com', 'プラン': 'Light', PlanType: 'Monthly', Status: 'active', '有効期限': '2026-10-20', VenueAccess: '' } },
+    { id: 'recOTHERAAAAAAAA3', fields: { Email: 'other3@example.com', 'プラン': 'Premium', PlanType: 'Monthly', PaymentMethod: 'Stripe', StripeSubscriptionId: 'sub_other', '有効期限': '2026-10-30', VenueAccess: 'nankan' } },
+  ];
+  const before = JSON.stringify(others);
+  const at = fakeAirtable([...others, { id: 'recTARGETAAAAAAA1', fields: { Email: 'buyer@example.com', 'プラン': 'Free' } }]);
+  const stripe = fakeStripe({ sub_1: subObj({ items: { data: [{ price: { id: 'price_jra' }, current_period_end: PERIOD_END }] } }) });
+  await applySubscription({ stripe, env: ENV, subscription: 'sub_1', now: NOW, fetchImpl: at.fetchImpl, allowCreate: true });
+  stripe.subscriptions.retrieve = async () => subObj({ status: 'canceled', ended_at: PERIOD_END });
+  await applySubscription({ stripe, env: ENV, subscription: 'sub_1', now: NOW, fetchImpl: at.fetchImpl });
+  assert.equal(JSON.stringify(others.map((o) => ({ id: o.id, fields: at.rows.get(o.id).fields }))), before);
+  assert.equal(at.rows.size, 4, 'レコードを増やしていない');
+  assert.equal(at.rows.get('recTARGETAAAAAAA1').fields.VenueAccess, 'jra');
 });

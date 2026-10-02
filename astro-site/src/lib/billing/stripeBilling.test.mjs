@@ -4,8 +4,11 @@ import {
   STRIPE_PLANS, planById, priceIdFor, planFromPriceId, venueAccessValue, isFullPremiumPlan, hasStripeSecret,
 } from './stripePlans.js';
 import {
-  snapshotSubscription, decideSubscriptionSync, expirationFromPeriodEnd,
+  snapshotSubscription, decideSubscriptionSync, expirationFromPeriodEnd, expirationAfterEnd, paidThroughFromInvoices,
 } from './stripeSubscriptionSync.js';
+
+/** 既定では「今の請求期間は支払い済み」（paidThrough = 期間末）として判定する */
+const decide = (args) => decideSubscriptionSync({ paidThrough: args.sub?.currentPeriodEnd ?? null, ...args });
 
 const ENV = {
   STRIPE_PRICE_PREMIUM: 'price_full',
@@ -64,7 +67,7 @@ test('snapshot: 旧 API 形（subscription 直下の current_period_end）も読
 });
 
 test('新規契約: 無料会員 → Premium（両会場）', () => {
-  const r = decideSubscriptionSync({ fields: { 'プラン': 'Free' }, sub: sub(), env: ENV, now: NOW });
+  const r = decide({ fields: { 'プラン': 'Free' }, sub: sub(), env: ENV, now: NOW });
   assert.equal(r.action, 'write');
   assert.equal(r.newlyAttached, true);
   assert.equal(r.fields['プラン'], 'Premium');
@@ -80,14 +83,14 @@ test('新規契約: 無料会員 → Premium（両会場）', () => {
 });
 
 test('新規契約: 中央版は VenueAccess=jra', () => {
-  const r = decideSubscriptionSync({ fields: {}, sub: sub({ price: 'price_jra' }), env: ENV, now: NOW });
+  const r = decide({ fields: {}, sub: sub({ price: 'price_jra' }), env: ENV, now: NOW });
   assert.equal(r.fields.VenueAccess, 'jra');
   assert.equal(r.plan.id, 'premium-jra');
 });
 
 test('更新（同じ購読）: 期限だけ延びる・PaidAt を上書きしない', () => {
   const fields = { 'プラン': 'Premium', PlanType: 'Monthly', Status: 'active', '有効期限': '2026-11-04', StripeSubscriptionId: 'sub_1', PaidAt: 'X' };
-  const r = decideSubscriptionSync({ fields, sub: sub({ periodEnd: '2026-12-02T03:00:00Z' }), env: ENV, now: NOW });
+  const r = decide({ fields, sub: sub({ periodEnd: '2026-12-02T03:00:00Z' }), env: ENV, now: NOW });
   assert.equal(r.reason, 'renewed');
   assert.equal(r.fields['有効期限'], '2026-12-04');
   assert.equal('PaidAt' in r.fields, false);
@@ -96,74 +99,75 @@ test('更新（同じ購読）: 期限だけ延びる・PaidAt を上書きし�
 
 test('冪等: 同じ入力を 2 回通しても同じ書き込み', () => {
   const fields = { StripeSubscriptionId: 'sub_1' };
-  const a = decideSubscriptionSync({ fields, sub: sub(), env: ENV, now: NOW });
-  const b = decideSubscriptionSync({ fields, sub: sub(), env: ENV, now: NOW });
+  const a = decide({ fields, sub: sub(), env: ENV, now: NOW });
+  const b = decide({ fields, sub: sub(), env: ENV, now: NOW });
   assert.deepEqual(a, b);
 });
 
 test('プラン変更（ポータル）: 中央版 → Premium で VenueAccess が両会場へ', () => {
   const fields = { 'プラン': 'Premium', StripeSubscriptionId: 'sub_1', VenueAccess: 'jra' };
-  const r = decideSubscriptionSync({ fields, sub: sub({ price: 'price_full' }), env: ENV, now: NOW });
+  const r = decide({ fields, sub: sub({ price: 'price_full' }), env: ENV, now: NOW });
   assert.equal(r.fields.VenueAccess, '');
 });
 
 test('未知の Price では権限を付けない', () => {
-  const r = decideSubscriptionSync({ fields: {}, sub: sub({ price: 'price_x' }), env: ENV, now: NOW });
+  const r = decide({ fields: {}, sub: sub({ price: 'price_x' }), env: ENV, now: NOW });
   assert.equal(r.action, 'conflict');
   assert.equal(r.reason, 'unknown_price');
 });
 
 test('二重課金防止: 別の購読が生きていれば書かない', () => {
   const fields = { StripeSubscriptionId: 'sub_old' };
-  const r = decideSubscriptionSync({ fields, sub: sub(), env: ENV, now: NOW, otherSubscriptionLive: true });
+  const r = decide({ fields, sub: sub(), env: ENV, now: NOW, otherSubscriptionLive: true });
   assert.equal(r.reason, 'duplicate_subscription');
   // 古い購読が終わっていれば乗り換えとして書く
-  const ok = decideSubscriptionSync({ fields, sub: sub(), env: ENV, now: NOW, otherSubscriptionLive: false });
+  const ok = decide({ fields, sub: sub(), env: ENV, now: NOW, otherSubscriptionLive: false });
   assert.equal(ok.action, 'write');
 });
 
 test('買い切り会員は月額に化けさせない', () => {
   const fields = { 'プラン': 'Premium', PlanType: 'Lifetime', Status: 'active' };
-  const r = decideSubscriptionSync({ fields, sub: sub(), env: ENV, now: NOW });
+  const r = decide({ fields, sub: sub(), env: ENV, now: NOW });
   assert.equal(r.reason, 'existing_lifetime');
 });
 
 test('年払い残りが長い Premium は縮めない（会場限定でも）', () => {
   const fields = { 'プラン': 'Premium', PlanType: 'Annual', Status: 'active', '有効期限': '2027-05-01' };
-  assert.equal(decideSubscriptionSync({ fields, sub: sub(), env: ENV, now: NOW }).reason, 'existing_longer_contract');
-  assert.equal(decideSubscriptionSync({ fields, sub: sub({ price: 'price_jra' }), env: ENV, now: NOW }).reason, 'existing_longer_contract');
+  assert.equal(decide({ fields, sub: sub(), env: ENV, now: NOW }).reason, 'existing_longer_contract');
+  assert.equal(decide({ fields, sub: sub({ price: 'price_jra' }), env: ENV, now: NOW }).reason, 'existing_longer_contract');
   // 年払いの残りが今回の期限より短い（継続のための切替）なら書く
   const near = { ...fields, '有効期限': '2026-10-10' };
-  assert.equal(decideSubscriptionSync({ fields: near, sub: sub(), env: ENV, now: NOW }).action, 'write');
+  assert.equal(decide({ fields: near, sub: sub(), env: ENV, now: NOW }).action, 'write');
 });
 
 test('Light 会員の乗り換え: 書く', () => {
   const fields = { 'プラン': 'Light', PlanType: 'Monthly', Status: 'active', '有効期限': '2026-10-20' };
-  assert.equal(decideSubscriptionSync({ fields, sub: sub(), env: ENV, now: NOW }).action, 'write');
+  assert.equal(decide({ fields, sub: sub(), env: ENV, now: NOW }).action, 'write');
 });
 
 test('三連複買い切り（LifetimeSanrenpuku）には触れない', () => {
-  const r = decideSubscriptionSync({ fields: { LifetimeSanrenpuku: true }, sub: sub(), env: ENV, now: NOW });
+  const r = decide({ fields: { LifetimeSanrenpuku: true }, sub: sub(), env: ENV, now: NOW });
   assert.equal('LifetimeSanrenpuku' in r.fields, false);
 });
 
-test('終了: 自分の購読なら期限を終了日へ縮める（延ばさない）', () => {
+test('終了（期間末の解約）: 支払い済み期間の終わりまで残し、猶予分だけ縮める（延ばさない）', () => {
   const fields = { StripeSubscriptionId: 'sub_1', '有効期限': '2026-11-04' };
-  const r = decideSubscriptionSync({ fields, sub: sub({ status: 'canceled', endedAt: '2026-11-02T03:00:00Z' }), env: ENV, now: NOW });
+  const r = decide({ fields, sub: sub({ status: 'canceled', endedAt: '2026-11-02T03:00:00Z' }), env: ENV, now: NOW });
   assert.equal(r.action, 'write');
-  assert.equal(r.fields['有効期限'], '2026-11-02');
+  // 支払い済みの終わり 11/02 12:00 JST → 11/03 09:00 JST まで見られる（その前に切らない）
+  assert.equal(r.fields['有効期限'], '2026-11-03');
   assert.equal(r.fields.CancelledAt, NOW.toISOString());
-  const earlier = decideSubscriptionSync({ fields: { ...fields, '有効期限': '2026-10-01' }, sub: sub({ status: 'canceled', endedAt: '2026-11-02T03:00:00Z' }), env: ENV, now: NOW });
+  const earlier = decide({ fields: { ...fields, '有効期限': '2026-10-01' }, sub: sub({ status: 'canceled', endedAt: '2026-11-02T03:00:00Z' }), env: ENV, now: NOW });
   assert.equal(earlier.fields['有効期限'], '2026-10-01');
 });
 
 test('終了: 他人（記録と違う購読）の終了では何もしない', () => {
-  const r = decideSubscriptionSync({ fields: { StripeSubscriptionId: 'sub_new' }, sub: sub({ status: 'canceled' }), env: ENV, now: NOW });
+  const r = decide({ fields: { StripeSubscriptionId: 'sub_new' }, sub: sub({ status: 'canceled' }), env: ENV, now: NOW });
   assert.equal(r.action, 'skip');
 });
 
 test('支払い待ち・未完了は書かない（期限で自然に止まる）', () => {
   for (const status of ['past_due', 'incomplete', 'paused']) {
-    assert.equal(decideSubscriptionSync({ fields: {}, sub: sub({ status }), env: ENV, now: NOW }).action, 'skip');
+    assert.equal(decide({ fields: {}, sub: sub({ status }), env: ENV, now: NOW }).action, 'skip');
   }
 });
