@@ -49,6 +49,8 @@ exports.handler = async (event) => {
       subscription: subId,
       redis: makeRedisCmd(env),
       notify: makeStripeNotifier(env, { mode: stripeMode(env) }),
+      // 未登録の人のレコードを作れるのは決済完了イベントだけ（作成元を 1 本にして重複作成を防ぐ）
+      allowCreate: evt.type === 'checkout.session.completed',
     });
     console.log(JSON.stringify({ event: 'stripe_webhook', type: evt.type, action: result.action, reason: result.reason }));
     if (result.action === 'busy') return reply(500, { error: 'busy' });

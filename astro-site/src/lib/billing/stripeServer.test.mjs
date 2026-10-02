@@ -91,7 +91,11 @@ test('未登録の人: レコードを作り Premium を付与・管理者へ 1 
   const at = fakeAirtable();
   const stripe = fakeStripe({ sub_1: subObj() });
   const notes = [];
-  const r = await applySubscription({ stripe, env: ENV, subscription: 'sub_1', now: NOW, fetchImpl: at.fetchImpl, notify: async (k, d) => notes.push([k, d]) });
+  // checkout.session.completed 以外（allowCreate なし）は作らない
+  const early = await applySubscription({ stripe, env: ENV, subscription: 'sub_1', now: NOW, fetchImpl: at.fetchImpl });
+  assert.equal(early.reason, 'no_record_yet');
+  assert.equal(at.rows.size, 0);
+  const r = await applySubscription({ stripe, env: ENV, subscription: 'sub_1', now: NOW, fetchImpl: at.fetchImpl, notify: async (k, d) => notes.push([k, d]), allowCreate: true });
   assert.equal(r.action, 'write');
   assert.equal(at.rows.size, 1);
   const rec = [...at.rows.values()][0];
@@ -114,10 +118,25 @@ test('同時に 2 本（Webhook と決済完了画面）来てもレコードは
   const at = fakeAirtable();
   const stripe = fakeStripe({ sub_1: subObj() });
   const redis = fakeRedis();
-  const run = () => applySubscription({ stripe, env: ENV, subscription: 'sub_1', now: NOW, fetchImpl: at.fetchImpl, redis });
-  const [a, b] = await Promise.all([run(), run()]);
+  const run = (allowCreate) => applySubscription({ stripe, env: ENV, subscription: 'sub_1', now: NOW, fetchImpl: at.fetchImpl, redis, allowCreate });
+  const [a, b] = await Promise.all([run(true), run(false)]);
   assert.equal(at.rows.size, 1);
-  assert.deepEqual([a.reason, b.reason].sort(), ['attached', 'renewed']);
+  assert.ok(['attached', 'renewed', 'no_record_yet'].includes(b.reason));
+  assert.equal(a.ok && b.ok, true);
+});
+
+test('Redis が無くても、同時に届いた複数イベントでレコードは 1 件（作成元は 1 本だけ）', async () => {
+  // 2026-10-02 E2E の再現: checkout.session.completed / subscription.created / invoice.paid / invoice.payment_succeeded が同時
+  const at = fakeAirtable();
+  const stripe = fakeStripe({ sub_1: subObj() });
+  const runs = [true, false, false, false].map((allowCreate) =>
+    applySubscription({ stripe, env: ENV, subscription: 'sub_1', now: NOW, fetchImpl: at.fetchImpl, allowCreate }));
+  await Promise.all(runs);
+  assert.equal(at.rows.size, 1);
+  // 後から来る再送（invoice.paid 等）で、作成済みのレコードが更新される
+  const again = await applySubscription({ stripe, env: ENV, subscription: 'sub_1', now: NOW, fetchImpl: at.fetchImpl });
+  assert.equal(again.reason, 'renewed');
+  assert.equal(at.rows.size, 1);
 });
 
 test('既存の無料会員はメールで照合して更新（新規作成しない）', async () => {

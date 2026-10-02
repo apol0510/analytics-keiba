@@ -34,6 +34,7 @@
 | 有効（active / trialing）| `プラン=Premium` `PlanType=Monthly` `Status=active` `PaymentMethod=Stripe` `有効期限=請求期間の終わり(JST)+2日` `VenueAccess=''/jra/nankan` `StripeCustomerId` `StripeSubscriptionId`。初回だけ `PaidAt` と退会フラグのリセット、Light からなら `PremiumConvertedFrom/At` |
 | 終了（canceled / unpaid / incomplete_expired）| 自分の購読なら `有効期限` を終了日へ**縮めるだけ** + `CancelledAt` |
 | 支払い待ち（past_due）・未完了 | 書かない（期限で自然に閉じる。Stripe の再試行で払えれば延びる）|
+| 未登録の人のレコード作成 | **Webhook の `checkout.session.completed` だけ**が作る（Stripe は同じイベントを並行に送らない）。他のイベント・決済完了画面は作成を待つ（`no_record_yet`、画面は「確認中」で再試行）。2026-10-02 の E2E で複数イベントが同時に届き 2 レコード作られたため（Redis の無い Deploy Preview ではロックが効かない）|
 | 書かない＋管理者通知 | 別の購読が生きている（二重課金）／買い切り会員／年払いの残りが長い／未登録 Price／同じメールのレコードが複数 |
 
 - 権限判定は既存の `resolveEntitlements`。`VenueAccess` は**有料 Premium 契約だけ**を会場で絞る（無料特典・三連複買い切りには効かない）。

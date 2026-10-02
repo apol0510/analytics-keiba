@@ -11,7 +11,10 @@
  *   1. `StripeSubscriptionId` が一致するレコード（2 回目以降のイベント）
  *   2. 購読 metadata の `ak_record_id`（ログイン中に申し込んだ会員）
  *   3. Stripe Customer のメールアドレス（`LOWER(TRIM({Email}))`・マジックリンクと同じ照合）
- *   4. どれも無ければ新規作成（未登録のまま決済した人）
+ *   4. どれも無ければ新規作成（未登録のまま決済した人）。**`allowCreate` の呼び出しだけ**
+ *      （= Webhook の checkout.session.completed）。Stripe は 1 つのイベントを並行に送らないので
+ *      作成は 1 本に限られる。2026-10-02 の E2E で、subscription.created / invoice.paid 等が
+ *      同時に届いて 2 レコード作られた（Redis の無い環境ではロックが効かない）ため、作成元を 1 つに絞った。
  * 同じメールで複数レコードがある場合は**書かない**（マジックリンクと同じ fail closed）。
  *
  * ⚠️ 秘密鍵・メールアドレス・レコード内容をログに出さない。
@@ -82,7 +85,7 @@ export async function findCustomerByEmail(at, email) {
 /**
  * 購読 1 件を Customers へ反映する。
  *
- * @param {{ stripe: object, env: object, subscription: object|string, now?: Date, fetchImpl?: Function, notify?: Function, redis?: Function|null }} input
+ * @param {{ stripe: object, env: object, subscription: object|string, now?: Date, fetchImpl?: Function, notify?: Function, redis?: Function|null, allowCreate?: boolean }} input
  *   notify(event, detail) — 管理者通知（新規契約・conflict）。失敗しても反映は止めない。
  * @returns {Promise<{ ok: boolean, action: string, reason: string, recordId?: string, email?: string, planId?: string }>}
  */
@@ -112,7 +115,7 @@ export async function applySubscription(input) {
   return { ok: false, action: 'busy', reason: 'lock_timeout' };
 }
 
-async function applySubscriptionLocked({ stripe, env, subId, now = new Date(), fetchImpl, notify = async () => {} }) {
+async function applySubscriptionLocked({ stripe, env, subId, now = new Date(), fetchImpl, notify = async () => {}, allowCreate = false }) {
   // イベントに載ってきた購読は古いことがある（順不同で届く）。常に Stripe の最新を読む。
   const fresh = await stripe.subscriptions.retrieve(subId);
   const sub = snapshotSubscription(fresh);
@@ -176,6 +179,8 @@ async function applySubscriptionLocked({ stripe, env, subId, now = new Date(), f
   // ── 3. 書く ──
   if (!record) {
     if (decision.reason === 'ended') return { ok: true, action: 'skip', reason: 'ended_no_record' };
+    // 作成は checkout.session.completed だけ。それ以外は作成を待つ（後から来る/再送で反映される）
+    if (!allowCreate) return { ok: true, action: 'skip', reason: 'no_record_yet' };
     record = await at.create({ Email: email, Source: 'stripe-checkout' });
   }
   await at.patch(record.id, decision.fields);
