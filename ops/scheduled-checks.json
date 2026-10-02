@@ -150,6 +150,20 @@
       },
       "record": "GitHub Issue「[自動測定] premium-renewal-outcomes-2026」に更新率・復帰率の表",
       "onFailure": "送信 0 件・結論前は待機中（翌日再確認）。トークン異常は赤＋最小作業。2026-12-31 まで結論が出なければ期限切れを追記"
+    },
+    {
+      "id": "stripe-live-activation-2026",
+      "title": "AK 用 Stripe アカウントの本番決済が有効になったか（Stripe 定期購読の本番公開の前提）",
+      "kind": "stripe-live-activation",
+      "runFrom": "2026-10-03",
+      "runUntil": "2026-12-31",
+      "trigger": "毎日 10:00 JST（scheduled-checks.yml）。2026-10-02 時点で Stripe 審査中（under_review・card_payments inactive）",
+      "compare": {
+        "since": "2026-10-02",
+        "baseline": "charges_enabled=false / disabled_reason=under_review / pending_verification 1 件（other_compliance_inquiry）"
+      },
+      "record": "GitHub Issue「[自動測定] stripe-live-activation-2026」に有効化を記録 → PR #677 の merge・本番スモークへ",
+      "onFailure": "審査中は待機中 Issue を更新して翌日再確認。鍵未設定・認証失敗は job 赤＋最小作業。12-31 まで無効なら期限切れを追記"
     }
   ]
 }
