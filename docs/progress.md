@@ -14,7 +14,11 @@
 | 退会導線 | Stripe 会員がマイページの退会処理を押すと閲覧が即停止し課金は続く不整合を検出 → お支払い管理へ案内に修正 |
 | 11/04 と 11/03 の 1 日差 | 意図どおり: 有効中 = 支払い済み期間末（11/02 12:00 JST）+ 猶予 2 日 → 11/04、終了後 = 猶予を外して期間末より前に切れない最小の暦日 → 11/03（有効期限は 09:00 JST に切れる。11/02 だと 3 時間早く切れる）。gate・ログイン判定とも同じ解釈 |
 | 未実施（人の操作が要る）| テストカードでの実決済（決済完了画面→ログインリンク）・ポータル画面の目視 |
-| 次 | Live: アカウント有効化（人）→ `stripe-live-key` → `stripe-setup.mjs --context production --apply` → merge（人）→ 本番スモーク |
+| Stripe（本番）| 2026-10-02 `stripe-setup.mjs --context production --apply` 完了（Price 3 件・ポータル設定・Webhook `https://analytics.keiba.link/.netlify/functions/stripe-webhook`・production env 6 件）。鍵は制限付き鍵（rk_live）で読み取り系は全 OK |
+| **待ち（実異常回避）** | **Stripe 審査中**（disabled_reason=under_review・card_payments inactive・pending_verification 1 件=other_compliance_inquiry）。live の Checkout 作成は `Your account cannot currently make live charges` で失敗。**この状態で merge すると月額が誰も買えなくなるため merge を保留** |
+| 自動検知 | scheduled-checks `stripe-live-activation-2026`（#679 `fd478947`・毎日 10:00 JST・GET /v1/account を読むだけ）。有効化で Issue「[自動測定] stripe-live-activation-2026」→ #677 merge・本番スモークへ。GitHub secret `STRIPE_ACCOUNT_READ_KEY` 登録済み。Actions 上の検証実行で審査中を正しく判定 |
+| 人の作業 | Stripe からのコンプライアンス確認への回答／Stripe のビジネス URL が `https://data.tirol.link/` のため AK（analytics.keiba.link）への修正・公開ビジネス名の確認 |
+| 次（有効化後）| merge #677 → 本番デプロイ → 本番スモーク（/pricing/・Checkout URL 発行・Webhook 署名 400・portal 401）→ cleanup |
 | rollback | STRIPE_BILLING.md §5 |
 
 # ⏳ 待ち状態と並行作業（2026-09-28 更新 / ルール: CLAUDE.md「⏳ 待ち時間は止まらず並行する」）
