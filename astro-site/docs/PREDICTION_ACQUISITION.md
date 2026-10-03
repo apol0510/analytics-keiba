@@ -70,6 +70,7 @@
 - **Preview の一覧**: Premium と同じカード・同じ CTA 位置に「Premiumで予想を取得」（→ `/pricing/`）と注記「この予想を取得するにはPremium」。上部に「Premiumを体験／Premiumではこの画面から気になるレースを1件ずつ取得できます」
 - **Preview の詳細**（`/free-prediction/view/?key=`）: Premium 詳細と同じ部品・同じ構成。公開してよい範囲だけ（`freePublicView.js` と同じ: 馬番・馬名・騎手・過去走・上位 4 頭の印 ◎○▲△）。**買い目・AI 総合指数・▲△以外の役割（連下/抑え/評価外の分類）は出さない**（ダミーのモザイクと「Premiumで表示」）。本文スナップショットは作らない
 - **Preview で有料本文を漏らさない**: 一覧に買い目・指数・役割を渡さない（`buildRaceListing` のみ）。プレビュー本文は `buildPreviewContent`（買い目・指数・役割を入れない純粋関数）だけから描画
+- **CTA の色体系（2026-10-04 MK 確定）**: Premium への導線（「Premiumで予想を取得」「Premiumのプランを見る」「この予想を取得するにはPremium」）は**同じ Premium CTA**（`.ag-cta.ag-cta-premium`）= 明るい紫→青紫のグラデーション・白文字・淡いラベンダーの縁・紫の soft glow、hover で明るく・active で沈む・focus-visible は白い outline。スマホは高さ 52px・全幅。通常の操作（予想を取得する・選択中のタブ）は**青**、取得済みは**緑**で、役割を混同させない
 - Premium 側は従来どおり: 同じカードで「予想を取得する」、取得済みは「取得済み／予想を見る」。冪等・他会員非影響・URL 直打ち防止・SSR / fail closed は不変
 - `/free-prediction/` は公開ページ（Cookie・会員判定を使わない）→ SSR ＋ CDN 5 分キャッシュ（`/free/` と同じ方式）
 

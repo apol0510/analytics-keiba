@@ -495,7 +495,7 @@ test('Preview と Premium の画面は同じ部品（違いは mode・CTA・権�
   assert.match(list, /mode\?: 'premium' \| 'preview'/);
   // CTA は同じ位置（同じ acq-race-cta の中）・同じボタン部品（ag-cta acq-btn）
   const cta = list.slice(list.indexOf('<div class="acq-race-cta">'), list.indexOf('</article>'));
-  assert.match(cta, /isPreview \? \([\s\S]*class="ag-cta acq-btn" href="\/pricing\/"[\s\S]*\) : r\.acquired \? \([\s\S]*class="ag-cta acq-btn"/);
+  assert.match(cta, /isPreview \? \([\s\S]*class="ag-cta ag-cta-premium acq-btn" href="\/pricing\/"[\s\S]*\) : r\.acquired \? \([\s\S]*class="ag-cta acq-btn"/);
   // Preview は公開ページ（会員判定・Cookie を使わない）。Premium は認可あり
   for (const p of ['src/pages/free-prediction/jra.astro', 'src/pages/free-prediction/nankan.astro', 'src/pages/free-prediction/all.astro', 'src/pages/free-prediction/view.astro']) {
     const s = read(p);
@@ -514,4 +514,29 @@ test('サイトマップ: 会員限定の取得画面とプレビュー詳細は
   const { isSitemapExcluded } = await import('../seo/sitemapPolicy.mjs');
   for (const p of ['/predictions/', '/predictions/view/', '/predictions/history/', '/free-prediction/view/']) assert.equal(isSitemapExcluded(`https://analytics.keiba.link${p}`), true, p);
   for (const p of ['/free-prediction/jra/', '/free-prediction/nankan/', '/free-prediction/all/', '/free/jra/']) assert.equal(isSitemapExcluded(`https://analytics.keiba.link${p}`), false, p);
+});
+
+test('Premium 導線 CTA は同じスタイル（明るい紫）・通常の取得 CTA（青）・取得済み（緑）と分ける', () => {
+  const css = read('src/styles/acquisitionGlass.css');
+  // 色体系
+  assert.match(css, /--ag-cta: linear-gradient\(135deg, #3b82f6 0%, #2563eb 45%, #0284c7 100%\)/, '通常の操作は青');
+  assert.match(css, /--ag-cta-premium: linear-gradient\(135deg, #b46cf9 0%, #9b5cf6 35%, #7c3aed 70%, #5b5ff0 100%\)/, 'Premium 導線は明るい紫→青紫');
+  const rule = (sel) => (css.match(new RegExp(`${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{[^}]*\\}`)) || [])[0] || '';
+  const base = rule('.ag-cta.ag-cta-premium');
+  assert.match(base, /color: #ffffff/);
+  assert.match(base, /border: 1px solid rgba\(237, 233, 254/);
+  assert.match(base, /box-shadow: [^;]*rgba\(147, 51, 234/);
+  assert.match(rule('.ag-cta.ag-cta-premium:hover'), /--ag-cta-premium-hover/, 'hover で明るく');
+  assert.match(rule('.ag-cta.ag-cta-premium:active'), /translateY\(1px\)/, 'active で沈む');
+  assert.match(rule('.ag-cta.ag-cta-premium:focus-visible'), /outline: 3px solid/, 'キーボードのフォーカスが見える');
+  assert.match(css, /@media \(max-width: 759px\) \{ \.ag-cta\.ag-cta-premium \{ min-height: 52px/);
+  // /pricing/ への Premium 導線はすべて同じクラス（Preview・Premium 部品・関連導線）
+  const files = ['src/components/acquisition/AcquisitionRaceList.astro', 'src/components/acquisition/PremiumRaceBoard.astro', 'src/components/acquisition/AcquiredPredictionBody.astro', 'src/pages/free-prediction/view.astro', 'src/pages/free-prediction/jra.astro', 'src/pages/free-prediction/nankan.astro', 'src/pages/free-prediction/all.astro'];
+  for (const f of files) {
+    const tags = [...read(f).matchAll(/<a [^>]*href="\/pricing\/"[^>]*>/g)].map((m) => m[0]);
+    assert.ok(tags.length > 0, f);
+    for (const t of tags) assert.match(t, /class="ag-cta ag-cta-premium/, `${f}: ${t}`);
+  }
+  // 通常の取得 CTA は Premium 色にしない
+  assert.match(read('src/components/acquisition/AcquisitionRaceList.astro'), /<button type="submit" class="ag-cta acq-btn">/);
 });
