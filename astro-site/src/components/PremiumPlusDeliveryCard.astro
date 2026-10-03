@@ -1,0 +1,117 @@
+---
+/**
+ * マイページの Premium Plus 提供レースカード。
+ *
+ * - 表示するかどうか・買い目の有無は**サーバー（/api/premium-plus-delivery.json）だけが決める**。
+ *   404（未購入・入金確認前）ならカードを出さない（既定 hidden）。
+ * - 公開前は「何レースを・何時に公開するか」とカウントダウンだけ。公開時刻になったら取り直して表示。
+ *   買い目は公開前の応答に**含まれていない**ので、ここで隠しているわけではない。
+ */
+---
+<section class="ppd" id="ppd-section" hidden aria-labelledby="ppd-title">
+  <div class="ppd-card">
+    <div class="ppd-head">
+      <span class="ppd-badge">Premium Plus</span>
+      <h2 class="ppd-title" id="ppd-title">ご購入レースの買い目</h2>
+    </div>
+    <div id="ppd-days"></div>
+    <p class="ppd-note">買い目は各レースの<strong>発走予定時刻の10分前</strong>に、この画面に表示されます（再読み込みは不要です）。</p>
+  </div>
+</section>
+
+<style>
+  .ppd { margin: 16px 0 24px; }
+  .ppd-card { border: 1px solid rgba(192, 132, 252, .45); border-radius: 16px; padding: 18px 18px 14px;
+    background: linear-gradient(135deg, rgba(59, 7, 100, .55), rgba(15, 23, 42, .85)); color: #f1f5f9; }
+  .ppd-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+  .ppd-badge { font-size: .75rem; font-weight: 700; letter-spacing: .06em; padding: 3px 10px; border-radius: 999px;
+    background: #a855f7; color: #fff; }
+  .ppd-title { margin: 0; font-size: 1.1rem; }
+  .ppd-day { margin: 10px 0 4px; font-size: .95rem; color: #e9d5ff; }
+  .ppd-race { border-top: 1px solid rgba(148, 163, 184, .25); padding: 12px 0; }
+  .ppd-race-name { font-weight: 700; font-size: 1.05rem; }
+  .ppd-times { margin-top: 4px; font-size: .9rem; color: #cbd5e1; }
+  .ppd-count { margin-top: 8px; font-size: 1rem; color: #fde68a; font-weight: 700; }
+  .ppd-bets { margin-top: 10px; display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; font-size: 1.05rem; }
+  .ppd-bets dt { color: #c4b5fd; font-weight: 700; }
+  .ppd-bets dd { margin: 0; font-weight: 700; letter-spacing: .04em; }
+  .ppd-bettype { margin-top: 10px; font-size: .85rem; color: #e9d5ff; }
+  .ppd-note { margin: 10px 0 0; font-size: .82rem; color: #94a3b8; }
+  .ppd-preparing { color: #cbd5e1; font-size: .9rem; margin: 6px 0; }
+</style>
+
+<script is:inline>
+(function () {
+  var sec = document.getElementById('ppd-section');
+  var daysEl = document.getElementById('ppd-days');
+  if (!sec || !daysEl) return;
+  var data = null;
+  var offset = 0; // サーバー時刻 − 端末時刻（端末の時計ずれを補正）
+  var timer = null;
+  var fetching = false;
+  var lastFetch = 0;
+
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function hm(ms) {
+    var d = new Date(ms + 9 * 3600000);
+    return String(d.getUTCHours()).padStart(2, '0') + ':' + String(d.getUTCMinutes()).padStart(2, '0');
+  }
+  function dateJa(s) {
+    var p = s.split('-');
+    var dow = '日月火水木金土'[new Date(s + 'T12:00:00+09:00').getUTCDay()];
+    return Number(p[1]) + '月' + Number(p[2]) + '日（' + dow + '）';
+  }
+  function left(ms) {
+    if (ms <= 0) return 'まもなく公開';
+    var t = Math.ceil(ms / 1000), h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60;
+    return '公開まで あと ' + (h > 0 ? h + '時間' : '') + (h > 0 || m > 0 ? m + '分' : '') + (h === 0 ? s + '秒' : '');
+  }
+  function render() {
+    var now = Date.now() + offset;
+    var html = '';
+    data.days.forEach(function (d) {
+      html += '<p class="ppd-day">提供日 ' + esc(dateJa(d.saleDate)) + '｜提供レース数 ' + esc(d.raceCount) + 'レース</p>';
+      if (d.status === 'preparing') {
+        html += '<p class="ppd-preparing">提供レースは当日の朝に決まり、ここに表示されます。</p>';
+        return;
+      }
+      d.races.forEach(function (r) {
+        html += '<div class="ppd-race"><div class="ppd-race-name">' + esc(r.venue) + ' ' + esc(r.raceNumber) + 'R ' + esc(r.raceName) + '</div>'
+          + '<div class="ppd-times">発走予定 ' + esc(r.startTime) + '／買い目公開 ' + esc(hm(r.revealAtMs)) + '</div>';
+        if (r.revealed) {
+          html += '<div class="ppd-bettype">' + esc(r.betType) + '（' + esc(r.points) + '点）</div>'
+            + '<dl class="ppd-bets"><dt>1着</dt><dd>' + esc(r.first.join('・')) + '</dd>'
+            + '<dt>2着</dt><dd>' + esc(r.second.join('・')) + '</dd>'
+            + '<dt>3着</dt><dd>' + esc(r.third.join('・')) + '</dd></dl>';
+        } else {
+          html += '<div class="ppd-count">' + esc(left(r.revealAtMs - now)) + '</div>';
+        }
+        html += '</div>';
+      });
+    });
+    daysEl.innerHTML = html;
+    sec.hidden = false;
+    // 公開時刻を過ぎたのに買い目が無いレースがあれば取り直す
+    var due = data.days.some(function (d) { return d.races.some(function (r) { return !r.revealed && r.revealAtMs <= now; }); });
+    if (due && Date.now() - lastFetch > 10000) load();
+  }
+  function load() {
+    if (fetching) return;
+    fetching = true;
+    lastFetch = Date.now();
+    fetch('/api/premium-plus-delivery.json', { credentials: 'same-origin', cache: 'no-store' })
+      .then(function (res) { return res.ok ? res.json() : null; })
+      .then(function (j) {
+        fetching = false;
+        if (!j || !Array.isArray(j.days) || j.days.length === 0) return;
+        data = j;
+        offset = (j.serverNowMs || Date.now()) - Date.now();
+        render();
+        if (!timer) timer = setInterval(function () { if (data) render(); }, 1000);
+      })
+      .catch(function () { fetching = false; });
+  }
+  load();
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) load(); });
+})();
+</script>
