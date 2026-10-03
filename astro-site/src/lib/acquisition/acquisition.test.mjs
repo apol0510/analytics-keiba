@@ -557,3 +557,11 @@ test('会場タブ＝イエロー系ガラス・日付タブ＝黄緑の乳白�
   assert.match(list, /\.acq-dates a \{[^}]*color: #d9f99d[^}]*backdrop-filter: blur/);
   assert.match(read('src/styles/acquisitionGlass.css'), /background: var\(--ag-cta\); color: #e0f2fe;/, '通常 CTA の文字は淡い青');
 });
+
+test('Preview 詳細の買い目カードは 1 枚（馬単買い目）だけ（2026-10-04 MK 確定）', () => {
+  const body = read('src/components/acquisition/AcquiredPredictionBody.astro');
+  const pv = body.slice(body.indexOf('{isPreview ? ('), body.indexOf(') : !isSrp ? ('));
+  assert.equal((pv.match(/<article /g) || []).length, 1, 'プレビューの買い目カードが 1 枚ではない');
+  assert.match(pv, /<h3>馬単買い目<\/h3>/);
+  for (const w of ['馬単 通常の買い目', '馬単 点数を絞った買い目']) assert.equal(pv.includes(`<h3>${w}`), false, w);
+});
