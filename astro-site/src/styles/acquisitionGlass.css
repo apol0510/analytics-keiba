@@ -1,0 +1,131 @@
+/*
+ * acquisitionGlass.css — 有料予想の取得画面（一覧・詳細・履歴）共通のガラスモーフィズム
+ *
+ * 2026-10-03 MK 確定（docs/PREDICTION_ACQUISITION.md §2-2）:
+ *   - 既存ダークブランドを土台に、blue / cyan / violet / white の淡い光を混ぜる（ダーク一辺倒にしない）
+ *   - 半透明背景 + backdrop blur + 明るい半透明 border + 内側ハイライト + ごく淡い glow を全要素で統一
+ *   - mobile-first（PC の縮小版にしない）
+ * クラスは ag- 接頭辞（サイト既存の CSS と衝突させない）。
+ */
+:root {
+  --ag-text: #eef2ff;
+  --ag-text-2: #b6c2dc;
+  --ag-text-3: #8a97b2;
+  --ag-glass: rgba(255, 255, 255, 0.075);
+  --ag-glass-2: rgba(255, 255, 255, 0.11);
+  --ag-glass-deep: rgba(15, 23, 52, 0.42);
+  --ag-border: rgba(255, 255, 255, 0.16);
+  --ag-border-hi: rgba(186, 230, 253, 0.32);
+  --ag-hi: inset 0 1px 0 rgba(255, 255, 255, 0.18), inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+  --ag-shadow: 0 12px 32px rgba(3, 7, 30, 0.38);
+  --ag-blur: blur(18px) saturate(150%);
+  --ag-blue: #60a5fa;
+  --ag-cyan: #22d3ee;
+  --ag-violet: #a78bfa;
+  --ag-gold: #fcd34d;
+  --ag-green: #4ade80;
+  --ag-red: #fb7185;
+  --ag-amber: #fbbf24;
+  --ag-cta: linear-gradient(135deg, #8b5cf6 0%, #6366f1 45%, #3b82f6 100%);
+  --ag-radius: 18px;
+}
+
+/* 背景: 濃紺ベース + 左上ブルー + 右上バイオレット + 一部シアンの光源 */
+.ag-scene {
+  position: relative;
+  color: var(--ag-text);
+  background:
+    radial-gradient(60% 40% at 0% 0%, rgba(59, 130, 246, 0.30), transparent 70%),
+    radial-gradient(55% 38% at 100% 2%, rgba(139, 92, 246, 0.30), transparent 70%),
+    radial-gradient(40% 30% at 70% 55%, rgba(34, 211, 238, 0.14), transparent 70%),
+    radial-gradient(50% 35% at 10% 95%, rgba(99, 102, 241, 0.18), transparent 70%),
+    linear-gradient(180deg, #0c1530 0%, #0a1128 60%, #0b1430 100%);
+  min-height: 100%;
+  overflow-x: clip;
+}
+
+/* ガラス面（セクション） */
+.ag-glass {
+  position: relative;
+  background: linear-gradient(155deg, var(--ag-glass-2), var(--ag-glass));
+  border: 1px solid var(--ag-border);
+  border-radius: var(--ag-radius);
+  box-shadow: var(--ag-shadow), var(--ag-hi);
+  -webkit-backdrop-filter: var(--ag-blur);
+  backdrop-filter: var(--ag-blur);
+}
+.ag-glass::before { /* 上辺の光の反射 */
+  content: ''; position: absolute; inset: 0 12% auto 12%; height: 1px; border-radius: 999px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.55), transparent);
+  pointer-events: none;
+}
+/* ガラス面の内側（一段濃い） */
+.ag-inset {
+  background: var(--ag-glass-deep);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 14px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+/* CTA */
+.ag-cta, .ag-btn-ghost, .ag-chip, .ag-glass, .ag-inset { box-sizing: border-box; }
+.ag-cta {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: 46px; padding: 0 20px; border: 1px solid rgba(255, 255, 255, 0.28); border-radius: 14px; cursor: pointer;
+  background: var(--ag-cta); color: #fff; font-weight: 800; font-size: 0.95rem; text-decoration: none; letter-spacing: 0.02em;
+  box-shadow: 0 8px 22px rgba(99, 102, 241, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.ag-cta:hover { transform: translateY(-1px); box-shadow: 0 10px 28px rgba(99, 102, 241, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.4); }
+.ag-cta:active { transform: translateY(0); }
+.ag-btn-ghost {
+  display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 18px; border-radius: 14px;
+  border: 1px solid var(--ag-border-hi); color: var(--ag-text); text-decoration: none; font-weight: 700;
+  background: rgba(255, 255, 255, 0.07); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+/* 取得済み（green glow） */
+.ag-done {
+  display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; border-radius: 999px; font-weight: 800;
+  color: #bbf7d0; background: rgba(34, 197, 94, 0.16); border: 1px solid rgba(74, 222, 128, 0.55);
+  box-shadow: 0 0 18px rgba(74, 222, 128, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+}
+.ag-pill {
+  display: inline-flex; align-items: center; padding: 3px 12px; border-radius: 999px; font-weight: 800; font-size: 0.82rem; white-space: nowrap;
+  background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.22);
+}
+.ag-pill.gold { color: var(--ag-gold); border-color: rgba(252, 211, 77, 0.55); background: rgba(252, 211, 77, 0.10); }
+.ag-pill.violet { color: #ddd6fe; border-color: rgba(167, 139, 250, 0.55); background: rgba(167, 139, 250, 0.14); }
+
+/* 馬チップ（印ごとの色） */
+.ag-chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 150px), 1fr)); gap: 8px; list-style: none; margin: 0; padding: 0; }
+.ag-chip {
+  display: flex; align-items: center; gap: 10px; min-width: 0; padding: 8px 10px; border-radius: 12px;
+  background: rgba(255, 255, 255, 0.07); border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+}
+.ag-chip-name { min-width: 0; overflow-wrap: anywhere; line-height: 1.35; font-weight: 700; }
+.ag-num {
+  flex: 0 0 auto; display: inline-grid; place-items: center; min-width: 30px; height: 30px; padding: 0 6px; border-radius: 9px;
+  font-weight: 900; font-size: 0.95rem; color: #fff; background: rgba(148, 163, 184, 0.45);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+.ag-num.lg { min-width: 38px; height: 38px; font-size: 1.15rem; border-radius: 10px; }
+.ag-role-honmei .ag-num { background: linear-gradient(135deg, #f43f5e, #e11d48); box-shadow: 0 0 14px rgba(244, 63, 94, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.35); }
+.ag-role-taikou .ag-num { background: linear-gradient(135deg, #f59e0b, #d97706); box-shadow: 0 0 12px rgba(245, 158, 11, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.35); }
+.ag-role-tana .ag-num { background: linear-gradient(135deg, #3b82f6, #2563eb); box-shadow: 0 0 12px rgba(59, 130, 246, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.35); }
+.ag-role-renka .ag-num { background: linear-gradient(135deg, #06b6d4, #0891b2); }
+.ag-role-osae .ag-num { background: linear-gradient(135deg, #a78bfa, #8b5cf6); }
+.ag-role-out .ag-num { background: rgba(100, 116, 139, 0.55); }
+.ag-chip.ag-role-renka { border-color: rgba(34, 211, 238, 0.35); background: rgba(34, 211, 238, 0.07); }
+.ag-chip.ag-role-osae { border-color: rgba(167, 139, 250, 0.38); background: rgba(167, 139, 250, 0.08); }
+.ag-chip.ag-role-out { border-color: rgba(148, 163, 184, 0.20); background: rgba(148, 163, 184, 0.05); color: var(--ag-text-2); }
+
+.ag-kicker { font-size: 0.78rem; color: var(--ag-text-3); letter-spacing: 0.06em; }
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .ag-glass { background: rgba(22, 30, 62, 0.94); }
+  .ag-chip, .ag-btn-ghost { background: rgba(30, 41, 80, 0.92); }
+}
+@media (prefers-reduced-motion: reduce) { .ag-cta { transition: none; } }

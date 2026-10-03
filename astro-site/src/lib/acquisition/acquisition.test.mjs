@@ -225,9 +225,12 @@ test('Premium 詳細の構成: レース情報・取得済み・馬単 通常・
   const body = read('src/components/acquisition/AcquiredPredictionBody.astro');
   for (const w of ['acq-hero', '✓ 取得済み', '取得日時', '取得済みの予想を見る']) assert.ok(view.includes(w), w);
   for (const w of ['馬単 通常の買い目', '馬単 点数を絞った買い目', '印とAI総合指数', 'minor-group-renka', 'minor-group-osae', 'ineligible-section', 'id="past-races"', '過去走']) assert.ok(body.includes(w), w);
-  assert.match(body, /backdrop-filter: blur\(16px\)/, 'ガラスモーフィズム（ぼかし）');
-  assert.match(body, /@supports not/, 'ぼかし非対応ブラウザでも可読');
-  assert.match(body, /@media \(max-width: 560px\)/, 'スマホ幅');
+  const glass = read('src/styles/acquisitionGlass.css');
+  assert.match(glass, /backdrop-filter: var\(--ag-blur\)/, 'ガラスモーフィズム（ぼかし）');
+  assert.match(glass, /@supports not/, 'ぼかし非対応ブラウザでも可読');
+  assert.match(glass, /radial-gradient\([^)]*rgba\(59, 130, 246/, '背景に青の光源');
+  assert.match(glass, /rgba\(139, 92, 246/, '紫の光源');
+  assert.match(glass, /rgba\(34, 211, 238/, 'シアンの光源');
 });
 
 test('Premium Sanrenpuku は推奨度/見送り・通常・中心・理由を持ち、馬単は持たない', () => {
@@ -317,6 +320,56 @@ test('一覧・本文のページは本人以外の recordId を受け取らな�
   }
   assert.match(read('src/pages/api/predictions/acquire.js'), /isSameOriginPost\(request\)/);
 });
+
+
+test('mobile-first・全画面ガラス統一（2026-10-03 MK 追加確定）', () => {
+  const body = read('src/components/acquisition/AcquiredPredictionBody.astro');
+  const list = read('src/components/acquisition/AcquisitionRaceList.astro');
+  const usage = read('src/components/acquisition/AcquisitionUsagePanel.astro');
+  // 連下・抑え・評価外は 1 頭ずつ独立したチップ（「/」区切りの文字列は禁止）
+  assert.equal(/join\(['"] \/ ['"]\)/.test(body), false, '「/」区切りで馬を並べている');
+  assert.match(body, /<ul class="ag-chips">/);
+  assert.match(body, /<li class=\{`ag-chip \$\{ROLE_CLASS\[h\.role\]\}`\}>/);
+  for (const r of ['ag-role-honmei', 'ag-role-taikou', 'ag-role-tana', 'ag-role-renka', 'ag-role-osae', 'ag-role-out']) {
+    assert.match(read('src/styles/acquisitionGlass.css'), new RegExp(`\\.${r}`), r);
+  }
+  // 過去走: PC は表、mobile は走ごとのカード（同じ情報を両方に出す）
+  assert.match(body, /class="acq-table-wrap acq-only-wide"/);
+  assert.match(body, /class="acq-race-cards acq-only-narrow"/);
+  // 全要素がガラス（共通 CSS を使う）
+  for (const [name, src] of [['body', body], ['list', list], ['usage', usage], ['srp', read('src/components/acquisition/SrpRecommendedRaces.astro')], ['view', read('src/pages/predictions/view.astro')]]) {
+    assert.match(src, /acquisitionGlass\.css/, name);
+  }
+  assert.match(list, /class=\{`ag-glass acq-race/);
+  assert.match(list, /class="ag-cta acq-btn"/);
+  assert.match(list, /class="ag-done"/);
+  // スマホ: 利用状況は一覧の上の小型サマリー、最近取得した予想は一覧の下で折りたたみ
+  assert.match(usage, /variant === 'mini'/);
+  assert.match(usage, /<details class="ag-glass acq-usage-card acq-usage-recent-narrow">/);
+  for (const p of ['src/pages/premium-prediction/jra.astro', 'src/pages/premium-prediction/nankan.astro', 'src/pages/premium-sanrenpuku.astro', 'src/pages/premium-sanrenpuku-jra.astro']) {
+    const s = read(p);
+    assert.ok(s.indexOf('variant="mini"') < s.indexOf('<AcquisitionRaceList'), `${p}: 小型サマリーが一覧より上にない`);
+    assert.ok(s.indexOf('variant="side"') > s.indexOf('<AcquisitionRaceList'), `${p}: 補助情報が一覧より下にない`);
+  }
+});
+
+test('一覧モデルは日付（新しい順）・会場・レース・（三連複は）選別結果を返す', async () => {
+  const { buildListModel } = await import('./listModel.js');
+  const { mkdtempSync, mkdirSync, writeFileSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const { tmpdir } = await import('node:os');
+  const root = mkdtempSync(join(tmpdir(), 'acq-'));
+  mkdirSync(join(root, 'src', 'data', 'predictions'), { recursive: true });
+  for (const d of ['2026-10-01', '2026-10-03']) {
+    writeFileSync(join(root, 'src', 'data', 'predictions', `${d}-funabashi.json`), JSON.stringify({ eventInfo: { date: d, venue: '船橋', totalRaces: 12 }, predictions: [{ ...race(11), raceInfo: { ...race(11).raceInfo, date: d } }] }));
+  }
+  const m = buildListModel({ cat: 'nankan', product: 'srp', requestedDate: '2026-10-03', acquisitions: [], root, now: Date.parse('2026-10-03T00:00:00Z') });
+  assert.deepEqual(m.dates, ['2026-10-03', '2026-10-01']);
+  assert.equal(m.date, '2026-10-03');
+  assert.equal(m.venues.length, 1);
+  assert.equal(m.venues[0].races[0].key, 'srp:nankan:2026-10-03:funabashi:11');
+  assert.ok(m.venues[0].races[0].selection);
+  assert.ok(m.day && Array.isArray(m.day.top3));
 
 test('会場別 Premium（中央版・南関版）も取得の入口を通り、取得できるのは契約した会場だけ', async () => {
   const { ACQUISITION_DOOR_PLANS } = await import('./acquisitionServer.js');
