@@ -68,7 +68,7 @@
 - 導線は 3 段階: 無料日常利用（`/free/`）→ Premium 体験（`/free-prediction/`）→ Premium 本利用（`/predictions/`）
 - **違いは権限状態と CTA だけ**。日付タブ・会場タブ・レースカード（R・発走・距離・頭数）・余白・タイポ・ガラス・配色・CTA の位置・mobile UI は共通部品（`PremiumRaceBoard` / `AcquisitionRaceList` / `AcquisitionVenueTabs` / `acquisitionGlass.css`）。別 CSS を重複管理しない
 - **Preview の一覧**: Premium と同じカード・同じ CTA 位置に「Premiumで予想を取得」（→ `/pricing/`）と注記「この予想を取得するにはPremium」。上部に「Premiumを体験／Premiumではこの画面から気になるレースを1件ずつ取得できます」
-- **Preview の詳細**（`/free-prediction/view/?key=`）: Premium 詳細と同じ部品・同じ構成。公開してよい範囲だけ（`freePublicView.js` と同じ: 馬番・馬名・騎手・過去走・上位 4 頭の印 ◎○▲△）。**買い目・AI 総合指数・▲△以外の役割（連下/抑え/評価外の分類）は出さない**（ダミーのモザイクと「Premiumで表示」）。本文スナップショットは作らない
+- **Preview の詳細**（`/free-prediction/view/?key=`）: Premium 詳細と同じ部品・同じ構成（ただし買い目カードは**「馬単買い目」1 枚だけ**＝2026-10-04 MK 確定。Premium の詳細は通常・絞りの 2 枚）。公開してよい範囲だけ（`freePublicView.js` と同じ: 馬番・馬名・騎手・過去走・上位 4 頭の印 ◎○▲△）。**買い目・AI 総合指数・▲△以外の役割（連下/抑え/評価外の分類）は出さない**（ダミーのモザイクと「Premiumで表示」）。本文スナップショットは作らない
 - **Preview で有料本文を漏らさない**: 一覧に買い目・指数・役割を渡さない（`buildRaceListing` のみ）。プレビュー本文は `buildPreviewContent`（買い目・指数・役割を入れない純粋関数）だけから描画
 - **CTA の色体系（2026-10-04 MK 確定）**: Premium への導線（「Premiumで予想を取得」「Premiumのプランを見る」「この予想を取得するにはPremium」）は**同じ Premium CTA**（`.ag-cta.ag-cta-premium`）= 明るい紫→青紫のグラデーション・白文字・淡いラベンダーの縁・紫の soft glow、hover で明るく・active で沈む・focus-visible は白い outline。スマホは高さ 52px・全幅。通常の操作（予想を取得する・選択中のタブ）は**青**、取得済みは**緑**で、役割を混同させない
 - **タブの色（2026-10-04 MK 確定）**: 会場タブ（すべて／中央競馬／南関東競馬）= **イエロー系のグラデーションのガラス**（選択中は濃い琥珀色の文字・非選択は淡いイエローの文字）。日付タブ = **黄緑の乳白色グラデーションのガラス**（選択中は濃い緑の文字・非選択は淡い黄緑の文字）。CTA の文字はボタンと同系色（Premium = 淡いラベンダー・通常 = 淡い青）

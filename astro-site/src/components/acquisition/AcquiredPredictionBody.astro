@@ -71,18 +71,17 @@ const metaFor = (r) => [
       <div class="unified-bet-card">
         {isPreview ? (
           <>
-            {[['umatan-normal', '馬単 通常の買い目', '本命・対抗を軸にした、全体の買い目です。'], ['umatan-narrowed', '馬単 点数を絞った買い目', '本命を軸に、相手を評価上位 3 頭に絞った買い目です。']].map(([kind, title, note]) => (
-              <article class={`ag-glass acq-sec acq-bet acq-locked-bet${kind === 'umatan-narrowed' ? ' narrowed' : ''}`} data-kind={kind}>
-                <header class="acq-head"><h3>{title}</h3><span class="ag-pill violet">Premium</span></header>
-                <p class="acq-note">{note}</p>
-                <div class="betting-teaser ag-inset" aria-hidden="true">
-                  <span class="acq-axis"><span class="acq-axis-label">軸</span><span class="ag-num lg acq-axis-num">●</span></span>
-                  <span class="acq-arrow">⇔</span>
-                  <span class="acq-partners">{[1, 2, 3, 4, 5].slice(0, kind === 'umatan-narrowed' ? 3 : 5).map(() => <span class="acq-pnum">●</span>)}</span>
-                </div>
-                <a class="ag-cta ag-cta-premium acq-unlock" href="/pricing/">この予想を取得するにはPremium</a>
-              </article>
-            ))}
+            {/* 2026-10-04 MK 確定: 有料版のプレビューなので買い目カードは 1 枚（馬単買い目）だけ */}
+            <article class="ag-glass acq-sec acq-bet acq-locked-bet" data-kind="umatan-preview">
+              <header class="acq-head"><h3>馬単買い目</h3><span class="ag-pill violet">Premium</span></header>
+              <p class="acq-note">Premium では、通常の買い目と点数を絞った買い目を表示します。</p>
+              <div class="betting-teaser ag-inset" aria-hidden="true">
+                <span class="acq-axis"><span class="acq-axis-label">軸</span><span class="ag-num lg acq-axis-num">●</span></span>
+                <span class="acq-arrow">⇔</span>
+                <span class="acq-partners">{[1, 2, 3, 4, 5].map(() => <span class="acq-pnum">●</span>)}</span>
+              </div>
+              <a class="ag-cta ag-cta-premium acq-unlock" href="/pricing/">この予想を取得するにはPremium</a>
+            </article>
           </>
         ) : !isSrp ? (
           <>

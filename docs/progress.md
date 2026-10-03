@@ -1,3 +1,13 @@
+# 🃏 Preview 詳細の買い目カードを 1 枚に（2026-10-04 MK 指示 / 本番反映済み）
+
+| 項目 | 状態 |
+|---|---|
+| 正本 | `decisions.md` 2026-10-04（追記 3）・`PREDICTION_ACQUISITION.md` §2-4 |
+| 本番 | PR #703 squash `6f13e255`・main CI success・Netlify production ready。本番 `/free-prediction/view/` で買い目カードは「馬単買い目」1 枚（`umatan-preview`）。Premium 本利用の詳細は 2 枚のまま（ビルド済み SSR で確認）|
+| cleanup | worktree `analytics-keiba-onecard` 削除 |
+
+---
+
 # 🟡 タブ色（会場＝イエロー・日付＝黄緑の乳白色）と CTA 文字色（2026-10-04 MK 指示）
 
 | 項目 | 状態 |
