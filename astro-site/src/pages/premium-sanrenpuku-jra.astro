@@ -6,6 +6,13 @@
 // ⚠️ SSR。有料本文を組み立てる前にサーバー側で認可を確定させる（2026-08-08）。
 //    prerender=true のままだと静的 HTML に有料本文が入り、localStorage の書き換えだけで読めてしまう。
 export const prerender = false;
+import AcquisitionRaceList from '../components/acquisition/AcquisitionRaceList.astro';
+import AcquisitionUsagePanel from '../components/acquisition/AcquisitionUsagePanel.astro';
+import SrpRecommendedRaces from '../components/acquisition/SrpRecommendedRaces.astro';
+import { buildListModel } from '../lib/acquisition/listModel.js';
+import { loadMemberAcquisitions } from '../lib/acquisition/acquisitionServer.js';
+import { summarizeUsage } from '../lib/acquisition/usageStats.js';
+import { canAcquire } from '../lib/acquisition/acquisitionPolicy.js';
 import BaseLayout from '../layouts/BaseLayout.astro';
 import SessionKeepAlive from '../components/SessionKeepAlive.astro';
 import AccessControl from '../components/AccessControl.astro';
@@ -29,6 +36,12 @@ const gate = await gatePaidPage({
 });
 if (gate.response) return gate.response;
 for (const [k, v] of Object.entries(PAID_PAGE_HEADERS)) Astro.response.headers.set(k, v);
+
+// ── 三連複で狙うレースの選別（推奨度・見送り・理由）と取得状態。買い目は一覧に渡さない ──
+const acqList = await loadMemberAcquisitions({ recordId: gate.subject, env: process.env });
+const srpModel = buildListModel({ cat: 'jra', product: 'srp', requestedDate: Astro.url.searchParams.get('date'), acquisitions: acqList || [] });
+const acqUsage = acqList ? summarizeUsage(acqList) : null;
+const srpCan = canAcquire(gate.entitlements, { product: 'srp', cat: 'jra' });
 
 // 直近の三連複的中実績（archiveSanrenpukuResultsJra 由来・表示専用）
 const latestResult = convertToSanrenpukuYesterdayResultsJra();
@@ -91,7 +104,7 @@ if (raceDate && /^\d{4}-\d{2}-\d{2}$/.test(raceDate)) {
 
 <BaseLayout
     title={`中央競馬 Premium三連複予想 | ${track} ${formattedDate}`}
-    description={`AI技術による中央競馬（JRA）の超厳選三連複予想。累積スコアに基づく少点数買い目で最適な組み合わせのみを提供。`}
+    description={`中央競馬（JRA）で、今日、三連複で狙うべきレースを AI が選別。推奨度・見送り判定・選別理由と、推奨レースの予想を取得できます。`}
 >
   {/* ak_session の idle TTL 延長（会員確定ページのみ）*/}
   <SessionKeepAlive />
@@ -103,182 +116,20 @@ if (raceDate && /^\d{4}-\d{2}-\d{2}$/.test(raceDate)) {
                     <span class="pulse"></span>
                     <span class="ai-status">✨ Premium Sanrenpuku（中央）</span>
                 </div>
-                <h1 class="race-title">{formattedDate} {track} - Premium 三連複厳選予想</h1>
+                <h1 class="race-title">中央 三連複で狙うべきレースを AI が選別</h1>
             </div>
 
-            {!hasData && (
-                <div class="no-data-card">
-                    <p>本日の中央競馬（JRA）三連複予想データがありません。</p>
-                    <p class="no-data-sub">開催日に自動反映されます。</p>
+            {/* 2026-10-03 MK 確定: Premium Sanrenpuku は「三連複で参加すべきレースを AI が選別する」商品。
+                 一覧では推奨度・見送り・理由だけを出し、買い目（通常・中心）は取得後の本文ページで出す。
+                 旧「AIで絞り込む」ボタン（買い目削減の演出）は廃止。docs/PREDICTION_ACQUISITION.md */}
+            <div class="acq-layout">
+                <div class="acq-main">
+                    <SrpRecommendedRaces day={srpModel.day} canAcquire={srpCan} />
+                    <h2 class="acq-heading">全レースの判定</h2>
+                    <AcquisitionRaceList product="srp" basePath="/premium-sanrenpuku-jra/" date={srpModel.date} dates={srpModel.dates} venues={srpModel.venues} canAcquire={srpCan} acquiredUnknown={acqList === null} />
                 </div>
-            )}
-
-            {hasData && (
-                <>
-                    <!-- 会場タブ（同時開催の場合のみ表示） -->
-                    {isMultiVenue && (
-                        <div class="venue-selector">
-                            {venuesProcessed.map((v, i) => (
-                                <button
-                                    class={`venue-btn ${i === 0 ? 'active' : ''}`}
-                                    data-venue-index={i}
-                                    type="button"
-                                    onclick="selectJraSanrenpukuVenue(this)"
-                                >
-                                    <span class="venue-label">{v.track}</span>
-                                    <span class="venue-race-count">{v.races.length}R</span>
-                                </button>
-                            ))}
-                        </div>
-                    )}
-
-                    {venuesProcessed.map((venue, venueIndex) => (
-                    <div class={`venue-content ${venueIndex === 0 ? 'active' : ''}`} data-venue-index={venueIndex}>
-                        {isMultiVenue && (
-                            <div class="venue-header-inline">
-                                <h2 class="venue-title">{venue.track}</h2>
-                                <p class="venue-subtitle">{venue.races.length}レース - Premium 三連複厳選予想</p>
-                            </div>
-                        )}
-
-                        <!-- フローティングレースセレクター（右下固定・会場ごと） -->
-                        <div class="floating-race-selector">
-                            <button class="floating-selector-toggle" type="button">
-                                <span class="toggle-icon">🏇</span>
-                                <span class="toggle-text">レース選択</span>
-                            </button>
-                            <div class="floating-selector-menu" style="display: none;">
-                                <div class="selector-header">📍 レースを選択</div>
-                                <div class="selector-grid">
-                                    {venue.races.map((race) => (
-                                        <button
-                                            class="selector-race-btn"
-                                            data-race-number={race.raceNumber}
-                                            onclick={`openSanrenpukuRace(${venueIndex}, ${String(race.raceNumber).replace('R','')}); this.closest('.floating-selector-menu').style.display = 'none';`}
-                                        >
-                                            {race.raceNumber}
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- 全レース予想 -->
-                        <div class="races-container">
-                            {venue.races.map((race) => {
-                                const raceNum = String(race.raceNumber).replace('R', '');
-                                return (
-                                <div class={`race-${raceNum}r-accordion`} id={`jra-srp-race-v${venueIndex}-${raceNum}`}>
-                                    <!-- レース単位アコーディオン ヘッダー（南関 premium-sanrenpuku と同型） -->
-                                    <div class="race-accordion-header" onclick={`toggleSanrenpukuRace(${venueIndex}, ${raceNum})`}>
-                                        <div class="race-basic-info">
-                                            <span class="race-number">{race.raceNumber}R</span>
-                                            {race.raceName && <span class="race-name">{race.raceName}</span>}
-                                            <span class="race-tier-badge">{`第${raceNum}レース`}</span>
-                                        </div>
-                                        <div class="race-preview">
-                                            {race.startTime && <span class="race-preview-time">🕐 {race.startTime}</span>}
-                                            <span class="toggle-icon" id={`srp-toggle-v${venueIndex}-${raceNum}r`}>▼</span>
-                                        </div>
-                                    </div>
-
-                                    <!-- アコーディオン中身（初期は畳む。max-height はトグルJSで制御） -->
-                                    <div class="race-accordion-content" id={`srp-race-v${venueIndex}-${raceNum}r`} style="max-height: 0; opacity: 0;">
-                                        <div class="race-meta race-meta-inner">
-                                            {race.horseCount && <span>🐴 {race.horseCount}頭</span>}
-                                            {race.startTime && <span>🕐 {race.startTime}発走</span>}
-                                        </div>
-
-                                    <!-- AI選出馬（本命・対抗・単穴 + 連下 + 抑え + 不要馬 / 過去走詳細つき） -->
-                                    {race.allHorses.length > 0 && (
-                                        <JraRaceHorseSection
-                                            horses={race.allHorses}
-                                            race={race.raceObj}
-                                            featureScoresData={venue.featureScoresData}
-                                        />
-                                    )}
-
-                                    <!-- 三連複AI推奨買い目（絞り込み / 通常 軸別 切替）AI_SANRENPUKU_AXIS_V1 -->
-                                    {race.hasSanrenpuku && (
-                                        <div class="recommendation-section srp-block">
-                                            <div class="unified-bet-card">
-                                                <div class="unified-bet-header">
-                                                    <h2 class="section-title"><span>🎯</span><span>三連複AI推奨買い目</span></h2>
-                                                    <span class="unified-bet-subtitle">軸馬構成ルールV1</span>
-                                                </div>
-
-                                                <div class="sanrenpuku-tabs">
-                                                    <button type="button" class="srp-tab active" data-srp-mode="narrow">絞り込み</button>
-                                                    <button type="button" class="srp-tab" data-srp-mode="normal">通常買い目</button>
-                                                </div>
-
-                                                {race.sanrenpukuView.narrow && (
-                                                    <div class="srp-panel srp-panel-narrow active">
-                                                        <div class="srp-panel-title">絞り込み買い目</div>
-                                                        <!-- AI絞り込み演出ボタン（南関 premium-sanrenpuku と同型・クリックで解析→reveal） -->
-                                                        <button type="button" class="premium-select-filter-btn">
-                                                            <span class="filter-icon">🎯</span>
-                                                            <span class="filter-text">AIで絞り込む</span>
-                                                            <span class="filter-arrow">▼</span>
-                                                        </button>
-                                                        <div class="premium-select-reveal" style="display: none;">
-                                                            {race.sanrenpukuView.narrowedLines && race.sanrenpukuView.narrowedLines.length > 0 ? (
-                                                                race.sanrenpukuView.narrowedLines.map((b) => (
-                                                                    <div class="bet-item">
-                                                                        <span class="bet-type">三連複</span>
-                                                                        <span class="bet-horses">{b.line}</span>
-                                                                        <span class="bet-points">{b.points}点</span>
-                                                                    </div>
-                                                                ))
-                                                            ) : (
-                                                                <div class="bet-item">
-                                                                    <span class="bet-type">三連複</span>
-                                                                    <span class="bet-horses">{race.sanrenpukuView.narrow.line}</span>
-                                                                    <span class="bet-points">{race.sanrenpukuView.narrow.points}点</span>
-                                                                </div>
-                                                            )}
-                                                            <p class="unified-bet-note">本命を軸に対抗・単穴・連下上位の3頭ボックス</p>
-                                                        </div>
-                                                    </div>
-                                                )}
-
-                                                <div class="srp-panel srp-panel-normal">
-                                                    <div class="srp-normal-header">
-                                                        <span class="srp-normal-title">通常買い目</span>
-                                                        <span class="srp-normal-points">集計点数 9〜12点</span>
-                                                    </div>
-                                                    {race.sanrenpukuView.normalHonmeiAxis && (
-                                                        <div class="srp-subblock">
-                                                            <div class="srp-panel-title">本命軸</div>
-                                                            <div class="bet-item">
-                                                                <span class="bet-type">三連複</span>
-                                                                <span class="bet-horses">{race.sanrenpukuView.normalHonmeiAxis.line}</span>
-                                                            </div>
-                                                        </div>
-                                                    )}
-                                                    {race.sanrenpukuView.normalTaikouAxis && (
-                                                        <div class="srp-subblock">
-                                                            <div class="srp-panel-title">対抗軸</div>
-                                                            <div class="bet-item">
-                                                                <span class="bet-type">三連複</span>
-                                                                <span class="bet-horses">{race.sanrenpukuView.normalTaikouAxis.line}</span>
-                                                            </div>
-                                                        </div>
-                                                    )}
-                                                    <p class="unified-bet-note">※ 本命軸・対抗軸のいずれかで3着以内が揃えば的中扱い（大勝ち日は12点、堅実配当日は9点で集計）</p>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    )}
-                                    </div>
-                                </div>
-                                );
-                            })}
-                        </div>
-                    </div>
-                    ))}
-                </>
-            )}
+                <AcquisitionUsagePanel usage={acqUsage} />
+            </div>
 
             {/* 段階公開 PHASE 2 の予告枠。静的 HTML には文言もリンクも出さず、
                 SSR の /api/premium-plus-stage.json（三連複会員のみ 200）から取得して描画する。
@@ -288,143 +139,7 @@ if (raceDate && /^\d{4}-\d{2}-\d{2}$/.test(raceDate)) {
     </AccessControl>
 </BaseLayout>
 
-<script is:inline>
-    // 会場切替（南関 premium-sanrenpuku と同一挙動・JRA 用に名前空間を分離）
-    function selectJraSanrenpukuVenue(btn) {
-        const idx = btn.getAttribute('data-venue-index');
-        document.querySelectorAll('.venue-btn').forEach((b) => b.classList.toggle('active', b.getAttribute('data-venue-index') === idx));
-        document.querySelectorAll('.venue-content').forEach((c) => c.classList.toggle('active', c.getAttribute('data-venue-index') === idx));
-        document.querySelectorAll('.floating-selector-menu').forEach((m) => { m.style.display = 'none'; });
-    }
-    window.selectJraSanrenpukuVenue = selectJraSanrenpukuVenue;
-
-    document.addEventListener('DOMContentLoaded', function() {
-        // フローティングレースセレクターのトグル（会場ごとに複数存在しうるため class ベース）
-        document.querySelectorAll('.floating-selector-toggle').forEach(function(toggle) {
-            const menu = toggle.parentElement.querySelector('.floating-selector-menu');
-            if (!menu) return;
-            toggle.addEventListener('click', function(e) {
-                e.stopPropagation();
-                menu.style.display = (menu.style.display === 'none' || !menu.style.display) ? 'block' : 'none';
-            });
-        });
-        document.addEventListener('click', function(event) {
-            if (!event.target.closest('.floating-race-selector')) {
-                document.querySelectorAll('.floating-selector-menu').forEach(function(m) { m.style.display = 'none'; });
-            }
-        });
-    });
-
-    // 三連複AI推奨買い目: 絞り込み / 通常 タブ切替（premium-prediction/nankan.astro と同一）
-    document.addEventListener('click', function(e) {
-        const btn = e.target && e.target.closest && e.target.closest('.srp-tab');
-        if (!btn) return;
-        const block = btn.closest('.srp-block');
-        if (!block) return;
-        const mode = btn.getAttribute('data-srp-mode');
-        block.querySelectorAll('.srp-tab').forEach((b) => {
-            b.classList.toggle('active', b.getAttribute('data-srp-mode') === mode);
-        });
-        block.querySelectorAll('.srp-panel').forEach((p) => {
-            p.classList.toggle('active', p.classList.contains(`srp-panel-${mode}`));
-        });
-        // タブ切替で表示パネルの高さが変わるため、親アコーディオンの max-height を再計算
-        // （未再計算だと通常買い目の2段目=対抗軸がクリップされて隠れる）
-        if (window._srpRecalcFrom) window._srpRecalcFrom(block);
-    });
-
-    // AI絞り込み演出ボタン（3段階アニメ・南関 premium-sanrenpuku と同型）
-    document.addEventListener('click', function(e) {
-        const btn = e.target && e.target.closest && e.target.closest('.premium-select-filter-btn');
-        if (!btn) return;
-        const panel = btn.closest('.srp-panel-narrow');
-        const reveal = panel && panel.querySelector('.premium-select-reveal');
-        if (!reveal) return;
-        const filterText = btn.querySelector('.filter-text');
-        const hidden = reveal.style.display === 'none' || reveal.style.display === '';
-        if (hidden) {
-            // 段階1: AIで絞り込む → AI絞り込み中（青・pulse）
-            btn.classList.add('filtering');
-            if (filterText) filterText.textContent = 'AI絞り込み中';
-            // 段階2: 1.6秒後に 絞り込み完了（緑）＋ 買い目 reveal
-            setTimeout(() => {
-                btn.classList.remove('filtering');
-                btn.classList.add('filtered');
-                if (filterText) filterText.textContent = 'AI絞り込み完了';
-                reveal.style.display = 'block';
-                if (window._srpRecalcFrom) window._srpRecalcFrom(reveal);
-            }, 1600);
-        } else {
-            // 初期状態へ戻す
-            reveal.style.display = 'none';
-            btn.classList.remove('filtered');
-            if (filterText) filterText.textContent = 'AIで絞り込む';
-            if (window._srpRecalcFrom) window._srpRecalcFrom(reveal);
-        }
-    });
-
-    // ==== レース単位アコーディオン（南関 premium-sanrenpuku と同型）====
-    // 開いているレースの固定 max-height を内側 details の開閉に追従して再計算（クリップ防止）
-    function _srpRecalcFrom(el) {
-        const content = el && el.closest && el.closest('.race-accordion-content');
-        if (!content) return;
-        const mh = content.style.maxHeight;
-        if (mh === '0px' || mh === '') return; // 閉じているレースは触らない
-        requestAnimationFrame(() => { content.style.maxHeight = content.scrollHeight + 'px'; });
-    }
-    window._srpRecalcFrom = _srpRecalcFrom;
-
-    function toggleSanrenpukuRace(venueIndex, raceNumber) {
-        const content = document.getElementById(`srp-race-v${venueIndex}-${raceNumber}r`);
-        const icon = document.getElementById(`srp-toggle-v${venueIndex}-${raceNumber}r`);
-        if (!content || !icon) return;
-        // 同じ会場の他アコーディオンを閉じる（1レースのみ展開）
-        for (let i = 1; i <= 12; i++) {
-            if (i !== raceNumber) {
-                const oc = document.getElementById(`srp-race-v${venueIndex}-${i}r`);
-                const oi = document.getElementById(`srp-toggle-v${venueIndex}-${i}r`);
-                if (oc && oi) { oc.style.maxHeight = '0px'; oc.style.opacity = '0'; oi.textContent = '▼'; oi.style.transform = 'rotate(0deg)'; }
-            }
-        }
-        if (content.style.maxHeight === '0px' || content.style.maxHeight === '') {
-            content.style.maxHeight = content.scrollHeight + 'px';
-            content.style.opacity = '1';
-            icon.textContent = '◎';
-            icon.style.transform = 'rotate(180deg)';
-        } else {
-            content.style.maxHeight = '0px';
-            content.style.opacity = '0';
-            icon.textContent = '▼';
-            icon.style.transform = 'rotate(0deg)';
-        }
-    }
-    window.toggleSanrenpukuRace = toggleSanrenpukuRace;
-
-    // フローティングレース選択から呼ぶ: 必ず開いてスクロール
-    function openSanrenpukuRace(venueIndex, raceNumber) {
-        const content = document.getElementById(`srp-race-v${venueIndex}-${raceNumber}r`);
-        if (!content) return;
-        const isClosed = content.style.maxHeight === '0px' || content.style.maxHeight === '';
-        if (isClosed) toggleSanrenpukuRace(venueIndex, raceNumber);
-        const wrapper = document.getElementById(`jra-srp-race-v${venueIndex}-${raceNumber}`);
-        (wrapper || content).scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-    window.openSanrenpukuRace = openSanrenpukuRace;
-
-    // 内側 details（過去走簡易 / 過去走詳細）の開閉で親レースアコーディオンの max-height を再計算
-    function bindSrpNestedDetailsRecalc() {
-        document.querySelectorAll('.race-accordion-content details').forEach((d) => {
-            if (d.dataset.srpScrollBound === '1') return;
-            d.dataset.srpScrollBound = '1';
-            d.addEventListener('toggle', () => { _srpRecalcFrom(d); });
-        });
-    }
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', bindSrpNestedDetailsRecalc);
-    } else {
-        bindSrpNestedDetailsRecalc();
-    }
-</script>
+{/* 2026-10-03: 旧レース一覧（会場切替・アコーディオン・「絞り込む」演出）のスクリプトを撤去。一覧は AcquisitionRaceList（スクリプト不要）。 */}
 
 <style is:global>
     .page-container { max-width: 1100px; margin: 0 auto; padding: 20px; }
@@ -655,4 +370,11 @@ if (raceDate && /^\d{4}-\d{2}-\d{2}$/.test(raceDate)) {
         color: #10b981; font-weight: 700; background: rgba(16, 185, 129, 0.1); padding: 4px 10px;
         border-radius: 15px; border: 1px solid rgba(16, 185, 129, 0.3); white-space: nowrap;
     }
+</style>
+
+<style>
+    .acq-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; margin: 20px 0 28px; }
+    .acq-main { display: grid; gap: 16px; align-content: start; }
+    .acq-heading { margin: 8px 0 0; font-size: 1.3rem; }
+    @media (max-width: 900px) { .acq-layout { grid-template-columns: 1fr; } }
 </style>

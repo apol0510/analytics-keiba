@@ -1,0 +1,56 @@
+---
+/**
+ * /predictions/history/ — 取得済みの予想（すべて）と今月の利用状況
+ * 本人（ak_session）の取得記録だけを読む。本文は出さない（各予想の閲覧ページで出す）。
+ */
+export const prerender = false;
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import SessionKeepAlive from '../../components/SessionKeepAlive.astro';
+import AcquisitionUsagePanel from '../../components/acquisition/AcquisitionUsagePanel.astro';
+import { gatePaidPage, PAID_PAGE_HEADERS } from '../../lib/auth/paidPageGate.js';
+import { ACQUISITION_DOOR_PLANS, loadMemberAcquisitions, viewUrlFor } from '../../lib/acquisition/acquisitionServer.js';
+import { summarizeUsage } from '../../lib/acquisition/usageStats.js';
+
+const gate = await gatePaidPage({ request: Astro.request, requiredPlan: ACQUISITION_DOOR_PLANS, env: process.env });
+if (gate.response) return gate.response;
+for (const [k, v] of Object.entries(PAID_PAGE_HEADERS)) Astro.response.headers.set(k, v);
+const list = await loadMemberAcquisitions({ recordId: gate.subject, env: process.env });
+const usage = list ? summarizeUsage(list) : null;
+const jst = (iso) => { const t = new Date(Date.parse(iso) + 9 * 3600e3); return `${t.getUTCFullYear()}/${t.getUTCMonth() + 1}/${t.getUTCDate()} ${String(t.getUTCHours()).padStart(2, '0')}:${String(t.getUTCMinutes()).padStart(2, '0')}`; };
+const productLabel = { premium: 'Premium', srp: '三連複 選別' };
+---
+<BaseLayout title="取得済みの予想" noindex>
+  <SessionKeepAlive />
+  <main class="acq-hist-page">
+    <h1>取得済みの予想</h1>
+    <div class="acq-hist-grid">
+      <section>
+        {list === null && <p class="acq-muted">取得済みの予想を確認できませんでした。時間をおいてもう一度お試しください。</p>}
+        {list && list.length === 0 && <p class="acq-muted">まだ取得した予想はありません。</p>}
+        {list && list.length > 0 && (
+          <ul class="acq-hist">
+            {list.map((e) => (
+              <li><a href={viewUrlFor(e.key)}>
+                <span class="acq-hist-race">{e.date} {e.venueName} {e.raceNumber}R</span>
+                <span class="acq-hist-name">{e.raceName} <small>{productLabel[e.product] || ''}</small></span>
+                <span class="acq-hist-at">取得 {jst(e.at)}</span>
+              </a></li>
+            ))}
+          </ul>
+        )}
+      </section>
+      <AcquisitionUsagePanel usage={usage} />
+    </div>
+  </main>
+</BaseLayout>
+
+<style>
+  .acq-hist-page { max-width: 1100px; margin: 0 auto; padding: 24px 16px 60px; }
+  .acq-hist-grid { display: grid; grid-template-columns: 1fr 320px; gap: 20px; align-items: start; }
+  .acq-hist { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+  .acq-hist a { display: grid; gap: 2px; padding: 12px; border-radius: 10px; background: rgba(255,255,255,0.06); color: inherit; text-decoration: none; border: 1px solid rgba(148,163,184,0.2); }
+  .acq-hist-race { font-weight: 800; }
+  .acq-hist-name small, .acq-hist-at, .acq-muted { color: #94a3b8; }
+  .acq-hist-at { font-size: 0.8rem; }
+  @media (max-width: 860px) { .acq-hist-grid { grid-template-columns: 1fr; } }
+</style>

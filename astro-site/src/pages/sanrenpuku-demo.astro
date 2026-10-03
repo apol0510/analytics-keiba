@@ -2,8 +2,8 @@
 export const prerender = true;
 import BaseLayout from '../layouts/BaseLayout.astro';
 
-const title = '高性能AI三連複の自動絞り込み機能 実体験';
-const description = '購入前に実際の的中レースで体験！高性能AI三連複の自動絞り込み機能の実体験。累積スコアベースの自動戦略選択で、わずか9点の少点数買い目を実現。';
+const title = '三連複のレース選別 実体験';
+const description = '購入前に実際の的中レースで体験！今日、三連複で狙うべきレースを AI が選別する Premium Sanrenpuku の実例。推奨度・選別理由と中心買い目をご覧いただけます。';
 
 // 固定デモデータ（2025年9月3日 大井競馬11R アフター５スター賞）
 const demoData = {
@@ -78,11 +78,11 @@ let selectedStrategy = '';
 let strategyDescription = '';
 
 if (mainScore >= 89) {
-    selectedStrategy = '少点数型+バランス型ミックス';
-    strategyDescription = '累積スコア89pt以上。本命の信頼度が非常に高いため、少点数型とバランス型の上位5点のみに絞り込みます。';
+    selectedStrategy = '推奨度 A';
+    strategyDescription = '累積スコア89pt以上。本命の信頼度が非常に高く、三連複で狙うべきレースと判定します。';
 } else if (mainScore === 88) {
-    selectedStrategy = '少点数型寄り';
-    strategyDescription = '累積スコア88pt。本命の信頼度が高いため、少点数型を中心に7点に絞り込みます。';
+    selectedStrategy = '推奨度 A';
+    strategyDescription = '累積スコア88pt。本命の信頼度が高く、三連複で狙うべきレースと判定します。';
 } else if (mainScore === 87) {
     selectedStrategy = 'バランス型';
     strategyDescription = '累積スコア87pt。バランスの取れた配置のため、バランス型10点を選択します。';
@@ -94,9 +94,9 @@ if (mainScore >= 89) {
     strategyDescription = '累積スコア85pt以下。穴狙いの配置のため、高配当型10点を選択します。';
 }
 
-// 今回のデモケースは88ptなので「少点数型寄り 9点」
-const actualStrategy = '少点数型寄り';
-const actualDescription = '本命ファーンヒル（88pt）の信頼度が高いため、少点数型を中心に9点に絞り込みました。';
+// 今回のデモケースは88pt → 推奨度 A（三連複で狙うレース）
+const actualStrategy = '推奨度 A（三連複で狙うレース）';
+const actualDescription = '本命ファーンヒル（88pt）の信頼度が高く、相手候補も整理しやすいため、三連複で狙うべきレースと判定しました。';
 ---
 
 <BaseLayout title={title} description={description}>
@@ -136,9 +136,9 @@ const actualDescription = '本命ファーンヒル（88pt）の信頼度が高�
         <!-- ヘッダー -->
         <div class="sample-header">
             <div class="badge-new">🎯 無料実体験</div>
-            <h1>高性能AI三連複の自動絞り込み機能 実体験</h1>
+            <h1>三連複のレース選別 実体験</h1>
             <p class="header-description">
-                実際のレースでPremium Sanrenpukuの絞り込み機能を実体験できます。
+                実際のレースで、Premium Sanrenpuku が「三連複で狙うべきレース」をどう選んだかをご覧いただけます。
             </p>
         </div>
 
@@ -172,8 +172,8 @@ const actualDescription = '本命ファーンヒル（88pt）の信頼度が高�
                 <div class="explanation-step">
                     <span class="step-number">2</span>
                     <div class="step-content">
-                        <h3>最適戦略を自動選択</h3>
-                        <p>スコアに応じて、少点数型・バランス型・高配当型から最適な戦略を自動判定します。</p>
+                        <h3>三連複で狙うレースかを判定</h3>
+                        <p>本命の信頼度・上位の評価差・頭数から、推奨度 A / B または見送りを判定します。</p>
                         <div class="strategy-selected">
                             <span class="strategy-icon">✅</span>
                             <span class="strategy-name">{actualStrategy}</span>
@@ -185,12 +185,12 @@ const actualDescription = '本命ファーンヒル（88pt）の信頼度が高�
                 <div class="explanation-step">
                     <span class="step-number">3</span>
                     <div class="step-content">
-                        <h3>買い目を自動絞り込み</h3>
-                        <p>選択された戦略の買い目を、累積スコア順にソートして上位のみを抽出します。</p>
+                        <h3>推奨レースの予想を取得</h3>
+                        <p>推奨レースでは、本命を軸に評価上位の相手で組んだ中心買い目と、通常買い目を確認できます。</p>
                         <div class="bet-count">
                             <span class="count-icon">🎯</span>
                             <span class="count-value">{demoData.betCount}点</span>
-                            <span class="count-label">に絞り込み</span>
+                            <span class="count-label">の中心買い目</span>
                         </div>
                     </div>
                 </div>
@@ -340,16 +340,16 @@ const actualDescription = '本命ファーンヒル（88pt）の信頼度が高�
             </div>
         </div>
 
-        <!-- 高性能AI絞り込みボタン -->
+        <!-- 推奨レースの予想を取得（デモ） -->
         <button class="demo-filter-btn" id="demoFilterBtn">
             <span class="filter-icon">🎯</span>
-            <span class="filter-text">高性能AI三連複 絞り込む</span>
+            <span class="filter-text">推奨レースの予想を取得する</span>
             <span class="filter-arrow">▼</span>
         </button>
 
-        <!-- 高性能AI絞り込み買い目（初期非表示） -->
+        <!-- 推奨レースの中心買い目（初期非表示） -->
         <div class="filtered-bets" id="demoContent" style="display: none;">
-            <h2>🎯 高性能AI自動絞り込み買い目</h2>
+            <h2>👑 推奨レースの中心買い目</h2>
             <div class="bet-strategy-info">
                 <span class="strategy-badge">{actualStrategy}</span>
                 <span class="bet-count-badge">{demoData.betCount}点</span>
@@ -388,9 +388,9 @@ const actualDescription = '本命ファーンヒル（88pt）の信頼度が高�
                     </div>
                 </div>
                 <p class="result-note">
-                    🤖 <strong>高性能AI搭載の自動絞り込み機能</strong>が、レースごとに最適な買い目を自動判定。<br>
-                    わずか{demoData.betCount}点の少点数で高配当的中を実現しました。<br>
-                    今後は戦略を選ぶ必要なく、自動で絞り込まれた買い目を購入するだけです。
+                    🤖 <strong>AI が三連複で狙うべきレースを選別</strong>し、このレースを推奨度 A と判定しました。<br>
+                    推奨レースの中心買い目で的中しています。<br>
+                    買うレースを選ぶ判断を AI に任せ、推奨レースの予想を取得するだけです。
                 </p>
             </div>
         )}
@@ -404,17 +404,17 @@ const actualDescription = '本命ファーンヒル（88pt）の信頼度が高�
                     <div class="reason-card">
                         <div class="reason-icon">🤖</div>
                         <h3>最も力を発揮</h3>
-                        <p>三連複は「本命・対抗・単穴」の3頭の相関関係をAIが分析。<br>高性能AIの予測能力が最大限に活かされ、<br>全ての組み合わせから最適な買い目を自動判定します。</p>
+                        <p>三連複は「本命・対抗・単穴」の3頭の相関関係をAIが分析。<br>その日のレースの中から、<br>三連複で狙う価値が高いレースを選別します。</p>
                     </div>
                     <div class="reason-card">
                         <div class="reason-icon">💰</div>
                         <h3>高配当も狙える</h3>
-                        <p>三連複は3頭の組み合わせのため、馬単より配当が高い傾向にあります。少点数で高配当を狙えるバランスの良い券種です。<br>実際に、わずか9点の少点数で高配当的中も連発しています。</p>
+                        <p>三連複は3頭の組み合わせのため、馬単より配当が高い傾向にあります。<br>狙うレースを選ぶことで、価値の低いレースまで買わずに済みます。</p>
                     </div>
                     <div class="reason-card">
                         <div class="reason-icon">🤖</div>
                         <h3>自動判定</h3>
-                        <p>累積スコアに基づいて南関東４競馬の大井、船橋、川崎、浦和の各会場で、レース毎に最適な戦略を自動選択。あなたは買い目を確認するだけで、迷う必要が一切ありません。</p>
+                        <p>中央・南関の各会場で、レースごとに推奨度 A / B・見送りを判定し、選別理由を表示します。どのレースで勝負するかを迷わずに選べます。</p>
                     </div>
                     <div class="reason-card">
                         <div class="reason-icon">⚡</div>
@@ -431,22 +431,22 @@ const actualDescription = '本命ファーンヒル（88pt）の信頼度が高�
                     <div class="pain-item">
                         <span class="pain-icon">❌</span>
                         <div class="pain-content">
-                            <h3>3つの戦略、結局どれを選べばいいか分からない</h3>
-                            <p>馬単の少点数・バランス・高配当の3戦略。それぞれ的中率・配当が異なり、レースごとに選ぶのが面倒...</p>
+                            <h3>どのレースを三連複で買えばいいか分からない</h3>
+                            <p>全レースを買うと、狙う価値の低いレースにも投資してしまう...</p>
                         </div>
                     </div>
                     <div class="pain-item">
                         <span class="pain-icon">❌</span>
                         <div class="pain-content">
-                            <h3>オッズを確認して戦略を選ぶのが面倒</h3>
-                            <p>オッズ11倍以上なら高配当型、10倍以下なら少点数型...。毎レース判断するのは時間がかかります。</p>
+                            <h3>買うか見送るかの判断に時間がかかる</h3>
+                            <p>軸が信頼できるか、混戦か...。毎レース判断するのは時間がかかります。</p>
                         </div>
                     </div>
                     <div class="pain-item">
                         <span class="pain-icon">❌</span>
                         <div class="pain-content">
                             <h3>毎レースチェックする時間がない</h3>
-                            <p>12レース全てを分析して戦略を選ぶ余裕がない。シンプルに「これだけ買えばOK」という買い目が欲しい。</p>
+                            <p>12レース全てを分析する余裕がない。「今日はこのレース」と狙うレースを教えてほしい。</p>
                         </div>
                     </div>
                 </div>
@@ -478,52 +478,29 @@ const actualDescription = '本命ファーンヒル（88pt）の信頼度が高�
                 <div class="performance-detail">
                     <h3>💡 なぜ高的中・高回収を実現できるのか</h3>
                     <ul>
-                        <li><strong>累積スコアベースの戦略選択：</strong>本命馬の信頼度から、レース全体の難易度を自動判定</li>
-                        <li><strong>スコア順の自動ソート：</strong>全戦略の買い目を展開し、上位のみを抽出</li>
+                        <li><strong>レース選別：</strong>本命の信頼度・上位の評価差・頭数から、三連複で狙うレースを判定</li>
+                        <li><strong>推奨度と理由：</strong>各レースに推奨度 A / B・見送りと選別理由を表示</li>
                         <li><strong>高回収率の実現：</strong>馬単が2頭で的中なのに対して三連複では3頭での的中となる為に高配当になる</li>
                         <li><strong>AI機械学習モデル：</strong>過去5,000レース以上のデータから最適な買い目を生成</li>
                     </ul>
                 </div>
             </div>
 
-            <!-- お客様の声 -->
-            <div class="testimonials-section">
-                <h2>💬 お客様の声</h2>
-                <div class="testimonial-cards">
-                    <div class="testimonial-card">
-                        <div class="testimonial-header">
-                            <div class="testimonial-name">Tさん（40代・会社員）</div>
-                            <div class="testimonial-plan">Premium会員 → Premium Sanrenpuku</div>
-                        </div>
-                        <p class="testimonial-text">
-                            「馬単の3戦略から毎回選ぶのが面倒で退会を考えていましたが、Premium Sanrenpukuに変えて正解でした。<strong>高性能AIが自動で絞り込んでくれるので、迷わず買えます。</strong>的中率も72%と高く、投資額も少なくて済むので助かっています。」
-                        </p>
-                    </div>
-                    <div class="testimonial-card">
-                        <div class="testimonial-header">
-                            <div class="testimonial-name">Kさん（30代・自営業）</div>
-                            <div class="testimonial-plan">新規でPremium Sanrenpuku加入</div>
-                        </div>
-                        <p class="testimonial-text">
-                            「仕事が忙しくて毎レースオッズを確認する時間がなかったのですが、<strong>Premium Sanrenpukuなら買い目がすでに絞り込まれているので楽です。</strong>9点の少点数で的中するので、無駄な投資をしなくて済みます。」
-                        </p>
-                    </div>
-                </div>
-            </div>
+            {/* お客様の声: 2026-10-03 撤去（旧訴求の声だったため。声の文面は書き換えない） */}
         </div>
 
         <!-- CTA -->
         <div class="cta-section">
             <h2>💎 Premium Sanrenpukuで毎日この精度の予想を</h2>
             <p class="cta-description">
-                今回体験いただいた高性能AI三連複の自動絞り込み機能を、<br>
-                全レース・毎日の開催でご利用いただけます。
+                今回体験いただいた三連複のレース選別を、<br>
+                毎日の開催でご利用いただけます（全レースに推奨度・見送り判定）。
             </p>
             <div class="cta-features">
                 <div class="cta-feature">
                     <span class="feature-icon">🎯</span>
-                    <h3>高性能AI自動絞り込み</h3>
-                    <p>累積スコアベースの自動戦略選択</p>
+                    <h3>AI レース選別</h3>
+                    <p>三連複で狙うべきレースを毎日選別</p>
                 </div>
                 <div class="cta-feature">
                     <span class="feature-icon">📊</span>
@@ -539,18 +516,18 @@ const actualDescription = '本命ファーンヒル（88pt）の信頼度が高�
             <div class="cta-plan-selection">
                 <h3 class="plan-selection-title">🔄 Sanrenpuku Lifetimeに変更</h3>
                 <p class="plan-selection-note">
-                    ※ 高性能AI三連複の自動絞り込み機能（買い切り・Premium会員の間はずっと利用可能）
+                    ※ 三連複のレース選別（買い切り・Premium会員の間はずっと利用可能）
                 </p>
                 <div class="plan-buttons">
                     <button onclick="openBankModal('Premium Sanrenpuku Lifetime', 78000, 'lifetime')" class="plan-btn combo-plan">
                         <div class="plan-badge">おすすめ</div>
                         <div class="plan-name">🏦 Sanrenpuku Lifetime</div>
-                        <div class="plan-subtitle">高性能AI三連複自動絞り込み（買い切り）</div>
+                        <div class="plan-subtitle">三連複で狙うレースを AI が選別（買い切り）</div>
                         <div class="plan-price">¥78,000<span class="plan-period">（買い切り）</span></div>
                         <div class="plan-note">今だけ特別価格：¥108,000 → ¥78,000</div>
                         <div class="plan-features">
                             <div class="feature-item">
-                                <strong>三連複（AI絞り込み）</strong><br>
+                                <strong>三連複（AIレース選別）</strong><br>
                                 <span class="feature-detail">永久アクセス（追加料金なし）</span>
                             </div>
                             <div class="feature-note">
@@ -2004,13 +1981,13 @@ document.addEventListener('DOMContentLoaded', function() {
             if (demoContent.style.display === 'none') {
                 // 段階1: 絞り込む → 絞り込み中（青・pulse）
                 this.classList.add('filtering');
-                filterText.textContent = '高性能AI三連複 絞り込み中';
+                filterText.textContent = '予想を取得中';
 
                 // 段階2: 1.6秒後に 絞り込み中 → 絞り込み完了（緑）
                 setTimeout(() => {
                     this.classList.remove('filtering');
                     this.classList.add('filtered');
-                    filterText.textContent = '高性能AI三連複 絞り込み完了';
+                    filterText.textContent = '取得済み';
                     demoContent.style.display = 'block';
 
                     // スムーズスクロール
@@ -2022,7 +1999,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 // 閉じる処理
                 demoContent.style.display = 'none';
                 this.classList.remove('filtered');
-                filterText.textContent = '高性能AI三連複 絞り込む';
+                filterText.textContent = '推奨レースの予想を取得する';
             }
         });
     }

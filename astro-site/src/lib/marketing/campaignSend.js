@@ -25,6 +25,7 @@ import { computeDeliveryKey, normalizeRecipientEmail } from '../newsletter/deliv
 import { classifyEngagement, isBlockedByEngagement } from './engagementPolicy.js';
 import { MK_SUPPRESSION_LABEL } from './customerMarketingAudience.js';
 import { matchesCampaignAudience, isTemplateConfigured, isCampaignUsable } from './campaignCatalog.js';
+import { isRetiredCopyCampaign } from './retiredCopyCampaigns.js';
 import { evaluateExtraAudience, CAMPAIGN_MISMATCH } from './campaignAudienceRules.js';
 import {
   linkOfferForRecipient,
@@ -245,6 +246,8 @@ export function buildCampaignPlan({
   if (!campaign || !campaign.campaignId) return empty('unknown_campaign');
   if (!Array.isArray(selected)) return empty('invalid_selection');
   if (!fromEmail) return empty('missing_from_email');
+  // 文面が現行の商品定義と合わない送信済み campaign は送らない（2026-10-03・文面は凍結）
+  if (isRetiredCopyCampaign(campaign.campaignId)) return empty('retired_copy');
   // 使用停止中のキャンペーンは計画自体を作らない
   if (!isCampaignUsable(campaign)) {
     const tpl = isTemplateConfigured(campaign);

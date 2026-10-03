@@ -1,0 +1,105 @@
+---
+/**
+ * 取得済み予想の本文（スナップショットから描画）。
+ * ⚠️ 取得済みと確認したページ（/predictions/view/）からだけ使う。一覧や取得前の画面で使わない。
+ * 指数は保存時点で raw−1（getHorseAiIndex）済みの aiIndex だけを出す。
+ */
+interface Props { content: any }
+const { content: c } = Astro.props;
+const isSrp = c.product === 'srp';
+const ROLE_CLASS = { '本命': 'r-honmei', '対抗': 'r-taikou', '単穴': 'r-tana', '連下最上位': 'r-renka', '連下': 'r-renka', '抑え': 'r-osae', '不要': 'r-out' };
+const main = c.horses.filter((h) => ['本命', '対抗', '単穴'].includes(h.role));
+const renka = c.horses.filter((h) => h.role === '連下最上位' || h.role === '連下');
+const osae = c.horses.filter((h) => h.role === '抑え');
+const out = c.horses.filter((h) => h.role === '不要');
+const gradeLabel = { A: '推奨度 A', B: '推奨度 B', skip: '見送り' };
+---
+<div class="acq-body" data-product={c.product}>
+  {isSrp && (
+    <section class={`acq-selection grade-${c.selection.grade}`}>
+      <div class="acq-grade">{gradeLabel[c.selection.grade] || '見送り'}</div>
+      <ul class="acq-reasons">{c.selection.reasons.map((r) => <li>{r}</li>)}</ul>
+    </section>
+  )}
+
+  <section class="recommendation-section">
+    <div class="unified-bet-card">
+      {!isSrp && (
+        <>
+          <div class="acq-bet-group" data-kind="umatan-normal">
+            <h3 class="acq-bet-title">馬単 通常の買い目 <span class="acq-pts">{c.umatan.normal.reduce((s, l) => s + l.points, 0)}点</span></h3>
+            <p class="acq-bet-note">{c.isMainRace ? '本命から相手 5 頭への馬単（一方向）です。' : '本命・対抗を軸にした、全体の買い目です。'}</p>
+            <ul class="bet-list">{c.umatan.normal.map((l) => <li class="bet-item"><span class="acq-line">{l.line}</span><span class="acq-line-pts">{l.points}点</span></li>)}</ul>
+          </div>
+          {c.umatan.narrowed && (
+            <div class="acq-bet-group narrowed" data-kind="umatan-narrowed">
+              <h3 class="acq-bet-title">馬単 点数を絞った買い目 <span class="acq-pts">{c.umatan.narrowed.points}点</span></h3>
+              <p class="acq-bet-note">本命を軸に、相手を評価上位 3 頭に絞った買い目です。</p>
+              <ul class="bet-list"><li class="bet-item"><span class="acq-line">{c.umatan.narrowed.line}</span><span class="acq-line-pts">{c.umatan.narrowed.points}点</span></li></ul>
+            </div>
+          )}
+        </>
+      )}
+      <div class="acq-bet-group" data-kind="sanrenpuku-normal">
+        <h3 class="acq-bet-title">三連複 通常の買い目 <span class="acq-pts">{c.sanrenpuku.normal.reduce((s, l) => s + l.points, 0)}点</span></h3>
+        {c.sanrenpuku.normal.length === 0 && <p class="acq-bet-note">このレースは三連複の買い目を組めません。</p>}
+        <ul class="bet-list">{c.sanrenpuku.normal.map((l) => <li class="bet-item"><span class="acq-line">{l.line}</span><span class="acq-line-pts">{l.points}点</span></li>)}</ul>
+      </div>
+      {isSrp && c.sanrenpuku.center && (
+        <div class="acq-bet-group center" data-kind="sanrenpuku-center">
+          <h3 class="acq-bet-title">三連複 中心買い目 <span class="acq-pts">{c.sanrenpuku.center.points}点</span></h3>
+          <p class="acq-bet-note">本命を軸に、評価上位の相手で組んだ中心の買い目です。</p>
+          <ul class="bet-list"><li class="bet-item"><span class="acq-line">{c.sanrenpuku.center.line}</span><span class="acq-line-pts">{c.sanrenpuku.center.points}点</span></li></ul>
+        </div>
+      )}
+    </div>
+  </section>
+
+  <section class="acq-horses">
+    <h3 class="acq-bet-title">印と AI 総合指数</h3>
+    <table class="acq-horse-table">
+      <thead><tr><th>印</th><th>馬番</th><th>馬名</th><th>騎手</th><th>AI総合指数</th></tr></thead>
+      <tbody>
+        {main.map((h) => <tr class={ROLE_CLASS[h.role]}><td>{h.role}</td><td>{h.number}</td><td>{h.name}</td><td>{h.jockey}</td><td>{h.aiIndex ?? '—'}</td></tr>)}
+      </tbody>
+    </table>
+    {renka.length > 0 && (
+      <div class="minor-group-renka"><h4>連下</h4><p>{renka.map((h) => `${h.number} ${h.name}`).join(' / ')}</p></div>
+    )}
+    {osae.length > 0 && (
+      <div class="minor-group-osae"><h4>抑え</h4><p>{osae.map((h) => `${h.number} ${h.name}`).join(' / ')}</p></div>
+    )}
+    {out.length > 0 && (
+      <div class="ineligible-section"><h4>評価外</h4><p>{out.map((h) => `${h.number} ${h.name}`).join(' / ')}</p></div>
+    )}
+  </section>
+</div>
+
+<style>
+  .acq-body { display: grid; gap: 16px; }
+  .acq-selection { border-radius: 12px; padding: 16px; background: rgba(148,163,184,0.12); border: 1px solid rgba(148,163,184,0.25); }
+  .acq-selection.grade-A { background: rgba(239,68,68,0.12); border-color: rgba(239,68,68,0.45); }
+  .acq-selection.grade-B { background: rgba(245,158,11,0.12); border-color: rgba(245,158,11,0.45); }
+  .acq-grade { font-weight: 800; font-size: 1.1rem; margin-bottom: 6px; }
+  .acq-reasons { margin: 0; padding-left: 1.2em; line-height: 1.7; }
+  .unified-bet-card { display: grid; gap: 14px; }
+  .acq-bet-group { border-radius: 12px; padding: 14px 16px; background: rgba(59,130,246,0.08); border-left: 4px solid #6366f1; }
+  .acq-bet-group.narrowed, .acq-bet-group.center { border-left-color: #22c55e; background: rgba(34,197,94,0.08); }
+  .acq-bet-title { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 0 0 4px; font-size: 1rem; }
+  .acq-pts { font-size: 0.85rem; padding: 2px 10px; border-radius: 999px; background: rgba(99,102,241,0.25); white-space: nowrap; }
+  .acq-bet-note { margin: 0 0 8px; color: #94a3b8; font-size: 0.85rem; }
+  .bet-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+  .bet-item { display: flex; justify-content: space-between; gap: 10px; padding: 8px 10px; border-radius: 8px; background: rgba(15,23,42,0.6); }
+  .acq-line { font-weight: 700; font-size: 1.05rem; letter-spacing: 0.02em; word-break: break-all; }
+  .acq-line-pts { color: #94a3b8; white-space: nowrap; }
+  .acq-horses h4 { margin: 10px 0 4px; font-size: 0.9rem; color: #cbd5e1; }
+  .acq-horses p { margin: 0; line-height: 1.7; }
+  .acq-horse-table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+  .acq-horse-table th, .acq-horse-table td { padding: 8px 6px; border-bottom: 1px solid rgba(148,163,184,0.2); text-align: left; }
+  .acq-horse-table td:nth-child(2), .acq-horse-table td:nth-child(5) { text-align: center; }
+  .r-honmei td:first-child { color: #f87171; font-weight: 800; }
+  .r-taikou td:first-child { color: #fbbf24; font-weight: 800; }
+  .r-tana td:first-child { color: #60a5fa; font-weight: 800; }
+  .ineligible-section p { color: #94a3b8; }
+  @media (max-width: 480px) { .acq-horse-table th:nth-child(4), .acq-horse-table td:nth-child(4) { display: none; } }
+</style>
