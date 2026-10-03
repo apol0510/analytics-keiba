@@ -1,0 +1,205 @@
+---
+/**
+ * マイページ: Premium Plus 購入済み会員向けの「価格据え置きの枠確保」と、確保済み枠の状態・日付予約。
+ *
+ * - 出すかどうか・金額・残席は**サーバー（/api/premium-plus-pass.json）だけが決める**。404 なら出さない。
+ * - プランの案内は、本人の当日のレースが終わってから（offerVisible）。確保済みの枠は常に出す。
+ * - 成績（的中率など）は表示しない（MK 決定）。
+ */
+---
+<section class="ppp" id="ppp-section" hidden aria-labelledby="ppp-title">
+  <div class="ppp-card">
+    <div id="ppp-passes"></div>
+    <div id="ppp-offer" hidden>
+      <div class="ppp-head">
+        <span class="ppp-badge">Premium Plus</span>
+        <h2 class="ppp-title" id="ppp-title">価格据え置きの枠確保</h2>
+      </div>
+      <p class="ppp-lead">ご購入ありがとうございました。次回からの単品は通常価格 <strong id="ppp-list"></strong> です。<br>
+        今のうちに枠を確保すると、<strong>確保したときの価格のまま</strong>ご利用いただけます。</p>
+      <p class="ppp-credit" id="ppp-credit" hidden></p>
+      <div class="ppp-plans" id="ppp-plans"></div>
+    </div>
+    <p class="ppp-msg" id="ppp-msg" role="status" aria-live="polite"></p>
+  </div>
+</section>
+
+<style>
+  .ppp { margin: 16px 0 24px; }
+  .ppp-card { border: 1px solid rgba(251, 191, 36, .45); border-radius: 16px; padding: 18px;
+    background: linear-gradient(135deg, rgba(66, 32, 6, .55), rgba(15, 23, 42, .9)); color: #f1f5f9; }
+  .ppp-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+  .ppp-badge { font-size: .75rem; font-weight: 700; padding: 3px 10px; border-radius: 999px; background: #f59e0b; color: #1f1300; }
+  .ppp-title { margin: 0; font-size: 1.1rem; }
+  .ppp-lead { font-size: .92rem; line-height: 1.8; color: #e2e8f0; margin: 0 0 10px; }
+  .ppp-credit { background: rgba(245, 158, 11, .15); border: 1px solid rgba(245, 158, 11, .5); border-radius: 10px;
+    padding: 10px 12px; font-size: .9rem; color: #fde68a; margin: 0 0 12px; }
+  .ppp-plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+  .ppp-plan { position: relative; border: 1px solid rgba(148, 163, 184, .35); border-radius: 14px; padding: 16px 14px;
+    background: rgba(15, 23, 42, .6); display: flex; flex-direction: column; gap: 6px; }
+  .ppp-plan.featured { border-color: #f59e0b; box-shadow: 0 0 0 1px #f59e0b inset; }
+  .ppp-tag { position: absolute; top: -10px; left: 12px; font-size: .72rem; font-weight: 700; padding: 2px 8px;
+    border-radius: 999px; background: #f59e0b; color: #1f1300; }
+  .ppp-name { font-weight: 700; font-size: 1rem; }
+  .ppp-desc { font-size: .82rem; color: #cbd5e1; line-height: 1.6; }
+  .ppp-price { font-size: 1.4rem; font-weight: 800; color: #fde68a; }
+  .ppp-was { font-size: .8rem; color: #94a3b8; }
+  .ppp-was s { color: #94a3b8; }
+  .ppp-save { font-size: .85rem; color: #86efac; font-weight: 700; }
+  .ppp-pay { font-size: .85rem; color: #fde68a; }
+  .ppp-plan select { margin-top: 4px; padding: 6px; border-radius: 8px; background: #0f172a; color: #f1f5f9; border: 1px solid #475569; }
+  .ppp-btn { margin-top: auto; padding: 10px 12px; border: 0; border-radius: 10px; font-weight: 700; cursor: pointer;
+    background: #f59e0b; color: #1f1300; }
+  .ppp-btn.armed { background: #fbbf24; }
+  .ppp-btn[disabled] { opacity: .5; cursor: default; }
+  .ppp-msg { font-size: .88rem; min-height: 1.2em; margin: 10px 0 0; }
+  .ppp-msg.err { color: #fca5a5; }
+  .ppp-msg.ok { color: #86efac; }
+  .ppp-pass { border: 1px solid rgba(148, 163, 184, .35); border-radius: 12px; padding: 12px 14px; margin-bottom: 12px; background: rgba(15, 23, 42, .6); }
+  .ppp-pass h3 { margin: 0 0 6px; font-size: 1rem; }
+  .ppp-pass p { margin: 4px 0; font-size: .88rem; color: #e2e8f0; }
+  .ppp-bank { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: .9rem; margin: 8px 0; }
+  .ppp-bank dt { color: #94a3b8; }
+  .ppp-bank dd { margin: 0; font-weight: 700; }
+  .ppp-reserve { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+  .ppp-reserve input { padding: 6px; border-radius: 8px; background: #0f172a; color: #f1f5f9; border: 1px solid #475569; }
+</style>
+
+<script is:inline>
+(function () {
+  var API = '/api/premium-plus-pass.json';
+  var sec = document.getElementById('ppp-section');
+  if (!sec) return;
+  var WD = ['日', '月', '火', '水', '木', '金', '土'];
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function yen(n) { return '¥' + Number(n).toLocaleString('ja-JP'); }
+  function jst(ms) { return new Date(ms).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
+  function dateJa(s) { var p = String(s).split('-'); return Number(p[1]) + '月' + Number(p[2]) + '日（' + WD[new Date(s + 'T12:00:00+09:00').getUTCDay()] + '）'; }
+  function msg(t, k) { var el = document.getElementById('ppp-msg'); el.textContent = t || ''; el.className = 'ppp-msg' + (k ? ' ' + k : ''); }
+  var state = null;
+
+  function bankHtml(bank, amount) {
+    if (!bank) return '';
+    return '<dl class="ppp-bank"><dt>振込先銀行</dt><dd>' + esc(bank.bank) + '</dd><dt>支店名</dt><dd>' + esc(bank.branch)
+      + '</dd><dt>口座種別</dt><dd>' + esc(bank.type) + '</dd><dt>口座番号</dt><dd>' + esc(bank.number)
+      + '</dd><dt>口座名義</dt><dd>' + esc(bank.holder) + '</dd><dt>振込金額</dt><dd>' + esc(yen(amount)) + '</dd></dl>';
+  }
+
+  function renderPasses() {
+    var el = document.getElementById('ppp-passes');
+    var html = '';
+    (state.passes || []).forEach(function (p) {
+      html += '<div class="ppp-pass"><h3>' + esc(p.planName) + '</h3>';
+      if (p.status === 'awaiting_payment') {
+        var pay = p.installments > 1 ? p.firstPayment : p.amount;
+        html += '<p>お振込み待ちです。下記へ <strong>' + esc(yen(pay)) + '</strong> をお振込みください。入金を確認しだい枠を確保し、メールでお知らせします。</p>'
+          + (p.installments > 1 ? '<p>' + esc(p.installments) + '回払い（合計 ' + esc(yen(p.amount)) + '）。2回目のご案内は後日お送りします。</p>' : '')
+          + bankHtml(state.bank, pay);
+      } else {
+        html += '<p>残り <strong>' + esc(p.remaining) + '鞍</strong>／ご利用期限 ' + esc(p.validUntil) + '</p>';
+        if (p.schedule === 'weekly') html += '<p>配信: 毎週' + esc(WD[p.weekday]) + '曜日（自動）</p>';
+        if (p.upcoming && p.upcoming.length) html += '<p>お届け予定: ' + p.upcoming.map(function (d) { return esc(dateJa(d)); }).join('・') + '</p>';
+        if (p.compensation && !p.compensationGranted) html += '<p class="ppp-desc">10鞍を使い終えて回収率が100%未満の場合は、' + esc(p.compensation) + '鞍を追加でお届けします。</p>';
+        if (p.schedule === 'choose' && p.remaining > 0) {
+          html += '<div class="ppp-reserve"><input type="date" data-pass="' + esc(p.passId) + '" min="' + esc(state.minReserveDate) + '" max="' + esc(p.validUntil) + '">'
+            + '<button type="button" class="ppp-btn" data-reserve="' + esc(p.passId) + '">この日に使う</button></div>';
+        }
+      }
+      html += '</div>';
+    });
+    el.innerHTML = html;
+    el.querySelectorAll('[data-reserve]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var id = btn.getAttribute('data-reserve');
+        var input = el.querySelector('input[data-pass="' + id + '"]');
+        if (!input || !input.value) { msg('日付を選んでください。', 'err'); return; }
+        post({ action: 'reserve', passId: id, saleDate: input.value }, btn, dateJa(input.value) + 'にお届けします。');
+      });
+    });
+  }
+
+  function renderOffer() {
+    var o = state.offer;
+    var box = document.getElementById('ppp-offer');
+    var awaiting = (state.passes || []).some(function (p) { return p.status === 'awaiting_payment'; });
+    if (!state.offerVisible || awaiting) { box.hidden = true; return; }
+    box.hidden = false;
+    document.getElementById('ppp-list').textContent = yen(o.listPrice);
+    var credit = document.getElementById('ppp-credit');
+    if (o.credit.available) {
+      credit.hidden = false;
+      credit.textContent = '初回ご購入分 ' + yen(o.credit.amount) + ' を、10鞍確保枠・年間オーナーズ枠の代金に充当できます（' + jst(o.credit.deadlineMs) + ' まで）。';
+    } else { credit.hidden = true; }
+    var html = '';
+    o.plans.forEach(function (p) {
+      var featured = p.id === 'pass10';
+      html += '<div class="ppp-plan' + (featured ? ' featured' : '') + '">' + (featured ? '<span class="ppp-tag">おすすめ</span>' : '')
+        + (p.id === 'annual' ? '<span class="ppp-tag">限定' + esc(p.capacity) + '名・残り' + esc(p.seatsLeft) + '名</span>' : '')
+        + '<div class="ppp-name">' + esc(p.name) + '</div>';
+      if (p.id === 'single') html += '<div class="ppp-desc">1鞍。お好きな日をお選びいただけます（有効 ' + esc(p.validDays) + '日）。</div>';
+      if (p.id === 'pass10') html += '<div class="ppp-desc">10鞍を確保。お好きな日に使えます（有効 6か月）。<br>10鞍を使い終えて回収率が100%未満なら、' + esc(p.compensation) + '鞍を追加でお届けします。</div>';
+      if (p.id === 'annual') html += '<div class="ppp-desc">毎週1鞍・1年で52鞍。配信曜日を選んで、毎週自動でお届けします。2回払いも選べます。</div>';
+      html += '<div class="ppp-price">' + esc(yen(p.price)) + '</div>';
+      if (p.races > 1) {
+        html += '<div class="ppp-was">1鞍あたり ' + esc(yen(p.perRace)) + '（通常 <s>' + esc(yen(o.listPrice)) + '</s>）</div>'
+          + '<div class="ppp-save">通常価格の合計 ' + esc(yen(p.listValue)) + ' より ' + esc(yen(p.saving)) + ' お得</div>';
+      } else {
+        html += '<div class="ppp-was">通常価格</div>';
+      }
+      if (p.creditApplied) html += '<div class="ppp-pay">充当後のお支払い ' + esc(yen(p.payAmount)) + '</div>';
+      if (p.id === 'annual') {
+        html += '<select data-weekday><option value="">配信曜日を選ぶ</option>' + [6, 0, 1, 2, 3, 4, 5].map(function (i) { return '<option value="' + i + '">毎週' + WD[i] + '曜日</option>'; }).join('') + '</select>'
+          + '<select data-inst><option value="1">一括 ' + esc(yen(p.payAmount)) + '</option><option value="2">2回払い（1回 ' + esc(yen(p.installmentAmount)) + '）</option></select>';
+      }
+      html += '<button type="button" class="ppp-btn" data-apply="' + esc(p.id) + '"' + (p.available ? '' : ' disabled') + '>'
+        + (p.available ? (p.id === 'single' ? '単品を申し込む' : 'この枠を確保する') : '満席') + '</button></div>';
+    });
+    document.getElementById('ppp-plans').innerHTML = html;
+    document.querySelectorAll('#ppp-plans [data-apply]').forEach(function (btn) {
+      var label = btn.textContent; var armed = false; var timer = null;
+      btn.addEventListener('click', function () {
+        var card = btn.closest('.ppp-plan');
+        var payload = { action: 'apply', plan: btn.getAttribute('data-apply') };
+        if (payload.plan === 'annual') {
+          payload.weekday = card.querySelector('[data-weekday]').value;
+          payload.installments = card.querySelector('[data-inst]').value;
+          if (payload.weekday === '') { msg('配信曜日を選んでください。', 'err'); return; }
+          payload.weekday = Number(payload.weekday); payload.installments = Number(payload.installments);
+        }
+        if (!armed) {
+          armed = true; btn.classList.add('armed'); btn.textContent = 'もう一度押すと申し込みます';
+          timer = setTimeout(function () { armed = false; btn.classList.remove('armed'); btn.textContent = label; }, 6000);
+          return;
+        }
+        clearTimeout(timer);
+        post(payload, btn, 'お申し込みを受け付けました。下記の口座へお振込みください。');
+      });
+    });
+  }
+
+  function render() {
+    sec.hidden = !(state.offerVisible || (state.passes || []).length > 0);
+    renderPasses();
+    renderOffer();
+  }
+
+  function post(payload, btn, okText) {
+    btn.disabled = true; msg('処理中…');
+    fetch(API, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+      .then(function (res) { return res.json().then(function (j) { return { ok: res.ok, j: j }; }); })
+      .then(function (r) {
+        btn.disabled = false;
+        if (!r.ok) { msg(r.j.error || '受け付けできませんでした。', 'err'); return; }
+        state.passes = r.j.passes; if (r.j.bank) state.bank = r.j.bank;
+        render(); msg(okText, 'ok');
+        var top = document.getElementById('ppp-passes'); if (top && top.scrollIntoView) top.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      })
+      .catch(function () { btn.disabled = false; msg('通信に失敗しました。受け付けられたか分からないため、ページを再読み込みしてご確認ください。', 'err'); });
+  }
+
+  fetch(API, { credentials: 'same-origin', cache: 'no-store' })
+    .then(function (res) { return res.ok ? res.json() : null; })
+    .then(function (j) { if (!j) return; state = j; render(); })
+    .catch(function () {});
+})();
+</script>

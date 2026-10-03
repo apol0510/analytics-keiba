@@ -41,6 +41,7 @@ import { recordPlusCheckoutStart } from '../../src/lib/premiumPlus/premiumPlusFu
 import { recordPaymentApplication } from '../../src/lib/payments/paymentFunnelServer.js';
 import { makeRedisCmd } from '../../src/lib/premiumPlus/premiumPlusFunnelServer.js';
 import { createOrderStore, recordOrderOnApplication } from '../../src/lib/premiumPlus/premiumPlusOrderService.js';
+import { isRepeatEligible } from '../../src/lib/premiumPlus/premiumPlusPass.js';
 import { normalizeSalePaused, PP_SALE_PAUSE_FIELDS } from '../../src/lib/premiumPlus/premiumPlusRelease.js';
 import { resolveUpsellForCustomer } from '../../src/lib/upsell/upsellTarget.js';
 
@@ -407,6 +408,35 @@ exports.handler = async (event, context) => {
           body: JSON.stringify({
             error: '現在お申し込みを受け付けていません。',
             code: 'plus_not_purchasable',
+            sideEffects: 'none',
+          }),
+        };
+      }
+    }
+
+    // ── Premium Plus: 購入済み会員の 2 回目以降は初回価格（¥68,000）で受け付けない（2026-10-04 MK 決定）──
+    // 一度購入した会員の次回は定価 ¥98,000。申込はマイページの「価格据え置きの枠確保」から受ける
+    // （/api/premium-plus-pass.json）。ここは副作用ゼロの地点で止めるだけ。
+    // 台帳を読めないときは止めない（初回購入者の申込を巻き込まない。重複は入金確認で判断できる）。
+    if (isPremiumPlusOrder && plusCustomerRecordId) {
+      let repeat = false;
+      try {
+        const cmd0 = makeRedisCmd(process.env);
+        if (cmd0) {
+          const orders0 = await createOrderStore({ redisCmd: cmd0 }).list();
+          repeat = isRepeatEligible(orders0, plusCustomerRecordId);
+        }
+      } catch (e) {
+        repeat = false;
+      }
+      if (repeat) {
+        console.warn('🚫 [bank-transfer] Premium Plus 購入済み会員の初回価格申込を停止（マイページへ案内）');
+        return {
+          statusCode: 409,
+          headers,
+          body: JSON.stringify({
+            error: 'ご購入済みのお客様は、マイページの「価格据え置きの枠確保」からお申し込みください。',
+            code: 'plus_repeat_member',
             sideEffects: 'none',
           }),
         };

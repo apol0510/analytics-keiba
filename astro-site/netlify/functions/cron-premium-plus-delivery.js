@@ -5,6 +5,7 @@
  *    Redis `ak:pp:delivery:v1` へ HSETNX。生成済みの日は二度と書かない。
  * 2. **入金確認済みの注文へサンクスメール**（1 注文 1 通）。管理画面で「入金確認」を押すと
  *    次の実行（最大 5 分後）で自動送信される。対象日が今日以降の注文だけ（過去分へは送らない）。
+ * 3. **枠確保（10鞍確保枠・年間枠・単品）の入金確認後のお礼**（1 枠 1 通）。
  *
  * ⚠️ ログに買い目・メールアドレス・recordId を出さない。
  */
@@ -16,8 +17,9 @@ import {
 import {
   jstDate, normalizePredictionFile, planDelivery, selectThanksTargets, buildThanksEmail, PP_RACES_PER_DAY,
 } from '../../src/lib/premiumPlus/premiumPlusDelivery.js';
-import { resolveVerifiedSender } from '../../src/lib/payments/senderIdentity.js';
-import { SUPPORT_EMAIL } from './config/email-config.js';
+import { fetchCustomerFields, sendPlusMail } from '../../src/lib/premiumPlus/premiumPlusMail.js';
+import { createPassStore } from '../../src/lib/premiumPlus/premiumPlusPassStore.js';
+import { buildPassThanksEmail, PASS_STATUS } from '../../src/lib/premiumPlus/premiumPlusPass.js';
 
 const TAG = '[pp-delivery]';
 /** これより早い時刻（JST）は生成しない（前夜の取込が終わってから） */
@@ -43,50 +45,13 @@ async function ensureTodayDelivery({ deliveries, nowMs }) {
   };
 }
 
-async function getCustomer(recordId) {
-  const key = process.env.AIRTABLE_API_KEY;
-  const base = process.env.AIRTABLE_BASE_ID;
-  const table = process.env.AIRTABLE_CUSTOMERS_TABLE || 'Customers';
-  if (!key || !base) return null;
-  const res = await fetch(`https://api.airtable.com/v0/${base}/${encodeURIComponent(table)}/${encodeURIComponent(recordId)}`, {
-    headers: { Authorization: `Bearer ${key}` },
-  });
-  if (!res.ok) return null;
-  const j = await res.json();
-  return j.fields || null;
-}
-
-/** @returns {'sent'|'failed'|'unknown'} */
-async function sendThanks({ to, recordId, orderId, mail }) {
-  const apiKey = process.env.SENDGRID_API_KEY;
-  const sender = resolveVerifiedSender(process.env);
-  if (!apiKey || !sender.ok) return 'failed';
-  try {
-    const res = await fetch('https://api.sendgrid.com/v3/mail/send', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        personalizations: [{ to: [{ email: to }] }],
-        from: { email: sender.email, name: sender.name },
-        reply_to: { email: SUPPORT_EMAIL },
-        subject: mail.subject,
-        content: [{ type: 'text/plain', value: mail.text }, { type: 'text/html', value: mail.html }],
-        custom_args: { record_id: recordId, idempotency_key: `pp-thanks:${orderId}`, purpose: 'premium_plus_thanks' },
-      }),
-    });
-    return res.status >= 200 && res.status < 300 ? 'sent' : 'failed';
-  } catch {
-    return 'unknown'; // 届いたか分からない → 再送しない（二重送信を避ける）
-  }
-}
-
 async function sendPendingThanks({ orders, deliveries, nowMs }) {
   const targets = selectThanksTargets(await orders.list(), { nowMs });
   const summary = { targets: targets.length, sent: 0, skipped: 0, failed: 0, unknown: 0 };
   for (const o of targets) {
     if (await deliveries.thanksState(o.orderId)) { summary.skipped += 1; continue; }
     if (!(await deliveries.reserveThanks(o.orderId, nowMs))) { summary.skipped += 1; continue; }
-    const fields = await getCustomer(o.recordId);
+    const fields = await fetchCustomerFields(o.recordId);
     const to = String(fields?.Email || '').trim();
     if (!to) { await deliveries.releaseThanks(o.orderId); summary.failed += 1; continue; }
     const delivery = await deliveries.get(o.saleDate);
@@ -96,10 +61,30 @@ async function sendPendingThanks({ orders, deliveries, nowMs }) {
       raceCount: delivery?.races?.length || PP_RACES_PER_DAY,
       siteBase: process.env.MAGIC_LINK_BASE_URL,
     });
-    const r = await sendThanks({ to, recordId: o.recordId, orderId: o.orderId, mail });
+    const r = await sendPlusMail({ to, ...mail, customArgs: { record_id: o.recordId, idempotency_key: `pp-thanks:${o.orderId}`, purpose: 'premium_plus_thanks' } });
     if (r === 'sent') { await deliveries.markThanksSent(o.orderId, nowMs); summary.sent += 1; }
     else if (r === 'failed') { await deliveries.releaseThanks(o.orderId); summary.failed += 1; }
     else summary.unknown += 1; // sending のまま残す（自動再送しない）
+  }
+  return summary;
+}
+
+/** 枠確保の入金確認後のお礼（1 枠 1 通）。送信記録は `pass:{passId}` で注文と分ける */
+async function sendPendingPassThanks({ passes, deliveries, nowMs }) {
+  const targets = (await passes.list()).filter((p) => p.status === PASS_STATUS.ACTIVE);
+  const summary = { targets: targets.length, sent: 0, skipped: 0, failed: 0, unknown: 0 };
+  for (const p of targets) {
+    const key = `pass:${p.passId}`;
+    if (await deliveries.thanksState(key)) { summary.skipped += 1; continue; }
+    if (!(await deliveries.reserveThanks(key, nowMs))) { summary.skipped += 1; continue; }
+    const fields = await fetchCustomerFields(p.recordId);
+    const to = String(fields?.Email || '').trim();
+    if (!to) { await deliveries.releaseThanks(key); summary.failed += 1; continue; }
+    const mail = buildPassThanksEmail({ pass: p, fullName: fields['氏名'], siteBase: process.env.MAGIC_LINK_BASE_URL });
+    const r = await sendPlusMail({ to, ...mail, customArgs: { record_id: p.recordId, idempotency_key: `pp-pass-thanks:${p.passId}`, purpose: 'premium_plus_pass_thanks' } });
+    if (r === 'sent') { await deliveries.markThanksSent(key, nowMs); summary.sent += 1; }
+    else if (r === 'failed') { await deliveries.releaseThanks(key); summary.failed += 1; }
+    else summary.unknown += 1;
   }
   return summary;
 }
@@ -113,7 +98,9 @@ export async function runDeliveryTick({ nowMs = Date.now() } = {}) {
   try { delivery = await ensureTodayDelivery({ deliveries, nowMs }); } catch (e) { delivery = { outcome: `error:${String(e?.message || e).slice(0, 80)}` }; }
   let thanks;
   try { thanks = await sendPendingThanks({ orders, deliveries, nowMs }); } catch (e) { thanks = { error: String(e?.message || e).slice(0, 80) }; }
-  return { ok: true, delivery, thanks };
+  let passThanks;
+  try { passThanks = await sendPendingPassThanks({ passes: createPassStore({ redisCmd: cmd }), deliveries, nowMs }); } catch (e) { passThanks = { error: String(e?.message || e).slice(0, 80) }; }
+  return { ok: true, delivery, thanks, passThanks };
 }
 
 export default async function handler() {
