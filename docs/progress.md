@@ -5,6 +5,8 @@
 | 正本 | `decisions.md` 2026-10-04（追記 2）・`PREDICTION_ACQUISITION.md` §2-4 |
 | 実装 | branch `feat/tab-colors`。会場タブ・日付タブのガラス配色と同系色の文字、Premium CTA の文字＝淡いラベンダー、通常 CTA の文字＝淡い青 |
 | 確認（実ブラウザ）| PC・390px（Preview / Premium）で選択タブがイエロー／黄緑の乳白色、文字が同系色・横スクロールなし。コントラスト 選択タブ 6.6〜8:1・非選択 11〜12:1 |
+| 本番 | PR #701 squash `142dad48`・main CI success・Netlify production ready。本番 `/free-prediction/jra/` の配信 CSS／HTML にタブ色（#713f12・#365314）と CTA 文字色（#f3e8ff）を確認、公開ページ 200・会員ページ 302 |
+| cleanup | worktree `analytics-keiba-tabs` 削除・確認用サーバー停止 |
 
 ---
 
