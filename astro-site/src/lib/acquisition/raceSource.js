@@ -7,6 +7,42 @@
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { venueIdOf, NANKAN_VENUES } from './predictionKey.js';
+import { injectHorseHistoriesIntoVenues } from '../loadHorseHistoriesJra.js';
+import { adaptNewToLegacy } from '../adaptLatestPrediction.js';
+import { injectRecentHorseHistoriesNankan } from '../injectRecentHorseHistoriesNankan.js';
+import { injectEntriesRecentRacesNankan } from '../injectEntriesRecentRacesNankan.js';
+import { injectHorseStatsNankan } from '../injectHorseStatsNankan.js';
+
+/**
+ * 南関: 無料ページと同じ過去走の注入（adaptNewToLegacy → histories / entries / horseStats）を行い、
+ * 注入された表示用フィールドだけを元データの馬（馬番で対応）へ写す。失敗しても予想本体は変えない。
+ */
+const NANKAN_DISPLAY_FIELDS = ['recentRacesFromEntriesNankan', 'recentRacesFromHistoriesNankan', 'horseStatsNankan', 'recentRaces'];
+function enrichNankanPastRaces(data, date, slug, root) {
+  try {
+    const adapted = { ...adaptNewToLegacy(data), venueSlug: slug };
+    const venues = [adapted];
+    for (const inject of [injectRecentHorseHistoriesNankan, injectEntriesRecentRacesNankan, injectHorseStatsNankan]) {
+      try { inject(venues, date, root || process.cwd()); } catch { /* 表示専用・非致命 */ }
+    }
+    const byRace = new Map();
+    for (const r of adapted.races || []) {
+      const rn = parseInt(String(r.raceNumber), 10);
+      const m = new Map();
+      for (const h of r.allHorses || []) if (h && h.number != null) m.set(Number(h.number), h);
+      byRace.set(rn, m);
+    }
+    for (const race of data.predictions || []) {
+      const m = byRace.get(Number(race?.raceInfo?.raceNumber));
+      if (!m) continue;
+      for (const h of race.horses || []) {
+        const src = m.get(Number(h?.horseNumber));
+        if (!src) continue;
+        for (const f of NANKAN_DISPLAY_FIELDS) if (src[f] !== undefined && h[f] === undefined) h[f] = src[f];
+      }
+    }
+  } catch { /* 表示専用・非致命 */ }
+}
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const baseDir = (root) => join(root || process.cwd(), 'src', 'data', 'predictions');
@@ -51,6 +87,7 @@ export function loadDay(cat, date, { root } = {}) {
     for (const [venueName, slug] of Object.entries(NANKAN_VENUES)) {
       const d = readJson(join(dir, `${date}-${slug}.json`));
       if (!d || !Array.isArray(d.predictions) || d.eventInfo?.date !== date) continue;
+      enrichNankanPastRaces(d, date, slug, root);
       out.push({
         venueName, venueId: slug,
         totalRaces: Number(d.eventInfo?.totalRaces) || d.predictions.length,
@@ -60,6 +97,8 @@ export function loadDay(cat, date, { root } = {}) {
   } else if (cat === 'jra') {
     const d = readJson(join(dir, 'jra', date.slice(0, 4), date.slice(5, 7), `${date}.json`));
     if (d && d.date === date && Array.isArray(d.venues)) {
+      // 無料ページと同じ horseHistories 由来の過去走（表示専用・失敗しても予想本体は変えない）
+      try { injectHorseHistoriesIntoVenues(d.venues, date, root || process.cwd()); } catch { /* 非致命 */ }
       for (const v of d.venues) {
         const venueId = venueIdOf('jra', v.venue);
         if (!venueId || !Array.isArray(v.predictions)) continue;

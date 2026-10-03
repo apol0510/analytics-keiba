@@ -1,105 +1,281 @@
 ---
 /**
- * 取得済み予想の本文（スナップショットから描画）。
+ * 取得済み予想の本文（スナップショットから描画・ガラスモーフィズム）。
  * ⚠️ 取得済みと確認したページ（/predictions/view/）からだけ使う。一覧や取得前の画面で使わない。
  * 指数は保存時点で raw−1（getHorseAiIndex）済みの aiIndex だけを出す。
+ *
+ * 2026-10-03 MK 確定（docs/PREDICTION_ACQUISITION.md §2）:
+ *   - Premium は馬単専用（通常＋点数を絞った買い目）。三連複の買い目は出さない（v1 の保存データに残っていても描画しない）
+ *   - 過去走は全馬ぶん出す（無料ページで見られる情報を減らさない）
+ *   - Premium Sanrenpuku は推奨度・理由・三連複 通常／中心
  */
-interface Props { content: any }
-const { content: c } = Astro.props;
+interface Props { content: any; pastUnavailable?: boolean }
+const { content: c, pastUnavailable = false } = Astro.props;
 const isSrp = c.product === 'srp';
-const ROLE_CLASS = { '本命': 'r-honmei', '対抗': 'r-taikou', '単穴': 'r-tana', '連下最上位': 'r-renka', '連下': 'r-renka', '抑え': 'r-osae', '不要': 'r-out' };
-const main = c.horses.filter((h) => ['本命', '対抗', '単穴'].includes(h.role));
+const ROLE_CLASS = { '本命': 'r-honmei', '対抗': 'r-taikou', '単穴': 'r-tana' };
+const ROLE_ORDER = { '本命': 0, '対抗': 1, '単穴': 2, '連下最上位': 3, '連下': 4, '抑え': 5, '不要': 6 };
+const main = c.horses.filter((h) => ['本命', '対抗', '単穴'].includes(h.role)).sort((a, b) => ROLE_ORDER[a.role] - ROLE_ORDER[b.role]);
 const renka = c.horses.filter((h) => h.role === '連下最上位' || h.role === '連下');
 const osae = c.horses.filter((h) => h.role === '抑え');
 const out = c.horses.filter((h) => h.role === '不要');
 const gradeLabel = { A: '推奨度 A', B: '推奨度 B', skip: '見送り' };
+const LABELS = ['前走', '2走前', '3走前', '4走前', '5走前'];
+const byRole = c.horses.slice().sort((a, b) => (ROLE_ORDER[a.role] - ROLE_ORDER[b.role]) || (a.number - b.number));
+const hasPast = c.horses.some((h) => Array.isArray(h.recent));
+/** "6↔4.8.10" → { axis, arrow, partners } */
+function splitLine(line) {
+  const m = /^(\d+)\s*(↔|⇔|→|-)\s*(.+)$/.exec(String(line || ''));
+  if (!m) return { axis: null, arrow: '', partners: String(line || '') };
+  return { axis: m[1], arrow: m[2] === '→' ? '→' : '⇔', partners: m[3] };
+}
+const rankClass = (rank) => { const n = Number(rank); return n === 1 ? 'rk rk-1' : n === 2 ? 'rk rk-2' : n === 3 ? 'rk rk-3' : 'rk'; };
+const umatanTotal = isSrp ? 0 : c.umatan.normal.reduce((s, l) => s + l.points, 0);
+/** 過去走の列（値のある列だけ出す。データ元によって日付・レース名・上り等が無いため）*/
+const PAST_COLS = [
+  { key: 'date', label: '日付' }, { key: 'venue', label: '開催' }, { key: 'raceName', label: 'レース名', cls: 'race' },
+  { key: 'rank', label: '着順', cls: 'num' }, { key: 'distance', label: '距離・馬場' }, { key: 'jockey', label: '騎手', sm: true },
+  { key: 'passingOrder', label: '通過', sm: true }, { key: 'last3f', label: '上り', cls: 'num' }, { key: 'time', label: 'タイム', sm: true },
+  { key: 'bodyWeight', label: '馬体重', sm: true },
+];
+const colsFor = (rows) => PAST_COLS.filter((col) => rows.some((r) => col.key === 'rank' ? (r.rank || r.finishStatus) : col.key === 'distance' ? (r.distance || r.trackCondition) : r[col.key]));
+const cellFor = (r, key) => key === 'distance' ? [r.distance, r.trackCondition].filter(Boolean).join(' ') : key === 'bodyWeight' ? (r.bodyWeight ? `${r.bodyWeight}kg` : '') : (r[key] || '');
 ---
 <div class="acq-body" data-product={c.product}>
   {isSrp && (
-    <section class={`acq-selection grade-${c.selection.grade}`}>
+    <section class={`glass acq-selection grade-${c.selection.grade}`} aria-label="レース選別">
       <div class="acq-grade">{gradeLabel[c.selection.grade] || '見送り'}</div>
       <ul class="acq-reasons">{c.selection.reasons.map((r) => <li>{r}</li>)}</ul>
     </section>
   )}
 
-  <section class="recommendation-section">
-    <div class="unified-bet-card">
-      {!isSrp && (
-        <>
-          <div class="acq-bet-group" data-kind="umatan-normal">
-            <h3 class="acq-bet-title">馬単 通常の買い目 <span class="acq-pts">{c.umatan.normal.reduce((s, l) => s + l.points, 0)}点</span></h3>
-            <p class="acq-bet-note">{c.isMainRace ? '本命から相手 5 頭への馬単（一方向）です。' : '本命・対抗を軸にした、全体の買い目です。'}</p>
-            <ul class="bet-list">{c.umatan.normal.map((l) => <li class="bet-item"><span class="acq-line">{l.line}</span><span class="acq-line-pts">{l.points}点</span></li>)}</ul>
-          </div>
-          {c.umatan.narrowed && (
-            <div class="acq-bet-group narrowed" data-kind="umatan-narrowed">
-              <h3 class="acq-bet-title">馬単 点数を絞った買い目 <span class="acq-pts">{c.umatan.narrowed.points}点</span></h3>
-              <p class="acq-bet-note">本命を軸に、相手を評価上位 3 頭に絞った買い目です。</p>
-              <ul class="bet-list"><li class="bet-item"><span class="acq-line">{c.umatan.narrowed.line}</span><span class="acq-line-pts">{c.umatan.narrowed.points}点</span></li></ul>
-            </div>
-          )}
-        </>
-      )}
-      <div class="acq-bet-group" data-kind="sanrenpuku-normal">
-        <h3 class="acq-bet-title">三連複 通常の買い目 <span class="acq-pts">{c.sanrenpuku.normal.reduce((s, l) => s + l.points, 0)}点</span></h3>
-        {c.sanrenpuku.normal.length === 0 && <p class="acq-bet-note">このレースは三連複の買い目を組めません。</p>}
-        <ul class="bet-list">{c.sanrenpuku.normal.map((l) => <li class="bet-item"><span class="acq-line">{l.line}</span><span class="acq-line-pts">{l.points}点</span></li>)}</ul>
+  <div class="acq-grid">
+    <section class="recommendation-section acq-col-bets" aria-label="買い目">
+      <div class="unified-bet-card">
+        {!isSrp ? (
+          <>
+            <article class="glass acq-bet" data-kind="umatan-normal">
+              <header class="acq-bet-head">
+                <h3><span class="acq-ico" aria-hidden="true">🐎</span>馬単 通常の買い目</h3>
+                <span class="acq-pts">{umatanTotal}点</span>
+              </header>
+              <p class="acq-note">{c.isMainRace ? '本命から相手 5 頭への馬単（一方向）です。' : '本命・対抗を軸に、相手との組み合わせ（表裏）で購入する買い目です。'}</p>
+              <ul class="bet-list">
+                {c.umatan.normal.map((l) => { const p = splitLine(l.line); return (
+                  <li class="bet-item">
+                    <span class="acq-axis-label">軸</span>
+                    {p.axis && <span class="acq-num">{p.axis}</span>}
+                    <span class="acq-arrow" aria-hidden="true">{p.arrow}</span>
+                    <span class="acq-partners">{p.partners}</span>
+                    <span class="acq-line-pts">{l.points}点</span>
+                  </li>
+                ); })}
+              </ul>
+            </article>
+            {c.umatan.narrowed && (() => { const p = splitLine(c.umatan.narrowed.line); return (
+              <article class="glass acq-bet narrowed" data-kind="umatan-narrowed">
+                <header class="acq-bet-head">
+                  <h3><span class="acq-ico" aria-hidden="true">👑</span>馬単 点数を絞った買い目 <span class="acq-tag">厳選</span></h3>
+                  <span class="acq-pts gold">{c.umatan.narrowed.points}点</span>
+                </header>
+                <p class="acq-note">本命を軸に、相手を評価上位 3 頭に絞った買い目です。</p>
+                <ul class="bet-list">
+                  <li class="bet-item">
+                    <span class="acq-axis-label">軸</span>
+                    {p.axis && <span class="acq-num">{p.axis}</span>}
+                    <span class="acq-arrow" aria-hidden="true">{p.arrow}</span>
+                    <span class="acq-partners">{p.partners}</span>
+                    <span class="acq-line-pts gold">{c.umatan.narrowed.points}点</span>
+                  </li>
+                </ul>
+              </article>
+            ); })()}
+          </>
+        ) : (
+          <>
+            <article class="glass acq-bet" data-kind="sanrenpuku-normal">
+              <header class="acq-bet-head">
+                <h3><span class="acq-ico" aria-hidden="true">🎯</span>三連複 通常の買い目</h3>
+                <span class="acq-pts">{c.sanrenpuku.normal.reduce((s, l) => s + l.points, 0)}点</span>
+              </header>
+              {c.sanrenpuku.normal.length === 0 && <p class="acq-note">このレースは三連複の買い目を組めません。</p>}
+              <ul class="bet-list">{c.sanrenpuku.normal.map((l) => <li class="bet-item"><span class="acq-partners">{l.line}</span><span class="acq-line-pts">{l.points}点</span></li>)}</ul>
+            </article>
+            {c.sanrenpuku.center && (
+              <article class="glass acq-bet narrowed" data-kind="sanrenpuku-center">
+                <header class="acq-bet-head">
+                  <h3><span class="acq-ico" aria-hidden="true">👑</span>三連複 中心買い目</h3>
+                  <span class="acq-pts gold">{c.sanrenpuku.center.points}点</span>
+                </header>
+                <p class="acq-note">本命を軸に、評価上位の相手で組んだ中心の買い目です。</p>
+                <ul class="bet-list"><li class="bet-item"><span class="acq-partners">{c.sanrenpuku.center.line}</span><span class="acq-line-pts gold">{c.sanrenpuku.center.points}点</span></li></ul>
+              </article>
+            )}
+          </>
+        )}
       </div>
-      {isSrp && c.sanrenpuku.center && (
-        <div class="acq-bet-group center" data-kind="sanrenpuku-center">
-          <h3 class="acq-bet-title">三連複 中心買い目 <span class="acq-pts">{c.sanrenpuku.center.points}点</span></h3>
-          <p class="acq-bet-note">本命を軸に、評価上位の相手で組んだ中心の買い目です。</p>
-          <ul class="bet-list"><li class="bet-item"><span class="acq-line">{c.sanrenpuku.center.line}</span><span class="acq-line-pts">{c.sanrenpuku.center.points}点</span></li></ul>
-        </div>
-      )}
-    </div>
-  </section>
+    </section>
 
-  <section class="acq-horses">
-    <h3 class="acq-bet-title">印と AI 総合指数</h3>
-    <table class="acq-horse-table">
-      <thead><tr><th>印</th><th>馬番</th><th>馬名</th><th>騎手</th><th>AI総合指数</th></tr></thead>
-      <tbody>
-        {main.map((h) => <tr class={ROLE_CLASS[h.role]}><td>{h.role}</td><td>{h.number}</td><td>{h.name}</td><td>{h.jockey}</td><td>{h.aiIndex ?? '—'}</td></tr>)}
-      </tbody>
-    </table>
-    {renka.length > 0 && (
-      <div class="minor-group-renka"><h4>連下</h4><p>{renka.map((h) => `${h.number} ${h.name}`).join(' / ')}</p></div>
-    )}
-    {osae.length > 0 && (
-      <div class="minor-group-osae"><h4>抑え</h4><p>{osae.map((h) => `${h.number} ${h.name}`).join(' / ')}</p></div>
-    )}
-    {out.length > 0 && (
-      <div class="ineligible-section"><h4>評価外</h4><p>{out.map((h) => `${h.number} ${h.name}`).join(' / ')}</p></div>
+    <section class="glass acq-marks acq-col-marks" aria-label="印とAI総合指数">
+      <header class="acq-bet-head"><h3><span class="acq-ico" aria-hidden="true">📊</span>印とAI総合指数</h3></header>
+      <div class="acq-table-wrap">
+        <table class="acq-table">
+          <thead><tr><th>印</th><th>馬番</th><th>馬名</th><th class="hide-sm">騎手</th><th>AI総合指数</th></tr></thead>
+          <tbody>
+            {main.map((h) => <tr class={ROLE_CLASS[h.role]}><td class="mark">{h.role}</td><td class="num">{h.number}</td><td>{h.name}</td><td class="hide-sm">{h.jockey}</td><td class="num strong">{h.aiIndex ?? '—'}</td></tr>)}
+          </tbody>
+        </table>
+      </div>
+      {renka.length > 0 && (
+        <div class="acq-group minor-group-renka"><h4>連下</h4><p>{renka.map((h) => `${h.number} ${h.name}`).join(' / ')}</p></div>
+      )}
+      {osae.length > 0 && (
+        <div class="acq-group minor-group-osae"><h4>抑え</h4><p>{osae.map((h) => `${h.number} ${h.name}`).join(' / ')}</p></div>
+      )}
+      {out.length > 0 && (
+        <div class="acq-group ineligible-section"><h4>評価外</h4><p>{out.map((h) => `${h.number} ${h.name}`).join(' / ')}</p></div>
+      )}
+    </section>
+  </div>
+
+  <section class="glass acq-past" aria-label="過去走" id="past-races">
+    <header class="acq-bet-head"><h3><span class="acq-ico" aria-hidden="true">📄</span>過去走 <small>全頭の直近のレース成績</small></h3></header>
+    {pastUnavailable && <p class="acq-note">この予想の過去走は、現在表示できません。</p>}
+    {!pastUnavailable && !hasPast && <p class="acq-note">過去走データはありません。</p>}
+    {hasPast && (
+      <div class="acq-past-list">
+        {byRole.map((h) => (
+          <details class="acq-past-horse" open={['本命', '対抗', '単穴'].includes(h.role)}>
+            <summary>
+              <span class={`acq-num sm ${ROLE_CLASS[h.role] || ''}`}>{h.number}</span>
+              <span class="acq-past-name">{h.name}</span>
+              <span class="acq-past-role">{h.role === '不要' ? '評価外' : h.role}</span>
+              <span class="acq-past-count">{(h.recent || []).length ? `過去${(h.recent || []).length}走` : '過去走なし'}</span>
+            </summary>
+            {(h.recent || []).length > 0 && (
+              <div class="acq-table-wrap">
+                <table class="acq-table past">
+                  <thead><tr><th></th>{colsFor(h.recent).map((col) => <th class={col.sm ? 'hide-sm' : ''}>{col.label}</th>)}</tr></thead>
+                  <tbody>
+                    {h.recent.map((r, i) => (
+                      <tr>
+                        <td class="lbl">{LABELS[i]}</td>
+                        {colsFor(h.recent).map((col) => col.key === 'rank' ? (
+                          <td class="num">{r.rank ? <span class={rankClass(r.rank)}>{r.rank}着</span> : (r.finishStatus || '—')}{r.popularity && <small class="pop">{r.popularity}人気</small>}</td>
+                        ) : (
+                          <td class={[col.cls, col.sm ? 'hide-sm' : ''].filter(Boolean).join(' ')}>{cellFor(r, col.key) || '—'}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {h.record && (
+              <div class="acq-record">
+                <div class="acq-record-cards">
+                  <div><span>通算</span><strong>{h.record.record}</strong></div>
+                  <div><span>勝率</span><strong>{h.record.winPct}</strong></div>
+                  <div><span>連対率</span><strong>{h.record.placePct}</strong></div>
+                  <div><span>3着内率</span><strong>{h.record.showPct}</strong></div>
+                </div>
+                {h.record.conds.length > 0 && <ul class="acq-conds">{h.record.conds.map((x) => <li><span>{x.label}</span>{x.text}</li>)}</ul>}
+                {h.record.rows.length > 0 && (
+                  <details class="acq-history">
+                    <summary>競走成績（直近{h.record.rows.length}走）{h.record.more > 0 && `・他${h.record.more}走あり`}</summary>
+                    <ul>{h.record.rows.map((r) => <li><span>{r.date}</span><span>{r.venue}</span><span>{r.distance}</span><span>{r.rank ? `${r.rank}着` : (r.finishStatus || '')}</span><span>{r.popularity ? `${r.popularity}人気` : ''}</span><span class="race">{r.raceName}</span><span>{r.jockey}</span><span>{r.time}</span>{r.winner && <span>勝: {r.winner}</span>}</li>)}</ul>
+                  </details>
+                )}
+              </div>
+            )}
+          </details>
+        ))}
+      </div>
     )}
   </section>
 </div>
 
 <style>
-  .acq-body { display: grid; gap: 16px; }
-  .acq-selection { border-radius: 12px; padding: 16px; background: rgba(148,163,184,0.12); border: 1px solid rgba(148,163,184,0.25); }
-  .acq-selection.grade-A { background: rgba(239,68,68,0.12); border-color: rgba(239,68,68,0.45); }
-  .acq-selection.grade-B { background: rgba(245,158,11,0.12); border-color: rgba(245,158,11,0.45); }
-  .acq-grade { font-weight: 800; font-size: 1.1rem; margin-bottom: 6px; }
-  .acq-reasons { margin: 0; padding-left: 1.2em; line-height: 1.7; }
-  .unified-bet-card { display: grid; gap: 14px; }
-  .acq-bet-group { border-radius: 12px; padding: 14px 16px; background: rgba(59,130,246,0.08); border-left: 4px solid #6366f1; }
-  .acq-bet-group.narrowed, .acq-bet-group.center { border-left-color: #22c55e; background: rgba(34,197,94,0.08); }
-  .acq-bet-title { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 0 0 4px; font-size: 1rem; }
-  .acq-pts { font-size: 0.85rem; padding: 2px 10px; border-radius: 999px; background: rgba(99,102,241,0.25); white-space: nowrap; }
-  .acq-bet-note { margin: 0 0 8px; color: #94a3b8; font-size: 0.85rem; }
-  .bet-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
-  .bet-item { display: flex; justify-content: space-between; gap: 10px; padding: 8px 10px; border-radius: 8px; background: rgba(15,23,42,0.6); }
-  .acq-line { font-weight: 700; font-size: 1.05rem; letter-spacing: 0.02em; word-break: break-all; }
-  .acq-line-pts { color: #94a3b8; white-space: nowrap; }
-  .acq-horses h4 { margin: 10px 0 4px; font-size: 0.9rem; color: #cbd5e1; }
-  .acq-horses p { margin: 0; line-height: 1.7; }
-  .acq-horse-table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
-  .acq-horse-table th, .acq-horse-table td { padding: 8px 6px; border-bottom: 1px solid rgba(148,163,184,0.2); text-align: left; }
-  .acq-horse-table td:nth-child(2), .acq-horse-table td:nth-child(5) { text-align: center; }
-  .r-honmei td:first-child { color: #f87171; font-weight: 800; }
-  .r-taikou td:first-child { color: #fbbf24; font-weight: 800; }
-  .r-tana td:first-child { color: #60a5fa; font-weight: 800; }
-  .ineligible-section p { color: #94a3b8; }
-  @media (max-width: 480px) { .acq-horse-table th:nth-child(4), .acq-horse-table td:nth-child(4) { display: none; } }
+  .acq-body { --g-bg: rgba(255,255,255,0.055); --g-bg-strong: rgba(255,255,255,0.085); --g-border: rgba(148,163,184,0.24); --g-hi: rgba(255,255,255,0.10); --g-text-2: #a7b4c8; --g-blue: #3b82f6; --g-gold: #f5c451; display: grid; gap: 18px; }
+  .glass { position: relative; background: linear-gradient(160deg, var(--g-bg-strong), var(--g-bg)); border: 1px solid var(--g-border); border-radius: 18px; box-shadow: 0 10px 30px rgba(2,6,23,0.45), inset 0 1px 0 var(--g-hi); -webkit-backdrop-filter: blur(16px) saturate(140%); backdrop-filter: blur(16px) saturate(140%); padding: 18px 20px; }
+  .acq-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 18px; align-items: start; }
+  /* 表（横スクロール）が親グリッドの幅を押し広げないように */
+  .acq-body > *, .acq-grid > *, .unified-bet-card > *, .acq-past-list > * { min-width: 0; }
+  .acq-body { grid-template-columns: minmax(0, 1fr); }
+  .unified-bet-card { display: grid; gap: 18px; }
+  .acq-bet-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 6px; }
+  .acq-bet-head h3 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 1.12rem; letter-spacing: 0.02em; }
+  .acq-bet-head h3 small { font-size: 0.8rem; font-weight: 500; color: var(--g-text-2); }
+  .acq-ico { font-size: 1.1rem; }
+  .acq-tag { white-space: nowrap; font-size: 0.72rem; font-weight: 800; padding: 2px 10px; border-radius: 999px; color: var(--g-gold); border: 1px solid rgba(245,196,81,0.55); background: rgba(245,196,81,0.10); }
+  .acq-pts { font-size: 0.85rem; font-weight: 800; padding: 3px 12px; border-radius: 999px; border: 1px solid rgba(148,163,184,0.35); background: rgba(15,23,42,0.55); white-space: nowrap; }
+  .acq-pts.gold, .acq-line-pts.gold { color: var(--g-gold); border-color: rgba(245,196,81,0.6); }
+  .acq-note { margin: 0 0 12px; color: var(--g-text-2); font-size: 0.86rem; line-height: 1.6; }
+  .bet-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+  .bet-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; background: rgba(15,23,42,0.62); border: 1px solid rgba(148,163,184,0.18); border-left: 3px solid var(--g-blue); }
+  .narrowed .bet-item { border-left-color: var(--g-gold); }
+  .acq-axis-label { color: #93c5fd; font-weight: 800; font-size: 0.85rem; }
+  .acq-num { display: inline-grid; place-items: center; min-width: 34px; height: 34px; padding: 0 6px; border-radius: 8px; background: var(--g-blue); color: #fff; font-weight: 800; font-size: 1.05rem; }
+  .acq-num.sm { min-width: 28px; height: 28px; font-size: 0.9rem; background: rgba(59,130,246,0.85); }
+  .acq-num.sm.r-honmei { background: #dc2626; }
+  .acq-num.sm.r-taikou { background: #d97706; }
+  .acq-arrow { color: #cbd5e1; font-size: 1.1rem; }
+  .acq-partners { flex: 1; font-weight: 800; font-size: 1.15rem; letter-spacing: 0.04em; word-break: break-all; }
+  .acq-line-pts { font-size: 0.82rem; font-weight: 800; padding: 3px 10px; border-radius: 999px; border: 1px solid rgba(148,163,184,0.35); white-space: nowrap; }
+  .acq-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; border-radius: 12px; border: 1px solid rgba(148,163,184,0.16); }
+  .acq-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+  .acq-table th { text-align: left; font-weight: 700; font-size: 0.78rem; color: var(--g-text-2); background: rgba(15,23,42,0.55); padding: 9px 10px; white-space: nowrap; }
+  .acq-table td { padding: 10px; border-top: 1px solid rgba(148,163,184,0.14); white-space: nowrap; }
+  .acq-table td.num { text-align: center; }
+  .acq-table td.strong { font-weight: 800; font-size: 1rem; }
+  .acq-table td.mark { font-weight: 800; }
+  .acq-table td.race { white-space: normal; min-width: 140px; }
+  .acq-table td.lbl { color: var(--g-text-2); font-size: 0.78rem; }
+  .r-honmei td.mark { color: #f87171; }
+  .r-taikou td.mark { color: #fbbf24; }
+  .r-tana td.mark { color: #60a5fa; }
+  .acq-group { padding: 12px 2px 0; border-top: 1px solid rgba(148,163,184,0.16); margin-top: 12px; }
+  .acq-group h4 { margin: 0 0 4px; font-size: 0.85rem; color: #cbd5e1; }
+  .acq-group p { margin: 0; line-height: 1.75; font-size: 0.9rem; }
+  .ineligible-section p { color: var(--g-text-2); }
+  .acq-selection { border-color: rgba(148,163,184,0.35); }
+  .acq-selection.grade-A { border-color: rgba(239,68,68,0.55); }
+  .acq-selection.grade-B { border-color: rgba(245,158,11,0.55); }
+  .acq-grade { font-weight: 800; font-size: 1.15rem; margin-bottom: 6px; }
+  .acq-reasons { margin: 0; padding-left: 1.2em; line-height: 1.75; }
+  .acq-past-list { display: grid; gap: 10px; }
+  .acq-past-horse { border-radius: 14px; border: 1px solid rgba(148,163,184,0.16); background: rgba(15,23,42,0.45); padding: 8px 10px; }
+  .acq-past-horse > summary { display: flex; align-items: center; gap: 10px; cursor: pointer; list-style: none; padding: 4px 2px; }
+  .acq-past-horse > summary::-webkit-details-marker { display: none; }
+  .acq-past-horse > summary::after { content: '▾'; margin-left: auto; color: var(--g-text-2); transition: transform 0.2s; }
+  .acq-past-horse[open] > summary::after { transform: rotate(180deg); }
+  .acq-past-horse[open] > summary { margin-bottom: 8px; }
+  .acq-past-name { font-weight: 800; }
+  .acq-past-role { font-size: 0.75rem; padding: 1px 8px; border-radius: 999px; border: 1px solid rgba(148,163,184,0.3); color: #cbd5e1; }
+  .acq-past-count { font-size: 0.78rem; color: var(--g-text-2); }
+  .rk { display: inline-block; min-width: 42px; padding: 2px 6px; border-radius: 6px; font-weight: 800; background: rgba(100,116,139,0.35); }
+  .rk-1 { background: rgba(245,196,81,0.28); color: #fde68a; }
+  .rk-2 { background: rgba(148,163,184,0.35); }
+  .rk-3 { background: rgba(180,83,9,0.35); color: #fed7aa; }
+  .pop { display: block; color: var(--g-text-2); font-size: 0.72rem; }
+  .acq-record { margin-top: 10px; display: grid; gap: 8px; }
+  .acq-record-cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+  .acq-record-cards div { padding: 8px; border-radius: 10px; background: rgba(15,23,42,0.6); text-align: center; }
+  .acq-record-cards span { display: block; font-size: 0.72rem; color: var(--g-text-2); }
+  .acq-record-cards strong { font-size: 0.98rem; }
+  .acq-conds { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 0.85rem; }
+  .acq-conds li { display: flex; flex-wrap: wrap; gap: 2px 12px; }
+  .acq-conds span { color: var(--g-text-2); min-width: 4.5em; }
+  .acq-history summary { cursor: pointer; color: #93c5fd; font-size: 0.85rem; }
+  .acq-history ul { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px; font-size: 0.82rem; }
+  .acq-history li { display: flex; flex-wrap: wrap; gap: 4px 10px; padding: 6px 8px; border-radius: 8px; background: rgba(15,23,42,0.5); }
+  .acq-history li .race { color: #cbd5e1; }
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { .glass { background: rgba(17,24,39,0.92); } }
+  @media (max-width: 900px) { .acq-grid { grid-template-columns: 1fr; } }
+  @media (max-width: 560px) {
+    .glass { padding: 14px; border-radius: 14px; }
+    .acq-partners { font-size: 1.02rem; }
+    .acq-num { min-width: 30px; height: 30px; }
+    .hide-sm { display: none; }
+    .acq-record-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
 </style>

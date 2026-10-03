@@ -10,6 +10,7 @@ import { canAcquire } from './acquisitionPolicy.js';
 import { buildPredictionContent, buildRaceListing, narrowUmatan } from './predictionContent.js';
 import { evaluateSanrenpukuRace, rankDay, GRADE } from './sanrenpukuSelection.js';
 import { summarizeUsage } from './usageStats.js';
+import { recentRacesFor, historyRecordFor } from './pastRaces.js';
 import { acquirePrediction, listAcquisitions, readAcquired, userKey } from './acquisitionStore.js';
 import { handleAcquire, loadAcquiredView, isSameOriginPost } from './acquisitionServer.js';
 import { makeFakeRedis } from './fakeRedis.test-helper.mjs';
@@ -179,15 +180,54 @@ test('Premium 馬単は通常の買い目＋点数を絞った買い目（本命
   const main = narrowUmatan(horses, ['3→2.4.5.9.10']);
   assert.deepEqual(main, { line: '3→2.4.9', points: 3 }, 'メインレースは一方向');
   assert.equal(c.selection, undefined);
-  assert.equal(c.sanrenpuku.center, undefined, 'Premium には中心買い目を出さない');
+  assert.equal(c.sanrenpuku, undefined, 'Premium に三連複を出さない');
 });
 
-test('Premium 三連複は通常買い目（本命軸・対抗軸）', () => {
+test('Premium は馬単専用: 三連複の買い目を本文に入れない（2026-10-03 MK 確定）', () => {
   const c = buildPredictionContent({ product: 'premium', cat: 'nankan', venueName: '船橋', race: race(1), venueTotalRaces: 12 });
-  assert.equal(c.sanrenpuku.normal.length, 2);
-  assert.match(c.sanrenpuku.normal[0].line, /^3 - /);
-  assert.match(c.sanrenpuku.normal[1].line, /^4 - /);
-  assert.ok(c.sanrenpuku.normal.every((l) => l.points > 0));
+  assert.equal(c.sanrenpuku, undefined);
+  assert.equal(c.v, 2);
+  assert.equal(JSON.stringify(c).includes(' - '), false, '三連複の表記（a - b - c）が入っていない');
+  // 描画部品: Premium の分岐に三連複は無い（v1 の保存データに残っていても出さない）
+  const body = read('src/components/acquisition/AcquiredPredictionBody.astro');
+  const premiumBranch = body.slice(body.indexOf('{!isSrp ? ('), body.indexOf(') : (', body.indexOf('{!isSrp ? (')));
+  assert.equal(/三連複|sanrenpuku/.test(premiumBranch), false, 'Premium の分岐で三連複を描画している');
+});
+
+test('過去走: 全馬ぶん保存（無料ページと同じ取り出し方）・中央は新しい順 5 走、南関は古い順保存の末尾 5 走を新しい順へ', () => {
+  const jraHorse = { ...H(3, '本命', 160, 90), recentRacesFromHistories: [1, 2, 3, 4, 5, 6].map((i) => ({ venue: `京都${i}`, rank: i, distance: '芝1600' })), recentRaces: [{ venue: 'x', rank: 9 }] };
+  const nkHorse = { ...H(3, '本命', 160, 90), recentRacesFromEntriesNankan: [1, 2, 3, 4, 5, 6].map((i) => ({ venue: `川崎${i}`, rank: i, date: `2026-0${i}-01` })) };
+  const jr = recentRacesFor(jraHorse, 'jra');
+  assert.deepEqual(jr.map((r) => r.venue), ['京都1', '京都2', '京都3', '京都4', '京都5']);
+  const nk = recentRacesFor(nkHorse, 'nankan');
+  assert.deepEqual(nk.map((r) => r.venue), ['川崎6', '川崎5', '川崎4', '川崎3', '川崎2']);
+  assert.deepEqual(recentRacesFor({ recentRaces: [{ venue: '大井', rank: 2 }] }, 'nankan').map((r) => r.rank), ['2']);
+  // 本文の全馬に recent がある（空配列でも項目は持つ）。pt・指数は入れない
+  const c = buildPredictionContent({ product: 'premium', cat: 'nankan', venueName: '船橋', race: { ...race(1), horses: horses.map((h) => (h.horseNumber === 3 ? nkHorse : h)) }, venueTotalRaces: 12 });
+  assert.ok(c.horses.every((h) => Array.isArray(h.recent)));
+  assert.equal(c.horses.find((h) => h.number === 3).recent.length, 5);
+  assert.equal(JSON.stringify(c.horses.map((h) => h.recent)).includes('"pt"'), false);
+});
+
+test('中央の過去走データ（通算・勝率・連対率・3着内率・条件別・競走成績 10 走）を無料ページと同じ集計で持つ', () => {
+  const hist = [1, 2, 3, 5, 1, 4, 2, 8, 1, 3, 6, 7].map((rank, i) => ({ rank, surface: i % 2 ? '芝' : 'ダ', distanceMeters: 1600, venue: '東京', _dateStr: `26/0${(i % 9) + 1}/01`, raceName: `R${i}` }));
+  const rec = historyRecordFor({ historyForDetails: hist }, { distance: 'ダート1600㍍', venue: '東京' });
+  assert.equal(rec.record, '3-2-2-5');
+  assert.deepEqual([rec.winPct, rec.placePct, rec.showPct], ['25%', '42%', '58%']);
+  assert.ok(rec.conds.some((x) => x.label === '芝') && rec.conds.some((x) => x.label.startsWith('同距離±200m')) && rec.conds.some((x) => x.label === '同会場(東京)'));
+  assert.equal(rec.rows.length, 10);
+  assert.equal(rec.more, 2);
+  assert.equal(historyRecordFor({}, {}), null);
+});
+
+test('Premium 詳細の構成: レース情報・取得済み・馬単 通常・馬単 絞り・印とAI総合指数・連下/抑え/評価外・過去走・取得済み予想への導線', () => {
+  const view = read('src/pages/predictions/view.astro');
+  const body = read('src/components/acquisition/AcquiredPredictionBody.astro');
+  for (const w of ['acq-hero', '✓ 取得済み', '取得日時', '取得済みの予想を見る']) assert.ok(view.includes(w), w);
+  for (const w of ['馬単 通常の買い目', '馬単 点数を絞った買い目', '印とAI総合指数', 'minor-group-renka', 'minor-group-osae', 'ineligible-section', 'id="past-races"', '過去走']) assert.ok(body.includes(w), w);
+  assert.match(body, /backdrop-filter: blur\(16px\)/, 'ガラスモーフィズム（ぼかし）');
+  assert.match(body, /@supports not/, 'ぼかし非対応ブラウザでも可読');
+  assert.match(body, /@media \(max-width: 560px\)/, 'スマホ幅');
 });
 
 test('Premium Sanrenpuku は推奨度/見送り・通常・中心・理由を持ち、馬単は持たない', () => {

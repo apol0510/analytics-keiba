@@ -11,6 +11,8 @@ import SessionKeepAlive from '../../components/SessionKeepAlive.astro';
 import AcquiredPredictionBody from '../../components/acquisition/AcquiredPredictionBody.astro';
 import { loadAcquiredView, ACQUISITION_DOOR_PLANS } from '../../lib/acquisition/acquisitionServer.js';
 import { gatePaidPage, PAID_PAGE_HEADERS } from '../../lib/auth/paidPageGate.js';
+import { findRace } from '../../lib/acquisition/raceSource.js';
+import { buildPredictionContent } from '../../lib/acquisition/predictionContent.js';
 
 // ── サーバー側認可（この行より前で本文を組み立てない）──
 const gate = await gatePaidPage({ request: Astro.request, requiredPlan: ACQUISITION_DOOR_PLANS, env: process.env });
@@ -26,26 +28,55 @@ const p = v.parsed;
 const listPath = p ? (p.product === 'srp'
   ? (p.cat === 'jra' ? '/premium-sanrenpuku-jra/' : '/premium-sanrenpuku/')
   : `/premium-prediction/${p.cat}/`) + `?date=${p.date}` : '/dashboard/';
-const c = v.status === 'ok' ? v.content : null;
+let c = v.status === 'ok' ? v.content : null;
+// v1（初版）の保存データ: Premium に三連複が入っていて過去走が無い。三連複は描画しない（部品側）。
+// 過去走は、予想データがまだ残っていれば今の取り出し方で補う（買い目・印・指数は保存時のまま変えない）。
+let pastUnavailable = false;
+if (c && c.product === 'premium' && !c.horses.some((h) => Array.isArray(h.recent))) {
+  const found = findRace(p.cat, p.date, p.venue, p.raceNumber);
+  if (found) {
+    const live = buildPredictionContent({ product: 'premium', cat: p.cat, venueName: p.venueName, race: found.race, venueTotalRaces: found.venue.totalRaces });
+    const byNum = new Map(live.horses.map((h) => [h.number, h]));
+    c = { ...c, horses: c.horses.map((h) => ({ ...h, recent: byNum.get(h.number)?.recent || [], record: byNum.get(h.number)?.record || null })) };
+  } else {
+    pastUnavailable = true;
+  }
+}
+const wd = ['日', '月', '火', '水', '木', '金', '土'];
+const dateBlock = (ymd) => { const t = new Date(`${ymd}T00:00:00Z`); return Number.isNaN(t.getTime()) ? { md: '', wd: '' } : { md: `${t.getUTCMonth() + 1}/${t.getUTCDate()}`, wd: wd[t.getUTCDay()] }; };
+const jstFull = (iso) => { const t = new Date(Date.parse(iso) + 9 * 3600e3); return `${t.getUTCFullYear()}/${String(t.getUTCMonth() + 1).padStart(2, '0')}/${String(t.getUTCDate()).padStart(2, '0')} ${String(t.getUTCHours()).padStart(2, '0')}:${String(t.getUTCMinutes()).padStart(2, '0')}`; };
+const distanceText = (d) => { const s = String(d || ''); return /^\d+$/.test(s) ? `${s}m` : s; };
 const jst = (iso) => { const t = new Date(Date.parse(iso) + 9 * 3600e3); return `${t.getUTCMonth() + 1}/${t.getUTCDate()} ${String(t.getUTCHours()).padStart(2, '0')}:${String(t.getUTCMinutes()).padStart(2, '0')}`; };
 const productName = p?.product === 'srp' ? 'Premium Sanrenpuku' : 'Premium';
 ---
 <BaseLayout title={c ? `${c.venueName}${c.raceNumber}R 取得済みの予想` : '予想'} noindex>
   <SessionKeepAlive />
+  <div class="acq-view-bg">
   <main class="acq-view-page">
-    <a class="acq-back" href={listPath}>← 一覧へ戻る</a>
+    <a class="acq-back" href={listPath}>‹ レース一覧に戻る</a>
     {c ? (
       <>
-        <header class="acq-view-head">
-          <div class="acq-view-no"><strong>{c.raceNumber}R</strong><span>{c.startTime}</span></div>
-          <div>
+        <header class="acq-hero" aria-label="レース情報">
+          <div class="acq-date"><strong>{dateBlock(c.date).md}</strong><span>({dateBlock(c.date).wd})</span></div>
+          <div class="acq-hero-main">
             <h1>{c.venueName} {c.raceNumber}R {c.raceName}</h1>
-            <p>{c.date} ・ {[c.distance, c.horseCount ? `${c.horseCount}頭` : ''].filter(Boolean).join(' ・ ')} ・ {productName}</p>
+            <ul class="acq-meta">
+              {c.startTime && <li><span aria-hidden="true">🕒</span>{c.startTime} 発走</li>}
+              {c.distance && <li><span aria-hidden="true">📏</span>{distanceText(c.distance)}</li>}
+              {c.horseCount > 0 && <li><span aria-hidden="true">🐎</span>{c.horseCount}頭</li>}
+              <li class={`acq-badge ${c.product === 'srp' ? 'srp' : ''}`}><span aria-hidden="true">👑</span>{c.product === 'srp' ? 'PREMIUM SANRENPUKU' : 'PREMIUM'}</li>
+            </ul>
           </div>
-          <div class="acq-view-done">✓ 取得済み<small>取得 {jst(v.entry.at)}</small></div>
+          <div class="acq-hero-state">
+            <span class="acq-done">✓ 取得済み</span>
+            <small>取得日時 {jstFull(v.entry.at)}</small>
+          </div>
         </header>
-        <AcquiredPredictionBody content={c} />
-        <p class="acq-view-note">取得した予想は「<a href="/predictions/history/">取得済みの予想</a>」からいつでも見返せます。</p>
+        <AcquiredPredictionBody content={c} pastUnavailable={pastUnavailable} />
+        <nav class="acq-foot" aria-label="取得済みの予想">
+          <a class="acq-foot-btn primary" href="/predictions/history/">取得済みの予想を見る</a>
+          <a class="acq-foot-btn" href={listPath}>このレース一覧に戻る</a>
+        </nav>
       </>
     ) : v.status === 'not_acquired' ? (
       <section class="acq-view-empty">
@@ -64,23 +95,34 @@ const productName = p?.product === 'srp' ? 'Premium Sanrenpuku' : 'Premium';
       <section class="acq-view-empty"><h1>予想が見つかりませんでした</h1></section>
     )}
   </main>
+  </div>
 </BaseLayout>
 
 <style>
-  .acq-view-page { max-width: 820px; margin: 0 auto; padding: 24px 16px 60px; display: grid; gap: 16px; }
-  .acq-back { color: #818cf8; text-decoration: none; }
-  .acq-view-head { display: grid; grid-template-columns: 64px 1fr auto; gap: 12px; align-items: center; }
-  .acq-view-head h1 { margin: 0; font-size: 1.25rem; }
-  .acq-view-head p { margin: 2px 0 0; color: #94a3b8; font-size: 0.85rem; }
-  .acq-view-no { display: grid; justify-items: center; padding: 8px; border-radius: 10px; background: rgba(15,23,42,0.6); }
-  .acq-view-no strong { font-size: 1.2rem; }
-  .acq-view-no span { color: #94a3b8; font-size: 0.8rem; }
-  .acq-view-done { display: grid; justify-items: center; padding: 6px 12px; border-radius: 8px; background: rgba(34,197,94,0.18); color: #4ade80; font-weight: 800; }
-  .acq-view-done small { color: #94a3b8; font-weight: 400; font-size: 0.72rem; }
-  .acq-view-empty { padding: 24px; border-radius: 12px; background: rgba(255,255,255,0.06); display: grid; gap: 8px; }
+  .acq-view-bg { background: radial-gradient(1200px 600px at 85% -10%, rgba(59,130,246,0.18), transparent 60%), radial-gradient(900px 500px at -10% 30%, rgba(99,102,241,0.14), transparent 60%), linear-gradient(180deg, #0b1224 0%, #0a1020 100%); min-height: 100%; }
+  .acq-view-page { max-width: 1200px; margin: 0 auto; padding: 22px 16px 64px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; color: #e2e8f0; }
+  .acq-view-page > * { min-width: 0; }
+  .acq-back { color: #93c5fd; text-decoration: none; font-weight: 700; width: fit-content; }
+  .acq-hero { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 18px; align-items: center; padding: 20px 22px; border-radius: 20px; border: 1px solid rgba(148,163,184,0.26); background: linear-gradient(135deg, rgba(255,255,255,0.09), rgba(255,255,255,0.04)); box-shadow: 0 12px 36px rgba(2,6,23,0.5), inset 0 1px 0 rgba(255,255,255,0.12); -webkit-backdrop-filter: blur(18px) saturate(140%); backdrop-filter: blur(18px) saturate(140%); }
+  .acq-date { display: grid; justify-items: center; padding: 10px 14px; border-radius: 14px; background: rgba(15,23,42,0.6); border: 1px solid rgba(148,163,184,0.22); }
+  .acq-date strong { font-size: 1.5rem; line-height: 1.1; }
+  .acq-date span { color: #a7b4c8; font-size: 0.85rem; }
+  .acq-hero h1 { margin: 0; font-size: clamp(1.25rem, 2.6vw, 1.9rem); letter-spacing: 0.02em; }
+  .acq-meta { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px 18px; color: #cbd5e1; font-size: 0.92rem; }
+  .acq-meta li { display: inline-flex; align-items: center; gap: 6px; }
+  .acq-badge { padding: 3px 12px; border-radius: 8px; border: 1px solid rgba(245,196,81,0.6); color: #f5c451; font-weight: 800; letter-spacing: 0.05em; font-size: 0.8rem; background: rgba(245,196,81,0.08); }
+  .acq-badge.srp { border-color: rgba(167,139,250,0.6); color: #c4b5fd; background: rgba(167,139,250,0.10); }
+  .acq-hero-state { display: grid; justify-items: end; gap: 6px; }
+  .acq-done { padding: 7px 16px; border-radius: 999px; border: 1px solid rgba(74,222,128,0.6); background: rgba(34,197,94,0.14); color: #86efac; font-weight: 800; }
+  .acq-hero-state small { color: #a7b4c8; font-size: 0.78rem; }
+  .acq-foot { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-top: 4px; }
+  .acq-foot-btn { padding: 11px 20px; border-radius: 12px; border: 1px solid rgba(148,163,184,0.35); color: #e2e8f0; text-decoration: none; font-weight: 700; background: rgba(255,255,255,0.05); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+  .acq-foot-btn.primary { background: linear-gradient(135deg, #4f46e5, #2563eb); border-color: transparent; color: #fff; }
+  .acq-view-empty { padding: 24px; border-radius: 18px; border: 1px solid rgba(148,163,184,0.24); background: rgba(255,255,255,0.06); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); display: grid; gap: 8px; }
   .acq-view-empty h1 { margin: 0; font-size: 1.15rem; }
-  .acq-btn { border: 0; cursor: pointer; padding: 12px 18px; border-radius: 10px; background: #4f46e5; color: #fff; font-weight: 800; }
-  .acq-view-note { color: #94a3b8; font-size: 0.85rem; }
-  .acq-view-note a { color: #818cf8; }
-  @media (max-width: 560px) { .acq-view-head { grid-template-columns: 56px 1fr; } .acq-view-done { grid-column: 1 / -1; } }
+  .acq-btn { border: 0; cursor: pointer; padding: 12px 18px; border-radius: 12px; background: linear-gradient(135deg, #4f46e5, #2563eb); color: #fff; font-weight: 800; }
+  @media (max-width: 720px) {
+    .acq-hero { grid-template-columns: auto minmax(0, 1fr); padding: 16px; }
+    .acq-hero-state { grid-column: 1 / -1; justify-items: start; grid-auto-flow: column; align-items: center; }
+  }
 </style>
