@@ -24,7 +24,15 @@ const TABS = [
 
 <style>
   .acq-venue-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; padding: 4px; border-radius: 16px; }
-  .acq-venue-tabs a { display: flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 8px; border-radius: 12px; color: var(--ag-text-2); text-decoration: none; font-weight: 800; font-size: 0.92rem; white-space: nowrap; transition: background 0.15s ease, color 0.15s ease; }
-  .acq-venue-tabs a:hover { color: var(--ag-text); background: rgba(255,255,255,0.08); }
-  .acq-venue-tabs a.is-active { color: #fff; background: var(--ag-cta); box-shadow: 0 6px 18px rgba(129,140,248,0.45), inset 0 1px 0 rgba(255,255,255,0.4); }
+  /* 2026-10-04 MK 確定: 会場タブはイエロー系のガラス。文字もイエローの同系色 */
+  .acq-venue-tabs a { display: flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 8px; border-radius: 12px; color: #fde68a; text-decoration: none; font-weight: 800; font-size: 0.92rem; white-space: nowrap; transition: background 0.15s ease, color 0.15s ease; }
+  .acq-venue-tabs a:hover { color: #fef3c7; background: rgba(253, 224, 71, 0.12); }
+  .acq-venue-tabs a.is-active {
+    color: #713f12;
+    background: linear-gradient(135deg, rgba(254, 249, 195, 0.92) 0%, rgba(253, 224, 71, 0.82) 55%, rgba(250, 204, 21, 0.72) 100%);
+    border: 1px solid rgba(255, 251, 235, 0.85);
+    box-shadow: 0 6px 20px rgba(250, 204, 21, 0.35), 0 0 22px rgba(253, 224, 71, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.75);
+    -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  }
+  .acq-venue-tabs a:focus-visible { outline: 3px solid #fef9c3; outline-offset: 2px; }
 </style>

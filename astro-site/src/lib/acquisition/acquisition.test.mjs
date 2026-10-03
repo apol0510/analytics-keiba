@@ -533,7 +533,7 @@ test('Premium 導線 CTA は同じスタイル（明るい紫）・通常の取�
   assert.match(css, /--ag-cta-premium: linear-gradient\(135deg, #b46cf9 0%, #9b5cf6 35%, #7c3aed 70%, #5b5ff0 100%\)/, 'Premium 導線は明るい紫→青紫');
   const rule = (sel) => (css.match(new RegExp(`${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{[^}]*\\}`)) || [])[0] || '';
   const base = rule('.ag-cta.ag-cta-premium');
-  assert.match(base, /color: #ffffff/);
+  assert.match(base, /color: #f3e8ff/, '文字色はボタンと同系色（淡いラベンダー）');
   assert.match(base, /border: 1px solid rgba\(237, 233, 254/);
   assert.match(base, /box-shadow: [^;]*rgba\(147, 51, 234/);
   assert.match(rule('.ag-cta.ag-cta-premium:hover'), /--ag-cta-premium-hover/, 'hover で明るく');
@@ -549,4 +549,21 @@ test('Premium 導線 CTA は同じスタイル（明るい紫）・通常の取�
   }
   // 通常の取得 CTA は Premium 色にしない
   assert.match(read('src/components/acquisition/AcquisitionRaceList.astro'), /<button type="submit" class="ag-cta acq-btn">/);
+});
+
+
+test('会場タブ＝イエロー系ガラス・日付タブ＝黄緑の乳白色ガラス（文字も同系色）', () => {
+  const tabs = read('src/components/acquisition/AcquisitionVenueTabs.astro');
+  const list = read('src/components/acquisition/AcquisitionRaceList.astro');
+  const active = (src, sel) => (src.match(new RegExp(`${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{[^}]*\\}`)) || [])[0] || '';
+  const venue = active(tabs, '.acq-venue-tabs a.is-active');
+  assert.match(venue, /color: #713f12/);
+  assert.match(venue, /rgba\(253, 224, 71/);
+  assert.match(venue, /backdrop-filter: blur/);
+  assert.match(tabs, /\.acq-venue-tabs a \{[^}]*color: #fde68a/);
+  const date = active(list, '.acq-dates a.is-active');
+  assert.match(date, /color: #365314/);
+  assert.match(date, /rgba\(236, 252, 203/);
+  assert.match(list, /\.acq-dates a \{[^}]*color: #d9f99d[^}]*backdrop-filter: blur/);
+  assert.match(read('src/styles/acquisitionGlass.css'), /background: var\(--ag-cta\); color: #e0f2fe;/, '通常 CTA の文字は淡い青');
 });
