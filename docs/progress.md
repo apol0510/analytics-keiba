@@ -1,10 +1,12 @@
-# 💜 Premium 導線 CTA の視認性（2026-10-04 MK 指示 / 進行中）
+# 💜 Premium 導線 CTA の視認性（2026-10-04 MK 指示 / 本番反映済み）
 
 | 項目 | 状態 |
 |---|---|
 | 正本 | `decisions.md` 2026-10-04（追記）・`PREDICTION_ACQUISITION.md` §2-4 |
 | 実装 | branch `feat/premium-cta-style`。`.ag-cta.ag-cta-premium`（明るい紫）・通常 CTA を青へ・プレビュー内の /pricing/ 導線を全て統一 |
 | 確認（実ブラウザ）| PC: Premium CTA は明るい紫・白文字・縁・glow／選択タブは青で区別／キーボードの Tab で白い outline＋紫のリングが見える。スマホ 375・390・430px: Premium CTA は高さ 52px・全幅・横スクロールなし／Premium 会員の取得ボタンは青 |
+| 本番 | PR #699 squash `ca35e10e`・main CI success・Netlify production ready。本番 `/free-prediction/jra/` で Premium CTA 27 箇所（カード 24・バナー・サイド・ページ下部）が `ag-cta-premium`、配信 CSS に明るい紫のグラデーションあり／`/free/` 200・会員ページ 302 |
+| cleanup | worktree `analytics-keiba-cta` 削除・確認用サーバー停止・確認用 HTML 削除 |
 
 ---
 
