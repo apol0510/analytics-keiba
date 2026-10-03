@@ -9,8 +9,13 @@ import { generateNormalSanrenpuku, generateNarrowSanrenpuku, formatSanrenpukuLin
 import { getHorseAiIndex, isOsaeCandidate, isIneligibleHorse } from '../shared-prediction-logic.js';
 import { evaluateSanrenpukuRace } from './sanrenpukuSelection.js';
 import { PRODUCTS } from './predictionKey.js';
+import { recentRacesFor, historyRecordFor } from './pastRaces.js';
 
-export const CONTENT_VERSION = 1;
+/**
+ * v1（2026-10-03 初版）: Premium にも三連複通常を入れていた・過去走なし
+ * v2（2026-10-03 MK 確定）: Premium は馬単専用（三連複を入れない）・全馬に過去走（無料ページと同じ取り出し方）
+ */
+export const CONTENT_VERSION = 2;
 
 const ROLE_PRIORITY = { '対抗': 1, '単穴': 2, '連下最上位': 3, '連下': 4 };
 const MAIN_ROLES = ['本命', '対抗', '単穴', '連下最上位', '連下'];
@@ -42,7 +47,7 @@ function sanrenpukuLine(spec) {
   return spec ? { line: formatSanrenpukuLine(spec), points: spec.points } : null;
 }
 
-function horseRows(horses) {
+function horseRows(horses, cat, raceInfo) {
   return (Array.isArray(horses) ? horses : [])
     .filter((h) => num(h) != null)
     .map((h) => {
@@ -53,6 +58,8 @@ function horseRows(horses) {
         jockey: String(h.jockey || ''),
         role,
         aiIndex: getHorseAiIndex(h),
+        recent: recentRacesFor(h, cat),
+        record: cat === 'jra' ? historyRecordFor(h, raceInfo) : null,
       };
     })
     .sort((a, b) => a.number - b.number);
@@ -83,12 +90,11 @@ export function buildPredictionContent({ product, cat, venueName, race, venueTot
     distance: String(info.distance ?? ''),
     horseCount: Number(info.horseCount) || horses.length,
     isMainRace: isMain,
-    horses: horseRows(horses),
+    horses: horseRows(horses, cat, info),
   };
-  const sanNormal = [generateNormalSanrenpuku(horses, '本命'), generateNormalSanrenpuku(horses, '対抗')]
-    .map(sanrenpukuLine).filter(Boolean);
-
   if (product === PRODUCTS.SRP) {
+    const sanNormal = [generateNormalSanrenpuku(horses, '本命'), generateNormalSanrenpuku(horses, '対抗')]
+      .map(sanrenpukuLine).filter(Boolean);
     const sel = evaluateSanrenpukuRace(horses, { horseCount: head.horseCount, cat });
     return {
       ...head,
@@ -101,10 +107,10 @@ export function buildPredictionContent({ product, cat, venueName, race, venueTot
   // 点数は保存文字列（原文）から数える。表示だけ抑えを除く。bettingLines は書き換えない
   const normal = stored.filter(Boolean)
     .map((lineStr) => ({ line: stripOsaeForDisplay(lineStr), points: countPointsFromUmatanLine(lineStr) }));
+  // Premium は馬単専用。三連複は Premium Sanrenpuku の商品価値なので入れない（2026-10-03 MK 確定）
   return {
     ...head,
     umatan: { normal, narrowed: narrowUmatan(horses, stored) },
-    sanrenpuku: { normal: sanNormal },
   };
 }
 
