@@ -175,6 +175,9 @@
 [functions."cron-sendgrid-weekly"]
   schedule = "0 3 * * *"     # 毎日 12:00 JST（枠が無ければ何もしない）
 
+[functions."cron-premium-plus-delivery"]
+  schedule = "*/5 * * * *"   # 5 分毎: Premium Plus 当日提供レースの生成（1日1回）＋購入お礼メール
+
 [dev]
   command = "npm run dev"
   port = 4321

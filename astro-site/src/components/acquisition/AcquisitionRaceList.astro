@@ -58,7 +58,7 @@ const previewUrl = (key) => `/free-prediction/view/?key=${encodeURIComponent(key
           <div class="acq-race-cta">
             {isPreview ? (
               <>
-                <a class="ag-cta acq-btn" href="/pricing/">Premiumで予想を取得</a>
+                <a class="ag-cta ag-cta-premium acq-btn" href="/pricing/">Premiumで予想を取得</a>
                 <small>この予想を取得するにはPremium ・ <a class="acq-preview-link" href={previewUrl(r.key)}>取得後の画面を見る</a></small>
               </>
             ) : r.acquired ? (

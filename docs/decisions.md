@@ -1,3 +1,11 @@
+# 2026-10-04（追記）— Premium 導線 CTA を明るい紫で統一・CTA の色体系を整理（MK 確定）
+
+- **決定**: 「Premiumで予想を取得」「Premiumのプランを見る」を同じ Premium CTA（明るい紫→青紫・白文字・ラベンダーの縁・紫の glow、hover/active/focus-visible 明確、スマホは十分な幅と高さ）。Preview と Premium で見た目を揃える。
+- **実装の判断**: 色体系を 3 つに分けた — Premium 導線 = 明るい紫（`--ag-cta-premium`）／通常の操作（予想を取得する・選択タブ）= 青（`--ag-cta` を紫→青から青系へ変更）／取得済み = 緑。白文字のコントラストは紫の各色で約 4〜5.7:1、文字に影を付けて補う。/pricing/ へのリンクはプレビュー内の全箇所を Premium CTA に揃え、ページ下部のテキストリンクもボタン化。
+- 正本: `astro-site/docs/PREDICTION_ACQUISITION.md` §2-4。テスト: `acquisition.test.mjs`（色・状態・全 /pricing/ 導線のクラス）。
+
+---
+
 # 2026-10-04 — /free-prediction/ を Premium と同一デザインのプレビューへ（MK 確定）
 
 - **決定**: `/free/` = 無料日常利用（現行 UI 維持）、`/free-prediction/` = Premium 体験プレビュー、`/predictions/` = Premium 本利用。Preview と Premium は同一デザインシステム・同一コンポーネントで、違いは権限状態と CTA だけ。Preview で有料本文を漏らさない。
