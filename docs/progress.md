@@ -1,10 +1,12 @@
-# 📱 取得画面 mobile-first・ガラス統一（2026-10-03 MK 追加指示 / 進行中）
+# 📱 取得画面 mobile-first・ガラス統一（2026-10-03 MK 追加指示 / 本番反映済み）
 
 | 項目 | 状態 |
 |---|---|
 | 正本 | `decisions.md` 2026-10-03（追記 2）・`PREDICTION_ACQUISITION.md` §2-2 |
 | 実装 | branch `feat/acq-glass-mobile`。共通 `acquisitionGlass.css`／詳細（印カード・チップ・過去走カード）／一覧（ガラスのレースカード・CTA・日付タブ・利用状況 mini/side）／三連複推奨／履歴 |
 | 確認（ビルド済み SSR＋合成会員・実ブラウザ）| 詳細・一覧・三連複・履歴 × 375/390/430px で横スクロールなし・CTA 45px 以上・チップに「/」なし・過去走はスマホでカード（南関 14 頭・中央 18 頭）・利用状況はスマホで一覧上の 1 行＋最近は一覧下で折りたたみ・一覧の開始位置 1176px→641px |
+| 本番 | PR #691 squash `3841e31a`・main CI success・Netlify production ready。read-only: 詳細・一覧・三連複・履歴は未ログイン 302／取得 API GET 405／トップ・無料予想・マイページ・料金・三連複案内 200 |
+| cleanup | worktree `analytics-keiba-glass` 削除・確認用サーバー停止・確認用 HTML 削除 |
 
 ---
 
