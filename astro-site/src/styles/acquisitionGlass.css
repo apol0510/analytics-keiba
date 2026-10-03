@@ -9,15 +9,16 @@
  */
 :root {
   --ag-text: #eef2ff;
-  --ag-text-2: #b6c2dc;
-  --ag-text-3: #8a97b2;
-  --ag-glass: rgba(255, 255, 255, 0.075);
-  --ag-glass-2: rgba(255, 255, 255, 0.11);
-  --ag-glass-deep: rgba(15, 23, 52, 0.42);
-  --ag-border: rgba(255, 255, 255, 0.16);
-  --ag-border-hi: rgba(186, 230, 253, 0.32);
-  --ag-hi: inset 0 1px 0 rgba(255, 255, 255, 0.18), inset 0 0 0 1px rgba(255, 255, 255, 0.03);
-  --ag-shadow: 0 12px 32px rgba(3, 7, 30, 0.38);
+  --ag-text-2: #c9d3ea;
+  --ag-text-3: #9fabc8;
+  /* 2026-10-03 MK 確定: dark glass 一辺倒にせず、半透明の白と淡い青紫の反射で軽さと高級感を出す */
+  --ag-glass: rgba(255, 255, 255, 0.10);
+  --ag-glass-2: rgba(226, 232, 255, 0.19);
+  --ag-glass-deep: rgba(30, 41, 96, 0.34);
+  --ag-border: rgba(255, 255, 255, 0.26);
+  --ag-border-hi: rgba(199, 210, 254, 0.45);
+  --ag-hi: inset 0 1px 0 rgba(255, 255, 255, 0.32), inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+  --ag-shadow: 0 14px 34px rgba(10, 16, 48, 0.32), 0 0 0 1px rgba(255, 255, 255, 0.02);
   --ag-blur: blur(18px) saturate(150%);
   --ag-blue: #60a5fa;
   --ag-cyan: #22d3ee;
@@ -26,7 +27,7 @@
   --ag-green: #4ade80;
   --ag-red: #fb7185;
   --ag-amber: #fbbf24;
-  --ag-cta: linear-gradient(135deg, #8b5cf6 0%, #6366f1 45%, #3b82f6 100%);
+  --ag-cta: linear-gradient(135deg, #a78bfa 0%, #818cf8 40%, #60a5fa 75%, #38bdf8 100%);
   --ag-radius: 18px;
 }
 
@@ -35,11 +36,13 @@
   position: relative;
   color: var(--ag-text);
   background:
-    radial-gradient(60% 40% at 0% 0%, rgba(59, 130, 246, 0.30), transparent 70%),
-    radial-gradient(55% 38% at 100% 2%, rgba(139, 92, 246, 0.30), transparent 70%),
-    radial-gradient(40% 30% at 70% 55%, rgba(34, 211, 238, 0.14), transparent 70%),
-    radial-gradient(50% 35% at 10% 95%, rgba(99, 102, 241, 0.18), transparent 70%),
-    linear-gradient(180deg, #0c1530 0%, #0a1128 60%, #0b1430 100%);
+    radial-gradient(45% 28% at 50% 0%, rgba(255, 255, 255, 0.10), transparent 70%),
+    radial-gradient(60% 40% at 0% 0%, rgba(96, 165, 250, 0.42), transparent 70%),
+    radial-gradient(55% 38% at 100% 2%, rgba(196, 181, 253, 0.36), transparent 70%),
+    radial-gradient(45% 32% at 75% 50%, rgba(103, 232, 249, 0.20), transparent 70%),
+    radial-gradient(50% 35% at 5% 70%, rgba(165, 180, 252, 0.22), transparent 70%),
+    radial-gradient(55% 30% at 90% 100%, rgba(56, 189, 248, 0.18), transparent 70%),
+    linear-gradient(180deg, #16245a 0%, #121e4c 55%, #15225a 100%);
   min-height: 100%;
   overflow-x: clip;
 }
@@ -47,7 +50,7 @@
 /* ガラス面（セクション） */
 .ag-glass {
   position: relative;
-  background: linear-gradient(155deg, var(--ag-glass-2), var(--ag-glass));
+  background: linear-gradient(155deg, var(--ag-glass-2) 0%, rgba(199, 210, 254, 0.10) 45%, var(--ag-glass) 100%);
   border: 1px solid var(--ag-border);
   border-radius: var(--ag-radius);
   box-shadow: var(--ag-shadow), var(--ag-hi);
@@ -56,7 +59,7 @@
 }
 .ag-glass::before { /* 上辺の光の反射 */
   content: ''; position: absolute; inset: 0 12% auto 12%; height: 1px; border-radius: 999px;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.55), transparent);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.85), transparent);
   pointer-events: none;
 }
 /* ガラス面の内側（一段濃い） */
@@ -88,7 +91,7 @@
 .ag-done {
   display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; border-radius: 999px; font-weight: 800;
   color: #bbf7d0; background: rgba(34, 197, 94, 0.16); border: 1px solid rgba(74, 222, 128, 0.55);
-  box-shadow: 0 0 18px rgba(74, 222, 128, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  box-shadow: 0 0 20px rgba(74, 222, 128, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.25);
 }
 .ag-pill {
   display: inline-flex; align-items: center; padding: 3px 12px; border-radius: 999px; font-weight: 800; font-size: 0.82rem; white-space: nowrap;
@@ -101,8 +104,8 @@
 .ag-chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 150px), 1fr)); gap: 8px; list-style: none; margin: 0; padding: 0; }
 .ag-chip {
   display: flex; align-items: center; gap: 10px; min-width: 0; padding: 8px 10px; border-radius: 12px;
-  background: rgba(255, 255, 255, 0.07); border: 1px solid rgba(255, 255, 255, 0.16);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.11); border: 1px solid rgba(255, 255, 255, 0.24);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
   -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
 }
 .ag-chip-name { min-width: 0; overflow-wrap: anywhere; line-height: 1.35; font-weight: 700; }
@@ -129,3 +132,12 @@
   .ag-chip, .ag-btn-ghost { background: rgba(30, 41, 80, 0.92); }
 }
 @media (prefers-reduced-motion: reduce) { .ag-cta { transition: none; } }
+
+/* 着順（2026-10-03 MK 確定）: 1着=ゴールド / 2着=明るいシルバー・アイスブルー（灰色にしない）/ 3着=ブロンズ */
+.rk-1 { color: #fff7cc !important; background: linear-gradient(135deg, rgba(252, 211, 77, 0.45), rgba(245, 158, 11, 0.30)) !important; border-color: rgba(253, 224, 71, 0.85) !important; box-shadow: 0 0 12px rgba(252, 211, 77, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.35); }
+.rk-2 { color: #ffffff !important; background: linear-gradient(135deg, rgba(224, 242, 254, 0.42), rgba(186, 230, 253, 0.22)) !important; border-color: rgba(224, 242, 254, 0.9) !important; box-shadow: 0 0 12px rgba(186, 230, 253, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.45); text-shadow: 0 0 6px rgba(186, 230, 253, 0.6); }
+.rk-3 { color: #ffedd5 !important; background: linear-gradient(135deg, rgba(234, 147, 84, 0.45), rgba(180, 83, 9, 0.30)) !important; border-color: rgba(251, 146, 60, 0.75) !important; box-shadow: 0 0 10px rgba(251, 146, 60, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.3); }
+
+/* スマホでは「本日の活用状況」を一覧の最上部に（PC は右カラム） */
+.acq-today-top { display: block; }
+@media (min-width: 1000px) { .acq-today-top { display: none; } }

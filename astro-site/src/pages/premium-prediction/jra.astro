@@ -1,9 +1,10 @@
 ---
 import AcquisitionRaceList from '../../components/acquisition/AcquisitionRaceList.astro';
-import AcquisitionUsagePanel from '../../components/acquisition/AcquisitionUsagePanel.astro';
+import AcquisitionValuePanel from '../../components/acquisition/AcquisitionValuePanel.astro';
+import AcquisitionVenueTabs from '../../components/acquisition/AcquisitionVenueTabs.astro';
+import { buildValueSummary } from '../../lib/acquisition/valueSummary.js';
 import { buildListModel } from '../../lib/acquisition/listModel.js';
 import { loadMemberAcquisitions } from '../../lib/acquisition/acquisitionServer.js';
-import { summarizeUsage } from '../../lib/acquisition/usageStats.js';
 import { canAcquire } from '../../lib/acquisition/acquisitionPolicy.js';
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import SessionKeepAlive from '../../components/SessionKeepAlive.astro';
@@ -48,7 +49,8 @@ for (const [k, v] of Object.entries(PAID_PAGE_HEADERS)) Astro.response.headers.s
 // ── 予想の取得（1 件ずつ）: 本人の取得記録だけを読む。一覧には出走情報と取得状態だけを渡す ──
 const acqList = await loadMemberAcquisitions({ recordId: gate.subject, env: process.env });
 const acqModel = buildListModel({ cat: 'jra', product: 'premium', requestedDate: Astro.url.searchParams.get('date'), acquisitions: acqList || [] });
-const acqUsage = acqList ? summarizeUsage(acqList) : null;
+// 活用状況（本日 = 取得レース / その契約で本日取得できる実レース数・今月 = 取得数・利用日数・内訳・実質額）
+const acqValue = buildValueSummary({ acquisitions: acqList, ent: gate.entitlements, contract: gate.contract, product: 'premium' });
 const acqCan = canAcquire(gate.entitlements, { product: 'premium', cat: 'jra' });
 
 // 表示専用フォールバック: horseHistories 由来があれば優先、なければ既存 recentRaces。
@@ -502,12 +504,13 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                  取得前は本文を出さない。旧「全レース一括表示」と会場別の傾向分析はここから外した。 */}
             <div class="ag-scene acq-layout">
               <div class="acq-main">
-                <AcquisitionUsagePanel usage={acqUsage} variant="mini" />
+                <div class="acq-today-top"><AcquisitionValuePanel value={acqValue} variant="today" basePath="/premium-prediction/jra/" /></div>
+                <AcquisitionVenueTabs active="jra" />
                 <h2 class="acq-heading">予想を取得</h2>
                 <p class="acq-lead">気になるレースの予想を 1 件ずつ取得できます。取得した予想は「取得済みの予想」に保存され、いつでも見返せます。</p>
                 <AcquisitionRaceList product="premium" basePath="/premium-prediction/jra/" date={acqModel.date} dates={acqModel.dates} venues={acqModel.venues} canAcquire={acqCan} acquiredUnknown={acqList === null} />
               </div>
-              <AcquisitionUsagePanel usage={acqUsage} variant="side" />
+              <AcquisitionValuePanel value={acqValue} variant="side" basePath="/premium-prediction/jra/" />
             </div>
 
             <!-- 免責事項（free 版に揃えてシンプル化） -->

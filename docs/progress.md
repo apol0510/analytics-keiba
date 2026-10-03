@@ -1,3 +1,16 @@
+# 💎 活用状況・会場タブ・明るい配色（2026-10-03/04 MK 追加指示 / 本番反映済み）
+
+| 項目 | 状態 |
+|---|---|
+| 正本 | `decisions.md` 2026-10-04・`PREDICTION_ACQUISITION.md` §2-3 |
+| 実装 | branch `feat/acq-value-ui`。`valueSummary.js`（本日/今月の活用状況・実質額）／`AcquisitionValuePanel`／会場タブ＋`/predictions/`（すべて）／配色の明るさ／着順色 |
+| 確認（ビルド済み SSR＋合成会員・実ブラウザ）| 本日 4/24レース 17%（中央 24・南関 0 の日）・今月 5 レース・1 レースあたり約 ¥830（年額の月あたり ¥4,150 ÷ 5）／タブ 3・「すべて」で中央＋南関／2着はアイスシルバー（白文字・縁・グロー）／375・390・430px で横スクロールなし・本日の活用状況が一覧の最上部・CTA 46px |
+| 本番 | PR #693 squash `11f033c6`・main CI success・Netlify production ready。read-only: `/predictions/`・中央/南関一覧・三連複・履歴・閲覧は未ログイン 302／トップ・無料予想・マイページ・料金 200 |
+| cleanup | worktree `analytics-keiba-value` 削除・確認用サーバー停止・確認用 HTML 削除 |
+| #677 合流時 | `/predictions/` の認可に会場別 Premium（premium-jra / premium-nankan）を追加する |
+
+---
+
 # 📱 取得画面 mobile-first・ガラス統一（2026-10-03 MK 追加指示 / 本番反映済み）
 
 | 項目 | 状態 |

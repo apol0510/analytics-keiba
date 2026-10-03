@@ -1,0 +1,60 @@
+---
+/**
+ * /predictions/ — Premium の「予想を取得」一覧（すべて＝中央＋南関・2026-10-03 MK 確定の会場タブ）
+ * 中央・南関それぞれの一覧（/premium-prediction/jra/・/nankan/）と同じ部品・同じ認可。取得前は本文を出さない。
+ */
+export const prerender = false;
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import SessionKeepAlive from '../../components/SessionKeepAlive.astro';
+import AcquisitionRaceList from '../../components/acquisition/AcquisitionRaceList.astro';
+import AcquisitionValuePanel from '../../components/acquisition/AcquisitionValuePanel.astro';
+import AcquisitionVenueTabs from '../../components/acquisition/AcquisitionVenueTabs.astro';
+import '../../styles/acquisitionGlass.css';
+import { gatePaidPage, PAID_PAGE_HEADERS } from '../../lib/auth/paidPageGate.js';
+import { loadMemberAcquisitions } from '../../lib/acquisition/acquisitionServer.js';
+import { buildListModel } from '../../lib/acquisition/listModel.js';
+import { buildValueSummary } from '../../lib/acquisition/valueSummary.js';
+import { canAcquire } from '../../lib/acquisition/acquisitionPolicy.js';
+
+// ── サーバー側認可（この行より前で一覧を組み立てない）──
+// 会場別 Premium（中央版・南関版）も入れる。区分ごとの取得可否は canAcquire がレースに付ける
+const gate = await gatePaidPage({ request: Astro.request, requiredPlan: ['premium', 'premium-jra', 'premium-nankan'], env: process.env });
+if (gate.response) return gate.response;
+for (const [k, v] of Object.entries(PAID_PAGE_HEADERS)) Astro.response.headers.set(k, v);
+
+const acqList = await loadMemberAcquisitions({ recordId: gate.subject, env: process.env });
+const acqModel = buildListModel({
+  cat: 'all', product: 'premium', requestedDate: Astro.url.searchParams.get('date'), acquisitions: acqList || [],
+  canAcquireFor: (cat) => canAcquire(gate.entitlements, { product: 'premium', cat }),
+});
+const acqValue = buildValueSummary({ acquisitions: acqList, ent: gate.entitlements, contract: gate.contract, product: 'premium' });
+const anyCan = ['jra', 'nankan'].some((cat) => canAcquire(gate.entitlements, { product: 'premium', cat }));
+---
+<BaseLayout title="予想を取得（中央・南関）" noindex>
+  <SessionKeepAlive />
+  <div class="ag-scene acq-all-page">
+    <div class="acq-layout">
+      <div class="acq-main">
+        <div class="acq-today-top"><AcquisitionValuePanel value={acqValue} variant="today" basePath="/predictions/" /></div>
+        <AcquisitionVenueTabs active="all" />
+        <h1 class="acq-heading">予想を取得</h1>
+        <p class="acq-lead">中央・南関のレースから、気になる予想を 1 件ずつ取得できます。月額の範囲でいくつでも取得でき、取得した予想はいつでも見返せます。</p>
+        <AcquisitionRaceList product="premium" basePath="/predictions/" date={acqModel.date} dates={acqModel.dates} venues={acqModel.venues} canAcquire={anyCan} acquiredUnknown={acqList === null} />
+      </div>
+      <AcquisitionValuePanel value={acqValue} variant="side" basePath="/predictions/" />
+    </div>
+  </div>
+</BaseLayout>
+
+<style>
+  .acq-all-page { padding: 8px 12px 48px; }
+  .acq-layout { max-width: 1200px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .acq-layout > * { min-width: 0; }
+  .acq-main { display: grid; gap: 14px; align-content: start; min-width: 0; }
+  .acq-heading { margin: 4px 0 0; font-size: clamp(1.3rem, 5vw, 1.7rem); background: linear-gradient(90deg, #ffffff, #c7d2fe 60%, #a5f3fc); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .acq-lead { margin: 0; color: var(--ag-text-2); font-size: 0.9rem; line-height: 1.6; }
+  @media (min-width: 1000px) {
+    .acq-all-page { padding: 20px 20px 64px; }
+    .acq-layout { grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; }
+  }
+</style>
