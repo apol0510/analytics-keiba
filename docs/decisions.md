@@ -1,3 +1,12 @@
+# 2026-10-03 — 旧 /prediction/[slug] の有料買い目 無認可表示を閉じる（実異常の是正）
+
+- 検出: 本番 `/prediction/2026-10-02-funabashi/` 等が**未ログインで 200**・全レースの馬単買い目（有料内容）を表示していた。サイト内リンクは 0（直 URL・検索経由のみ）。
+- 対応: ページを「同じ日付の無料予想 `/free-prediction/nankan/{date}/` へ 301・形式外は 404」だけにし、予想データを読まない。認可付きの有料表示は `/premium-prediction/nankan/` 等（gatePaidPage）だけ。
+- `AIBettingSection.astro` はこのページから外れ未使用になるが、削除可否は PR-H-2 の判断まで凍結（削除しない）。
+- 再発防止: `src/lib/auth/legacyPredictionPage.guard.test.mjs`（データ読込・買い目・AIBettingSection を含まない／301・404 のみ）。
+
+---
+
 # 2026-09-29 — Premium 月払いにも期限前・失効後リマインドを適用する（MK 確定 / ①）
 
 - Light 月払い（1-B）と同じ考え方: 実際に支払った Premium 月払いだけ・期限 1〜7 日前と失効後 3〜30 日・周期ごとに各 1 回。
