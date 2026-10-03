@@ -40,5 +40,6 @@ export function buildListModel({ cat, product, requestedDate, acquisitions, root
       venues.push({ venueName: v.venueName, venueId: v.venueId, races });
     }
   }
-  return { cat, product, date, dates: dates.slice().sort(), venues, day: product === 'srp' ? rankDay(evaluated) : null };
+  // dates は新しい日付から（スマホで当日・直近が先頭に見える）
+  return { cat, product, date, dates: dates.slice(), venues, day: product === 'srp' ? rankDay(evaluated) : null };
 }
