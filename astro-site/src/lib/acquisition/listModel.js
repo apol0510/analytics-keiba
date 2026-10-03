@@ -13,8 +13,15 @@ export function pickDate(requested, dates) {
   return dates.includes(requested) ? requested : (dates[0] || null);
 }
 
-export function buildListModel({ cat, product, requestedDate, acquisitions, root, now = Date.now() }) {
-  const dates = listDates(cat, { root }).slice(0, 7);
+const CAT_LABEL = { jra: '中央', nankan: '南関' };
+
+/**
+ * cat: 'jra' | 'nankan' | 'all'（中央＋南関。2026-10-03 MK 確定の「すべて」タブ）。
+ * canAcquireFor(cat) を渡すと、区分ごとの取得可否をレースへ付ける（会場別 Premium で片方だけ取得できる場合）。
+ */
+export function buildListModel({ cat, product, requestedDate, acquisitions, root, now = Date.now(), canAcquireFor }) {
+  const cats = cat === 'all' ? ['jra', 'nankan'] : [cat];
+  const dates = [...new Set(cats.flatMap((c) => listDates(c, { root })))].sort().reverse().slice(0, 7);
   // 既定は「今日（JST）以降で最も近い日」、無ければ最新日
   const today = new Date(now + 9 * 3600e3).toISOString().slice(0, 10);
   const upcoming = dates.filter((d) => d >= today).sort();
@@ -22,24 +29,25 @@ export function buildListModel({ cat, product, requestedDate, acquisitions, root
   const byKey = new Map((acquisitions || []).map((e) => [e.key, e]));
   const venues = [];
   const evaluated = [];
-  if (date) {
-    for (const v of loadDay(cat, date, { root })) {
+  for (const c of (date ? cats : [])) {
+    for (const v of loadDay(c, date, { root, pastRaces: false })) {
       const races = [];
       for (const race of v.races) {
         const listing = buildRaceListing({ race, venueTotalRaces: v.totalRaces });
-        const key = buildPredictionKey({ product, cat, date, venue: v.venueId, raceNumber: listing.raceNumber });
+        const key = buildPredictionKey({ product, cat: c, date, venue: v.venueId, raceNumber: listing.raceNumber });
         if (!key) continue;
         const item = { key, listing, acquired: byKey.get(key) || null };
+        if (typeof canAcquireFor === 'function') item.canAcquire = canAcquireFor(c) === true;
         if (product === 'srp') {
-          const sel = evaluateSanrenpukuRace(race.horses, { horseCount: listing.horseCount, cat });
+          const sel = evaluateSanrenpukuRace(race.horses, { horseCount: listing.horseCount, cat: c });
           item.selection = { grade: sel.grade, skip: sel.skip, reasons: sel.reasons };
           evaluated.push({ ...item, venueName: v.venueName, selection: { ...item.selection, score: sel.score } });
         }
         races.push(item);
       }
-      venues.push({ venueName: v.venueName, venueId: v.venueId, races });
+      venues.push({ venueName: cat === 'all' ? `${CAT_LABEL[c]} ${v.venueName}` : v.venueName, venueId: v.venueId, cat: c, races });
     }
   }
   // dates は新しい日付から（スマホで当日・直近が先頭に見える）
-  return { cat, product, date, dates: dates.slice(), venues, day: product === 'srp' ? rankDay(evaluated) : null };
+  return { cat, product, date, dates, venues, day: product === 'srp' ? rankDay(evaluated) : null };
 }

@@ -329,5 +329,12 @@ export async function gatePaidPage({
   if (!flags.some((f) => ent[f] === true)) return deny('entitlement_denied');
 
   // subject = ak_session の recordId（取得履歴など本人 1 件だけを読む処理が使う。クライアントの値は使わない）
-  return { ok: true, response: null, reason: 'ok', entitlements: ent, subject: sub };
+  // contract = 料金表示（1 レースあたりの実質額など）に必要な契約の種類だけ。氏名・メール等の個人情報は渡さない
+  const contract = {
+    planType: String(fields?.PlanType || ''),
+    tier: String(fields?.['プラン'] || fields?.Plan || ''),
+    stripe: !!fields?.StripeSubscriptionId,
+    venueAccess: String(fields?.VenueAccess || ''),
+  };
+  return { ok: true, response: null, reason: 'ok', entitlements: ent, subject: sub, contract };
 }

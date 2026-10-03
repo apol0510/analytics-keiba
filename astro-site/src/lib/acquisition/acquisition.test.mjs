@@ -228,9 +228,10 @@ test('Premium 詳細の構成: レース情報・取得済み・馬単 通常・
   const glass = read('src/styles/acquisitionGlass.css');
   assert.match(glass, /backdrop-filter: var\(--ag-blur\)/, 'ガラスモーフィズム（ぼかし）');
   assert.match(glass, /@supports not/, 'ぼかし非対応ブラウザでも可読');
-  assert.match(glass, /radial-gradient\([^)]*rgba\(59, 130, 246/, '背景に青の光源');
-  assert.match(glass, /rgba\(139, 92, 246/, '紫の光源');
-  assert.match(glass, /rgba\(34, 211, 238/, 'シアンの光源');
+  assert.match(glass, /radial-gradient\([^)]*rgba\(96, 165, 250/, '背景に青の光源');
+  assert.match(glass, /rgba\(196, 181, 253/, 'ラベンダーの光源');
+  assert.match(glass, /rgba\(255, 255, 255, 0\.10\), transparent/, '柔らかい白の光');
+  assert.match(glass, /rgba\(103, 232, 249/, 'シアンの光源');
 });
 
 test('Premium Sanrenpuku は推奨度/見送り・通常・中心・理由を持ち、馬単は持たない', () => {
@@ -343,13 +344,11 @@ test('mobile-first・全画面ガラス統一（2026-10-03 MK 追加確定）', 
   assert.match(list, /class=\{`ag-glass acq-race/);
   assert.match(list, /class="ag-cta acq-btn"/);
   assert.match(list, /class="ag-done"/);
-  // スマホ: 利用状況は一覧の上の小型サマリー、最近取得した予想は一覧の下で折りたたみ
-  assert.match(usage, /variant === 'mini'/);
-  assert.match(usage, /<details class="ag-glass acq-usage-card acq-usage-recent-narrow">/);
-  for (const p of ['src/pages/premium-prediction/jra.astro', 'src/pages/premium-prediction/nankan.astro', 'src/pages/premium-sanrenpuku.astro', 'src/pages/premium-sanrenpuku-jra.astro']) {
+  // スマホ: 本日の活用状況を一覧の最上部、今月の活用状況は一覧の下（PC は右カラム）
+  for (const p of ['src/pages/premium-prediction/jra.astro', 'src/pages/premium-prediction/nankan.astro', 'src/pages/premium-sanrenpuku.astro', 'src/pages/premium-sanrenpuku-jra.astro', 'src/pages/predictions/index.astro']) {
     const s = read(p);
-    assert.ok(s.indexOf('variant="mini"') < s.indexOf('<AcquisitionRaceList'), `${p}: 小型サマリーが一覧より上にない`);
-    assert.ok(s.indexOf('variant="side"') > s.indexOf('<AcquisitionRaceList'), `${p}: 補助情報が一覧より下にない`);
+    assert.ok(s.indexOf('variant="today"') < s.indexOf('<AcquisitionRaceList'), `${p}: 本日の活用状況が一覧より上にない`);
+    assert.ok(s.indexOf('variant="side"') > s.indexOf('<AcquisitionRaceList'), `${p}: 今月の活用状況が一覧より下にない`);
   }
 });
 
@@ -370,4 +369,98 @@ test('一覧モデルは日付（新しい順）・会場・レース・（三�
   assert.equal(m.venues[0].races[0].key, 'srp:nankan:2026-10-03:funabashi:11');
   assert.ok(m.venues[0].races[0].selection);
   assert.ok(m.day && Array.isArray(m.day.top3));
+});
+
+
+// ── 2026-10-03/04 MK 追加確定: 活用状況・会場タブ・着順の色 ──
+test('本日の活用状況: 分母はその契約で本日取得できる実レース数（中央のみ・南関のみ・両方）・% は取得率', async () => {
+  const { buildValueSummary } = await import('./valueSummary.js');
+  const now = Date.parse('2026-10-04T03:00:00Z'); // JST 10/4
+  const count = (cat, d) => (d === '2026-10-04' ? (cat === 'jra' ? 36 : 12) : (d === '2026-10-05' ? (cat === 'jra' ? 24 : 0) : 0));
+  const dates = () => ['2026-10-05', '2026-10-04'];
+  const acq = (cat, n, date = '2026-10-04') => Array.from({ length: n }, (_, i) => ({ key: `premium:${cat}:${date}:X:${i + 1}`, product: 'premium', cat, date, at: '2026-10-04T02:00:00Z' }));
+  const both = buildValueSummary({ acquisitions: [...acq('jra', 12)], ent: { canViewPremium: true }, contract: { tier: 'Premium', planType: 'Annual' }, nowMs: now, count, dates });
+  assert.deepEqual([both.today.acquired, both.today.available, both.today.pct], [12, 48, 25]);
+  const jraOnly = buildValueSummary({ acquisitions: acq('jra', 12), ent: { canViewPremium: false, canViewPremiumJra: true, canViewPremiumNankan: false }, contract: { tier: 'Premium', stripe: true, venueAccess: 'jra' }, nowMs: now, count, dates });
+  assert.deepEqual([jraOnly.today.acquired, jraOnly.today.available, jraOnly.today.pct], [12, 36, 33]);
+  const nkOnly = buildValueSummary({ acquisitions: acq('jra', 3), ent: { canViewPremium: false, canViewPremiumJra: false, canViewPremiumNankan: true }, contract: {}, nowMs: now, count, dates });
+  assert.deepEqual([nkOnly.today.acquired, nkOnly.today.available], [0, 12], '契約外の区分は分子にも分母にも入れない');
+  // 次に取得できる予想: 本日に未取得があれば本日、全部取得済みなら次の開催
+  assert.equal(both.next.isToday, true);
+  const done = buildValueSummary({ acquisitions: acq('jra', 36), ent: { canViewPremiumJra: true, canViewPremiumNankan: false }, contract: {}, nowMs: now, count, dates });
+  assert.deepEqual([done.next.isToday, done.next.date, done.next.available], [false, '2026-10-05', 24]);
+  // 読めないときは取得数を作らない（0 と区別）
+  const unknown = buildValueSummary({ acquisitions: null, ent: { canViewPremium: true }, contract: {}, nowMs: now, count, dates });
+  assert.equal(unknown.today.acquired, null);
+  assert.equal(unknown.month, null);
+});
+
+test('今月の活用状況: 取得レース数・利用日数・内訳・1 レースあたりの実質額（月額 ÷ 取得数・定価）', async () => {
+  const { buildValueSummary, monthlyPriceFor, MONTHLY_PRICE } = await import('./valueSummary.js');
+  const now = Date.parse('2026-10-04T03:00:00Z');
+  const acqs = [
+    { key: 'a', product: 'premium', cat: 'jra', date: '2026-10-04', at: '2026-10-04T01:00:00Z' },
+    { key: 'b', product: 'premium', cat: 'nankan', date: '2026-10-02', at: '2026-10-02T09:00:00Z' },
+    { key: 'c', product: 'srp', cat: 'nankan', date: '2026-10-02', at: '2026-10-02T09:00:00Z' },
+  ];
+  const v = buildValueSummary({ acquisitions: acqs, ent: { canViewPremium: true }, contract: { tier: 'Premium', stripe: true }, nowMs: now, count: () => 0, dates: () => [] });
+  assert.equal(v.month.count, 2, 'Premium の取得だけを数える');
+  assert.equal(v.month.activeDays, 2);
+  assert.deepEqual(v.month.byCategory, { jra: 1, nankan: 1 });
+  assert.equal(v.month.unitCost, Math.round(4980 / 2));
+  assert.equal(monthlyPriceFor({ tier: 'Premium', stripe: true, venueAccess: 'nankan' }).yen, 2980);
+  assert.equal(monthlyPriceFor({ tier: 'Premium', planType: 'Monthly' }).yen, 18000);
+  assert.equal(monthlyPriceFor({ tier: 'Premium', planType: 'Annual' }).yen, MONTHLY_PRICE.annual);
+  assert.equal(monthlyPriceFor({ tier: 'Premium', planType: 'Lifetime' }), null, '買い切りは実質額を出さない');
+  assert.equal(monthlyPriceFor({ tier: 'Free' }), null);
+  const zero = buildValueSummary({ acquisitions: [], ent: { canViewPremium: true }, contract: { tier: 'Premium', planType: 'Annual' }, nowMs: now, count: () => 0, dates: () => [] });
+  assert.equal(zero.month.unitCost, null, '0 件で割らない');
+  const srp = buildValueSummary({ acquisitions: acqs, ent: { canViewSanrenpuku: true }, contract: { tier: 'Premium', stripe: true }, product: 'srp', nowMs: now, count: () => 0, dates: () => [] });
+  assert.equal(srp.month.price, null, '三連複の選別には月額の実質額を出さない');
+});
+
+test('活用状況の表示: 「残り○回」と書かない・主役は次に取得できる予想・見返しは控えめ', () => {
+  const panel = read('src/components/acquisition/AcquisitionValuePanel.astro');
+  const tpl = panel.slice(panel.indexOf('---', 3));
+  assert.equal(/残り|あと\s*\d|回まで|上限/.test(tpl.replace(/<style[\s\S]*<\/style>/, '')), false, 'クレジット制に見える表現');
+  assert.match(tpl, /本日の活用状況/);
+  assert.match(tpl, /今月の活用状況/);
+  assert.match(tpl, /1レースあたりの実質額/);
+  assert.match(tpl, /次のレースの予想を取得する/);
+  assert.match(tpl, /class="ag-cta acq-today-cta"/);
+  assert.match(tpl, /class="acq-month-history"/, '見返しは控えめなリンク');
+});
+
+test('会場タブ（すべて / 中央競馬 / 南関東競馬）と「すべて」一覧', async () => {
+  const tabs = read('src/components/acquisition/AcquisitionVenueTabs.astro');
+  for (const [label, href] of [['すべて', '/predictions/'], ['中央競馬', '/premium-prediction/jra/'], ['南関東競馬', '/premium-prediction/nankan/']]) {
+    assert.match(tabs, new RegExp(`label: '${label}', href: '${href.replace(/\//g, '\\/')}'`), label);
+  }
+  assert.match(read('src/pages/premium-prediction/jra.astro'), /<AcquisitionVenueTabs active="jra" \/>/);
+  assert.match(read('src/pages/premium-prediction/nankan.astro'), /<AcquisitionVenueTabs active="nankan" \/>/);
+  const all = read('src/pages/predictions/index.astro');
+  assert.match(all, /<AcquisitionVenueTabs active="all" \/>/);
+  assert.ok(all.indexOf('gatePaidPage(') < all.indexOf('buildListModel('), '認可の前に一覧を組み立てている');
+  // 「すべて」のモデル: 中央・南関を合わせ、区分ごとの取得可否をレースに付ける
+  const { buildListModel } = await import('./listModel.js');
+  const { mkdtempSync, mkdirSync, writeFileSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const { tmpdir } = await import('node:os');
+  const root = mkdtempSync(join(tmpdir(), 'acq-all-'));
+  mkdirSync(join(root, 'src', 'data', 'predictions', 'jra', '2026', '10'), { recursive: true });
+  writeFileSync(join(root, 'src', 'data', 'predictions', '2026-10-03-funabashi.json'), JSON.stringify({ eventInfo: { date: '2026-10-03', venue: '船橋', totalRaces: 12 }, predictions: [race(11)] }));
+  writeFileSync(join(root, 'src', 'data', 'predictions', 'jra', '2026', '10', '2026-10-03.json'), JSON.stringify({ date: '2026-10-03', venues: [{ venue: '東京', eventInfo: { totalRaces: 12 }, predictions: [{ ...race(11), raceInfo: { ...race(11).raceInfo, venue: '東京' } }] }] }));
+  const m = buildListModel({ cat: 'all', product: 'premium', requestedDate: '2026-10-03', acquisitions: [], root, canAcquireFor: (c) => c === 'jra' });
+  assert.deepEqual(m.venues.map((v) => [v.venueName, v.cat]), [['中央 東京', 'jra'], ['南関 船橋', 'nankan']]);
+  assert.deepEqual(m.venues.map((v) => v.races[0].canAcquire), [true, false]);
+  assert.deepEqual(m.venues.map((v) => v.races[0].key), ['premium:jra:2026-10-03:TOK:11', 'premium:nankan:2026-10-03:funabashi:11']);
+});
+
+test('着順の色: 1着ゴールド / 2着アイスシルバー（灰色にしない）/ 3着ブロンズ', () => {
+  const css = read('src/styles/acquisitionGlass.css');
+  assert.match(css, /\.rk-1 \{[^}]*rgba\(252, 211, 77/);
+  assert.match(css, /\.rk-2 \{[^}]*color: #ffffff[^}]*rgba\(224, 242, 254[^}]*box-shadow: 0 0 12px/);
+  assert.match(css, /\.rk-3 \{[^}]*rgba\(234, 147, 84/);
+  const body = read('src/components/acquisition/AcquiredPredictionBody.astro');
+  assert.equal(/\.rk-2 \{/.test(body), false, '部品側に古い 2 着色が残っている');
 });

@@ -1,0 +1,120 @@
+---
+/**
+ * 活用状況（2026-10-04 MK 確定・docs/PREDICTION_ACQUISITION.md §2-3）。buildValueSummary の結果を描画するだけ。
+ *   variant="today" … 本日の活用状況（12/36レース 33%）＋次に取得できる予想への CTA。スマホでは一覧の最上部
+ *   variant="side"  … PC の右カラム（本日＋今月の活用状況）。スマホでは今月の活用状況だけを一覧の下に出す
+ * % は利用上限ではない（本日これだけのレースが月額内で利用できる、の指標）。「残り○回」とは書かない。
+ * 主役は次に取得できる予想。取得済みの見返しは控えめなリンクだけ。
+ */
+import '../../styles/acquisitionGlass.css';
+interface Props { value: any; variant: 'today' | 'side'; basePath: string }
+const { value: v, variant, basePath } = Astro.props;
+const wd = ['日', '月', '火', '水', '木', '金', '土'];
+const md = (d: string) => { const t = new Date(`${d}T00:00:00Z`); return `${t.getUTCMonth() + 1}/${t.getUTCDate()}(${wd[t.getUTCDay()]})`; };
+const CAT = { jra: '中央', nankan: '南関' };
+const yen = (n: number) => `¥${Number(n).toLocaleString('ja-JP')}`;
+const t = v?.today;
+const next = v?.next;
+const nextHref = next ? (next.isToday ? `${basePath}?date=${next.date}#acq-next` : `${basePath}?date=${next.date}`) : basePath;
+const m = v?.month;
+---
+{variant === 'today' ? (
+  <section class="ag-glass acq-today" aria-label="本日の活用状況">
+    {t && t.available > 0 ? (
+      <>
+        <div class="acq-today-head">
+          <h2>本日の活用状況</h2>
+          <span class="acq-today-date">{md(t.date)}</span>
+        </div>
+        {t.acquired !== null ? (
+          <p class="acq-today-num"><strong data-value="today-acquired">{t.acquired}</strong><span>/{t.available}レース</span><em data-value="today-pct">{t.pct}%</em></p>
+        ) : <p class="acq-today-num"><span>本日 {t.available}レース</span></p>}
+        <div class="acq-bar" role="img" aria-label={`本日の対象 ${t.available}レース中 ${t.acquired ?? 0}レースを活用`}><span style={`width:${Math.max(t.pct ?? 0, 3)}%`}></span></div>
+        <p class="acq-today-note">本日は{Object.entries(t.byCat).filter(([, n]) => n > 0).map(([c, n]) => `${CAT[c]} ${n}`).join('・')}レースの予想を、月額の範囲でいくつでも取得できます。</p>
+      </>
+    ) : (
+      <div class="acq-today-head"><h2>本日の活用状況</h2><span class="acq-today-date">{t ? md(t.date) : ''}</span></div>
+    )}
+    {next ? (
+      <>
+        {!next.isToday && <p class="acq-today-next">次の開催 <strong>{md(next.date)}</strong> は {next.available}レースの予想を取得できます。</p>}
+        <a class="ag-cta acq-today-cta" href={nextHref}>{next.isToday ? '次のレースの予想を取得する' : `${md(next.date)}の予想を見る`}</a>
+      </>
+    ) : (
+      <p class="acq-today-next">次の開催の予想は、前日の夕方以降に公開されます。</p>
+    )}
+  </section>
+) : (
+  <aside class="acq-side" aria-label="活用状況">
+    <div class="acq-side-today"><Astro.self value={v} variant="today" basePath={basePath} /></div>
+    <section class="ag-glass acq-month" aria-label="今月の活用状況">
+      <h2>今月の活用状況</h2>
+      {m ? (
+        <>
+          <div class="acq-month-nums">
+            <div class="ag-inset"><span>取得レース</span><strong data-value="month-count">{m.count}</strong><em>レース</em></div>
+            <div class="ag-inset"><span>利用日数</span><strong data-value="month-days">{m.activeDays}</strong><em>日</em></div>
+          </div>
+          <dl class="acq-month-cat">
+            <div><dt>中央競馬</dt><dd>{m.byCategory.jra}レース</dd></div>
+            <div><dt>南関東競馬</dt><dd>{m.byCategory.nankan}レース</dd></div>
+          </dl>
+          {m.price && (
+            <div class="acq-unit ag-inset">
+              {m.unitCost !== null ? (
+                <>
+                  <span>1レースあたりの実質額</span>
+                  <strong data-value="unit-cost">約{yen(m.unitCost)}</strong>
+                  <small>{m.price.basis} {yen(m.price.yen)} ÷ {m.count}レース</small>
+                </>
+              ) : (
+                <>
+                  <span>1レースあたりの実質額</span>
+                  <small>予想を取得すると、{m.price.basis} {yen(m.price.yen)} を取得数で割った実質額が表示されます。</small>
+                </>
+              )}
+            </div>
+          )}
+          <p class="acq-month-copy">{m.count > 0 ? '今月ここまで活用中。使うほど 1 レースあたりの実質額が下がります。' : '月額の範囲で、気になるレースの予想をいくつでも取得できます。'}</p>
+        </>
+      ) : <p class="acq-month-copy">活用状況を確認できませんでした。</p>}
+      <a class="acq-month-history" href="/predictions/history/">取得済みの予想（いつでも見返せます）›</a>
+    </section>
+  </aside>
+)}
+
+<style>
+  .acq-today { padding: 16px; display: grid; gap: 10px; border-color: rgba(165,180,252,0.42); box-shadow: var(--ag-shadow), 0 0 34px rgba(129,140,248,0.22), var(--ag-hi); }
+  .acq-today-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .acq-today-head h2 { margin: 0; font-size: 1.02rem; }
+  .acq-today-date { color: var(--ag-text-2); font-size: 0.85rem; font-weight: 700; }
+  .acq-today-num { display: flex; align-items: baseline; gap: 6px; margin: 0; }
+  .acq-today-num strong { font-size: 2.4rem; line-height: 1; background: linear-gradient(135deg, #ffffff, #c7d2fe 55%, #a5f3fc); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .acq-today-num span { font-size: 1.05rem; font-weight: 800; color: var(--ag-text); }
+  .acq-today-num em { margin-left: auto; font-style: normal; font-weight: 900; font-size: 1.3rem; color: #a5f3fc; }
+  .acq-bar { height: 10px; border-radius: 999px; background: rgba(255,255,255,0.14); border: 1px solid rgba(255,255,255,0.18); overflow: hidden; }
+  .acq-bar span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #67e8f9, #818cf8 60%, #c084fc); box-shadow: 0 0 12px rgba(129,140,248,0.7); }
+  .acq-today-note, .acq-today-next { margin: 0; color: var(--ag-text-2); font-size: 0.86rem; line-height: 1.6; }
+  .acq-today-next strong { color: var(--ag-text); }
+  .acq-today-cta { width: 100%; }
+  .acq-side { display: grid; gap: 14px; align-content: start; }
+  .acq-side-today { display: none; }
+  .acq-month { padding: 16px; display: grid; gap: 10px; }
+  .acq-month h2 { margin: 0; font-size: 1.02rem; }
+  .acq-month-nums { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .acq-month-nums > div { padding: 10px 12px; }
+  .acq-month-nums span { display: block; color: var(--ag-text-2); font-size: 0.78rem; }
+  .acq-month-nums strong { font-size: 1.9rem; background: linear-gradient(135deg, #ffffff, #c7d2fe); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .acq-month-nums em { font-style: normal; margin-left: 4px; color: var(--ag-text-2); font-size: 0.85rem; }
+  .acq-month-cat { margin: 0; display: grid; gap: 4px; }
+  .acq-month-cat div { display: flex; justify-content: space-between; }
+  .acq-month-cat dt { color: var(--ag-text-2); }
+  .acq-month-cat dd { margin: 0; font-weight: 800; }
+  .acq-unit { display: grid; gap: 2px; padding: 12px; border-color: rgba(103,232,249,0.35); box-shadow: inset 0 1px 0 rgba(255,255,255,0.12), 0 0 20px rgba(34,211,238,0.12); }
+  .acq-unit span { font-size: 0.78rem; color: var(--ag-text-2); }
+  .acq-unit strong { font-size: 1.6rem; color: #a5f3fc; }
+  .acq-unit small { color: var(--ag-text-2); font-size: 0.76rem; line-height: 1.5; }
+  .acq-month-copy { margin: 0; color: var(--ag-text); font-size: 0.86rem; line-height: 1.6; }
+  .acq-month-history { color: var(--ag-text-2); font-size: 0.82rem; text-decoration: none; }
+  @media (min-width: 1000px) { .acq-side-today { display: block; } }
+</style>

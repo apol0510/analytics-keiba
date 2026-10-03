@@ -11,7 +11,7 @@ interface Props {
   basePath: string;
   date: string;
   dates: string[];
-  venues: Array<{ venueName: string; venueId: string; races: Array<{ key: string; listing: any; acquired: any; selection?: any }> }>;
+  venues: Array<{ venueName: string; venueId: string; races: Array<{ key: string; listing: any; acquired: any; selection?: any; canAcquire?: boolean }> }>;
   canAcquire: boolean;
   acquiredUnknown?: boolean;
 }
@@ -22,6 +22,10 @@ const jstTime = (iso: string) => { const t = new Date(Date.parse(iso) + 9 * 3600
 const gradeLabel = { A: '推奨度 A', B: '推奨度 B', skip: '見送り候補' };
 const productLabel = product === 'srp' ? 'Premium Sanrenpuku' : 'Premium予想';
 const ctaLabel = product === 'srp' ? '推奨レースの予想を取得する' : '予想を取得する';
+// レースごとの取得可否（会場別の契約）。無ければ一覧全体の canAcquire
+const can = (r) => (typeof r.canAcquire === 'boolean' ? r.canAcquire : canAcquire);
+// 「次のレースの予想を取得する」の飛び先＝最初の未取得で取得できるレース
+const nextKey = venues.flatMap((v) => v.races).find((r) => !r.acquired && can(r))?.key || null;
 ---
 <div class="acq-list" data-product={product}>
   {dates.length > 1 && (
@@ -35,7 +39,7 @@ const ctaLabel = product === 'srp' ? '推奨レースの予想を取得する' :
     <section class="acq-venue">
       <h2 class="acq-venue-title">{v.venueName}<small>{v.races.length}レース</small></h2>
       {v.races.map((r) => (
-        <article class={`ag-glass acq-race${r.acquired ? ' is-acquired' : ''}`} data-key={r.key}>
+        <article class={`ag-glass acq-race${r.acquired ? ' is-acquired' : ''}`} data-key={r.key} id={r.key === nextKey ? 'acq-next' : undefined}>
           <div class="acq-race-no ag-inset"><strong>{r.listing.raceNumber}R</strong><span>{r.listing.startTime}</span></div>
           <div class="acq-race-info">
             <h3>{r.listing.raceName || `${r.listing.raceNumber}R`}{r.listing.isMainRace && <span class="acq-tag main">メイン</span>}</h3>
@@ -54,7 +58,7 @@ const ctaLabel = product === 'srp' ? '推奨レースの予想を取得する' :
                 <a class="ag-btn-ghost acq-view" href={viewUrlFor(r.key)}>予想を見る</a>
                 <small>取得 {jstTime(r.acquired.at)}</small>
               </>
-            ) : canAcquire ? (
+            ) : can(r) ? (
               <form method="post" action="/api/predictions/acquire/">
                 <input type="hidden" name="key" value={r.key} />
                 <button type="submit" class="ag-cta acq-btn">{ctaLabel}</button>
@@ -80,6 +84,7 @@ const ctaLabel = product === 'srp' ? '推奨レースの予想を取得する' :
   .acq-venue-title { display: flex; align-items: baseline; gap: 8px; margin: 6px 0 0; padding-left: 10px; border-left: 4px solid; border-image: linear-gradient(180deg, #22d3ee, #8b5cf6) 1; font-size: 1.15rem; }
   .acq-venue-title small { font-size: 0.78rem; color: var(--ag-text-2); font-weight: 600; }
   .acq-race { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 10px 12px; align-items: center; padding: 12px; min-width: 0; }
+  .acq-race[id="acq-next"] { scroll-margin-top: 90px; }
   .acq-race.is-acquired { border-color: rgba(74,222,128,0.42); box-shadow: var(--ag-shadow), 0 0 22px rgba(74,222,128,0.12), var(--ag-hi); }
   .acq-race-no { display: grid; justify-items: center; padding: 8px 4px; }
   .acq-race-no strong { font-size: 1.2rem; line-height: 1.1; }
