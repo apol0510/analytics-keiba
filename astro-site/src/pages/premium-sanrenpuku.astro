@@ -115,13 +115,14 @@ const formattedDate = `${year}年${parseInt(month)}月${parseInt(day)}日`;
             {/* 2026-10-03 MK 確定: Premium Sanrenpuku は「三連複で参加すべきレースを AI が選別する」商品。
                  一覧では推奨度・見送り・理由だけを出し、買い目（通常・中心）は取得後の本文ページで出す。
                  旧「絞り込む」ボタン（買い目削減の演出）は廃止。docs/PREDICTION_ACQUISITION.md */}
-            <div class="acq-layout">
+            <div class="ag-scene acq-layout">
                 <div class="acq-main">
+                <AcquisitionUsagePanel usage={acqUsage} variant="mini" />
                     <SrpRecommendedRaces day={srpModel.day} canAcquire={srpCan} />
                     <h2 class="acq-heading">全レースの判定</h2>
                     <AcquisitionRaceList product="srp" basePath="/premium-sanrenpuku/" date={srpModel.date} dates={srpModel.dates} venues={srpModel.venues} canAcquire={srpCan} acquiredUnknown={acqList === null} />
                 </div>
-                <AcquisitionUsagePanel usage={acqUsage} />
+                <AcquisitionUsagePanel usage={acqUsage} variant="side" />
             </div>
 
             {/* 【一時非表示 2026-07-15】Premium Plus CTA
@@ -1359,8 +1360,12 @@ const formattedDate = `${year}年${parseInt(month)}月${parseInt(day)}日`;
 {/* 2026-10-03: 旧レース一覧（会場切替・アコーディオン・「絞り込む」演出）のスクリプトを撤去。一覧は AcquisitionRaceList（スクリプト不要）。 */}
 
 <style>
-    .acq-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; margin: 20px 0 28px; }
-    .acq-main { display: grid; gap: 16px; align-content: start; }
-    .acq-heading { margin: 8px 0 0; font-size: 1.3rem; }
-    @media (max-width: 900px) { .acq-layout { grid-template-columns: 1fr; } }
+    .acq-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; margin: 16px -4px 24px; padding: 16px 12px; border-radius: 22px; }
+    .acq-layout > * { min-width: 0; }
+    .acq-main { display: grid; gap: 14px; align-content: start; min-width: 0; }
+    .acq-heading { margin: 4px 0 0; font-size: clamp(1.3rem, 5vw, 1.7rem); letter-spacing: 0.02em; background: linear-gradient(90deg, #f8fafc, #c7d2fe 60%, #a5f3fc); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    .acq-lead { margin: 0; color: var(--ag-text-2); font-size: 0.9rem; line-height: 1.6; }
+    @media (min-width: 1000px) {
+        .acq-layout { grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; margin: 20px 0 28px; padding: 24px; }
+    }
 </style>

@@ -499,13 +499,14 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
 
             {/* 予想は 1 件ずつ取得（2026-10-03 MK 確定・docs/PREDICTION_ACQUISITION.md）。
                  取得前は本文を出さない。旧「全レース一括表示」と会場別の傾向分析はここから外した。 */}
-            <div class="acq-layout">
+            <div class="ag-scene acq-layout">
               <div class="acq-main">
+                <AcquisitionUsagePanel usage={acqUsage} variant="mini" />
                 <h2 class="acq-heading">予想を取得</h2>
                 <p class="acq-lead">気になるレースの予想を 1 件ずつ取得できます。取得した予想は「取得済みの予想」に保存され、いつでも見返せます。</p>
                 <AcquisitionRaceList product="premium" basePath="/premium-prediction/jra/" date={acqModel.date} dates={acqModel.dates} venues={acqModel.venues} canAcquire={acqCan} acquiredUnknown={acqList === null} />
               </div>
-              <AcquisitionUsagePanel usage={acqUsage} />
+              <AcquisitionUsagePanel usage={acqUsage} variant="side" />
             </div>
 
             <!-- 免責事項（free 版に揃えてシンプル化） -->
@@ -3317,8 +3318,14 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
 </BaseLayout>
 
 <style>
-  .acq-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; margin: 20px 0 28px; }
-  .acq-heading { margin: 0; font-size: 1.6rem; }
-  .acq-lead { margin: 6px 0 16px; color: #94a3b8; }
-  @media (max-width: 900px) { .acq-layout { grid-template-columns: 1fr; } }
+    .acq-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; margin: 16px -4px 24px; padding: 16px 12px; border-radius: 22px; }
+    .acq-layout > * { min-width: 0; }
+    .acq-main { display: grid; gap: 14px; align-content: start; min-width: 0; }
+    .acq-heading { margin: 4px 0 0; font-size: clamp(1.3rem, 5vw, 1.7rem); letter-spacing: 0.02em; background: linear-gradient(90deg, #f8fafc, #c7d2fe 60%, #a5f3fc); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    .acq-lead { margin: 0; color: var(--ag-text-2); font-size: 0.9rem; line-height: 1.6; }
+    /* mobile-first: 取得一覧をすぐ出すため、装飾の指標ブロック（ai-metrics）はスマホで省く（2026-10-03 MK 確定） */
+    @media (max-width: 759px) { .ai-metrics { display: none !important; } }
+    @media (min-width: 1000px) {
+        .acq-layout { grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; margin: 20px 0 28px; padding: 24px; }
+    }
 </style>

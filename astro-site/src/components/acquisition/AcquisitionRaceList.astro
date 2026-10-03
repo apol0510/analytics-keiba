@@ -3,6 +3,7 @@
  * 「予想を取得」一覧（取得前は本文を出さない）。
  * 渡すのは出走情報（buildRaceListing）と取得状態・選別結果だけ。買い目・印・指数は渡さない／描画しない。
  */
+import '../../styles/acquisitionGlass.css';
 import { viewUrlFor } from '../../lib/acquisition/acquisitionServer.js';
 
 interface Props {
@@ -32,10 +33,10 @@ const ctaLabel = product === 'srp' ? '推奨レースの予想を取得する' :
   {venues.length === 0 && <p class="acq-empty">この日の予想はまだありません。</p>}
   {venues.map((v) => (
     <section class="acq-venue">
-      <h2 class="acq-venue-title">{v.venueName}</h2>
+      <h2 class="acq-venue-title">{v.venueName}<small>{v.races.length}レース</small></h2>
       {v.races.map((r) => (
-        <article class={`acq-race${r.acquired ? ' is-acquired' : ''}`} data-key={r.key}>
-          <div class="acq-race-no"><strong>{r.listing.raceNumber}R</strong><span>{r.listing.startTime}</span></div>
+        <article class={`ag-glass acq-race${r.acquired ? ' is-acquired' : ''}`} data-key={r.key}>
+          <div class="acq-race-no ag-inset"><strong>{r.listing.raceNumber}R</strong><span>{r.listing.startTime}</span></div>
           <div class="acq-race-info">
             <h3>{r.listing.raceName || `${r.listing.raceNumber}R`}{r.listing.isMainRace && <span class="acq-tag main">メイン</span>}</h3>
             <p>{[r.listing.distance, r.listing.horseCount ? `${r.listing.horseCount}頭` : ''].filter(Boolean).join(' ・ ')}</p>
@@ -49,14 +50,14 @@ const ctaLabel = product === 'srp' ? '推奨レースの予想を取得する' :
           <div class="acq-race-cta">
             {r.acquired ? (
               <>
-                <span class="acq-done">✓ 取得済み</span>
-                <a class="acq-view" href={viewUrlFor(r.key)}>予想を見る</a>
+                <span class="ag-done">✓ 取得済み</span>
+                <a class="ag-btn-ghost acq-view" href={viewUrlFor(r.key)}>予想を見る</a>
                 <small>取得 {jstTime(r.acquired.at)}</small>
               </>
             ) : canAcquire ? (
               <form method="post" action="/api/predictions/acquire/">
                 <input type="hidden" name="key" value={r.key} />
-                <button type="submit" class="acq-btn">{ctaLabel}</button>
+                <button type="submit" class="ag-cta acq-btn">{ctaLabel}</button>
                 <small>{productLabel}</small>
               </form>
             ) : (
@@ -70,37 +71,38 @@ const ctaLabel = product === 'srp' ? '推奨レースの予想を取得する' :
 </div>
 
 <style>
-  .acq-list { display: grid; gap: 18px; }
-  .acq-dates { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
-  .acq-dates a { flex: 0 0 auto; padding: 8px 14px; border-radius: 10px; background: rgba(148,163,184,0.14); color: inherit; text-decoration: none; font-weight: 700; }
-  .acq-dates a.is-active { background: #4f46e5; color: #fff; }
-  .acq-venue { display: grid; gap: 10px; }
-  .acq-venue-title { margin: 6px 0 0; padding-left: 10px; border-left: 4px solid #6366f1; font-size: 1.15rem; }
-  .acq-race { display: grid; grid-template-columns: 64px 1fr auto; gap: 12px; align-items: center; padding: 12px; border-radius: 12px; background: rgba(255,255,255,0.06); border: 1px solid rgba(148,163,184,0.2); }
-  .acq-race.is-acquired { border-color: rgba(34,197,94,0.45); }
-  .acq-race-no { display: grid; justify-items: center; padding: 8px 4px; border-radius: 10px; background: rgba(15,23,42,0.6); }
-  .acq-race-no strong { font-size: 1.2rem; }
-  .acq-race-no span { font-size: 0.8rem; color: #94a3b8; }
-  .acq-race-info h3 { margin: 0; font-size: 1rem; }
-  .acq-race-info p { margin: 2px 0 0; color: #94a3b8; font-size: 0.85rem; }
-  .acq-tag.main { margin-left: 6px; font-size: 0.72rem; padding: 1px 8px; border-radius: 999px; background: rgba(245,158,11,0.25); }
-  .acq-sel { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; font-size: 0.85rem; }
-  .acq-sel-badge { font-weight: 800; padding: 1px 8px; border-radius: 999px; background: rgba(148,163,184,0.25); }
-  .acq-sel.grade-A .acq-sel-badge { background: #dc2626; color: #fff; }
-  .acq-sel.grade-B .acq-sel-badge { background: #d97706; color: #fff; }
-  .acq-sel-reason { color: #cbd5e1; }
-  .acq-race-cta { display: grid; justify-items: center; gap: 4px; min-width: 150px; }
-  .acq-race-cta form { display: grid; justify-items: center; gap: 4px; margin: 0; }
-  .acq-btn { border: 0; cursor: pointer; padding: 10px 16px; border-radius: 10px; background: #4f46e5; color: #fff; font-weight: 800; font-size: 0.92rem; }
-  .acq-btn:hover { background: #4338ca; }
-  .acq-done { padding: 4px 12px; border-radius: 8px; background: rgba(34,197,94,0.2); color: #4ade80; font-weight: 800; }
-  .acq-view { padding: 8px 16px; border-radius: 10px; border: 1px solid rgba(148,163,184,0.5); color: inherit; text-decoration: none; font-weight: 700; }
-  .acq-race-cta small { color: #94a3b8; font-size: 0.75rem; }
-  .acq-warn, .acq-empty { color: #94a3b8; }
-  @media (max-width: 560px) {
-    .acq-race { grid-template-columns: 56px 1fr; }
-    .acq-race-cta { grid-column: 1 / -1; min-width: 0; }
-    .acq-btn, .acq-view { width: 100%; text-align: center; }
-    .acq-race-cta form { width: 100%; }
+  .acq-list { display: grid; gap: 16px; min-width: 0; }
+  .acq-dates { display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 6px; scrollbar-width: none; }
+  .acq-dates::-webkit-scrollbar { display: none; }
+  .acq-dates a { flex: 0 0 auto; display: inline-flex; align-items: center; min-height: 42px; padding: 0 16px; border-radius: 12px; color: var(--ag-text); text-decoration: none; font-weight: 800; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.16); box-shadow: inset 0 1px 0 rgba(255,255,255,0.12); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+  .acq-dates a.is-active { background: var(--ag-cta); border-color: rgba(255,255,255,0.35); box-shadow: 0 6px 18px rgba(99,102,241,0.45), inset 0 1px 0 rgba(255,255,255,0.35); }
+  .acq-venue { display: grid; gap: 10px; min-width: 0; }
+  .acq-venue-title { display: flex; align-items: baseline; gap: 8px; margin: 6px 0 0; padding-left: 10px; border-left: 4px solid; border-image: linear-gradient(180deg, #22d3ee, #8b5cf6) 1; font-size: 1.15rem; }
+  .acq-venue-title small { font-size: 0.78rem; color: var(--ag-text-2); font-weight: 600; }
+  .acq-race { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 10px 12px; align-items: center; padding: 12px; min-width: 0; }
+  .acq-race.is-acquired { border-color: rgba(74,222,128,0.42); box-shadow: var(--ag-shadow), 0 0 22px rgba(74,222,128,0.12), var(--ag-hi); }
+  .acq-race-no { display: grid; justify-items: center; padding: 8px 4px; }
+  .acq-race-no strong { font-size: 1.2rem; line-height: 1.1; }
+  .acq-race-no span { font-size: 0.76rem; color: var(--ag-text-2); }
+  .acq-race-info { min-width: 0; }
+  .acq-race-info h3 { margin: 0; font-size: 1rem; line-height: 1.35; overflow-wrap: anywhere; }
+  .acq-race-info p { margin: 3px 0 0; color: var(--ag-text-2); font-size: 0.82rem; }
+  .acq-tag.main { margin-left: 6px; font-size: 0.68rem; padding: 1px 8px; border-radius: 999px; color: var(--ag-gold); border: 1px solid rgba(252,211,77,0.5); background: rgba(252,211,77,0.10); vertical-align: middle; }
+  .acq-sel { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; font-size: 0.82rem; }
+  .acq-sel-badge { font-weight: 900; padding: 1px 9px; border-radius: 999px; background: rgba(148,163,184,0.25); border: 1px solid rgba(255,255,255,0.18); }
+  .acq-sel.grade-A .acq-sel-badge { background: linear-gradient(135deg, #f43f5e, #e11d48); box-shadow: 0 0 12px rgba(244,63,94,0.45); }
+  .acq-sel.grade-B .acq-sel-badge { background: linear-gradient(135deg, #f59e0b, #d97706); }
+  .acq-sel-reason { color: var(--ag-text-2); }
+  .acq-race-cta { grid-column: 1 / -1; display: grid; gap: 6px; }
+  .acq-race-cta form { display: grid; gap: 4px; margin: 0; }
+  .acq-race-cta .acq-btn, .acq-race-cta .acq-view { width: 100%; }
+  .acq-race-cta small { color: var(--ag-text-3); font-size: 0.72rem; text-align: center; }
+  .acq-race.is-acquired .acq-race-cta { grid-template-columns: auto minmax(0, 1fr); align-items: center; }
+  .acq-race.is-acquired .acq-race-cta small { grid-column: 1 / -1; }
+  .acq-warn, .acq-empty, .acq-locked { color: var(--ag-text-2); }
+  @media (min-width: 640px) {
+    .acq-race { grid-template-columns: 64px minmax(0, 1fr) 200px; padding: 14px 16px; }
+    .acq-race-cta { grid-column: auto; }
+    .acq-race.is-acquired .acq-race-cta { grid-template-columns: 1fr; justify-items: center; }
   }
 </style>
