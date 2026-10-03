@@ -370,6 +370,7 @@ test('一覧モデルは日付（新しい順）・会場・レース・（三�
   assert.equal(m.venues[0].races[0].key, 'srp:nankan:2026-10-03:funabashi:11');
   assert.ok(m.venues[0].races[0].selection);
   assert.ok(m.day && Array.isArray(m.day.top3));
+});
 
 test('会場別 Premium（中央版・南関版）も取得の入口を通り、取得できるのは契約した会場だけ', async () => {
   const { ACQUISITION_DOOR_PLANS } = await import('./acquisitionServer.js');
