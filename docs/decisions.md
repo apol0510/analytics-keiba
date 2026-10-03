@@ -1,3 +1,9 @@
+# 2026-10-03 — 旧 /prediction/[slug] の有料買い目 無認可表示を閉じる（実異常の是正）
+
+- 検出: 本番 `/prediction/2026-10-02-funabashi/` 等が**未ログインで 200**・全レースの馬単買い目（有料内容）を表示していた。サイト内リンクは 0（直 URL・検索経由のみ）。
+- 対応: ページを「同じ日付の無料予想 `/free-prediction/nankan/{date}/` へ 301・形式外は 404」だけにし、予想データを読まない。認可付きの有料表示は `/premium-prediction/nankan/` 等（gatePaidPage）だけ。
+- `AIBettingSection.astro` はこのページから外れ未使用になるが、削除可否は PR-H-2 の判断まで凍結（削除しない）。
+- 再発防止: `src/lib/auth/legacyPredictionPage.guard.test.mjs`（データ読込・買い目・AIBettingSection を含まない／301・404 のみ）。
 # 2026-10-03 — 有料予想を 1 予想ずつ取得する方式へ／Premium Sanrenpuku をレース選別商品へ（MK 確定）
 
 - **決定**: 有料予想の全部見える方式を廃止し 1 予想ずつ取得。Premium は通常＋点数を絞った馬単・三連複通常、Premium Sanrenpuku は推奨度/見送り・理由・通常・中心。三連複 CTA を「レース選別」へ全面統一。取得履歴で利用状況を出す。既存三連複購入者の権利と Premium Plus は別概念として維持（モックの方向性は承認済み）。
