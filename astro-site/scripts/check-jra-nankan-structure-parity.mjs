@@ -87,6 +87,25 @@ for (const r of REQUIRED) {
   }
 }
 
+// ── 2026-10-03〜 予想本文は「取得」後に共通部品で描画する（docs/PREDICTION_ACQUISITION.md）──
+// 中央・南関とも同じ一覧部品（AcquisitionRaceList）と同じ本文部品（AcquiredPredictionBody）を使うことを確かめ、
+// 旧来ページ内にあった本文セクション（連下・抑え・不要馬・買い目カード）は本文部品側に必須とする。
+const BODY = resolve(__dirname, '..', 'src', 'components', 'acquisition', 'AcquiredPredictionBody.astro');
+const CONTENT = resolve(__dirname, '..', 'src', 'lib', 'acquisition', 'predictionContent.js');
+const bodyContent = checkFile(BODY);
+const contentLib = checkFile(CONTENT);
+for (const [name, src] of [['jra', jraContent], ['nankan', nankanContent]]) {
+  if (!src.includes('<AcquisitionRaceList product="premium"')) {
+    missing.push({ key: 'AcquisitionRaceList', label: `${name}: 取得一覧（共通部品）`, advice: '<AcquisitionRaceList product="premium" …/> を使う' });
+  }
+}
+for (const key of ['recommendation-section', 'unified-bet-card', 'bet-list', 'bet-item', 'minor-group-renka', 'minor-group-osae', 'ineligible-section']) {
+  if (!bodyContent.includes(key)) missing.push({ key, label: `本文部品の ${key}`, advice: 'AcquiredPredictionBody.astro に必須セクションを置く' });
+}
+for (const key of ['isOsaeCandidate', 'isIneligibleHorse', 'getHorseAiIndex']) {
+  if (!contentLib.includes(key)) missing.push({ key, label: `本文の単一源 ${key}`, advice: 'predictionContent.js で共通判定を使う' });
+}
+
 if (missing.length === 0) {
   console.log(`✅ premium-prediction/jra.astro: nankan 構造パリティ OK (必須 ${okList.length} 項目すべて存在)`);
   process.exit(0);

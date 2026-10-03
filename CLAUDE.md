@@ -259,6 +259,7 @@ CI・deploy・外部 API・scheduled job・将来日付・長時間 run 等の**
 
 | 領域 | 正本 |
 |---|---|
+| **有料予想の取得方式（1 予想ずつ）／Premium Sanrenpuku のレース選別** | [`PREDICTION_ACQUISITION.md`](./astro-site/docs/PREDICTION_ACQUISITION.md) |
 | 予想ロジック（スコア・役割決定） | [`PREDICTION_LOGIC.md`](./astro-site/docs/PREDICTION_LOGIC.md) |
 | 買い目生成（メイン5点 / 通常2段 / 抑え判定） | [`MAIN_RACE_BETTING.md`](./astro-site/docs/MAIN_RACE_BETTING.md) |
 | 購入点数・回収率 | [`BET_POINT_LOGIC.md`](./astro-site/docs/BET_POINT_LOGIC.md) |
@@ -342,6 +343,15 @@ CLAUDE.md 再編（2026-08-13）で旧セクションがどこへ行ったかの
 ## 🚫 領域別の不変条件（詳細は各正本へ）
 
 破ると本番事故になるものだけを並べる。**変更したくなったら、まず正本を読むこと。**
+
+### 📋 有料予想は 1 予想ずつ取得（2026-10-03 MK 確定）
+
+正本は [`PREDICTION_ACQUISITION.md`](./astro-site/docs/PREDICTION_ACQUISITION.md)（`npm run test:acquisition` → `check:safety`）。
+
+- **取得前は本文を出さない**。一覧部品 `AcquisitionRaceList` に買い目・印・指数を渡さない。本文部品 `AcquiredPredictionBody` は `/predictions/view/` 以外で使わない
+- 本人は `ak_session` の recordId だけ（クライアントから会員を受け取らない）。Redis が読めなければ本文を出さない（fail closed）
+- 三連複の訴求は「今日、三連複で狙うべきレースを AI が選別」。「点数を絞る／少点数」を復活させない。送信済みメールは文面を変えず `retiredCopyCampaigns.js` で送信停止
+- 既存三連複購入者の権利・Premium Plus の判定は変えない
 
 ### 💳 Stripe 定期購読（2026-10-02 MK 確定）
 

@@ -1,3 +1,19 @@
+# 📋 有料予想の 1 予想ずつ取得／Premium Sanrenpuku レース選別（2026-10-03 MK 指示 / 本番反映済み）
+
+| 項目 | 状態 |
+|---|---|
+| 正本 | `spec.md` 先頭・`decisions.md` 2026-10-03・`astro-site/docs/PREDICTION_ACQUISITION.md` |
+| 実装 | branch `feat/per-prediction-acquisition`（worktree `analytics-keiba-acq`）。取得 API・閲覧/履歴ページ・有料 4 ページの一覧化・推奨度判定・利用状況（一覧/履歴/マイページ）・三連複 CTA 統一・旧訴求メールの送信停止 |
+| テスト | `test:acquisition`（20 件・`check:safety` に組込）／`retiredCopyCampaigns.guard.test.mjs`／既存の GCI・パリティを新しい単一源へ付け替え。`check:safety`・build 通過 |
+| E2E（ローカル・本番と同じビルド済み SSR 関数を直接呼ぶ・合成会員・外部接続なし）| 未ログイン=302／Light=302／取得前は本文 0／他オリジン POST=403／取得=303→本文（通常・絞り・三連複）／再取得は冪等（取得数 1 のまま）／他会員は未取得・本文 0／三連複のみ会員は Premium 取得 403・選別取得可（見送り・理由・通常・中心）／形式外キー 400／履歴・マイページに今月 1 件 |
+| 同日是正 | 旧 `/prediction/[slug]` の無認可表示 → PR #686 merge・本番 301 確認済み |
+| 本番 | PR #687 squash merge `c4325c9d`・main CI success・Netlify 本番反映。read-only 確認: 有料 4 ページ・閲覧・履歴は未ログイン 302／取得 API は GET 405・他オリジン POST 403・未ログイン POST 302／`/sanrenpuku-demo/` は新訴求で旧訴求 0／トップ・料金・無料予想・マイページ 200 |
+| 本番で確認できないこと | 会員の画面（本番の会員セッションは作れない設計）→ ビルド済み SSR 関数の合成会員 E2E で代替（上の行）|
+| 後続（#677 と合流するとき）| 会場別 Premium（中央版・南関版）が取得一覧に入れるよう、入口の権利 `ACQUISITION_DOOR_PLANS` と Premium ページの gate に `premium-jra` / `premium-nankan` を加える（#677 側で対応）|
+| cleanup | worktree `analytics-keiba-acq` / `analytics-keiba-slugfix` 削除・E2E の使い捨て鍵削除・ローカル dev 停止 |
+
+---
+
 # 💳 Stripe 定期購読の導入（2026-10-02 MK 指示 / 進行中）
 
 | 項目 | 状態 |

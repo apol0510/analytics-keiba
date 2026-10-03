@@ -1,4 +1,10 @@
 ---
+import AcquisitionRaceList from '../../components/acquisition/AcquisitionRaceList.astro';
+import AcquisitionUsagePanel from '../../components/acquisition/AcquisitionUsagePanel.astro';
+import { buildListModel } from '../../lib/acquisition/listModel.js';
+import { loadMemberAcquisitions } from '../../lib/acquisition/acquisitionServer.js';
+import { summarizeUsage } from '../../lib/acquisition/usageStats.js';
+import { canAcquire } from '../../lib/acquisition/acquisitionPolicy.js';
 // ⚠️ SSR。有料本文を組み立てる前にサーバー側で認可を確定させる（2026-08-08）。
 //    prerender=true のままだと静的 HTML に有料本文が入り、localStorage の書き換えだけで読めてしまう。
 export const prerender = false;
@@ -35,6 +41,12 @@ const gate = await gatePaidPage({
 });
 if (gate.response) return gate.response;
 for (const [k, v] of Object.entries(PAID_PAGE_HEADERS)) Astro.response.headers.set(k, v);
+
+// ── 予想の取得（1 件ずつ）: 本人の取得記録だけを読む。一覧には出走情報と取得状態だけを渡す ──
+const acqList = await loadMemberAcquisitions({ recordId: gate.subject, env: process.env });
+const acqModel = buildListModel({ cat: 'nankan', product: 'premium', requestedDate: Astro.url.searchParams.get('date'), acquisitions: acqList || [] });
+const acqUsage = acqList ? summarizeUsage(acqList) : null;
+const acqCan = canAcquire(gate.entitlements, { product: 'premium', cat: 'nankan' });
 
 // R1d-impl-v2c Step2: 連下/補欠 compact 近走の field 読み替え（entries 由来 / 既存 getDisplay 由来の両 shape 対応）。
 // 表示専用・正本順位不変・recentHorseHistories fallback 正本化しない・compact 維持・docs §34.24。
@@ -290,23 +302,6 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
             </div>
         </div>
 
-        <!-- 会場タブ（同時開催の場合のみ表示） -->
-        {isMultiVenue && (
-            <div class="venue-selector">
-                {venuesProcessed.map((v, i) => (
-                    <button
-                        class={`venue-btn ${i === 0 ? 'active' : ''}`}
-                        data-venue-index={i}
-                        type="button"
-                        onclick="selectNankanVenue(this)"
-                    >
-                        <span class="venue-label">{v.track}</span>
-                        <span class="venue-race-count">{v.allRacesData.races.length}R</span>
-                    </button>
-                ))}
-            </div>
-        )}
-
         <!-- 穴馬ページリンク -->
         <div class="dark-horse-link-section">
             <a href="/dark-horse-picks/?category=nankan" class="dark-horse-link-btn">
@@ -429,652 +424,16 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
             })();
         </script>
 
-        <!-- 本日の傾向分析（AI自動判定） -->
-        <div class="daily-analysis-section">
-            <h3 class="analysis-title">🔍 本日の傾向分析（AI自動判定）</h3>
-            <p class="analysis-subtitle">本命スコア・対抗との差・混戦度を合成したレース信頼度で自動分類しています</p>
-
-            <div class="analysis-stats">
-                <div class="stat-card high-confidence">
-                    <div class="stat-icon">⭐</div>
-                    <div class="stat-content">
-                        <div class="stat-number">{highConfidenceRaces.length}</div>
-                        <div class="stat-label">高信頼度レース</div>
-                        <div class="stat-description">本命候補が比較的明確</div>
-                    </div>
-                </div>
-
-                <div class="stat-card upset-mode">
-                    <div class="stat-icon">💰</div>
-                    <div class="stat-content">
-                        <div class="stat-number">{upsetModeRaces.length}</div>
-                        <div class="stat-label">高配当モードレース</div>
-                        <div class="stat-description">上位拮抗・波乱含み</div>
-                    </div>
-                </div>
-
-                <div class="stat-card normal">
-                    <div class="stat-icon">📊</div>
-                    <div class="stat-content">
-                        <div class="stat-number">{normalRaces.length}</div>
-                        <div class="stat-label">通常レース</div>
-                        <div class="stat-description">標準的なAI推奨レース</div>
-                    </div>
-                </div>
+        {/* 予想は 1 件ずつ取得（2026-10-03 MK 確定・docs/PREDICTION_ACQUISITION.md）。
+             取得前は本文を出さない。旧「全レース一括表示」・会場タブ・傾向分析はここから外した。 */}
+        <div class="acq-layout">
+            <div class="acq-main">
+                <h2 class="acq-heading">予想を取得</h2>
+                <p class="acq-lead">気になるレースの予想を 1 件ずつ取得できます。取得した予想は「取得済みの予想」に保存され、いつでも見返せます。</p>
+                <AcquisitionRaceList product="premium" basePath="/premium-prediction/nankan/" date={acqModel.date} dates={acqModel.dates} venues={acqModel.venues} canAcquire={acqCan} acquiredUnknown={acqList === null} />
             </div>
-
-            <div class="auto-insight">
-                <div class="insight-icon">💡</div>
-                <div class="insight-text">{autoInsight}</div>
-            </div>
-
-            {/* レース別詳細リスト */}
-            <div class="race-classification-list">
-                {highConfidenceRaces.length > 0 && (
-                    <div class="classification-group">
-                        <div class="classification-header high">
-                            <span class="badge">⭐ 高信頼度</span>
-                            <span class="count">{highConfidenceRaces.length}レース</span>
-                        </div>
-                        <div class="race-chips">
-                            {highConfidenceRaces.map((race) => (
-                                <div class="race-chip high">
-                                    <span class="chip-race">{race.raceNumber}</span>
-                                    <span class="chip-score">{race.confidenceScore}pt</span>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                )}
-
-                {normalRaces.length > 0 && (
-                    <div class="classification-group">
-                        <div class="classification-header normal">
-                            <span class="badge">📊 通常</span>
-                            <span class="count">{normalRaces.length}レース</span>
-                        </div>
-                        <div class="race-chips">
-                            {normalRaces.map((race) => (
-                                <div class="race-chip normal">
-                                    <span class="chip-race">{race.raceNumber}</span>
-                                    <span class="chip-score">{race.confidenceScore}pt</span>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                )}
-
-                {upsetModeRaces.length > 0 && (
-                    <div class="classification-group">
-                        <div class="classification-header upset">
-                            <span class="badge">💰 高配当モード</span>
-                            <span class="count">{upsetModeRaces.length}レース</span>
-                        </div>
-                        <div class="race-chips">
-                            {upsetModeRaces.map((race) => (
-                                <div class="race-chip upset">
-                                    <span class="chip-race">{race.raceNumber}</span>
-                                    <span class="chip-score">{race.confidenceScore}pt</span>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                )}
-            </div>
+            <AcquisitionUsagePanel usage={acqUsage} />
         </div>
-
-        <!-- 全レースアコーディオン（データドリブン）- 同時開催対応 -->
-        {venuesProcessed.map((venueData, venueIndex) => (
-        <div class={`venue-content ${venueIndex === 0 ? 'active' : ''}`} data-venue-index={venueIndex}>
-        {isMultiVenue && (
-            <div class="venue-header-inline">
-                <h2 class="venue-title-inline">{venueData.track}（{venueData.totalRaces}R）</h2>
-            </div>
-        )}
-        {venueData.sortedRaces.map((raceData) => {
-            const raceNum = raceData.raceNumber.replace('R', '');
-            const isMainRace = raceData.isMainRace;
-
-            // 南関 featureScores（この会場・日付分）。馬単位で getHorseFeatures が引く。無ければ既存表示に fallback。
-            const fsVenueCode = venueCodeFromName('nankan', (venueData.track || '').replace('競馬', '').trim());
-            const featureScoresData = loadFeatureScores('nankan', venueData.raceDate, fsVenueCode);
-
-            // 20年運営対応: データ正規化システム使用
-            const normalizedHorses = normalizeHorseData(raceData);
-            const raceHorses = normalizedHorses; // 正規化されたデータを使用
-
-            // データ整合性チェック（開発環境でのみログ出力）
-            const integrity = validateDataIntegrity(raceData);
-            if (integrity.length > 0) {
-                console.warn(`Race ${raceData.raceNumber} integrity issues:`, integrity);
-            }
-
-            // 買い目データ取得（メイン=一方向5点ロジック準拠 / 単一源は importPrediction の bettingLines）
-            // raceData.bettingLines.umatan を最優先。欠落時のみ共通モジュールで再生成。
-            const umatanLines = Array.isArray(raceData.bettingLines?.umatan) && raceData.bettingLines.umatan.length > 0
-                ? raceData.bettingLines.umatan
-                : generateRaceUmatanLines(raceData.allHorses || [], !!raceData.isMainRace);
-            // 保存文字列をそのまま表示。メインは正本生成時点で一方向「本命→相手5頭」5点で保存される。
-            const umatanBets = umatanLines.map((line) => ({
-                numbers: stripOsaeForDisplay(line),
-                points: countPointsFromUmatanLine(line) || 0,
-            }));
-
-            // 三連複買い目（絞り込み / 通常本命軸 / 通常対抗軸） AI_SANRENPUKU_AXIS_V1
-            const sanrenpukuBuilt = buildRaceSanrenpuku(raceData.allHorses || []);
-            const sanrenpukuView = {
-                narrow: sanrenpukuBuilt.narrow ? {
-                    line: formatSanrenpukuLine(sanrenpukuBuilt.narrow),
-                    points: sanrenpukuBuilt.narrow.points || 0,
-                } : null,
-                normalHonmeiAxis: sanrenpukuBuilt.normalHonmeiAxis ? {
-                    line: formatSanrenpukuLine(sanrenpukuBuilt.normalHonmeiAxis),
-                    points: sanrenpukuBuilt.normalHonmeiAxis.points || 0,
-                } : null,
-                normalTaikouAxis: sanrenpukuBuilt.normalTaikouAxis ? {
-                    line: formatSanrenpukuLine(sanrenpukuBuilt.normalTaikouAxis),
-                    points: sanrenpukuBuilt.normalTaikouAxis.points || 0,
-                } : null,
-            };
-
-            const accordionId = `race-v${venueIndex}-${raceNum}r`;
-            const toggleId = `toggle-v${venueIndex}-${raceNum}r`;
-            return (
-                <div class={`race-${raceNum}r-accordion`}>
-                    <div class="race-accordion-header" onclick={`toggleNankanRace(${venueIndex}, ${raceNum})`}>
-                        <div class="race-basic-info">
-                            <span class="race-number">{raceData.raceNumber}</span>
-                            <span class="race-name">{(raceData.raceName || '競走名').replace(/\s*[ダ芝]\d+[,.]?\d*m.*$/, '').replace(/\s*（\d+頭）.*$/, '').replace(/\s*発走時刻.*$/, '')}</span>
-                            <span class="race-tier-badge">{`第${raceNum}レース`}</span>
-                            {isMainRace && <span class="main-race-badge">メインレース</span>}
-                        </div>
-                        <div class="race-preview">
-                            <span class="toggle-icon" id={toggleId}>▼</span>
-                        </div>
-                    </div>
-
-                    <div class="race-accordion-content" id={accordionId} style="max-height: 0; opacity: 0;">
-                        <div class={`race-content-${raceNum}r`}>
-
-                            <!-- レース詳細情報 -->
-                            <div class="race-details-info">
-                                {/* レース名から距離・頭数・発走時刻を抽出 */}
-                                {(() => {
-                                    const raceName = raceData.raceName || '競走名';
-                                    // レース名から距離、頭数、発走時刻を抽出
-                                    const distanceMatch = raceName.match(/[ダ芝]\s?(\d+[,.]?\d*)\s?m/);
-                                    const horseCountMatch = raceName.match(/[（(](\d+)頭[）)]/);
-                                    const startTimeMatch = raceName.match(/発走時刻\s?(\d+:\d+)/);
-
-                                    // 抽出した情報またはraceInfoから取得（末尾に m を付与。free 版と同一正規化）
-                                    const rawDistance = distanceMatch ? distanceMatch[0] : (raceData.raceInfo?.distance || null);
-                                    const distance = (() => {
-                                        if (rawDistance == null || rawDistance === '') return null;
-                                        const s = String(rawDistance).replace(/㍍|メートル|ｍ|Ｍ/g, 'm').trim();
-                                        return /m$/i.test(s) ? s.replace(/M$/, 'm') : `${s}m`;
-                                    })();
-                                    const horseCount = horseCountMatch ? horseCountMatch[1] : (raceData.raceInfo?.horseCount || null);
-                                    const startTime = startTimeMatch ? startTimeMatch[1] : (raceData.raceInfo?.startTime || null);
-
-                                    // レース名から情報を除去してクリーンな名前を取得
-                                    let cleanRaceName = raceName
-                                        .replace(/\s*[ダ芝]\d+[,.]?\d*m.*$/, '')
-                                        .replace(/\s*[（(]\d+頭[）)].*$/, '')
-                                        .replace(/\s*発走時刻.*$/, '');
-
-                                    return (
-                                        <>
-                                            <h3 class="race-detail-title">{raceData.raceNumber} {cleanRaceName}</h3>
-                                            <div class="race-detail-meta">
-                                                {distance && <span class="meta-item">📏 {distance}</span>}
-                                                {horseCount && <span class="meta-item">🐎 {horseCount}頭</span>}
-                                                {startTime && <span class="meta-item">🕐 発走時刻 {startTime}</span>}
-                                            </div>
-                                        </>
-                                    );
-                                })()}
-                            </div>
-
-                            <!-- AI選出馬分析 -->
-                            <div class="analysis-section">
-                                <h2 class="section-title">
-                                    <span>🤖</span>
-                                    <span>AIモデル選出馬 - XGBoost×LSTM統合分析</span>
-                                </h2>
-
-                                {/* 本命・対抗・単穴を統一フォーマットで表示（無料版と同じデザイン） */}
-                                {raceHorses && raceHorses.filter(h => h.role === '本命' || h.role === '対抗' || h.role === '単穴').map((horse) => {
-                                    const roleConfig = getRoleDisplayConfig(horse.role);
-                                    const cardClass = horse.role === '本命' ? 'horse-card horse-card-main'
-                                        : horse.role === '対抗' ? 'horse-card horse-card-sub'
-                                        : 'horse-card horse-card-tana';
-                                    const pt = horse.pt ?? 0;
-                                    const importance = fsImportanceFor(featureScoresData, raceNum, horse.number) || (horse.importance && horse.importance.length > 0 ? horse.importance : null);
-                                    const evalPoints = Array.isArray(horse.evalPoints) ? horse.evalPoints : [];
-                                    const weightStr = (horse.weight != null && horse.weight !== '' && Number.isFinite(Number(horse.weight)))
-                                        ? `${horse.weight}kg`
-                                        : null;
-                                    const ageGenderStr = (horse.ageNum != null && horse.gender)
-                                        ? `${horse.ageNum}歳${horse.gender}`
-                                        : (horse.age || null);
-                                    const hasBasicInfo = ageGenderStr || weightStr || horse.jockey || horse.trainer || horse.frame != null || horse.sire;
-                                    const displayCi = getHorseAiIndex(horse);
-                                    return (
-                                    <div class={cardClass}>
-                                        {horse.role === '本命' && <div class="main-glow" aria-hidden="true"></div>}
-                                        <div class="horse-header">
-                                            <div class="horse-identity">
-                                                <span class={roleConfig.markClass}>{horse.displayMark}</span>
-                                                <span class="horse-number">{horse.number}</span>
-                                                <span class="horse-name">{horse.name}</span>
-                                            </div>
-                                            <span class={`role-badge role-badge-${horse.role === '本命' ? 'main' : horse.role === '対抗' ? 'sub' : 'tana'}`}>{horse.role}</span>
-                                        </div>
-
-                                        <div class="horse-stats-row">
-                                            <div class="stat-block stat-score-block">
-                                                <div class="stat-label">累積スコア</div>
-                                                <div class="stat-value stat-score">{pt}<span class="stat-unit">pt</span></div>
-                                            </div>
-                                            {displayCi != null && (
-                                                <div class="stat-block stat-index-block">
-                                                    <div class="stat-label">AI総合指数</div>
-                                                    <div class="stat-value stat-index">{displayCi}</div>
-                                                </div>
-                                            )}
-                                        </div>
-
-                                        {hasBasicInfo && (
-                                            <div class="basic-info">
-                                                <h4>基本情報</h4>
-                                                <div class="info-grid">
-                                                    {(ageGenderStr || weightStr) && (
-                                                        <div class="info-line info-line-primary">
-                                                            {ageGenderStr && <span class="info-chip">{ageGenderStr}</span>}
-                                                            {weightStr && <span class="info-chip">{weightStr}</span>}
-                                                        </div>
-                                                    )}
-                                                    {horse.jockey && (
-                                                        <div class="info-line"><span class="info-key">騎手</span><span class="info-val">{horse.jockey}</span></div>
-                                                    )}
-                                                    {horse.trainer && (
-                                                        <div class="info-line"><span class="info-key">調教師</span><span class="info-val">{horse.trainer}</span></div>
-                                                    )}
-                                                    {horse.frame != null && (
-                                                        <div class="info-line"><span class="info-key">枠番</span><span class="info-val">{horse.frame}枠</span></div>
-                                                    )}
-                                                    {horse.sire && (
-                                                        <div class="info-line"><span class="info-key">父</span><span class="info-val">{horse.sire}</span></div>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        {evalPoints.length > 0 && (
-                                            <div class="eval-points">
-                                                <h4>評価ポイント</h4>
-                                                <div class="eval-tags">
-                                                    {evalPoints.map((p) => (
-                                                        <span class="eval-tag">{p}</span>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        {importance && (
-                                            <div class="feature-importance">
-                                                <h4>特徴量重要度</h4>
-                                                <div class="importance-list">
-                                                    {importance.map((item) => (
-                                                        <div class="importance-item">
-                                                            <span class="importance-label">{item.label}</span>
-                                                            <div class="importance-bar">
-                                                                <div class="importance-fill" style={`width: ${item.value * 100}%`}></div>
-                                                            </div>
-                                                            <span class="importance-percent">{Math.round(item.value * 100)}%</span>
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        {/* R1d-impl-v2: 既存「過去N走」アコーディオンを維持しつつ内部だけ整理（上がり3F/通過を優先表示・白カード不可） */}
-                                        {/* R1d-impl-v2b: entries は premium 近走アコーディオンの「表示専用ソース」。entries があれば優先し、無ければ既存 getDisplay を維持（正本順位は変更しない・recentHorseHistories fallback 正本にしない・docs §34.21） */}
-                                        {(() => {
-                                            const entriesRecentRaces = Array.isArray(horse.recentRacesFromEntriesNankan) ? horse.recentRacesFromEntriesNankan : [];
-                                            const recentRaces = entriesRecentRaces.length > 0 ? entriesRecentRaces : getDisplayRecentRacesForNankan(horse);
-                                            return Array.isArray(recentRaces) && recentRaces.length > 0 && (
-                                            <details class="recent-races recent-races-enhanced" data-click-close="true">
-                                                <summary>過去{Math.min(5, recentRaces.length)}走</summary>
-                                                <div class="recent-races-list">
-                                                    {recentRaces.slice(0, 5).map((r) => {
-                                                        const ne = (v) => v !== null && v !== undefined && String(v).trim() !== '';
-                                                        const pick = (...xs) => { for (const x of xs) { if (ne(x)) return String(x).trim(); } return ''; };
-                                                        const date = pick(r?.date, r?.raceDate);
-                                                        const venue = pick(r?.venue, r?.track, r?.trackName);
-                                                        const distance = pick(r?.distance);
-                                                        const cond = pick(r?.trackCondition, r?.going, r?.condition);
-                                                        const rankRaw = r?.rank ?? r?.finish;
-                                                        const rank = (rankRaw != null && Number.isFinite(Number(rankRaw))) ? `${rankRaw}着` : pick(r?.finishStatus);
-                                                        const pop = ne(r?.popularity) ? `${r.popularity}人気` : '';
-                                                        const time = ne(r?.time) ? `タイム${r.time}` : '';
-                                                        const margin = ne(r?.margin) ? `着差${r.margin}` : '';
-                                                        const last3f = (() => { const v = pick(r?.last3f, r?.lastThreeFurlong, r?.agari, r?.closing3f); return v ? `上がり${v}` : ''; })();
-                                                        const pass = (() => { const v = pick(r?.passingOrder, r?.cornerPassage, r?.corner); return v ? `通過${v}` : ''; })();
-                                                        const jk = ne(r?.jockey) ? `騎手:${r.jockey}` : '';
-                                                        const kin = (() => { const v = pick(r?.carriedWeight, r?.weight); return v ? `斤量${v}` : ''; })();
-                                                        const bw = ne(r?.bodyWeight) ? `馬体${r.bodyWeight}kg` : '';
-                                                        const raceName = pick(r?.raceName);
-                                                        const row1 = [date, venue, distance, cond].filter(Boolean);
-                                                        const row2 = [rank, pop, time, margin].filter(Boolean);
-                                                        const row3 = [last3f, pass].filter(Boolean);
-                                                        const row4 = [jk, kin, bw].filter(Boolean);
-                                                        return (
-                                                            <div class="recent-race-card">
-                                                                {row1.length > 0 && <div class="recent-race-line recent-race-head">{row1.map((x) => (<span class="recent-race-cell">{x}</span>))}</div>}
-                                                                {row2.length > 0 && <div class="recent-race-line recent-race-result">{row2.map((x) => (<span class="recent-race-cell">{x}</span>))}</div>}
-                                                                {row3.length > 0 && <div class="recent-race-line recent-race-lap">{row3.map((x) => (<span class="recent-race-cell">{x}</span>))}</div>}
-                                                                {row4.length > 0 && <div class="recent-race-line recent-race-meta">{row4.map((x) => (<span class="recent-race-cell">{x}</span>))}</div>}
-                                                                {raceName && <div class="recent-race-line recent-race-name">{raceName}</div>}
-                                                            </div>
-                                                        );
-                                                    })}
-                                                </div>
-                                            </details>
-                                        ); })()}
-                                        <NankanHorseStatsPanel horse={horse} />
-                                    </div>
-                                    );
-                                })}
-
-                                {/* 連下候補馬（情報量のあるミニカード） */}
-                                {raceHorses && raceHorses.filter(h => h.role === '連下' || h.role === '連下最上位').length > 0 && (
-                                    <div class="horse-card horse-card-minor minor-group-renka">
-                                        <div class="horse-header">
-                                            <div>
-                                                <span class="horse-mark-minor">{raceHorses.find(h => h.role === '連下')?.displayMark || '△'}</span>
-                                                <span class="minor-group-title minor-group-title-renka">連下候補馬</span>
-                                            </div>
-                                        </div>
-                                        <div class="minor-horse-grid">
-                                            {raceHorses.filter(h => h.role === '連下' || h.role === '連下最上位').map((horse) => {
-                                                const honmei = raceHorses.find(h => h.role === '本命');
-                                                const gap = (Number(honmei?.pt) || 0) - (Number(horse?.pt) || 0);
-                                                const comment = generateMinorHorseComment(horse.role, gap);
-                                                const importance = fsImportanceFor(featureScoresData, raceNum, horse.number) || (Array.isArray(horse.importance) && horse.importance.length > 0 ? horse.importance : null);
-                                                const evalPoints = Array.isArray(horse.evalPoints) ? horse.evalPoints : [];
-                                                // R1d-impl-v2c Step1: entries を表示専用ソースとして優先（無ければ既存 getDisplay・正本順位不変・recentHorseHistories fallback 正本化しない・compact 表示維持・docs §34.23）
-                                                const entriesRecentRaces = Array.isArray(horse.recentRacesFromEntriesNankan) ? horse.recentRacesFromEntriesNankan : [];
-                                                const recentRaces = entriesRecentRaces.length > 0 ? entriesRecentRaces : getDisplayRecentRacesForNankan(horse);
-                                                const weightStr = (horse.weight != null && Number.isFinite(Number(horse.weight))) ? `${horse.weight}kg` : null;
-                                                return (
-                                                    <div class="minor-horse-card minor-horse-card-renka">
-                                                        <div class="minor-horse-head">
-                                                            <span class="minor-horse-mark">{horse.displayMark || '△'}</span>
-                                                            <span class="minor-horse-number">{horse.number}</span>
-                                                            <span class="minor-horse-name">{horse.name}</span>
-                                                            <span class="minor-horse-score">{horse.pt ?? 0}pt</span>
-                                                        </div>
-                                                        <div class="minor-horse-meta">
-                                                            {horse.jockey && <span><span class="meta-key">騎手</span>{horse.jockey}</span>}
-                                                            {horse.trainer && <span><span class="meta-key">厩舎</span>{horse.trainer}</span>}
-                                                            {weightStr && <span><span class="meta-key">斤量</span>{weightStr}</span>}
-                                                            {getHorseAiIndex(horse) != null && <span><span class="meta-key">指数</span>{getHorseAiIndex(horse)}</span>}
-                                                        </div>
-                                                        {evalPoints.length > 0 && (
-                                                            <div class="minor-horse-evals">
-                                                                {evalPoints.slice(0, 3).map((p) => (<span class="eval-tag-small">{p}</span>))}
-                                                            </div>
-                                                        )}
-                                                        {importance && (
-                                                            <div class="minor-horse-importance">
-                                                                安定{Math.round(importance[0].value * 100)} / 能力{Math.round(importance[1].value * 100)} / 展開{Math.round(importance[2].value * 100)}
-                                                            </div>
-                                                        )}
-                                                        {comment && <p class="minor-horse-comment">{comment}</p>}
-                                                        {recentRaces.length > 0 && (
-                                                            <details class="recent-races recent-races-compact" data-click-close="true">
-                                                                <summary>過去{Math.min(5, recentRaces.length)}走</summary>
-                                                                <div class="recent-races-list">
-                                                                    {recentRaces.slice(0, 5).map((r) => {
-                                                                        // R1d-impl-v2c Step2: コーナー通過順を最小追加・field 読み替え補強（compact 維持・docs §34.24）
-                                                                        const c = compactRaceCells(r);
-                                                                        return (
-                                                                            <div class="recent-race-row">
-                                                                                {c.venue && <span class="recent-race-venue">{c.venue}</span>}
-                                                                                {c.distance && <span class="recent-race-distance">{c.distance}</span>}
-                                                                                {c.rank && <span class="recent-race-rank">{c.rank}</span>}
-                                                                                {c.time && <span class="recent-race-meta">タイム{c.time}</span>}
-                                                                                {c.last3f && <span class="recent-race-meta">上がり{c.last3f}</span>}
-                                                                                {c.pass && <span class="recent-race-meta">通過{c.pass}</span>}
-                                                                                {c.bodyWeight && <span class="recent-race-meta">{c.bodyWeight}kg</span>}
-                                                                                {c.raceName && <span class="recent-race-meta recent-race-name">{c.raceName}</span>}
-                                                                            </div>
-                                                                        );
-                                                                    })}
-                                                                </div>
-                                                            </details>
-                                                        )}
-                                                        <NankanHorseStatsPanel horse={horse} />
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* 抑え候補馬（控えめなミニカード）— shared-prediction-logic.js の isOsaeCandidate で振り分け
-                                    （2026-05-13 修正: 補欠は pt > 70 または computerIndex >= 10 のみ抑え候補へ。
-                                    それ以外の弱評価補欠は下の「不要馬・見送り馬」に残す） */}
-                                {raceHorses && raceHorses.filter(isOsaeCandidate).length > 0 && (
-                                    <div class="horse-card horse-card-minor minor-group-osae">
-                                        <div class="horse-header">
-                                            <div>
-                                                <span class="horse-mark-minor">{raceHorses.find(h => h.role === '押さえ')?.displayMark || '×'}</span>
-                                                <span class="minor-group-title minor-group-title-osae">抑え候補馬</span>
-                                            </div>
-                                        </div>
-                                        <div class="minor-horse-grid">
-                                            {sortOsaeCandidates(raceHorses.filter(isOsaeCandidate))
-                                                .map((horse) => {
-                                                const honmei = raceHorses.find(h => h.role === '本命');
-                                                const gap = (Number(honmei?.pt) || 0) - (Number(horse?.pt) || 0);
-                                                const comment = generateMinorHorseComment(horse.role, gap);
-                                                const evalPoints = Array.isArray(horse.evalPoints) ? horse.evalPoints : [];
-                                                // R1d-impl-v2c Step1: entries を表示専用ソースとして優先（無ければ既存 getDisplay・正本順位不変・recentHorseHistories fallback 正本化しない・compact 表示維持・docs §34.23）
-                                                const entriesRecentRaces = Array.isArray(horse.recentRacesFromEntriesNankan) ? horse.recentRacesFromEntriesNankan : [];
-                                                const recentRaces = entriesRecentRaces.length > 0 ? entriesRecentRaces : getDisplayRecentRacesForNankan(horse);
-                                                const weightStr = (horse.weight != null && Number.isFinite(Number(horse.weight))) ? `${horse.weight}kg` : null;
-                                                return (
-                                                    <div class="minor-horse-card minor-horse-card-osae">
-                                                        <div class="minor-horse-head">
-                                                            <span class="minor-horse-mark">{horse.displayMark || '×'}</span>
-                                                            <span class="minor-horse-number">{horse.number}</span>
-                                                            <span class="minor-horse-name">{horse.name}</span>
-                                                            <span class="minor-horse-score">{horse.pt ?? 0}pt</span>
-                                                        </div>
-                                                        <div class="minor-horse-meta">
-                                                            {horse.jockey && <span><span class="meta-key">騎手</span>{horse.jockey}</span>}
-                                                            {horse.trainer && <span><span class="meta-key">厩舎</span>{horse.trainer}</span>}
-                                                            {weightStr && <span><span class="meta-key">斤量</span>{weightStr}</span>}
-                                                            {getHorseAiIndex(horse) != null && <span><span class="meta-key">指数</span>{getHorseAiIndex(horse)}</span>}
-                                                        </div>
-                                                        {evalPoints.length > 0 && (
-                                                            <div class="minor-horse-evals">
-                                                                {evalPoints.slice(0, 3).map((p) => (<span class="eval-tag-small">{p}</span>))}
-                                                            </div>
-                                                        )}
-                                                        {comment && <p class="minor-horse-comment">{comment}</p>}
-                                                        {recentRaces.length > 0 && (
-                                                            <details class="recent-races recent-races-compact" data-click-close="true">
-                                                                <summary>過去{Math.min(5, recentRaces.length)}走</summary>
-                                                                <div class="recent-races-list">
-                                                                    {recentRaces.slice(0, 5).map((r) => {
-                                                                        // R1d-impl-v2c Step2: コーナー通過順を最小追加・field 読み替え補強（compact 維持・docs §34.24）
-                                                                        const c = compactRaceCells(r);
-                                                                        return (
-                                                                            <div class="recent-race-row">
-                                                                                {c.venue && <span class="recent-race-venue">{c.venue}</span>}
-                                                                                {c.distance && <span class="recent-race-distance">{c.distance}</span>}
-                                                                                {c.rank && <span class="recent-race-rank">{c.rank}</span>}
-                                                                                {c.time && <span class="recent-race-meta">タイム{c.time}</span>}
-                                                                                {c.last3f && <span class="recent-race-meta">上がり{c.last3f}</span>}
-                                                                                {c.pass && <span class="recent-race-meta">通過{c.pass}</span>}
-                                                                                {c.raceName && <span class="recent-race-meta recent-race-name">{c.raceName}</span>}
-                                                                            </div>
-                                                                        );
-                                                                    })}
-                                                                </div>
-                                                            </details>
-                                                        )}
-                                                        <NankanHorseStatsPanel horse={horse} />
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* 不要馬・見送り馬: shared-prediction-logic.js の isIneligibleHorse で判定。
-                                    role が未割当 + 補欠で抑え候補に拾えなかった馬を表示。
-                                    (2026-05-13 修正: 補欠の中で「拾う / 見送る」を pt/computerIndex で振り分け) */}
-                                {(() => {
-                                    const honmei = raceHorses.find(h => h.role === '本命');
-                                    const honmeiPt = Number(honmei?.pt) || 0;
-                                    const ineligible = (raceHorses || [])
-                                        .filter(isIneligibleHorse)
-                                        .sort((a, b) => (Number(b?.pt) || 0) - (Number(a?.pt) || 0));
-                                    if (ineligible.length === 0) return null;
-                                    // 2026-05-14: 不要馬の理由表記を「買い目基準未満」系に統一
-                                    const reasonFor = (h) => {
-                                        const pt = Number(h?.pt) || 0;
-                                        if (!(pt > 0)) return '評価対象外';
-                                        return '買い目基準未満';
-                                    };
-                                    return (
-                                        <details class="ineligible-section" data-click-close="true">
-                                            <summary>不要馬・見送り馬 {ineligible.length}頭</summary>
-                                            <ul class="ineligible-list">
-                                                {ineligible.map((h) => {
-                                                    const gap = honmeiPt - (Number(h.pt) || 0);
-                                                    // D セクションでは元の role に関わらず「見送り」分岐の文言を使う
-                                                    // （元 role が 補欠 だと「大穴候補として残す価値あり」が出てしまうため）
-                                                    const comment = generateMinorHorseComment('無', gap);
-                                                    return (
-                                                        <li class="ineligible-row">
-                                                            <div class="ineligible-row-top">
-                                                                <span class="ineligible-num">{h.number}</span>
-                                                                <span class="ineligible-name">{h.name}</span>
-                                                                {/* 2026-05-14: pt=70 は未評価フォールバック値のため「見送り」表示 */}
-                                                                {(Number(h.pt) || 0) > 70 ? (
-                                                                    <span class="ineligible-pt">{h.pt}pt</span>
-                                                                ) : (
-                                                                    <span class="ineligible-pt ineligible-pt-skip">見送り</span>
-                                                                )}
-                                                                {h.jockey && <span class="ineligible-meta">騎手:{h.jockey}</span>}
-                                                                <span class="ineligible-reason">{reasonFor(h)}</span>
-                                                            </div>
-                                                            {comment && (
-                                                                <div class="ineligible-comment">{comment}</div>
-                                                            )}
-                                                            <NankanHorseStatsPanel horse={h} />
-                                                        </li>
-                                                    );
-                                                })}
-                                            </ul>
-                                        </details>
-                                    );
-                                })()}
-                            </div>
-
-                            <!-- AI推奨買い目（10点ロジック / 通常レースは本命軸+対抗軸 統一表示） -->
-                            {umatanBets.length > 0 && (
-                                <div class="recommendation-section">
-                                    <div class="bet-strategy unified-bet-card">
-                                        <div class="unified-bet-header">
-                                            <h2 class="section-title">
-                                                <span>📊</span>
-                                                <span>AI推奨買い目</span>
-                                            </h2>
-                                        </div>
-
-                                        <div class="bet-list">
-                                            {umatanBets.map((bet) => (
-                                                <div class="bet-item">
-                                                    <span class="bet-type">馬単</span>
-                                                    <span class="bet-horses">{bet.numbers}</span>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
-
-                            <!-- 三連複AI推奨買い目（絞り込み / 通常 軸別 切替）AI_SANRENPUKU_AXIS_V1 -->
-                            {(sanrenpukuView.narrow || sanrenpukuView.normalHonmeiAxis || sanrenpukuView.normalTaikouAxis) && (
-                                <div class="recommendation-section sanrenpuku-section" data-race-id={`v${venueIndex}-${raceNum}`}>
-                                    <div class="bet-strategy unified-bet-card">
-                                        <div class="unified-bet-header">
-                                            <h2 class="section-title">
-                                                <span>🎯</span>
-                                                <span>三連複AI推奨買い目</span>
-                                            </h2>
-                                            <span class="unified-bet-subtitle">軸馬構成ルールV1</span>
-                                        </div>
-
-                                        <div class="sanrenpuku-tabs">
-                                            <button type="button" class="srp-tab active" data-srp-mode="narrow">絞り込み</button>
-                                            <button type="button" class="srp-tab" data-srp-mode="normal">通常買い目</button>
-                                        </div>
-
-                                        {sanrenpukuView.narrow && (
-                                            <div class="srp-panel srp-panel-narrow active">
-                                                <div class="srp-panel-title">絞り込み買い目</div>
-                                                <div class="bet-item">
-                                                    <span class="bet-type">三連複</span>
-                                                    <span class="bet-horses">{sanrenpukuView.narrow.line}</span>
-                                                    <span class="bet-points">{sanrenpukuView.narrow.points}点</span>
-                                                </div>
-                                                <p class="unified-bet-note">本命を軸に対抗・単穴・連下上位の3頭ボックス</p>
-                                            </div>
-                                        )}
-
-                                        <div class="srp-panel srp-panel-normal">
-                                            <div class="srp-normal-header">
-                                                <span class="srp-normal-title">通常買い目</span>
-                                                <span class="srp-normal-points">集計点数 9〜12点</span>
-                                            </div>
-                                            {sanrenpukuView.normalHonmeiAxis && (
-                                                <div class="srp-subblock">
-                                                    <div class="srp-panel-title">本命軸</div>
-                                                    <div class="bet-item">
-                                                        <span class="bet-type">三連複</span>
-                                                        <span class="bet-horses">{sanrenpukuView.normalHonmeiAxis.line}</span>
-                                                    </div>
-                                                </div>
-                                            )}
-                                            {sanrenpukuView.normalTaikouAxis && (
-                                                <div class="srp-subblock">
-                                                    <div class="srp-panel-title">対抗軸</div>
-                                                    <div class="bet-item">
-                                                        <span class="bet-type">三連複</span>
-                                                        <span class="bet-horses">{sanrenpukuView.normalTaikouAxis.line}</span>
-                                                    </div>
-                                                </div>
-                                            )}
-                                            <p class="unified-bet-note">※ 本命軸・対抗軸のいずれかで3着以内が揃えば的中扱い（大勝ち日は12点、堅実配当日は9点で集計）</p>
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
-
-                        </div>
-                    </div>
-                </div>
-            );
-        })}
-        </div>
-        ))}
 
         </div>
 
@@ -1082,18 +441,18 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
         <!-- 三連複 予告カード（段階表示: 2日目=day2 / 3日目=day3。4日目以降は下の CTA カードへ切替＝排他） -->
         <div class="sanrenpuku-teaser-section" id="sanrenpuku-teaser-section" style="display: none;">
           <div class="sanrenpuku-teaser-card">
-            <span class="srp-teaser-badge">🎯 三連複 絞り込み機能</span>
+            <span class="srp-teaser-badge">👑 三連複 レース選別</span>
             <div class="srp-teaser-day2" style="display: none;">
-              <h3 class="srp-teaser-title">買い目の絞り込みに不安はありませんか？</h3>
-              <p class="srp-teaser-desc">Premium予想を使い始めると、軸馬や相手候補は見えてきても、最後の買い目点数で迷う場面があります。</p>
-              <p class="srp-teaser-desc">三連複絞り込み機能では、相手候補が広いレースでも、ボタン操作だけで買い目を6〜9点前後まで整理できます。</p>
+              <h3 class="srp-teaser-title">今日、三連複で狙うべきレースはどれですか？</h3>
+              <p class="srp-teaser-desc">Premium予想で各レースの軸馬や相手候補は見えても、「どのレースを三連複で買うか」で迷う場面があります。</p>
+              <p class="srp-teaser-desc">Premium Sanrenpuku では、今日、三連複で狙うべきレースを AI が選別し、推奨度と選別理由をお届けします。</p>
               <p class="srp-teaser-note">明日から直近の的中結果を先行公開します。</p>
             </div>
             <div class="srp-teaser-day3" style="display: none;">
-              <h3 class="srp-teaser-title">三連複絞り込み機能の直近結果を先行公開中</h3>
-              <p class="srp-teaser-desc">買い目の絞り込みに迷いやすいレースでも、三連複では候補を整理して、6〜9点前後の買い目にまとめます。</p>
+              <h3 class="srp-teaser-title">三連複レース選別の直近結果を先行公開中</h3>
+              <p class="srp-teaser-desc">三連複で参加すべきレースを AI が選び、推奨レースの予想（通常買い目・中心買い目）を取得できます。</p>
               <p class="srp-teaser-desc">現在は直近の的中結果を先に確認できます。</p>
-              <p class="srp-teaser-note">三連複絞り込み機能は明日ご案内します。</p>
+              <p class="srp-teaser-note">三連複のレース選別は明日ご案内します。</p>
               <p class="srp-teaser-archive-note">三連複アーカイブは機能解禁後に閲覧できます。</p>
             </div>
           </div>
@@ -1106,19 +465,19 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
               <span class="new-badge">NEW</span>
             </div>
             <div class="upsell-content">
-              <h3 class="upsell-title">買い目の絞り込みに不安はありませんか？</h3>
+              <h3 class="upsell-title">今日、三連複で狙うべきレースはどれですか？</h3>
               <p class="upsell-description">
-                Premium予想で軸馬や相手候補が見えても、最後の買い目点数で迷う場面があります。<br>
-                三連複絞り込み機能では、相手候補が広いレースでも、ボタン操作だけで買い目を6〜9点前後まで整理できます。
+                Premium予想で各レースの軸馬や相手候補が見えても、「どのレースを三連複で買うか」で迷う場面があります。<br>
+                Premium Sanrenpuku では、今日、三連複で狙うべきレースを AI が選別し、推奨度と選別理由をお届けします。
               </p>
-              <p class="upsell-subnote">中央・南関に対応した三連複絞り込み機能です。馬単予想とあわせて使うことで、買い目点数に迷うレースの判断をサポートします。</p>
+              <p class="upsell-subnote">中央・南関に対応しています。馬単予想とあわせて、買うレースを選ぶ判断をサポートします。</p>
               <div class="upsell-stats">
                 <span class="stat-highlight">📊 過去1年間：的中率72% 回収率203%</span>
-                <span class="stat-highlight">🎯 買い目点数：6〜9点前後まで整理</span>
+                <span class="stat-highlight">👑 推奨度 A/B・見送り判定・選別理由</span>
               </div>
               <div class="upsell-buttons">
                 <a href="/sanrenpuku-demo/" class="btn-sample">
-                  ✨ 三連複絞り込み機能を使う
+                  👑 推奨レースの予想を取得する
                 </a>
                 <a href="/archive-sanrenpuku/" class="btn-archive">
                   📊 三連複アーカイブを見る
@@ -1146,7 +505,7 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                     <h3>✅ 買い切りプランの特徴</h3>
                     <ul>
                         <li>💰 <strong>一度きりの支払いで永久アクセス</strong>（追加料金なし）</li>
-                        <li>🔄 <strong>即座に利用開始</strong> - 決済後すぐに高性能AI三連複の自動絞り込み機能が利用可能</li>
+                        <li>🔄 <strong>即座に利用開始</strong> - 決済後すぐに三連複のレース選別（推奨レースの予想取得）が利用可能</li>
                         <li>📈 <strong>AIは毎日進化</strong> - 長く使うほどお得（50年利用で月額換算¥130）</li>
                     </ul>
                 </div>
@@ -1157,14 +516,14 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                     <div class="plan-option recommended">
                         <div class="recommended-badge">馬単予想 + 三連複予想の両方を利用する</div>
                         <h3 class="plan-option-name">Sanrenpuku Lifetime</h3>
-                        <div class="plan-option-subtitle">高性能AI三連複自動絞り込み（Premium期限内閲覧可能）</div>
+                        <div class="plan-option-subtitle">三連複で狙うレースを AI が選別（Premium期限内閲覧可能）</div>
                         <div class="plan-option-price-strike">¥108,000</div>
                         <div class="plan-option-price">¥78,000</div>
                         <div class="plan-option-discount">永久アクセス（追加料金なし）</div>
                         <ul class="plan-option-features">
-                            <li>✅ <strong>高性能AI三連複絞り込み機能</strong>を利用できます</li>
+                            <li>✅ <strong>今日、三連複で狙うべきレースを AI が選別</strong></li>
                             <li>✅ 的中率72% 回収率203%</li>
-                            <li>✅ 買い目点数7-9点の少点数</li>
+                            <li>✅ 各レースに推奨度・見送り判定・選別理由</li>
                             <li>✅ 永久アクセス（追加料金なし）</li>
                             <li>✅ Premium会員の間はずっと利用可能</li>
                         </ul>
@@ -1180,7 +539,7 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
                 <div class="modal-flow">
                     <h3>📋 購入後の流れ</h3>
                     <ol>
-                        <li><strong>今すぐ利用開始</strong> - 購入後すぐに高性能AI三連複の自動絞り込み機能が利用できます</li>
+                        <li><strong>今すぐ利用開始</strong> - 購入後すぐに三連複のレース選別が利用できます</li>
                         <li><strong>自動で追加</strong> - 決済後に自動でPremium会員に三連複予想が追加されます</li>
                     </ol>
                 </div>
@@ -5001,3 +4360,10 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
     });
 </script>
 </BaseLayout>
+
+<style>
+    .acq-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; margin: 20px 0 28px; }
+    .acq-heading { margin: 0; font-size: 1.6rem; }
+    .acq-lead { margin: 6px 0 16px; color: #94a3b8; }
+    @media (max-width: 900px) { .acq-layout { grid-template-columns: 1fr; } }
+</style>

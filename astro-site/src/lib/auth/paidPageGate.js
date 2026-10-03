@@ -345,5 +345,6 @@ export async function gatePaidPage({
     if (!flags.some((f) => ent[f] === true)) return deny('entitlement_denied');
   }
 
-  return { ok: true, response: null, reason: 'ok', entitlements: ent };
+  // subject = ak_session の recordId（取得履歴など本人 1 件だけを読む処理が使う。クライアントの値は使わない）
+  return { ok: true, response: null, reason: 'ok', entitlements: ent, subject: sub };
 }
