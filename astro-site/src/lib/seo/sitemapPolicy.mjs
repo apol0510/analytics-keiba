@@ -30,6 +30,7 @@ export const SITEMAP_EXCLUDE_EXACT = Object.freeze([
   '/results-jra/',
   '/today/',
   '/free-prediction/archive/', // 2026-09-28 から /archive/nankan/ へ 301
+  '/free-prediction/view/', // Premium 詳細のプレビュー（?key= 必須・noindex。キー無しは 404）
   // noindex / 個人向け（検索者に意味が無い）
   '/offer/',
   '/login/',
@@ -43,6 +44,7 @@ export const SITEMAP_EXCLUDE_PREFIX = Object.freeze([
   '/admin/',
   '/auth/',
   '/premium-prediction/', // 会員限定（未ログインは 302）
+  '/predictions/', // Premium の取得一覧・本文・履歴（会員限定・未ログインは 302）
   '/premium-plus',        // Premium Sanrenpuku 会員限定の非公開商品。存在を知らせない
 ]);
 

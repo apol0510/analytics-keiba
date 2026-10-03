@@ -1,3 +1,15 @@
+# 2026-10-04 — /free-prediction/ を Premium と同一デザインのプレビューへ（MK 確定）
+
+- **決定**: `/free/` = 無料日常利用（現行 UI 維持）、`/free-prediction/` = Premium 体験プレビュー、`/predictions/` = Premium 本利用。Preview と Premium は同一デザインシステム・同一コンポーネントで、違いは権限状態と CTA だけ。Preview で有料本文を漏らさない。
+- **実装の判断**:
+  - 共通の画面部品 `PremiumRaceBoard`（mode = premium / preview）に一覧画面をまとめ、`/predictions/`・`/premium-prediction/{jra,nankan}/`・`/free-prediction/{all,jra,nankan}/` が同じ部品を使う
+  - Preview 詳細 `/free-prediction/view/` は Premium 詳細と同じ本文部品を preview モードで使い、内容は公開 DTO と同じ範囲（`buildPreviewContent`）。買い目・指数・役割分類は入れない
+  - `/free-prediction/{jra,nankan}/` は日付タブのため静的生成から SSR ＋ CDN 5 分キャッシュへ（`/free/` と同じ。Cookie・会員判定を使わない）
+  - 旧プレビュー（全頭アコーディオン・locked-paid の CTA カード・モザイク）を置き換えるため、旧構造を固定していたガードは新しい構造へ書き換え、守っていた条件（有料の実データを出さない・上部でプレビューと伝える・料金への導線・無料登録 CTA を置かない）は維持する
+- 正本: `astro-site/docs/PREDICTION_ACQUISITION.md` §2-4
+
+---
+
 # 2026-10-04 — 活用状況は「本日の実レース数」を分母に・会場タブ・明るい配色・着順色（MK 確定）
 
 - **決定**: 利用状況を「活用状況」へ（件数報告ではなく価値の伝達）。本日の活用状況 = 取得レース / その契約で本日取得できる実レース数（%は上限ではない・「残り○回」禁止）、主訴求は次に取得できる予想。今月は取得レース・利用日数・内訳・1 レースあたり実質額。会場タブ（すべて/中央/南関）。配色を明るく（青・シアン・ラベンダー・白の光）。着順 1着金/2着アイスシルバー/3着銅。安全条件と権利は不変。

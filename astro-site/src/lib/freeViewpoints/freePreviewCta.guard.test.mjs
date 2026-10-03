@@ -2,13 +2,14 @@
  * freePreviewCta.guard.test.mjs
  *
  * 2026-08-20 確定: `/free-prediction/` は「無料予想」ではなく **有料版のプレビュー**。
- *   - 無料登録による全頭解放 CTA を撤廃した
- *   - 未登録でも出走全頭と ○▲△ が見える（ゲート撤廃）
- *   - 残る CTA は **有料 1 枚のみ**
- *   - 有料項目（pt / AI総合指数 / 役割 / 買い目）のマスクは**従来どおり維持**
+ * 2026-10-04 MK 確定: プレビューは `/predictions/`（Premium 本利用）と**同一デザイン・同一部品**
+ *   （PremiumRaceBoard mode="preview"）。違いは権限状態と CTA だけ（docs/PREDICTION_ACQUISITION.md §2-4）。
  *
- * ここを戻すと「未登録は◎しか見えないのに解除手段が無い」壊れた状態になるため、
- * 復活を検知できるように固定する。
+ * 守る条件（旧プレビューから継続）:
+ *   - 無料登録 CTA で有料 CTA と競合させない／全頭解放ゲートを復活させない
+ *   - 有料 CTA（/pricing/）を持つ
+ *   - プレビューであることをページ上部で伝える（PREVIEW バナー）
+ *   - 有料項目（買い目・AI 総合指数・役割分類）の実データを描画しない
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,94 +18,70 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+const read = (rel) => readFileSync(join(ROOT, rel), 'utf-8');
 const PAGES = ['nankan', 'jra'].map((c) => ({
   name: c,
   src: readFileSync(join(ROOT, `src/pages/free-prediction/${c}.astro`), 'utf-8'),
 }));
 
-test('無料登録で解放する CTA を置かない', () => {
+const BOARD = readFileSync(join(ROOT, 'src/components/acquisition/PremiumRaceBoard.astro'), 'utf-8');
+const LIST = readFileSync(join(ROOT, 'src/components/acquisition/AcquisitionRaceList.astro'), 'utf-8');
+const BODY = readFileSync(join(ROOT, 'src/components/acquisition/AcquiredPredictionBody.astro'), 'utf-8');
+const PREVIEW_VIEW = readFileSync(join(ROOT, 'src/pages/free-prediction/view.astro'), 'utf-8');
+const PREVIEW_CONTENT = readFileSync(join(ROOT, 'src/lib/acquisition/previewContent.js'), 'utf-8');
+
+test('無料登録で解放する CTA・全頭解放ゲートを置かない', () => {
   for (const { name, src } of PAGES) {
-    assert.equal(src.includes('locked-free'), false, `${name}: 無料 CTA のクラスが残っている`);
-    assert.equal(src.includes('無料登録で全頭を見る'), false, `${name}: 無料 CTA の文言が残っている`);
-    assert.equal(src.includes('出走全頭をフル解放'), false, `${name}: 無料 CTA の見出しが残っている`);
-    assert.equal(src.includes('cta-badge-free'), false, `${name}: 無料 CTA のバッジが残っている`);
+    for (const w of ['locked-free', '無料登録で全頭を見る', '出走全頭をフル解放', 'cta-badge-free', 'free-member-unlock-content', '/free-signup/']) {
+      assert.equal(src.includes(w), false, `${name}: ${w} がある`);
+    }
   }
+  for (const w of ['/free-signup/', 'locked-free']) assert.equal(BOARD.includes(w), false, `board: ${w}`);
 });
 
-test('全頭解放ゲートを復活させない（未登録でも全頭・印が見える）', () => {
+test('Premium と同じ部品で描画する（違いは mode だけ）', () => {
   for (const { name, src } of PAGES) {
-    assert.equal(
-      src.includes('free-member-unlock-content" style="display: none;"'), false,
-      `${name}: 既定で隠すゲートが復活している`,
-    );
-    // 未登録で隠す JS を復活させない
-    assert.equal(/free-member-unlock-content'\)[\s\S]{0,200}isRegistered \? 'block' : 'none'/.test(src), false,
-      `${name}: 未登録で隠す JS が復活している`);
-    assert.equal(src.includes("includes('全頭')"), false, `${name}: 全頭解放鍵の制御が残っている`);
+    assert.match(src, new RegExp(`<PremiumRaceBoard mode="preview" venue="${name}"`), `${name}: 共通部品を使っていない`);
   }
+  assert.match(read('src/pages/predictions/index.astro'), /<PremiumRaceBoard mode="premium" venue="all"/);
+  assert.match(read('src/pages/free-prediction/all.astro'), /<PremiumRaceBoard mode="preview" venue="all"/);
+  for (const c of ['jra', 'nankan']) assert.match(read(`src/pages/premium-prediction/${c}.astro`), new RegExp(`<PremiumRaceBoard mode="premium" venue="${c}"`));
+  // 部品の中でカード・タブは 1 つ（モードで分けて別実装を持たない）
+  assert.equal((BOARD.match(/<AcquisitionRaceList /g) || []).length, 1);
+  assert.equal((BOARD.match(/<AcquisitionVenueTabs /g) || []).length, 1);
 });
 
-test('有料 CTA は残す（1 枚のみ）', () => {
-  for (const { name, src } of PAGES) {
-    assert.ok(src.includes('locked-paid'), `${name}: 有料 CTA が消えている`);
-    assert.ok(src.includes('AI予測買い目'), `${name}: 有料 CTA の見出しが無い`);
-    assert.ok(src.includes('/pricing/'), `${name}: 料金ページへの導線が無い`);
-    const count = (src.match(/class="locked-content/g) || []).length;
-    assert.equal(count, 1, `${name}: CTA は 1 枚だけにする（現在 ${count} 枚）`);
-  }
+test('有料 CTA（/pricing/）を Premium の取得ボタンと同じ位置に置く', () => {
+  const preview = LIST.slice(LIST.indexOf('{isPreview ? ('), LIST.indexOf(') : r.acquired ? ('));
+  assert.match(preview, /<a class="ag-cta acq-btn" href="\/pricing\/">Premiumで予想を取得<\/a>/);
+  assert.match(preview, /この予想を取得するにはPremium/);
+  for (const { name, src } of PAGES) assert.ok(src.includes('href="/pricing/"'), `${name}: 料金ページへの導線が無い`);
 });
 
-test('CTA が 1 枚になったレイアウトに変えている（2 枚並びの grid を残さない）', () => {
-  for (const { name, src } of PAGES) {
-    assert.ok(src.includes('.access-control-section .locked-content.locked-paid'),
-      `${name}: 1 枚用のスタイルが無い`);
-    assert.ok(/\.access-control-section\s*\{[^}]*display:\s*block/.test(src),
-      `${name}: 2 枚並びの grid のままになっている`);
-  }
+test('プレビューであることをページ上部で伝える（Premiumを体験）', () => {
+  const banner = BOARD.indexOf('class="ag-glass preview-banner"');
+  assert.ok(banner > -1, '上部バナーが無い');
+  assert.ok(banner < BOARD.indexOf('<AcquisitionVenueTabs'), 'バナーが会場タブより後ろ');
+  assert.ok(banner < BOARD.indexOf('<AcquisitionRaceList'), 'バナーが一覧より後ろ');
+  const seg = BOARD.slice(banner, banner + 700);
+  assert.ok(seg.includes('PREVIEW'), 'バナーのラベルが無い');
+  assert.ok(seg.includes('Premiumを体験'), '見出しが無い');
+  assert.ok(seg.includes('1 件ずつ取得'), '取得の説明が無い');
+  assert.ok(seg.includes('/pricing/'), 'バナーから料金ページへ行けない');
 });
 
-test('有料版プレビューであることをページ内で伝える', () => {
+test('有料項目の実データを描画しない（一覧・プレビュー詳細とも）', () => {
   for (const { name, src } of PAGES) {
-    assert.ok(src.includes('preview-note'), `${name}: CTA 横の注記が無い`);
-    assert.ok(src.includes('有料版のプレビュー'), `${name}: 位置づけの説明が無い`);
+    for (const w of ['bettingLines', 'computerIndex', 'getHorseAiIndex', 'buildPredictionContent', 'AcquiredPredictionBody']) assert.equal(src.includes(w), false, `${name}: ${w}`);
   }
+  // プレビュー詳細は buildPreviewContent だけ（取得後本文・スナップショットを使わない）
+  assert.match(PREVIEW_VIEW, /buildPreviewContent\(/);
+  for (const w of ['buildPredictionContent', 'readAcquired', 'loadAcquiredView', 'acquisitionStore']) assert.equal(PREVIEW_VIEW.includes(w), false, `view: ${w}`);
+  for (const w of ['bettingLines', 'umatan', 'aiIndex', 'getHorseAiIndex', 'computerIndex', ' pt']) assert.equal(PREVIEW_CONTENT.replace(/\/\*[\s\S]*?\*\//, '').includes(w), false, `previewContent: ${w}`);
+  // 部品のプレビュー分岐は買い目をダミーのモザイクで描く
+  assert.match(BODY, /class="betting-teaser ag-inset"/);
+  assert.match(BODY, /\.betting-teaser \{[^}]*filter: blur\(/);
 });
-
-test('プレビューであることをページ上部で伝える（CTA まで読まないと分からない状態にしない）', () => {
-  for (const { name, src } of PAGES) {
-    assert.ok(src.includes('preview-banner'), `${name}: 上部バナーが無い`);
-    // 各レースの CTA より前（＝ページ上部）に置かれていること
-    const banner = src.indexOf('class="preview-banner"');
-    const firstCta = src.indexOf('locked-content locked-paid');
-    assert.ok(banner > -1 && firstCta > -1, `${name}: 位置を判定できない`);
-    assert.ok(banner < firstCta, `${name}: バナーが CTA より後ろにある（上部に置くこと）`);
-    // ヘッダー直後に置く（会場タブやレース一覧より前）
-    const header = src.indexOf('class="header-section"');
-    assert.ok(header > -1 && header < banner, `${name}: ヘッダーより前に出ている`);
-    const races = src.indexOf('venue-selector');
-    if (races > -1) assert.ok(banner < races, `${name}: 会場タブより後ろにある`);
-  }
-});
-
-test('上部バナーは有料への導線を持つ', () => {
-  for (const { name, src } of PAGES) {
-    const i = src.indexOf('class="preview-banner"');
-    const seg = src.slice(i, i + 1200);
-    assert.ok(seg.includes('/pricing/'), `${name}: バナーから料金ページへ行けない`);
-    assert.ok(seg.includes('PREVIEW'), `${name}: バナーのラベルが無い`);
-  }
-});
-
-test('有料項目のマスクは維持する（プレビュー化で緩めない）', () => {
-  for (const { name, src } of PAGES) {
-    assert.ok(src.includes('masked-eval'), `${name}: マスクのクラスが消えている`);
-    assert.ok(src.includes('stat-value-masked'), `${name}: 指数マスクの打ち消しが消えている`);
-    assert.ok(src.includes('betting-teaser'), `${name}: 買い目のダミー表示が消えている`);
-    // 買い目の実データを出していない
-    assert.equal(/bettingLines/.test(src), false, `${name}: 買い目の実データを描画している`);
-  }
-});
-
 
 // ─── サイト全体の呼び方 ───────────────────────────────────────
 

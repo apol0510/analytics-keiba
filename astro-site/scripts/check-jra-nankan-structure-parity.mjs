@@ -95,8 +95,9 @@ const CONTENT = resolve(__dirname, '..', 'src', 'lib', 'acquisition', 'predictio
 const bodyContent = checkFile(BODY);
 const contentLib = checkFile(CONTENT);
 for (const [name, src] of [['jra', jraContent], ['nankan', nankanContent]]) {
-  if (!src.includes('<AcquisitionRaceList product="premium"')) {
-    missing.push({ key: 'AcquisitionRaceList', label: `${name}: 取得一覧（共通部品）`, advice: '<AcquisitionRaceList product="premium" …/> を使う' });
+  // 2026-10-04〜 一覧は Premium / Preview 共通の画面部品 PremiumRaceBoard（中で AcquisitionRaceList を使う）
+  if (!src.includes(`<PremiumRaceBoard mode="premium" venue="${name}"`)) {
+    missing.push({ key: 'PremiumRaceBoard', label: `${name}: 取得一覧（共通部品）`, advice: '<PremiumRaceBoard mode="premium" venue="…" …/> を使う' });
   }
 }
 for (const key of ['recommendation-section', 'unified-bet-card', 'bet-list', 'bet-item', 'minor-group-renka', 'minor-group-osae', 'ineligible-section']) {

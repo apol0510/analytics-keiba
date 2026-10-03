@@ -75,7 +75,11 @@ test('本文部品を使うのは取得済み確認後の閲覧ページだけ',
   const { readdirSync } = await import('node:fs');
   const out = readdirSync(`${ROOT}src/pages`, { recursive: true })
     .filter((f) => /\.(astro|js|ts)$/.test(f) && read(`src/pages/${f}`).includes('AcquiredPredictionBody'));
-  assert.deepEqual(out, ['predictions/view.astro']);
+  // 本番の閲覧（取得済み確認後）と、Preview 詳細（buildPreviewContent＝公開範囲だけ）
+  assert.deepEqual(out.sort(), ['free-prediction/view.astro', 'predictions/view.astro']);
+  const pv = read('src/pages/free-prediction/view.astro');
+  assert.match(pv, /content=\{c\}/);
+  assert.ok(pv.indexOf('buildPreviewContent(') > -1 && !pv.includes('buildPredictionContent'), 'Preview 詳細が有料本文を組み立てている');
   const v = read('src/pages/predictions/view.astro');
   assert.ok(v.indexOf('gatePaidPage(') < v.indexOf('loadAcquiredView('), '認可の前に本文を読んでいる');
   assert.match(v, /v\.status === 'ok' \? v\.content : null/);
@@ -87,7 +91,7 @@ test('有料 4 ページの本文表示（全レース一括）を撤去し、�
     const s = read(p);
     // テンプレート（マークアップ）だけを見る。旧 CSS / スクリプトのセレクタは本文ではない
     const body = s.slice(s.indexOf('---', 3) + 3).replace(/<style[\s\S]*?<\/style>/g, '').replace(/<script[\s\S]*?<\/script>/g, '');
-    assert.match(body, new RegExp(`<AcquisitionRaceList product="${product}"`), p);
+    assert.match(body, product === 'premium' ? /<PremiumRaceBoard mode="premium"/ : new RegExp(`<AcquisitionRaceList product="${product}"`), p);
     for (const w of ['race-accordion-content', 'bet-horses', 'premium-select-reveal', 'premium-select-highlight', 'RaceHorseSection raceHorses', 'JraRaceHorseSection']) {
       assert.equal(body.includes(w), false, `${p}: 旧本文表示（${w}）が残っている`);
     }
@@ -345,7 +349,7 @@ test('mobile-first・全画面ガラス統一（2026-10-03 MK 追加確定）', 
   assert.match(list, /class="ag-cta acq-btn"/);
   assert.match(list, /class="ag-done"/);
   // スマホ: 本日の活用状況を一覧の最上部、今月の活用状況は一覧の下（PC は右カラム）
-  for (const p of ['src/pages/premium-prediction/jra.astro', 'src/pages/premium-prediction/nankan.astro', 'src/pages/premium-sanrenpuku.astro', 'src/pages/premium-sanrenpuku-jra.astro', 'src/pages/predictions/index.astro']) {
+  for (const p of ['src/components/acquisition/PremiumRaceBoard.astro', 'src/pages/premium-sanrenpuku.astro', 'src/pages/premium-sanrenpuku-jra.astro']) {
     const s = read(p);
     assert.ok(s.indexOf('variant="today"') < s.indexOf('<AcquisitionRaceList'), `${p}: 本日の活用状況が一覧より上にない`);
     assert.ok(s.indexOf('variant="side"') > s.indexOf('<AcquisitionRaceList'), `${p}: 今月の活用状況が一覧より下にない`);
@@ -433,13 +437,15 @@ test('活用状況の表示: 「残り○回」と書かない・主役は次に
 
 test('会場タブ（すべて / 中央競馬 / 南関東競馬）と「すべて」一覧', async () => {
   const tabs = read('src/components/acquisition/AcquisitionVenueTabs.astro');
-  for (const [label, href] of [['すべて', '/predictions/'], ['中央競馬', '/premium-prediction/jra/'], ['南関東競馬', '/premium-prediction/nankan/']]) {
-    assert.match(tabs, new RegExp(`label: '${label}', href: '${href.replace(/\//g, '\\/')}'`), label);
-  }
-  assert.match(read('src/pages/premium-prediction/jra.astro'), /<AcquisitionVenueTabs active="jra" \/>/);
-  assert.match(read('src/pages/premium-prediction/nankan.astro'), /<AcquisitionVenueTabs active="nankan" \/>/);
+  for (const label of ['すべて', '中央競馬', '南関東競馬']) assert.ok(tabs.includes(`label: '${label}'`), label);
+  // Premium（本利用）と Preview（体験）で同じタブ。リンク先だけが違う
+  assert.match(tabs, /premium: \{ all: '\/predictions\/', jra: '\/premium-prediction\/jra\/', nankan: '\/premium-prediction\/nankan\/' \}/);
+  assert.match(tabs, /preview: \{ all: '\/free-prediction\/all\/', jra: '\/free-prediction\/jra\/', nankan: '\/free-prediction\/nankan\/' \}/);
+  assert.match(read('src/pages/premium-prediction/jra.astro'), /<PremiumRaceBoard mode="premium" venue="jra"/);
+  assert.match(read('src/pages/premium-prediction/nankan.astro'), /<PremiumRaceBoard mode="premium" venue="nankan"/);
   const all = read('src/pages/predictions/index.astro');
-  assert.match(all, /<AcquisitionVenueTabs active="all" \/>/);
+  assert.match(all, /<PremiumRaceBoard mode="premium" venue="all"/);
+  assert.match(read('src/components/acquisition/PremiumRaceBoard.astro'), /<AcquisitionVenueTabs active=\{venue\} mode=\{mode\} \/>/);
   assert.ok(all.indexOf('gatePaidPage(') < all.indexOf('buildListModel('), '認可の前に一覧を組み立てている');
   // 「すべて」のモデル: 中央・南関を合わせ、区分ごとの取得可否をレースに付ける
   const { buildListModel } = await import('./listModel.js');
@@ -463,4 +469,49 @@ test('着順の色: 1着ゴールド / 2着アイスシルバー（灰色にし�
   assert.match(css, /\.rk-3 \{[^}]*rgba\(234, 147, 84/);
   const body = read('src/components/acquisition/AcquiredPredictionBody.astro');
   assert.equal(/\.rk-2 \{/.test(body), false, '部品側に古い 2 着色が残っている');
+});
+
+// ── 2026-10-04 MK 確定: Preview（/free-prediction/）と Premium は同じ部品・違いは権限と CTA だけ ──
+test('Preview の詳細内容は公開範囲だけ（買い目・指数・pt・▲△以外の役割を入れない）', async () => {
+  const { buildPreviewContent } = await import('./previewContent.js');
+  const c = buildPreviewContent({ cat: 'nankan', venueName: '船橋', race: race(11), venueTotalRaces: 12 });
+  assert.equal(c.preview, true);
+  const json = JSON.stringify(c);
+  for (const w of ['umatan', 'sanrenpuku', 'aiIndex', 'computerIndex', '"pt"', 'bettingLines', '抑え', '補欠', '"無"', '連下"']) assert.equal(json.includes(w), false, w);
+  assert.deepEqual(c.horses.filter((h) => h.mark).map((h) => [h.number, h.mark]), [[3, '◎'], [4, '○'], [2, '▲'], [9, '▲'], [5, '△']], '公開の印（◎○▲△）だけ・無料公開 DTO と同じ');
+  assert.ok(c.horses.every((h) => Array.isArray(h.recent)), '過去走は全馬');
+  assert.equal(c.horses.length, 12, '全出走馬（分類は付けない）');
+  // 本文部品: プレビューでは買い目・指数の実値を参照しない（ダミーのモザイクだけ）
+  const body = read('src/components/acquisition/AcquiredPredictionBody.astro');
+  assert.match(body, /const umatanTotal = \(isSrp \|\| isPreview\) \? 0/, 'プレビューで買い目を参照している');
+  const pv = body.slice(body.indexOf('{isPreview ? ('), body.indexOf(') : !isSrp ? ('));
+  assert.equal(/c\.umatan|l\.line|h\.aiIndex/.test(pv), false);
+});
+
+test('Preview と Premium の画面は同じ部品（違いは mode・CTA・権限だけ）', () => {
+  const board = read('src/components/acquisition/PremiumRaceBoard.astro');
+  const list = read('src/components/acquisition/AcquisitionRaceList.astro');
+  assert.match(board, /mode: 'premium' \| 'preview'/);
+  assert.match(list, /mode\?: 'premium' \| 'preview'/);
+  // CTA は同じ位置（同じ acq-race-cta の中）・同じボタン部品（ag-cta acq-btn）
+  const cta = list.slice(list.indexOf('<div class="acq-race-cta">'), list.indexOf('</article>'));
+  assert.match(cta, /isPreview \? \([\s\S]*class="ag-cta acq-btn" href="\/pricing\/"[\s\S]*\) : r\.acquired \? \([\s\S]*class="ag-cta acq-btn"/);
+  // Preview は公開ページ（会員判定・Cookie を使わない）。Premium は認可あり
+  for (const p of ['src/pages/free-prediction/jra.astro', 'src/pages/free-prediction/nankan.astro', 'src/pages/free-prediction/all.astro', 'src/pages/free-prediction/view.astro']) {
+    const s = read(p);
+    assert.match(s, /setPublicCdnCache\(Astro\)/, p);
+    for (const w of ['gatePaidPage', 'ak_session', 'Astro.cookies', 'loadMemberAcquisitions']) assert.equal(s.includes(w), false, `${p}: ${w}`);
+  }
+  assert.match(read('src/pages/predictions/index.astro'), /gatePaidPage\(/);
+  // /free/ は Premium 系 UI へ寄せない
+  for (const p of ['src/pages/free/jra.astro', 'src/pages/free/nankan.astro']) {
+    const s = read(p);
+    for (const w of ['PremiumRaceBoard', 'AcquisitionRaceList', 'acquisitionGlass']) assert.equal(s.includes(w), false, `${p}: ${w}`);
+  }
+});
+
+test('サイトマップ: 会員限定の取得画面とプレビュー詳細は載せない・プレビュー一覧は載せる', async () => {
+  const { isSitemapExcluded } = await import('../seo/sitemapPolicy.mjs');
+  for (const p of ['/predictions/', '/predictions/view/', '/predictions/history/', '/free-prediction/view/']) assert.equal(isSitemapExcluded(`https://analytics.keiba.link${p}`), true, p);
+  for (const p of ['/free-prediction/jra/', '/free-prediction/nankan/', '/free-prediction/all/', '/free/jra/']) assert.equal(isSitemapExcluded(`https://analytics.keiba.link${p}`), false, p);
 });

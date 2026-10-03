@@ -1,0 +1,107 @@
+---
+/**
+ * /free-prediction/view/?key=… — Premium 詳細のプレビュー（2026-10-04 MK 確定・docs/PREDICTION_ACQUISITION.md §2-4）
+ *
+ * Premium の取得後詳細と同じ部品（AcquiredPredictionBody）・同じ構成で見せる。内容は buildPreviewContent だけ
+ * ＝無料公開と同じ範囲（馬番・馬名・騎手・過去走・上位 4 頭の印）。買い目・AI 総合指数・役割分類は出さない（ダミーのモザイク）。
+ * 公開ページ（Cookie・会員判定を使わない）。検索対象にしない（レースごとの薄いページを増やさない）。
+ */
+export const prerender = false;
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import AcquiredPredictionBody from '../../components/acquisition/AcquiredPredictionBody.astro';
+import '../../styles/acquisitionGlass.css';
+import { parsePredictionKey } from '../../lib/acquisition/predictionKey.js';
+import { findRace } from '../../lib/acquisition/raceSource.js';
+import { buildPreviewContent } from '../../lib/acquisition/previewContent.js';
+import { setPublicCdnCache } from '../../lib/cdnCache.mjs';
+
+const p = parsePredictionKey(Astro.url.searchParams.get('key') || '');
+let c = null;
+if (p && p.product === 'premium') {
+  try {
+    const found = findRace(p.cat, p.date, p.venue, p.raceNumber);
+    if (found) c = buildPreviewContent({ cat: p.cat, venueName: p.venueName, race: found.race, venueTotalRaces: found.venue.totalRaces });
+  } catch (error) {
+    console.error('[free-prediction/view] build error:', error);
+  }
+}
+if (!c) Astro.response.status = 404;
+setPublicCdnCache(Astro);
+const listPath = p ? `/free-prediction/${p.cat}/?date=${p.date}` : '/free-prediction/all/';
+const wd = ['日', '月', '火', '水', '木', '金', '土'];
+const dateBlock = (ymd) => { const t = new Date(`${ymd}T00:00:00Z`); return Number.isNaN(t.getTime()) ? { md: '', wd: '' } : { md: `${t.getUTCMonth() + 1}/${t.getUTCDate()}`, wd: wd[t.getUTCDay()] }; };
+const distanceText = (d) => { const s = String(d || ''); return /^\d+$/.test(s) ? `${s}m` : s; };
+---
+<BaseLayout title={c ? `${c.venueName}${c.raceNumber}R Premium 予想プレビュー` : 'Premium 予想プレビュー'} noindex>
+  <div class="ag-scene acq-view-bg">
+  <main class="acq-view-page">
+    <a class="acq-back" href={listPath}>‹ レース一覧に戻る</a>
+    {c ? (
+      <>
+        <header class="ag-glass acq-hero" aria-label="レース情報">
+          <div class="acq-hero-top">
+            <div class="acq-date ag-inset"><strong>{dateBlock(c.date).md}</strong><span>({dateBlock(c.date).wd})</span></div>
+            <div class="acq-hero-main">
+              <p class="ag-kicker">{c.venueName} {c.raceNumber}R{c.isMainRace ? ' ・ メインレース' : ''}</p>
+              <h1>{c.raceName || `${c.venueName} ${c.raceNumber}R`}</h1>
+            </div>
+          </div>
+          <ul class="acq-meta">
+            {c.startTime && <li class="ag-pill">{c.startTime} 発走</li>}
+            {c.distance && <li class="ag-pill">{distanceText(c.distance)}</li>}
+            {c.horseCount > 0 && <li class="ag-pill">{c.horseCount}頭</li>}
+            <li class="ag-pill violet">PREVIEW</li>
+          </ul>
+          <div class="acq-hero-state">
+            <a class="ag-cta" href="/pricing/">Premiumで予想を取得</a>
+            <small>Premium では、この画面で買い目・AI 総合指数・分類まで見られます</small>
+          </div>
+        </header>
+        <AcquiredPredictionBody content={c} />
+        <nav class="ag-glass acq-foot" aria-label="Premium">
+          <p>Premium ではレース一覧から気になる予想を 1 件ずつ取得でき、取得した予想はいつでも見返せます。</p>
+          <div class="acq-foot-actions">
+            <a class="ag-cta" href="/pricing/">Premiumで予想を取得</a>
+            <a class="ag-btn-ghost" href={listPath}>レース一覧に戻る</a>
+          </div>
+        </nav>
+      </>
+    ) : (
+      <section class="ag-glass acq-view-empty">
+        <h1>このレースのプレビューは表示できません</h1>
+        <p>開催日の予想が公開されると、レース一覧から見られます。</p>
+        <a class="ag-cta" href="/free-prediction/all/">レース一覧へ</a>
+      </section>
+    )}
+  </main>
+  </div>
+</BaseLayout>
+
+<style>
+  .acq-view-page { max-width: 1200px; margin: 0 auto; padding: 16px 14px 56px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .acq-view-page > * { min-width: 0; }
+  .acq-back { color: #bae6fd; text-decoration: none; font-weight: 700; width: fit-content; min-height: 40px; display: inline-flex; align-items: center; }
+  .acq-hero { display: grid; gap: 12px; padding: 16px; }
+  .acq-hero-top { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 12px; align-items: center; }
+  .acq-date { display: grid; justify-items: center; padding: 8px 12px; }
+  .acq-date strong { font-size: 1.35rem; line-height: 1.1; }
+  .acq-date span { color: var(--ag-text-2); font-size: 0.8rem; }
+  .acq-hero h1 { margin: 2px 0 0; font-size: clamp(1.2rem, 4.8vw, 1.9rem); line-height: 1.3; overflow-wrap: anywhere; }
+  .acq-meta { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+  .acq-meta .ag-pill { font-weight: 700; font-size: 0.8rem; }
+  .acq-hero-state { display: grid; gap: 6px; }
+  .acq-hero-state small { color: var(--ag-text-2); font-size: 0.78rem; }
+  .acq-foot { padding: 18px 16px; display: grid; gap: 12px; text-align: center; }
+  .acq-foot p { margin: 0; color: var(--ag-text-2); font-size: 0.88rem; }
+  .acq-foot-actions { display: grid; gap: 10px; }
+  .acq-view-empty { padding: 22px 18px; display: grid; gap: 10px; }
+  .acq-view-empty h1 { margin: 0; font-size: 1.15rem; }
+  @media (min-width: 760px) {
+    .acq-view-page { padding: 22px 20px 64px; gap: 18px; }
+    .acq-hero { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "top state" "meta state"; padding: 22px 24px; }
+    .acq-hero-top { grid-area: top; }
+    .acq-meta { grid-area: meta; }
+    .acq-hero-state { grid-area: state; justify-items: end; align-self: center; max-width: 260px; text-align: right; }
+    .acq-foot-actions { grid-auto-flow: column; justify-content: center; }
+  }
+</style>
