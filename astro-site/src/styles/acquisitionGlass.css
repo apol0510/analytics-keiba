@@ -79,7 +79,7 @@
 .ag-cta {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
   min-height: 46px; padding: 0 20px; border: 1px solid rgba(255, 255, 255, 0.28); border-radius: 14px; cursor: pointer;
-  background: var(--ag-cta); color: #fff; font-weight: 800; font-size: 0.95rem; text-decoration: none; letter-spacing: 0.02em;
+  background: var(--ag-cta); color: #e0f2fe; font-weight: 800; font-size: 0.95rem; text-decoration: none; letter-spacing: 0.02em;
   box-shadow: 0 8px 22px rgba(99, 102, 241, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.35);
   transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
@@ -92,7 +92,8 @@
 .ag-cta.ag-cta-premium {
   background: var(--ag-cta-premium);
   border: 1px solid rgba(237, 233, 254, 0.75);
-  color: #ffffff;
+  /* 2026-10-04 MK 確定: 文字色はボタンと同系色（淡いラベンダー） */
+  color: #f3e8ff;
   font-weight: 900;
   letter-spacing: 0.03em;
   text-shadow: 0 1px 2px rgba(46, 16, 101, 0.55);
