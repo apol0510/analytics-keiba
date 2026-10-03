@@ -26,6 +26,7 @@
 export const prerender = false;
 import BaseLayout from '../layouts/BaseLayout.astro';
 import PremiumContactModal from '../components/PremiumContactModal.astro';
+import PremiumPlusDeliveryCard from '../components/PremiumPlusDeliveryCard.astro';
 import { resolveViewer, VIEWER_STATE } from '../lib/auth/viewerEntitlements.js';
 import { viewFromEntitlements } from '../lib/entitlements/resolveEntitlements.js';
 import { resolvePredictionDestination } from '../lib/navigation/predictionDestination.js';
@@ -339,6 +340,9 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
                     <a class="coupon-link" id="reopen-coupon-link" href="/premium-plus-coupon/">クーポン詳細を確認</a>
                 </div>
             </div>
+
+            <!-- Premium Plus ご購入レース（購入・入金確認済みの本人にだけサーバーが返す） -->
+            <PremiumPlusDeliveryCard />
 
             <!-- 今日の予想 -->
             <div class="predictions-section">
