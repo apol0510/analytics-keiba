@@ -14,6 +14,8 @@ import '../../styles/acquisitionGlass.css';
 interface Props { content: any; pastUnavailable?: boolean }
 const { content: c, pastUnavailable = false } = Astro.props;
 const isSrp = c.product === 'srp';
+// Preview（/free-prediction/view/）: 公開してよい範囲だけ（buildPreviewContent）。買い目・指数・役割分類は描画しない
+const isPreview = c.preview === true;
 const ROLE_CLASS = {
   '本命': 'ag-role-honmei', '対抗': 'ag-role-taikou', '単穴': 'ag-role-tana',
   '連下最上位': 'ag-role-renka', '連下': 'ag-role-renka', '抑え': 'ag-role-osae', '不要': 'ag-role-out',
@@ -21,7 +23,10 @@ const ROLE_CLASS = {
 const ROLE_LABEL = { '連下最上位': '連下', '不要': '評価外' };
 const ROLE_ORDER = { '本命': 0, '対抗': 1, '単穴': 2, '連下最上位': 3, '連下': 4, '抑え': 5, '不要': 6 };
 const main = c.horses.filter((h) => ['本命', '対抗', '単穴'].includes(h.role)).sort((a, b) => ROLE_ORDER[a.role] - ROLE_ORDER[b.role]);
-const groups = [
+const groups = isPreview ? [
+  { key: 'renka', label: '△ 連下（最上位）', horses: c.horses.filter((h) => h.role === '連下最上位'), cls: 'minor-group-renka' },
+  { key: 'others', label: 'その他の出走馬', horses: c.horses.filter((h) => !h.role), cls: 'acq-preview-others' },
+].filter((g) => g.horses.length > 0) : [
   { key: 'renka', label: '連下', horses: c.horses.filter((h) => h.role === '連下最上位' || h.role === '連下'), cls: 'minor-group-renka' },
   { key: 'osae', label: '抑え', horses: c.horses.filter((h) => h.role === '抑え'), cls: 'minor-group-osae' },
   { key: 'out', label: '評価外', horses: c.horses.filter((h) => h.role === '不要'), cls: 'ineligible-section' },
@@ -37,7 +42,7 @@ function splitLine(line) {
   return { axis: m[1], arrow: m[2] === '→' ? '→' : '⇔', partners: m[3].split('.').filter(Boolean) };
 }
 const rankClass = (rank) => { const n = Number(rank); return n === 1 ? 'rk rk-1' : n === 2 ? 'rk rk-2' : n === 3 ? 'rk rk-3' : 'rk'; };
-const umatanTotal = isSrp ? 0 : c.umatan.normal.reduce((s, l) => s + l.points, 0);
+const umatanTotal = (isSrp || isPreview) ? 0 : c.umatan.normal.reduce((s, l) => s + l.points, 0);
 /** 過去走の列（値のある列だけ出す。データ元によって日付・レース名・上り等が無いため）*/
 const PAST_COLS = [
   { key: 'date', label: '日付' }, { key: 'venue', label: '開催' }, { key: 'raceName', label: 'レース名', cls: 'race' },
@@ -64,7 +69,22 @@ const metaFor = (r) => [
   <div class="acq-grid">
     <section class="recommendation-section acq-col-bets" aria-label="買い目">
       <div class="unified-bet-card">
-        {!isSrp ? (
+        {isPreview ? (
+          <>
+            {[['umatan-normal', '馬単 通常の買い目', '本命・対抗を軸にした、全体の買い目です。'], ['umatan-narrowed', '馬単 点数を絞った買い目', '本命を軸に、相手を評価上位 3 頭に絞った買い目です。']].map(([kind, title, note]) => (
+              <article class={`ag-glass acq-sec acq-bet acq-locked-bet${kind === 'umatan-narrowed' ? ' narrowed' : ''}`} data-kind={kind}>
+                <header class="acq-head"><h3>{title}</h3><span class="ag-pill violet">Premium</span></header>
+                <p class="acq-note">{note}</p>
+                <div class="betting-teaser ag-inset" aria-hidden="true">
+                  <span class="acq-axis"><span class="acq-axis-label">軸</span><span class="ag-num lg acq-axis-num">●</span></span>
+                  <span class="acq-arrow">⇔</span>
+                  <span class="acq-partners">{[1, 2, 3, 4, 5].slice(0, kind === 'umatan-narrowed' ? 3 : 5).map(() => <span class="acq-pnum">●</span>)}</span>
+                </div>
+                <a class="ag-cta acq-unlock" href="/pricing/">この予想を取得するにはPremium</a>
+              </article>
+            ))}
+          </>
+        ) : !isSrp ? (
           <>
             <article class="ag-glass acq-sec acq-bet" data-kind="umatan-normal">
               <header class="acq-head">
@@ -135,7 +155,9 @@ const metaFor = (r) => [
               <span class="acq-mark-role">{h.role}</span>
               <span class="ag-num lg">{h.number}</span>
               <span class="acq-mark-name"><strong>{h.name}</strong>{h.jockey && <small>{h.jockey}</small>}</span>
-              <span class="acq-mark-index"><small>AI総合指数</small><strong>{h.aiIndex ?? '—'}</strong></span>
+              {isPreview
+                ? <span class="acq-mark-index acq-masked"><small>AI総合指数</small><strong aria-label="Premiumで表示">●●</strong></span>
+                : <span class="acq-mark-index"><small>AI総合指数</small><strong>{h.aiIndex ?? '—'}</strong></span>}
             </li>
           ))}
         </ul>
@@ -143,6 +165,7 @@ const metaFor = (r) => [
 
       {groups.length > 0 && (
         <section class="ag-glass acq-sec acq-groups" aria-label="連下・抑え・評価外">
+          {isPreview && <p class="acq-note acq-preview-note">連下・抑え・評価外の分類は Premium で表示されます。</p>}
           {groups.map((g) => (
             <div class={`acq-group ${g.cls}`} data-group={g.key}>
               <h4><span>{g.label}</span><small>{g.horses.length}頭</small></h4>
@@ -333,6 +356,14 @@ const metaFor = (r) => [
   .acq-history summary { cursor: pointer; color: #bae6fd; font-size: 0.85rem; min-height: 36px; display: flex; align-items: center; }
   .acq-history ol { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 6px; }
 
+  /* Preview: 有料部分はダミーのモザイク（実値は描画しない） */
+  .betting-teaser { display: grid; grid-template-columns: auto auto minmax(0, 1fr); align-items: center; gap: 10px; padding: 12px; filter: blur(5px); opacity: 0.75; user-select: none; pointer-events: none; }
+  .acq-locked-bet { display: grid; gap: 10px; }
+  .acq-unlock { width: 100%; }
+  /* グラデーション文字の中では blur が効かない（2026-08 の事故）ため、文字色を戻してからぼかす */
+  .acq-mark-index.acq-masked strong { background: none; background-clip: initial; -webkit-background-clip: initial; -webkit-text-fill-color: currentColor; color: var(--ag-text-2); filter: blur(6px); user-select: none; }
+  .acq-preview-note { margin: 0 0 4px; }
+  .acq-group.acq-preview-others h4 span { color: var(--ag-text-2); }
   .acq-selection.grade-A { border-color: rgba(251,113,133,0.55); box-shadow: var(--ag-shadow), 0 0 26px rgba(244,63,94,0.18); }
   .acq-selection.grade-B { border-color: rgba(251,191,36,0.55); }
   .acq-grade { font-weight: 900; font-size: 1.15rem; margin-bottom: 6px; }

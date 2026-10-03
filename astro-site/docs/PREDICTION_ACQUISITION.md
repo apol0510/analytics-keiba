@@ -57,6 +57,22 @@
 - **明るさ**: ベースのネイビーは維持し、blue / cyan / lavender / soft white の光、半透明の白と淡い青紫の反射、内側ハイライトで軽さと高級感。CTA・取得済み・選択タブ・統計カードまで統一
 - **着順の色**: 1着 ゴールド／2着 明るいシルバー・アイスブルー（文字白・縁取り・軽いグロー。灰色にしない）／3着 ブロンズ
 
+### 2-4. /free/・/free-prediction/・/predictions/ の役割と共通デザイン（2026-10-04 MK 確定）
+
+| URL | 役割 | デザイン |
+|---|---|---|
+| `/free/{jra,nankan}/` | 無料ユーザーが**日常利用**する無料予想（AI 印を見る場所）| 現行の無料専用 UI のまま。Premium 系 UI へ寄せない |
+| `/free-prediction/{all,jra,nankan}/` | **Premium の体験プレビュー**（ショールーム）| `/predictions/` と**同一デザインシステム・同一コンポーネント** |
+| `/predictions/`・`/premium-prediction/{jra,nankan}/` | Premium 会員が予想を 1 件ずつ取得する**本番利用画面** | 同上 |
+
+- 導線は 3 段階: 無料日常利用（`/free/`）→ Premium 体験（`/free-prediction/`）→ Premium 本利用（`/predictions/`）
+- **違いは権限状態と CTA だけ**。日付タブ・会場タブ・レースカード（R・発走・距離・頭数）・余白・タイポ・ガラス・配色・CTA の位置・mobile UI は共通部品（`PremiumRaceBoard` / `AcquisitionRaceList` / `AcquisitionVenueTabs` / `acquisitionGlass.css`）。別 CSS を重複管理しない
+- **Preview の一覧**: Premium と同じカード・同じ CTA 位置に「Premiumで予想を取得」（→ `/pricing/`）と注記「この予想を取得するにはPremium」。上部に「Premiumを体験／Premiumではこの画面から気になるレースを1件ずつ取得できます」
+- **Preview の詳細**（`/free-prediction/view/?key=`）: Premium 詳細と同じ部品・同じ構成。公開してよい範囲だけ（`freePublicView.js` と同じ: 馬番・馬名・騎手・過去走・上位 4 頭の印 ◎○▲△）。**買い目・AI 総合指数・▲△以外の役割（連下/抑え/評価外の分類）は出さない**（ダミーのモザイクと「Premiumで表示」）。本文スナップショットは作らない
+- **Preview で有料本文を漏らさない**: 一覧に買い目・指数・役割を渡さない（`buildRaceListing` のみ）。プレビュー本文は `buildPreviewContent`（買い目・指数・役割を入れない純粋関数）だけから描画
+- Premium 側は従来どおり: 同じカードで「予想を取得する」、取得済みは「取得済み／予想を見る」。冪等・他会員非影響・URL 直打ち防止・SSR / fail closed は不変
+- `/free-prediction/` は公開ページ（Cookie・会員判定を使わない）→ SSR ＋ CDN 5 分キャッシュ（`/free/` と同じ方式）
+
 - Premium Sanrenpuku は「買い目を少なくする高額商品」ではなく、**三連複で参加すべきレースを AI が選別する上位商品**。
   既存の絞り込み（`generateNarrowSanrenpuku`）は「点数を減らす機能」ではなく**中心買い目**として使う。
 - 一覧（取得前）でも推奨度・見送り・選別理由・「今日の上位 3 レース」は見せてよい（**レースの選別結果**であって買い目ではない）。買い目は取得後だけ。

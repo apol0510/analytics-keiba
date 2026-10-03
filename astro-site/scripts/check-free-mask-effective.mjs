@@ -28,74 +28,29 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const PAGES = [
-  'src/pages/free-prediction/jra.astro',
-  'src/pages/free-prediction/nankan.astro',
-];
 
-/** gradient 文字を使う親クラス（子の blur が効かなくなる組み合わせ） */
-const GRADIENT_TEXT_CLASSES = ['stat-score', 'stat-index'];
-
+/**
+ * 2026-10-04: /free-prediction/ は Premium と同じ部品のプレビューになり、有料部分のモザイクは
+ * 本文部品 AcquiredPredictionBody の preview 分岐（買い目 = .betting-teaser / 指数 = .acq-masked）が描く。
+ * 守る条件は同じ: モザイクが構造的に効いていること（グラデーション文字の打ち消し＋blur）。
+ */
+const COMPONENT = 'src/components/acquisition/AcquiredPredictionBody.astro';
 let failed = 0;
-let checkedElements = 0;
-
-for (const rel of PAGES) {
-  const path = join(root, rel);
-  let src;
-  try {
-    src = readFileSync(path, 'utf-8');
-  } catch {
-    console.error(`❌ ${rel}: ファイルが読めない`);
-    failed++;
-    continue;
-  }
-
-  const problems = [];
-
-  // 1. masked-num を持つ .stat-value 要素は stat-value-masked 必須
-  const statValueTags = src.match(/<div\s+class="[^"]*stat-value[^"]*"[^>]*>[\s\S]{0,240}?<\/div>/g) || [];
-  const maskedTags = statValueTags.filter((t) => /masked-num|masked-eval/.test(t));
-  for (const tag of maskedTags) {
-    const cls = (tag.match(/<div\s+class="([^"]*)"/) || [, ''])[1];
-    const usesGradient = GRADIENT_TEXT_CLASSES.some((c) => cls.split(/\s+/).includes(c));
-    if (!usesGradient) continue; // gradient 文字でなければ子の blur がそのまま効く
-    checkedElements++;
-    if (!cls.split(/\s+/).includes('stat-value-masked')) {
-      problems.push(`gradient 文字の親に stat-value-masked が無い: class="${cls}"`);
-    }
-  }
-
-  // 2〜3. 打ち消し CSS の存在と内容
-  const rule = (src.match(/\.stat-value\.stat-value-masked\s*\{[^}]*\}/) || [])[0];
-  if (!rule) {
-    problems.push('.stat-value.stat-value-masked の打ち消し CSS が無い（詳細度 2 クラスで書くこと）');
-  } else {
-    if (!/background-clip:\s*initial/.test(rule)) problems.push('打ち消し CSS に background-clip: initial が無い');
-    if (!/-webkit-text-fill-color:/.test(rule)) problems.push('打ち消し CSS に -webkit-text-fill-color が無い');
-  }
-
-  // 4. blur 本体
-  const maskedEval = (src.match(/\.masked-eval\s*\{[^}]*\}/) || [])[0];
-  if (!maskedEval || !/filter:\s*blur\(/.test(maskedEval)) {
-    problems.push('.masked-eval に filter: blur( が無い');
-  }
-
-  if (problems.length) {
-    console.error(`❌ ${rel}\n   - ${problems.join('\n   - ')}`);
-    failed++;
-  } else {
-    console.log(`✅ ${rel}: モザイクが構造的に有効（gradient 打ち消しあり / blur あり）`);
-  }
+const src = readFileSync(join(root, COMPONENT), 'utf-8');
+const problems = [];
+const idx = (src.match(/\.acq-mark-index\.acq-masked strong\s*\{[^}]*\}/) || [])[0];
+if (!idx) problems.push('.acq-mark-index.acq-masked strong のルールが無い（詳細度 2 クラス以上で書くこと）');
+else {
+  if (!/background-clip:\s*initial/.test(idx)) problems.push('指数モザイクに background-clip: initial が無い');
+  if (!/-webkit-text-fill-color:/.test(idx)) problems.push('指数モザイクに -webkit-text-fill-color が無い');
+  if (!/filter:\s*blur\(/.test(idx)) problems.push('指数モザイクに filter: blur( が無い');
 }
-
-// 5. 素通り防止
-if (checkedElements === 0) {
-  console.error('❌ 検査対象（gradient 文字 × モザイク）が 0 件。セレクタか対象ページの変更を確認すること');
-  failed++;
-}
-
-if (failed) {
-  console.error(`\n無料モザイク実効性チェック 失敗: ${failed} 件`);
-  process.exit(1);
-}
-console.log(`\n✅ 無料モザイク実効性チェック 合格（検査要素 ${checkedElements} 箇所）`);
+const teaser = (src.match(/\.betting-teaser\s*\{[^}]*\}/) || [])[0];
+if (!teaser || !/filter:\s*blur\(/.test(teaser)) problems.push('.betting-teaser に filter: blur( が無い');
+if (!/class="betting-teaser ag-inset" aria-hidden="true"/.test(src)) problems.push('買い目のダミー表示が無い');
+// プレビューで描く値はダミー（●）だけ
+const pv = src.slice(src.indexOf('{isPreview ? ('), src.indexOf(') : !isSrp ? ('));
+if (/\{(c\.umatan|l\.line|l\.points|h\.aiIndex)/.test(pv)) problems.push('プレビュー分岐で実データを描画している');
+if (problems.length) { console.error(`❌ ${COMPONENT}\n   - ${problems.join('\n   - ')}`); failed++; }
+else console.log(`✅ ${COMPONENT}: プレビューのモザイクが構造的に有効（打ち消しあり / blur あり / 実値なし）`);
+if (failed) process.exit(1);

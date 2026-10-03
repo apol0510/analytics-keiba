@@ -14,8 +14,11 @@ interface Props {
   venues: Array<{ venueName: string; venueId: string; races: Array<{ key: string; listing: any; acquired: any; selection?: any; canAcquire?: boolean }> }>;
   canAcquire: boolean;
   acquiredUnknown?: boolean;
+  /** premium = 本利用（取得できる）/ preview = 体験（同じカード・同じ位置に Premium への CTA）*/
+  mode?: 'premium' | 'preview';
 }
-const { product, basePath, date, dates, venues, canAcquire, acquiredUnknown = false } = Astro.props;
+const { product, basePath, date, dates, venues, canAcquire, acquiredUnknown = false, mode = 'premium' } = Astro.props;
+const isPreview = mode === 'preview';
 const wd = ['日', '月', '火', '水', '木', '金', '土'];
 const dateLabel = (d: string) => { const t = new Date(`${d}T00:00:00Z`); return `${t.getUTCMonth() + 1}/${t.getUTCDate()}(${wd[t.getUTCDay()]})`; };
 const jstTime = (iso: string) => { const t = new Date(Date.parse(iso) + 9 * 3600e3); return `${t.getUTCMonth() + 1}/${t.getUTCDate()} ${String(t.getUTCHours()).padStart(2, '0')}:${String(t.getUTCMinutes()).padStart(2, '0')}`; };
@@ -25,7 +28,8 @@ const ctaLabel = product === 'srp' ? '推奨レースの予想を取得する' :
 // レースごとの取得可否（会場別の契約）。無ければ一覧全体の canAcquire
 const can = (r) => (typeof r.canAcquire === 'boolean' ? r.canAcquire : canAcquire);
 // 「次のレースの予想を取得する」の飛び先＝最初の未取得で取得できるレース
-const nextKey = venues.flatMap((v) => v.races).find((r) => !r.acquired && can(r))?.key || null;
+const nextKey = isPreview ? null : (venues.flatMap((v) => v.races).find((r) => !r.acquired && can(r))?.key || null);
+const previewUrl = (key) => `/free-prediction/view/?key=${encodeURIComponent(key)}`;
 ---
 <div class="acq-list" data-product={product}>
   {dates.length > 1 && (
@@ -52,7 +56,12 @@ const nextKey = venues.flatMap((v) => v.races).find((r) => !r.acquired && can(r)
             )}
           </div>
           <div class="acq-race-cta">
-            {r.acquired ? (
+            {isPreview ? (
+              <>
+                <a class="ag-cta acq-btn" href="/pricing/">Premiumで予想を取得</a>
+                <small>この予想を取得するにはPremium ・ <a class="acq-preview-link" href={previewUrl(r.key)}>取得後の画面を見る</a></small>
+              </>
+            ) : r.acquired ? (
               <>
                 <span class="ag-done">✓ 取得済み</span>
                 <a class="ag-btn-ghost acq-view" href={viewUrlFor(r.key)}>予想を見る</a>
@@ -105,8 +114,10 @@ const nextKey = venues.flatMap((v) => v.races).find((r) => !r.acquired && can(r)
   .acq-race.is-acquired .acq-race-cta { grid-template-columns: auto minmax(0, 1fr); align-items: center; }
   .acq-race.is-acquired .acq-race-cta small { grid-column: 1 / -1; }
   .acq-warn, .acq-empty, .acq-locked { color: var(--ag-text-2); }
+  .acq-preview-link { color: #bae6fd; font-weight: 700; }
   @media (min-width: 640px) {
-    .acq-race { grid-template-columns: 64px minmax(0, 1fr) 200px; padding: 14px 16px; }
+    .acq-race { grid-template-columns: 64px minmax(0, 1fr) 230px; padding: 14px 16px; }
+    .acq-race-cta .acq-btn { white-space: nowrap; }
     .acq-race-cta { grid-column: auto; }
     .acq-race.is-acquired .acq-race-cta { grid-template-columns: 1fr; justify-items: center; }
   }
