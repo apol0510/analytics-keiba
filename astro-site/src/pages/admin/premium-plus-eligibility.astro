@@ -86,6 +86,20 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       <div class="pp-orders-msg" id="ppOrdersMsg" role="status" aria-live="polite"></div>
       <div class="pp-orders-list" id="ppOrdersList"></div>
     </section>
+    <!--
+      枠確保（購入済み会員向け: 単品 定価 ¥98,000 / 10鞍確保枠 / 年間オーナーズ枠）— 2026-10-04 MK 決定。
+      会員がマイページから申し込む。入金を確認したら「入金確認」を 2 回押して枠を有効化する
+      （有効期限は確認日から。お礼メールは 5 分以内に自動送信）。金額はサーバーが決めた値を表示するだけ。
+    -->
+    <section class="pp-orders" id="ppPasses" aria-labelledby="ppPassesH">
+      <div class="pp-orders-head">
+        <h2 id="ppPassesH">🎫 Premium Plus 枠確保（入金確認）</h2>
+        <button type="button" id="ppPassesReload" class="btn-ghost">枠を再読み込み</button>
+      </div>
+      <p class="pp-orders-lead">マイページから申し込まれた枠です。入金（2回払いは初回分）を確認したら「入金確認」を 2 回押します。未入金・誤申込は「取消」。</p>
+      <div class="pp-orders-msg" id="ppPassesMsg" role="status" aria-live="polite"></div>
+      <div class="pp-orders-list" id="ppPassesList"></div>
+    </section>
     <div class="sumbar" id="summary"></div>
     <div class="sumsub" id="summarySub"></div>
 
@@ -4024,6 +4038,64 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     }
     $('ppOrdersReload').addEventListener('click', () => loadOrders());
 
+    // ── 枠確保（入金確認）──────────────────────────────────────────
+    const PASS_STATUS_JA = { awaiting_payment: '入金待ち', active: '有効', cancelled: '取消' };
+    const PASS_WD = ['日', '月', '火', '水', '木', '金', '土'];
+    function passesMsg(text, kind) { const el = $('ppPassesMsg'); el.textContent = text || ''; el.className = 'pp-orders-msg' + (kind ? ' ' + kind : ''); }
+    async function passOp(action, passId, extra) {
+      const actor = currentActor();
+      if (!actor) { passesMsg('操作者名を入力してください（変更履歴に残ります）', 'err'); $('connBody').hidden = false; return; }
+      passesMsg('処理中…');
+      const out = await call({ action, passId, actor, ...(extra || {}) });
+      if (!out) { passesMsg('操作できませんでした（理由は画面上部のメッセージ）。', 'err'); await loadPasses(); return; }
+      if (out.__unknown) { passesMsg('通信が切れました。確定したかどうかは分かりません。再読み込みで確認してください。', 'err'); return; }
+      passesMsg(out.code === 'confirmed' ? '✅ 入金確認しました（枠を有効化・お礼メールは 5 分以内に自動送信）'
+        : out.code === 'cancelled' ? '取り消しました' : (out.idempotent ? '既に処理済みです' : (out.error || out.code)), out.ok ? 'ok' : 'err');
+      await loadPasses();
+    }
+    function renderPasses(data) {
+      const list = $('ppPassesList');
+      list.textContent = '';
+      const rows = data.rows || [];
+      if (!rows.length) { list.textContent = '枠確保の申込はまだありません。'; return; }
+      for (const p of rows) {
+        const box = document.createElement('div');
+        box.className = 'pp-order';
+        const lines = [
+          orderMemberLabel(p.recordId) + ' ／ ' + p.planName + '（' + p.races + '鞍）',
+          '状態: ' + (PASS_STATUS_JA[p.status] || p.status) + ' ／ 請求 ' + ordYen(p.amount)
+            + (p.creditAmount ? '（初回 ' + ordYen(p.creditAmount) + ' 充当済み）' : '')
+            + (p.installments > 1 ? ' ／ ' + p.installments + '回払い 初回 ' + ordYen(p.firstPayment) : ' ／ 一括'),
+          (p.schedule === 'weekly' ? '配信: 毎週' + PASS_WD[p.weekday] + '曜日' : '配信日: 会員が予約' + (p.reservations.length ? '（' + p.reservations.join('・') + '）' : ''))
+            + (p.validUntil ? ' ／ 期限 ' + p.validUntil : ''),
+          '申込 ' + ordJst(p.createdAt),
+        ];
+        for (const t of lines) { const d = document.createElement('div'); d.textContent = t; box.appendChild(d); }
+        if (p.status === 'awaiting_payment') {
+          const bar = document.createElement('div');
+          const ok = document.createElement('button'); ok.type = 'button'; ok.textContent = '入金確認';
+          armButton(ok, '本当に入金確認する', () => passOp('plusPassConfirm', p.passId));
+          const why = document.createElement('input'); why.type = 'text'; why.placeholder = '取消の理由（未入金・誤申込 など）';
+          const ng = document.createElement('button'); ng.type = 'button'; ng.className = 'btn-ghost'; ng.textContent = '取消';
+          armButton(ng, '本当に取り消す', () => {
+            const reason = why.value.trim();
+            if (!reason) { passesMsg('取消の理由を入力してください', 'err'); return; }
+            return passOp('plusPassCancel', p.passId, { reason });
+          });
+          bar.append(ok, ' ', why, ' ', ng);
+          box.appendChild(bar);
+        }
+        list.appendChild(box);
+      }
+    }
+    async function loadPasses() {
+      const data = await call({ action: 'plusPasses' }, { quiet: true });
+      if (!data || data.__unknown) { passesMsg('枠を読み取れませんでした（0 件という意味ではありません）。', 'err'); return false; }
+      renderPasses(data);
+      return true;
+    }
+    $('ppPassesReload').addEventListener('click', () => loadPasses());
+
     async function load(opts = {}) {
       const auto = !!opts.auto;
       const silent = auto || !!opts.keepMessage;
@@ -4044,6 +4116,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       renderRefreshNote(Date.now(), auto);
       // 注文（入金確認）は手動の読み込みでだけ更新する（自動更新で操作中のボタンを作り替えない）
       if (!auto) await loadOrders({ keepMessage: true });
+      if (!auto) await loadPasses();
       return true;
     }
 

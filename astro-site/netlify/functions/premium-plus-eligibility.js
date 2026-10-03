@@ -76,6 +76,7 @@ import { resolveEntitlements, fromAirtableFields } from '../../src/lib/entitleme
 import { describeSanrenpukuHolding } from '../../src/lib/entitlements/sanrenpukuDisplay.js';
 import { createFunnelStore, describeFunnelRow, funnelJst } from '../../src/lib/premiumPlus/premiumPlusFunnelStore.js';
 import { makeRedisCmd } from '../../src/lib/premiumPlus/premiumPlusFunnelServer.js';
+import { createPassStore, confirmPass, cancelPass } from '../../src/lib/premiumPlus/premiumPlusPassStore.js';
 import {
   createOrderStore, confirmOrder, repairOrder, cancelOrder, revokeOrder, createCanaryOrder, deleteCanaryOrder,
 } from '../../src/lib/premiumPlus/premiumPlusOrderService.js';
@@ -231,6 +232,10 @@ exports.handler = async (event) => {
     if (action === 'reopenStart') return await handleReopenStart({ KEY, BASE, now, req });
     // Premium Plus 注文（入金確認は Plus 専用 / 2026-09-29 MK 決定 B）
     if (action === 'plusOrders') return await handlePlusOrders({ req });
+    // 枠確保（購入済み会員向け: 単品 定価 / 10鞍確保枠 / 年間枠）の一覧と入金確認・取消
+    if (action === 'plusPasses' || action === 'plusPassConfirm' || action === 'plusPassCancel') {
+      return await handlePlusPassOp({ action, now, req });
+    }
     if (action === 'plusOrderConfirm' || action === 'plusOrderRepair'
         || action === 'plusOrderCancel' || action === 'plusOrderRevoke'
         || action === 'plusOrderCanaryCreate' || action === 'plusOrderCanaryDelete') {
@@ -2095,6 +2100,38 @@ async function handlePlusOrders({ req }) {
       needsRepair: rows.filter((o) => o.needsRepair).length,
     },
     sideEffects: 'none',
+  });
+}
+
+/** 枠確保の一覧・入金確認・取消。**金額・状態はクライアントから受け取らない**（台帳を読み直す） */
+async function handlePlusPassOp({ action, now, req }) {
+  const cmd = makeRedisCmd(process.env);
+  if (!cmd) return json(503, { error: 'store_unavailable', sideEffects: 'none' });
+  const store = createPassStore({ redisCmd: cmd });
+  if (action === 'plusPasses') {
+    const rows = (await store.list()).sort((a, b) => b.createdAt - a.createdAt).map((p) => ({
+      passId: p.passId, recordId: p.recordId, plan: p.plan, planName: p.planName, races: p.races,
+      amount: p.amount, installments: p.installments, firstPayment: p.firstPayment, creditAmount: p.creditAmount,
+      schedule: p.schedule, weekday: p.weekday, status: p.status, createdAt: p.createdAt,
+      startDate: p.startDate || null, validUntil: p.validUntil || null, reservations: p.reservations || [],
+    }));
+    return json(200, { rows, sideEffects: 'none' });
+  }
+  const passId = String(req.passId || '').trim();
+  if (!passId) return json(400, { error: 'passId が必要です', sideEffects: 'none' });
+  const actor = String(req.actor || '').trim();
+  const out = action === 'plusPassConfirm'
+    ? await confirmPass({ store, passId, actor, nowMs: now })
+    : await cancelPass({ store, passId, actor, reason: String(req.reason || '').trim(), nowMs: now });
+  console.log('🧾 [premium-plus-eligibility] 枠確保の操作:', { action, code: out.code, ok: out.ok });
+  const PASS_ERROR = {
+    pass_not_found: '枠が見つかりません（何もしていません）', not_awaiting: 'この枠は入金待ちではありません',
+    missing_actor: '操作者名を入力してください', missing_reason: '理由を入力してください',
+    in_progress: '処理中です。少し待ってから再読み込みしてください', store_unavailable: '台帳を読めません（何もしていません）',
+  };
+  return json(out.status || (out.ok ? 200 : 409), {
+    ok: out.ok, code: out.code, idempotent: out.idempotent === true,
+    error: out.ok || out.idempotent ? undefined : (PASS_ERROR[out.code] || `操作できません（${out.code}）`),
   });
 }
 
