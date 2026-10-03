@@ -26,6 +26,7 @@
 | 事業サイトの方針変更（2026-10-02）| data.tirol.link と同じ一般的な事業者サイトへ変更・競馬固有の語を全削除（analytics-tirol-link #1 `2c062b1` 本番反映・禁止語 0・HTTPS・全ページ 200）|
 | 人の作業 | **なし**（2026-10-02 MK: 必要情報は送信済み・Stripe 側の審査中。ビジネス URL は analytics.tirol.link へ変更済み）|
 | メール横断監査（2026-10-02 MK 確定）| 実装・テスト固定済み: Light を案内する 5 campaign は送信計画を作らない／オンボーディング step5 停止／有料 Light 会員の更新メールと /pricing/ は同額 Premium ¥4,980 を主導線（Light 更新は会員だけの控えめな行）／Premium 更新メールは 3 プラン／会場限定 Premium は三連複 campaign から除外／更新リマインド 2 本は Stripe live 決済が無効な間 dry-run。**有効化後に本番で更新リマインドが live に戻ることを確認する** |
+| 2026-10-03 再測定（MK: 本人確認・入金口座の設定完了の連絡後）| live: charges_enabled=false・card_payments inactive・disabled_reason=under_review・pending_verification=other_compliance_inquiry（currently_due / past_due は空＝こちらの提出物不足ではない）。live Checkout 作成は引き続き `cannot currently make live charges`。live 設定は正常（Price 3 件 active・¥4,980/¥2,980/¥2,980・商品名 Analytics Premium 系・ポータル at_period_end・Webhook enabled 6 イベント）。Deploy Preview（test）回帰: 3 プランとも Checkout URL 発行・Webhook 無署名 400・ポータル未ログイン 401。**merge は live 決済受付まで保留継続** |
 | 次（有効化後）| merge #677 → 本番デプロイ → 本番スモーク（/pricing/・Checkout URL 発行・Webhook 署名 400・portal 401）→ cleanup |
 | rollback | STRIPE_BILLING.md §5 |
 
