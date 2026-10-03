@@ -1,0 +1,25 @@
+---
+/**
+ * Premium 取得一覧の会場タブ（すべて / 中央競馬 / 南関東競馬）。日付タブとは別軸（2026-10-03 MK 確定）。
+ */
+import '../../styles/acquisitionGlass.css';
+interface Props { active: 'all' | 'jra' | 'nankan' }
+const { active } = Astro.props;
+const TABS = [
+  { key: 'all', label: 'すべて', href: '/predictions/' },
+  { key: 'jra', label: '中央競馬', href: '/premium-prediction/jra/' },
+  { key: 'nankan', label: '南関東競馬', href: '/premium-prediction/nankan/' },
+];
+---
+<nav class="ag-glass acq-venue-tabs" aria-label="会場">
+  {TABS.map((t) => (
+    <a href={t.href} class={t.key === active ? 'is-active' : ''} aria-current={t.key === active ? 'page' : undefined} data-venue-tab={t.key}>{t.label}</a>
+  ))}
+</nav>
+
+<style>
+  .acq-venue-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; padding: 4px; border-radius: 16px; }
+  .acq-venue-tabs a { display: flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 8px; border-radius: 12px; color: var(--ag-text-2); text-decoration: none; font-weight: 800; font-size: 0.92rem; white-space: nowrap; transition: background 0.15s ease, color 0.15s ease; }
+  .acq-venue-tabs a:hover { color: var(--ag-text); background: rgba(255,255,255,0.08); }
+  .acq-venue-tabs a.is-active { color: #fff; background: var(--ag-cta); box-shadow: 0 6px 18px rgba(129,140,248,0.45), inset 0 1px 0 rgba(255,255,255,0.4); }
+</style>

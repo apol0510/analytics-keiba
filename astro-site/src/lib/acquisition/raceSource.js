@@ -79,7 +79,8 @@ export function listDates(cat, { root, limit = 7 } = {}) {
 /**
  * @returns {Array<{ venueName, venueId, totalRaces, races: Array<{raceInfo, horses, bettingLines}> }>}
  */
-export function loadDay(cat, date, { root } = {}) {
+export function loadDay(cat, date, { root, pastRaces = true } = {}) {
+  // pastRaces=false: 一覧用（本文を作らないので過去走の注入は不要）
   if (!DATE_RE.test(String(date))) return [];
   const dir = baseDir(root);
   const out = [];
@@ -87,7 +88,7 @@ export function loadDay(cat, date, { root } = {}) {
     for (const [venueName, slug] of Object.entries(NANKAN_VENUES)) {
       const d = readJson(join(dir, `${date}-${slug}.json`));
       if (!d || !Array.isArray(d.predictions) || d.eventInfo?.date !== date) continue;
-      enrichNankanPastRaces(d, date, slug, root);
+      if (pastRaces) enrichNankanPastRaces(d, date, slug, root);
       out.push({
         venueName, venueId: slug,
         totalRaces: Number(d.eventInfo?.totalRaces) || d.predictions.length,
@@ -98,7 +99,7 @@ export function loadDay(cat, date, { root } = {}) {
     const d = readJson(join(dir, 'jra', date.slice(0, 4), date.slice(5, 7), `${date}.json`));
     if (d && d.date === date && Array.isArray(d.venues)) {
       // 無料ページと同じ horseHistories 由来の過去走（表示専用・失敗しても予想本体は変えない）
-      try { injectHorseHistoriesIntoVenues(d.venues, date, root || process.cwd()); } catch { /* 非致命 */ }
+      if (pastRaces) { try { injectHorseHistoriesIntoVenues(d.venues, date, root || process.cwd()); } catch { /* 非致命 */ } }
       for (const v of d.venues) {
         const venueId = venueIdOf('jra', v.venue);
         if (!venueId || !Array.isArray(v.predictions)) continue;
@@ -120,4 +121,26 @@ export function findRace(cat, date, venueId, raceNumber, opts) {
   if (!v) return null;
   const race = v.races.find((r) => Number(r.raceInfo.raceNumber) === Number(raceNumber));
   return race ? { venue: v, race } : null;
+}
+
+/**
+ * その日の対象レース数（予想ファイルの races だけを数える・過去走の注入はしない軽い読み込み）。
+ * 活用状況の分母に使う（docs/PREDICTION_ACQUISITION.md §2-3）。
+ */
+export function countRaces(cat, date, { root } = {}) {
+  if (!DATE_RE.test(String(date))) return 0;
+  const dir = baseDir(root);
+  let n = 0;
+  if (cat === 'nankan') {
+    for (const slug of Object.values(NANKAN_VENUES)) {
+      const d = readJson(join(dir, `${date}-${slug}.json`));
+      if (d && Array.isArray(d.predictions) && d.eventInfo?.date === date) n += d.predictions.filter((r) => Number(r?.raceInfo?.raceNumber) > 0).length;
+    }
+  } else if (cat === 'jra') {
+    const d = readJson(join(dir, 'jra', date.slice(0, 4), date.slice(5, 7), `${date}.json`));
+    if (d && d.date === date && Array.isArray(d.venues)) {
+      for (const v of d.venues) if (venueIdOf('jra', v.venue) && Array.isArray(v.predictions)) n += v.predictions.filter((r) => Number(r?.raceInfo?.raceNumber) > 0).length;
+    }
+  }
+  return n;
 }

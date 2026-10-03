@@ -1,11 +1,11 @@
 ---
 /**
- * 今月の利用状況と、最近取得した予想（summarizeUsage の結果を描画するだけ）。
+ * 今月の活用状況と、最近取得した予想（summarizeUsage の結果を描画するだけ）。
  * usage が null のときは「確認できない」と表示する（0 件と区別する）。
  *
  * 2026-10-03 MK 確定（mobile-first・docs/PREDICTION_ACQUISITION.md §2-2）:
  *   variant="mini" … スマホで一覧の上に出す 1 行の小型サマリー（PC では出さない）
- *   variant="side" … PC の右カラム（今月の利用状況＋最近取得した予想）。
+ *   variant="side" … PC の右カラム（今月の活用状況＋最近取得した予想）。
  *                    スマホでは統計を出さず、最近取得した予想だけを一覧の下で折りたたむ
  */
 import '../../styles/acquisitionGlass.css';
@@ -16,7 +16,7 @@ const jst = (iso: string) => { const t = new Date(Date.parse(iso) + 9 * 3600e3);
 const productLabel = { premium: 'Premium', srp: '三連複 選別' };
 ---
 {variant === 'mini' ? (
-  <a class="ag-glass acq-usage-mini" href="/predictions/history/" aria-label="今月の利用状況（取得済みの予想へ）">
+  <a class="ag-glass acq-usage-mini" href="/predictions/history/" aria-label="今月の活用状況（取得済みの予想へ）">
     {usage ? (
       <span class="acq-mini-row">
         <span>今月 <strong data-usage="month-count">{usage.monthCount}</strong>件取得</span>
@@ -24,13 +24,13 @@ const productLabel = { premium: 'Premium', srp: '三連複 選別' };
         <span><strong data-usage="active-days">{usage.activeDays}</strong>日利用</span>
         <span class="acq-mini-cat">中央 {usage.byCategory.jra}・南関 {usage.byCategory.nankan}</span>
       </span>
-    ) : <span class="acq-mini-row">利用状況を確認できませんでした</span>}
+    ) : <span class="acq-mini-row">活用状況を確認できませんでした</span>}
     <span class="acq-mini-go" aria-hidden="true">›</span>
   </a>
 ) : (
-  <aside class={`acq-usage acq-usage-${variant}`} aria-label="今月の利用状況">
+  <aside class={`acq-usage acq-usage-${variant}`} aria-label="今月の活用状況">
     <div class="ag-glass acq-usage-card acq-usage-stats">
-      <h2>今月の利用状況</h2>
+      <h2>今月の活用状況</h2>
       {usage ? (
         <>
           <div class="acq-usage-nums">
@@ -43,7 +43,7 @@ const productLabel = { premium: 'Premium', srp: '三連複 選別' };
           </dl>
         </>
       ) : (
-        <p class="acq-usage-unknown">利用状況を確認できませんでした。</p>
+        <p class="acq-usage-unknown">活用状況を確認できませんでした。</p>
       )}
     </div>
     {usage && (

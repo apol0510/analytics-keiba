@@ -19,11 +19,12 @@
 //    prerender=true のままだと静的 HTML に有料本文が入り、localStorage の書き換えだけで読めてしまう。
 export const prerender = false;
 import AcquisitionRaceList from '../components/acquisition/AcquisitionRaceList.astro';
-import AcquisitionUsagePanel from '../components/acquisition/AcquisitionUsagePanel.astro';
+import AcquisitionValuePanel from '../components/acquisition/AcquisitionValuePanel.astro';
+import AcquisitionVenueTabs from '../components/acquisition/AcquisitionVenueTabs.astro';
+import { buildValueSummary } from '../lib/acquisition/valueSummary.js';
 import SrpRecommendedRaces from '../components/acquisition/SrpRecommendedRaces.astro';
 import { buildListModel } from '../lib/acquisition/listModel.js';
 import { loadMemberAcquisitions } from '../lib/acquisition/acquisitionServer.js';
-import { summarizeUsage } from '../lib/acquisition/usageStats.js';
 import { canAcquire } from '../lib/acquisition/acquisitionPolicy.js';
 import BaseLayout from '../layouts/BaseLayout.astro';
 import SessionKeepAlive from '../components/SessionKeepAlive.astro';
@@ -54,7 +55,8 @@ for (const [k, v] of Object.entries(PAID_PAGE_HEADERS)) Astro.response.headers.s
 // ── 三連複で狙うレースの選別（推奨度・見送り・理由）と取得状態。買い目は一覧に渡さない ──
 const acqList = await loadMemberAcquisitions({ recordId: gate.subject, env: process.env });
 const srpModel = buildListModel({ cat: 'nankan', product: 'srp', requestedDate: Astro.url.searchParams.get('date'), acquisitions: acqList || [] });
-const acqUsage = acqList ? summarizeUsage(acqList) : null;
+// 活用状況（本日 = 取得レース / その契約で本日取得できる実レース数・今月 = 取得数・利用日数・内訳・実質額）
+const acqValue = buildValueSummary({ acquisitions: acqList, ent: gate.entitlements, contract: gate.contract, product: 'srp' });
 const srpCan = canAcquire(gate.entitlements, { product: 'srp', cat: 'nankan' });
 
 // src/data/predictions/*.json から最新日付の全会場を取得（南関同時開催対応）
@@ -117,12 +119,12 @@ const formattedDate = `${year}年${parseInt(month)}月${parseInt(day)}日`;
                  旧「絞り込む」ボタン（買い目削減の演出）は廃止。docs/PREDICTION_ACQUISITION.md */}
             <div class="ag-scene acq-layout">
                 <div class="acq-main">
-                <AcquisitionUsagePanel usage={acqUsage} variant="mini" />
+                <div class="acq-today-top"><AcquisitionValuePanel value={acqValue} variant="today" basePath="/premium-sanrenpuku/" /></div>
                     <SrpRecommendedRaces day={srpModel.day} canAcquire={srpCan} />
                     <h2 class="acq-heading">全レースの判定</h2>
                     <AcquisitionRaceList product="srp" basePath="/premium-sanrenpuku/" date={srpModel.date} dates={srpModel.dates} venues={srpModel.venues} canAcquire={srpCan} acquiredUnknown={acqList === null} />
                 </div>
-                <AcquisitionUsagePanel usage={acqUsage} variant="side" />
+                <AcquisitionValuePanel value={acqValue} variant="side" basePath="/premium-sanrenpuku/" />
             </div>
 
             {/* 【一時非表示 2026-07-15】Premium Plus CTA
