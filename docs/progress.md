@@ -1,4 +1,4 @@
-# 🪞 /free-prediction/ を Premium と同一デザインのプレビューへ（2026-10-04 MK 指示 / 進行中）
+# 🪞 /free-prediction/ を Premium と同一デザインのプレビューへ（2026-10-04 MK 指示 / 本番反映済み）
 
 | 項目 | 状態 |
 |---|---|
@@ -6,6 +6,8 @@
 | 実装 | branch `feat/preview-unify`。共通画面部品 `PremiumRaceBoard`（premium / preview）／Preview 一覧 `/free-prediction/{all,jra,nankan}/`（SSR＋CDN 5 分）／Preview 詳細 `/free-prediction/view/`（`buildPreviewContent`＝公開範囲だけ）／Premium 一覧 3 ページも同じ部品へ |
 | 確認（ビルド済み SSR・合成会員・実ブラウザ）| Preview 一覧・詳細に買い目・AI 総合指数の実値 0（ダミーのモザイクのみ）・分類は公開の ◎○▲△ だけ・過去走は全頭（中央 18 頭 90 行・南関 14 頭 70 行）／形式外キー 404／`/free/` は従来どおり 200／390px で Preview と Premium の一覧が同じ構造（違いは上部と CTA だけ）・横スクロールなし |
 | サイトマップ | 会員限定の `/predictions/`（一覧・本文・履歴）が #687 以降サイトマップに載っていたのを除外。プレビュー詳細 `/free-prediction/view/` も除外。プレビュー一覧（all/jra/nankan）は掲載 |
+| 本番 | PR #696 squash `a13470a0`・main CI success・Netlify production ready。本番（公開ページなので実測）: Preview 一覧 jra 24 カード・上部バナー・会場タブ 3・有料実データ 0／Preview 詳細 指数はダミーのみ・買い目の実値なし・noindex／`/free/` 200／会員ページは未ログイン 302／サイトマップに `/predictions/` 0 件 |
+| cleanup | worktree `analytics-keiba-preview2` 削除・確認用サーバー停止・確認用 HTML 削除 |
 | ガード | 旧プレビュー構造を固定していた `freePreviewCta.guard`・`check-free-mask-effective` を新構造へ（守る条件は維持）。穴馬リンクは Preview にも継続 |
 
 ---
