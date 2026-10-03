@@ -1,10 +1,12 @@
-# 🪟 Premium 詳細 v2（馬単専用・過去走・ガラスモーフィズム／2026-10-03 MK 指示 / 進行中）
+# 🪟 Premium 詳細 v2（馬単専用・過去走・ガラスモーフィズム／2026-10-03 MK 指示 / 本番反映済み）
 
 | 項目 | 状態 |
 |---|---|
 | 正本 | `spec.md` 先頭表・`decisions.md` 2026-10-03（追記）・`astro-site/docs/PREDICTION_ACQUISITION.md` §2-1 |
 | 実装 | branch `feat/premium-detail-v2`。本文 v2（Premium に三連複なし・全馬の過去走）／`pastRaces.js`／詳細画面のガラスモーフィズム化／v1 本文の互換表示 |
 | 確認（ビルド済み SSR 関数・合成会員）| 中央・南関とも 構成 8 要素あり・三連複 0・過去走 全馬（南関 14 頭 70 行・中央 18 頭 90 行＋過去走データ 18）／Sanrenpuku は三連複 通常・中心のまま／v1 本文は三連複なし・過去走補完／履歴・マイページ反映。PC 2 列、390px・360px で横スクロールなし・買い目行が最前面 |
+| 本番 | PR #689 squash `bdc1f380`・main CI success・Netlify production ready。read-only: 閲覧・一覧・履歴は未ログイン 302／取得 API GET 405／トップ・無料予想・マイページ・料金 200。会員の画面は本番セッションを作れないため上の SSR 確認で代替 |
+| cleanup | worktree `analytics-keiba-pdv2` 削除・ローカル確認用サーバー停止・確認用 HTML 削除 |
 
 ---
 
