@@ -1,3 +1,17 @@
+# 2026-10-03 — 有料予想を 1 予想ずつ取得する方式へ／Premium Sanrenpuku をレース選別商品へ（MK 確定）
+
+- **決定**: 有料予想の全部見える方式を廃止し 1 予想ずつ取得。Premium は通常＋点数を絞った馬単・三連複通常、Premium Sanrenpuku は推奨度/見送り・理由・通常・中心。三連複 CTA を「レース選別」へ全面統一。取得履歴で利用状況を出す。既存三連複購入者の権利と Premium Plus は別概念として維持（モックの方向性は承認済み）。
+- **実装の判断**（対象仕様書 `astro-site/docs/PREDICTION_ACQUISITION.md`）:
+  - URL は変えない（`/premium-prediction/{jra,nankan}/`・`/premium-sanrenpuku{,-jra}/` を取得一覧へ作り替え）。メール・ナビ・既存リンクを壊さない。本文は `/predictions/view/?key=` だけ。
+  - 取得記録と本文スナップショットは Redis（`ak:acq:v1:*`・本番 schema を増やさない）。JRA の予想データは SSR に直近 3 日しか残らないため、**本文を取得時に保存**して再閲覧を保証。
+  - 旧ページの「全レース一括の本文表示」「会場別の傾向分析（レースの信頼度分類）」「三連複の絞り込む演出」は撤去（承認モックに無く、レース選別は Premium Sanrenpuku の価値のため）。
+  - 推奨度の閾値は 2026-08〜10 の実データで推奨率 南関 36%・中央 33% になるよう区分ごとに設定（`sanrenpukuSelection.js`）。
+  - 送信済みで旧訴求のメール（`sanrenpuku-offer` v3・`campaign-discount-premium` step1＝23 通送信済み・割引期間終了）は文面を変えず送信計画を作らない（`retiredCopyCampaigns.js`）。未送信の `sanrenpuku-upsell-sequence` 全 4 通・`free-signup-onboarding` step6（step1〜5 送信済みを CampaignDeliveries で確認）は書き直した。
+  - `/sanrenpuku-demo/` の「お客様の声」2 件は旧訴求の声だったため撤去（声の文面は書き換えない）。
+- **同日の実異常の是正**: 旧 `/prediction/[slug]` が未ログインで有料の馬単買い目を表示していた → PR #686（`ceec0f44`）で無料予想への 301 / 404 に置換・本番で確認済み。
+
+---
+
 # 2026-09-29 — Premium 月払いにも期限前・失効後リマインドを適用する（MK 確定 / ①）
 
 - Light 月払い（1-B）と同じ考え方: 実際に支払った Premium 月払いだけ・期限 1〜7 日前と失効後 3〜30 日・周期ごとに各 1 回。

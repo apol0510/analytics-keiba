@@ -328,5 +328,6 @@ export async function gatePaidPage({
   // any-of: 指定された権利のどれか 1 つでも true なら通す。0 個は上で弾いている。
   if (!flags.some((f) => ent[f] === true)) return deny('entitlement_denied');
 
-  return { ok: true, response: null, reason: 'ok', entitlements: ent };
+  // subject = ak_session の recordId（取得履歴など本人 1 件だけを読む処理が使う。クライアントの値は使わない）
+  return { ok: true, response: null, reason: 'ok', entitlements: ent, subject: sub };
 }

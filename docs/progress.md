@@ -1,3 +1,16 @@
+# 📋 有料予想の 1 予想ずつ取得／Premium Sanrenpuku レース選別（2026-10-03 MK 指示 / 進行中）
+
+| 項目 | 状態 |
+|---|---|
+| 正本 | `spec.md` 先頭・`decisions.md` 2026-10-03・`astro-site/docs/PREDICTION_ACQUISITION.md` |
+| 実装 | branch `feat/per-prediction-acquisition`（worktree `analytics-keiba-acq`）。取得 API・閲覧/履歴ページ・有料 4 ページの一覧化・推奨度判定・利用状況（一覧/履歴/マイページ）・三連複 CTA 統一・旧訴求メールの送信停止 |
+| テスト | `test:acquisition`（20 件・`check:safety` に組込）／`retiredCopyCampaigns.guard.test.mjs`／既存の GCI・パリティを新しい単一源へ付け替え。`check:safety`・build 通過 |
+| E2E（ローカル・本番と同じビルド済み SSR 関数を直接呼ぶ・合成会員・外部接続なし）| 未ログイン=302／Light=302／取得前は本文 0／他オリジン POST=403／取得=303→本文（通常・絞り・三連複）／再取得は冪等（取得数 1 のまま）／他会員は未取得・本文 0／三連複のみ会員は Premium 取得 403・選別取得可（見送り・理由・通常・中心）／形式外キー 400／履歴・マイページに今月 1 件 |
+| 同日是正 | 旧 `/prediction/[slug]` の無認可表示 → PR #686 merge・本番 301 確認済み |
+| 次 | commit → PR → CI → merge → 本番（read-only 確認: 未ログイン 302・一覧 HTML に本文なし）→ cleanup |
+
+---
+
 # ⏳ 待ち状態と並行作業（2026-09-28 更新 / ルール: CLAUDE.md「⏳ 待ち時間は止まらず並行する」）
 
 | 何を待っているか | いつ・どう動くか | 人の作業 |

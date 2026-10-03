@@ -1,0 +1,106 @@
+---
+/**
+ * 「予想を取得」一覧（取得前は本文を出さない）。
+ * 渡すのは出走情報（buildRaceListing）と取得状態・選別結果だけ。買い目・印・指数は渡さない／描画しない。
+ */
+import { viewUrlFor } from '../../lib/acquisition/acquisitionServer.js';
+
+interface Props {
+  product: 'premium' | 'srp';
+  basePath: string;
+  date: string;
+  dates: string[];
+  venues: Array<{ venueName: string; venueId: string; races: Array<{ key: string; listing: any; acquired: any; selection?: any }> }>;
+  canAcquire: boolean;
+  acquiredUnknown?: boolean;
+}
+const { product, basePath, date, dates, venues, canAcquire, acquiredUnknown = false } = Astro.props;
+const wd = ['日', '月', '火', '水', '木', '金', '土'];
+const dateLabel = (d: string) => { const t = new Date(`${d}T00:00:00Z`); return `${t.getUTCMonth() + 1}/${t.getUTCDate()}(${wd[t.getUTCDay()]})`; };
+const jstTime = (iso: string) => { const t = new Date(Date.parse(iso) + 9 * 3600e3); return `${t.getUTCMonth() + 1}/${t.getUTCDate()} ${String(t.getUTCHours()).padStart(2, '0')}:${String(t.getUTCMinutes()).padStart(2, '0')}`; };
+const gradeLabel = { A: '推奨度 A', B: '推奨度 B', skip: '見送り候補' };
+const productLabel = product === 'srp' ? 'Premium Sanrenpuku' : 'Premium予想';
+const ctaLabel = product === 'srp' ? '推奨レースの予想を取得する' : '予想を取得する';
+---
+<div class="acq-list" data-product={product}>
+  {dates.length > 1 && (
+    <nav class="acq-dates" aria-label="日付">
+      {dates.map((d) => <a href={`${basePath}?date=${d}`} class={d === date ? 'is-active' : ''} aria-current={d === date ? 'date' : undefined}>{dateLabel(d)}</a>)}
+    </nav>
+  )}
+  {acquiredUnknown && <p class="acq-warn">取得状況を確認できませんでした。取得済みの予想は「取得済みの予想」からご覧ください。</p>}
+  {venues.length === 0 && <p class="acq-empty">この日の予想はまだありません。</p>}
+  {venues.map((v) => (
+    <section class="acq-venue">
+      <h2 class="acq-venue-title">{v.venueName}</h2>
+      {v.races.map((r) => (
+        <article class={`acq-race${r.acquired ? ' is-acquired' : ''}`} data-key={r.key}>
+          <div class="acq-race-no"><strong>{r.listing.raceNumber}R</strong><span>{r.listing.startTime}</span></div>
+          <div class="acq-race-info">
+            <h3>{r.listing.raceName || `${r.listing.raceNumber}R`}{r.listing.isMainRace && <span class="acq-tag main">メイン</span>}</h3>
+            <p>{[r.listing.distance, r.listing.horseCount ? `${r.listing.horseCount}頭` : ''].filter(Boolean).join(' ・ ')}</p>
+            {r.selection && (
+              <div class={`acq-sel grade-${r.selection.grade}`}>
+                <span class="acq-sel-badge">{gradeLabel[r.selection.grade]}</span>
+                <span class="acq-sel-reason">{r.selection.reasons[0]}</span>
+              </div>
+            )}
+          </div>
+          <div class="acq-race-cta">
+            {r.acquired ? (
+              <>
+                <span class="acq-done">✓ 取得済み</span>
+                <a class="acq-view" href={viewUrlFor(r.key)}>予想を見る</a>
+                <small>取得 {jstTime(r.acquired.at)}</small>
+              </>
+            ) : canAcquire ? (
+              <form method="post" action="/api/predictions/acquire/">
+                <input type="hidden" name="key" value={r.key} />
+                <button type="submit" class="acq-btn">{ctaLabel}</button>
+                <small>{productLabel}</small>
+              </form>
+            ) : (
+              <small class="acq-locked">この予想はご契約のプランでは取得できません</small>
+            )}
+          </div>
+        </article>
+      ))}
+    </section>
+  ))}
+</div>
+
+<style>
+  .acq-list { display: grid; gap: 18px; }
+  .acq-dates { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
+  .acq-dates a { flex: 0 0 auto; padding: 8px 14px; border-radius: 10px; background: rgba(148,163,184,0.14); color: inherit; text-decoration: none; font-weight: 700; }
+  .acq-dates a.is-active { background: #4f46e5; color: #fff; }
+  .acq-venue { display: grid; gap: 10px; }
+  .acq-venue-title { margin: 6px 0 0; padding-left: 10px; border-left: 4px solid #6366f1; font-size: 1.15rem; }
+  .acq-race { display: grid; grid-template-columns: 64px 1fr auto; gap: 12px; align-items: center; padding: 12px; border-radius: 12px; background: rgba(255,255,255,0.06); border: 1px solid rgba(148,163,184,0.2); }
+  .acq-race.is-acquired { border-color: rgba(34,197,94,0.45); }
+  .acq-race-no { display: grid; justify-items: center; padding: 8px 4px; border-radius: 10px; background: rgba(15,23,42,0.6); }
+  .acq-race-no strong { font-size: 1.2rem; }
+  .acq-race-no span { font-size: 0.8rem; color: #94a3b8; }
+  .acq-race-info h3 { margin: 0; font-size: 1rem; }
+  .acq-race-info p { margin: 2px 0 0; color: #94a3b8; font-size: 0.85rem; }
+  .acq-tag.main { margin-left: 6px; font-size: 0.72rem; padding: 1px 8px; border-radius: 999px; background: rgba(245,158,11,0.25); }
+  .acq-sel { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; font-size: 0.85rem; }
+  .acq-sel-badge { font-weight: 800; padding: 1px 8px; border-radius: 999px; background: rgba(148,163,184,0.25); }
+  .acq-sel.grade-A .acq-sel-badge { background: #dc2626; color: #fff; }
+  .acq-sel.grade-B .acq-sel-badge { background: #d97706; color: #fff; }
+  .acq-sel-reason { color: #cbd5e1; }
+  .acq-race-cta { display: grid; justify-items: center; gap: 4px; min-width: 150px; }
+  .acq-race-cta form { display: grid; justify-items: center; gap: 4px; margin: 0; }
+  .acq-btn { border: 0; cursor: pointer; padding: 10px 16px; border-radius: 10px; background: #4f46e5; color: #fff; font-weight: 800; font-size: 0.92rem; }
+  .acq-btn:hover { background: #4338ca; }
+  .acq-done { padding: 4px 12px; border-radius: 8px; background: rgba(34,197,94,0.2); color: #4ade80; font-weight: 800; }
+  .acq-view { padding: 8px 16px; border-radius: 10px; border: 1px solid rgba(148,163,184,0.5); color: inherit; text-decoration: none; font-weight: 700; }
+  .acq-race-cta small { color: #94a3b8; font-size: 0.75rem; }
+  .acq-warn, .acq-empty { color: #94a3b8; }
+  @media (max-width: 560px) {
+    .acq-race { grid-template-columns: 56px 1fr; }
+    .acq-race-cta { grid-column: 1 / -1; min-width: 0; }
+    .acq-btn, .acq-view { width: 100%; text-align: center; }
+    .acq-race-cta form { width: 100%; }
+  }
+</style>

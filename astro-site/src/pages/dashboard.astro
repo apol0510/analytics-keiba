@@ -29,6 +29,9 @@ import PremiumContactModal from '../components/PremiumContactModal.astro';
 import { resolveViewer, VIEWER_STATE } from '../lib/auth/viewerEntitlements.js';
 import { viewFromEntitlements } from '../lib/entitlements/resolveEntitlements.js';
 import { resolvePredictionDestination } from '../lib/navigation/predictionDestination.js';
+import AcquisitionUsagePanel from '../components/acquisition/AcquisitionUsagePanel.astro';
+import { loadMemberAcquisitions } from '../lib/acquisition/acquisitionServer.js';
+import { summarizeUsage } from '../lib/acquisition/usageStats.js';
 
 // 判定が落ちても画面は出す（従来の localStorage 経路へフォールバックする）。
 let viewer = { state: VIEWER_STATE.UNKNOWN, reason: 'not_resolved', entitlements: null, profile: null, isMember: false };
@@ -55,6 +58,17 @@ const serverAuth = {
 };
 // 会員ごとに中身が変わる。共有キャッシュに載せない（別人へ配られるのを防ぐ）。
 Astro.response.headers.set('Cache-Control', 'private, no-store');
+
+// ── 予想の取得状況（2026-10-03・docs/PREDICTION_ACQUISITION.md）: 取得できる会員だけ・本人の記録だけ ──
+const _ent = viewer.isMember ? (viewer.entitlements || {}) : {};
+const showAcquisition = viewer.isMember && !!viewer.recordId && [
+    _ent.canViewPremium, _ent.canViewSanrenpuku, _ent.canViewPremiumJra, _ent.canViewPremiumNankan,
+].some((v) => v === true);
+let acquisitionUsage = null;
+if (showAcquisition) {
+    const list = await loadMemberAcquisitions({ recordId: viewer.recordId, env: process.env });
+    acquisitionUsage = list ? summarizeUsage(list) : null;
+}
 
 // `</script>` 断片で script を閉じられないようにしてから埋め込む
 const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
@@ -158,6 +172,20 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
                     </div>
                 </div>
             </div>
+
+            {showAcquisition && (
+                <section class="acq-dashboard" aria-label="予想の取得状況">
+                    <h2 class="acq-dashboard-title">📋 予想の取得状況</h2>
+                    <AcquisitionUsagePanel usage={acquisitionUsage} />
+                    <div class="acq-dashboard-links">
+                        {(_ent.canViewPremium || _ent.canViewPremiumJra) && <a href="/premium-prediction/jra/">中央の予想を取得</a>}
+                        {(_ent.canViewPremium || _ent.canViewPremiumNankan) && <a href="/premium-prediction/nankan/">南関の予想を取得</a>}
+                        {_ent.canViewSanrenpuku && <a href="/premium-sanrenpuku/">三連複の推奨レース（南関）</a>}
+                        {_ent.canViewSanrenpuku && <a href="/premium-sanrenpuku-jra/">三連複の推奨レース（中央）</a>}
+                        <a href="/predictions/history/">取得済みの予想</a>
+                    </div>
+                </section>
+            )}
 
             <!-- 今回のログイン情報 -->
             <div id="login-info-section" class="login-info-section" style="display: none;">
@@ -397,7 +425,7 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
                     <!-- Premium Sanrenpuku予想（Premium Sanrenpuku/Combo会員専用・中央/南関セット利用導線） -->
                     <div id="sanrenpuku-predictions" class="prediction-card sanrenpuku" style="display: none;">
                         <div class="card-header">
-                            <h3>💎 Premium三連複予想 <span class="method-badge">中央・南関対応 AI絞り込み</span></h3>
+                            <h3>💎 Premium三連複予想 <span class="method-badge">中央・南関対応 AIレース選別</span></h3>
                         </div>
                         <div class="race-info">
                             <div class="race-title race-title-sm">全レース（1R-12R）</div>
@@ -5180,7 +5208,7 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
                 <h3>✅ 買い切りプランの特徴</h3>
                 <ul>
                     <li>💰 <strong>一度きりの支払いで永久アクセス</strong>（追加料金なし）</li>
-                    <li>🔄 <strong>即座に利用開始</strong> - 決済後すぐに高性能AI三連複の自動絞り込み機能が利用可能</li>
+                    <li>🔄 <strong>即座に利用開始</strong> - 決済後すぐに三連複のレース選別（推奨レースの予想取得）が利用可能</li>
                     <li>📈 <strong>AIは毎日進化</strong> - 長く使うほどお得（50年利用で月額換算¥130）</li>
                 </ul>
             </div>
@@ -5191,14 +5219,14 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
                 <div class="plan-option recommended">
                     <div class="recommended-badge">馬単予想 + 三連複予想の両方を利用する</div>
                     <h3 class="plan-option-name">Sanrenpuku Lifetime</h3>
-                    <div class="plan-option-subtitle">高性能AI三連複自動絞り込み（Premium期限内閲覧可能）</div>
+                    <div class="plan-option-subtitle">三連複で狙うレースを AI が選別（Premium期限内閲覧可能）</div>
                     <div class="plan-option-price-strike" data-ak-price-strike="Premium Sanrenpuku Lifetime">¥108,000</div>
                     <div class="plan-option-price" data-ak-price="Premium Sanrenpuku Lifetime">¥78,000</div>
                     <div class="plan-option-discount">永久アクセス（追加料金なし）</div>
                     <ul class="plan-option-features">
-                        <li>✅ <strong>高性能AI三連複絞り込み機能</strong>を利用できます</li>
+                        <li>✅ <strong>今日、三連複で狙うべきレースを AI が選別</strong></li>
                         <li>✅ 的中率72% 回収率203%</li>
-                        <li>✅ 買い目点数7-9点の少点数</li>
+                        <li>✅ 各レースに推奨度・見送り判定・選別理由</li>
                         <li>✅ 永久アクセス（追加料金なし）</li>
                         <li>✅ Premium会員の間はずっと利用可能</li>
                     </ul>
@@ -5214,7 +5242,7 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
             <div class="modal-flow">
                 <h3>📋 購入後の流れ</h3>
                 <ol>
-                    <li><strong>今すぐ利用開始</strong> - 購入後すぐに高性能AI三連複の自動絞り込み機能が利用できます</li>
+                    <li><strong>今すぐ利用開始</strong> - 購入後すぐに三連複のレース選別が利用できます</li>
                     <li><strong>自動で追加</strong> - 決済後に自動でPremium会員に三連複予想が追加されます</li>
                 </ol>
             </div>
@@ -6223,3 +6251,10 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
     });
   })();
 </script>
+
+<style>
+    .acq-dashboard { margin: 0 0 24px; display: grid; gap: 12px; }
+    .acq-dashboard-title { margin: 0; font-size: 1.2rem; }
+    .acq-dashboard-links { display: flex; flex-wrap: wrap; gap: 8px; }
+    .acq-dashboard-links a { padding: 8px 14px; border-radius: 10px; background: rgba(79,70,229,0.25); color: inherit; text-decoration: none; font-weight: 700; font-size: 0.9rem; }
+</style>

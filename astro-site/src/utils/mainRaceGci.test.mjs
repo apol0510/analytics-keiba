@@ -231,8 +231,11 @@ test('Lightは保存 bettingLines.umatan を参照する（正本パース）', 
   }
 });
 
-test('Premium JRA は保存 bettingLines.umatan を優先（無ければ正本生成へフォールバック）', () => {
-  const s = src('../pages/premium-prediction/jra.astro');
+// 2026-10-03〜 Premium の本文は「取得」後に predictionContent.js（単一源・JRA/南関共通）が組み立てる
+const PREMIUM_CONTENT = '../lib/acquisition/predictionContent.js';
+
+test('Premium（取得後の本文）は保存 bettingLines.umatan を優先（無ければ正本生成へフォールバック）', () => {
+  const s = src(PREMIUM_CONTENT);
   assert.ok(s.includes('bettingLines?.umatan'), '保存 bettingLines?.umatan を参照していない');
   assert.ok(s.includes('generateRaceUmatanLines'), 'フォールバックの正本生成を参照していない');
 });
@@ -267,17 +270,15 @@ test('抑えなし文字列は不変・区切り記号(dash/↔/⇔/→)は保�
   assert.strictEqual(stripOsae('13↔2.3.9.10.14'), '13↔2.3.9.10.14');
 });
 
-test('Premium南関・JRA はコードと同一の抑え除去正規表現を表示専用に持つ', () => {
-  for (const p of ['../pages/premium-prediction/nankan.astro', '../pages/premium-prediction/jra.astro']) {
-    const s = src(p);
-    assert.ok(s.includes('[(（]抑え[^)）]*[)）]'), `${p} が想定の抑え除去正規表現を持たない`);
-    assert.ok(s.includes('stripOsaeForDisplay'), `${p} が stripOsaeForDisplay を定義していない`);
-    assert.ok(/numbers:\s*stripOsaeForDisplay\(/.test(s), `${p} が表示 numbers に抑え除去を適用していない`);
-  }
+test('Premium（取得後の本文）はコードと同一の抑え除去正規表現を表示専用に持つ', () => {
+  const s = src(PREMIUM_CONTENT);
+  assert.ok(s.includes('[(（]抑え[^)）]*[)）]'), '想定の抑え除去正規表現を持たない');
+  assert.ok(s.includes('stripOsaeForDisplay'), 'stripOsaeForDisplay を定義していない');
+  assert.ok(/line:\s*stripOsaeForDisplay\(/.test(s), '表示 line に抑え除去を適用していない');
 });
 
 test('Premium表示は保存文字列を破壊しない（点数は元の行から算出・bettingLines再代入なし）', () => {
-  for (const p of ['../pages/premium-prediction/nankan.astro', '../pages/premium-prediction/jra.astro']) {
+  for (const p of [PREMIUM_CONTENT]) {
     const s = src(p);
     // 点数は原文字列(line/lineStr)から算出（抑え除去後の値では算出しない）
     assert.ok(/countPointsFromUmatanLine\((line|lineStr)\)/.test(s), `${p} の点数算出が原文字列でない`);
