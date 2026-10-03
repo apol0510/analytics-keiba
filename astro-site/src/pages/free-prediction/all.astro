@@ -1,0 +1,45 @@
+---
+/**
+ * /free-prediction/all/ — Premium の体験プレビュー（ショールーム）
+ *
+ * 2026-10-04 MK 確定（docs/PREDICTION_ACQUISITION.md §2-4）:
+ *   /free/ = 無料の日常利用 ／ /free-prediction/ = Premium 体験 ／ /predictions/ = Premium 本利用
+ *   Premium と同一デザイン・同一部品（PremiumRaceBoard mode="preview"）。違いは権限状態と CTA だけ。
+ *   一覧には出走情報しか渡さない（買い目・AI 総合指数・役割は描画しない）。
+ *   公開ページ（Cookie・会員判定を使わない）なので SSR ＋ CDN 5 分キャッシュ（/free/ と同じ）。
+ */
+export const prerender = false;
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import PremiumRaceBoard from '../../components/acquisition/PremiumRaceBoard.astro';
+import '../../styles/acquisitionGlass.css';
+import { buildListModel } from '../../lib/acquisition/listModel.js';
+import { setPublicCdnCache } from '../../lib/cdnCache.mjs';
+
+let model = { date: null, dates: [], venues: [] };
+try {
+  model = buildListModel({ cat: 'all', product: 'premium', requestedDate: Astro.url.searchParams.get('date'), acquisitions: [] });
+} catch (error) {
+  console.error('[free-prediction/all] build error:', error);
+}
+setPublicCdnCache(Astro);
+---
+<BaseLayout
+  title="AI予想プレビュー（中央・南関）- KEIBA Analytics"
+  description="KEIBA Analytics の Premium 予想プレビュー（中央・南関）。Premium ではこの画面から気になるレースの予想を 1 件ずつ取得できます。"
+>
+  <div class="fp-page">
+    <PremiumRaceBoard mode="preview" venue="all" model={model} basePath="/free-prediction/all/" />
+    <nav class="ag-glass fp-links" aria-label="関連ページ">
+      <a href="/free-prediction/jra/archive/">過去の予想と結果（中央）</a>
+      <a href="/free-prediction/nankan/archive/">過去の予想と結果（南関）</a>
+      <a href="/pricing/">Premium のプランを見る</a>
+      <a href="/free/nankan/">無料予想（毎日の AI 印）を見る</a>
+    </nav>
+  </div>
+</BaseLayout>
+
+<style>
+  .fp-page { max-width: 1240px; margin: 0 auto; padding: 0 12px 48px; display: grid; gap: 16px; }
+  .fp-links { display: flex; flex-wrap: wrap; gap: 8px 18px; padding: 14px 16px; }
+  .fp-links a { color: #bae6fd; font-weight: 700; text-decoration: none; min-height: 40px; display: inline-flex; align-items: center; }
+</style>

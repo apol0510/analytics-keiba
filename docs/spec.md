@@ -1,3 +1,16 @@
+# /free/・/free-prediction/・/predictions/ の役割と共通デザイン（2026-10-04 MK 確定）
+
+| URL | 役割 |
+|---|---|
+| `/free/` | 無料ユーザーの日常利用（AI 印）。現行の無料 UI のまま |
+| `/free-prediction/` | Premium の体験プレビュー。`/predictions/` と同一デザイン・同一コンポーネントで、違いは権限状態と CTA だけ |
+| `/predictions/` | Premium 会員が 1 件ずつ取得する本番画面 |
+
+- 完成条件: Preview と Premium が同じサービスの同じ体験に見え、Preview から契約後の利用イメージがそのまま伝わる
+- Preview で有料本文（買い目・AI 総合指数・役割の分類・取得後本文）を漏らさない。詳細は `astro-site/docs/PREDICTION_ACQUISITION.md` §2-4
+
+---
+
 # 有料予想は 1 予想ずつ取得する ／ Premium Sanrenpuku はレース選別（2026-10-03 MK 確定）
 
 > 対象仕様書（画面・権利・データ・テスト）は `astro-site/docs/PREDICTION_ACQUISITION.md`。経緯は `decisions.md` 2026-10-03。

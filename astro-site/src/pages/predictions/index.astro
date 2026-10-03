@@ -6,9 +6,7 @@
 export const prerender = false;
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import SessionKeepAlive from '../../components/SessionKeepAlive.astro';
-import AcquisitionRaceList from '../../components/acquisition/AcquisitionRaceList.astro';
-import AcquisitionValuePanel from '../../components/acquisition/AcquisitionValuePanel.astro';
-import AcquisitionVenueTabs from '../../components/acquisition/AcquisitionVenueTabs.astro';
+import PremiumRaceBoard from '../../components/acquisition/PremiumRaceBoard.astro';
 import '../../styles/acquisitionGlass.css';
 import { gatePaidPage, PAID_PAGE_HEADERS } from '../../lib/auth/paidPageGate.js';
 import { loadMemberAcquisitions } from '../../lib/acquisition/acquisitionServer.js';
@@ -31,29 +29,11 @@ const anyCan = ['jra', 'nankan'].some((cat) => canAcquire(gate.entitlements, { p
 ---
 <BaseLayout title="予想を取得（中央・南関）" noindex>
   <SessionKeepAlive />
-  <div class="ag-scene acq-all-page">
-    <div class="acq-layout">
-      <div class="acq-main">
-        <div class="acq-today-top"><AcquisitionValuePanel value={acqValue} variant="today" basePath="/predictions/" /></div>
-        <AcquisitionVenueTabs active="all" />
-        <h1 class="acq-heading">予想を取得</h1>
-        <p class="acq-lead">中央・南関のレースから、気になる予想を 1 件ずつ取得できます。月額の範囲でいくつでも取得でき、取得した予想はいつでも見返せます。</p>
-        <AcquisitionRaceList product="premium" basePath="/predictions/" date={acqModel.date} dates={acqModel.dates} venues={acqModel.venues} canAcquire={anyCan} acquiredUnknown={acqList === null} />
-      </div>
-      <AcquisitionValuePanel value={acqValue} variant="side" basePath="/predictions/" />
-    </div>
+  <div class="acq-all-page">
+    <PremiumRaceBoard mode="premium" venue="all" model={acqModel} value={acqValue} basePath="/predictions/" canAcquire={anyCan} acquiredUnknown={acqList === null} />
   </div>
 </BaseLayout>
 
 <style>
-  .acq-all-page { padding: 8px 12px 48px; }
-  .acq-layout { max-width: 1200px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
-  .acq-layout > * { min-width: 0; }
-  .acq-main { display: grid; gap: 14px; align-content: start; min-width: 0; }
-  .acq-heading { margin: 4px 0 0; font-size: clamp(1.3rem, 5vw, 1.7rem); background: linear-gradient(90deg, #ffffff, #c7d2fe 60%, #a5f3fc); -webkit-background-clip: text; background-clip: text; color: transparent; }
-  .acq-lead { margin: 0; color: var(--ag-text-2); font-size: 0.9rem; line-height: 1.6; }
-  @media (min-width: 1000px) {
-    .acq-all-page { padding: 20px 20px 64px; }
-    .acq-layout { grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; }
-  }
+  .acq-all-page { max-width: 1240px; margin: 0 auto; padding: 0 12px 48px; }
 </style>

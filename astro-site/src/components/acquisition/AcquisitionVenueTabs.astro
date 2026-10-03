@@ -3,12 +3,17 @@
  * Premium 取得一覧の会場タブ（すべて / 中央競馬 / 南関東競馬）。日付タブとは別軸（2026-10-03 MK 確定）。
  */
 import '../../styles/acquisitionGlass.css';
-interface Props { active: 'all' | 'jra' | 'nankan' }
-const { active } = Astro.props;
+interface Props { active: 'all' | 'jra' | 'nankan'; mode?: 'premium' | 'preview' }
+const { active, mode = 'premium' } = Astro.props;
+// Premium（本利用）と Preview（体験）で同じタブ。違いはリンク先だけ（2026-10-04 MK 確定）
+const HREF = {
+  premium: { all: '/predictions/', jra: '/premium-prediction/jra/', nankan: '/premium-prediction/nankan/' },
+  preview: { all: '/free-prediction/all/', jra: '/free-prediction/jra/', nankan: '/free-prediction/nankan/' },
+};
 const TABS = [
-  { key: 'all', label: 'すべて', href: '/predictions/' },
-  { key: 'jra', label: '中央競馬', href: '/premium-prediction/jra/' },
-  { key: 'nankan', label: '南関東競馬', href: '/premium-prediction/nankan/' },
+  { key: 'all', label: 'すべて', href: HREF[mode].all },
+  { key: 'jra', label: '中央競馬', href: HREF[mode].jra },
+  { key: 'nankan', label: '南関東競馬', href: HREF[mode].nankan },
 ];
 ---
 <nav class="ag-glass acq-venue-tabs" aria-label="会場">

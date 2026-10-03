@@ -1,0 +1,87 @@
+---
+/**
+ * Premium の「予想を取得」一覧画面（Premium 本利用と Preview 体験で共通・2026-10-04 MK 確定）。
+ *
+ *   mode="premium" … /predictions/・/premium-prediction/{jra,nankan}/。本日の活用状況・取得 CTA・今月の活用状況
+ *   mode="preview" … /free-prediction/{all,jra,nankan}/。同じカード・同じ位置に「Premiumで予想を取得」。上部で体験だと伝える
+ *
+ * 違いは権限状態と CTA だけ。日付タブ・会場タブ・レースカード・余白・配色・mobile UI は同じ部品（docs/PREDICTION_ACQUISITION.md §2-4）。
+ * 一覧には出走情報しか渡さない（買い目・指数・役割は描画しない）。
+ */
+import '../../styles/acquisitionGlass.css';
+import AcquisitionRaceList from './AcquisitionRaceList.astro';
+import AcquisitionValuePanel from './AcquisitionValuePanel.astro';
+import AcquisitionVenueTabs from './AcquisitionVenueTabs.astro';
+
+interface Props {
+  mode: 'premium' | 'preview';
+  venue: 'all' | 'jra' | 'nankan';
+  model: any;
+  basePath: string;
+  value?: any;
+  canAcquire?: boolean;
+  acquiredUnknown?: boolean;
+  /** ページに別の h1 がある場合は 'h2' */
+  headingTag?: 'h1' | 'h2';
+}
+const { mode, venue, model, basePath, value = null, canAcquire = false, acquiredUnknown = false, headingTag = 'h1' } = Astro.props;
+const Heading = headingTag;
+const isPreview = mode === 'preview';
+const VENUE_LEAD = { all: '中央・南関のレース', jra: '中央競馬のレース', nankan: '南関東競馬のレース' };
+---
+<div class={`ag-scene acq-layout acq-board acq-board-${mode}`} data-board-mode={mode}>
+  <div class="acq-main">
+    {isPreview ? (
+      <section class="ag-glass preview-banner" aria-label="Premiumを体験">
+        <span class="ag-pill violet">PREVIEW</span>
+        <h2>Premiumを体験</h2>
+        <p>Premiumではこの画面から、気になるレースの予想を 1 件ずつ取得できます。月額の範囲でいくつでも取得でき、取得した予想はいつでも見返せます。</p>
+        <a class="ag-cta preview-banner-cta" href="/pricing/">Premiumのプランを見る</a>
+      </section>
+    ) : (
+      <div class="acq-today-top"><AcquisitionValuePanel value={value} variant="today" basePath={basePath} /></div>
+    )}
+    <AcquisitionVenueTabs active={venue} mode={mode} />
+    <Heading class="acq-heading">予想を取得</Heading>
+    <p class="acq-lead">{VENUE_LEAD[venue]}から、気になる予想を 1 件ずつ取得できます。{isPreview ? '下のカードは Premium と同じ画面です。' : '月額の範囲でいくつでも取得でき、取得した予想はいつでも見返せます。'}</p>
+    <AcquisitionRaceList product="premium" mode={mode} basePath={basePath} date={model.date} dates={model.dates} venues={model.venues} canAcquire={canAcquire} acquiredUnknown={acquiredUnknown} />
+  </div>
+  {isPreview ? (
+    <aside class="acq-preview-side" aria-label="Premiumでできること">
+      <section class="ag-glass acq-preview-card">
+        <h2>Premiumでできること</h2>
+        <ul>
+          <li>中央・南関の全レースから、予想を 1 件ずつ取得</li>
+          <li>馬単の通常の買い目と、点数を絞った買い目</li>
+          <li>印と AI 総合指数・連下／抑え／評価外の分類</li>
+          <li>全頭の過去走</li>
+          <li>取得した予想はいつでも見返せる</li>
+        </ul>
+        <a class="ag-cta" href="/pricing/">Premiumで予想を取得</a>
+      </section>
+    </aside>
+  ) : (
+    <AcquisitionValuePanel value={value} variant="side" basePath={basePath} />
+  )}
+</div>
+
+<style>
+  .acq-board { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; margin: 16px -4px 24px; padding: 16px 12px; border-radius: 22px; }
+  .acq-board > * { min-width: 0; }
+  .acq-main { display: grid; gap: 14px; align-content: start; min-width: 0; }
+  .acq-heading { margin: 4px 0 0; font-size: clamp(1.3rem, 5vw, 1.7rem); letter-spacing: 0.02em; background: linear-gradient(90deg, #ffffff, #c7d2fe 60%, #a5f3fc); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .acq-lead { margin: 0; color: var(--ag-text-2); font-size: 0.9rem; line-height: 1.6; }
+  .preview-banner { padding: 16px; display: grid; gap: 8px; border-color: rgba(196, 181, 253, 0.5); box-shadow: var(--ag-shadow), 0 0 32px rgba(167, 139, 250, 0.22), var(--ag-hi); }
+  .preview-banner .ag-pill { width: fit-content; }
+  .preview-banner h2 { margin: 0; font-size: 1.15rem; }
+  .preview-banner p { margin: 0; color: var(--ag-text-2); font-size: 0.9rem; line-height: 1.6; }
+  .preview-banner-cta { width: 100%; }
+  .acq-preview-side { display: grid; gap: 14px; align-content: start; }
+  .acq-preview-card { padding: 16px; display: grid; gap: 10px; }
+  .acq-preview-card h2 { margin: 0; font-size: 1.02rem; }
+  .acq-preview-card ul { margin: 0; padding-left: 1.2em; display: grid; gap: 6px; color: var(--ag-text); font-size: 0.88rem; line-height: 1.55; }
+  @media (min-width: 1000px) {
+    .acq-board { grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; margin: 20px 0 28px; padding: 24px; }
+    .preview-banner-cta { width: fit-content; }
+  }
+</style>
