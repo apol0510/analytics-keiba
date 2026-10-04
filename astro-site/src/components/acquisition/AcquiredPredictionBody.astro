@@ -103,10 +103,10 @@ const metaFor = (r) => [
               </ul>
             </article>
             {c.umatan.narrowed && (() => { const p = splitLine(c.umatan.narrowed.line); return (
-              <article class="ag-glass acq-sec acq-bet narrowed" data-kind="umatan-narrowed">
+              <article class="ag-glass acq-sec acq-bet" data-kind="umatan-narrowed">
                 <header class="acq-head">
                   <h3>馬単 点数を絞った買い目</h3>
-                  <span class="ag-pill gold">{c.umatan.narrowed.points}点</span>
+                  <span class="ag-pill">{c.umatan.narrowed.points}点</span>
                 </header>
                 <p class="acq-note">本命を軸に、相手を評価上位 3 頭に絞った買い目です。</p>
                 <ul class="bet-list">
@@ -114,7 +114,7 @@ const metaFor = (r) => [
                     <span class="acq-axis"><span class="acq-axis-label">軸</span>{p.axis && <span class="ag-num lg acq-axis-num">{p.axis}</span>}</span>
                     <span class="acq-arrow" aria-hidden="true">{p.arrow}</span>
                     <span class="acq-partners">{p.partners.map((n) => <span class="acq-pnum">{n}</span>)}</span>
-                    <span class="ag-pill gold acq-line-pts">{c.umatan.narrowed.points}点</span>
+                    <span class="ag-pill acq-line-pts">{c.umatan.narrowed.points}点</span>
                   </li>
                 </ul>
               </article>
