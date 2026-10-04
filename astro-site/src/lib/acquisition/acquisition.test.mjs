@@ -523,7 +523,7 @@ test('Premium 導線 CTA は同じスタイル（明るい紫）・通常の取�
   assert.match(css, /--ag-cta-premium: linear-gradient\(135deg, #b46cf9 0%, #9b5cf6 35%, #7c3aed 70%, #5b5ff0 100%\)/, 'Premium 導線は明るい紫→青紫');
   const rule = (sel) => (css.match(new RegExp(`${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{[^}]*\\}`)) || [])[0] || '';
   const base = rule('.ag-cta.ag-cta-premium');
-  assert.match(base, /color: #f3e8ff/, '文字色はボタンと同系色（淡いラベンダー）');
+  assert.match(base, /color: #e9d5ff/, '文字色はボタンと同系色（紫みのあるラベンダー・白に見せない）');
   assert.match(base, /border: 1px solid rgba\(237, 233, 254/);
   assert.match(base, /box-shadow: [^;]*rgba\(147, 51, 234/);
   assert.match(rule('.ag-cta.ag-cta-premium:hover'), /--ag-cta-premium-hover/, 'hover で明るく');
