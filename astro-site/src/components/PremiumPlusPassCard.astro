@@ -3,7 +3,7 @@
  * マイページ: Premium Plus 購入済み会員向けの「価格据え置きの枠確保」と、確保済み枠の状態・日付予約。
  *
  * - 出すかどうか・金額・残席は**サーバー（/api/premium-plus-pass.json）だけが決める**。404 なら出さない。
- * - プランの案内は、本人の当日のレースが終わってから（offerVisible）。確保済みの枠は常に出す。
+ * - プランの案内は購入済み会員に常に出す（入金待ちの申込があるあいだは振込案内を優先）。
  * - 成績（的中率など）は表示しない（MK 決定）。
  */
 ---
@@ -138,7 +138,7 @@
         + '<div class="ppp-name">' + esc(p.name) + '</div>';
       if (p.id === 'single') html += '<div class="ppp-desc">1鞍。お好きな日をお選びいただけます（有効 ' + esc(p.validDays) + '日）。</div>';
       if (p.id === 'pass10') html += '<div class="ppp-desc">10鞍を確保。お好きな日に使えます（有効 6か月）。<br>10鞍を使い終えて回収率が100%未満なら、' + esc(p.compensation) + '鞍を追加でお届けします。</div>';
-      if (p.id === 'annual') html += '<div class="ppp-desc">毎週1鞍・1年で52鞍。配信曜日を選んで、毎週自動でお届けします。2回払いも選べます。</div>';
+      if (p.id === 'annual') html += '<div class="ppp-desc">毎週1鞍・1年で52鞍。配信曜日を選んで、毎週自動でお届けします（一括払い）。</div>';
       html += '<div class="ppp-price">' + esc(yen(p.price)) + '</div>';
       if (p.races > 1) {
         html += '<div class="ppp-was">1鞍あたり ' + esc(yen(p.perRace)) + '（通常 <s>' + esc(yen(o.listPrice)) + '</s>）</div>'
@@ -148,8 +148,7 @@
       }
       if (p.creditApplied) html += '<div class="ppp-pay">充当後のお支払い ' + esc(yen(p.payAmount)) + '</div>';
       if (p.id === 'annual') {
-        html += '<select data-weekday><option value="">配信曜日を選ぶ</option>' + [6, 0, 1, 2, 3, 4, 5].map(function (i) { return '<option value="' + i + '">毎週' + WD[i] + '曜日</option>'; }).join('') + '</select>'
-          + '<select data-inst><option value="1">一括 ' + esc(yen(p.payAmount)) + '</option><option value="2">2回払い（1回 ' + esc(yen(p.installmentAmount)) + '）</option></select>';
+        html += '<select data-weekday><option value="">配信曜日を選ぶ</option>' + [6, 0, 1, 2, 3, 4, 5].map(function (i) { return '<option value="' + i + '">毎週' + WD[i] + '曜日</option>'; }).join('') + '</select>';
       }
       html += '<button type="button" class="ppp-btn" data-apply="' + esc(p.id) + '"' + (p.available ? '' : ' disabled') + '>'
         + (p.available ? (p.id === 'single' ? '単品を申し込む' : 'この枠を確保する') : '満席') + '</button></div>';
@@ -162,9 +161,8 @@
         var payload = { action: 'apply', plan: btn.getAttribute('data-apply') };
         if (payload.plan === 'annual') {
           payload.weekday = card.querySelector('[data-weekday]').value;
-          payload.installments = card.querySelector('[data-inst]').value;
           if (payload.weekday === '') { msg('配信曜日を選んでください。', 'err'); return; }
-          payload.weekday = Number(payload.weekday); payload.installments = Number(payload.installments);
+          payload.weekday = Number(payload.weekday);
         }
         if (!armed) {
           armed = true; btn.classList.add('armed'); btn.textContent = 'もう一度押すと申し込みます';
