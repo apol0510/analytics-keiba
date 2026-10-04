@@ -51,7 +51,9 @@ import { resolveCouponAccess } from '../lib/premiumPlus/premiumPlusCouponAccess.
 // 申込モーダル内のクーポン適用 UI（金額はサーバーの単一源から取る）
 import PremiumPlusCouponApply from '../components/PremiumPlusCouponApply.astro';
 import { lookupCustomerFields } from '../lib/premiumPlus/purchaseAnchorLookup.js';
-import { recordPlusPageView, readPlusSourceFromUrl } from '../lib/premiumPlus/premiumPlusFunnelServer.js';
+import { recordPlusPageView, readPlusSourceFromUrl, makeRedisCmd } from '../lib/premiumPlus/premiumPlusFunnelServer.js';
+import { createOrderStore } from '../lib/premiumPlus/premiumPlusOrderService.js';
+import { isRepeatEligible } from '../lib/premiumPlus/premiumPlusPass.js';
 
 // --- SSR プラン認可（真実源） ---
 const access = await verifyPlanAccess({
@@ -176,6 +178,19 @@ Astro.response.headers.set('Vary', 'Cookie');
 
 const PRICE = 68000;
 const LIST_PRICE = 98000;
+
+// 初回のみ ¥68,000。一度購入した会員の次回は定価 ¥98,000 を表示し、申込はマイページ
+// （「価格据え置きの枠確保」の単品 ¥98,000 / 10鞍確保枠 / 年間枠）へ案内する（2026-10-04 MK 決定）。
+// 申込 API（bank-transfer-application）も同じ判定で初回価格の申込を止める。台帳を読めなければ通常表示。
+let ppRepeatMember = false;
+try {
+  const cmdR = makeRedisCmd(process.env);
+  if (cmdR && access.payload?.sub) {
+    ppRepeatMember = isRepeatEligible(await createOrderStore({ redisCmd: cmdR }).list(), access.payload.sub);
+  }
+} catch { ppRepeatMember = false; }
+// 画面に出す価格（PRICE は初回価格の正本としてそのまま残す）
+const SHOWN_PRICE = ppRepeatMember ? LIST_PRICE : PRICE;
 
 // --- 実績台帳（git コミット / 管理画面 premium-plus-results から入力）---
 // 数値は computeStats() の自動集計のみ（手書き禁止）。10 鞍未満は非表示。
@@ -1045,7 +1060,7 @@ import BankApplicationEmailLock from '../components/BankApplicationEmailLock.ast
         <div class="today-r">
           {ppRelease.showPurchaseCta ? (
             <>
-              <div class="price"><span class="now">¥{PRICE.toLocaleString('ja-JP')}</span><span class="was">¥{LIST_PRICE.toLocaleString('ja-JP')}</span></div>
+              <div class="price"><span class="now">¥{SHOWN_PRICE.toLocaleString('ja-JP')}</span>{!ppRepeatMember && <span class="was">¥{LIST_PRICE.toLocaleString('ja-JP')}</span>}</div>
               <span class="tax">買い切り・追加課金なし</span>
               <button class="extract" type="button" onclick="openBankModal()" disabled={!ppRelease.purchaseEnabled}>{ppTeaserCta}</button>
             </>
@@ -1261,10 +1276,12 @@ import BankApplicationEmailLock from '../components/BankApplicationEmailLock.ast
             )}
 
             <div class="price-row">
-              <span class="price-was">¥{LIST_PRICE.toLocaleString('ja-JP')}</span>
-              <span class="price-now">¥{PRICE.toLocaleString('ja-JP')}</span>
+              {!ppRepeatMember && <span class="price-was">¥{LIST_PRICE.toLocaleString('ja-JP')}</span>}
+              <span class="price-now">¥{SHOWN_PRICE.toLocaleString('ja-JP')}</span>
             </div>
-            <p class="price-note">単品購入（サブスクリプションではありません）</p>
+            <p class="price-note">{ppRepeatMember
+              ? '通常価格（初回価格 ¥68,000 はお一人様 1 回限り）。お得な「価格据え置きの枠確保」はマイページから'
+              : '単品購入（サブスクリプションではありません）'}</p>
 
             {/* 注文へ運ぶ対象日。サーバーが出し直して確定させるが、
                 画面が何日分を出していたかを記録として残す */}
@@ -1279,7 +1296,7 @@ import BankApplicationEmailLock from '../components/BankApplicationEmailLock.ast
             )}
 
             <button class="cta-button" onclick="openBankModal()" disabled={!ppRelease.purchaseEnabled}>
-              🏦 銀行振込で購入する
+              {ppRepeatMember ? '🎫 マイページで申し込む' : '🏦 銀行振込で購入する'}
             </button>
 
             <p class="cta-sub">
@@ -1431,16 +1448,23 @@ import BankApplicationEmailLock from '../components/BankApplicationEmailLock.ast
   <!-- ══ モバイル固定 CTA ══ -->
   {ppRelease.showPurchaseCta && (
     <div class="sticky-cta">
-      <span class="p">¥{PRICE.toLocaleString('ja-JP')}</span>
-      <button onclick="openBankModal()" disabled={!ppRelease.purchaseEnabled}>銀行振込で購入する</button>
+      <span class="p">¥{SHOWN_PRICE.toLocaleString('ja-JP')}</span>
+      <button onclick="openBankModal()" disabled={!ppRelease.purchaseEnabled}>{ppRepeatMember ? 'マイページで申し込む' : '銀行振込で購入する'}</button>
     </div>
   )}
 
   <!-- ══ 銀行振込モーダル ══ -->
+  {ppRepeatMember && <input type="hidden" id="ppRepeatMember" value="1" />}
   <div class="modal" id="bankModal">
     <div class="modal-content">
       <button class="modal-close" onclick="closeBankModal()">×</button>
       <h2 class="modal-title">🏦 銀行振込でのお申し込み</h2>
+      {ppRepeatMember && (
+        <p class="pp-repeat-note" style="background:rgba(245,158,11,.15);border:1px solid rgba(245,158,11,.5);border-radius:10px;padding:12px;margin:0 0 12px;color:#fde68a;line-height:1.7;">
+          ご購入ありがとうございました。2回目以降は通常価格 ¥{LIST_PRICE.toLocaleString('ja-JP')} となります。<br>
+          お得な「価格据え置きの枠確保」は <a href="/dashboard/" style="color:#fbbf24;font-weight:700;">マイページ</a> からお申し込みください。
+        </p>
+      )}
 
       <PremiumPlusCouponApply />
 
@@ -1601,6 +1625,8 @@ import BankApplicationEmailLock from '../components/BankApplicationEmailLock.ast
 
     function openBankModal() {
       if (!PP_PURCHASE_ENABLED) return;
+      // 購入済み会員は初回価格の申込フォームを開かず、マイページの枠確保へ
+      if (document.getElementById('ppRepeatMember')) { location.href = '/dashboard/#ppp-section'; return; }
       prefillContactFields();
       document.getElementById('bankModal').classList.add('active');
       document.body.style.overflow = 'hidden';

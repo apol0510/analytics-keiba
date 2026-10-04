@@ -27,6 +27,7 @@ export const prerender = false;
 import BaseLayout from '../layouts/BaseLayout.astro';
 import PremiumContactModal from '../components/PremiumContactModal.astro';
 import PremiumPlusDeliveryCard from '../components/PremiumPlusDeliveryCard.astro';
+import PremiumPlusPassCard from '../components/PremiumPlusPassCard.astro';
 import { resolveViewer, VIEWER_STATE } from '../lib/auth/viewerEntitlements.js';
 import { viewFromEntitlements } from '../lib/entitlements/resolveEntitlements.js';
 import { resolvePredictionDestination } from '../lib/navigation/predictionDestination.js';
@@ -347,6 +348,8 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
 
             <!-- Premium Plus ご購入レース（購入・入金確認済みの本人にだけサーバーが返す） -->
             <PremiumPlusDeliveryCard />
+            <!-- 購入済み会員向け: 価格据え置きの枠確保・確保済み枠の状態と日付予約 -->
+            <PremiumPlusPassCard />
 
             <!-- 今日の予想 -->
             <div class="predictions-section">

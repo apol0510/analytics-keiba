@@ -1,3 +1,13 @@
+# ✍️ 「本日の使用状況」・Preview の訴求（2026-10-04 MK 指示 / 本番反映済み）
+
+| 項目 | 状態 |
+|---|---|
+| 正本 | `decisions.md` 2026-10-04（追記 4）・`PREDICTION_ACQUISITION.md` §2-3 / §2-4 |
+| 本番 | PR #708 squash `5e9c90a8`・main CI success・Netlify production ready。本番 `/free-prediction/jra/` で「月額のまま、何レースでも。」「取得回数に上限なし」を確認、「Premiumでできること」は 0 件 |
+| cleanup | worktree `analytics-keiba-copy` 削除 |
+
+---
+
 # 🃏 Preview 詳細の買い目カードを 1 枚に（2026-10-04 MK 指示 / 本番反映済み）
 
 | 項目 | 状態 |

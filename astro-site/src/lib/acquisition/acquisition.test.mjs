@@ -436,7 +436,7 @@ test('活用状況の表示: 「残り○回」と書かない・主役は次に
   const panel = read('src/components/acquisition/AcquisitionValuePanel.astro');
   const tpl = panel.slice(panel.indexOf('---', 3));
   assert.equal(/残り|あと\s*\d|回まで|上限/.test(tpl.replace(/<style[\s\S]*<\/style>/, '')), false, 'クレジット制に見える表現');
-  assert.match(tpl, /本日の活用状況/);
+  assert.match(tpl, /本日の使用状況/);
   assert.match(tpl, /今月の活用状況/);
   assert.match(tpl, /1レースあたりの実質額/);
   assert.match(tpl, /次のレースの予想を取得する/);
@@ -574,4 +574,17 @@ test('Preview 詳細の買い目カードは 1 枚（馬単買い目）だけ（
   assert.equal((pv.match(/<article /g) || []).length, 1, 'プレビューの買い目カードが 1 枚ではない');
   assert.match(pv, /<h3>馬単買い目<\/h3>/);
   for (const w of ['馬単 通常の買い目', '馬単 点数を絞った買い目']) assert.equal(pv.includes(`<h3>${w}`), false, w);
+});
+
+
+test('Preview の「Premium なら」パネル: たくさん使えるメリットを主役に（2026-10-04 MK 確定）', () => {
+  const board = read('src/components/acquisition/PremiumRaceBoard.astro');
+  const side = board.slice(board.indexOf('<aside class="acq-preview-side"'), board.indexOf('</aside>'));
+  assert.match(side, /取得回数に上限なし/);
+  assert.match(side, /月額のまま、何レースでも。/);
+  assert.match(side, /使うほど 1 レースあたりがお得に/);
+  assert.equal(/通常の買い目と、点数を絞った買い目/.test(side), false, '買い目の種類を強調しない');
+  assert.equal(/Premiumでできること/.test(side), false);
+  assert.match(side, /class="ag-cta ag-cta-premium" href="\/pricing\/"/);
+  assert.match(read('src/components/acquisition/AcquisitionValuePanel.astro'), /<h2>本日の使用状況<\/h2>/);
 });
