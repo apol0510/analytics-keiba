@@ -4,6 +4,7 @@
 // 2026-08-31: 管理者宛先・返信先・送信元を単一源 config/email-config.js へ統一
 
 import { SUPPORT_EMAIL, ADMIN_EMAIL } from './config/email-config.js';
+import { isStripeSubscriber } from '../../src/lib/billing/stripeSubscriptionSync.js';
 import { formatJst } from '../../src/lib/datetime/jstTimestamp.js';
 import { buildUnsubscribeUrl } from '../../src/lib/unsubscribe/listUnsubscribeHeaders.js';
 
@@ -63,6 +64,37 @@ export const handler = async (event, context) => {
                 statusCode: 404,
                 headers,
                 body: JSON.stringify({ error: '該当する会員情報が見つかりませんでした' })
+            };
+        }
+
+        // 1-b. Stripe の月額会員は退会フラグを立てない（2026-10-02 MK 確定: 解約は期間末失効）。
+        //      退会フラグはその場で閲覧を止め、しかも Stripe の課金は止まらない。
+        //      解約（次回更新の停止）はログイン後の「お支払い管理」で本人が行う。ここは案内だけ送る。
+        //      ⚠️ このエンドポイントはメールアドレスだけで呼べるため、ここから Stripe の購読を操作しない。
+        if (isStripeSubscriber(customerRecord.fields)) {
+            await sendEmailViaSendGrid({
+                to: email,
+                subject: '【解約のご案内】KEIBA Analytics',
+                html: `
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+                <p>KEIBA Analytics をご利用いただきありがとうございます。</p>
+                <p>月額プラン（クレジットカード）の解約は、ログイン後のマイページにある<strong>「お支払い管理」</strong>から行えます。</p>
+                <p>解約すると次回の更新が止まり、お支払い済みの期間の終わりまでは引き続きご利用いただけます。</p>
+                <p><a href="https://analytics.keiba.link/login/">ログインはこちら</a></p>
+                <p>ご不明な点はこのメールにご返信ください。</p>
+            </div>`,
+                replyTo: SUPPORT_EMAIL,
+                fromName: 'KEIBA Analytics サポート'
+            });
+            console.log('[process-withdrawal] {"event":"stripe_subscriber_redirected_to_portal"}');
+            return {
+                statusCode: 200,
+                headers,
+                body: JSON.stringify({
+                    success: true,
+                    stripe: true,
+                    message: '月額プラン（クレジットカード）の解約は、マイページの「お支払い管理」から行えます。ご案内をメールでお送りしました。'
+                })
             };
         }
 

@@ -299,8 +299,11 @@ export function resolveCustomerMarketing({ fields, nowMs, blacklistEmails, histo
     // ⚠️ **課金契約のみ**（`canViewPremium` は無料特典でも true になる）。
     //    マーケティングは「何を買った人か」を扱う面なので、無料特典で
     //    「支払済み」に見えてはいけない。無料特典は下の promo* で別軸として持つ。
-    premiumActive: ent.paidPremiumActive === true,
-    lightActive: ent.paidLightActive === true && ent.paidPremiumActive !== true,
+    // 会場限定（Stripe 中央版・南関版 / 2026-10-02〜）も**有料の Premium 契約者**として数える
+    // （無料→有料の案内を止める側）。三連複・Plus の販売資格は持たないので premiumVenueOnly で区別する。
+    premiumActive: ent.paidPremiumActive === true || ent.paidPremiumVenueActive === true,
+    premiumVenueOnly: ent.paidPremiumVenueActive === true,
+    lightActive: ent.paidLightActive === true && ent.paidPremiumActive !== true && ent.paidPremiumVenueActive !== true,
     /** カムバック等の無料特典（閲覧できるだけ。課金実績ではない） */
     promoPremiumActive: ent.promo?.premiumActive === true,
     promoLightActive: ent.promo?.lightActive === true,

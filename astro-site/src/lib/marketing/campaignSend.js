@@ -24,6 +24,7 @@ import { MARKETING_EMAIL_SHELL_VERSION } from './marketingEmailShell.js';
 import { computeDeliveryKey, normalizeRecipientEmail } from '../newsletter/delivery-key.js';
 import { classifyEngagement, isBlockedByEngagement } from './engagementPolicy.js';
 import { MK_SUPPRESSION_LABEL } from './customerMarketingAudience.js';
+import { isLightSignupClosedCampaign } from './lightSignupClosedCampaigns.js';
 import { matchesCampaignAudience, isTemplateConfigured, isCampaignUsable } from './campaignCatalog.js';
 import { isRetiredCopyCampaign } from './retiredCopyCampaigns.js';
 import { evaluateExtraAudience, CAMPAIGN_MISMATCH } from './campaignAudienceRules.js';
@@ -246,6 +247,8 @@ export function buildCampaignPlan({
   if (!campaign || !campaign.campaignId) return empty('unknown_campaign');
   if (!Array.isArray(selected)) return empty('invalid_selection');
   if (!fromEmail) return empty('missing_from_email');
+  // Light の新規募集・継続を案内する文面の campaign は送らない（2026-10-02・文面は凍結）
+  if (isLightSignupClosedCampaign(campaign.campaignId)) return empty('light_signup_closed');
   // 文面が現行の商品定義と合わない送信済み campaign は送らない（2026-10-03・文面は凍結）
   if (isRetiredCopyCampaign(campaign.campaignId)) return empty('retired_copy');
   // 使用停止中のキャンペーンは計画自体を作らない

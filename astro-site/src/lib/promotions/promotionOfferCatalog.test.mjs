@@ -30,6 +30,7 @@ import {
   describeOffer,
 } from './promotionOfferCatalog.js';
 import { PROMO_TIER, MAX_GRANT_DAYS } from '../entitlements/promotionalGrants.js';
+import { planById } from '../billing/stripePlans.js';
 
 // ═══ カタログの形 ════════════════════════════════════════════════════
 
@@ -52,7 +53,7 @@ test('要望された組み合わせがすべて作れる', () => {
   for (const id of [
     'light-lifetime-free', 'light-30d-free', 'light-90d-free', 'light-custom-free',
     'premium-30d-free', 'premium-custom-days-free', 'premium-annual-free', 'premium-lifetime-free',
-    'premium-30d-half', 'premium-annual-half', 'premium-annual-custom',
+    'premium-annual-half', 'premium-annual-custom',
     'premium-lifetime-half', 'premium-lifetime-custom',
   ]) {
     assert.ok(getOfferDefinition(id), `${id} が無い`);
@@ -83,11 +84,14 @@ test('通常価格が pricing.astro の実装と一致する（ズレたら落�
     fileURLToPath(new URL('../../pages/pricing.astro', import.meta.url)), 'utf8');
   const calls = [...page.matchAll(/openBankModal\('([^']+)',\s*(\d+),\s*'(\w+)'\)/g)]
     .map((m) => ({ plan: m[1], amount: Number(m[2]), term: m[3] }));
-  assert.ok(calls.length >= 4, 'pricing.astro の申込ボタンを読み取れない（テストの前提が壊れた）');
+  assert.ok(calls.length >= 3, 'pricing.astro の申込ボタンを読み取れない（テストの前提が壊れた）');
 
   const find = (plan) => calls.find((c) => c.plan === plan);
   assert.equal(find('Light').amount, REGULAR_PRICE.light_monthly, 'Light の通常価格がズレている');
-  assert.equal(find('Premium Monthly').amount, REGULAR_PRICE.premium_monthly, 'Premium 30日の通常価格がズレている');
+  // Premium 月額は Stripe（2026-10-02〜）。銀行振込の月払いは /pricing/ に無いこと
+  assert.equal(find('Premium Monthly'), undefined, '販売終了した銀行振込の月払いが /pricing/ に残っている');
+  assert.match(page, /data-checkout="premium"/);
+  assert.equal(REGULAR_PRICE.premium_monthly, planById('premium').amountYen, 'Premium 月額（Stripe）の通常価格がズレている');
   assert.equal(find('Premium Annual').amount, REGULAR_PRICE.premium_annual, 'Premium 年額の通常価格がズレている');
   assert.equal(find('Premium Lifetime').amount, REGULAR_PRICE.premium_lifetime, 'Premium 買い切りの通常価格がズレている');
 
@@ -95,7 +99,6 @@ test('通常価格が pricing.astro の実装と一致する（ズレたら落�
   assert.equal(TERM_TO_PLAN_NAME.annual, find('Premium Annual').plan);
   assert.equal(TERM_TO_PLAN_TYPE.annual.toLowerCase(), find('Premium Annual').term);
   assert.equal(TERM_TO_PLAN_TYPE.lifetime.toLowerCase(), find('Premium Lifetime').term);
-  assert.equal(TERM_TO_PLAN_TYPE.monthly.toLowerCase(), find('Premium Monthly').term);
 });
 
 // ═══ 無料付与 ════════════════════════════════════════════════════════
@@ -132,11 +135,9 @@ test('任意日数は範囲内の整数だけ受け付ける', () => {
 // ═══ 割引購入 ════════════════════════════════════════════════════════
 
 test('50%OFF は通常価格の半額（30日 / 年額 / 買い切り）', () => {
-  const m = resolveOffer('premium-30d-half').offer;
-  assert.equal(m.regularPrice, 18000);
-  assert.equal(m.offerPrice, 9000);
-  assert.equal(m.discountPercent, 50);
-  assert.equal(m.planType, 'Monthly');
+  // 30日（銀行振込）は 2026-10-02 に販売終了（enabled:false）＝新規に発行できない
+  assert.equal(getOfferDefinition('premium-30d-half'), null);
+  assert.equal(resolveOffer('premium-30d-half').ok, false);
 
   const a = resolveOffer('premium-annual-half').offer;
   assert.equal(a.offerPrice, 24900);

@@ -28,6 +28,45 @@
 
 ---
 
+# Stripe 定期購読（2026-10-02 MK 確定 / 根拠 `decisions.md` 2026-10-02）
+
+> ⚠️ 本節は下の「AK の商品・価格の事業境界（2026-09-28）」の「低価格・Stripe 月額へ全面転換しない」「価格変更は確定事項ではない」を**改訂**する。
+
+| 商品 | 価格 | 決済 | 閲覧できるもの | Airtable |
+|---|---|---|---|---|
+| **Premium** | ¥4,980/月 | Stripe 定期購読（カード・自動更新）| 中央・南関の Premium 全部 | プラン=Premium / PlanType=Monthly / PaymentMethod=Stripe / VenueAccess 空 |
+| **Premium 中央版** | ¥2,980/月 | 同上 | 中央（JRA）の Premium だけ | 同上 + VenueAccess=`jra` |
+| **Premium 南関版** | ¥2,980/月 | 同上 | 南関の Premium だけ | 同上 + VenueAccess=`nankan` |
+| Premium 年払い | ¥49,800/年（Light 会員 ¥44,820）| 銀行振込（`/pricing/` 下部の折りたたみ・目立たせない）| 両会場 | 従来どおり |
+| Premium 買い切り | ¥78,000 | 銀行振込（同上）| 両会場・期限なし | 従来どおり |
+| Light | ¥4,980/30 日 | 銀行振込 | 従来どおり | **新規募集停止**。有料 Light 会員（tier 1）の更新・再開にだけ表示 |
+| ~~Premium 月払い（30 日 ¥18,000）~~ | — | — | — | **販売終了**（告知なし）。振込報告が来た場合は受理して管理者へ警告 |
+
+- 金額の正本は **Stripe の Price**（コードは `src/lib/billing/stripePlans.js`）。Live の Price を編集しない（既存契約の価格が変わる）。変えるときは新しい Price を作る。
+- **解約（2026-10-02 MK 確定）**: 即時失効ではなく**次回更新だけを止め、支払い済み期間の終わりまで利用可能**。**最低利用期間なし・日割り返金なし**。
+- 有効期限の根拠は**支払い済みの請求書だけ**: 有効中 = 支払い済み期間末 + 猶予 2 日（毎月の請求成功で延びる）／終了後 = 支払い済み期間末まで（翌暦日）。決済失敗では延びない。
+- **表示方針（2026-10-02 MK 確定）**: 上の解約条件は `/refund/`・`/terms/`・`/legal/` に正確に、FAQ に通常の説明として書く。
+  `/pricing/`（カード・見出し・強調枠）と Stripe Checkout の追加文言（custom_text）では強調しない。`/pricing/` の主役は商品内容・価格・中央／南関／Premium の価値。Stripe 標準の必要表示は消さない。
+- Stripe 月額会員の解約は「お支払い管理」だけ（マイページの退会処理は退会フラグを立てず案内する）。
+- **CTA（Light 新規募集停止・2026-10-02 MK 確定）**: 未ログイン・無料には Light の新規 CTA を出さず、中央版・南関版・Premium へ。既存の**有料** Light 会員の更新・再開は維持（/pricing/ の tier 1 だけ）。永久無料・無償 Light の権利は変えず購入導線と分離。Premium 会員には同じプランの購入 CTA を出さず三連複へ。Light 新規・Premium 月払いの銀行振込はサーバー側で 409（fail closed）。旧 /light-campaign/ は /pricing/ へ 301。詳細 `decisions.md` 2026-10-02 追記 6。
+- **メール（2026-10-02 MK 確定）**: 新規・無料向けに Light を募集しない（該当 campaign は送信計画を作らない・文面は凍結）。再開時は新料金で書き直し version を上げる。有料 Light 会員へは同額 Premium ¥4,980 への変更を主に案内し Light の継続を勧めない。会場限定 Premium に三連複を売らない。Stripe live 決済が無効な間は Stripe 月額を案内するメールを送らない。詳細 `decisions.md` 2026-10-02 追記 8。
+- **商品方針**: 短期解約をペナルティで抑えない。継続の理由は Premium に「履歴・継続利用で価値が蓄積する機能」を寄せて作る。**具体的な新機能は未決定（先行実装しない）**。
+- 三連複買い切りの購入資格・Premium Plus は**両会場の Premium だけ**（会場版は対象外）。
+- 解約・カード変更・プラン変更（会場版 ⇄ Premium）は Stripe のカスタマーポータル（マイページ「お支払い管理」）。
+- Stripe 会員には期限前・失効後リマインド（Premium 月払い）を送らない（自動更新のため）。
+- 実装・運用手順の正本: `astro-site/docs/STRIPE_BILLING.md`。
+- **販売開始の条件（2026-10-02 MK 確定）**: live の決済受付が可能（charges_enabled かつ card_payments=active）なこと**だけ**。Stripe の審査完了・Payout 有効化は待たない。
+- **返金**: 決済完了後の返金は行わない（14 日返金保証は 2026-10-02 廃止）。例外は法令上の義務・当方の誤請求・当方の責めによる不提供のみ。
+
+## 事業サイト analytics.tirol.link（2026-10-02 MK 確定 / Stripe 登録用）
+
+**data.tirol.link と同じ位置づけ・構成の一般的な事業者サイト（TIROL DATA LABO）**。正本は repo `apol0510/analytics-tirol-link` の `docs/SPEC.md`。
+
+- 公開ページに競馬固有の語（競馬・KEIBA・JRA・南関・競馬場名・中央版／南関版・予想・料金表 等）を使わない（同 repo の tests が検査）
+- 特商法は一般事業表現（価格は「各商品・サービスの詳細ページに表示する価格」）。返金・キャンセルは本 spec の確定仕様（14 日返金なし）
+- 連絡先 analytics@tirol.link。analytics.keiba.link（サービス画面）とは役割を分離する
+- Stripe 登録 URL の data.tirol.link → analytics.tirol.link 差し替えは公開確認後（MK）
+
 # AK の商品・価格の事業境界（2026-09-28 MK 確定 / **AK と KI を混同しない**）
 
 > 根拠・経緯は `decisions.md` 2026-09-28。**価格・販売条件はこの節では変えない**（既存の確定料金・販売条件がそのまま正本）。

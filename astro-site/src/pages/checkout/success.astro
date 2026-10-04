@@ -1,0 +1,138 @@
+---
+// Stripe 決済完了後の戻り先（success_url）。
+// 反映は stripe-checkout-complete（Webhook と同じ判定・排他ロック）で行い、ここは結果を表示するだけ。
+export const prerender = true;
+import BaseLayout from '../../layouts/BaseLayout.astro';
+---
+
+<BaseLayout title="お申し込みありがとうございます" noindex={true}>
+  <main class="co-page">
+    <div class="co-card" id="coCard">
+      <div class="co-icon" id="coIcon">⏳</div>
+      <h1 class="co-title" id="coTitle">お支払いを確認しています…</h1>
+      <p class="co-text" id="coText">そのまま数秒お待ちください。</p>
+      <div class="co-actions" id="coActions" hidden></div>
+    </div>
+  </main>
+</BaseLayout>
+
+<script is:inline>
+  (function () {
+    var LINKS = {
+      'premium': [['中央の Premium 予想へ', '/premium-prediction/jra/'], ['南関の Premium 予想へ', '/premium-prediction/nankan/']],
+      'premium-jra': [['中央の Premium 予想へ', '/premium-prediction/jra/']],
+      'premium-nankan': [['南関の Premium 予想へ', '/premium-prediction/nankan/']],
+    };
+    var NAMES = { 'premium': 'Premium（中央＋南関）', 'premium-jra': 'Premium 中央版', 'premium-nankan': 'Premium 南関版' };
+    var $ = function (id) { return document.getElementById(id); };
+    function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); }
+
+    function show(icon, title, html, actionsHtml) {
+      $('coIcon').textContent = icon;
+      $('coTitle').textContent = title;
+      $('coText').innerHTML = html;
+      if (actionsHtml) { $('coActions').innerHTML = actionsHtml; $('coActions').hidden = false; }
+    }
+
+    var sessionId = new URLSearchParams(location.search).get('session_id') || '';
+    if (!/^cs_(test|live)_[A-Za-z0-9]+$/.test(sessionId)) {
+      show('ℹ️', 'お申し込み状況を確認できませんでした', 'お支払いがお済みの場合は、ご登録のメールアドレスで<a href="/login/">ログイン</a>してください。');
+      return;
+    }
+
+    var tries = 0;
+    async function poll() {
+      tries += 1;
+      try {
+        var res = await fetch('/.netlify/functions/stripe-checkout-complete?session_id=' + encodeURIComponent(sessionId), { credentials: 'include' });
+        var data = await res.json().catch(function () { return {}; });
+        if (res.status === 200 && data.ok) return done(data);
+        if (res.status === 409) {
+          return show('📩', 'お手続きを確認しています', 'お支払いは完了しています。ご利用開始の準備をサポートで確認のうえ、ご登録のメールアドレスへご連絡いたします。<br>お急ぎの場合は<a href="/contact/">お問い合わせ</a>ください。');
+        }
+      } catch (_) { /* 再試行 */ }
+      if (tries < 15) { setTimeout(poll, 2000); return; }
+      show('📩', 'お支払いを受け付けました', 'ご利用開始の反映に時間がかかっています。数分後にご登録のメールアドレスで<a href="/login/">ログイン</a>してください。<br>解決しない場合は<a href="/contact/">お問い合わせ</a>ください。');
+    }
+
+    async function done(data) {
+      if (window.AkFunnel && window.AkFunnel.purchaseCompleted) window.AkFunnel.purchaseCompleted(data.plan, sessionId);
+      var name = NAMES[data.plan] || 'Premium';
+      var links = (LINKS[data.plan] || []).map(function (l) {
+        return '<a class="co-btn" href="' + l[1] + '">' + esc(l[0]) + '</a>';
+      }).join('');
+      if (data.loggedIn) {
+        // 表示用の user-plan（非権威）をサーバーの反映結果に合わせる。verify-magic-link と同じ形。
+        // 認可はサーバー（ak_session + Airtable）が行うので、ここは「画面が古いまま」を防ぐだけ。
+        try {
+          var up = JSON.parse(localStorage.getItem('user-plan') || 'null') || {};
+          if (!/sanrenpuku|combo|plus/i.test(String(up.plan || ''))) up.plan = 'Premium';
+          up.venueAccess = data.plan === 'premium-jra' ? 'jra' : (data.plan === 'premium-nankan' ? 'nankan' : 'all');
+          up.planType = 'Monthly';
+          up.entitlementSource = 'paid_contract';
+          up.nonAuthoritative = true;
+          localStorage.setItem('user-plan', JSON.stringify(up));
+          ['isExpired', 'originalPlan', 'validUntil', 'expiryDate'].forEach(function (k) { localStorage.removeItem(k); });
+        } catch (_) {}
+        show('🎉', name + ' のご利用を開始しました', 'お申し込みありがとうございます。今すぐ予想をご覧いただけます。', links + '<a class="co-btn co-btn-sub" href="/dashboard/">マイページへ</a>');
+        return;
+      }
+      // 未ログイン: ログイン用リンクをメールで送る（決済したアドレスにだけ届く）
+      var sent = false;
+      try {
+        var r = await fetch('/.netlify/functions/send-magic-link', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: data.email }),
+        });
+        sent = r.ok;
+      } catch (_) { sent = false; }
+      show('🎉', name + ' のお申し込みが完了しました',
+        sent
+          ? '<strong>' + esc(data.email) + '</strong> にログイン用のリンクをお送りしました。<br>メールのボタンからログインすると、すぐに予想をご覧いただけます。<br><small>メールが届かない場合は迷惑メールフォルダもご確認ください。</small>'
+          : 'ご登録のメールアドレス（<strong>' + esc(data.email) + '</strong>）で<a href="/login/">ログイン</a>してください。',
+        '<a class="co-btn co-btn-sub" href="/login/">ログイン画面へ</a>');
+    }
+
+    poll();
+  })();
+</script>
+
+<style>
+  .co-page {
+    min-height: 70vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 32px 16px;
+  }
+  .co-card {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 520px;
+    background: rgba(15, 23, 42, 0.85);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    border-radius: 16px;
+    padding: 32px 24px;
+    text-align: center;
+    color: #e2e8f0;
+  }
+  .co-icon { font-size: 40px; margin-bottom: 12px; }
+  .co-title { font-size: 22px; margin: 0 0 16px; color: #f8fafc; }
+  .co-text { font-size: 15px; line-height: 1.8; color: #cbd5e1; margin: 0; overflow-wrap: anywhere; }
+  .co-text a { color: #60a5fa; }
+  .co-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 24px; }
+  .co-actions[hidden] { display: none; }
+  .co-btn {
+    display: block;
+    padding: 12px 16px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, #0ea5e9, #2563eb);
+    color: #fff;
+    font-weight: 700;
+    text-decoration: none;
+  }
+  .co-btn-sub {
+    background: transparent;
+    border: 1px solid rgba(148, 163, 184, 0.5);
+    color: #cbd5e1;
+  }
+</style>

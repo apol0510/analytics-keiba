@@ -20,6 +20,11 @@ import assert from 'node:assert/strict';
 
 import { createWorld } from './rolloutJourney.fake.mjs';
 import { ROLLOUT_STAGE } from './rolloutPlan.js';
+import { __allowLightSignupClosedCampaignsForTests } from './lightSignupClosedCampaigns.js';
+
+// このテストは送信の仕組みを、Light 新規募集停止（2026-10-02）で送信停止にした campaign を題材に検査している。
+// 仕組みの検査なので停止を解除して走らせる（本番では lightSignupClosedCampaigns.js が送信計画を作らせない）。
+__allowLightSignupClosedCampaignsForTests(true);
 
 const CAMPAIGN_ID = 'light-trial-to-premium-sequence';
 const DAY = 86400_000;

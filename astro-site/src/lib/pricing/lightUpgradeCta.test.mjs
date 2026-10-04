@@ -30,10 +30,12 @@ test('/premium-upgrade/ の年払いは乗り換え特典 ¥44,820（¥49,800 �
   assert.match(src, /<a class="cta-button cta-secondary" href="\/pricing\/">/);
 });
 
-test('既存商品は廃止しない（買い切り ¥78,000・30 日 ¥18,000 は残る）', () => {
+test('既存商品は廃止しない（買い切り ¥78,000 は残る）・月額は Stripe ¥4,980 の /pricing/ へ（2026-10-02〜）', () => {
   const src = read('src/pages/premium-upgrade.astro');
   assert.match(src, /openBankModal\('Premium 買い切り \(Light会員アップグレード\)', 78000, 'lifetime'\)/);
-  assert.match(src, /openBankModal\('Premium 30日 \(Light会員アップグレード\)', 18000, 'monthly'\)/);
+  // 銀行振込の 30 日 ¥18,000 は販売終了。月額はカード（Stripe）で /pricing/ から申し込む
+  assert.equal(/openBankModal\([^)]*18000/.test(src), false, '販売終了した 30 日 ¥18,000 の申込ボタンが残っている');
+  assert.match(src, /<div class="plan-card-price">¥4,980<\/div>/);
 });
 
 test('/pricing/ の Light 向け乗り換え特典（¥44,820・Premium Annual - Campaign）は変えていない', () => {

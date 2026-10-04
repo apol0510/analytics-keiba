@@ -72,6 +72,7 @@
     "test:sanrenpuku-cta": "node --test src/lib/sanrenpuku/*.test.mjs",
     "test:pricing-tiers": "node --test src/lib/pricing/*.test.mjs",
     "test:bank-payment": "node --test src/lib/payments/*.test.mjs",
+    "test:billing": "node --test src/lib/billing/*.test.mjs",
     "test:revenue": "node --test scripts/revenueMonthly.test.mjs",
     "test:entitlements": "node --test src/lib/entitlements/*.test.mjs",
     "test:netlify-deploy": "bash ../.github/actions/netlify-deploy/tests/run-tests.sh",
@@ -102,7 +103,7 @@
     "check:no-unbounded-scan": "node scripts/check-no-unbounded-customer-scan.mjs",
     "upload:premium-plus": "node scripts/uploadPremiumPlusImage.mjs",
     "seed:premium-plus": "node scripts/seedPremiumPlusLegacy.mjs",
-    "check:safety": "npm run check:race-calendar && npm run test:acquisition && npm run check:fn-no-undef && npm run check:no-unbounded-scan && npm run check:no-raw-index && npm run check:display-index && npm run check:horse-sections && npm run check:free-mask && npm run check:differentiation && npm run check:ki-relics:jra && npm run check:ki-relics:free-jra-date && npm run check:ki-relics:free-jra && npm run check:jra-nankan-parity && npm run check:prediction-scope && npm run check:prediction-integrity && npm run check:jra-join && npm run check:jra-stale-retry && npm run test:archive-sync && npm run test:shared-checkers && npm run test:archive-coverage && npm run test:jra-import-need && npm run test:nankan && npm run test:contact-autofill && npm run test:pricing-tiers && npm run test:bank-payment && npm run test:entitlements && npm run test:results-showcase && npm run test:premium-plus && npm run test:order-ux && npm run test:premium-plus-media && npm run test:drm && npm run test:marketing && npm run test:email-copy && npm run test:comeback && npm run test:promotions && npm run test:coupons && npm run test:upsell && npm run test:contact-subject && npm run test:email-identity && npm run test:webhooks && npm run test:unsubscribe && npm run test:crm && npm run test:dedupe && npm run test:auth-session && npm run test:auth-security && npm run test:ssr-retention && npm run test:dark-horse && npm run test:jra-history-join && npm run test:free-viewpoints && npm run test:nav && npm run test:dashboard && npm run test:analytics && npm run check:cdn-cache && npm run test:archive-redirect && npm run test:copy && npm run test:premium-plus-admin && npm run test:seo && npm run test:ops && npm run test:light-renewal && npm run test:premium-renewal && npm run test:import-computer",
+    "check:safety": "npm run check:race-calendar && npm run test:acquisition && npm run check:fn-no-undef && npm run check:no-unbounded-scan && npm run check:no-raw-index && npm run check:display-index && npm run check:horse-sections && npm run check:free-mask && npm run check:differentiation && npm run check:ki-relics:jra && npm run check:ki-relics:free-jra-date && npm run check:ki-relics:free-jra && npm run check:jra-nankan-parity && npm run check:prediction-scope && npm run check:prediction-integrity && npm run check:jra-join && npm run check:jra-stale-retry && npm run test:archive-sync && npm run test:shared-checkers && npm run test:archive-coverage && npm run test:jra-import-need && npm run test:nankan && npm run test:contact-autofill && npm run test:pricing-tiers && npm run test:bank-payment && npm run test:billing && npm run test:entitlements && npm run test:results-showcase && npm run test:premium-plus && npm run test:order-ux && npm run test:premium-plus-media && npm run test:drm && npm run test:marketing && npm run test:email-copy && npm run test:comeback && npm run test:promotions && npm run test:coupons && npm run test:upsell && npm run test:contact-subject && npm run test:email-identity && npm run test:webhooks && npm run test:unsubscribe && npm run test:crm && npm run test:dedupe && npm run test:auth-session && npm run test:auth-security && npm run test:ssr-retention && npm run test:dark-horse && npm run test:jra-history-join && npm run test:free-viewpoints && npm run test:nav && npm run test:dashboard && npm run test:analytics && npm run check:cdn-cache && npm run test:archive-redirect && npm run test:copy && npm run test:premium-plus-admin && npm run test:seo && npm run test:ops && npm run test:light-renewal && npm run test:premium-renewal && npm run test:import-computer",
     "verify:safety": "npm run build && npm run check:ssr-runtime-data && npm run check:safety",
     "preflight:phase2-canary": "node scripts/phase2-canary-preflight.mjs",
     "preflight:light-trial-step1": "node scripts/light-trial-step1-preflight.mjs",
@@ -130,6 +131,7 @@
     "airtable": "^0.12.2",
     "astro": "^5.13.2",
     "sass": "^1.90.0",
+    "stripe": "^19.3.0",
     "uuid": "^13.0.0"
   },
   "devDependencies": {

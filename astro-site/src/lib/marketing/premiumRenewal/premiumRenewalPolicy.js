@@ -8,7 +8,7 @@
  *   - 時期: 期限の 1〜7 日前（PRE）と、失効後 3〜30 日（POST）。周期（有効期限）ごとに各 1 回
  *   - 更新・再開（有効期限が延びた）・年払い等への切り替え（PlanType が変わった）の後は送らない
  *   - 配信停止・バウンス・suppression・退会申請・停止中は送らない
- *   - 料金・権利・販売条件は変えない（本文は /pricing/ に出ている Premium 月払い ¥18,000／30日 だけを書く）
+ *   - 料金・権利・販売条件は変えない（本文は /pricing/ に出ている Stripe 月額 Premium ¥4,980・中央版／南関版 ¥2,980 と年払いだけを書く・2026-10-02〜）
  *
  * 時期・周期・送信直前の再判定の考え方は Light と同じ（共通の日付関数を再利用する）。
  */
@@ -28,12 +28,18 @@ export const PREMIUM_RENEWAL_CAMPAIGN_TYPE = `${PREMIUM_RENEWAL_CAMPAIGN_ID}:v${
 
 /** 失効後に案内する日数（POST の窓の上限と同じ）。この日を過ぎた周期は「失効」として数える */
 export const PREMIUM_POST_DAYS = POST_WINDOW.max;
-/** /pricing/ の Premium 月払い（openBankModal('Premium Monthly', 18000, 'monthly')）。ずれはテストで検知する */
-export const PREMIUM_MONTHLY_YEN = 18000;
+/**
+ * /pricing/ の Premium 月額（2026-10-02〜 Stripe 定期購読 ¥4,980・クレジットカード自動更新）。
+ * 金額の正本は `src/lib/billing/stripePlans.js`。ずれはテストで検知する。
+ * （旧: 銀行振込の Premium 月払い ¥18,000／30日。販売終了）
+ */
+export const PREMIUM_MONTHLY_YEN = 4980;
 
 export const SKIP = Object.freeze({
   NOT_PREMIUM: 'not_premium',
   NOT_MONTHLY: 'not_monthly',
+  /** Stripe の定期購読（自動更新）。期限のお知らせは不要（更新は Stripe が行う） */
+  STRIPE_AUTO_RENEW: 'stripe_auto_renew',
   NOT_PAID: 'not_paid',
   EXCLUDED_STATUS: 'excluded_status',
   FORCE_LOGOUT: 'force_logout',
@@ -53,6 +59,8 @@ export function isPaidPremiumMonthly(fields = {}) {
   const f = fields || {};
   if (normalizePlan(f['プラン']) !== 'premium') return { ok: false, reason: SKIP.NOT_PREMIUM };
   if (String(f.PlanType || '').trim().toLowerCase() !== 'monthly') return { ok: false, reason: SKIP.NOT_MONTHLY };
+  // ⚠️ Stripe 会員の `有効期限` は毎月の請求で自動的に延びる。ここで拾うと**毎月**「期限が近い」が届く。
+  if (String(f.PaymentMethod || '').trim().toLowerCase() === 'stripe') return { ok: false, reason: SKIP.STRIPE_AUTO_RENEW };
   if (isBlank(f.PaidAt)) return { ok: false, reason: SKIP.NOT_PAID };
   if (EXCLUDED_STATUSES.includes(String(f.Status || '').trim().toLowerCase())) return { ok: false, reason: SKIP.EXCLUDED_STATUS };
   if (isTrue(f.ForceLogout)) return { ok: false, reason: SKIP.FORCE_LOGOUT };

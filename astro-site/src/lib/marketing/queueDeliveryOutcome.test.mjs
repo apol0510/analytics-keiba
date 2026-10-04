@@ -24,6 +24,11 @@ import { buildCampaignPlan, computeCampaignDeliveryKey } from './campaignSend.js
 import { getCampaign } from './campaignCatalog.js';
 import { resolveSequenceStep } from './campaignSequence.js';
 import { resolveCustomerMarketing } from './customerMarketingAudience.js';
+import { __allowLightSignupClosedCampaignsForTests } from './lightSignupClosedCampaigns.js';
+
+// このテストは送信の仕組みを、Light 新規募集停止（2026-10-02）で送信停止にした campaign を題材に検査している。
+// 仕組みの検査なので停止を解除して走らせる（本番では lightSignupClosedCampaigns.js が送信計画を作らせない）。
+__allowLightSignupClosedCampaignsForTests(true);
 
 /** 宛先 n 件（アドレスは example.com のみ） */
 const R = (n) => Array.from({ length: n }, (_, i) => ({

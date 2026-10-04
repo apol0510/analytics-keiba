@@ -15,7 +15,8 @@ import { buildValueSummary } from '../../lib/acquisition/valueSummary.js';
 import { canAcquire } from '../../lib/acquisition/acquisitionPolicy.js';
 
 // ── サーバー側認可（この行より前で一覧を組み立てない）──
-const gate = await gatePaidPage({ request: Astro.request, requiredPlan: 'premium', env: process.env });
+// 会場別 Premium（中央版・南関版）も入れる。区分ごとの取得可否は canAcquire がレースに付ける
+const gate = await gatePaidPage({ request: Astro.request, requiredPlan: ['premium', 'premium-jra', 'premium-nankan'], env: process.env });
 if (gate.response) return gate.response;
 for (const [k, v] of Object.entries(PAID_PAGE_HEADERS)) Astro.response.headers.set(k, v);
 

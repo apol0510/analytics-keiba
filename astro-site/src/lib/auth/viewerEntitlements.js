@@ -109,6 +109,9 @@ export function viewerProfile(fields) {
     // ⚠️ `Number(null)` は 0（有限）になる。列が無いときに 0pt と表示しないよう、
     //    値が有ることを先に確かめる。
     points: points === null || !Number.isFinite(Number(points)) ? null : Number(points),
+    // Stripe の月額で契約中か（マイページの「お支払い管理」ボタン用）。ID そのものは渡さない。
+    billing: String(read(['PaymentMethod']) || '').trim().toLowerCase() === 'stripe'
+      && /^cus_/.test(String(read(['StripeCustomerId']) || '')) ? 'stripe' : null,
   };
 }
 

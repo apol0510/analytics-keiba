@@ -123,8 +123,8 @@ test('無料の方に案内が届く（本番で届いていなかった）', as
   const { status, body } = await campaignApi('free');
   assert.equal(status, 200, '無料の方に案内 API が応答しない');
   assert.equal(body.active, true);
-  assert.equal(body.offers.length, 3, '無料の方への案内が 3 件でない');
-  assert.ok(body.offers.some((o) => o.name.includes('Light')), 'Light の割引が入っていない');
+  assert.equal(body.offers.length, 2, '無料の方への案内が 2 件でない');
+  assert.equal(body.offers.some((o) => o.name.includes('Light')), false, 'Light の割引を案内している（新規募集停止）');
 });
 
 test('無料会員にはセッションが発行されない（この設計は変えない）', async () => {
@@ -219,7 +219,7 @@ test('【期間外】会員 API も案内を出さない（届いてしまうと
 test('【期間外】割引は 1 円も乗らない（表示と請求の食い違いを作らない）', () => {
   const entitlements = { paidLightActive: false, paidPremiumActive: false, canViewSanrenpuku: false };
   const args = {
-    planName: 'Light', planType: 'Monthly', entitlements, registered: true,
+    planName: 'Premium', planType: 'Annual', entitlements, registered: true,
     allowed: { allowed: true, reason: '', note: '' },
   };
   const inside = resolveCampaignPricing({ ...args, nowMs: IN_WINDOW });

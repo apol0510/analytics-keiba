@@ -118,6 +118,38 @@
 
 ---
 
+# 💳 Stripe 定期購読の導入（2026-10-02 MK 指示 / 進行中）
+
+| 項目 | 状態 |
+|---|---|
+| 目的 | Premium 月額 ¥4,980・中央版／南関版 各 ¥2,980 を Stripe 定期購読で販売。Light 新規停止・月払い銀行振込停止・年払い／買い切りは控えめに残す |
+| 正本 | `spec.md`「Stripe 定期購読」/ `decisions.md` 2026-10-02 / `astro-site/docs/STRIPE_BILLING.md` |
+| Airtable | Customers に `VenueAccess` / `StripeCustomerId` / `StripeSubscriptionId`（1 行テキスト）を 2026-10-02 作成済み（全件空 = 挙動不変）|
+| 実装 | branch `feat/stripe-subscriptions`（worktree `analytics-keiba-stripe`）。check:safety・build 通過 |
+| Stripe（テスト）| AK 用アカウント（サンドボックス）作成済み・2026-10-02 `stripe-setup.mjs --context deploy-preview --apply` で Price 3 件・ポータル設定・Webhook（PR #677 の Deploy Preview 宛）を作成、env は deploy-preview のみ（production 未設定を確認）|
+| E2E（2026-10-02・テストモード・Deploy Preview → 本番 Airtable）| ✅ 決済完了前 0 件 → checkout.session.completed で 1 件作成（中央版・VenueAccess=jra・期限 11/04）✅ Premium へ変更で両会場 ✅ 同じメールの再申込 409 ✅ 2 本目の購読は書かずに要確認 ✅ 解約で期限が終了日へ ✅ 新規メールで Checkout URL 発行・画面表示（日本語・メール固定・自動更新の注記）。**途中で重複作成バグを検出し修正（`028a8888`）**。テストレコード・テスト顧客は削除済み（残 0）|
+| 解約仕様（2026-10-02 MK 確定）| 期間末失効・最低利用期間なし・日割り返金なし。初版の即日失効と「支払い前に期限を延ばす」誤りを修正し、期限の根拠を支払い済み請求書に変更。テスト固定（期間末失効・決済失敗で延ばさない・各プラン・Webhook 冪等・他会員非影響）|
+| 商品方針 | 短期解約をペナルティで抑えない／Premium に履歴・継続利用で価値が蓄積する機能を寄せる。**具体機能は未決定・実装しない** |
+| 表示方針（2026-10-02 MK 確定）| 解約条件は refund / terms / legal に正確・FAQ は通常説明・/pricing/ と Checkout では強調しない。Checkout custom_text 削除・pricing カード下の「いつでも解約」削除・アップグレード導線の特長から削除。guard 固定 |
+| 退会導線 | Stripe 会員がマイページの退会処理を押すと閲覧が即停止し課金は続く不整合を検出 → お支払い管理へ案内に修正 |
+| 11/04 と 11/03 の 1 日差 | 意図どおり: 有効中 = 支払い済み期間末（11/02 12:00 JST）+ 猶予 2 日 → 11/04、終了後 = 猶予を外して期間末より前に切れない最小の暦日 → 11/03（有効期限は 09:00 JST に切れる。11/02 だと 3 時間早く切れる）。gate・ログイン判定とも同じ解釈 |
+| 未実施（人の操作が要る）| テストカードでの実決済（決済完了画面→ログインリンク）・ポータル画面の目視 |
+| Stripe（本番）| 2026-10-02 `stripe-setup.mjs --context production --apply` 完了（Price 3 件・ポータル設定・Webhook `https://analytics.keiba.link/.netlify/functions/stripe-webhook`・production env 6 件）。鍵は制限付き鍵（rk_live）で読み取り系は全 OK |
+| Stripe 商品名（2026-10-02 MK 確定）| test / live の Product 名を Analytics Premium（中央＋南関）／中央／南関 に API で更新（ID・Price・金額・metadata 不変を確認）。単一源 productName・再発防止テスト |
+| CTA 横断監査（2026-10-02 MK 確定）| 実装・テスト固定済み（Light 購入 CTA は /pricing/ tier 1 の更新用だけ・キャンペーン割引から Light 除外・申込 Function で Light 新規/Premium 月払いを 409・Premium 会員は購入 CTA の代わりに三連複へ・AccessControl の Light 文言）。**Deploy Preview 実測**: Light / Light - Campaign / Premium Monthly の申込は 409（Customers 書き込み 0）・/light-campaign/ → /pricing/ 301・/pricing/ 状態別（未ログイン=3 プラン+無料 / 有料 Light=3 プラン+Light 更新 / 永久無料 Light=3 プラン（Light 購入なし）/ Premium 契約中=購入 CTA なし+三連複案内 / Premium 期限切れ=3 プラン）|
+| 販売開始条件（2026-10-02 MK 確定）| 審査完了・Payout は待たず、live の決済受付が可能なら開始。2026-10-02 実測: charges_enabled=false・card inactive・payouts_enabled=true・live Checkout 不可 → **決済受付不可のため merge 保留継続**（ビジネス URL は analytics.tirol.link へ変更済み）|
+| **待ち（実異常回避）** | **Stripe 審査中**（disabled_reason=under_review・card_payments inactive・pending_verification 1 件=other_compliance_inquiry）。live の Checkout 作成は `Your account cannot currently make live charges` で失敗。**この状態で merge すると月額が誰も買えなくなるため merge を保留** |
+| 自動検知 | scheduled-checks `stripe-live-activation-2026`（#679 `fd478947`・毎日 10:00 JST・GET /v1/account を読むだけ）。有効化で Issue「[自動測定] stripe-live-activation-2026」→ #677 merge・本番スモークへ。GitHub secret `STRIPE_ACCOUNT_READ_KEY` 登録済み。Actions 上の検証実行で審査中を正しく判定 | ／ 対話セッションでも 10 分ごとに `charges_enabled && card_payments=active` を監視し、検知したら #677 merge → 本番確認へ |
+| 事業サイト analytics.tirol.link（2026-10-02 決定）| repo `apol0510/analytics-tirol-link`（private・CI green）・Netlify `analytics-tirol-link`（GitHub 連携・`analytics-tirol-link.netlify.app` で 6 ページ 200・build/README は 404）・custom domain 設定済み。390/320px で横スクロールなし・secret/PII scan 0 |
+| 🚨 本番デプロイ失敗（2026-10-02 09:01〜10:17）| Stripe の env 6 件を production に入れた結果、関数 env が Lambda 4KB 上限を超え本番ビルドが全失敗（自動取込 3 件と #679・#683 が未反映）。env を外して Build Hook で復旧（10:17 ready・/refund/ 反映確認）。恒久対策: Price/ポータル ID はコード、env は秘密 2 つだけ（10:21 本番ビルドで収まることを確認）|
+| 事業サイト 公開（2026-10-02）| DNS（Cloudflare CNAME・DNS only）・`analytics@tirol.link`（Xserver）作成済み。HTTPS: Let's Encrypt（〜2026-12-31）・http→https 301・6 ページ + robots/sitemap 200・build/README 404・リンク切れ 0・320/390px 横スクロールなし。`analytics@tirol.link` へテスト 1 通 → SendGrid `delivered`（Xserver 受理）|
+| 事業サイトの方針変更（2026-10-02）| data.tirol.link と同じ一般的な事業者サイトへ変更・競馬固有の語を全削除（analytics-tirol-link #1 `2c062b1` 本番反映・禁止語 0・HTTPS・全ページ 200）|
+| 人の作業 | **なし**（2026-10-02 MK: 必要情報は送信済み・Stripe 側の審査中。ビジネス URL は analytics.tirol.link へ変更済み）|
+| メール横断監査（2026-10-02 MK 確定）| 実装・テスト固定済み: Light を案内する 5 campaign は送信計画を作らない／オンボーディング step5 停止／有料 Light 会員の更新メールと /pricing/ は同額 Premium ¥4,980 を主導線（Light 更新は会員だけの控えめな行）／Premium 更新メールは 3 プラン／会場限定 Premium は三連複 campaign から除外／更新リマインド 2 本は Stripe live 決済が無効な間 dry-run。**有効化後に本番で更新リマインドが live に戻ることを確認する** |
+| 2026-10-03 再測定（MK: 本人確認・入金口座の設定完了の連絡後）| live: charges_enabled=false・card_payments inactive・disabled_reason=under_review・pending_verification=other_compliance_inquiry（currently_due / past_due は空＝こちらの提出物不足ではない）。live Checkout 作成は引き続き `cannot currently make live charges`。live 設定は正常（Price 3 件 active・¥4,980/¥2,980/¥2,980・商品名 Analytics Premium 系・ポータル at_period_end・Webhook enabled 6 イベント）。Deploy Preview（test）回帰: 3 プランとも Checkout URL 発行・Webhook 無署名 400・ポータル未ログイン 401。**merge は live 決済受付まで保留継続** |
+| 次（有効化後）| merge #677 → 本番デプロイ → 本番スモーク（/pricing/・Checkout URL 発行・Webhook 署名 400・portal 401）→ cleanup |
+| rollback | STRIPE_BILLING.md §5 |
+
 # ⏳ 待ち状態と並行作業（2026-09-28 更新 / ルール: CLAUDE.md「⏳ 待ち時間は止まらず並行する」）
 
 | 何を待っているか | いつ・どう動くか | 人の作業 |

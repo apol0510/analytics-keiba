@@ -1,11 +1,16 @@
 /**
  * premiumRenewalEmail.js — Premium 月払い 期限前・失効後リマインドの本文（純粋）
  *
- * 書くのは /pricing/ にある事実だけ（Premium 月払い ¥18,000／30日・銀行振込）。割引・特典は書かない。
+ * 書くのは /pricing/ にある事実だけ（Premium 月額 ¥4,980・クレジットカードの自動更新 / 2026-10-02〜）。割引・特典は書かない。
+ * 対象は銀行振込で月払いを契約していた会員（Stripe 会員は自動更新なので対象外・premiumRenewalPolicy）。
  * ボタンは `/login/?next=/pricing/`（ログイン後に料金ページ）。配信停止リンクは共通シェルのフッター。
  */
 import { renderMarketingHtml, renderMarketingText } from '../marketingEmailShell.js';
 import { STAGE, PREMIUM_MONTHLY_YEN } from './premiumRenewalPolicy.js';
+import { planById } from '../../billing/stripePlans.js';
+
+/** 中央版・南関版の月額（Stripe）。金額の正本は stripePlans.js */
+const VENUE_MONTHLY_YEN = planById('premium-jra').amountYen;
 import { jpDate } from '../lightRenewal/lightRenewalEmail.js';
 
 export const PREMIUM_RENEWAL_CTA_URL = 'https://analytics.keiba.link/login/?next=/pricing/';
@@ -24,12 +29,12 @@ export function contentFor({ stage, cycle, name }) {
     ? [
       'いつも KEIBA Analytics の Premium プランをご利用いただき、ありがとうございます。',
       `ご利用中の Premium プラン（月払い）の有効期限は ${jpDate(cycle)} です。期限を過ぎると、全レースの買い目など Premium の内容をご覧いただけなくなります。`,
-      `引き続きご利用いただく場合は、料金ページから Premium 月払い（${yen(PREMIUM_MONTHLY_YEN)}／30日）を、これまでと同じ銀行振込でお申し込みください。年払いなど他のプランも料金ページでお選びいただけます。`,
+      `引き続きご利用いただく場合は、料金ページから Premium 月額プラン（${yen(PREMIUM_MONTHLY_YEN)}／月・中央＋南関・クレジットカードで毎月自動更新）をお申し込みください。中央だけ・南関だけをご覧になる場合は、中央版・南関版（各 ${yen(VENUE_MONTHLY_YEN)}／月）もお選びいただけます。年払い（銀行振込）も料金ページからお申し込みいただけます。`,
     ].join('\n')
     : [
       'KEIBA Analytics の Premium プランをご利用いただき、ありがとうございました。',
       `Premium プラン（月払い）の有効期限は ${jpDate(cycle)} で終了しました。`,
-      `再開をご希望の場合は、料金ページから Premium 月払い（${yen(PREMIUM_MONTHLY_YEN)}／30日）を銀行振込でお申し込みいただけます。年払いなど他のプランも料金ページでお選びいただけます。`,
+      `再開をご希望の場合は、料金ページから Premium 月額プラン（${yen(PREMIUM_MONTHLY_YEN)}／月・中央＋南関・クレジットカードで毎月自動更新）をお申し込みいただけます。中央だけ・南関だけをご覧になる場合は、中央版・南関版（各 ${yen(VENUE_MONTHLY_YEN)}／月）もお選びいただけます。年払い（銀行振込）も料金ページからお申し込みいただけます。`,
     ].join('\n');
   return {
     salutation,

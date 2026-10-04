@@ -54,6 +54,10 @@ export const PAID_DOOR_PLANS = Object.freeze([
 export const REQUIRED_PLAN_ENTITLEMENT = Object.freeze({
   'Premium Sanrenpuku': 'canViewSanrenpuku',
   premium: 'canViewPremium',
+  // 会場別の Premium 予想ページ（2026-10-02〜 Stripe 中央版・南関版）。
+  // 両会場の Premium・無料特典の Premium は従来どおり両方開く（resolveEntitlements 側で包含）。
+  'premium-jra': 'canViewPremiumJra',
+  'premium-nankan': 'canViewPremiumNankan',
   standard: 'canViewLight',
 });
 
@@ -324,9 +328,22 @@ export async function gatePaidPage({
   if (!r.ok) return deny(r.reason === 'not_found' ? 'customer_not_found' : 'lookup_unavailable');
   const fields = r.fields;
 
-  const ent = resolveEntitlements(fromAirtableFields(fields), now);
+  let ent = resolveEntitlements(fromAirtableFields(fields), now);
   // any-of: 指定された権利のどれか 1 つでも true なら通す。0 個は上で弾いている。
-  if (!flags.some((f) => ent[f] === true)) return deny('entitlement_denied');
+  if (!flags.some((f) => ent[f] === true)) {
+    // ⚠️ 拒否の前に**一度だけ**新しい値で読み直す。
+    //    Stripe の決済直後は別 Function（Webhook / 決済完了）が Customers を更新するため、
+    //    この Function の 10 分キャッシュが古いまま「買ったのに見られない」になる。
+    //    読み直すのは拒否するときだけなので、通常の閲覧の Airtable 負荷は増えない。
+    let again = null;
+    try {
+      again = normalizeLookupResult(await lookup({ recordId: sub, env, now, maxAgeMs: 0 }));
+    } catch {
+      again = null;
+    }
+    if (again && again.ok) ent = resolveEntitlements(fromAirtableFields(again.fields), now);
+    if (!flags.some((f) => ent[f] === true)) return deny('entitlement_denied');
+  }
 
   // subject = ak_session の recordId（取得履歴など本人 1 件だけを読む処理が使う。クライアントの値は使わない）
   // contract = 料金表示（1 レースあたりの実質額など）に必要な契約の種類だけ。氏名・メール等の個人情報は渡さない

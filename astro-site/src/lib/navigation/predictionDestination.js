@@ -27,6 +27,10 @@
 export const PREDICTION_DESTINATIONS = Object.freeze({
   /** 馬単 Premium 会員 */
   premium: '/premium-prediction/nankan/',
+  /** 会場限定 Premium（Stripe 中央版 / 2026-10-02〜） */
+  premiumJra: '/premium-prediction/jra/',
+  /** 会場限定 Premium（Stripe 南関版） */
+  premiumNankan: '/premium-prediction/nankan/',
   /** Light 会員。会場指定なしで南関（大井・浦和・船橋）の最新開催日を表示する */
   light: '/light-predictions/',
   /**
@@ -58,6 +62,9 @@ export function resolvePredictionDestination(viewer) {
 
   // ページが要求する権利そのもので選ぶ（上から順に強い権利）
   if (e.canViewPremium === true) return PREDICTION_DESTINATIONS.premium;
+  // 会場限定は**見られる会場の**Premium へ（もう一方へ送ると gatePaidPage に跳ね返される）
+  if (e.canViewPremiumNankan === true) return PREDICTION_DESTINATIONS.premiumNankan;
+  if (e.canViewPremiumJra === true) return PREDICTION_DESTINATIONS.premiumJra;
   if (e.canViewLight === true) return PREDICTION_DESTINATIONS.light;
 
   // 無料会員・未ログイン・権利なし（期限切れ / 退会 / 三連複のみ保有）はすべて無料予想へ。

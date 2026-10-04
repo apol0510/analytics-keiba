@@ -57,21 +57,20 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                 </a>
             </div>
 
-            <!-- 30日 -->
+            <!-- 月額（2026-10-02〜 Stripe 定期購読。申込は /pricing/ の単一導線へ） -->
             <div class="plan-card">
-                <h3 class="plan-card-name">Premium 30日</h3>
-                <p class="plan-card-subtitle">まずは試したい方に</p>
-                <div class="plan-card-price">¥18,000</div>
-                <div class="plan-card-period">/30日</div>
+                <h3 class="plan-card-name">Premium 月額</h3>
+                <p class="plan-card-subtitle">クレジットカードで毎月自動更新</p>
+                <div class="plan-card-price">¥4,980</div>
+                <div class="plan-card-period">/月</div>
                 <ul class="plan-card-features">
                     <li>✅ <strong>全12レース</strong>の予想・買い目</li>
                     <li>✅ 高精度AI予想</li>
-                    <li>✅ 詳細な投資戦略</li>
-                    <li>✅ 優先サポート</li>
+                    <li>✅ 中央版・南関版（各 ¥2,980/月）もあります</li>
                 </ul>
-                <button class="cta-button cta-secondary" onclick="openBankModal('Premium 30日 (Light会員アップグレード)', 18000, 'monthly')">
-                    🏦 銀行振込で申し込む
-                </button>
+                <a class="cta-button cta-secondary" href="/pricing/">
+                    💳 料金ページで申し込む →
+                </a>
             </div>
         </div>
 
@@ -145,9 +144,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                         <span class="final-option-note">/年</span>
                     </div>
                     <div class="final-option">
-                        <span class="final-option-name">30日</span>
-                        <span class="final-option-price">¥18,000</span>
-                        <span class="final-option-note">/30日</span>
+                        <span class="final-option-name">月額（カード）</span>
+                        <span class="final-option-price">¥4,980</span>
+                        <span class="final-option-note">/月</span>
                     </div>
                 </div>
             </div>

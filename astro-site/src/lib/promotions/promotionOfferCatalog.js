@@ -91,7 +91,11 @@ export const DISCOUNT_TYPE = Object.freeze({
  */
 export const REGULAR_PRICE = Object.freeze({
   light_monthly: 4980,
-  premium_monthly: 18000,
+  /**
+   * Premium 月額。2026-10-02〜 Stripe 定期購読 ¥4,980（正本は `src/lib/billing/stripePlans.js`）。
+   * （旧: 銀行振込 30 日 ¥18,000。販売終了）無料付与の「通常価格相当」表示にだけ使う。
+   */
+  premium_monthly: 4980,
   premium_annual: 49800,
   premium_lifetime: 78000,
   /**
@@ -325,6 +329,8 @@ export const PROMOTION_OFFERS = Object.freeze([
     applyPlanName: 'Light',
     applyPlanType: 'Monthly',
     version: 1,
+    // ⚠️ 2026-10-02 Light の新規募集停止: キャンペーンの案内（campaignOffers.resolveCampaignOfferIdsFor）から外し、
+    //    申込はサーバー側（discontinuedBankProducts）で受け付けない。過去キャンペーンの価格記録のため定義は残す。
     enabled: true,
   },
   {
@@ -395,19 +401,22 @@ export const PROMOTION_OFFERS = Object.freeze([
   {
     offerId: 'premium-30d-half',
     name: 'Premium 30日 50%OFF',
-    description: '通常 ¥18,000/30日 を半額で購入できる、その顧客専用のオファー。',
+    // ⚠️ 2026-10-02 に月払いの銀行振込（¥18,000/30日）を販売終了したため**新規発行を停止**。
+    //    半額 ¥9,000 は新しい月額 ¥4,980 より高く、案内すると不利な条件になる。
+    //    発行済み行の表示のため定義は残す（旧価格のまま固定）。
+    description: '（販売終了）通常 ¥18,000/30日 を半額で購入できる、その顧客専用のオファー。',
     kind: OFFER_KIND.PURCHASE,
     targetTier: PROMO_TIER.PREMIUM,
     term: BILLING_TERM.MONTHLY,
     duration: null,
     isLifetime: false,
-    regularPrice: REGULAR_PRICE.premium_monthly,
+    regularPrice: 18000,
     offerPrice: null, // discountType から算出
     discountType: DISCOUNT_TYPE.PERCENT,
     discountValue: 50,
     isFree: false,
     version: 1,
-    enabled: true,
+    enabled: false,
   },
   {
     offerId: 'premium-annual-half',

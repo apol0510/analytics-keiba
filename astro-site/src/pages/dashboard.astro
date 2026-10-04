@@ -53,10 +53,14 @@ const serverAuth = {
         light: _view.showLightCard === true,
         premiumActive: _view.showPremiumActiveCard === true,
         premiumExpired: _view.showPremiumExpiredCard === true,
+        // 会場限定 Premium（Stripe 中央版・南関版）: 'jra' | 'nankan' | null
+        premiumVenue: _view.showPremiumVenueCard === true ? _view.premiumVenue : null,
         sanrenpuku: _view.showSanrenpukuCard === true,
         purchaseCta: _view.showPurchaseCta === true,
     } : null,
     profile: viewer.isMember ? (viewer.profile || null) : null,
+    // Stripe の月額で契約中（「お支払い管理」を出す）
+    stripeBilling: viewer.isMember && viewer.profile?.billing === 'stripe',
 };
 // 会員ごとに中身が変わる。共有キャッシュに載せない（別人へ配られるのを防ぐ）。
 Astro.response.headers.set('Cache-Control', 'private, no-store');
@@ -410,9 +414,29 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
                             <div class="confidence">AI分析完了！</div>
                         </div>
                         <div class="sanrenpuku-view-buttons">
-                            <a href="/premium-prediction/nankan/" class="view-btn">南関 馬単を見る</a>
-                            <a href="/premium-prediction/jra/" class="view-btn">中央 馬単を見る</a>
+                            <a href="/premium-prediction/nankan/" class="view-btn" data-premium-venue="nankan">南関 馬単を見る</a>
+                            <a href="/premium-prediction/jra/" class="view-btn" data-premium-venue="jra">中央 馬単を見る</a>
                         </div>
+                        <!-- 会場限定（中央版・南関版）のときだけ表示。もう一方の会場は Premium への変更で開く -->
+                        <p class="premium-venue-upsell" id="premium-venue-upsell" style="display: none;">
+                            <span id="premium-venue-upsell-text"></span>
+                            <button type="button" class="view-btn" onclick="akOpenStripePortal()">Premium（中央＋南関 ¥4,980/月）へ変更</button>
+                        </p>
+                    </div>
+
+                    <!-- Stripe 月額の会員: カード変更・プラン変更・解約（Stripe のお支払い管理画面） -->
+                    <div id="stripe-billing-card" class="prediction-card premium" style="display: none;">
+                        <div class="card-header">
+                            <h3>💳 お支払い管理</h3>
+                        </div>
+                        <div class="race-info">
+                            <div class="race-title race-title-sm">カードの変更・プランの変更・解約</div>
+                            <div class="confidence">毎月自動で更新されます。解約後もお支払い済みの期間の終わりまでご利用いただけます。</div>
+                        </div>
+                        <div class="sanrenpuku-view-buttons">
+                            <button type="button" class="view-btn" onclick="akOpenStripePortal()">お支払い管理を開く</button>
+                        </div>
+                        <p class="stripe-billing-error" id="stripe-billing-error" style="display: none;">お支払い管理を開けませんでした。時間をおいて再度お試しいただくか、お問い合わせください。</p>
                     </div>
 
                     <!-- Premium予想（契約期間終了）: 期限切れ時に上のカードの代わりに表示。予想リンクは出さない。 -->
@@ -1879,6 +1903,28 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
             if (_view.showPremiumActiveCard) {
                 console.log('Premium予想（有効）を表示');
                 document.getElementById('premium-predictions').style.display = 'block';
+            }
+            // 会場限定 Premium（Stripe 中央版・南関版）→ 同じカードで、その会場のボタンだけを出す
+            const _serverAuth = getServerAuth();
+            const _venue = _byServer && _serverAuth && _serverAuth.cards ? _serverAuth.cards.premiumVenue : null;
+            if (!_view.showPremiumActiveCard && (_venue === 'jra' || _venue === 'nankan')) {
+                document.getElementById('premium-predictions').style.display = 'block';
+                document.querySelectorAll('#premium-predictions [data-premium-venue]').forEach(function (a) {
+                    a.style.display = a.getAttribute('data-premium-venue') === _venue ? '' : 'none';
+                });
+                const badge = document.querySelector('#premium-predictions .method-badge');
+                if (badge) badge.textContent = _venue === 'jra' ? '中央版' : '南関版';
+                const upsell = document.getElementById('premium-venue-upsell');
+                if (upsell) {
+                    document.getElementById('premium-venue-upsell-text').textContent = _venue === 'jra'
+                        ? '南関の予想もご覧になるなら、Premium への変更がお得です。'
+                        : '中央の予想もご覧になるなら、Premium への変更がお得です。';
+                    upsell.style.display = 'block';
+                }
+            }
+            // Stripe 月額の会員 → お支払い管理
+            if (_serverAuth && _serverAuth.stripeBilling === true) {
+                document.getElementById('stripe-billing-card').style.display = 'block';
             }
             // Premium 期限切れ → 契約期間終了カード（予想リンクは出さない・再契約導線のみ）。馬単ページは canViewPremium で別途拒否。
             if (_view.showPremiumExpiredCard) {
@@ -5305,22 +5351,21 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
                     </button>
                 </div>
 
-                <!-- Premium 30日 -->
+                <!-- Premium 月額（2026-10-02〜 Stripe 定期購読。申込は /pricing/ の単一導線へ） -->
                 <div class="plan-option">
-                    <div class="plan-badge-normal">30日</div>
-                    <h3 class="plan-option-name">Premium 30日</h3>
-                    <div class="plan-option-subtitle">まずは試したい方に</div>
-                    <div class="plan-option-price">¥18,000</div>
-                    <div class="plan-option-discount">/30日</div>
+                    <div class="plan-badge-normal">月額</div>
+                    <h3 class="plan-option-name">Premium 月額</h3>
+                    <div class="plan-option-subtitle">クレジットカードで毎月自動更新</div>
+                    <div class="plan-option-price">¥4,980</div>
+                    <div class="plan-option-discount">/月（中央版・南関版は各 ¥2,980）</div>
                     <ul class="plan-option-features">
                         <li>✅ <strong>全12レース</strong>の馬単予想</li>
                         <li>✅ 高精度AI予想</li>
                         <li>✅ 詳細な投資戦略</li>
-                        <li>✅ 優先サポート</li>
                     </ul>
-                    <button class="btn-plan premium" onclick="openBankModal('Premium 30日', 18000, 'monthly')">
-                        🏦 銀行振込で申し込む
-                    </button>
+                    <a class="btn-plan premium" href="/pricing/">
+                        💳 料金ページで申し込む
+                    </a>
                 </div>
             </div>
 
@@ -5484,6 +5529,16 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
             // ボタンを無効化
             confirmBtn.disabled = true;
             confirmBtn.textContent = '処理中...';
+
+            // Stripe の月額会員は「お支払い管理」で解約する（次回更新の停止・支払い済み期間末まで利用可）。
+            // 退会フラグはその場で閲覧を止め、Stripe の課金も止まらないため使わない（2026-10-02）。
+            const _sa = (typeof getServerAuth === 'function') ? getServerAuth() : null;
+            if (_sa && _sa.stripeBilling === true && typeof window.akOpenStripePortal === 'function') {
+                window.akOpenStripePortal();
+                confirmBtn.disabled = false;
+                confirmBtn.textContent = '退会する';
+                return;
+            }
 
             try {
                 // 退会処理APIを呼び出し
@@ -5774,6 +5829,17 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
       let currentPlan = '';
       let currentAmount = 0;
       let currentPlanType = 'monthly';
+
+      // Stripe のお支払い管理（カード・プラン変更・解約）
+      window.akOpenStripePortal = async function () {
+        const err = document.getElementById('stripe-billing-error');
+        try {
+          const res = await fetch('/.netlify/functions/stripe-portal', { method: 'POST', credentials: 'include' });
+          const data = await res.json().catch(() => ({}));
+          if (res.ok && data.url) { location.href = data.url; return; }
+        } catch (_) { /* 下で表示 */ }
+        if (err) err.style.display = 'block';
+      };
 
       function openBankModal(planName, amount, planType = 'monthly') {
         // プラン選択モーダルを閉じる

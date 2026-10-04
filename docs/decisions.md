@@ -86,6 +86,175 @@
   - `/sanrenpuku-demo/` の「お客様の声」2 件は旧訴求の声だったため撤去（声の文面は書き換えない）。
 - **同日の実異常の是正**: 旧 `/prediction/[slug]` が未ログインで有料の馬単買い目を表示していた → PR #686（`ceec0f44`）で無料予想への 301 / 404 に置換・本番で確認済み。
 
+# 2026-10-02（追記 8）— メール横断監査と、有料 Light 会員は Premium を主導線に（MK 確定・PR #677 の一部）
+
+- **新規・無料向けメールで Light を募集しない**。送信済みの文面は 1 文字も変えない（version を上げると全員へ再送になる）ため、
+  Light を案内する文面の campaign は**文面を凍結したまま送信計画を作らない**（`lightSignupClosedCampaigns.js` → `buildCampaignPlan` が `light_signup_closed`）。
+  対象: campaign-discount-free / campaign-discount-light / campaign-prospect-phase2 / light-trial-to-premium-sequence / light-to-premium-sequence。
+  一部の step だけが該当する free-signup-onboarding は step5 だけを止める（`retiredSequenceSteps.js`・定期 tick が skip）。
+- **再開する campaign は送信前に書き直す**: 新料金（中央版 ¥2,980／南関版 ¥2,980／Premium ¥4,980・CTA は /pricing/）で書き直して version を上げてから停止リストから外す。Light 文面のまま外すと guard テストで落ちる。
+- 無償付与・終了のお知らせ（comeback-light-30d-granted / light-lifetime-restart / light-trial-post-expiry step1）は Light に触れてよいが、購入・継続は案内しない。
+- **既存の有料 Light 会員**: 主導線は「同じ ¥4,980/月で中央＋南関の Premium へ変更」。Light の更新権は残すが会員だけに見える控えめな行（/pricing/ の「その他のお支払い方法」内・tier 1 のみ）とし、Light の継続を勧めない。更新リマインドの CTA は Premium（`/login/?next=/pricing/`）だけ。Premium へ変更後は Light の更新を案内しない（Premium の tier では Light 行が出ない）。
+- 永久無料・無償 Light には Light の購入導線を出さない（既存の権利は変えない）。
+- **Premium 更新リマインド**: Premium ¥4,980（中央＋南関）／中央版・南関版 各 ¥2,980／年払い（銀行振込）を案内し、Light は案内しない。
+- **会場限定 Premium（中央版・南関版）には三連複を売らない**（購入資格は両会場 Premium だけ）: sanrenpuku-offer / sanrenpuku-upsell-sequence / campaign-discount-premium は `matchesCampaignAudience` が `venue_only_premium` で除外。
+- **Stripe live 決済が無効な間は Stripe 月額を案内するメールを実送信しない**: 更新リマインド 2 本は `checkStripeLiveSales`（charges_enabled かつ card_payments=active）で live → dry-run に落とす（読めないときも送らない側）。
+- 固定: `src/lib/marketing/lightSignupClosedEmail.guard.test.mjs`・`lightRenewalEmail.test.mjs`・`premiumRenewalEmail.test.mjs`・`src/lib/pricing/lightSignupClosed.guard.test.mjs`。
+
+---
+
+# 2026-10-02（追記 7）— Stripe の商品名から「KEIBA」を外す（MK 確定）
+
+- Product 名を **Analytics Premium（中央＋南関）／ Analytics Premium 中央 ／ Analytics Premium 南関** に統一（Checkout・領収書・請求書・明細に出る名前）。
+- 単一源は `stripePlans.js` の `productName`。`scripts/stripe-setup.mjs`（作成・`--products-only` で名前だけ同期）と Checkout の `subscription_data.description` が参照する。
+- test / live とも API で Product 名だけ更新（2026-10-02）。Product ID・Price ID・金額・metadata・active は変更なし（更新前後のスナップショットで確認）。
+- 再発防止: `stripeBilling.test.mjs`（productName に競馬固有の語を含まない・setup / Checkout が productName を使う）。
+- 対象外: AK サービス（analytics.keiba.link）のメール送信者名「KEIBA Analytics」は Stripe の商品名ではないため変更しない。
+
+---
+
+# 2026-10-02（追記 6）— Light 新規募集停止に伴う CTA 横断監査（MK 確定・PR #677 の一部）
+
+## 確定仕様
+
+| 状態 | CTA |
+|---|---|
+| 未ログイン・無料 | Light の新規 CTA を出さない。有料 CTA は **Premium 中央版 ¥2,980 / 南関版 ¥2,980 / Premium ¥4,980**（「両方なら Premium がお得」）|
+| 既存の**有料** Light 会員 | 更新・再開の導線を維持（`/pricing/` の Light カードは tier 1 にだけ表示・一般公開の新規募集 CTA にはしない）|
+| 永久無料 Light・無償付与 Light | 既存の閲覧権は変えない。購入導線とは分離（「有料 Light 会員」には含めない）|
+| Premium（両会場）会員 | 同じプランの購入 CTA を出さず、次段（三連複 `/sanrenpuku-demo/`）とマイページへ |
+| URL 直打ち・旧ページ | Light 新規・Premium 月払いの銀行振込は**サーバー側で 409**（メール送信・書き込みより前・fail closed）。旧 `/light-campaign/` は `/pricing/` へ 301 |
+
+## 監査結果（2026-10-02・repo 全体）
+
+- Light の購入ボタン（`openBankModal('Light'…)`）は `/pricing/` の更新用カード 1 か所だけ（tier 1 限定）。他ページの有料 CTA はすべて `/pricing/` 行き・文言も Light を名指ししない
+- キャンペーン割引の案内（`campaignOffers.resolveCampaignOfferIdsFor`）から Light を外した（`campaign-light-monthly-500off` の発行済み 0 件を本番で確認）
+- Light 向けページの未加入案内（AccessControl）を「Light プランが必要」→「有料プラン（Premium 中央版・南関版・Premium）」へ
+- 申込 Function（`bank-transfer-application`）: Light 新規・Premium 月払いを受け付けない（判定 `discontinuedBankProducts.decideBankProductAvailability`・照会失敗も止める）
+- 既存の Light 会員向け表示（マイページの会員表示・Light 予想ページ・Light 更新リマインド）は変更なし
+- テスト固定: `src/lib/pricing/lightSignupClosed.guard.test.mjs` / `src/lib/payments/discontinuedBankProducts.test.mjs` / キャンペーン関連テスト
+
+---
+
+# 2026-10-02（追記 5）— 販売開始の条件は「live の決済受付が可能」だけ（審査完了・Payout は待たない）（MK 確定）
+
+- Stripe の審査中・Payout 保留は、Stripe 月額の販売開始・PR #677 merge の待機条件にしない。
+- 条件は **live の決済受付が可能**（`charges_enabled=true` かつ card_payments=active、live Checkout Session が作れる）ことだけ。Payout だけ保留なら正常として進める。
+- 2026-10-02 12:0x JST の実測: `charges_enabled=false` / card_payments=inactive / `disabled_reason=under_review` / `payouts_enabled=true` / live Checkout 作成は `Your account cannot currently make live charges`。
+  → **決済受付ができないため merge は保留**（merge すると月額を誰も買えない＝月払い銀行振込は停止済み）。
+- 決済受付の開始は scheduled-checks `stripe-live-activation-2026`（charges_enabled かつ card active を毎日検知）が拾う。検知したら #677 merge → 本番確認へ進む。
+
+---
+
+# 2026-10-02（追記 4）— analytics.tirol.link は data.tirol.link と同じ一般的な事業者サイトにする（MK 確定・追記 3 を改訂）
+
+- 追記 3 で本文に載せた個別サービスの内容・料金表を削除し、TIROL DATA LABO の一般的な事業者サイトにする（data.tirol.link の構成・粒度）。
+- 公開ページで競馬固有の語を使わない。再混入は analytics-tirol-link の tests が検査。正本は同 repo の docs/SPEC.md・DECISIONS.md。
+- 本番反映済み（analytics-tirol-link #1 `2c062b1`・HTTPS・全ページ 200・禁止語 0・リンク切れ 0・320/390px 横スクロールなし）。
+
+---
+
+# 2026-10-02（追記 3）— Stripe 登録用の事業サイト analytics.tirol.link を新設／14 日返金保証を廃止（MK 確定）
+
+## 決定
+
+| 項目 | 内容 |
+|---|---|
+| 事業サイト | **https://analytics.tirol.link/**（新設・独立 repo `apol0510/analytics-tirol-link`・Netlify site `analytics-tirol-link`）|
+| 公開連絡先 | **analytics@tirol.link** |
+| 参考元 | https://data.tirol.link/（repo `data-tirol-link`・Netlify・Cloudflare DNS）。**参考元のファイル・設定は変更しない** |
+| ブランド | サイト名・見出し・主要コピーに「競馬」「KEIBA」を使わない（tirol data labo / Analytics）|
+| 実態の一致 | **販売実態を偽装・省略しない**。本文にサービス内容（中央競馬・南関東地方競馬の AI 解析レポート・情報提供のみ）、サービス名 KEIBA Analytics、価格、支払方法、解約・返金条件を正確に書き、Stripe の登録内容・analytics.keiba.link の表示と一致させる |
+| 掲載 | 事業者情報・サービス説明・月額であること・主要価格・問い合わせ先・特商法・利用規約・プライバシーポリシー・返金キャンセル・サポート。未完成・ダミー・工事中を置かない |
+| Stripe 登録 URL | 現在の `https://data.tirol.link/` は、analytics.tirol.link の本番公開と必要情報の確認が**完了してから**差し替える |
+| 返金 | **14 日間・無条件全額返金は廃止**（AK の /refund/ から削除。Premium Plus を含む）|
+
+## 実装（2026-10-02）
+
+- 生成スクリプト `build/pages.py` で共通ヘッダー・フッター・連絡先・価格を全ページ共通化。利用規約・プライバシーは data.tirol.link の原文を置換して作成（API 条項を除き、銀行振込・最低利用期間なしを追記）
+- 公開条件を `tests/site.test.mjs` で固定（見出しに競馬/KEIBA なし・本文に実態・価格一致・全ページ相互リンク・リンク切れ 0・14 日返金なし・工事中なし・旧連絡先なし）。CI は生成物とスクリプト出力の一致も検査
+- AK 側: /legal/ の販売事業者名・所在地・連絡先を事業サイトと一致（tirol data labo / analytics@tirol.link / 日本語の特商法へのリンク）、/refund/ の 14 日返金を削除、/terms/・/privacy/ の連絡先を analytics@tirol.link に。guard テスト追加
+
+---
+
+# 2026-10-02（追記 2）— 解約条件は正確に記載するが、販売画面・決済画面では強調しない（MK 確定の表示方針）
+
+「最低利用期間なし／いつでも解約可／日割り返金なし」は**制度上の確定仕様として維持**する。ただし販売の主役にしない。
+
+| 面 | 方針 |
+|---|---|
+| `/refund/`・`/terms/`・`/legal/` | 条件を**正確に**記載（次回更新の停止・支払い済み期間末まで利用可・最低利用期間なし・日割り返金なし）|
+| FAQ | **通常の説明**として記載（強調しない）|
+| `/pricing/` | 商品内容・価格・中央／南関／Premium の価値が主役。カード・見出し・強調枠に解約条件を書かない |
+| Stripe Checkout | プラン名・月額・定期購読など必要情報が中心。**AK 側の custom_text は付けない**（Stripe 標準の必要表示は消さない）|
+
+- 是正（2026-10-02）: Checkout の custom_text「毎月自動で更新…いつでも解約できます」を削除／`/pricing/` のカード下「いつでも解約」を削除／
+  アップグレード導線（マイページ・`/premium-upgrade/`）の特長「いつでも解約できます」を削除／`/service-description/` の強調枠を通常の段落へ。
+- 同時に見つかった不整合: マイページの「退会処理」は退会フラグを立てて**その場で閲覧を止め、Stripe の課金は止まらない**。
+  → Stripe 月額会員は退会フラグを立てず「お支払い管理」（次回更新の停止）へ案内する（メールアドレスだけで呼べる API から購読は操作しない）。
+- guard: `src/lib/billing/stripeDisplayPolicy.guard.test.mjs`（`test:billing`）。
+
+---
+
+# 2026-10-02（追記）— 解約は期間末失効・最低利用期間なし・日割り返金なし／短期解約はペナルティで抑えない（MK 確定）
+
+## 確定仕様
+
+| 項目 | 仕様 |
+|---|---|
+| 解約 | **即時失効ではない**。次回の更新だけが止まり、**支払い済み期間の終わりまで利用可能** |
+| 最低利用期間 | 設けない |
+| 日割り返金 | 設けない |
+
+## 商品方針
+
+- **短期解約をペナルティ（最低利用期間・違約金・解約導線を隠す等）で抑えない。**
+- 継続の理由は **Premium に「履歴・継続利用で価値が蓄積する機能」を寄せる**ことで作る。
+- **具体的な新機能は未決定**。この方針を理由に機能を先行実装しない（決まったら別途 MK が確定する）。
+
+## 実装への反映（2026-10-02）
+
+- 初版は (1) 購読終了で `有効期限` を終了日＝当日にしており、Stripe 画面の即時解約で支払い済み期間が失われた
+  (2) 更新日に `current_period_end` が**支払い前に**進むのを見て期限を延ばしており、決済失敗でも 1 か月見られた。
+  → 期限の根拠を**支払い済み請求書の期間末（paidThrough）だけ**に変更（`stripeSubscriptionSync.js`）。
+  有効中 = paidThrough + 猶予 2 日、終了後 = paidThrough の翌暦日（09:00 JST に切れるため支払い済みより前に切らない）。
+- ポータルの解約は `at_period_end`（期間末で終了）。解約予約中は期限を変えない。
+- テスト固定: 期間末失効・即時解約でも支払い済み期間は残る・決済失敗で延ばさない・各プラン・Webhook 冪等・他会員非影響（`npm run test:billing`）。
+
+---
+
+# 2026-10-02 — AK に Stripe 定期購読を導入し、Premium 月額を ¥4,980（カード）へ／中央版・南関版を新設／Light 新規募集停止（MK 確定）
+
+## 決定（MK 原文の要旨）
+
+| # | 確定事項 |
+|---|---|
+| 1 | Stripe 決済を追加する。**AK 専用の新規 Stripe アカウント**（KI とは分ける・旧 AK アカウントは停止済み）|
+| 2 | **Premium 月額 = Stripe 定期購読 ¥4,980/月のみ**。月払いの銀行振込（30 日 ¥18,000）は停止。停止の告知はしない |
+| 3 | **Light は新規募集停止**。代わりに Premium を会場で分けた **中央版・南関版（各 Stripe ¥2,980/月）**を新設。「どちらにしますか？ 両方なら Premium がお得」の流れ |
+| 4 | 銀行振込の **年払い（¥49,800 / Light 乗り換え ¥44,820）は目立たないように残す**。非表示だった **買い切り ¥78,000 も目立たないように表示** |
+| 5 | 旧 AK の古い仕様（Zapier 等）は使わない。KI の最近の実装を参考にする |
+| 6 | 既存の有料 Light 会員は**銀行振込で更新・再開できる**（新規だけ停止）（2026-10-02 AskUserQuestion）|
+| 7 | 三連複買い切りの購入資格は**両会場の Premium だけ**（中央版・南関版には付けない）（同上）|
+
+## 2026-09-28 決定との関係
+
+2026-09-28「AK は低価格 Stripe 月額モデルへ全面転換しない」の #1・#2・#5 は、**本決定で MK が明示的に改訂した**
+（価格変更・Stripe 自動課金は MK の確定事項になった）。Light→Premium の構造維持（#3）は「Light 新規停止＋会場版新設」に置き換わる。
+KI の実装は**参考にしただけ**で、アカウント・Price・Webhook・顧客データは AK 単独（独立運用方針は不変）。
+
+## 実装上の判断（Claude）
+
+- 中央版・南関版は **プラン=Premium のまま `VenueAccess`（jra / nankan）で会場を絞る**。新しいプラン値を作らない
+  （既存の Premium 判定・メール・管理画面の分岐を増やさない）。`VenueAccess` 空 = 両会場（既存会員全員）。
+- 権限は既存どおり `有効期限` で決める。Stripe 会員は「請求期間の終わり + 猶予 2 日」を毎回書く
+  （請求が止まれば何も書かなくても期限で閉じる＝fail closed）。
+- Webhook と決済完了画面は同じ判定（`stripeSubscriptionSync.js`）・同じ排他ロック（Redis SET NX）で反映。
+  順不同・重複・再送でも同じ結果。二重課金（別の購読が生きている）・買い切り会員・年払い残存は**書かずに管理者通知**。
+- 未ログインでも購入できる（メールで照合／無ければ新規作成）。閲覧はマジックリンク＝本人のメールでしか開けないため、
+  他人のアドレスで払っても得をしない。
+- 割引オファー `premium-30d-half`（30 日 ¥9,000・銀行振込）は新月額より高くなるため新規発行を停止（発行済み 0 件を確認）。
+
 ---
 
 # 2026-09-29 — Premium 月払いにも期限前・失効後リマインドを適用する（MK 確定 / ①）

@@ -53,7 +53,8 @@ const APPLICATION_ENDPOINT = 'functions/bank-transfer-application';
 test('検査対象が 0 件で素通りしない', () => {
   assert.ok(PAGES.length > 50, `ページが少なすぎる: ${PAGES.length}`);
   const withEndpoint = PAGES.filter((p) => p.src.includes(APPLICATION_ENDPOINT));
-  assert.ok(withEndpoint.length >= 13, `申込ページが少なすぎる: ${withEndpoint.length}`);
+  // 2026-10-02: Light 新規募集停止で /light-campaign/ を削除（13 → 12）
+  assert.ok(withEndpoint.length >= 12, `申込ページが少なすぎる: ${withEndpoint.length}`);
 });
 
 test('計測スクリプトが BaseLayout で全ページに読み込まれる', () => {
@@ -95,7 +96,7 @@ test('申込成功はサーバーの受理を確かめた分岐からしか呼�
 
 test('モーダルを開く関数は global のまま（包み込みが効く形）', () => {
   const pagesWithModal = PAGES.filter((p) => /function openBankModal/.test(p.src));
-  assert.ok(pagesWithModal.length >= 13, `申込モーダルのページが少なすぎる: ${pagesWithModal.length}`);
+  assert.ok(pagesWithModal.length >= 12, `申込モーダルのページが少なすぎる: ${pagesWithModal.length}`);
   for (const p of pagesWithModal) {
     const idx = p.src.indexOf('function openBankModal');
     const before = p.src.slice(0, idx);
