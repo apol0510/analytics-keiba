@@ -1,3 +1,12 @@
+# 💜 Premium CTA の文字色（2026-10-04 MK 指示 / 本番反映済み）
+
+| 項目 | 状態 |
+|---|---|
+| 本番 | PR #710 squash `91b2c3c0`・main CI success・Netlify production ready。「Premiumで予想を取得」等の文字色 #f3e8ff → #e9d5ff（紫みのあるラベンダー・影を強めて可読性確保）。本番 CSS に反映を確認 |
+| cleanup | worktree `analytics-keiba-ctatext` 削除 |
+
+---
+
 # ✍️ 「本日の使用状況」・Preview の訴求（2026-10-04 MK 指示 / 本番反映済み）
 
 | 項目 | 状態 |
