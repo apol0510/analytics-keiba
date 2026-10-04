@@ -3,10 +3,10 @@
  *
  * - 対象は **`ak_session` の recordId だけ**。購入済み（確認済みの本番注文あり）でなければ 404。
  * - 金額は `premiumPlusPass.js` がサーバーで決める。body の金額は読まない（受け取る口が無い）。
- * - 案内を出すのは、本人の当日のレースが**発走して 30 分たってから**（結果のあとで見せる）。
+ * - 案内は購入済み会員に常に出す（2026-10-04 MK 指示: 当日レースの終了を待たない）。
  *
  * GET  → { offerVisible, offer, passes, bank }
- * POST { action:'apply', plan, weekday?, installments? } → 申込（入金待ち）＋管理者へ通知
+ * POST { action:'apply', plan, weekday? } → 申込（入金待ち）＋管理者へ通知
  * POST { action:'reserve', passId, saleDate }            → 好きな日に使う枠の日付予約
  */
 export const prerender = false;
@@ -15,19 +15,17 @@ import { verifySession } from '../../lib/auth/index.js';
 import { readSessionCookie } from '../../lib/auth/sessionCookie.js';
 import { makeRedisCmd } from '../../lib/premiumPlus/premiumPlusFunnelServer.js';
 import { createOrderStore } from '../../lib/premiumPlus/premiumPlusOrderService.js';
-import { createDeliveryStore } from '../../lib/premiumPlus/premiumPlusDeliveryStore.js';
 import { createPassStore, applyPass, reservePass } from '../../lib/premiumPlus/premiumPlusPassStore.js';
 import {
   buildOffer, describePassesForMember, isRepeatEligible, buildAdminNotice, PP_BANK,
 } from '../../lib/premiumPlus/premiumPlusPass.js';
-import { jstDate, startAtMs } from '../../lib/premiumPlus/premiumPlusDelivery.js';
+import { jstDate } from '../../lib/premiumPlus/premiumPlusDelivery.js';
 import { fetchCustomerFields, sendPlusMail } from '../../lib/premiumPlus/premiumPlusMail.js';
 import { ADMIN_EMAIL } from '../../../netlify/functions/config/email-config.js';
 
 const NO_STORE = { 'Content-Type': 'application/json', 'Cache-Control': 'private, no-store, max-age=0' };
 const out = (status, body) => new Response(JSON.stringify(body), { status, headers: NO_STORE });
 const notFound = () => out(404, { error: 'not_found' });
-const OFFER_AFTER_START_MS = 30 * 60 * 1000;
 
 const ERROR_JA = {
   unknown_plan: 'プランを選んでください。',
@@ -53,20 +51,6 @@ async function session(request, nowMs) {
   return recordId || null;
 }
 
-/** 本人の当日のレースがまだ終わっていなければ案内を出さない */
-async function offerVisibleNow({ deliveries, orders, passes, recordId, nowMs }) {
-  const today = jstDate(nowMs);
-  const mineToday = orders.some((o) => o.recordId === recordId && o.status === 'confirmed' && o.saleDate === today)
-    || passes.some((p) => p.recordId === recordId && (p.reservations || []).includes(today));
-  if (!mineToday) return true;
-  const d = await deliveries.get(today);
-  if (!d) return false;
-  return (d.races || []).every((r) => {
-    const s = startAtMs(today, r.startTime);
-    return s !== null && nowMs >= s + OFFER_AFTER_START_MS;
-  });
-}
-
 export async function GET({ request }) {
   const nowMs = Date.now();
   const recordId = await session(request, nowMs);
@@ -77,9 +61,7 @@ export async function GET({ request }) {
     const orders = await createOrderStore({ redisCmd: cmd }).list();
     if (!isRepeatEligible(orders, recordId)) return notFound();
     const passes = await createPassStore({ redisCmd: cmd }).list();
-    const offerVisible = await offerVisibleNow({
-      deliveries: createDeliveryStore({ redisCmd: cmd }), orders, passes, recordId, nowMs,
-    });
+    const offerVisible = true;
     const mine = describePassesForMember(passes, { recordId, nowMs });
     return out(200, {
       offerVisible,
@@ -109,7 +91,7 @@ export async function POST({ request }) {
     let r;
     if (body?.action === 'apply') {
       r = await applyPass({
-        store, orders, recordId, planId: String(body.plan || ''), weekday: body.weekday, installments: body.installments, nowMs,
+        store, orders, recordId, planId: String(body.plan || ''), weekday: body.weekday, nowMs,
       });
       if (r.ok) {
         // 管理者へ通知（失敗しても申込は成立している。管理画面の一覧が正本）

@@ -6,8 +6,9 @@
  * - 一度購入した会員の**次回の単品は定価 ¥98,000**（初回価格 ¥68,000 は 1 回だけ）。
  * - 購入済み会員には「**価格据え置きの枠確保**」を案内する。何鞍のパックかではなく、
  *   定価に戻ったあとも確保時の価格で受け取れる権利として見せる。
- *     - 10鞍確保枠: ¥598,000（有効 6 か月・好きな日に使う）
- *     - 年間オーナーズ枠: ¥1,980,000（毎週 1 鞍・52 鞍・曜日固定・**限定 5 名**・2 回払い可）
+ *     - 10鞍確保枠: ¥680,000 = **初回価格 ¥68,000 を 10 鞍分据え置き**（有効 6 か月・好きな日に使う）。
+ *       1 鞍あたりが初回価格を下回らないようにする（初回が最安という形を崩さない）
+ *     - 年間オーナーズ枠: ¥1,980,000（毎週 1 鞍・52 鞍・曜日固定・**限定 5 名**・**一括払いのみ**）
  * - 初回購入の確認から 7 日以内なら、初回の ¥68,000 を枠の代金へ充当する（1 回だけ）。
  * - 10鞍確保枠は、10 鞍を使い終えて回収率が 100% 未満なら**補償 3 鞍**を追加する。
  * - 中身は自動生成（`premiumPlusDelivery.js`）。的中率などの成績表示はしない。
@@ -28,12 +29,12 @@ export const PASS_PLANS = Object.freeze({
     schedule: 'choose', creditable: false, compensation: 0,
   }),
   pass10: Object.freeze({
-    id: 'pass10', name: '10鞍確保枠', races: 10, price: 598000, validDays: 183,
+    id: 'pass10', name: '10鞍確保枠', races: 10, price: PP_FIRST_PRICE * 10, validDays: 183,
     schedule: 'choose', creditable: true, compensation: PP_COMPENSATION_RACES,
   }),
   annual: Object.freeze({
     id: 'annual', name: '年間オーナーズ枠', races: 52, price: 1980000, validDays: 365,
-    schedule: 'weekly', creditable: true, compensation: 0, capacity: PP_ANNUAL_CAPACITY, installments: 2,
+    schedule: 'weekly', creditable: true, compensation: 0, capacity: PP_ANNUAL_CAPACITY,
   }),
 });
 
