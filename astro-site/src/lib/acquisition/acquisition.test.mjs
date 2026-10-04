@@ -578,3 +578,9 @@ test('Preview の「Premium なら」パネル: たくさん使えるメリッ�
   assert.match(side, /class="ag-cta ag-cta-premium" href="\/pricing\/"/);
   assert.match(read('src/components/acquisition/AcquisitionValuePanel.astro'), /<h2>本日の使用状況<\/h2>/);
 });
+
+test('絞った買い目に「厳選」バッジを付けない（少点数は的中が難しく、確度を誇張しない／2026-10-04 MK）', () => {
+  const body = read('src/components/acquisition/AcquiredPredictionBody.astro');
+  assert.ok(!body.includes('厳選'), 'AcquiredPredictionBody に「厳選」表記が残っている');
+  assert.ok(body.includes('data-kind="umatan-narrowed"'), '絞った買い目カード自体は維持');
+});
