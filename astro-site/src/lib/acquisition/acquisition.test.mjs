@@ -584,3 +584,12 @@ test('絞った買い目に「厳選」バッジを付けない（少点数は�
   assert.ok(!body.includes('厳選'), 'AcquiredPredictionBody に「厳選」表記が残っている');
   assert.ok(body.includes('data-kind="umatan-narrowed"'), '絞った買い目カード自体は維持');
 });
+
+test('絞った馬単買い目は通常の買い目と同じ配色（金色の強調を残さない／2026-10-05 MK）', () => {
+  const body = read('src/components/acquisition/AcquiredPredictionBody.astro');
+  const m = body.match(/data-kind="umatan-narrowed"[\s\S]*?<\/article>/);
+  assert.ok(m, '絞った買い目カードが無い');
+  const open = body.slice(body.lastIndexOf('<article', m.index), m.index);
+  assert.ok(!/\bnarrowed\b/.test(open), 'カードに narrowed（金色枠）クラスが残っている');
+  assert.ok(!/\bgold\b/.test(m[0]), 'カード内に gold ピルが残っている');
+});
