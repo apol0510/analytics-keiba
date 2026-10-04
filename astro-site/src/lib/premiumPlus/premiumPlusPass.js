@@ -10,7 +10,8 @@
  *       1 鞍あたりが初回価格を下回らないようにする（初回が最安という形を崩さない）
  *     - 年間オーナーズ枠: ¥1,980,000（毎週 1 鞍・52 鞍・曜日固定・**限定 5 名**・**一括払いのみ**）
  * - 初回購入の確認から 7 日以内なら、初回の ¥68,000 を枠の代金へ充当する（1 回だけ）。
- * - 10鞍確保枠は、10 鞍を使い終えて回収率が 100% 未満なら**補償 3 鞍**を追加する。
+ * - **補償・保証はない**（MK 決定）。的中・回収の保証なし・入金後のキャンセル返金なしを申込ボタンの近くに明記する
+ *   （特商法の返品特約表示。小さくてよいが、読める大きさ・申込前に目に入る位置に置く）。
  * - 中身は自動生成（`premiumPlusDelivery.js`）。的中率などの成績表示はしない。
  *
  * 金額は**ここだけ**で決める。クライアントから金額・割引額を受け取る口は作らない。
@@ -21,7 +22,6 @@ export const PP_FIRST_PRICE = 68000;
 export const PP_LIST_PRICE = 98000;
 export const PP_CREDIT_DAYS = 7;
 export const PP_ANNUAL_CAPACITY = 5;
-export const PP_COMPENSATION_RACES = 3;
 
 export const PASS_PLANS = Object.freeze({
   single: Object.freeze({
@@ -30,7 +30,7 @@ export const PASS_PLANS = Object.freeze({
   }),
   pass10: Object.freeze({
     id: 'pass10', name: '10鞍確保枠', races: 10, price: PP_FIRST_PRICE * 10, validDays: 183,
-    schedule: 'choose', creditable: true, compensation: PP_COMPENSATION_RACES,
+    schedule: 'choose', creditable: true, compensation: 0,
   }),
   annual: Object.freeze({
     id: 'annual', name: '年間オーナーズ枠', races: 52, price: 1980000, validDays: 365,

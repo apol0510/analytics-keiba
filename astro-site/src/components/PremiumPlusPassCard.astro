@@ -19,6 +19,7 @@
         今のうちに枠を確保すると、<strong>確保したときの価格のまま</strong>ご利用いただけます。</p>
       <p class="ppp-credit" id="ppp-credit" hidden></p>
       <div class="ppp-plans" id="ppp-plans"></div>
+      <p class="ppp-terms">※ 的中・回収を保証するものではありません。ご入金後のキャンセル・返金は承っておりません。</p>
     </div>
     <p class="ppp-msg" id="ppp-msg" role="status" aria-live="polite"></p>
   </div>
@@ -52,6 +53,7 @@
     background: #f59e0b; color: #1f1300; }
   .ppp-btn.armed { background: #fbbf24; }
   .ppp-btn[disabled] { opacity: .5; cursor: default; }
+  .ppp-terms { margin: 10px 0 0; font-size: .78rem; color: #cbd5e1; }
   .ppp-msg { font-size: .88rem; min-height: 1.2em; margin: 10px 0 0; }
   .ppp-msg.err { color: #fca5a5; }
   .ppp-msg.ok { color: #86efac; }
@@ -99,7 +101,6 @@
         html += '<p>残り <strong>' + esc(p.remaining) + '鞍</strong>／ご利用期限 ' + esc(p.validUntil) + '</p>';
         if (p.schedule === 'weekly') html += '<p>配信: 毎週' + esc(WD[p.weekday]) + '曜日（自動）</p>';
         if (p.upcoming && p.upcoming.length) html += '<p>お届け予定: ' + p.upcoming.map(function (d) { return esc(dateJa(d)); }).join('・') + '</p>';
-        if (p.compensation && !p.compensationGranted) html += '<p class="ppp-desc">10鞍を使い終えて回収率が100%未満の場合は、' + esc(p.compensation) + '鞍を追加でお届けします。</p>';
         if (p.schedule === 'choose' && p.remaining > 0) {
           html += '<div class="ppp-reserve"><input type="date" data-pass="' + esc(p.passId) + '" min="' + esc(state.minReserveDate) + '" max="' + esc(p.validUntil) + '">'
             + '<button type="button" class="ppp-btn" data-reserve="' + esc(p.passId) + '">この日に使う</button></div>';
@@ -137,7 +138,7 @@
         + (p.id === 'annual' ? '<span class="ppp-tag">限定' + esc(p.capacity) + '名・残り' + esc(p.seatsLeft) + '名</span>' : '')
         + '<div class="ppp-name">' + esc(p.name) + '</div>';
       if (p.id === 'single') html += '<div class="ppp-desc">1鞍。お好きな日をお選びいただけます（有効 ' + esc(p.validDays) + '日）。</div>';
-      if (p.id === 'pass10') html += '<div class="ppp-desc">10鞍を確保。お好きな日に使えます（有効 6か月）。<br>10鞍を使い終えて回収率が100%未満なら、' + esc(p.compensation) + '鞍を追加でお届けします。</div>';
+      if (p.id === 'pass10') html += '<div class="ppp-desc"><strong>初回価格 ' + esc(yen(o.firstPrice)) + ' のまま</strong>10鞍を確保。お好きな日に使えます（有効 6か月）。</div>';
       if (p.id === 'annual') html += '<div class="ppp-desc">毎週1鞍・1年で52鞍。配信曜日を選んで、毎週自動でお届けします（一括払い）。</div>';
       html += '<div class="ppp-price">' + esc(yen(p.price)) + '</div>';
       if (p.races > 1) {

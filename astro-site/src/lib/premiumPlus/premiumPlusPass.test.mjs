@@ -140,3 +140,27 @@ test('guard: 金額をクライアントから受け取らない／購入済み�
   assert.ok(guard > 0);
   assert.ok(guard < bt.indexOf('recordOrderOnApplication({'), '注文台帳へ書く前に止める');
 });
+
+test('補償はない・返品特約（保証なし／返金なし）は申込ボタンの近くに読める形で出す', () => {
+  const o = buildOffer({ orders, passes: [], recordId: ME, nowMs: NOW });
+  assert.ok(o.plans.every((p) => p.compensation === 0));
+  const card = readFileSync(new URL('../../components/PremiumPlusPassCard.astro', import.meta.url), 'utf8');
+  assert.doesNotMatch(card, /追加でお届け/);
+  assert.match(card, /キャンセル・返金は承っておりません/);
+  assert.match(card, /保証するものではありません/);
+  // 隠さない: display:none / hidden / 極小文字にしない
+  const terms = /\.ppp-terms \{([^}]*)\}/.exec(card)[1];
+  assert.doesNotMatch(terms, /display:\s*none|visibility:\s*hidden/);
+  const size = Number(/font-size:\s*\.?(\d*\.?\d+)rem/.exec(terms)[0].match(/[\d.]+/)[0]);
+  assert.ok(size >= 0.75, '返品特約の文字を小さくしすぎない');
+  assert.ok(card.indexOf('ppp-terms">') > card.indexOf('id="ppp-plans"'), '申込ボタンの直後に置く');
+});
+
+test('購入済み会員の判定は特定の会員に依存しない（確認済み注文が 1 件以上なら誰でも）', () => {
+  const someone = 'recCCCCCCCCCCCCCC';
+  const o2 = [{ orderId: `${someone}:2026-11-01`, recordId: someone, saleDate: '2026-11-01', status: 'confirmed', confirmedAt: NOW }];
+  assert.equal(buildOffer({ orders: o2, passes: [], recordId: someone, nowMs: NOW }).plans.find((p) => p.id === 'single').price, 98000);
+  assert.equal(planApply({ orders: o2, passes: [], recordId: someone, planId: 'pass10', nowMs: NOW }).ok, true);
+  const awaitingOnly = [{ ...o2[0], status: 'awaiting_payment' }];
+  assert.equal(planApply({ orders: awaitingOnly, passes: [], recordId: someone, planId: 'pass10', nowMs: NOW }).code, 'not_repeat_member');
+});
