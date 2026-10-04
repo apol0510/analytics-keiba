@@ -1,7 +1,7 @@
 ---
 /**
  * 活用状況（2026-10-04 MK 確定・docs/PREDICTION_ACQUISITION.md §2-3）。buildValueSummary の結果を描画するだけ。
- *   variant="today" … 本日の活用状況（12/36レース 33%）＋次に取得できる予想への CTA。スマホでは一覧の最上部
+ *   variant="today" … 本日の使用状況（12/36レース 33%）＋次に取得できる予想への CTA。スマホでは一覧の最上部
  *   variant="side"  … PC の右カラム（本日＋今月の活用状況）。スマホでは今月の活用状況だけを一覧の下に出す
  * % は利用上限ではない（本日これだけのレースが月額内で利用できる、の指標）。「残り○回」とは書かない。
  * 主役は次に取得できる予想。取得済みの見返しは控えめなリンクだけ。
@@ -19,11 +19,11 @@ const nextHref = next ? (next.isToday ? `${basePath}?date=${next.date}#acq-next`
 const m = v?.month;
 ---
 {variant === 'today' ? (
-  <section class="ag-glass acq-today" aria-label="本日の活用状況">
+  <section class="ag-glass acq-today" aria-label="本日の使用状況">
     {t && t.available > 0 ? (
       <>
         <div class="acq-today-head">
-          <h2>本日の活用状況</h2>
+          <h2>本日の使用状況</h2>
           <span class="acq-today-date">{md(t.date)}</span>
         </div>
         {t.acquired !== null ? (
@@ -33,7 +33,7 @@ const m = v?.month;
         <p class="acq-today-note">本日は{Object.entries(t.byCat).filter(([, n]) => n > 0).map(([c, n]) => `${CAT[c]} ${n}`).join('・')}レースの予想を、月額の範囲でいくつでも取得できます。</p>
       </>
     ) : (
-      <div class="acq-today-head"><h2>本日の活用状況</h2><span class="acq-today-date">{t ? md(t.date) : ''}</span></div>
+      <div class="acq-today-head"><h2>本日の使用状況</h2><span class="acq-today-date">{t ? md(t.date) : ''}</span></div>
     )}
     {next ? (
       <>
