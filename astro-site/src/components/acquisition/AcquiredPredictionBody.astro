@@ -82,7 +82,7 @@ const metaFor = (r) => [
               <header class="acq-head"><h3>馬単買い目</h3><span class="ag-pill blue">Premium</span></header>
               <p class="acq-note">Premium では、通常の買い目と点数を絞った買い目を表示します。</p>
               <div class="betting-teaser ag-inset" aria-hidden="true">
-                <span class="acq-axis"><span class="acq-axis-label">軸</span><span class="ag-num lg acq-axis-num">●</span></span>
+                <span class="acq-axis"><span class="acq-axis-label">軸</span><span class="acq-pnum acq-axis-mask">ー</span></span>{/* 2026-10-06 MK: 青い大きな四角は意味が分からず混乱するので「ー」 */}
                 <span class="acq-arrow">⇔</span>
                 <span class="acq-partners">{[1, 2, 3, 4, 5].map(() => <span class="acq-pnum">●</span>)}</span>
               </div>

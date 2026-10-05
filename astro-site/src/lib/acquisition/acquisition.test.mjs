@@ -801,3 +801,10 @@ test('一覧の取得ボタン（体験・会員とも）は小さく（幅い�
   assert.match(list, /\.acq-race-cta \.acq-btn-compact \{ width: auto;[^}]*min-height: 38px;[^}]*font-size: 0\.86rem;/);
   assert.match(list, /<button type="submit" class="ag-cta acq-btn acq-btn-compact">/);
 });
+
+test('プレビューの買い目モザイクで軸を青い大きな四角にしない（「ー」・2026-10-06 MK）', () => {
+  const b = read('src/components/acquisition/AcquiredPredictionBody.astro');
+  const teaser = b.slice(b.indexOf('class="betting-teaser'), b.indexOf('class="ag-cta acq-unlock"'));
+  assert.doesNotMatch(teaser, /acq-axis-num/);
+  assert.match(teaser, /<span class="acq-pnum acq-axis-mask">ー<\/span>/);
+});
