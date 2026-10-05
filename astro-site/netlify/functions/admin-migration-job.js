@@ -26,6 +26,9 @@
  *   POST { action:'reconcile', jobType:'delivery-keys', campaignId, version }
  */
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'admin-migration-job' });
 import {
   JOB_TYPE, JOB_STATUS, JOB_NAMESPACE, isValidJobType, clampChunk, jobKey, lockKey,
   createJob, applyStep, completeJob, failJob, verifyBalance, canStep,

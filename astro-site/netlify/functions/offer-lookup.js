@@ -14,6 +14,9 @@
  * gate: COMEBACK_OFFER_TABLE_READY='1' と PROMO_OFFER_SECRET が無ければ 503。
  */
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'offer-lookup' });
 import {
   OFFERS_TABLE,
   verifyOfferToken,

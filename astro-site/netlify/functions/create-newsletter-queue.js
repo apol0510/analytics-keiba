@@ -2,6 +2,9 @@
 // PayPal Webhook Phase 7の冪等性設計応用
 // ジョブ作成 → Customers取得 → Queue一括投入
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'create-newsletter-queue' });
 import {
   fetchCustomersReadOnly,
   loadBlacklistEmails,

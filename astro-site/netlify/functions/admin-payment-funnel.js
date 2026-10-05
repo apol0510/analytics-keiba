@@ -3,6 +3,7 @@
  *
  *   POST {action:'plusOfferOutcome'}                 … Plus 案内メールの成果（送信→開封→到達→注文→購入・件数のみ）
  *   POST {action:'plusOrdersSummary'}                … Premium Plus 注文と新系列の購入の突き合わせ（件数のみ）
+ *   POST {action:'airtableUsage', days?:number}      … Airtable API の呼び出し回数（Function 別・日別）と月の見込み
  *   POST {action:'revenueMonth', month:'YYYY-MM'}   … 月（JST）の入金確認の件数と金額の合計（KAO D-158・識別子なし）
  *   POST {action:'summary', days?:number}  … 期間内の申込受理・入金確認の件数（商品別・日別）、
  *                                              報告→入金確認の日数分布、いま入金確認待ちの件数と経過日数
@@ -10,6 +11,9 @@
  *       識別子・アドレスは返さない。
  * 正本: src/lib/payments/paymentFunnel.js
  */
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'admin-payment-funnel' });
 import { readPaymentFunnelMonth, readPaymentFunnelSummary } from '../../src/lib/payments/paymentFunnelServer.js';
 import { makeRedisCmd } from '../../src/lib/premiumPlus/premiumPlusFunnelServer.js';
 import { createOrderStore } from '../../src/lib/premiumPlus/premiumPlusOrderService.js';
@@ -42,6 +46,18 @@ export const handler = async (event) => {
   let req;
   try { req = JSON.parse(event.body || '{}'); } catch { return json(400, { error: 'Invalid JSON' }); }
   // 月間売上（KAO D-158）: 入金確認の件数と金額の合計（識別子なし・読み取りのみ）
+  // Airtable API の呼び出し回数（Function 別・日別・回数のみ。docs/AIRTABLE_CAPACITY.md）
+  if (req.action === 'airtableUsage') {
+    try {
+      const { readAirtableCallDays, projectMonthly } = await import('../../src/lib/ops/airtableCallMeter.js');
+      const days = Math.min(62, Math.max(1, Number(req.days) || 31));
+      const r = await readAirtableCallDays({ days });
+      if (!r.ok) return json(503, { error: r.reason, sideEffects: 'none' });
+      return json(200, { days: r.days, projectedMonthly: projectMonthly(r.days.slice(1, 8)), sideEffects: 'none' });
+    } catch {
+      return json(500, { error: 'read_failed', sideEffects: 'none' });
+    }
+  }
   if (req.action === 'revenueMonth') {
     if (!/^20\d{2}-(0[1-9]|1[0-2])$/.test(String(req.month || ''))) return json(400, { error: 'month must be YYYY-MM' });
     try {

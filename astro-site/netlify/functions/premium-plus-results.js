@@ -15,6 +15,9 @@
  * 判定の単一源: src/lib/premiumPlusResults.js（normalize / upsert / remove）
  */
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'premium-plus-results' });
 import { normalizeResult, upsertResult, removeResult } from '../../src/lib/premiumPlusResults.js';
 
 const FILE_PATH = 'astro-site/src/data/premiumPlusResults.json';

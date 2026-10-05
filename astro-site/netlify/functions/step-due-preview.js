@@ -21,6 +21,9 @@
 //
 // 注意: enroll がまだ無い段階（Phase 2.2）では全件 0 が正常。
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'step-due-preview' });
 import {
   fetchCustomersReadOnly,
   loadBlacklistEmails,

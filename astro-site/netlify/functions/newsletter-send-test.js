@@ -15,6 +15,9 @@
 //   - subject 接頭辞 [TEST] + 本文先頭にテスト識別バナー
 //   - deliveryKey は namespace='test-send' で本番と衝突防止
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'newsletter-send-test' });
 import { createHash } from 'node:crypto';
 import { getBrandConfig, validateBrandFromEmail } from '../../src/lib/newsletter/brand-config.js';
 import { computeContentHash } from '../../src/lib/newsletter/content-hash.js';

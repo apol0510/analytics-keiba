@@ -40,6 +40,9 @@
  * 判定・許可リスト・`expectedCount`・委譲先はどちらの経路でも**同じこの関数**を通る。
  */
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'cron-drm-autostart' });
 import {
   DRM_ENTRY_CAMPAIGN_IDS, DRM_ENTRY_ENV, ENTRY_ABORT,
   isEntryCampaignAllowed, readDrmEntryGates, checkExpectedCount,

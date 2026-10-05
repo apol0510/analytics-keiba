@@ -27,6 +27,9 @@
  *      PREMIUM_PLUS_FIELDS_READY（本番フィールド作成後に '1'）
  */
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'premium-plus-eligibility' });
 import {
   PP_ELIGIBILITY,
   PP_ELIGIBILITY_LABEL,

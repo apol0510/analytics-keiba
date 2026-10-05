@@ -3,6 +3,9 @@
 // 2025-10-10 v1.3: メール文言最終版（銀行振込記述削除）
 // 2026-08-31: 管理者宛先・返信先・送信元を単一源 config/email-config.js へ統一
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'process-withdrawal' });
 import { SUPPORT_EMAIL, ADMIN_EMAIL } from './config/email-config.js';
 import { formatJst } from '../../src/lib/datetime/jstTimestamp.js';
 import { buildUnsubscribeUrl } from '../../src/lib/unsubscribe/listUnsubscribeHeaders.js';

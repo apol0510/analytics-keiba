@@ -6,6 +6,9 @@ const sgMail = require('@sendgrid/mail');
 
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'expiry-notification' });
 import { SUPPORT_EMAIL, ADMIN_EMAIL, FROM_EMAIL } from './config/email-config.js';
 import { buildListUnsubscribeHeaders, buildUnsubscribeUrl } from '../../src/lib/unsubscribe/listUnsubscribeHeaders.js';
 exports.handler = async (event, context) => {

@@ -12,6 +12,9 @@
  * - まだ管理画面から未配線。cutover で管理画面を差し替える。
  */
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'admin-promote-customer' });
 import { buildManualPromotionFields } from '../../src/lib/payments/promotionV2.js';
 import { getRecord, patchRecord } from '../../src/lib/payments/paymentEmailDeps.js';
 

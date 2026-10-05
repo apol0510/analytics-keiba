@@ -5,6 +5,9 @@
  *   POST {action:'report'}   … 送った周期ごとの Light 更新率・Light→Premium 転換率
  * 認可: x-admin-secret（admin-marketing と同じ secret）。アドレスは返さない。
  */
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'admin-light-renewal' });
 import { runLightRenewal, MODE, resolveMode } from '../../src/lib/marketing/lightRenewal/lightRenewalRunner.js';
 import { loadLightRenewalReportData, summarizeLightRenewalOutcomes } from '../../src/lib/marketing/lightRenewal/lightRenewalReport.js';
 

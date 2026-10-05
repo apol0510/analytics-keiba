@@ -1,6 +1,9 @@
 // 期限切れチェックcron（毎日午前9時UTC = 日本時間18時実行）
 // Netlify Scheduled Functions
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'cron-expiry-check' });
 export default async function handler(request, context) {
   const headers = {
     'Content-Type': 'application/json'

@@ -291,9 +291,12 @@ test('1 tick の上限は env で下げられる（壊れた値は同期経路�
   assert.equal(MAX_RECIPIENTS_PER_TICK, 500);
 });
 
-test('【配線】cron が 10 分間隔で動く（1 日 1 回では配り切れない）', () => {
+// 2026-10-05: 10 分 → 30 分（Airtable API 月 100,000 回の上限対策。docs/AIRTABLE_CAPACITY.md）。
+// 1 tick 500 名 × 48 回/日 = 24,000 名/日で、配り切れない心配は無い（大量配信は SendGrid MC 側）。
+test('【配線】cron が 30 分以内の間隔で動く（1 日 1 回では配り切れない）', () => {
   const cron = read('../../../netlify/functions/cron-campaign-sequence.js');
-  assert.match(cron, /schedule: '\*\/10 \* \* \* \*'/, 'cron が 10 分間隔になっていない');
+  const m = /schedule: '\*\/(\d+) \* \* \* \*'/.exec(cron);
+  assert.ok(m && Number(m[1]) <= 30, 'cron が 30 分以内の間隔になっていない');
   assert.match(cron, /resolveMaxRecipientsPerTick/, '1 tick の上限を env から読んでいない');
 });
 

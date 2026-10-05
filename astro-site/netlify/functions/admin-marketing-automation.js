@@ -24,6 +24,9 @@
  * 料金 / UI は**すべて AK 内が正本**。KMA の名前空間・env・送信元は参照しない。
  */
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'admin-marketing-automation' });
 import {
   createAutomationAdminApi, isWriteEnabled, WRITE_ACTIONS, WRITE_GATE_ENV,
 } from '../../src/lib/marketing/automationAdminApi.js';

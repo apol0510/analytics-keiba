@@ -3,6 +3,9 @@
  * Premium Plus専用のお問い合わせを受け付け、確認メールを送信
  */
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'premium-plus-contact' });
 import Airtable from 'airtable';
 import { SUPPORT_EMAIL, ADMIN_EMAIL, FROM_EMAIL } from './config/email-config.js';
 import { buildAdminContactSubject } from '../../src/lib/contact/contactSubject.js';

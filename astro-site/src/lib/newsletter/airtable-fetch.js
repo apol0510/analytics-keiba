@@ -191,16 +191,73 @@ export function buildBlacklistEmailSet(records) {
  *  - 失敗時は { emails: empty, status: classifyBlacklistError(err) } を返し、例外は投げない
  *  - 呼び出し側はこの戻り値をそのまま countAudience / resolveAudienceRecipients に渡せる
  */
-export async function loadBlacklistEmails({ brand, baseId, apiKey }) {
+export async function loadBlacklistEmails({ brand, baseId, apiKey, cache = true }) {
   if (!BRAND_HAS_BLACKLIST_TABLE[brand]) {
     return { emails: new Set(), status: 'not-applicable' };
   }
+  // ── 共有キャッシュ（2026-10-05 / Airtable API 月 100,000 回の上限対策）──────────
+  // 送信系の cron は campaign ごと・tick ごとに EmailBlacklist を全件（5〜7 ページ）読んでいた。
+  // 読めた結果だけを Redis に 10 分置き、全 Function で共有する。読めなかった結果は置かない
+  // （失敗を「0 件」として使い回さない）。SendGrid 側でも bounce / 配信停止の宛先は送信時に
+  // 止まるので、追加から最大 10 分の遅れは二重の守りの片方が遅れるだけ。
+  const cacheKey = `ak:cache:email-blacklist:v1:${brand}:${baseId}`;
+  if (cache) {
+    const hit = await readBlacklistCache(cacheKey);
+    if (hit) return { emails: new Set(hit), status: 'enabled', cached: true };
+  }
   try {
     const records = await fetchEmailBlacklistReadOnly(baseId, apiKey);
-    return { emails: buildBlacklistEmailSet(records), status: 'enabled' };
+    const emails = buildBlacklistEmailSet(records);
+    if (cache) await writeBlacklistCache(cacheKey, [...emails]);
+    return { emails, status: 'enabled' };
   } catch (err) {
     return { emails: new Set(), status: classifyBlacklistError(err) };
   }
+}
+
+export const BLACKLIST_CACHE_TTL_SEC = 600;
+
+function blacklistRedis() {
+  const url = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  return url && token && typeof fetch === 'function' ? { url, token } : null;
+}
+
+async function blacklistRedisCmd(args) {
+  const r = blacklistRedis();
+  if (!r) return null;
+  try {
+    const res = await fetch(r.url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${r.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(args),
+    });
+    if (!res.ok) return null;
+    const j = await res.json();
+    return j ? j.result : null;
+  } catch {
+    return null;
+  }
+}
+
+async function readBlacklistCache(key) {
+  const raw = await blacklistRedisCmd(['GET', key]);
+  if (!raw) return null;
+  try {
+    const v = JSON.parse(raw);
+    return Array.isArray(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeBlacklistCache(key, emails) {
+  await blacklistRedisCmd(['SET', key, JSON.stringify(emails), 'EX', String(BLACKLIST_CACHE_TTL_SEC)]);
+}
+
+/** EmailBlacklist を書き換えたあとに呼ぶ（次の読み取りで最新を取り直させる） */
+export async function invalidateBlacklistCache({ brand, baseId }) {
+  await blacklistRedisCmd(['DEL', `ak:cache:email-blacklist:v1:${brand}:${baseId}`]);
 }
 
 /**

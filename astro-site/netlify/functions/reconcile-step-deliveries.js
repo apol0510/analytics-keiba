@@ -21,6 +21,9 @@
 //   - StepEnrollments が completed/converted/removed/unsubscribed のものは進めない（active のみ）。
 //   - 同じ jobId を再実行しても、既に sent 化済み delivery は対象外なので CurrentStepNumber は二重に進まない。
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'reconcile-step-deliveries' });
 import { getStep, getMaxStepNumber } from '../../src/lib/newsletter/step-sequences.js';
 
 const DEFAULT_SEQUENCE_ID = 'analytics-keiba:signup-onboarding';

@@ -21,6 +21,9 @@
  * 宛先を返さない）が guard で固定されている。取り込みは責務も危険の質も違うので分ける。
  */
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'admin-customer-import' });
 import {
   buildImportRows, hashBytes, PARSER_VERSION, MAX_FILE_BYTES, MAX_ROWS, CSV_ERROR_LABEL,
 } from '../../src/lib/crm/csvParse.js';
