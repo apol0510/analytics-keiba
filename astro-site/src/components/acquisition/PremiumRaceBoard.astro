@@ -68,7 +68,8 @@ const VENUE_LEAD = { all: '中央・南関のレース', jra: '中央競馬の�
 </div>
 
 <style>
-  .acq-board { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; margin: 16px -4px 24px; padding: 16px 12px; border-radius: 22px; }
+  /* min-height: 0 — .ag-scene の min-height: 100% がグリッド内で行の高さを超え、直後の要素（穴馬抽出リンク等）に重なっていた（2026-10-05） */
+  .acq-board { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; margin: 16px -4px 24px; padding: 16px 12px; border-radius: 22px; min-height: 0; }
   .acq-board > * { min-width: 0; }
   .acq-main { display: grid; gap: 14px; align-content: start; min-width: 0; }
   .acq-heading { margin: 4px 0 0; font-size: clamp(1.3rem, 5vw, 1.7rem); letter-spacing: 0.02em; background: linear-gradient(90deg, #ffffff, #c7d2fe 60%, #a5f3fc); -webkit-background-clip: text; background-clip: text; color: transparent; }
