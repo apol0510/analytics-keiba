@@ -530,13 +530,14 @@ test('Premium 導線 CTA は同じスタイル（明るい紫）・通常の取�
   const css = read('src/styles/acquisitionGlass.css');
   // 色体系
   assert.match(css, /--ag-cta: linear-gradient\(135deg, #3b82f6 0%, #2563eb 45%, #0284c7 100%\)/, '通常の操作は青');
-  assert.match(css, /--ag-cta-premium: linear-gradient\(180deg, rgba\(255, 255, 255, [^)]*\)[^;]*linear-gradient\(135deg, rgba\(192, 132, 252, 0\.2\d\)/, 'Premium 導線はメインバッジと同じ薄い色付きガラス（紫・塗りつぶしにしない）');
+  assert.match(css, /--ag-cta-premium: linear-gradient\(135deg, rgba\(180, 108, 249, 0\.1\d\)/, 'Premium 導線はメインバッジと同じ薄い紫のガラス（塗りつぶしにしない）');
+  assert.doesNotMatch(css.match(/--ag-cta-premium: [^;]*;/)[0], /rgba\(255, 255, 255/, '白の光沢を重ねない（乳白色に見える）');
   const rule = (sel) => (css.match(new RegExp(`${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{[^}]*\\}`)) || [])[0] || '';
   const base = rule('.ag-cta.ag-cta-premium');
   assert.match(base, /backdrop-filter: blur\(14px\) saturate\(170%\)/, '色付きガラス: 背景ぼかし（2026-10-05 MK）');
-  assert.match(base, /color: #e9d5ff/, '文字色はボタンと同系色（紫みのあるラベンダー・白に見せない）');
-  assert.match(base, /border: 1px solid rgba\(196, 181, 253/, '縁は同系色（メインバッジと同じ作り）');
-  assert.match(base, /box-shadow: 0 0 22px rgba\(167, 139, 250/, '柔らかい紫の発光');
+  assert.match(base, /color: #c084fc/, '文字は紫（2026-10-05 MK・淡いラベンダーは乳白色に見える）');
+  assert.match(base, /border: 1px solid rgba\(180, 108, 249/, '枠は紫（メインバッジと同じ作り）');
+  assert.match(base, /box-shadow: 0 0 22px rgba\(168, 85, 247/, '柔らかい紫の発光');
   assert.match(rule('.ag-cta.ag-cta-premium:hover'), /--ag-cta-premium-hover/, 'hover で明るく');
   assert.match(rule('.ag-cta.ag-cta-premium:active'), /translateY\(1px\)/, 'active で沈む');
   assert.match(rule('.ag-cta.ag-cta-premium:focus-visible'), /outline: 3px solid/, 'キーボードのフォーカスが見える');
