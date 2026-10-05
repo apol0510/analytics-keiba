@@ -505,7 +505,7 @@ test('Preview と Premium の画面は同じ部品（違いは mode・CTA・権�
   assert.match(list, /mode\?: 'premium' \| 'preview'/);
   // CTA は同じ位置（同じ acq-race-cta の中）・同じボタン部品（ag-cta acq-btn）
   const cta = list.slice(list.indexOf('<div class="acq-race-cta">'), list.indexOf('</article>'));
-  assert.match(cta, /isPreview \? \([\s\S]*class="ag-cta ag-cta-premium acq-btn" href="\/pricing\/"[\s\S]*\) : r\.acquired \? \([\s\S]*class="ag-cta acq-btn"/);
+  assert.match(cta, /isPreview \? \([\s\S]*class="ag-cta ag-cta-premium acq-btn acq-btn-preview" href="\/pricing\/"[\s\S]*\) : r\.acquired \? \([\s\S]*class="ag-cta acq-btn"/);
   // Preview は公開ページ（会員判定・Cookie を使わない）。Premium は認可あり
   for (const p of ['src/pages/free-prediction/jra.astro', 'src/pages/free-prediction/nankan.astro', 'src/pages/free-prediction/all.astro', 'src/pages/free-prediction/view.astro']) {
     const s = read(p);
@@ -794,4 +794,9 @@ test('ガラス面は必ず色付き（ag-tint-blue/violet/gold）か専用の�
     }
   }
   assert.deepEqual(bad, []);
+});
+
+test('体験一覧の Premium 導線ボタンは小さく（幅いっぱい・52px にしない／2026-10-06 MK）', () => {
+  const list = read('src/components/acquisition/AcquisitionRaceList.astro');
+  assert.match(list, /\.acq-race-cta \.acq-btn-preview \{ width: auto;[^}]*min-height: 38px;[^}]*font-size: 0\.86rem;/);
 });
