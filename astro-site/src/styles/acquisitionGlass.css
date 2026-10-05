@@ -29,7 +29,9 @@
   --ag-amber: #fbbf24;
   /* CTA の色体系（2026-10-04 MK 確定）:
      通常の操作（予想を取得する・選択中のタブ）= 青 ／ Premium への導線 = 明るい紫 ／ 取得済み = 緑 */
-  --ag-cta: linear-gradient(135deg, #3b82f6 0%, #2563eb 45%, #0284c7 100%);
+  /* 2026-10-05 MK 確定: 通常の操作（青）もメインバッジと同じガラス表現。会員の主操作なので紫の導線より少し濃いめ */
+  --ag-cta: linear-gradient(135deg, rgba(59, 130, 246, 0.26) 0%, rgba(37, 99, 235, 0.22) 50%, rgba(2, 132, 199, 0.26) 100%);
+  --ag-cta-hover: linear-gradient(135deg, rgba(59, 130, 246, 0.36) 0%, rgba(37, 99, 235, 0.32) 50%, rgba(2, 132, 199, 0.36) 100%);
   /* 2026-10-05 MK 確定: メインバッジ（.ag-pill.gold）と同じガラス表現を紫で。
      薄い紫の半透明＋紫の縁＋紫の文字＋柔らかい発光。白の光沢・淡い文字は乳白色に見えるので使わない */
   --ag-cta-premium: linear-gradient(135deg, rgba(180, 108, 249, 0.18) 0%, rgba(155, 92, 246, 0.14) 50%, rgba(124, 58, 237, 0.18) 100%);
@@ -81,15 +83,16 @@
 .ag-cta, .ag-btn-ghost, .ag-chip, .ag-glass, .ag-inset { box-sizing: border-box; }
 .ag-cta {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-  min-height: 46px; padding: 0 20px; border: 1px solid rgba(255, 255, 255, 0.28); border-radius: 14px; cursor: pointer;
-  background: var(--ag-cta); color: #e0f2fe; font-weight: 800; font-size: 0.95rem; text-decoration: none; letter-spacing: 0.02em;
-  box-shadow: 0 8px 22px rgba(99, 102, 241, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  min-height: 46px; padding: 0 20px; border: 1px solid rgba(96, 165, 250, 0.85); border-radius: 14px; cursor: pointer;
+  -webkit-backdrop-filter: blur(14px) saturate(170%); backdrop-filter: blur(14px) saturate(170%);
+  background: var(--ag-cta); color: #7cc4ff; font-weight: 800; font-size: 0.95rem; text-decoration: none; letter-spacing: 0.02em;
+  box-shadow: 0 0 22px rgba(59, 130, 246, 0.38);
   transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
-.ag-cta:hover { transform: translateY(-1px); box-shadow: 0 10px 28px rgba(37, 99, 235, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.4); }
-.ag-cta:active { transform: translateY(1px); box-shadow: 0 4px 12px rgba(37, 99, 235, 0.45), inset 0 2px 4px rgba(15, 23, 42, 0.25); }
+.ag-cta:hover { transform: translateY(-1px); background: var(--ag-cta-hover); border-color: #93c5fd; color: #a5d8ff; box-shadow: 0 0 30px rgba(59, 130, 246, 0.52); }
+.ag-cta:active { transform: translateY(1px); background: var(--ag-cta); box-shadow: 0 0 14px rgba(59, 130, 246, 0.35), inset 0 2px 5px rgba(15, 23, 42, 0.3); }
 .ag-cta:focus-visible, .ag-btn-ghost:focus-visible { outline: 3px solid #e0f2fe; outline-offset: 3px; }
-.ag-cta { box-shadow: 0 8px 22px rgba(37, 99, 235, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.35); text-shadow: 0 1px 2px rgba(15, 23, 42, 0.35); }
+.ag-cta { text-shadow: 0 0 10px rgba(59, 130, 246, 0.45); }
 
 /* Premium 導線（「Premiumで予想を取得」「Premiumのプランを見る」等）。Preview / Premium / 関連導線で同じ見た目にする */
 .ag-cta.ag-cta-premium {
