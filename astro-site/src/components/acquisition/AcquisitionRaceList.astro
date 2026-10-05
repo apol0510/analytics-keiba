@@ -96,6 +96,8 @@ const previewUrl = (key) => `/free-prediction/view/?key=${encodeURIComponent(key
   .acq-venue-title { display: flex; align-items: baseline; gap: 8px; margin: 6px 0 0; padding-left: 10px; border-left: 4px solid; border-image: linear-gradient(180deg, #22d3ee, #8b5cf6) 1; font-size: 1.15rem; }
   .acq-venue-title small { font-size: 0.78rem; color: var(--ag-text-2); font-weight: 600; }
   .acq-race { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 10px 12px; align-items: center; padding: 12px; min-width: 0; }
+  /* 2026-10-05 MK: レースカードは乳白色を弱める（白の塗りを薄く・青紫寄りに）。ボタンが半透明なので、カードの白がボタンにも透けて乳白色に見えていた */
+  .acq-race.ag-glass { background: linear-gradient(155deg, rgba(199, 210, 254, 0.08) 0%, rgba(129, 140, 248, 0.05) 45%, rgba(255, 255, 255, 0.03) 100%); }
   .acq-race[id="acq-next"] { scroll-margin-top: 90px; }
   .acq-race.is-acquired { border-color: rgba(74,222,128,0.42); box-shadow: var(--ag-shadow), 0 0 22px rgba(74,222,128,0.12), var(--ag-hi); }
   .acq-race-no { display: grid; justify-items: center; padding: 8px 4px; }
