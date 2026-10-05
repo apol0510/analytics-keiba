@@ -1,0 +1,203 @@
+---
+/**
+ * /ai-lab/ — AI ラボ（試験運用・中央のみ）。正本 docs/AI_LAB.md（2026-10-05 MK 確定）
+ * - 有料会員だけ（gatePaidPage）。自動更新は /api/ailab/view/（ak_session の署名だけで確認）
+ * - KAP の全頭 AI 勝率ランキング（🛑 オッズ・期待値・金額・KAP の買い目は出さない：KAP 契約）。発走後は AK 上位 5 頭と結果で答え合わせ
+ * - KAP のダッシュボードと同じく、自動更新・次のレースへの自動追従・発走までのカウントダウン
+ */
+export const prerender = false;
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import SessionKeepAlive from '../../components/SessionKeepAlive.astro';
+import '../../styles/acquisitionGlass.css';
+import { gatePaidPage, PAID_PAGE_HEADERS } from '../../lib/auth/paidPageGate.js';
+import { loadLabView } from '../../lib/ailab/aiLabServer.js';
+
+const gate = await gatePaidPage({ request: Astro.request, requiredPlan: ['standard', 'premium', 'Premium Sanrenpuku'], env: process.env });
+if (gate.response) return gate.response;
+for (const [k, v] of Object.entries(PAID_PAGE_HEADERS)) Astro.response.headers.set(k, v);
+const initial = await loadLabView({ env: process.env });
+const initialJson = JSON.stringify(initial || null).replace(/</g, '\\u003c');
+---
+<BaseLayout title="AI ラボ" noindex>
+  <SessionKeepAlive />
+  <div class="ag-scene"><main class="lab-page">
+    <header class="lab-head">
+      <div>
+        <p class="lab-kicker">AI ラボ <span>試験運用中</span></p>
+        <h1>AI の見立てを、レースごとに</h1>
+        <p class="lab-lead">開発中の AI が、過去の走りから出走馬すべての「勝つ確率」を計算しています。レースが終わると、AK の上位 5 頭と結果で答え合わせができます。</p>
+      </div>
+      <div class="lab-live" id="lab-live" data-state="connecting"><i aria-hidden="true"></i><span id="lab-live-text">接続中</span><small id="lab-updated"></small></div>
+    </header>
+
+    <section class="ag-glass ag-tint-blue lab-next" id="lab-next" hidden>
+      <span class="lab-next-label">次のレース</span>
+      <b id="lab-next-race"></b>
+      <span class="lab-next-cd">発走まで <strong id="lab-countdown">--:--</strong></span>
+      <label class="lab-follow"><input type="checkbox" id="lab-follow" checked /> 自動追従（次のレースへ自動で移る）</label>
+    </section>
+
+    <section class="ag-glass ag-tint-blue lab-stats" id="lab-stats" hidden aria-label="AI ラボの成績"></section>
+    <nav class="lab-days" id="lab-days" aria-label="日付"></nav>
+    <div id="lab-races" class="lab-races"></div>
+    <p class="lab-empty" id="lab-empty" hidden>まだデータがありません。中央競馬の開催日に、レース前から順に表示されます。</p>
+    <noscript><p class="lab-empty">この画面は JavaScript で自動更新します。</p></noscript>
+  </main></div>
+  <script is:inline id="lab-initial" type="application/json" set:html={initialJson}></script>
+  <script is:inline>
+  (function(){
+    var POLL_MS = 30000;
+    var data = null; try { data = JSON.parse(document.getElementById('lab-initial').textContent); } catch (e) { data = null; }
+    var selDate = null, skew = 0, followed = null;
+    var $ = function (id) { return document.getElementById(id); };
+    function h(tag, attrs, kids) { var e = document.createElement(tag); if (attrs) for (var k in attrs) { if (k === 'class') e.className = attrs[k]; else if (attrs[k] != null) e.setAttribute(k, attrs[k]); }
+      (kids || []).forEach(function (c) { if (c == null) return; e.appendChild(typeof c === 'string' || typeof c === 'number' ? document.createTextNode(String(c)) : c); }); return e; }
+    function startMs(date, t) { var m = /^(\d{1,2}):(\d{2})$/.exec(t || ''); return m ? Date.parse(date + 'T' + ('0' + m[1]).slice(-2) + ':' + m[2] + ':00+09:00') : null; }
+    function now() { return Date.now() + skew; }
+    function pct(p) { return p == null ? '-' : (p * 100).toFixed(1) + '%'; }
+    function hm(iso) { var d = new Date(iso); return isNaN(d) ? '' : d.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', second: '2-digit' }); }
+    function setLive(state, text) { var l = $('lab-live'); l.setAttribute('data-state', state); $('lab-live-text').textContent = text; }
+    function nextRace(day) { if (!day) return null; var best = null; day.races.forEach(function (r) { var s = startMs(day.date, r.startTime); if (s != null && s > now() && (!best || s < best.s)) best = { r: r, s: s }; }); return best; }
+    function renderStats(st) { var el = $('lab-stats'); el.textContent = ''; if (!st || !st.settled) { el.hidden = true; return; } el.hidden = false;
+      el.appendChild(h('h2', null, ['これまでの答え合わせ（結果が出た全 ' + st.settled + ' レース）']));
+      el.appendChild(h('div', { class: 'lab-stat-grid' }, [
+        h('div', { class: 'ag-inset is-ak' }, [h('span', null, ['1着が AK 上位 5 頭に']), h('strong', null, [String(st.top5Hit)]), h('em', null, ['/ ' + st.settled + ' レース'])]),
+        h('div', { class: 'ag-inset is-ev' }, [h('span', null, ['勝ち馬が AI 勝率 上位 5 頭に']), h('strong', null, [String(st.aiTop5)]), h('em', null, ['/ ' + st.aiRanked + ' レース'])]) ])); }
+    function renderDays() { var nav = $('lab-days'); nav.textContent = ''; (data.days || []).forEach(function (d) {
+      var b = h('button', { type: 'button', class: 'lab-day' + (d.date === selDate ? ' is-active' : '') }, [d.date.slice(5).replace('-', '/')]);
+      b.addEventListener('click', function () { selDate = d.date; $('lab-follow').checked = false; render(); }); nav.appendChild(b); }); }
+    function roleCls(role) { return { '本命': 'ag-role-honmei', '対抗': 'ag-role-taikou', '単穴': 'ag-role-tana', '連下': 'ag-role-renka' }[role] || 'ag-role-renka'; }
+    function raceCard(day, r, isNext) {
+      var s = startMs(day.date, r.startTime), state = r.result ? 'done' : (s != null && now() >= s ? 'started' : 'before');
+      var stateLabel = { before: '発走前', started: '発走済み・結果待ち', done: '結果' }[state];
+      var card = h('article', { class: 'ag-glass ag-tint-blue lab-race is-' + state + (isNext ? ' is-next' : ''), id: 'race-' + r.raceId }, [
+        h('header', { class: 'lab-race-head' }, [h('b', null, [r.venueName + ' ' + r.raceNumber + 'R']), h('span', { class: 'lab-time' }, [r.startTime ? r.startTime + ' 発走' : '']), h('span', { class: 'lab-state is-' + state }, [stateLabel])]) ]);
+      if (r.result) {
+        var res = h('div', { class: 'lab-result' }, [h('span', { class: 'lab-sub' }, ['結果'])]);
+        r.result.order.forEach(function (n, i) { res.appendChild(h('b', { class: 'ag-num rk rk-' + (i + 1) }, [String(n)])); });
+        if (r.result.winnerInAkTop5 != null) res.appendChild(h('span', { class: 'lab-chip ' + (r.result.winnerInAkTop5 ? 'is-hit' : 'is-miss') }, [r.result.winnerInAkTop5 ? '✓ 1着は AK 上位 5 頭' : '1着は AK 上位 5 頭の外']));
+        if (r.result.winnerAiRank != null) res.appendChild(h('span', { class: 'lab-chip is-info' }, ['勝ち馬の AI 勝率 ' + r.result.winnerAiRank + '位']));
+        card.appendChild(res); }
+      if (r.akTop5) { var ak = h('div', { class: 'lab-ak' }, [h('span', { class: 'lab-sub' }, ['AK 上位 5 頭'])]);
+        r.akTop5.forEach(function (x) { var win = r.result && r.result.order[0] === x.n; ak.appendChild(h('span', { class: 'lab-ak-horse ' + roleCls(x.role) + (win ? ' is-win' : '') }, [h('b', { class: 'ag-num' }, [String(x.n)]), h('small', null, [x.role])])); });
+        card.appendChild(ak); }
+      else if (state === 'before') card.appendChild(h('p', { class: 'lab-note' }, ['AK の上位 5 頭は発走後に表示します（予想は「予想を取得」から）']));
+      var winner = r.result ? r.result.order[0] : null;
+      var top = r.ranking.slice(0, 6), rest = r.ranking.slice(6);
+      var maxP = r.ranking.reduce(function (m, x) { return Math.max(m, x.p || 0); }, 0) || 1;
+      function table(rows) { var t = h('table', { class: 'lab-table' }, [h('tr', null, ['順位', '馬番', 'AI 勝率', ''].map(function (x) { return h('th', null, [x]); }))]);
+        rows.forEach(function (x) { var bar = h('span', { class: 'lab-bar' }, [h('i', { style: 'width:' + Math.round((x.p || 0) / maxP * 100) + '%' }, [])]);
+          t.appendChild(h('tr', { class: (x.rank != null && x.rank <= 3 ? 'is-top' : '') + (x.n === winner ? ' is-winner' : '') }, [
+          h('td', null, [x.rank != null ? String(x.rank) : '-']), h('td', null, [String(x.n) + (x.n === winner ? ' 🏆' : '')]), h('td', null, [pct(x.p)]), h('td', { class: 'lab-bar-cell' }, [bar])])); }); return t; }
+      card.appendChild(h('div', { class: 'lab-sub' }, ['全頭の AI 勝率ランキング']));
+      card.appendChild(h('div', { class: 'lab-scroll' }, [table(top)]));
+      if (rest.length) { var det = h('details', { class: 'lab-more' }, [h('summary', null, ['残り ' + rest.length + ' 頭を見る']), h('div', { class: 'lab-scroll' }, [table(rest)])]); card.appendChild(det); }
+      return card; }
+    function render() {
+      var days = (data && data.days) || [];
+      $('lab-empty').hidden = days.length > 0;
+      if (!days.length) { $('lab-races').textContent = ''; $('lab-next').hidden = true; renderStats(null); return; }
+      if (!selDate || !days.some(function (d) { return d.date === selDate; })) selDate = days[0].date;
+      if ($('lab-follow').checked) selDate = days[0].date;
+      renderDays(); renderStats(data.stats);
+      var day = days.filter(function (d) { return d.date === selDate; })[0];
+      var nx = nextRace(day); $('lab-next').hidden = !nx;
+      if (nx) { $('lab-next-race').textContent = nx.r.venueName + ' ' + nx.r.raceNumber + 'R' + (nx.r.startTime ? '（' + nx.r.startTime + ' 発走）' : ''); }
+      var box = $('lab-races'); box.textContent = '';
+      day.races.forEach(function (r) { box.appendChild(raceCard(day, r, nx && nx.r.raceId === r.raceId)); });
+      if (day.updatedAt) $('lab-updated').textContent = 'データ ' + hm(day.updatedAt) + ' 更新';
+      if ($('lab-follow').checked && nx && followed !== nx.r.raceId) { followed = nx.r.raceId; var el = document.getElementById('race-' + nx.r.raceId); if (el && followed && window.scrollY < 10) el.scrollIntoView({ block: 'center' }); }
+    }
+    function tick() { var day = (data && data.days || []).filter(function (d) { return d.date === selDate; })[0]; var nx = nextRace(day);
+      if (!nx) { $('lab-countdown').textContent = '--:--'; return; } var sec = Math.max(0, Math.floor((nx.s - now()) / 1000));
+      var hh = Math.floor(sec / 3600), mm = Math.floor(sec % 3600 / 60), ss = sec % 60;
+      $('lab-countdown').textContent = (hh ? hh + ':' + ('0' + mm).slice(-2) : mm) + ':' + ('0' + ss).slice(-2);
+      if (sec === 0) render(); }
+    function poll() { fetch('/api/ailab/view/', { credentials: 'same-origin', cache: 'no-store' }).then(function (r) {
+        if (r.status === 401) { setLive('off', 'ログインが切れました（再読み込みしてください）'); return null; }
+        if (!r.ok) { setLive('warn', '再接続中'); return null; } return r.json(); })
+      .then(function (j) { if (!j || !j.ok) return; data = j; if (j.serverNow) skew = Date.parse(j.serverNow) - Date.now(); setLive('on', '接続中（自動更新）'); render(); })
+      .catch(function () { setLive('warn', '再接続中'); }); }
+    $('lab-follow').addEventListener('change', function () { if (this.checked) { followed = null; render(); } });
+    if (data && data.serverNow) skew = Date.parse(data.serverNow) - Date.now();
+    setLive(data ? 'on' : 'warn', data ? '接続中（自動更新）' : '再接続中');
+    render(); setInterval(tick, 1000); setInterval(poll, POLL_MS);
+    document.addEventListener('visibilitychange', function () { if (!document.hidden) poll(); });
+  })();
+  </script>
+</BaseLayout>
+
+<style is:global>
+  /* 画面は JS で描画するため global（Astro の scoped style は動的要素に当たらない）。すべて .lab- 接頭辞 */
+  .lab-page [hidden] { display: none !important; }
+  .lab-page { max-width: 1100px; margin: 0 auto; padding: 18px 14px 56px; display: grid; gap: 14px; }
+  .lab-page > * { min-width: 0; }
+  .lab-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 10px 20px; }
+  .lab-kicker { margin: 0; color: #c084fc; font-weight: 800; letter-spacing: 0.06em; font-size: 0.85rem; }
+  .lab-kicker span { margin-left: 6px; padding: 1px 10px; border-radius: 999px; border: 1px solid rgba(250,204,21,0.55); background: rgba(250,204,21,0.10); color: #fde047; font-size: 0.72rem; }
+  .lab-head h1 { margin: 4px 0 6px; font-size: clamp(1.3rem, 4.5vw, 1.8rem); color: #d6ebff; }
+  .lab-lead { margin: 0; color: rgba(214,235,255,0.8); font-size: 0.9rem; line-height: 1.7; max-width: 640px; }
+  .lab-live { display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px; border-radius: 999px; border: 1px solid rgba(74,222,128,0.55); background: rgba(34,197,94,0.10); color: #86efac; font-weight: 800; font-size: 0.85rem; }
+  .lab-live i { width: 9px; height: 9px; border-radius: 50%; background: #4ade80; box-shadow: 0 0 10px #4ade80; animation: lab-pulse 1.6s ease-in-out infinite; }
+  .lab-live small { color: rgba(187,247,208,0.75); font-weight: 600; }
+  .lab-live[data-state="warn"], .lab-live[data-state="connecting"] { border-color: rgba(250,204,21,0.55); background: rgba(250,204,21,0.08); color: #fde047; }
+  .lab-live[data-state="warn"] i, .lab-live[data-state="connecting"] i { background: #facc15; box-shadow: 0 0 10px #facc15; }
+  .lab-live[data-state="off"] { border-color: rgba(248,113,113,0.5); background: rgba(239,68,68,0.08); color: #fca5a5; }
+  .lab-live[data-state="off"] i { background: #f87171; box-shadow: none; animation: none; }
+  @keyframes lab-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+  @media (prefers-reduced-motion: reduce) { .lab-live i { animation: none; } }
+  .lab-next { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; padding: 14px 16px; }
+  .lab-next-label { color: #7cc4ff; font-weight: 800; font-size: 0.85rem; }
+  .lab-next b { font-size: 1.1rem; color: #d6ebff; }
+  .lab-next-cd { color: rgba(214,235,255,0.8); }
+  .lab-next-cd strong { font-size: 1.8rem; color: #fde047; font-variant-numeric: tabular-nums; margin-left: 4px; }
+  .lab-follow { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; color: #86efac; font-weight: 700; font-size: 0.85rem; cursor: pointer; }
+  .lab-stats { padding: 14px 16px; display: grid; gap: 10px; }
+  .lab-stats h2 { margin: 0; font-size: 0.98rem; }
+  .lab-stat-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .lab-stat-grid > div { padding: 10px 12px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; }
+  .lab-stat-grid span { flex-basis: 100%; font-size: 0.78rem; color: var(--ag-text-2); }
+  .lab-stat-grid strong { font-size: 1.8rem; line-height: 1.1; }
+  .lab-stat-grid em { font-style: normal; font-size: 0.85rem; color: var(--ag-text-2); }
+  .lab-stat-grid .is-ak { border-color: rgba(252,211,77,0.4); background: rgba(252,211,77,0.07); }
+  .lab-stat-grid .is-ak strong { color: #fcd34d; }
+  .lab-stat-grid .is-ev strong { color: #c084fc; }
+  .lab-days { display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 6px; }
+  /* 日付タブは取得一覧と同じ黄緑の乳白色ガラス（GLASS_DESIGN_RULES.md） */
+  .lab-day { flex: 0 0 auto; min-height: 42px; padding: 0 16px; border-radius: 12px; color: #d9f99d; font-weight: 800; font-size: 0.95rem; cursor: pointer; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.16); box-shadow: inset 0 1px 0 rgba(255,255,255,0.12); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+  .lab-day.is-active { color: #365314; background: linear-gradient(135deg, rgba(247, 254, 231, 0.94) 0%, rgba(236, 252, 203, 0.88) 45%, rgba(190, 242, 100, 0.72) 100%); border-color: rgba(247, 254, 231, 0.9); box-shadow: 0 6px 18px rgba(163, 230, 53, 0.3); }
+  .lab-races { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  @media (min-width: 900px) { .lab-races { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .lab-race { padding: 14px 16px; display: grid; gap: 8px; min-width: 0; }
+  .lab-race.is-next { border-color: rgba(250,204,21,0.6); box-shadow: 0 14px 34px rgba(10,16,48,0.32), 0 0 24px rgba(250,204,21,0.18); }
+  .lab-race.is-done { border-color: rgba(96,165,250,0.5); }
+  .lab-race-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; }
+  .lab-race-head b { font-size: 1.05rem; color: #d6ebff; }
+  .lab-time { color: rgba(214,235,255,0.7); font-size: 0.85rem; }
+  .lab-state { margin-left: auto; padding: 2px 10px; border-radius: 999px; border: 1px solid; font-size: 0.75rem; font-weight: 800; }
+  .lab-state.is-before { color: #fde047; border-color: rgba(250,204,21,0.5); background: rgba(250,204,21,0.08); }
+  .lab-state.is-started { color: #fdba74; border-color: rgba(251,146,60,0.5); background: rgba(251,146,60,0.08); }
+  .lab-state.is-done { color: #7cc4ff; border-color: rgba(96,165,250,0.55); background: rgba(59,130,246,0.10); }
+  .lab-sub { font-size: 0.76rem; color: var(--ag-text-2); font-weight: 700; }
+  .lab-result, .lab-ak { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+  .lab-result .ag-num { min-width: 34px; height: 34px; }
+  .lab-chip { padding: 2px 10px; border-radius: 999px; border: 1px solid; font-size: 0.78rem; font-weight: 800; }
+  .lab-chip.is-hit { color: #86efac; border-color: rgba(74,222,128,0.6); background: rgba(34,197,94,0.12); }
+  .lab-chip.is-miss { color: #fca5a5; border-color: rgba(248,113,113,0.45); background: rgba(239,68,68,0.08); }
+  .lab-chip.is-info { color: #c084fc; border-color: rgba(180,108,249,0.6); background: rgba(180,108,249,0.10); }
+  .lab-ak-horse { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px 3px 3px; border-radius: 10px; border: 1px solid rgba(96,165,250,0.3); background: rgba(59,130,246,0.06); }
+  .lab-ak-horse small { font-size: 0.72rem; color: var(--ag-text-2); }
+  .lab-ak-horse.is-win { border-color: rgba(74,222,128,0.7); background: rgba(34,197,94,0.14); box-shadow: 0 0 14px rgba(74,222,128,0.25); }
+  .lab-note, .lab-foot { margin: 0; font-size: 0.76rem; color: var(--ag-text-2); }
+  .lab-scroll { overflow-x: auto; }
+  .lab-table { width: 100%; border-collapse: collapse; font-size: 0.84rem; font-variant-numeric: tabular-nums; }
+  .lab-table th { text-align: left; font-size: 0.72rem; color: var(--ag-text-2); font-weight: 700; padding: 4px 6px; border-bottom: 1px solid rgba(96,165,250,0.25); }
+  .lab-table td { padding: 5px 6px; border-bottom: 1px solid rgba(96,165,250,0.12); }
+  .lab-table tr.is-top td { color: #c084fc; font-weight: 700; }
+  .lab-bar-cell { width: 40%; }
+  .lab-bar { display: block; height: 8px; border-radius: 999px; background: rgba(180,108,249,0.12); overflow: hidden; }
+  .lab-bar i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, rgba(180,108,249,0.55), rgba(192,132,252,0.95)); }
+  .lab-table tr.is-winner td { background: rgba(252,211,77,0.10); font-weight: 800; }
+  .lab-more summary { cursor: pointer; color: #7cc4ff; font-size: 0.82rem; font-weight: 700; }
+  .lab-empty { color: var(--ag-text-2); }
+</style>

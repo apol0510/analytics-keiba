@@ -45,6 +45,7 @@ export const SITEMAP_EXCLUDE_PREFIX = Object.freeze([
   '/auth/',
   '/premium-prediction/', // 会員限定（未ログインは 302）
   '/predictions/', // Premium の取得一覧・本文・履歴（会員限定・未ログインは 302）
+  '/ai-lab/', // AI ラボ（有料会員限定・noindex・docs/AI_LAB.md）
   '/premium-plus',        // Premium Sanrenpuku 会員限定の非公開商品。存在を知らせない
 ]);
 
