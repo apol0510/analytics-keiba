@@ -434,7 +434,7 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
 >
   {/* ak_session の idle TTL 延長（会員確定ページのみ）*/}
   <SessionKeepAlive />
-  <AccessControl requiredPlan="premium" venue="jra">
+  <AccessControl requiredPlan="premium" venue="jra" serverVerified={gate.ok === true} serverTier={gate.entitlements?.effectiveTier || ''}>
     <section class="prediction-section">
       <div class="container">
         {error && (

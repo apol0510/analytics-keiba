@@ -232,7 +232,7 @@ export const dailyResultsData = {
         表示名は「ライト会員」で、AccessControl 側の getPlanDisplayName でも
         'light' / 'standard' は両方とも「Lightプラン」として表示される。
         新しい権限値を作らず、内部の standard キーをそのまま使う。 */}
-    <AccessControl requiredPlan="standard">
+    <AccessControl requiredPlan="standard" serverVerified={gate.ok === true} serverTier={gate.entitlements?.effectiveTier || ''}>
         <div class="page-container">
         <!-- ヘッダーセクション -->
         <div class="header-section">
