@@ -19,7 +19,7 @@ const nextHref = next ? (next.isToday ? `${basePath}?date=${next.date}#acq-next`
 const m = v?.month;
 ---
 {variant === 'today' ? (
-  <section class="ag-glass acq-today" aria-label="本日の使用状況">
+  <section class="ag-glass ag-tint-blue acq-today" aria-label="本日の使用状況">
     {t && t.available > 0 ? (
       <>
         <div class="acq-today-head">
@@ -47,7 +47,7 @@ const m = v?.month;
 ) : (
   <aside class="acq-side" aria-label="活用状況">
     <div class="acq-side-today"><Astro.self value={v} variant="today" basePath={basePath} /></div>
-    <section class="ag-glass acq-month" aria-label="今月の活用状況">
+    <section class="ag-glass ag-tint-blue acq-month" aria-label="今月の活用状況">
       <h2>今月の活用状況</h2>
       {m ? (
         <>
@@ -84,15 +84,15 @@ const m = v?.month;
 )}
 
 <style>
-  .acq-today { padding: 16px; display: grid; gap: 10px; border-color: rgba(165,180,252,0.42); box-shadow: var(--ag-shadow), 0 0 34px rgba(129,140,248,0.22), var(--ag-hi); }
+  .acq-today { padding: 16px; display: grid; gap: 10px; }
   .acq-today-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
   .acq-today-head h2 { margin: 0; font-size: 1.02rem; }
   .acq-today-date { color: var(--ag-text-2); font-size: 0.85rem; font-weight: 700; }
   .acq-today-num { display: flex; align-items: baseline; gap: 6px; margin: 0; }
-  .acq-today-num strong { font-size: 2.4rem; line-height: 1; background: linear-gradient(135deg, #ffffff, #c7d2fe 55%, #a5f3fc); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .acq-today-num strong { font-size: 2.4rem; line-height: 1; color: #7cc4ff; }
   .acq-today-num span { font-size: 1.05rem; font-weight: 800; color: var(--ag-text); }
   .acq-today-num em { margin-left: auto; font-style: normal; font-weight: 900; font-size: 1.3rem; color: #a5f3fc; }
-  .acq-bar { height: 10px; border-radius: 999px; background: rgba(255,255,255,0.14); border: 1px solid rgba(255,255,255,0.18); overflow: hidden; }
+  .acq-bar { height: 10px; border-radius: 999px; background: rgba(59,130,246,0.14); border: 1px solid rgba(96,165,250,0.35); overflow: hidden; }
   .acq-bar span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #67e8f9, #818cf8 60%, #c084fc); box-shadow: 0 0 12px rgba(129,140,248,0.7); }
   .acq-today-note, .acq-today-next { margin: 0; color: var(--ag-text-2); font-size: 0.86rem; line-height: 1.6; }
   .acq-today-next strong { color: var(--ag-text); }
@@ -104,7 +104,7 @@ const m = v?.month;
   .acq-month-nums { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .acq-month-nums > div { padding: 10px 12px; }
   .acq-month-nums span { display: block; color: var(--ag-text-2); font-size: 0.78rem; }
-  .acq-month-nums strong { font-size: 1.9rem; background: linear-gradient(135deg, #ffffff, #c7d2fe); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .acq-month-nums strong { font-size: 1.9rem; color: #7cc4ff; }
   .acq-month-nums em { font-style: normal; margin-left: 4px; color: var(--ag-text-2); font-size: 0.85rem; }
   .acq-month-cat { margin: 0; display: grid; gap: 4px; }
   .acq-month-cat div { display: flex; justify-content: space-between; }

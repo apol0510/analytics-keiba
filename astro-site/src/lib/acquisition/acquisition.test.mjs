@@ -625,3 +625,21 @@ test('取得ボード（ag-scene）が直後の要素に重ならない: min-hei
   const board = read('src/components/acquisition/PremiumRaceBoard.astro');
   assert.match(board, /\.acq-board \{[^}]*min-height: 0;[^}]*\}/, '.ag-scene の min-height: 100% をボードでは打ち消す');
 });
+
+test('ガラス表現の正本: 取得状況のパネルとマイページ導線は青の色付きガラス（無彩色・ベタ塗り・白抜き数字にしない／2026-10-05 MK）', () => {
+  const css = read('src/styles/acquisitionGlass.css');
+  assert.match(css, /\.ag-glass\.ag-tint-blue \{[^}]*background: linear-gradient\(155deg, rgba\(59, 130, 246, 0\.1\d\)[^}]*border-color: rgba\(96, 165, 250/, '青の色付きガラス面');
+  assert.ok(read('docs/GLASS_DESIGN_RULES.md').includes('色付きの薄い半透明 ＋ 同系色の枠 ＋ 同系色の文字'), '正本に原則がある');
+  const usage = read('src/components/acquisition/AcquisitionUsagePanel.astro');
+  const value = read('src/components/acquisition/AcquisitionValuePanel.astro');
+  for (const [name, src] of [['UsagePanel', usage], ['ValuePanel', value]]) {
+    const glass = [...src.matchAll(/class="ag-glass[^"]*"/g)].map((m) => m[0]);
+    assert.ok(glass.length > 0 && glass.every((c) => c.includes('ag-tint-blue')), `${name}: 全ガラス面に青の色付け`);
+    assert.doesNotMatch(src, /background-clip: text/, `${name}: 白抜き・グラデーション文字で数字を強調しない`);
+  }
+  const dash = read('src/pages/dashboard.astro');
+  const link = (dash.match(/\.acq-dashboard-links a \{[^}]*\}/) || [])[0] || '';
+  assert.match(link, /border: 1px solid rgba\(96,165,250/, 'マイページ導線は青の枠');
+  assert.match(link, /color: #7cc4ff/, 'マイページ導線は青の文字');
+  assert.doesNotMatch(link, /color: inherit/, '文字色を白（継承）に戻さない');
+});

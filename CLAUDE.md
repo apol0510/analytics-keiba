@@ -260,6 +260,7 @@ CI・deploy・外部 API・scheduled job・将来日付・長時間 run 等の**
 | 領域 | 正本 |
 |---|---|
 | **有料予想の取得方式（1 予想ずつ）／Premium Sanrenpuku のレース選別** | [`PREDICTION_ACQUISITION.md`](./astro-site/docs/PREDICTION_ACQUISITION.md) |
+| **ガラス表現（色の役割・見本・やらないこと）** | [`GLASS_DESIGN_RULES.md`](./astro-site/docs/GLASS_DESIGN_RULES.md) |
 | 予想ロジック（スコア・役割決定） | [`PREDICTION_LOGIC.md`](./astro-site/docs/PREDICTION_LOGIC.md) |
 | 買い目生成（メイン5点 / 通常2段 / 抑え判定） | [`MAIN_RACE_BETTING.md`](./astro-site/docs/MAIN_RACE_BETTING.md) |
 | 購入点数・回収率 | [`BET_POINT_LOGIC.md`](./astro-site/docs/BET_POINT_LOGIC.md) |
@@ -342,6 +343,14 @@ CLAUDE.md 再編（2026-08-13）で旧セクションがどこへ行ったかの
 ## 🚫 領域別の不変条件（詳細は各正本へ）
 
 破ると本番事故になるものだけを並べる。**変更したくなったら、まず正本を読むこと。**
+
+### 🪟 見た目はガラスモーフィズムで統一（2026-10-05 MK 確定）
+
+正本は [`GLASS_DESIGN_RULES.md`](./astro-site/docs/GLASS_DESIGN_RULES.md)（`npm run test:acquisition` で一部を検知）。
+
+- **色付きの薄い半透明＋同系色の枠＋同系色の文字**。見本（メインバッジ・お知らせ・穴馬抽出・ログアウト・取得済み）から派生させ、ゼロから作らない
+- **やらない**: 不透明なベタ塗り／白の光沢・乳白色／白・グレーだけの無彩色ガラス／白抜き・グラデーション文字の数字／役割表に無い新しい色系統
+- 色の役割: 青=会員の操作・取得状況／紫=Premium 導線／緑=取得済み／金=目印・お知らせ／赤=ログアウト／黄=会場タブ／黄緑=日付タブ
 
 ### 📋 有料予想は 1 予想ずつ取得（2026-10-03 MK 確定）
 
