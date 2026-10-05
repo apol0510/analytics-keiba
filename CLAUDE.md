@@ -368,6 +368,7 @@ CLAUDE.md 再編（2026-08-13）で旧セクションがどこへ行ったかの
 - **取得前は本文を出さない**。一覧部品 `AcquisitionRaceList` に買い目・印・指数を渡さない。本文部品 `AcquiredPredictionBody` は `/predictions/view/` 以外で使わない
 - 本人は `ak_session` の recordId だけ（クライアントから会員を受け取らない）。Redis が読めなければ本文を出さない（fail closed）
 - 三連複の訴求は「今日、三連複で狙うべきレースを AI が選別」。「点数を絞る／少点数」を復活させない。送信済みメールは文面を変えず `retiredCopyCampaigns.js` で送信停止
+- **訴求に使わない言い回し**（「いつでも見返せる」「月額の範囲で」等）は正本 §6-1 の表。MK に指摘された言い回しは表とテスト（`weakClaims.guard`）に足し、提案にも二度と出さない
 - 既存三連複購入者の権利・Premium Plus の判定は変えない
 
 ### 💳 Stripe 定期購読（2026-10-02 MK 確定）
