@@ -75,3 +75,14 @@ export async function readAcquired({ redis, recordId, key }) {
   if (!content) throw new Error('content_missing');
   return { entry, content };
 }
+
+/** 取得記録（entries）の本文スナップショットをまとめて読む（本人の記録から得た ref だけを使う） */
+export async function readContentsFor({ redis, entries }) {
+  if (typeof redis !== 'function') throw new Error('redis_unavailable');
+  const ok = (Array.isArray(entries) ? entries : []).filter((e) => e && parsePredictionKey(e.key) && /^[0-9a-f]{16}$/.test(String(e.ref)));
+  if (!ok.length) return new Map();
+  const got = await redis(['MGET', ...ok.map((e) => contentKey(parsePredictionKey(e.key).key, e.ref))]);
+  const out = new Map();
+  ok.forEach((e, i) => { const c = parse(Array.isArray(got) ? got[i] : null); if (c) out.set(e.key, c); });
+  return out;
+}

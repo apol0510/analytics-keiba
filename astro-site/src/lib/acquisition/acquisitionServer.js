@@ -10,7 +10,8 @@ import { parsePredictionKey } from './predictionKey.js';
 import { canAcquire } from './acquisitionPolicy.js';
 import { findRace } from './raceSource.js';
 import { buildPredictionContent } from './predictionContent.js';
-import { acquirePrediction, readAcquired, listAcquisitions } from './acquisitionStore.js';
+import { acquirePrediction, readAcquired, listAcquisitions, readContentsFor } from './acquisitionStore.js';
+import { judgeAcquired, loadResultIndex } from './acquiredResults.js';
 
 /** 取得・閲覧の入口に通す権利（どれか 1 つ）。商品ごとの可否は canAcquire で絞る */
 // 会場別 Premium（Stripe の中央版・南関版 = premium-jra / premium-nankan）も入口を通す。会場ごとの可否は canAcquire
@@ -85,6 +86,28 @@ export async function loadMemberAcquisitions({ recordId, env, deps = {} }) {
   if (!redis || !recordId) return null;
   try { return await listAcquisitions({ redis, recordId }); } catch (e) {
     console.error('[acquisition] list failed:', e?.message || 'unknown');
+    return null;
+  }
+}
+
+/**
+ * 直近の取得記録の結果（key → { status, betType, combination, payout }）。
+ * 本文や結果を読めないときは null（「確認できない」を不的中や結果待ちに化けさせない）。
+ */
+export async function loadAcquiredResults({ entries, env, deps = {} }) {
+  const redis = deps.redis || makeRedisCmd(env);
+  if (!redis || !Array.isArray(entries) || !entries.length) return null;
+  try {
+    const contents = await readContentsFor({ redis, entries });
+    const index = deps.index || loadResultIndex();
+    const out = {};
+    for (const e of entries) {
+      const content = contents.get(e.key);
+      if (content) out[e.key] = judgeAcquired({ entry: e, content, index });
+    }
+    return out;
+  } catch (e) {
+    console.error('[acquisition] results failed:', e?.message || 'unknown');
     return null;
   }
 }

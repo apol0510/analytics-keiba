@@ -32,7 +32,7 @@ import { resolveViewer, VIEWER_STATE } from '../lib/auth/viewerEntitlements.js';
 import { viewFromEntitlements } from '../lib/entitlements/resolveEntitlements.js';
 import { resolvePredictionDestination } from '../lib/navigation/predictionDestination.js';
 import AcquisitionUsagePanel from '../components/acquisition/AcquisitionUsagePanel.astro';
-import { loadMemberAcquisitions } from '../lib/acquisition/acquisitionServer.js';
+import { loadMemberAcquisitions, loadAcquiredResults } from '../lib/acquisition/acquisitionServer.js';
 import { summarizeUsage } from '../lib/acquisition/usageStats.js';
 
 // 判定が落ちても画面は出す（従来の localStorage 経路へフォールバックする）。
@@ -71,9 +71,12 @@ const showAcquisition = viewer.isMember && !!viewer.recordId && [
     _ent.canViewPremium, _ent.canViewSanrenpuku, _ent.canViewPremiumJra, _ent.canViewPremiumNankan,
 ].some((v) => v === true);
 let acquisitionUsage = null;
+let acquisitionResults = null;
 if (showAcquisition) {
     const list = await loadMemberAcquisitions({ recordId: viewer.recordId, env: process.env });
     acquisitionUsage = list ? summarizeUsage(list) : null;
+    // 直近の結果（取得時点の買い目×結果アーカイブ。読めなければ null＝結果を出さない）
+    if (acquisitionUsage && acquisitionUsage.recent.length) acquisitionResults = await loadAcquiredResults({ entries: acquisitionUsage.recent, env: process.env });
 }
 
 // `</script>` 断片で script を閉じられないようにしてから埋め込む
@@ -182,7 +185,7 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
             {showAcquisition && (
                 <section class="acq-dashboard" aria-label="予想の取得状況">
                     <h2 class="acq-dashboard-title">📋 予想の取得状況</h2>
-                    <AcquisitionUsagePanel usage={acquisitionUsage} />
+                    <AcquisitionUsagePanel usage={acquisitionUsage} results={acquisitionResults} />
                     <div class="acq-dashboard-links">
                         {(_ent.canViewPremium || _ent.canViewPremiumJra) && <a href="/premium-prediction/jra/">中央の予想を取得</a>}
                         {(_ent.canViewPremium || _ent.canViewPremiumNankan) && <a href="/premium-prediction/nankan/">南関の予想を取得</a>}
