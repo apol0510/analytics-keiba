@@ -430,22 +430,29 @@ await send('Page.addScriptToEvaluateOnNewDocument', { source: STUB_SRC });
 
 // ⚠️ 固定の待ち時間だけだと、CI のマシンが遅いときに一覧の描画前に読んで rows=0 で落ちた（2026-10-05/06 に 3 回）。
 //    「一覧の行が出るまで」最大 15 秒待つ（出なければ待ちを打ち切り、後続の check が失敗して原因が見える）。
+const waitFor = async (expr, ms = 15000) => {
+  // 毎回 Node 側から評価し直す（遷移直後は古い document のことがあるため、1 回の evaluate の中で待たない）
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    try { if (await evaluate(expr)) return true; } catch { /* 遷移中は評価できない */ }
+    await sleep(150);
+  }
+  return false;
+};
 const openPage = async () => {
   await send('Page.navigate', { url: BASE + PAGE_PATH });
-  await evaluate(`(async () => {
-    for (let i = 0; i < 100 && !document.getElementById('reload'); i += 1) await new Promise((r) => setTimeout(r, 100));
-    return 'ok';
-  })()`);
+  await sleep(300);
+  await waitFor(`document.readyState === 'complete' && !!document.getElementById('reload') && location.pathname.includes('admin')`);
   await evaluate(`(async () => {
     const el = document.getElementById('secret');
     if (el) { el.value = 'e2e'; el.dispatchEvent(new Event('change')); }
     const actor = document.getElementById('actor');
     if (actor) { actor.value = 'e2e'; actor.dispatchEvent(new Event('change')); }
     const b = document.getElementById('reload'); if (b) b.click();
-    for (let i = 0; i < 150 && document.querySelectorAll('#rows tr .c-cust').length === 0; i += 1) await new Promise((r) => setTimeout(r, 100));
-    await new Promise((r) => setTimeout(r, 300));
     return 'ok';
   })()`);
+  await waitFor(`document.querySelectorAll('#rows tr .c-cust').length > 0 && document.querySelectorAll('.sumcard').length === 4`);
+  await sleep(300);
 };
 
 console.log(`\n■ 実 DOM E2E（${BROWSER.split('/').pop()} / dist 配信）\n`);
