@@ -147,7 +147,7 @@ test('profile は列挙した項目だけ（内部列を素通しにしない）
     PaymentConfirmed: true, RequestedAmount: 4980, Source: 'customer-import:2026-08',
     LifetimeSanrenpuku: true, ForceLogout: false,
   });
-  assert.deepEqual(Object.keys(p).sort(), ['billing', 'email', 'name', 'planType', 'plan', 'points', 'validUntil'].sort());
+  assert.deepEqual(Object.keys(p).sort(), ['billing', 'email', 'name', 'planType', 'plan', 'points', 'registeredAt', 'validUntil'].sort());
   assert.equal(p.billing, null);
   assert.equal(p.email, 'a@example.test');
   assert.equal(p.name, '末吉 太郎');

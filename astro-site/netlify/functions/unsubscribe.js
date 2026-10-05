@@ -16,6 +16,9 @@
 //   - Airtable formula の email エスケープ
 //   - POST { action: 'resubscribe' } で配信再開対応
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'unsubscribe' });
 import { createHash } from 'node:crypto';
 import {
   parseUnsubscribeRequest, statusForResult, REQUEST_KIND,

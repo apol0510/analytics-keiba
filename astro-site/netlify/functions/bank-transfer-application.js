@@ -4,6 +4,9 @@
  * 事前予約・事前申し込みではないため、サーバー側で振込完了日の未来日を拒否する。
  */
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'bank-transfer-application' });
 import { SUPPORT_EMAIL, ADMIN_EMAIL, FROM_EMAIL } from './config/email-config.js';
 import { buildApplicationFields } from '../../src/lib/payments/bankPaymentFlow.js';
 // 「誰の申込か」の単一源。ログイン中は**セッションのアドレス以外で申し込めない**

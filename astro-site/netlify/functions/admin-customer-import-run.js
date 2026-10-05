@@ -17,6 +17,9 @@
  * 読み取り専用の下見は `admin-customer-import.js`。**責務を分けている**。
  */
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'admin-customer-import-run' });
 import {
   buildImportRows, hashBytes, MAX_FILE_BYTES, CSV_ERROR_LABEL,
 } from '../../src/lib/crm/csvParse.js';

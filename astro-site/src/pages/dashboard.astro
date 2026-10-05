@@ -32,6 +32,8 @@ import { resolveViewer, VIEWER_STATE } from '../lib/auth/viewerEntitlements.js';
 import { viewFromEntitlements } from '../lib/entitlements/resolveEntitlements.js';
 import { resolvePredictionDestination } from '../lib/navigation/predictionDestination.js';
 import AcquisitionUsagePanel from '../components/acquisition/AcquisitionUsagePanel.astro';
+import MemberRankCard from '../components/membership/MemberRankCard.astro';
+import { memberRank } from '../lib/membership/memberRank.js';
 import { loadMemberAcquisitions, loadAcquiredResults } from '../lib/acquisition/acquisitionServer.js';
 import { summarizeUsage } from '../lib/acquisition/usageStats.js';
 
@@ -64,6 +66,13 @@ const serverAuth = {
 };
 // 会員ごとに中身が変わる。共有キャッシュに載せない（別人へ配られるのを防ぐ）。
 Astro.response.headers.set('Cache-Control', 'private, no-store');
+
+// ── 会員ランク（2026-10-05・docs/MEMBER_RANK.md）: 有料の権利を今持っている会員だけ・起点は登録日 ──
+const _entR = viewer.isMember ? (viewer.entitlements || {}) : {};
+const isPaidMember = viewer.isMember && [
+    _entR.canViewLight, _entR.canViewPremium, _entR.canViewSanrenpuku, _entR.canViewPremiumJra, _entR.canViewPremiumNankan,
+].some((v) => v === true);
+const rankInfo = isPaidMember ? memberRank({ registeredAt: viewer.profile?.registeredAt }) : null;
 
 // ── 予想の取得状況（2026-10-03・docs/PREDICTION_ACQUISITION.md）: 取得できる会員だけ・本人の記録だけ ──
 const _ent = viewer.isMember ? (viewer.entitlements || {}) : {};
@@ -181,6 +190,8 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
                     </div>
                 </div>
             </div>
+
+            {rankInfo && <MemberRankCard rank={rankInfo} name={viewer.profile?.name || null} />}
 
             {showAcquisition && (
                 <section class="acq-dashboard" aria-label="予想の取得状況">

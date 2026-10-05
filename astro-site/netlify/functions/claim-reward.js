@@ -1,4 +1,7 @@
 // 特典申請処理Function
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'claim-reward' });
 import Airtable from 'airtable';
 import { formatJst } from '../../src/lib/datetime/jstTimestamp.js';
 

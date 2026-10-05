@@ -51,6 +51,9 @@
  *   さらに apply / revoke は dry-run が返した planFingerprint と operationId が必須。
  */
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'admin-comeback-grants' });
 import { validateSelection } from '../../src/lib/marketing/adminMultiFilter.js';
 import {
   FREE_GRANT_NOW, FREE_GRANT_NOW_LABEL, FREE_GRANT_NOW_VALUES,

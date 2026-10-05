@@ -27,6 +27,9 @@
  * PII 非出力: 応答・ログには status/reason の**件数集計だけ**。recordId / Email / secret を出さない。
  */
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'payment-email-dispatcher' });
 import { dispatchPendingBatch } from '../../src/lib/payments/paymentEmailDispatcher.js';
 import { parseGatesFromEnv, validateEmailGates } from '../../src/lib/payments/paymentEmailState.js';
 import { makeDispatcherDeps } from '../../src/lib/payments/paymentEmailDeps.js';

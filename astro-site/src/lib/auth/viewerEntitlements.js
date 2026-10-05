@@ -112,6 +112,8 @@ export function viewerProfile(fields) {
     // Stripe の月額で契約中か（マイページの「お支払い管理」ボタン用）。ID そのものは渡さない。
     billing: String(read(['PaymentMethod']) || '').trim().toLowerCase() === 'stripe'
       && /^cus_/.test(String(read(['StripeCustomerId']) || '')) ? 'stripe' : null,
+    // 会員ランク（docs/MEMBER_RANK.md）の起点。本人に既に表示している登録日だけを渡す
+    registeredAt: read(['登録日', 'RegisteredAt', 'RegistrationDate']),
   };
 }
 

@@ -99,7 +99,16 @@ async function sweepOldTokens({ authTokensTable, email, keepTokenId }) {
   }
 }
 
+// Airtable SDK（node-fetch）経由の呼び出しは fetch の計測に乗らないため、回数だけを明示的に数える
+// （docs/AIRTABLE_CAPACITY.md「API 呼び出しの計測」）。失敗しても本処理は止めない。
+function meterAirtable(n = 1) {
+  return import('../../src/lib/ops/airtableCallMeter.js')
+    .then((m) => m.countAirtableCalls('send-magic-link', n)).catch(() => false);
+}
+
 exports.handler = async (event) => {
+  // 1 回の呼び出しで Customers 検索・トークン作成/更新など約 3 回 Airtable を呼ぶ（概算で数える）
+  if (event && event.httpMethod === 'POST') await meterAirtable(3);
   const headers = corsHeaders(event);
 
   if (event.httpMethod === 'OPTIONS') return { statusCode: 200, headers, body: '' };

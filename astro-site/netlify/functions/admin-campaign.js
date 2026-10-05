@@ -18,6 +18,9 @@
  * 認可: `x-admin-secret`（`COMEBACK_ADMIN_SECRET` があれば優先／無ければ `PREMIUM_PLUS_ADMIN_SECRET`）
  */
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'admin-campaign' });
 import { campaignControlStore, isSafeRecordId } from '../../src/lib/promotions/campaignControlStore.js';
 import { resolveCampaignAllowed, describeCampaignControl } from '../../src/lib/promotions/campaignControl.js';
 import {

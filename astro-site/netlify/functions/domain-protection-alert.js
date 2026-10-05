@@ -1,6 +1,9 @@
 // ドメイン保護アラートシステム
 // 高リスク状況の早期検知・管理者通知
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'domain-protection-alert' });
 import { formatJst } from '../../src/lib/datetime/jstTimestamp.js';
 
 export default async function handler(request, context) {

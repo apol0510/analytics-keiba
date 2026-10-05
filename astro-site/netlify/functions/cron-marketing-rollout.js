@@ -35,6 +35,9 @@
  * ⚠️ 既定は全部閉じている。env を開けない限り、この Function は**何も書かない**。
  */
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'cron-marketing-rollout' });
 import {
   tickRollout, settleTick, describeTick, isRolloutComplete, TICK_ACTION, TICK_BLOCK,
 } from '../../src/lib/marketing/rolloutOrchestrator.js';

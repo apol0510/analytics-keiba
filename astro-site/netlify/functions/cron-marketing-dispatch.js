@@ -30,6 +30,9 @@
  * ⚠️ **Customers を 1 バイトも書かない**（会員・課金・特典・期限を変更しない）。
  */
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'cron-marketing-dispatch' });
 import {
   planAutoDispatch, resolveMaxJobsPerTick, summarizeAutoDispatch, readWillSend, DEFAULT_COOLDOWN_MS,
 } from '../../src/lib/marketing/autoDispatchPlan.js';

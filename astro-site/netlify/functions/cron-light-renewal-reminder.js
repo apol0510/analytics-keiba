@@ -11,6 +11,9 @@
  * ⚠️ 既存の自動化（cron-marketing-automation / cron-expiry-check）のゲートには一切触れない。
  */
 import { checkStripeLiveSales, gateModeOnStripeSales } from '../../src/lib/billing/stripeSalesGate.js';
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'cron-light-renewal-reminder' });
 import { runLightRenewal, resolveMode } from '../../src/lib/marketing/lightRenewal/lightRenewalRunner.js';
 import { makeRedisCmd } from '../../src/lib/marketing/deliveryKeyStore.js';
 

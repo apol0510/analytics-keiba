@@ -11,6 +11,9 @@
  * ⚠️ Light のリマインド（10:00）と時刻をずらす。同じ人への横断 24 時間上限は共通の送信前判定が持つ。
  */
 import { checkStripeLiveSales, gateModeOnStripeSales } from '../../src/lib/billing/stripeSalesGate.js';
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'cron-premium-renewal-reminder' });
 import { runPremiumRenewal, resolveMode } from '../../src/lib/marketing/premiumRenewal/premiumRenewalRunner.js';
 import { makeRedisCmd } from '../../src/lib/marketing/deliveryKeyStore.js';
 

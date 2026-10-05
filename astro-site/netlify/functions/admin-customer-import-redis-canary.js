@@ -40,6 +40,9 @@
  *   検証完了後は env を消す（deploy 不要で無効化）。その後コードごと削除する。
  */
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'admin-customer-import-redis-canary' });
 import { randomBytes } from 'node:crypto';
 import {
   createCanaryRunner, runPhase0, runPhase1, runPhase2, cleanupCanary, scanCanaryKeys, finalizeCanary,

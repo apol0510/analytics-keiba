@@ -18,6 +18,9 @@
  * 6. formula への外部入力は `airtableFormula.js` 経由（injection 遮断）。
  */
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'sendgrid-webhook' });
 import { config } from 'dotenv';
 import {
   SIGNATURE_HEADER,
@@ -733,6 +736,11 @@ async function updateExistingRecord(record, bounceInfo) {
 
   if (response.ok) {
     console.log('✅ [sendgrid-webhook] 既存レコード更新:', { bounceCount: newBounceCount, status: newStatus });
+    // 送信系 cron の EmailBlacklist キャッシュ（10 分）を捨てて、次の読み取りで最新を使わせる
+    try {
+      const { invalidateBlacklistCache } = await import('../../src/lib/newsletter/airtable-fetch.js');
+      await invalidateBlacklistCache({ brand: 'analytics-keiba', baseId: AIRTABLE_BASE_ID });
+    } catch { /* キャッシュは 10 分で自然に切れる */ }
   } else {
     // Airtable 応答本文はログへ出さない（メール等が含まれうる）
     console.log('❌ [sendgrid-webhook] 既存レコード更新失敗:', response.status);
@@ -766,6 +774,11 @@ async function createNewRecord(email, bounceInfo, originalEvent) {
 
   if (response.ok) {
     console.log('✅ [sendgrid-webhook] 新規レコード作成');
+    // 送信系 cron の EmailBlacklist キャッシュ（10 分）を捨てて、次の読み取りで最新を使わせる
+    try {
+      const { invalidateBlacklistCache } = await import('../../src/lib/newsletter/airtable-fetch.js');
+      await invalidateBlacklistCache({ brand: 'analytics-keiba', baseId: AIRTABLE_BASE_ID });
+    } catch { /* キャッシュは 10 分で自然に切れる */ }
   } else {
     console.log('❌ [sendgrid-webhook] 新規レコード作成失敗:', response.status);
   }

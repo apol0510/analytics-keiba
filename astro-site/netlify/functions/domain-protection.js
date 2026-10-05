@@ -1,6 +1,9 @@
 // ドメイン保護システム - 配信失敗追跡・自動停止
 // 5回失敗したら自動的に配信を停止してドメイン評価を保護
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'domain-protection' });
 export default async function handler(request, context) {
   const headers = {
     'Access-Control-Allow-Origin': '*',

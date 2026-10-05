@@ -1,6 +1,9 @@
 // 自作メールスケジューラー - 予約登録Function
 // Airtableをジョブキューとして使用した堅牢なスケジューラー
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'schedule-email' });
 export default async function handler(request, context) {
   const headers = {
     'Access-Control-Allow-Origin': '*',
