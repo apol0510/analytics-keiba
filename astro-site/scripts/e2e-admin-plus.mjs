@@ -428,16 +428,22 @@ const STUB_SRC = `
 `;
 await send('Page.addScriptToEvaluateOnNewDocument', { source: STUB_SRC });
 
+// ⚠️ 固定の待ち時間だけだと、CI のマシンが遅いときに一覧の描画前に読んで rows=0 で落ちた（2026-10-05/06 に 3 回）。
+//    「一覧の行が出るまで」最大 15 秒待つ（出なければ待ちを打ち切り、後続の check が失敗して原因が見える）。
 const openPage = async () => {
   await send('Page.navigate', { url: BASE + PAGE_PATH });
-  await sleep(1200);
+  await evaluate(`(async () => {
+    for (let i = 0; i < 100 && !document.getElementById('reload'); i += 1) await new Promise((r) => setTimeout(r, 100));
+    return 'ok';
+  })()`);
   await evaluate(`(async () => {
     const el = document.getElementById('secret');
     if (el) { el.value = 'e2e'; el.dispatchEvent(new Event('change')); }
     const actor = document.getElementById('actor');
     if (actor) { actor.value = 'e2e'; actor.dispatchEvent(new Event('change')); }
     const b = document.getElementById('reload'); if (b) b.click();
-    await new Promise((r) => setTimeout(r, 1200));
+    for (let i = 0; i < 150 && document.querySelectorAll('#rows tr .c-cust').length === 0; i += 1) await new Promise((r) => setTimeout(r, 100));
+    await new Promise((r) => setTimeout(r, 300));
     return 'ok';
   })()`);
 };
