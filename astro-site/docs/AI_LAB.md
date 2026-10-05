@@ -34,7 +34,8 @@ KAP（MK の PC・launchd）── 開催中は 2 分ごと ──▶ POST /api/
 - 画面データは全員共通なので、関数内で 20 秒キャッシュする。
 - 結果（着順）は AK の結果アーカイブ（`archiveResultsJra.json`）から読む（`acquiredResults.buildResultIndex`）。
 - MK の PC が止まっている間は更新が止まる。画面に「データ HH:MM:SS 更新」を出す。
-- 取込の秘密値 `AILAB_INGEST_SECRET` は Netlify（production・Functions）と MK の PC（`~/.analytics-keiba-ops/ailab-ingest-secret`、権限 600）だけに置く。値をログ・commit・docs に出さない。
+- 取込の秘密値は MK の PC（`~/.analytics-keiba-ops/ailab-ingest-secret`、権限 600）にだけ置き、AK 側は **その SHA-256 を Redis `ak:ailab:v1:ingest-key-sha256` に置いて照合**する。値をログ・commit・docs に出さない。ローテーションは「新しい値をファイルへ → 新しい SHA-256 を SET」だけ（再デプロイ不要）。
+- 🛑 **Netlify の env に秘密値を足さない**。Functions の env は AWS Lambda の 4KB 上限ぎりぎりで、2026-10-05 に 1 つ（約 60 バイト）足しただけで全 Function の作成が失敗し、本番 deploy が 2 回止まった（変数を消して即復旧）。
 
 ## 3. 実装
 

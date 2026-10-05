@@ -6,6 +6,8 @@
 const DAY_TTL = 180 * 24 * 3600;
 export const dayKey = (date) => `ak:ailab:v1:jra:day:${date}`;
 export const DAYS_KEY = 'ak:ailab:v1:jra:days';
+/** 取込の秘密値の SHA-256（hex）。env には置かない（Lambda 4KB 上限・docs/AI_LAB.md） */
+export const INGEST_KEY_HASH = 'ak:ailab:v1:ingest-key-sha256';
 const parse = (s) => { try { return JSON.parse(s); } catch { return null; } };
 
 /** 1 日分を保存する。新しいデータに AK 上位 5 頭が無いレース（AK 側の予想が既に無い等）は保存済みの値を残す */
