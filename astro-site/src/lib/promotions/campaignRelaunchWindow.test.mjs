@@ -67,14 +67,14 @@ test('【核心】期限表示は、割引が乗る最後の JST 暦日と完全
   const lastMoment = endsAtMs - 1;
   assert.equal(
     resolveCampaignPricing({
-      planName: 'Light', planType: 'Monthly', entitlements: FREE, registered: true,
+      planName: 'Premium', planType: 'Annual', entitlements: FREE, registered: true,
       allowed: ALLOWED, nowMs: lastMoment,
     }).applied, true,
     '期限として案内した日に割引が乗らない（案内した額と請求額が食い違う）',
   );
   assert.equal(
     resolveCampaignPricing({
-      planName: 'Light', planType: 'Monthly', entitlements: FREE, registered: true,
+      planName: 'Premium', planType: 'Annual', entitlements: FREE, registered: true,
       allowed: ALLOWED, nowMs: endsAtMs,
     }).reason, 'outside_window',
     '期限を過ぎても割引が乗り続けている',

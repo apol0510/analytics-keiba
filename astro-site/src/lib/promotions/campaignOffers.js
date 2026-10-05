@@ -78,11 +78,9 @@ export function resolveCampaignOfferIdsFor(entitlements) {
   // Premium を見られる方には三連複だけを案内する
   if (e.canViewPremium === true) return [CAMPAIGN_OFFER_IDS.SANRENPUKU_LIFETIME];
 
-  const out = [];
-  // Light をお持ちでない方には Light も案内する（持っている方には出さない）
-  if (e.canViewLight !== true) out.push(CAMPAIGN_OFFER_IDS.LIGHT_MONTHLY);
-  out.push(CAMPAIGN_OFFER_IDS.PREMIUM_ANNUAL, CAMPAIGN_OFFER_IDS.PREMIUM_LIFETIME);
-  return out;
+  // ⚠️ Light は 2026-10-02 に新規募集を停止した。キャンペーンでも Light を案内しない
+  //    （LIGHT_MONTHLY の定義は過去キャンペーンの価格記録のため残す。申込はサーバー側で受け付けない）。
+  return [CAMPAIGN_OFFER_IDS.PREMIUM_ANNUAL, CAMPAIGN_OFFER_IDS.PREMIUM_LIFETIME];
 }
 
 /**

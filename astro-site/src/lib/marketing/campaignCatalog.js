@@ -1458,10 +1458,23 @@ export function renderCampaign({
  * 受信者がキャンペーンの想定対象か判定する。
  * @returns {{ ok: boolean, enforced: boolean, reason: string|null }}
  */
+/**
+ * 三連複（買い切り）を販売する campaign。会場限定 Premium（Stripe 中央版・南関版）は三連複を買えない
+ * （購入資格は両会場の Premium だけ・2026-10-02 MK 確定）ため、送らない。
+ */
+export const SANRENPUKU_SALES_CAMPAIGNS = Object.freeze(new Set([
+  'sanrenpuku-offer', 'sanrenpuku-upsell-sequence', 'campaign-discount-premium',
+]));
+
 export function matchesCampaignAudience(campaign, marketing) {
   const rule = (campaign && campaign.audienceRule) || { contracts: [], plans: [], enforce: false };
   const enforced = rule.enforce === true;
   if (!marketing) return { ok: false, enforced, reason: 'unknown_customer' };
+  // 会場限定 Premium（プラン=Premium のため plan グループは premium になる）には三連複を売らない。
+  // 買えない商品の案内になるので、campaign の enforce 設定に関わらず必ず外す。
+  if (marketing.premiumVenueOnly === true && SANRENPUKU_SALES_CAMPAIGNS.has(campaign?.campaignId)) {
+    return { ok: false, enforced: true, reason: 'venue_only_premium' };
+  }
 
   const contractOk = !rule.contracts?.length || rule.contracts.includes(marketing.contract);
   const planOk = !rule.plans?.length || rule.plans.includes(marketing.plan);

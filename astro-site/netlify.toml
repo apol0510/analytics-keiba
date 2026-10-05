@@ -56,6 +56,17 @@
 # 既に共有されたリンクを死なせないため 301 を恒久的に残す。
 # ⚠️ 個別行のみ。ワイルドカードのフォールバックは書かないこと
 #    （過去に `/* /index.html 200` が全 SSR ページをトップに化けさせた事故がある）。
+# Light の新規募集停止（2026-10-02）。旧キャンペーンページ（Light 銀行振込 ¥3,980）は削除し料金ページへ。
+[[redirects]]
+  from = "/light-campaign"
+  to = "/pricing/"
+  status = 301
+
+[[redirects]]
+  from = "/light-campaign/"
+  to = "/pricing/"
+  status = 301
+
 [[redirects]]
   from = "/race-viewpoints"
   to = "/free/"

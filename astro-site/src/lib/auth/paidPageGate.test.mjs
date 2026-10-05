@@ -208,9 +208,11 @@ test('入口プランに free を含めない', () => {
   assert.ok(PAID_DOOR_PLANS.includes('light'));
 });
 
-test('requiredPlan → entitlement の対応が既存 3 種を網羅する', () => {
+test('requiredPlan → entitlement の対応（既存 3 種 + 会場別 Premium 2 種）を網羅する', () => {
   assert.deepEqual(Object.keys(REQUIRED_PLAN_ENTITLEMENT).sort(),
-    ['Premium Sanrenpuku', 'premium', 'standard']);
+    ['Premium Sanrenpuku', 'premium', 'premium-jra', 'premium-nankan', 'standard']);
+  assert.equal(resolveEntitlementFlag('premium-jra'), 'canViewPremiumJra');
+  assert.equal(resolveEntitlementFlag('premium-nankan'), 'canViewPremiumNankan');
   assert.equal(resolveEntitlementFlag('PREMIUM'), 'canViewPremium', '表記ゆれを吸収していない');
   assert.equal(resolveEntitlementFlag('nope'), null);
 });
@@ -342,4 +344,44 @@ test('一時障害の reason は /login コードへ写像しない（分離の�
   }
   assert.equal(isTransientDenyReason('entitlement_denied'), false);
   assert.equal(isTransientDenyReason('no_cookie'), false);
+});
+
+// ── 会場限定 Premium（Stripe 中央版・南関版 / 2026-10-02）──────────────
+const JRA_ONLY = { ...PLAIN_PREMIUM, PlanType: 'Monthly', VenueAccess: 'jra' };
+
+test('中央版: 中央の Premium ページは通り、南関・両会場ページは拒否', async () => {
+  const req = await signedRequest({ plan: 'premium' });
+  const jra = await gatePaidPage({ request: req, requiredPlan: 'premium-jra', env, now: NOW, lookup: lookupOf(JRA_ONLY) });
+  assert.equal(jra.ok, true);
+  const nankan = await gatePaidPage({ request: await signedRequest({ plan: 'premium' }), requiredPlan: 'premium-nankan', env, now: NOW, lookup: lookupOf(JRA_ONLY) });
+  assert.equal(nankan.ok, false);
+  assert.equal(nankan.reason, 'entitlement_denied');
+  const both = await gatePaidPage({ request: await signedRequest({ plan: 'premium' }), requiredPlan: 'premium', env, now: NOW, lookup: lookupOf(JRA_ONLY) });
+  assert.equal(both.ok, false);
+});
+
+test('両会場の Premium は会場別ページを両方通る（既存会員の後退なし）', async () => {
+  for (const key of ['premium-jra', 'premium-nankan']) {
+    const g = await gatePaidPage({ request: await signedRequest({ plan: 'premium' }), requiredPlan: key, env, now: NOW, lookup: lookupOf(PLAIN_PREMIUM) });
+    assert.equal(g.ok, true, key);
+  }
+});
+
+test('拒否の前に一度だけ新しい値で読み直す（決済直後のキャッシュ遅れ対策）', async () => {
+  const calls = [];
+  const lookup = async (input) => {
+    calls.push(input.maxAgeMs);
+    // 1 回目（キャッシュ）は決済前の Light、2 回目（読み直し）は決済後の中央版
+    return calls.length === 1 ? LIGHT : JRA_ONLY;
+  };
+  const g = await gatePaidPage({ request: await signedRequest({ plan: 'light' }), requiredPlan: 'premium-jra', env, now: NOW, lookup });
+  assert.equal(g.ok, true);
+  assert.deepEqual(calls, [undefined, 0]);
+});
+
+test('通るときは読み直さない（通常閲覧の Airtable 負荷を増やさない）', async () => {
+  let n = 0;
+  const lookup = async () => { n += 1; return PLAIN_PREMIUM; };
+  await gatePaidPage({ request: await signedRequest({ plan: 'premium' }), requiredPlan: 'premium-jra', env, now: NOW, lookup });
+  assert.equal(n, 1);
 });

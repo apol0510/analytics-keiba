@@ -293,6 +293,7 @@ CI・deploy・外部 API・scheduled job・将来日付・長時間 run 等の**
 | **会員が予想へ辿り着く導線（マイページ表示 / ナビの行き先）** | [`MEMBER_PREDICTION_FUNNEL.md`](./astro-site/docs/MEMBER_PREDICTION_FUNNEL.md) |
 | 管理画面の Basic 認証（`/admin/*`） | [`ADMIN_BASIC_AUTH.md`](./astro-site/docs/ADMIN_BASIC_AUTH.md) |
 | 銀行振込 入金確認フロー | [`BANK_TRANSFER_FLOW.md`](./astro-site/docs/BANK_TRANSFER_FLOW.md) |
+| Stripe 定期購読（Premium ¥4,980 / 中央版・南関版 ¥2,980） | [`STRIPE_BILLING.md`](./astro-site/docs/STRIPE_BILLING.md) |
 | 入金確認メール v2 | [`PAYMENT_EMAIL_V2.md`](./astro-site/docs/PAYMENT_EMAIL_V2.md) |
 | 顧客マーケティング管理 | [`CUSTOMER_MARKETING.md`](./astro-site/docs/CUSTOMER_MARKETING.md) / [`CAMPAIGN_SEQUENCE.md`](./astro-site/docs/CAMPAIGN_SEQUENCE.md) / [`ENGAGEMENT_SUPPRESSION.md`](./astro-site/docs/ENGAGEMENT_SUPPRESSION.md) |
 | 大規模継続配信の運用（展開・停止・追跡） | [`MARKETING_ROLLOUT.md`](./astro-site/docs/MARKETING_ROLLOUT.md) |
@@ -368,6 +369,17 @@ CLAUDE.md 再編（2026-08-13）で旧セクションがどこへ行ったかの
 - 本人は `ak_session` の recordId だけ（クライアントから会員を受け取らない）。Redis が読めなければ本文を出さない（fail closed）
 - 三連複の訴求は「今日、三連複で狙うべきレースを AI が選別」。「点数を絞る／少点数」を復活させない。送信済みメールは文面を変えず `retiredCopyCampaigns.js` で送信停止
 - 既存三連複購入者の権利・Premium Plus の判定は変えない
+
+### 💳 Stripe 定期購読（2026-10-02 MK 確定）
+
+正本は [`STRIPE_BILLING.md`](./astro-site/docs/STRIPE_BILLING.md) / `docs/spec.md`「Stripe 定期購読」。
+
+- 月額は **Stripe（カード・自動更新）だけ**。月払いの銀行振込（30 日 ¥18,000）は販売終了。**Light は新規募集停止**（既存の有料 Light 会員の更新・再開のみ）
+- 中央版・南関版は **プラン=Premium + `VenueAccess`（jra / nankan）**。新しいプラン値を作らない。空 = 両会場
+- 会場別ページの認可は `gatePaidPage({ requiredPlan: 'premium-jra' | 'premium-nankan' })`。ページで会場判定を書かない
+- 反映は Webhook と決済完了画面が**同じ判定**（`stripeSubscriptionSync.js`）。二重課金・買い切り・年払い残存は書かずに管理者通知
+- **Live の Price を編集しない**（新しい Price を作る）。KI とは**別アカウント**で、設定・顧客を混ぜない
+- 鍵・署名鍵・Price ID を docs / commit / ログに書かない（`scripts/stripe-setup.mjs` が Netlify env へ直接入れる）
 
 ### 🎟 クーポン（**Premium Plus 専用ではない** / 2026-08-20 MK 確定）
 

@@ -34,10 +34,11 @@ import { deriveAkImportance } from '../../lib/akFeatureSummary.js';
 
 // ── サーバー側認可（この行より前で有料データを組み立てない）──
 // 判定は既存の単一源に委譲: ak_session（本人特定）+ resolveEntitlements（権利）。
-// requiredPlan='premium' は既存どおり canViewPremium を意味する（境界は変えない）。
+// requiredPlan='premium-jra' = この会場の Premium を見られる人（両会場の Premium・無料特典も含む）。
+// 2026-10-02〜 Stripe の会場限定プランのため 'premium'（両会場）から絞った。
 const gate = await gatePaidPage({
   request: Astro.request,
-  requiredPlan: 'premium',
+  requiredPlan: 'premium-jra',
   env: process.env, // 認可ライブラリは env を直接参照しない方針のため、ページ側で注入する
 });
 if (gate.response) return gate.response;

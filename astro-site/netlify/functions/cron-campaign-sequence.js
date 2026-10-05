@@ -36,6 +36,7 @@
  * Customers 全件走査（14,000 件超・Function がタイムアウトする）を**構造的に避ける**。
  */
 
+import { retiredStepsFor } from '../../src/lib/marketing/retiredSequenceSteps.js';
 import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
 // Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
 installAirtableCallMeter({ source: 'cron-campaign-sequence' });
@@ -1198,7 +1199,8 @@ export async function runSequenceTick({
   const maxStepAttempts = mayAdvanceStep
     ? Math.max(1, Number(resolveMaxSends(base)) || 1)
     : 1;
-  const emptySteps = [];
+  // 今後は送らない step（新規募集を停止した Light の案内を含む送信済み step 等・2026-10-02）を最初から外す
+  const emptySteps = [...retiredStepsFor(base.campaignId)];
   let plan = null;
   let sending = null;
   let keyOfTarget = null;

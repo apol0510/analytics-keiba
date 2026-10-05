@@ -147,7 +147,8 @@ test('profile は列挙した項目だけ（内部列を素通しにしない）
     PaymentConfirmed: true, RequestedAmount: 4980, Source: 'customer-import:2026-08',
     LifetimeSanrenpuku: true, ForceLogout: false,
   });
-  assert.deepEqual(Object.keys(p).sort(), ['email', 'name', 'planType', 'plan', 'points', 'registeredAt', 'validUntil'].sort());
+  assert.deepEqual(Object.keys(p).sort(), ['billing', 'email', 'name', 'planType', 'plan', 'points', 'registeredAt', 'validUntil'].sort());
+  assert.equal(p.billing, null);
   assert.equal(p.email, 'a@example.test');
   assert.equal(p.name, '末吉 太郎');
   assert.equal(p.plan, 'Light');
@@ -169,4 +170,13 @@ test('member のときだけ profile を返す', async () => {
     lookup: lookupOf({ ...LIGHT, Email: 'l@example.test' }),
   });
   assert.equal(member.profile.email, 'l@example.test');
+});
+
+test('profile.billing は Stripe 契約かどうかだけ（Stripe の ID は画面へ渡さない）', () => {
+  const p = viewerProfile({ Email: 'a@example.test', PaymentMethod: 'Stripe', StripeCustomerId: 'cus_ABC', StripeSubscriptionId: 'sub_XYZ' });
+  assert.equal(p.billing, 'stripe');
+  assert.equal(JSON.stringify(p).includes('cus_ABC'), false);
+  assert.equal(JSON.stringify(p).includes('sub_XYZ'), false);
+  assert.equal(viewerProfile({ PaymentMethod: 'Bank Transfer', StripeCustomerId: 'cus_ABC' }).billing, null);
+  assert.equal(viewerProfile({ PaymentMethod: 'Stripe' }).billing, null);
 });

@@ -460,7 +460,9 @@ const { requiredPlan, showUpgrade = true, serverVerified = false, serverTier = '
                     }
                 } else {
                     const currentPlanName = getPlanDisplayName(plan);
-                    const requiredPlanName = getPlanDisplayName(requiredPlan);
+                    // Light は 2026-10-02 に新規募集を停止した。Light 向けページの案内で「Light プランが必要」と出すと
+                    // 申し込めないプランへ誘導してしまうため、有料プラン（中央版・南関版・Premium）として案内する。
+                    const requiredPlanName = (requiredPlan === 'standard') ? '有料プラン（Premium 中央版・南関版・Premium）' : getPlanDisplayName(requiredPlan);
                     
                     deniedMessage.textContent = `現在のプラン: ${currentPlanName}\nこのコンテンツには「${requiredPlanName}」以上のプランが必要です。`;
                 }

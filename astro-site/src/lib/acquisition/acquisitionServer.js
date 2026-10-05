@@ -14,7 +14,8 @@ import { acquirePrediction, readAcquired, listAcquisitions, readContentsFor } fr
 import { judgeAcquired, loadResultIndex } from './acquiredResults.js';
 
 /** 取得・閲覧の入口に通す権利（どれか 1 つ）。商品ごとの可否は canAcquire で絞る */
-export const ACQUISITION_DOOR_PLANS = Object.freeze(['premium', 'Premium Sanrenpuku']);
+// 会場別 Premium（Stripe の中央版・南関版 = premium-jra / premium-nankan）も入口を通す。会場ごとの可否は canAcquire
+export const ACQUISITION_DOOR_PLANS = Object.freeze(['premium', 'premium-jra', 'premium-nankan', 'Premium Sanrenpuku']);
 
 export function viewUrlFor(key) {
   return `/predictions/view/?key=${encodeURIComponent(key)}`;

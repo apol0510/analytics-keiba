@@ -67,7 +67,8 @@ test('guard: pricing.astro は Light 会員に無料カードだけ隠し、Ligh
     false,
     'Light 会員に Light カードを隠している（Light の更新ができなくなる）',
   );
-  assert.ok(/class="plan-card" data-plan-tier="1"/.test(src), 'Light カードに tier 属性が無い');
+  // 2026-10-02: Light の更新・再開は主導線ではなく「銀行振込」欄の補助行（有料 Light 会員だけ）。主導線は同額の Premium
+  assert.ok(/<div class="other-plan" data-only-for="light">[\s\S]{0,400}openBankModal\('Light', 4980, 'monthly'\)/.test(src), 'Light の更新導線（有料 Light 会員向け）が無い');
   assert.ok(/class="plan-card" data-plan-tier="0"/.test(src), '無料カードに tier 属性が無い');
 });
 
@@ -113,7 +114,8 @@ test('guard: 乗り換え特典価格が Functions のプラン名正規化を�
     '乗り換えボタンの引数が変わった',
   );
   assert.ok(src.includes('¥44,820'), 'カード/FAQ に乗り換え価格が無い');
-  assert.ok(src.includes('¥14,940'), 'FAQ の差額表記が無い');
+  // 2026-10-02: 「Light を続けるより年払いが ¥14,940 お得」の FAQ は撤去（Light 継続を前提にしない）。乗り換え価格の説明は残す
+  assert.ok(src.includes('乗り換え特典価格（¥44,820/年）'), '乗り換え特典価格の案内が無い');
 
   // bank-transfer-application.js の正規化を再現して planName='Premium' / planType='Annual' を確認
   const productName = 'Premium Annual - Campaign (¥44,820/年)';
@@ -166,5 +168,7 @@ test('guard: FAQ の Light 年間換算がカード表示価格と整合する',
 
   assert.ok(src.includes("openBankModal('Light', 4980, 'monthly')"), 'Light の価格が変わった');
   assert.ok(src.includes("openBankModal('Premium Annual', 49800, 'annual')"), 'プレミアム年払いの価格が変わった');
-  assert.ok(src.includes('¥59,760'), 'FAQ の Light 年間換算が無い');
+  // 2026-10-02: Light 会員向け FAQ は「同額で中央＋南関の全レースの Premium へ」を主訴求にする（Light 継続は勧めない）
+  assert.ok(src.includes('Light と Premium（月額）の違いは？'), 'Light → Premium の比較 FAQ が無い');
+  assert.equal(src.includes('¥59,760'), false, 'Light 継続を前提にした比較が残っている');
 });

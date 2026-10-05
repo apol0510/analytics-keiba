@@ -229,7 +229,40 @@
   /** テスト用（本番コードからは使わない）。 */
   function _reset() { lastSent = {}; }
 
+  /**
+   * Stripe 月額（2026-10-02〜）。プラン ID は**閉じた語彙**（stripePlans.js の id）だけを通す。
+   * - `begin_checkout`: Stripe の決済画面へ遷移する直前（サーバーが URL を返した後）
+   * - `purchase`: 決済完了画面で**サーバーが反映済みを返した後**だけ。同じ決済で 2 回送らない
+   */
+  var STRIPE_PLAN_LABELS = { 'premium': 'Premium', 'premium-jra': 'Premium JRA', 'premium-nankan': 'Premium NANKAN' };
+  var STRIPE_PLAN_YEN = { 'premium': 4980, 'premium-jra': 2980, 'premium-nankan': 2980 };
+
+  function stripeParams(planId) {
+    var label = STRIPE_PLAN_LABELS[planId] || 'other';
+    return { plan: label, plan_type: 'Monthly', payment_method: 'stripe', currency: 'JPY', value: STRIPE_PLAN_YEN[planId] || 0 };
+  }
+
+  function checkoutStart(planId) {
+    try {
+      if (typeof global.gtag === 'function') global.gtag('event', 'begin_checkout', stripeParams(planId));
+    } catch (_) {}
+  }
+
+  function purchaseCompleted(planId, sessionId) {
+    try {
+      var key = 'ak_purchase_sent:' + String(sessionId || '').slice(0, 80);
+      try { if (global.sessionStorage && global.sessionStorage.getItem(key)) return; } catch (_) {}
+      var params = stripeParams(planId);
+      // transaction_id は Stripe の決済セッション ID（個人情報ではない・重複計上の防止）
+      params.transaction_id = String(sessionId || '').slice(0, 80);
+      if (typeof global.gtag === 'function') global.gtag('event', 'purchase', params);
+      try { if (global.sessionStorage) global.sessionStorage.setItem(key, '1'); } catch (_) {}
+    } catch (_) {}
+  }
+
   global.AkFunnel = {
+    checkoutStart: checkoutStart,
+    purchaseCompleted: purchaseCompleted,
     PLAN_LABELS: PLAN_LABELS,
     PLAN_TYPE_LABELS: PLAN_TYPE_LABELS,
     APPLICATION_HISTORY_TYPE: APPLICATION_HISTORY_TYPE,

@@ -269,3 +269,14 @@ test('三連複: RequestedPlan="Premium Sanrenpuku Lifetime" でも フラグの
     assert.ok(!(forbidden in r.fields), `${forbidden} を書いてはいけない`);
   }
 });
+
+test('銀行振込の Light / Premium 承認は VenueAccess を空（=両会場）に戻す（Stripe 会場限定からの移行・2026-10-02）', () => {
+  const at = new Date('2026-10-02T03:00:00Z');
+  for (const [plan, type] of [['Premium', 'Annual'], ['Premium', 'Lifetime'], ['Light', 'Monthly']]) {
+    const r = buildConfirmationFields({ requestedPlan: plan, requestedPlanType: type, confirmedAt: at });
+    assert.equal(r.fields.VenueAccess, '', `${plan}/${type}`);
+  }
+  // 三連複（追加の買い切り権）は会場を触らない
+  const s = buildConfirmationFields({ requestedPlan: 'Premium Sanrenpuku', requestedPlanType: 'Lifetime', confirmedAt: at });
+  assert.equal('VenueAccess' in s.fields, false);
+});

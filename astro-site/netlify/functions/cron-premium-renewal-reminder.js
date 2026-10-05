@@ -10,6 +10,7 @@
  *   - live         … 送信直前の再判定を通った相手へ送る（1 回 20 通まで）
  * ⚠️ Light のリマインド（10:00）と時刻をずらす。同じ人への横断 24 時間上限は共通の送信前判定が持つ。
  */
+import { checkStripeLiveSales, gateModeOnStripeSales } from '../../src/lib/billing/stripeSalesGate.js';
 import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
 // Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
 installAirtableCallMeter({ source: 'cron-premium-renewal-reminder' });
@@ -17,7 +18,10 @@ import { runPremiumRenewal, resolveMode } from '../../src/lib/marketing/premiumR
 import { makeRedisCmd } from '../../src/lib/marketing/deliveryKeyStore.js';
 
 export default async function handler() {
-  const mode = resolveMode(process.env);
+  // 2026-10-02: 本文は Stripe 月額（Premium ¥4,980 等）を案内する。live 決済が無効な間は送らない（dry-run に落とす）
+  const sales = await checkStripeLiveSales(process.env);
+  const mode = gateModeOnStripeSales(resolveMode(process.env), sales);
+  if (mode !== resolveMode(process.env)) console.log('[premium-renewal] Stripe live 決済が無効のため送信しない（dry-run）:', sales.reason);
   let redisCmd = null;
   try { redisCmd = makeRedisCmd(process.env); } catch { redisCmd = null; }
   try {

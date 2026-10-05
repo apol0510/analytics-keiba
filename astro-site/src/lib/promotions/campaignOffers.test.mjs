@@ -102,9 +102,8 @@ test('申込プラン名が商品ごとに正しい（別商品の申込を作�
 });
 
 // ── 出し分け ────────────────────────────────────────────────
-test('無料の方には Light と Premium（年額・買い切り）を案内する', () => {
+test('無料の方には Premium（年額・買い切り）を案内する（Light は 2026-10-02 新規募集停止で案内しない）', () => {
   assert.deepEqual(resolveCampaignOfferIdsFor({}), [
-    CAMPAIGN_OFFER_IDS.LIGHT_MONTHLY,
     CAMPAIGN_OFFER_IDS.PREMIUM_ANNUAL,
     CAMPAIGN_OFFER_IDS.PREMIUM_LIFETIME,
   ]);
@@ -146,12 +145,12 @@ test('期限は 14 日（再募集クーポンと同じ）', () => {
 
 test('案内の 1 行に金額を必ず含める（画面で組み立てない）', () => {
   const lines = describeCampaignOffersFor({}).map(describeCampaignOfferLine);
-  assert.equal(lines.length, 3);
+  assert.equal(lines.length, 2);
   for (const l of lines) {
     assert.match(l, /¥[\d,]+ → ¥[\d,]+/, `金額が入っていない: ${l}`);
     assert.match(l, /円OFF/);
   }
-  assert.ok(lines.some((l) => l.includes('¥4,980 → ¥4,480')));
+  assert.equal(lines.some((l) => l.includes('¥4,980 → ¥4,480')), false, 'Light の割引を案内している');
 });
 
 // ── 他の offer と混ぜない ────────────────────────────────────

@@ -375,6 +375,15 @@ test('一覧モデルは日付（新しい順）・会場・レース・（三�
   assert.ok(m.day && Array.isArray(m.day.top3));
 });
 
+test('会場別 Premium（中央版・南関版）も取得の入口を通り、取得できるのは契約した会場だけ', async () => {
+  const { ACQUISITION_DOOR_PLANS } = await import('./acquisitionServer.js');
+  for (const p of ['premium', 'premium-jra', 'premium-nankan', 'Premium Sanrenpuku']) assert.ok(ACQUISITION_DOOR_PLANS.includes(p), p);
+  const now = Date.parse('2026-10-03T03:00:00Z');
+  const jraOnly = resolveEntitlements(fromAirtableFields({ 'プラン': 'Premium', PlanType: 'Monthly', Status: 'active', '有効期限': '2026-11-04', PaidAt: 'x', VenueAccess: 'jra' }), now);
+  assert.equal(canAcquire(jraOnly, { product: 'premium', cat: 'jra' }), true);
+  assert.equal(canAcquire(jraOnly, { product: 'premium', cat: 'nankan' }), false);
+  assert.equal(canAcquire(jraOnly, { product: 'srp', cat: 'jra' }), false);
+});
 
 // ── 2026-10-03/04 MK 追加確定: 活用状況・会場タブ・着順の色 ──
 test('本日の活用状況: 分母はその契約で本日取得できる実レース数（中央のみ・南関のみ・両方）・% は取得率', async () => {
@@ -447,6 +456,7 @@ test('会場タブ（すべて / 中央競馬 / 南関東競馬）と「すべ�
   assert.match(all, /<PremiumRaceBoard mode="premium" venue="all"/);
   assert.match(read('src/components/acquisition/PremiumRaceBoard.astro'), /<AcquisitionVenueTabs active=\{venue\} mode=\{mode\} \/>/);
   assert.ok(all.indexOf('gatePaidPage(') < all.indexOf('buildListModel('), '認可の前に一覧を組み立てている');
+  assert.match(all, /requiredPlan: \['premium', 'premium-jra', 'premium-nankan'\]/, '会場別 Premium も「すべて」に入れる');
   // 「すべて」のモデル: 中央・南関を合わせ、区分ごとの取得可否をレースに付ける
   const { buildListModel } = await import('./listModel.js');
   const { mkdtempSync, mkdirSync, writeFileSync } = await import('node:fs');

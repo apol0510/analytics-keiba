@@ -73,12 +73,18 @@ test('Light と名前空間が分かれている（同じ会員・周期でも�
   assert.equal(PREMIUM_RENEWAL_CAMPAIGN_TYPE, 'premium-renewal:v1');
 });
 
-test('本文: 価格は /pricing/ の Premium 月払いと同じ・割引や特典を書かない・ログイン経由の /pricing/', () => {
+test('本文: 価格は /pricing/ の Premium 月額（Stripe）と同じ・割引や特典を書かない・ログイン経由の /pricing/', async () => {
   const pricing = readFileSync(`${ROOT}src/pages/pricing.astro`, 'utf8');
-  assert.match(pricing, new RegExp(`openBankModal\\('Premium Monthly', ${PREMIUM_MONTHLY_YEN}, 'monthly'\\)`));
+  const { planById } = await import('../../billing/stripePlans.js');
+  assert.equal(planById('premium').amountYen, PREMIUM_MONTHLY_YEN, 'Stripe の Premium 月額と本文の金額がずれている');
+  assert.match(pricing, /data-checkout="premium"/, '/pricing/ に Premium 月額（Stripe）の申込ボタンが無い');
+  assert.equal(/openBankModal\('Premium Monthly'/.test(pricing), false, '販売終了した銀行振込の月払いが /pricing/ に残っている');
   for (const stage of [STAGE.PRE, STAGE.POST]) {
     const m = renderPremiumRenewalEmail({ stage, cycle: '2026-10-05', name: '山田' });
-    assert.match(m.text, /¥18,000／30日/);
+    assert.match(m.text, /¥4,980／月・中央＋南関・クレジットカードで毎月自動更新/);
+    assert.match(m.text, /中央版・南関版（各 ¥2,980／月）/);
+    assert.equal(/Light/.test(m.text), false, 'Premium 会員向けに Light を案内している');
+    assert.equal(/18,000|銀行振込で/.test(m.text), false, '販売終了した月払いの案内が残っている');
     assert.ok(m.html.includes(PREMIUM_RENEWAL_CTA_URL) && m.text.includes(PREMIUM_RENEWAL_CTA_URL));
     assert.equal(/44,820|49,800|割引|特典|OFF/.test(m.text + m.subject), false, '書いていない価格・特典を書いている');
     assert.match(m.html, /\{\{unsubscribeUrl\}\}/);
@@ -251,4 +257,13 @@ test('Light と分離: cron・env・時刻が別で、既存の自動化のゲ�
   const lightCron = readFileSync(`${ROOT}netlify/functions/cron-light-renewal-reminder.js`, 'utf8');
   assert.match(lightCron, /schedule: '0 1 \* \* \*'/);
   assert.match(lightCron, /runLightRenewal/);
+});
+
+test('Stripe 会員（自動更新）には期限のお知らせを送らない', () => {
+  const base = {
+    'プラン': 'Premium', PlanType: 'Monthly', PaidAt: '2026-09-01T00:00:00Z', Status: 'active',
+    Email: 'a@example.com', '有効期限': '2026-10-05',
+  };
+  assert.equal(isPaidPremiumMonthly({ ...base, PaymentMethod: 'Stripe' }).reason, 'stripe_auto_renew');
+  assert.equal(isPaidPremiumMonthly({ ...base, PaymentMethod: 'Bank Transfer' }).ok, true);
 });
