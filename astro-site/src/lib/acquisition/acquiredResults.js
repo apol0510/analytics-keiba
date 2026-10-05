@@ -81,7 +81,8 @@ export function buildResultIndex({ umatan = [], sanrenpuku = [] } = {}) {
 
 /**
  * 取得記録 1 件の結果
- * @returns {{ status: 'hit'|'miss'|'pending'|'none', betType?: string, combination?: string, payout?: number|null }}
+ * @returns {{ status: 'hit'|'miss'|'pending'|'none', betType?: string, combination?: string, payout?: number|null, order?: number[] }}
+ * order = [1着, 2着, 3着]（着順が分かったときだけ。3着は無いことがある）
  */
 export function judgeAcquired({ entry, content, index }) {
   if (!entry || !content) return { status: 'pending' };
@@ -93,16 +94,17 @@ export function judgeAcquired({ entry, content, index }) {
     const top3 = [res.first, res.second, res.third];
     const hit = lines.some((l) => sanrenpukuLineHits(l, top3));
     return hit
-      ? { status: 'hit', betType: '三連複', combination: top3.slice().sort((a, b) => a - b).join('-'), payout: res.sanrenpukuPayout ?? null }
-      : { status: 'miss', betType: '三連複' };
+      ? { status: 'hit', betType: '三連複', combination: top3.slice().sort((a, b) => a - b).join('-'), payout: res.sanrenpukuPayout ?? null, order: top3 }
+      : { status: 'miss', betType: '三連複', order: top3 };
   }
   const lines = [...(content.umatan?.normal || []), content.umatan?.narrowed].filter((l) => l && l.line).map((l) => l.line);
   if (!lines.length) return { status: 'none', betType: '馬単' };
   if (!res) return { status: 'pending', betType: '馬単' };
   const hit = lines.some((l) => umatanLineHits(l, res.first, res.second));
+  const order = [res.first, res.second, res.third].filter(Boolean);
   return hit
-    ? { status: 'hit', betType: '馬単', combination: `${res.first}→${res.second}`, payout: res.umatanPayout ?? null }
-    : { status: 'miss', betType: '馬単' };
+    ? { status: 'hit', betType: '馬単', combination: `${res.first}→${res.second}`, payout: res.umatanPayout ?? null, order }
+    : { status: 'miss', betType: '馬単', order };
 }
 
 // 実行時の索引（デプロイ単位でしか変わらないので、温まった関数の中ではメモリに持つ）

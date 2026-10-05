@@ -676,12 +676,12 @@ test('結果: 取得時点の買い目×アーカイブ着順で 的中／不的
   });
   const e = (product, venueName, raceNumber) => ({ product, date: '2026-10-04', venueName, raceNumber });
   const um = (lines, narrowed) => ({ umatan: { normal: lines.map((line) => ({ line })), narrowed: narrowed ? { line: narrowed } : null } });
-  assert.deepEqual(judgeAcquired({ entry: e('premium', '東京', 1), content: um(['3↔4.5.10.11.12']), index }), { status: 'hit', betType: '馬単', combination: '3→12', payout: 960 });
+  assert.deepEqual(judgeAcquired({ entry: e('premium', '東京', 1), content: um(['3↔4.5.10.11.12']), index }), { status: 'hit', betType: '馬単', combination: '3→12', payout: 960, order: [3, 12, 4] });
   assert.equal(judgeAcquired({ entry: e('premium', '東京', 1), content: um(['4↔5.6']), index }).status, 'miss');
   assert.equal(judgeAcquired({ entry: e('premium', '東京', 1), content: um(['4↔5.6'], '3↔12.5'), index }).status, 'hit', '絞った買い目で当たっても的中');
   assert.equal(judgeAcquired({ entry: e('premium', '東京', 9), content: um(['3↔12']), index }).status, 'pending', '着順が無い＝結果待ち');
   const srp = (normal, center) => ({ sanrenpuku: { normal: normal.map((line) => ({ line })), center: center ? { line: center } : null } });
-  assert.deepEqual(judgeAcquired({ entry: e('srp', '京都', 2), content: srp(['1 - 2.3 - 2.3.7']), index }), { status: 'hit', betType: '三連複', combination: '1-2-7', payout: 1410 });
+  assert.deepEqual(judgeAcquired({ entry: e('srp', '京都', 2), content: srp(['1 - 2.3 - 2.3.7']), index }), { status: 'hit', betType: '三連複', combination: '1-2-7', payout: 1410, order: [1, 2, 7] });
   assert.equal(judgeAcquired({ entry: e('srp', '京都', 2), content: srp(['5 - 2.3 - 2.3.7']), index }).status, 'miss');
   assert.equal(judgeAcquired({ entry: e('srp', '京都', 2), content: srp([]), index }).status, 'none', '買い目が無い（見送り等）は結果を出さない');
 });
@@ -732,4 +732,21 @@ test('取得履歴ページ: 各予想に結果・成績サマリー・日付ご
   assert.doesNotMatch(h, /回収率|払戻合計/, '会員ごとに買い方が違うので合計・回収率は出さない');
   const panel = read('src/components/acquisition/AcquisitionUsagePanel.astro');
   assert.match(panel, /\{usage && variant !== 'stats' && \(/);
+});
+
+test('取得済み予想の画面: レース結果（着順は金銀銅・緑=的中・金=払戻・赤=不的中・黄=結果待ち）と当たった買い目の行（2026-10-05 MK）', () => {
+  const v = read('src/pages/predictions/view.astro');
+  assert.match(v, /judgeAcquired\(\{ entry: v\.entry, content: c, index: loadResultIndex\(\) \}\)/, '取得時点の買い目で判定');
+  assert.match(v, /result && result\.status !== 'none' &&/, '買い目が無いものは結果を出さない');
+  assert.match(v, /class=\{`ag-num rk rk-\$\{i \+ 1\}`\}/, '着順は着順色');
+  assert.match(v, /<AcquiredPredictionBody content=\{c\} pastUnavailable=\{pastUnavailable\} result=\{result\} \/>/);
+  const glass = [...v.matchAll(/class=\{?[`"]ag-glass[^`"]*[`"]/g)].map((m) => m[0]);
+  assert.ok(glass.length >= 4 && glass.every((c) => c.includes('ag-tint-blue')), `画面のガラス面は青の色付き: ${glass}`);
+  const b = read('src/components/acquisition/AcquiredPredictionBody.astro');
+  assert.match(b, /const umHit = \(line\) => !!\(order && order\.length >= 2 && umatanLineHits\(line, order\[0\], order\[1\]\)\)/);
+  assert.match(b, /\.bet-item\.is-hit-line \{ border-color: rgba\(74,222,128/);
+  for (const k of ['umatan-normal', 'umatan-narrowed', 'sanrenpuku-normal']) assert.match(b, new RegExp(`class="ag-glass ag-tint-blue acq-sec acq-bet" data-kind="${k}"`), k);
+  for (const k of ['acq-marks', 'acq-groups', 'acq-past']) assert.match(b, new RegExp(`class="ag-glass ag-tint-blue acq-sec ${k}"`), k);
+  assert.match(b, /\.acq-selection\.grade-A \{[^}]*background: linear-gradient/, '推奨度 A は色付き');
+  assert.match(b, /\.narrowed \{[^}]*background: linear-gradient\(155deg, rgba\(252,211,77/, '三連複 中心は金の色付き');
 });
