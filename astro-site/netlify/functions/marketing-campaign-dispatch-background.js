@@ -26,6 +26,9 @@
  * ⚠️ dryRun はこの経路を使わない（同期版で確認する）。
  */
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'marketing-campaign-dispatch-background' });
 import { runDispatch, resolveDispatchSecret } from './marketing-campaign-dispatch.js';
 // ⚠️ ゲート判定は**専用モジュールの単一源**を使う（同期版と同じ関数）
 import { isMarketingDispatchEnabled } from '../../src/lib/marketing/marketingDispatchGate.js';

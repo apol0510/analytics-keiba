@@ -1,3 +1,6 @@
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'send-newsletter-worker-background' });
 import { buildUnsubscribeUrl } from '../../src/lib/unsubscribe/listUnsubscribeHeaders.js';
 // Queue方式メルマガ配信システム - 送信ワーカー（Background Functions）
 // 専門家推奨修正版：10件バッチ更新 + LeaseId二重起動ガード

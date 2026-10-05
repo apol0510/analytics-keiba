@@ -54,13 +54,20 @@ function baseHeaders(event) {
   };
 }
 
+// Airtable SDK（node-fetch）経由の呼び出しは fetch の計測に乗らないため、回数だけを明示的に数える
+// （docs/AIRTABLE_CAPACITY.md「API 呼び出しの計測」）。失敗しても本処理は止めない。
+function meterAirtable(n = 1) {
+  return import('../../src/lib/ops/airtableCallMeter.js')
+    .then((m) => m.countAirtableCalls('refresh-session', n)).catch(() => false);
+}
+
 // Airtable recordId で 1 件取得。
 //   { ok:true, record:{id,fields} }  … 取得成功
 //   { ok:true, record:null }         … 明確に存在しない（退会後の削除等）→ 認可拒否
 //   { ok:false }                     … 障害（延長も削除もしない）
 async function findCustomerById(base, recordId) {
   try {
-    const rec = await base('Customers').find(recordId);
+    const [rec] = await Promise.all([base('Customers').find(recordId), meterAirtable(1)]);
     return { ok: true, record: { id: rec.id, fields: rec.fields || {} } };
   } catch (err) {
     const notFound =

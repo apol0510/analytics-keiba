@@ -5,6 +5,9 @@
  *   POST {action:'report'}   … 送った周期ごとの 更新率・復帰率
  * 認可: x-admin-secret（admin-marketing と同じ secret）。アドレスは返さない。
  */
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'admin-premium-renewal' });
 import { runPremiumRenewal, MODE, resolveMode } from '../../src/lib/marketing/premiumRenewal/premiumRenewalRunner.js';
 import { loadPremiumRenewalReportData, summarizePremiumRenewalOutcomes } from '../../src/lib/marketing/premiumRenewal/premiumRenewalReport.js';
 

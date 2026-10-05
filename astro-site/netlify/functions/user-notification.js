@@ -8,6 +8,9 @@
 //   - SendGrid 失敗時のレスポンスに API エラー本文を含めるよう変更（呼び出し側がログで原因確認可能）
 //   - ブランドを KEIBA Analytics に更新
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'user-notification' });
 export default async function handler(request, context) {
   // CORSヘッダー
   const headers = {

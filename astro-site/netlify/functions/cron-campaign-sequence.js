@@ -36,6 +36,9 @@
  * Customers 全件走査（14,000 件超・Function がタイムアウトする）を**構造的に避ける**。
  */
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'cron-campaign-sequence' });
 import {
   buildCampaignPlan, buildDeliveryRecords, chunkRecipients,
   computeCampaignContentHash, assertOnlyDeliveryFields, computeCampaignDeliveryKey,
@@ -1985,7 +1988,7 @@ export function resolveTickCampaignIds(env = process.env) {
 export const SEQUENCE_TICK_LOCK_ID = 'tick:campaign-sequence';
 /**
  * tick 鍵の寿命。
- * この Function の実行時間より十分長く、**次の tick（10 分）より短く**する。
+ * この Function の実行時間より十分長く、**次の tick（30 分）より短く**する。
  * 長すぎると落ちたときに次の tick まで再開できない。
  */
 export const SEQUENCE_TICK_LOCK_TTL_SEC = 240;
@@ -2100,13 +2103,15 @@ export default async function handler() {
 }
 
 /**
- * **10 分ごと**。ゲートが閉じていれば即終了（副作用ゼロ）。
+ * **30 分ごと**。ゲートが閉じていれば即終了（副作用ゼロ）。
  *
- * ⚠️ **2026-08-26 MK 確定で 1 日 1 回から変更**。
+ * ⚠️ **2026-08-26 MK 確定で 1 日 1 回から 10 分ごとへ変更**。
  *    1 日 1 回・200 通では 15,000 名に 75 日かかり、実質動かなかった。
- *    10 分間隔 × 1 tick 500 通 = **3,000 通/時**で、同じ日のうちに配り切れる。
+ * ⚠️ **2026-10-05 に 30 分ごとへ**。1 tick ごとに台帳・EmailBlacklist・Customers を読むため、
+ *    10 分間隔では Airtable API（Team 月 100,000 回）を単独で押し上げていた。
+ *    大量配信は SendGrid MC へ移っており、30 分 × 1 tick 500 通 = 1,000 通/時でも同じ日に配り切れる。
  * ⚠️ 送る相手が居なければ 1 件も書かずに終わる（`no_due`）。空振りは無害。
  */
 export const config = {
-  schedule: '*/10 * * * *',
+  schedule: '*/30 * * * *',
 };

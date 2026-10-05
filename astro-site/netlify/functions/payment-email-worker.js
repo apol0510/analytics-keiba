@@ -9,6 +9,9 @@
  * - まだ何からも呼ばれない（Scheduled/Automation 未配線）。cutover S7 で配線する。
  */
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'payment-email-worker' });
 import { runWorkerOnce } from '../../src/lib/payments/paymentEmailWorker.js';
 import { parseGatesFromEnv, validateEmailGates } from '../../src/lib/payments/paymentEmailState.js';
 import { makeWorkerDeps } from '../../src/lib/payments/paymentEmailDeps.js';

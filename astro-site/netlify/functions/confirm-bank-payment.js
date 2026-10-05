@@ -27,6 +27,9 @@
  * 判定ロジックの単一源: src/lib/payments/bankPaymentFlow.js
  */
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'confirm-bank-payment' });
 import { SUPPORT_EMAIL, ADMIN_EMAIL } from './config/email-config.js';
 import { resolveVerifiedSender } from '../../src/lib/payments/senderIdentity.js';
 import { buildConfirmationFields } from '../../src/lib/payments/bankPaymentFlow.js';

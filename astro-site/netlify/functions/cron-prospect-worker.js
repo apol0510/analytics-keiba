@@ -20,6 +20,9 @@
  * ⚠️ この Function は**メールを送らない**。
  */
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'cron-prospect-worker' });
 import { createProspectStore } from '../../src/lib/marketing/prospectStore.js';
 import { planPromotions } from '../../src/lib/marketing/prospectPipeline.js';
 import {

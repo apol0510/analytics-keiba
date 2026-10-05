@@ -7,6 +7,61 @@
 
 ---
 
+## 2026-10-05 再発対策（正本・最新）
+
+### 実測（2026-10-05・read-only）
+
+| table | 件数 | 内訳 |
+|---|---:|---|
+| CampaignDeliveries | 39,920 | **23,440 行が 8/27 に Customers から削除済みの人（prospect へ移行）宛て**（全て `sent`・全て 2026-08 作成）。残る 16,480 行が現役の Customers 宛て |
+| ScheduledEmails | 5,235 | **4,360 行が `CANCELLED`**（2026-09-14 の過剰 enqueue の取消分・未送信） |
+| Customers | 4,078 | |
+| その他 9 table | 1,624 | AuthTokens 635 / EmailBlacklist 472 / StepEnrollments 415 ほか |
+| **合計** | **50,857** | |
+
+**増加は止まっている**: CampaignDeliveries の作成は 2026-08 に 34,595 行 → 9 月 5,251 行 → 10 月 3 行。
+超過は「今も増えている」からではなく、**8 月に積んだ行を一度も消していない**から。
+
+### なぜ過去の対策が恒久にならなかったか
+
+1. **CampaignDeliveries は 1 行も消していない。** 8/10 に `dual`（Airtable と Redis の両方へ書く）へ
+   進んだあと、`redis` への切替と古い行の退避（§6 手順 7）が未着手のまま止まった。
+   Customers 側の配信は `campaign_delivery_id`（= Airtable の recordId）を必須にしているため、
+   切替には配信系の作り替えが要り、手が付かなかった。
+2. **8/27 の Customers 削除（11,955 名）で、その人たち宛ての配信行 23,440 行が宙に浮いた。**
+   送信履歴の正本は prospect レコード（Redis）へ移ったのに、Airtable 側の行は残った。
+3. **ScheduledEmails の取消は「状態を変えただけ」。** 9/14 の過剰 enqueue で積まれた 4,360 行が
+   `CANCELLED` のまま残った（保持期間の表 §retention は実装されていない）。
+4. **API 呼び出しは計測が無かった。** 8/27 に `cron-marketing-rollout` だけを直した（8,372,540 回/月）が、
+   他の処理の回数は誰も数えておらず、推測で削っては再発していた。
+
+### 対策
+
+| # | 内容 | 状態 |
+|---|---|---|
+| 1 | **API 呼び出しの計測**（`src/lib/ops/airtableCallMeter.js`）: 全 Function と SSR で `api.airtable.com` への呼び出しを Function 別・日別に Redis へ数える。SDK 経由（ログイン系 4 本）は明示的に数える。読み出しは `admin-payment-funnel` の `airtableUsage` | 本 PR |
+| 2 | **EmailBlacklist の共有キャッシュ**（Redis 10 分・読めた結果だけ）。送信系 cron が campaign ごと・tick ごとに全件読んでいた。webhook が書き換えたら即時に捨てる | 本 PR |
+| 3 | `cron-campaign-sequence` を 10 分 → **30 分**（1 tick 500 名 × 48 回/日で配り切れる） | 本 PR |
+| 4 | Plus 管理画面の自動更新を 90 秒 → **10 分**（開きっぱなしで 1 時間に数百回呼んでいた） | 本 PR |
+| 5 | **毎日の見張り** `.github/workflows/airtable-capacity-watch.yml`: API の月末見込みが 90,000 回超、または（毎週月曜）レコードが 45,000 件超で job を赤にして Issue | 本 PR |
+| 6 | **CampaignDeliveries の宙に浮いた 23,394 行を退避して削除**（下記） | **MK の実行待ち** |
+
+### 6. 宙に浮いた配信行の削除（MK の実行待ち）
+
+- 対象: `CustomerRecordId` が現在の Customers に無い行のうち、宛先メールが現役の Customers と
+  一致しない **23,394 行**（一致した 46 行は残す）。全て `sent`・全て 2026-08 作成・campaign は
+  `campaign-discount-free:v1`（終了済み）と `dormant-reactivation:v2`（1 回きり）。
+- 退避: 全 39,920 行の全フィールドを `~/.analytics-keiba-ops/airtable-capacity-2026-10-05/`
+  （運営者端末・権限 600）に保存済み。削除対象 ID は `cd_delete_ids.json`。
+- 消しても困らない理由: その人たちの送信履歴の正本は prospect レコード（Redis）。DeliveryKey は
+  Redis にも二重書きされている。どちらの campaign も再送しない。Customers 側の読み手
+  （進行・反応なし除外・Plus 案内済み・DRM）は現役の Customers の recordId / メールで引くので当たらない。
+- 削除後: 50,857 → **約 27,463 件**。
+- rollback: 退避ファイルから書ける型のフィールドだけで作り直す（`CreatedAt` / `UpdatedAt` は作成時刻になる）。
+- ⚠️ Claude Code の安全機構が大量削除を止めたため、**実行は MK が行う**（1 コマンド）。
+
+---
+
 ## 0. 再測定（2026-08-27 実測 / 全 13 table）— **まだ超過している**
 
 | table | 件数 | 2026-08-09 比 |

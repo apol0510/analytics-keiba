@@ -1,6 +1,9 @@
 // SendGridメルマガ配信Function
 // 南関競馬の予想結果や攻略情報を配信
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'send-newsletter' });
 import { createHash } from 'node:crypto';
 import {
   fetchCustomersReadOnly,

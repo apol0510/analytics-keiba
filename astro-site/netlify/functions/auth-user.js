@@ -38,6 +38,13 @@ async function markLastLogin({ base, recordId, fields }) {
   return result;
 }
 
+// Airtable SDK（node-fetch）経由の呼び出しは fetch の計測に乗らないため、回数だけを明示的に数える
+// （docs/AIRTABLE_CAPACITY.md「API 呼び出しの計測」）。失敗しても本処理は止めない。
+function meterAirtable(n = 1) {
+  return import('../../src/lib/ops/airtableCallMeter.js')
+    .then((m) => m.countAirtableCalls('auth-user', n)).catch(() => false);
+}
+
 exports.handler = async (event) => {
   const request = { method: event.httpMethod };
   const headers = {
@@ -76,7 +83,10 @@ exports.handler = async (event) => {
     // Email 完全一致（LOWER(TRIM()) で大小・空白差を吸収）
     const escapedEmail = email.replace(/'/g, "\\'");
     const emailFilter = `LOWER(TRIM({Email})) = '${escapedEmail}'`;
-    const records = await base('Customers').select({ filterByFormula: emailFilter, maxRecords: 5 }).firstPage();
+    const [records] = await Promise.all([
+      base('Customers').select({ filterByFormula: emailFilter, maxRecords: 5 }).firstPage(),
+      meterAirtable(1),
+    ]);
 
     console.log(`🔍 [auth-user] Email hits: ${records.length} (email=${email})`);
 

@@ -13,6 +13,9 @@
  *   5. セッションを破棄する（本人性の根拠が変わったので入り直してもらう）
  */
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'confirm-email-change' });
 import {
   normalizeEmail, EMAIL_CHANGE_REJECT, EMAIL_CHANGE_MESSAGE,
 } from '../../src/lib/auth/emailChange.js';

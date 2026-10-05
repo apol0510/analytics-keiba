@@ -8,6 +8,9 @@
 // SentCount・CompletedAt 記録 / brand付き配信停止URL / List-Unsubscribe ヘッダーは不変。
 // 呼び出し元 cron-email-scheduler.js は本関数を 202 即返しで起動する（結果は Airtable で監視）。
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'execute-scheduled-emails-background' });
 import {
   fetchCustomersReadOnly,
   loadBlacklistEmails,

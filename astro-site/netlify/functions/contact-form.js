@@ -2,6 +2,9 @@
 // 2026-08-31: 管理者宛先・返信先・送信元を単一源 config/email-config.js へ統一
 //   （旧サイト名残の Gmail アドレスのハードコードを撤去）
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'contact-form' });
 import { SUPPORT_EMAIL, ADMIN_EMAIL } from './config/email-config.js';
 import { formatJst } from '../../src/lib/datetime/jstTimestamp.js';
 

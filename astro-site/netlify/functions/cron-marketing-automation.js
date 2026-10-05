@@ -17,6 +17,9 @@
  *   Airtable  … 送信の事実（ScheduledEmails / CampaignDeliveries / EmailEvents）
  */
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'cron-marketing-automation' });
 import {
   createAutomationStore, AUTO_ROOT, AutomationStoreError,
 } from '../../src/lib/marketing/automationStore.js';

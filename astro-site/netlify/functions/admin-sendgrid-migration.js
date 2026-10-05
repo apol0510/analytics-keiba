@@ -30,6 +30,9 @@
  * ⚠️ ゲートが閉じているときは **SendGrid へ 1 リクエストも出さない**。
  */
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'admin-sendgrid-migration' });
 import { createProspectStore, emailHash } from '../../src/lib/marketing/prospectStore.js';
 import { createDeliveryKeyStore } from '../../src/lib/marketing/deliveryKeyStore.js';
 import { getBrandConfig } from '../../src/lib/newsletter/brand-config.js';

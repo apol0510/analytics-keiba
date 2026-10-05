@@ -1,4 +1,7 @@
 // デイリーポイント付与Function（ESModule版）
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'daily-points' });
 import Airtable from 'airtable';
 
 export const handler = async (event, context) => {

@@ -15,6 +15,9 @@
  *      NETLIFY_SITE_ID / NETLIFY_AUTH_TOKEN（ローカル netlify dev のみ）
  */
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'premium-plus-media' });
 import { getStore, connectLambda } from '@netlify/blobs';
 import { handleMediaGet, handleMediaPost } from '../../src/lib/premiumPlus/mediaHandlers.js';
 import { resolvePremiumPlusStoreName } from '../../src/lib/premiumPlus/storeSelection.js';

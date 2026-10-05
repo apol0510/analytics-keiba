@@ -9,6 +9,9 @@
  *   4. PaymentEmailSent を true に更新
  */
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'send-payment-confirmation-auto' });
 import { SUPPORT_EMAIL } from './config/email-config.js';
 import { resolveVerifiedSender } from '../../src/lib/payments/senderIdentity.js';
 

@@ -1,0 +1,56 @@
+name: Airtable 上限の見張り（API 呼び出し・レコード数）
+
+# Team プランの上限（API 月 100,000 回 / レコード 50,000 件）を超えてから気づく事故が
+# 2026-08 と 2026-10 に起きた。毎日 API 呼び出しの月末見込みを、毎週月曜はレコード数も数え、
+# 閾値（API 見込み 90,000 回 / レコード 45,000 件）を超えたら job を赤にして Issue を立てる。
+# 読むだけ（本番データ・送信には触れない）。詳細は astro-site/docs/AIRTABLE_CAPACITY.md。
+
+on:
+  schedule:
+    - cron: '30 0 * * *'   # 毎日 09:30 JST
+  workflow_dispatch:
+    inputs:
+      records:
+        description: 'レコード数も数える（約 500 回の API 呼び出し）'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: airtable-capacity-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PAYMENT_FUNNEL_READ_SECRET: ${{ secrets.PAYMENT_FUNNEL_READ_SECRET }}
+      AIRTABLE_READONLY_TOKEN: ${{ secrets.AIRTABLE_READONLY_TOKEN }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - name: 見張る
+        id: watch
+        working-directory: astro-site
+        run: |
+          set +e
+          FLAG=""
+          if [ "$(date -u +%u)" = "1" ] || [ "${{ inputs.records }}" = "true" ]; then FLAG="--records"; fi
+          node scripts/airtable-capacity-watch.mjs $FLAG | tee ../watch.txt
+          echo "code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+      - name: 結果を Issue に残す（警告・超過・測れないとき）
+        if: steps.watch.outputs.code != '0'
+        run: |
+          gh label create airtable-capacity --color B60205 --description 'Airtable 上限の見張り' --force
+          TITLE="[Airtable 上限] $(date -u -d '+9 hours' +%Y-%m-%d) code=${{ steps.watch.outputs.code }}"
+          { echo '```'; cat watch.txt; echo '```'; echo; echo '対処の手順: astro-site/docs/AIRTABLE_CAPACITY.md「2026-10-05 再発対策」'; } > body.md
+          gh issue create --title "$TITLE" --label airtable-capacity --body-file body.md
+      - name: 赤にする（警告以外）
+        if: steps.watch.outputs.code == '2' || steps.watch.outputs.code == '3'
+        run: exit 1

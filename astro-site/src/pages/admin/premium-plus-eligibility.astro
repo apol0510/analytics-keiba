@@ -4147,8 +4147,10 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
      *   - 詳細・操作パネルを開いている間は止める（操作中に足元を変えない）
      *   - 管理シークレット未入力なら動かさない（無駄な 403 を作らない）
      *   - 実行中は重ねない
+     *   - 間隔は 10 分（2026-10-05: 90 秒だと開きっぱなしで 1 時間に数百回 Airtable を呼び、
+     *     月 100,000 回の API 上限を押し上げていた。今すぐ見たいときは「再読み込み」ボタン）
      */
-    const AUTO_REFRESH_MS = 90000;
+    const AUTO_REFRESH_MS = 600000;
     let autoTimer = null;
     let autoBusy = false;
     function autoRefreshTick() {

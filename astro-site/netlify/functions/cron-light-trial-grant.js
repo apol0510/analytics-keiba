@@ -36,6 +36,9 @@
  *    メールも、キューの行（ScheduledEmails / CampaignDeliveries）も**一切作らない**。
  */
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'cron-light-trial-grant' });
 import {
   readAutoGrantGates, summarizeAutoGrantRun,
   AUTOGRANT_ABORT, AUTOGRANT_SKIP_LABEL, HARD_MAX_BATCH_SIZE,

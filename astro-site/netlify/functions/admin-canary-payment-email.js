@@ -18,6 +18,9 @@
  * - 1 回だけ（worker が attempt 上限・lease で多重を抑止）
  */
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'admin-canary-payment-email' });
 import { runWorkerOnce } from '../../src/lib/payments/paymentEmailWorker.js';
 import { makeCanaryWorkerDeps } from '../../src/lib/payments/paymentEmailDeps.js';
 import { authorizeCanaryAccess, matchCanaryRecordId } from '../../src/lib/payments/canaryAuth.js';
