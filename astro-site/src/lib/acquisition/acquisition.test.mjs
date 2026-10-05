@@ -605,3 +605,11 @@ test('絞った馬単買い目は通常の買い目と同じ配色（金色の�
   assert.ok(!/\bnarrowed\b/.test(open), 'カードに narrowed（金色枠）クラスが残っている');
   assert.ok(!/\bgold\b/.test(m[0]), 'カード内に gold ピルが残っている');
 });
+
+test('レースカードは乳白色を弱める（白の塗りを薄く／2026-10-05 MK）', () => {
+  const list = read('src/components/acquisition/AcquisitionRaceList.astro');
+  const m = list.match(/\.acq-race\.ag-glass \{ background: ([^;]*);/);
+  assert.ok(m, 'レースカード専用の背景指定がない');
+  const alphas = [...m[1].matchAll(/rgba\(\d+, \d+, \d+, (0\.\d+)\)/g)].map((x) => Number(x[1]));
+  assert.ok(alphas.length >= 2 && Math.max(...alphas) <= 0.1, `塗りの不透明度が高い: ${alphas}`);
+});
