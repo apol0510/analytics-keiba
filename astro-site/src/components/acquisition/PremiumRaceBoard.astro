@@ -35,7 +35,7 @@ const VENUE_LEAD = { all: '中央・南関のレース', jra: '中央競馬の�
       <section class="ag-glass preview-banner" aria-label="Premiumを体験">
         <span class="ag-pill violet">PREVIEW</span>
         <h2>Premiumを体験</h2>
-        <p>Premiumではこの画面から、気になるレースの予想を 1 件ずつ取得できます。月額の範囲でいくつでも取得でき、取得した予想はいつでも見返せます。</p>
+        <p>Premiumではこの画面から、気になるレースの予想を 1 件ずつ取得できます。月額料金だけで、何レースでも取得し放題。取得した予想はいつでも見返せます。</p>
         <a class="ag-cta ag-cta-premium preview-banner-cta" href="/pricing/">Premiumのプランを見る</a>
       </section>
     ) : (
@@ -43,7 +43,7 @@ const VENUE_LEAD = { all: '中央・南関のレース', jra: '中央競馬の�
     )}
     <AcquisitionVenueTabs active={venue} mode={mode} />
     <Heading class="acq-heading">予想を取得</Heading>
-    <p class="acq-lead">{VENUE_LEAD[venue]}から、気になる予想を 1 件ずつ取得できます。{isPreview ? '下のカードは Premium と同じ画面です。' : '月額の範囲でいくつでも取得でき、取得した予想はいつでも見返せます。'}</p>
+    <p class="acq-lead">{VENUE_LEAD[venue]}から、気になる予想を 1 件ずつ取得できます。{isPreview ? '下のカードは Premium と同じ画面です。' : '月額料金だけで、何レースでも取得し放題。取得した予想はいつでも見返せます。'}</p>
     <AcquisitionRaceList product="premium" mode={mode} basePath={basePath} date={model.date} dates={model.dates} venues={model.venues} canAcquire={canAcquire} acquiredUnknown={acquiredUnknown} />
   </div>
   {isPreview ? (
