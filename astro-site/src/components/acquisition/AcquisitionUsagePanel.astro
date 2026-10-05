@@ -5,12 +5,13 @@
  *
  * 2026-10-03 MK 確定（mobile-first・docs/PREDICTION_ACQUISITION.md §2-2）:
  *   variant="mini" … スマホで一覧の上に出す 1 行の小型サマリー（PC では出さない）
+ *   variant="stats" … 今月の活用状況だけ（取得履歴ページの右カラム。一覧と重複する「直近5件」を出さない）
  *   variant="side" … PC の右カラム（今月の活用状況＋最近取得した予想）。
  *                    スマホでは統計を出さず、最近取得した予想だけを一覧の下で折りたたむ
  */
 import '../../styles/acquisitionGlass.css';
 import { viewUrlFor } from '../../lib/acquisition/acquisitionServer.js';
-interface Props { usage: any | null; variant?: 'mini' | 'side' | 'full'; results?: Record<string, any> | null }
+interface Props { usage: any | null; variant?: 'mini' | 'side' | 'full' | 'stats'; results?: Record<string, any> | null }
 const { usage, variant = 'full', results = null } = Astro.props;
 const jst = (iso: string) => { const t = new Date(Date.parse(iso) + 9 * 3600e3); return `${t.getUTCMonth() + 1}/${t.getUTCDate()} ${String(t.getUTCHours()).padStart(2, '0')}:${String(t.getUTCMinutes()).padStart(2, '0')}`; };
 const productLabel = { premium: 'Premium', srp: '三連複 選別' };
@@ -51,7 +52,7 @@ const resultOf = (key) => (results && results[key]) || null;
         <p class="acq-usage-unknown">活用状況を確認できませんでした。</p>
       )}
     </div>
-    {usage && (
+    {usage && variant !== 'stats' && (
       <>
         <div class="ag-glass ag-tint-blue acq-usage-card acq-usage-recent-wide">
           <h2>取得済みの予想（直近{usage.recent.length}件）<a href="/predictions/history/">すべて見る</a></h2>
