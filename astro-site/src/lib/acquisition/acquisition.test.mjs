@@ -613,3 +613,11 @@ test('レースカードは乳白色を弱める（白の塗りを薄く／2026-
   const alphas = [...m[1].matchAll(/rgba\(\d+, \d+, \d+, (0\.\d+)\)/g)].map((x) => Number(x[1]));
   assert.ok(alphas.length >= 2 && Math.max(...alphas) <= 0.1, `塗りの不透明度が高い: ${alphas}`);
 });
+
+test('レースカードの枠線・上辺反射は白くしない（2026-10-05 MK）', () => {
+  const list = read('src/components/acquisition/AcquisitionRaceList.astro');
+  assert.match(list, /\.acq-race\.ag-glass \{ border-color: rgba\(165, 180, 252, 0\.2\d\)/, '枠は青紫寄りの控えめな線');
+  assert.match(list, /\.acq-race\.ag-glass::before \{ background: linear-gradient\(90deg, transparent, rgba\(199, 210, 254, 0\.3\d\)/, '上辺の反射を弱める');
+  const shadow = (list.match(/\.acq-race\.ag-glass \{ border-color[^}]*box-shadow: ([^;]*);/) || [])[1] || '';
+  assert.ok(shadow && !/rgba\(255, 255, 255/.test(shadow), '内側の白ハイライトを使わない');
+});
