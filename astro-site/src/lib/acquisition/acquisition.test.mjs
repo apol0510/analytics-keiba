@@ -760,3 +760,10 @@ test('取得済み予想の画面: レース結果（着順は金銀銅・緑=�
   assert.match(b, /\.acq-selection\.grade-A \{[^}]*background: linear-gradient/, '推奨度 A は色付き');
   assert.match(b, /\.narrowed \{[^}]*background: linear-gradient\(155deg, rgba\(252,211,77/, '三連複 中心は金の色付き');
 });
+
+test('取得の説明は「制限があるように見える」言い方をしない（月額の範囲で→追加料金なし・取得し放題／2026-10-05 MK）', () => {
+  for (const f of ['src/components/acquisition/PremiumRaceBoard.astro', 'src/components/acquisition/AcquisitionValuePanel.astro', 'src/pages/pricing.astro']) {
+    assert.doesNotMatch(read(f), /月額の範囲/, f);
+  }
+  assert.match(read('src/components/acquisition/PremiumRaceBoard.astro'), /何レースでも取得し放題/);
+});

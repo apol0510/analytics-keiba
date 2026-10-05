@@ -30,7 +30,7 @@ const m = v?.month;
           <p class="acq-today-num"><strong data-value="today-acquired">{t.acquired}</strong><span>/{t.available}レース</span><em data-value="today-pct">{t.pct}%</em></p>
         ) : <p class="acq-today-num"><span>本日 {t.available}レース</span></p>}
         <div class="acq-bar" role="img" aria-label={`本日の対象 ${t.available}レース中 ${t.acquired ?? 0}レースを活用`}><span style={`width:${Math.max(t.pct ?? 0, 3)}%`}></span></div>
-        <p class="acq-today-note">本日は{Object.entries(t.byCat).filter(([, n]) => n > 0).map(([c, n]) => `${CAT[c]} ${n}`).join('・')}レースの予想を、月額の範囲でいくつでも取得できます。</p>
+        <p class="acq-today-note">本日は{Object.entries(t.byCat).filter(([, n]) => n > 0).map(([c, n]) => `${CAT[c]} ${n}`).join('・')}レースの予想を、追加料金なしで何レースでも取得できます。</p>
       </>
     ) : (
       <div class="acq-today-head"><h2>本日の使用状況</h2><span class="acq-today-date">{t ? md(t.date) : ''}</span></div>
@@ -75,7 +75,7 @@ const m = v?.month;
               )}
             </div>
           )}
-          <p class="acq-month-copy">{m.count > 0 ? '今月ここまで活用中。使うほど 1 レースあたりの実質額が下がります。' : '月額の範囲で、気になるレースの予想をいくつでも取得できます。'}</p>
+          <p class="acq-month-copy">{m.count > 0 ? '今月ここまで活用中。使うほど 1 レースあたりの実質額が下がります。' : '追加料金なしで、気になるレースの予想を何レースでも取得できます。'}</p>
         </>
       ) : <p class="acq-month-copy">活用状況を確認できませんでした。</p>}
       <a class="acq-month-history" href="/predictions/history/">取得済みの予想（いつでも見返せます）›</a>
