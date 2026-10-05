@@ -346,7 +346,7 @@ test('mobile-first・全画面ガラス統一（2026-10-03 MK 追加確定）', 
     assert.match(src, /acquisitionGlass\.css/, name);
   }
   assert.match(list, /class=\{`ag-glass acq-race/);
-  assert.match(list, /class="ag-cta acq-btn"/);
+  assert.match(list, /class="ag-cta acq-btn acq-btn-compact"/);
   assert.match(list, /class="ag-done"/);
   // スマホ: 本日の活用状況を一覧の最上部、今月の活用状況は一覧の下（PC は右カラム）
   for (const p of ['src/components/acquisition/PremiumRaceBoard.astro', 'src/pages/premium-sanrenpuku.astro', 'src/pages/premium-sanrenpuku-jra.astro']) {
@@ -505,7 +505,7 @@ test('Preview と Premium の画面は同じ部品（違いは mode・CTA・権�
   assert.match(list, /mode\?: 'premium' \| 'preview'/);
   // CTA は同じ位置（同じ acq-race-cta の中）・同じボタン部品（ag-cta acq-btn）
   const cta = list.slice(list.indexOf('<div class="acq-race-cta">'), list.indexOf('</article>'));
-  assert.match(cta, /isPreview \? \([\s\S]*class="ag-cta acq-btn acq-btn-preview" href="\/pricing\/"[\s\S]*\) : r\.acquired \? \([\s\S]*class="ag-cta acq-btn"/);
+  assert.match(cta, /isPreview \? \([\s\S]*class="ag-cta acq-btn acq-btn-preview acq-btn-compact" href="\/pricing\/"[\s\S]*\) : r\.acquired \? \([\s\S]*class="ag-cta acq-btn acq-btn-compact"/);
   // Preview は公開ページ（会員判定・Cookie を使わない）。Premium は認可あり
   for (const p of ['src/pages/free-prediction/jra.astro', 'src/pages/free-prediction/nankan.astro', 'src/pages/free-prediction/all.astro', 'src/pages/free-prediction/view.astro']) {
     const s = read(p);
@@ -551,7 +551,7 @@ test('Premium 導線 CTA は同じスタイル（明るい紫）・通常の取�
     for (const t of tags) { assert.match(t, /class="ag-cta[ "]/, `${f}: ${t}`); assert.doesNotMatch(t, /ag-cta-premium/, `${f}: Preview は紫にしない: ${t}`); }
   }
   // 通常の取得 CTA は Premium 色にしない
-  assert.match(read('src/components/acquisition/AcquisitionRaceList.astro'), /<button type="submit" class="ag-cta acq-btn">/);
+  assert.match(read('src/components/acquisition/AcquisitionRaceList.astro'), /<button type="submit" class="ag-cta acq-btn acq-btn-compact">/);
 });
 
 
@@ -796,7 +796,8 @@ test('ガラス面は必ず色付き（ag-tint-blue/violet/gold）か専用の�
   assert.deepEqual(bad, []);
 });
 
-test('体験一覧の Premium 導線ボタンは小さく（幅いっぱい・52px にしない／2026-10-06 MK）', () => {
+test('一覧の取得ボタン（体験・会員とも）は小さく（幅いっぱい・大きくしない／2026-10-06 MK）', () => {
   const list = read('src/components/acquisition/AcquisitionRaceList.astro');
-  assert.match(list, /\.acq-race-cta \.acq-btn-preview \{ width: auto;[^}]*min-height: 38px;[^}]*font-size: 0\.86rem;/);
+  assert.match(list, /\.acq-race-cta \.acq-btn-compact \{ width: auto;[^}]*min-height: 38px;[^}]*font-size: 0\.86rem;/);
+  assert.match(list, /<button type="submit" class="ag-cta acq-btn acq-btn-compact">/);
 });
