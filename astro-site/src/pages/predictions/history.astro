@@ -1,7 +1,13 @@
 ---
 /**
- * /predictions/history/ — 取得済みの予想（すべて）と今月の利用状況
+ * /predictions/history/ — 取得済みの予想（すべて）・結果・今月の利用状況
  * 本人（ak_session）の取得記録だけを読む。本文は出さない（各予想の閲覧ページで出す）。
+ *
+ * 2026-10-05 MK 確定（docs/PREDICTION_ACQUISITION.md §2-5）:
+ *   - 各予想に結果（的中／不的中／結果待ち）。判定は取得時点の買い目×結果アーカイブ（acquiredResults.js）
+ *   - 先頭に「取得した予想の成績」（結果が出たものだけを分母にした的中数・的中率・最高払戻）
+ *   - レース日ごとにまとめる。右カラムは今月の活用状況だけ（一覧と重複する直近 5 件は出さない）
+ *   - 色は正本 docs/GLASS_DESIGN_RULES.md（緑=的中・金=払戻・赤=不的中・黄=結果待ち・紫=Premium・金=三連複）
  */
 export const prerender = false;
 import BaseLayout from '../../layouts/BaseLayout.astro';
@@ -9,52 +15,139 @@ import SessionKeepAlive from '../../components/SessionKeepAlive.astro';
 import AcquisitionUsagePanel from '../../components/acquisition/AcquisitionUsagePanel.astro';
 import '../../styles/acquisitionGlass.css';
 import { gatePaidPage, PAID_PAGE_HEADERS } from '../../lib/auth/paidPageGate.js';
-import { ACQUISITION_DOOR_PLANS, loadMemberAcquisitions, viewUrlFor } from '../../lib/acquisition/acquisitionServer.js';
+import { ACQUISITION_DOOR_PLANS, loadMemberAcquisitions, loadAcquiredResults, viewUrlFor } from '../../lib/acquisition/acquisitionServer.js';
 import { summarizeUsage } from '../../lib/acquisition/usageStats.js';
+import { summarizeResults } from '../../lib/acquisition/acquiredResults.js';
 
 const gate = await gatePaidPage({ request: Astro.request, requiredPlan: ACQUISITION_DOOR_PLANS, env: process.env });
 if (gate.response) return gate.response;
 for (const [k, v] of Object.entries(PAID_PAGE_HEADERS)) Astro.response.headers.set(k, v);
 const list = await loadMemberAcquisitions({ recordId: gate.subject, env: process.env });
 const usage = list ? summarizeUsage(list) : null;
-const jst = (iso) => { const t = new Date(Date.parse(iso) + 9 * 3600e3); return `${t.getUTCFullYear()}/${t.getUTCMonth() + 1}/${t.getUTCDate()} ${String(t.getUTCHours()).padStart(2, '0')}:${String(t.getUTCMinutes()).padStart(2, '0')}`; };
+
+// 結果は新しい順に RESULT_LIMIT 件まで（本文スナップショットをまとめて読むため上限を置く）
+const RESULT_LIMIT = 60;
+const judged = list && list.length ? list.slice(0, RESULT_LIMIT) : [];
+const results = judged.length ? await loadAcquiredResults({ entries: judged, env: process.env }) : null;
+const stats = results ? summarizeResults(results) : null;
+const limited = !!list && list.length > RESULT_LIMIT;
+
+const WD = ['日', '月', '火', '水', '木', '金', '土'];
+const dayLabel = (ymd) => { const d = new Date(`${ymd}T00:00:00Z`); return `${d.getUTCMonth() + 1}/${d.getUTCDate()}(${WD[d.getUTCDay()]})`; };
+const jst = (iso) => { const t = new Date(Date.parse(iso) + 9 * 3600e3); return `${t.getUTCMonth() + 1}/${t.getUTCDate()} ${String(t.getUTCHours()).padStart(2, '0')}:${String(t.getUTCMinutes()).padStart(2, '0')}`; };
 const productLabel = { premium: 'Premium', srp: '三連複 選別' };
+const productTone = { premium: 'violet', srp: 'gold' };
+const yen = (n) => `¥${Number(n).toLocaleString('ja-JP')}`;
+
+// レース日（新しい順）→ その日の取得（レース番号順ではなく取得の新しい順のまま）
+const groups = [];
+for (const e of list || []) {
+  let g = groups.find((x) => x.date === e.date);
+  if (!g) { g = { date: e.date, items: [] }; groups.push(g); }
+  g.items.push(e);
+}
+groups.sort((a, b) => (a.date < b.date ? 1 : -1));
 ---
 <BaseLayout title="取得済みの予想" noindex>
   <SessionKeepAlive />
   <div class="ag-scene"><main class="acq-hist-page">
     <h1>取得済みの予想</h1>
+
+    {stats && stats.settled + stats.pending > 0 && (
+      <section class="ag-glass ag-tint-blue acq-hist-stats" aria-label="取得した予想の成績">
+        <h2>取得した予想の成績{limited ? `（新しい ${RESULT_LIMIT} 件）` : ''}</h2>
+        <div class="acq-hist-stat-grid">
+          <div class="ag-inset is-hit"><span>的中</span><strong data-stat="hits">{stats.hits}</strong><em>/ {stats.settled} 件</em></div>
+          <div class="ag-inset is-rate"><span>的中率</span><strong data-stat="hit-rate">{stats.hitRate == null ? '—' : stats.hitRate}</strong><em>{stats.hitRate == null ? '' : '%'}</em></div>
+          <div class="ag-inset is-pay"><span>最高払戻（100円あたり）</span><strong data-stat="max-payout">{stats.maxPayout ? yen(stats.maxPayout) : '—'}</strong></div>
+        </div>
+        <p class="acq-hist-note">結果が出た予想だけで数えています{stats.pending ? `（結果待ち ${stats.pending} 件は含みません）` : ''}。払戻は 100 円あたりの配当です。</p>
+      </section>
+    )}
+
     <div class="acq-hist-grid">
       <section>
         {list === null && <p class="acq-muted">取得済みの予想を確認できませんでした。時間をおいてもう一度お試しください。</p>}
         {list && list.length === 0 && <p class="acq-muted">まだ取得した予想はありません。</p>}
-        {list && list.length > 0 && (
-          <ul class="acq-hist">
-            {list.map((e) => (
-              <li><a class="ag-glass" href={viewUrlFor(e.key)}>
-                <span class="acq-hist-race">{e.date} {e.venueName} {e.raceNumber}R</span>
-                <span class="acq-hist-name">{e.raceName} <small>{productLabel[e.product] || ''}</small></span>
-                <span class="acq-hist-at">取得 {jst(e.at)}</span>
-              </a></li>
-            ))}
-          </ul>
-        )}
+        {groups.map((g) => (
+          <section class="acq-hist-day">
+            <h2 class="acq-hist-day-title">{dayLabel(g.date)}<small>{g.items.length} 件</small></h2>
+            <ul class="acq-hist">
+              {g.items.map((e) => { const r = results && results[e.key]; const st = r && r.status !== 'none' ? r.status : 'unknown'; return (
+                <li><a class={`ag-glass ag-tint-blue acq-hist-item is-${st}`} href={viewUrlFor(e.key)} data-result={st}>
+                  <span class="acq-hist-race">{e.venueName} {e.raceNumber}R <small class={`acq-prod ${productTone[e.product] || ''}`}>{productLabel[e.product] || ''}</small></span>
+                  <span class="acq-hist-name">{e.raceName}</span>
+                  <span class="acq-hist-at">取得 {jst(e.at)}</span>
+                  {r && r.status !== 'none' && (
+                    <span class={`acq-result is-${r.status}`}>
+                      {r.status === 'hit' ? <><b>✓ 的中</b><span>{`${r.betType} ${r.combination}`}</span>{r.payout ? <em>{yen(r.payout)}</em> : null}</>
+                        : r.status === 'miss' ? <b>不的中</b> : <b>結果待ち</b>}
+                    </span>
+                  )}
+                </a></li>
+              ); })}
+            </ul>
+          </section>
+        ))}
       </section>
-      <AcquisitionUsagePanel usage={usage} />
+      <AcquisitionUsagePanel usage={usage} variant="stats" />
     </div>
   </main></div>
 </BaseLayout>
 
 <style>
   .acq-hist-page { max-width: 1100px; margin: 0 auto; padding: 20px 14px 56px; }
-  .acq-hist-page h1 { margin: 0 0 14px; font-size: 1.5rem; }
+  .acq-hist-page h1 { margin: 0 0 14px; font-size: 1.5rem; color: #7cc4ff; }
   .acq-hist-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
   .acq-hist-grid > * { min-width: 0; }
+  .acq-muted { color: var(--ag-text-2); }
+
+  /* 成績サマリー（緑=的中・青=的中率・金=最高払戻） */
+  .acq-hist-stats { padding: 16px; margin-bottom: 16px; display: grid; gap: 10px; }
+  .acq-hist-stats h2 { margin: 0; font-size: 1rem; }
+  .acq-hist-stat-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  .acq-hist-stat-grid > div { padding: 10px 12px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; min-width: 0; }
+  .acq-hist-stat-grid span { flex-basis: 100%; font-size: 0.78rem; color: var(--ag-text-2); }
+  .acq-hist-stat-grid strong { font-size: 1.8rem; line-height: 1.1; }
+  .acq-hist-stat-grid em { font-style: normal; font-size: 0.85rem; color: var(--ag-text-2); }
+  .acq-hist-stat-grid .is-hit { border-color: rgba(74,222,128,0.4); background: rgba(34,197,94,0.08); }
+  .acq-hist-stat-grid .is-hit strong { color: #86efac; }
+  .acq-hist-stat-grid .is-rate strong { color: #7cc4ff; }
+  .acq-hist-stat-grid .is-pay { border-color: rgba(252,211,77,0.4); background: rgba(252,211,77,0.07); }
+  .acq-hist-stat-grid .is-pay strong { color: #fcd34d; font-size: 1.5rem; }
+  .acq-hist-note { margin: 0; font-size: 0.78rem; color: var(--ag-text-2); line-height: 1.6; }
+  @media (max-width: 520px) {
+    .acq-hist-stat-grid { grid-template-columns: 1fr 1fr; }
+    .acq-hist-stat-grid .is-pay { grid-column: 1 / -1; }
+  }
+
+  /* 日付ごと */
+  .acq-hist-day + .acq-hist-day { margin-top: 18px; }
+  .acq-hist-day-title { display: flex; align-items: baseline; gap: 8px; margin: 0 0 8px; padding-left: 10px; border-left: 4px solid #60a5fa; font-size: 1.05rem; color: #a5d8ff; }
+  .acq-hist-day-title small { font-size: 0.78rem; color: rgba(147,197,253,0.8); font-weight: 600; }
+
+  /* 各予想（結果で縁取りの色を変える） */
   .acq-hist { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
-  .acq-hist a { display: grid; gap: 2px; padding: 14px; color: inherit; text-decoration: none; }
-  .acq-hist-race { font-weight: 800; }
-  .acq-hist-name { overflow-wrap: anywhere; }
-  .acq-hist-name small, .acq-hist-at, .acq-muted { color: var(--ag-text-2); }
-  .acq-hist-at { font-size: 0.8rem; }
+  .acq-hist-item { display: grid; grid-template-columns: minmax(0, 1fr); gap: 3px; padding: 12px 14px; color: inherit; text-decoration: none; }
+  .acq-hist-item.is-hit { border-color: rgba(74,222,128,0.55); box-shadow: 0 14px 34px rgba(10,16,48,0.32), 0 0 22px rgba(74,222,128,0.16); }
+  .acq-hist-item.is-pending { border-color: rgba(250,204,21,0.4); }
+  .acq-hist-race { font-weight: 800; color: #d6ebff; }
+  .acq-hist-name { overflow-wrap: anywhere; color: #a5d8ff; font-size: 0.92rem; }
+  .acq-hist-at { font-size: 0.76rem; color: var(--ag-text-2); }
+  .acq-prod { display: inline-flex; margin-left: 4px; padding: 1px 9px; border-radius: 999px; font-size: 0.72rem; font-weight: 800; vertical-align: 2px; border: 1px solid; }
+  .acq-prod.violet { color: #c084fc; border-color: rgba(180,108,249,0.7); background: rgba(180,108,249,0.12); }
+  .acq-prod.gold { color: #fcd34d; border-color: rgba(252,211,77,0.6); background: rgba(252,211,77,0.10); }
+  .acq-result { justify-self: start; display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; margin-top: 4px; padding: 3px 12px; border-radius: 999px; border: 1px solid; font-size: 0.8rem; }
+  .acq-result b { font-weight: 900; }
+  .acq-result.is-hit { color: #86efac; border-color: rgba(74,222,128,0.6); background: rgba(34,197,94,0.12); box-shadow: 0 0 16px rgba(74,222,128,0.22); }
+  .acq-result.is-hit span { color: #bbf7d0; }
+  .acq-result.is-hit em { font-style: normal; font-weight: 900; color: #fcd34d; }
+  .acq-result.is-miss { color: #fca5a5; border-color: rgba(248,113,113,0.45); background: rgba(239,68,68,0.08); }
+  .acq-result.is-pending { color: #fde047; border-color: rgba(250,204,21,0.5); background: rgba(250,204,21,0.08); }
+  @media (min-width: 640px) {
+    .acq-hist-item { grid-template-columns: minmax(0, 1fr) auto; }
+    .acq-hist-item > :not(.acq-result) { grid-column: 1; }
+    .acq-result { grid-column: 2; grid-row: 1 / span 3; align-self: center; justify-self: end; margin-top: 0; }
+  }
   @media (min-width: 900px) { .acq-hist-grid { grid-template-columns: minmax(0, 1fr) 320px; } }
 </style>

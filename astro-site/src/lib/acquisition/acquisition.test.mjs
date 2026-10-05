@@ -721,3 +721,25 @@ test('マイページ直近の結果: 緑=的中・金=払戻・赤=不的中・
   assert.match(read('src/pages/dashboard.astro'), /loadAcquiredResults\(\{ entries: acquisitionUsage\.recent/);
   assert.ok(read('docs/GLASS_DESIGN_RULES.md').includes('的中'), '正本に結果の色を記載');
 });
+
+test('取得履歴の成績: 分母は結果が出たものだけ・最高払戻は金額のある的中だけ（合計・回収率は出さない）', async () => {
+  const { summarizeResults } = await import('./acquiredResults.js');
+  const s = summarizeResults({ a: { status: 'hit', payout: 960 }, b: { status: 'hit', payout: null }, c: { status: 'miss' }, d: { status: 'pending' }, e: { status: 'none' } });
+  assert.deepEqual(s, { settled: 3, hits: 2, pending: 1, hitRate: 66.7, maxPayout: 960 });
+  assert.deepEqual(summarizeResults(null), { settled: 0, hits: 0, pending: 0, hitRate: null, maxPayout: null });
+});
+
+test('取得履歴ページ: 各予想に結果・成績サマリー・日付ごと・色付きガラス（無彩色にしない）・直近5件を重複表示しない（2026-10-05 MK）', () => {
+  const h = read('src/pages/predictions/history.astro');
+  assert.match(h, /loadAcquiredResults\(\{ entries: judged/, '取得時点の買い目で判定');
+  assert.match(h, /summarizeResults\(results\)/);
+  assert.match(h, /<AcquisitionUsagePanel usage=\{usage\} variant="stats" \/>/, '右カラムは今月の活用状況だけ');
+  const glass = [...h.matchAll(/class=\{?[`"]ag-glass[^`"]*[`"]/g)].map((m) => m[0]);
+  assert.ok(glass.length >= 2 && glass.every((c) => c.includes('ag-tint-blue')), `全ガラス面に青の色付け: ${glass}`);
+  assert.match(h, /\.acq-result\.is-hit \{ color: #86efac/);
+  assert.match(h, /\.acq-hist-stat-grid \.is-pay strong \{ color: #fcd34d/);
+  assert.match(h, /結果が出た予想だけで数えています/, '分母を明記');
+  assert.doesNotMatch(h, /回収率|払戻合計/, '会員ごとに買い方が違うので合計・回収率は出さない');
+  const panel = read('src/components/acquisition/AcquisitionUsagePanel.astro');
+  assert.match(panel, /\{usage && variant !== 'stats' && \(/);
+});
