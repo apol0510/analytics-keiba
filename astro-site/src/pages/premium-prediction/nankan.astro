@@ -269,7 +269,7 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
 <BaseLayout title={`プレミアム予想 | ${raceInfo.title}`} description={`AI技術による${raceInfo.track}競馬${raceInfo.raceName}の詳細分析。機械学習モデルによる高精度予想の有料版を提供中。`}>
   {/* ak_session の idle TTL 延長（会員確定ページのみ）*/}
   <SessionKeepAlive />
-    <AccessControl requiredPlan="premium">
+    <AccessControl requiredPlan="premium" serverVerified={gate.ok === true} serverTier={gate.entitlements?.effectiveTier || ''}>
         <div class="page-container">
         <!-- ヘッダーセクション -->
         <div class="header-section">

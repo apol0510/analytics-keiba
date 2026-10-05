@@ -60,7 +60,9 @@ test('南関・中央とも サーバー側 gatePaidPage と AccessControl の 2
     const src = read(rel);
     assert.match(src, /export const prerender = false;/, `${rel}: SSR 化が外れている`);
     assert.match(src, /gatePaidPage\(/, `${rel}: サーバー側認可が無い`);
-    assert.match(src, /<AccessControl requiredPlan="Premium Sanrenpuku">/, `${rel}: AccessControl が無い`);
+    assert.match(src, /<AccessControl requiredPlan="Premium Sanrenpuku"[^>]*>/, `${rel}: AccessControl が無い`);
+    // サーバーが認可したかを AccessControl へ渡す（古い localStorage で拒否しない・2026-10-05）
+    assert.match(src, /<AccessControl requiredPlan="Premium Sanrenpuku" serverVerified=\{gate\.ok === true\}/, `${rel}: serverVerified が無い`);
   }
 });
 

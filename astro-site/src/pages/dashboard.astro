@@ -192,6 +192,14 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
             </div>
 
             {rankInfo && <MemberRankCard rank={rankInfo} name={viewer.profile?.name || null} />}
+            {isPaidMember && (
+                <a class="ailab-entry" href="/ai-lab/" aria-label="AI ラボ（試験運用中）">
+                    <span class="ailab-entry-kicker">AI ラボ <em>試験運用中</em></span>
+                    <b>開発中の AI の見立てを、レースごとに</b>
+                    <small>全頭の期待値ランキングと、レース後の答え合わせ（中央競馬）。自動更新でライブ表示</small>
+                    <span class="ailab-entry-go" aria-hidden="true">›</span>
+                </a>
+            )}
 
             {showAcquisition && (
                 <section class="acq-dashboard" aria-label="予想の取得状況">
@@ -6340,6 +6348,14 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
 </script>
 
 <style>
+    /* AI ラボへの入口（紫=開発中の AI／黄=試験運用中・GLASS_DESIGN_RULES.md） */
+    .ailab-entry { position: relative; display: grid; gap: 4px; margin: 0 0 20px; padding: 14px 40px 14px 18px; border-radius: 18px; text-decoration: none; color: #e9d5ff; background: linear-gradient(155deg, rgba(180,108,249,0.16), rgba(124,58,237,0.06)); border: 1px solid rgba(180,108,249,0.6); box-shadow: 0 0 24px rgba(168,85,247,0.2); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
+    .ailab-entry:hover { border-color: #c084fc; box-shadow: 0 0 30px rgba(168,85,247,0.35); }
+    .ailab-entry-kicker { font-size: 0.8rem; font-weight: 800; color: #c084fc; letter-spacing: 0.06em; }
+    .ailab-entry-kicker em { font-style: normal; margin-left: 6px; padding: 1px 8px; border-radius: 999px; border: 1px solid rgba(250,204,21,0.55); background: rgba(250,204,21,0.10); color: #fde047; font-size: 0.7rem; }
+    .ailab-entry b { font-size: 1.02rem; }
+    .ailab-entry small { color: rgba(233,213,255,0.75); }
+    .ailab-entry-go { position: absolute; right: 16px; top: 50%; transform: translateY(-50%); font-size: 1.6rem; color: #c084fc; }
     .acq-dashboard { margin: 0 0 24px; display: grid; gap: 12px; }
     .acq-dashboard-title { margin: 0; font-size: 1.2rem; }
     .acq-dashboard-links { display: flex; flex-wrap: wrap; gap: 8px; }

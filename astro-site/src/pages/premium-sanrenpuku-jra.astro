@@ -110,7 +110,7 @@ if (raceDate && /^\d{4}-\d{2}-\d{2}$/.test(raceDate)) {
 >
   {/* ak_session の idle TTL 延長（会員確定ページのみ）*/}
   <SessionKeepAlive />
-    <AccessControl requiredPlan="Premium Sanrenpuku">
+    <AccessControl requiredPlan="Premium Sanrenpuku" serverVerified={gate.ok === true} serverTier={gate.entitlements?.effectiveTier || ''}>
         <div class="page-container">
             <!-- ヘッダー -->
             <div class="header-section">

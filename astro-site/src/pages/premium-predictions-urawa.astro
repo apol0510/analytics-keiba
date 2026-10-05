@@ -119,7 +119,7 @@ const sanrenpukuLatestResult = getLatestSanrenpukuDayData();
     📢 このページは新しい<strong>南関統合 プレミアム予想ページ</strong>へ移動しました。最新の予想（大井・船橋・川崎・浦和を会場切替で表示）は
     <a href="/premium-prediction/nankan/" style="color:#60a5fa;font-weight:700;text-decoration:underline;">こちら →</a>
   </div>
-    <AccessControl requiredPlan="premium">
+    <AccessControl requiredPlan="premium" serverVerified={gate.ok === true} serverTier={gate.entitlements?.effectiveTier || ''}>
         <div class="page-container">
         <!-- ヘッダーセクション -->
         <div class="header-section">

@@ -3,12 +3,22 @@
 export interface Props {
     requiredPlan: 'free' | 'standard' | 'premium' | 'Premium Predictions' | 'Premium Sanrenpuku' | 'Premium Combo' | 'Premium Plus';
     showUpgrade?: boolean;
+    /**
+     * サーバー（`gatePaidPage`）がこの閲覧者を ak_session と Airtable の正本で認可済みなら true。
+     * ⚠️ 2026-10-05: 旧銀行振込 Light の有効会員が、入金前の無料ログインで残った
+     *    localStorage（plan='free'）のせいで「無料プランです」と表示を拒否された。
+     *    認可の正本はサーバーなので、サーバーが通したページではクライアントの古い表示用データで拒否しない。
+     *    （このページは gate を通らなければ HTML 自体が返らない＝値を偽装しても中身は出ない）
+     */
+    serverVerified?: boolean;
+    /** サーバーが判定した閲覧ティア（`resolveEntitlements().effectiveTier`）。古い localStorage の補正に使う */
+    serverTier?: string;
 }
 
-const { requiredPlan, showUpgrade = true } = Astro.props;
+const { requiredPlan, showUpgrade = true, serverVerified = false, serverTier = '' } = Astro.props;
 ---
 
-<div id="access-control" data-required-plan={requiredPlan}>
+<div id="access-control" data-required-plan={requiredPlan} data-server-verified={serverVerified ? '1' : '0'} data-server-tier={serverTier}>
     <!-- 読み込み中表示 -->
     <div id="loading-state" class="access-loading">
         <div class="spinner"></div>
@@ -356,6 +366,18 @@ const { requiredPlan, showUpgrade = true } = Astro.props;
         return displayNames[plan] || '不明なプラン';
     }
 
+    /** サーバー判定のティア → 表示用 plan 名（verify-magic-link の displayPlanName と同じ表記） */
+    function syncStalePlan(serverTier) {
+        const name = serverTier === 'light' ? 'Light' : serverTier === 'premium' ? 'Premium' : null;
+        if (!name) return;
+        try {
+            const raw = localStorage.getItem('user-plan');
+            const cur = raw ? JSON.parse(raw) : {};
+            localStorage.setItem('user-plan', JSON.stringify({ ...cur, plan: name, nonAuthoritative: true }));
+            localStorage.setItem('userPlan', name.toLowerCase());
+        } catch (e) { /* 表示用の補正なので失敗しても閲覧は通す */ }
+    }
+
     async function checkAccess() {
         const accessControl = document.getElementById('access-control');
         const loadingState = document.getElementById('loading-state');
@@ -389,7 +411,14 @@ const { requiredPlan, showUpgrade = true } = Astro.props;
             // アクセス権限チェック（2026-02-09更新: Lifetime対応）
             // 開発モード（localhost / 127.0.0.1 / port 4321・3000）はゲート解除でローカル閲覧可。
             // 本番ドメイン（analytics.keiba.link）は hostname/port が一致しないため発火しない。
-            if (isDevelopmentMode() || canAccessContent(plan, requiredPlan, user, planType, lifetimeSanrenpuku)) {
+            const clientAllowed = canAccessContent(plan, requiredPlan, user, planType, lifetimeSanrenpuku);
+            const serverVerified = accessControl.dataset.serverVerified === '1';
+            if (serverVerified && !clientAllowed) {
+                // 表示用の古い localStorage を、サーバーが判定したティアへ揃える（Light / Premium のみ。
+                // 三連複などの付帯権利は推測で書かない）。次の画面からも古い表示に戻らない。
+                syncStalePlan(accessControl.dataset.serverTier);
+            }
+            if (isDevelopmentMode() || clientAllowed || serverVerified) {
                 // アクセス許可
                 console.log(`✅ アクセス許可: ${getPlanDisplayName(plan)} → ${requiredPlan}コンテンツ`);
                 console.log('📋 DOM要素状態 - loading:', loadingState, 'content:', contentArea, 'denied:', accessDenied);

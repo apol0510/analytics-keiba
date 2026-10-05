@@ -262,6 +262,7 @@ CI・deploy・外部 API・scheduled job・将来日付・長時間 run 等の**
 | **有料予想の取得方式（1 予想ずつ）／Premium Sanrenpuku のレース選別** | [`PREDICTION_ACQUISITION.md`](./astro-site/docs/PREDICTION_ACQUISITION.md) |
 | **ガラス表現（色の役割・見本・やらないこと）** | [`GLASS_DESIGN_RULES.md`](./astro-site/docs/GLASS_DESIGN_RULES.md) |
 | **会員ランク（会員歴で決まる会員証）** | [`MEMBER_RANK.md`](./astro-site/docs/MEMBER_RANK.md) |
+| **AI ラボ（KAP の全頭 AI 勝率・AK 上位 5 頭で答え合わせ・自動更新／オッズは出さない）** | [`AI_LAB.md`](./astro-site/docs/AI_LAB.md) |
 | 予想ロジック（スコア・役割決定） | [`PREDICTION_LOGIC.md`](./astro-site/docs/PREDICTION_LOGIC.md) |
 | 買い目生成（メイン5点 / 通常2段 / 抑え判定） | [`MAIN_RACE_BETTING.md`](./astro-site/docs/MAIN_RACE_BETTING.md) |
 | 購入点数・回収率 | [`BET_POINT_LOGIC.md`](./astro-site/docs/BET_POINT_LOGIC.md) |
@@ -345,6 +346,12 @@ CLAUDE.md 再編（2026-08-13）で旧セクションがどこへ行ったかの
 ## 🚫 領域別の不変条件（詳細は各正本へ）
 
 破ると本番事故になるものだけを並べる。**変更したくなったら、まず正本を読むこと。**
+
+### 🧱 Netlify Functions の env は AWS Lambda の 4KB 上限ぎりぎり（2026-10-05 実測）
+
+- production の env に **1 つ（約 60 バイト）足しただけで全 Function の作成が失敗し、本番 deploy が止まった**（`Your environment variables exceed the 4KB limit imposed by AWS Lambda`。ビルドログは `netlify logs -s deploy -f -u https://<deploy_id>--analytics-keiba.netlify.app` で取得）
+- 新しい秘密値は env に置かない（例: AI ラボの取込キーは SHA-256 だけをコード定数に置く）。env を足すときは、使っていない変数を先に消して枠を作ってから
+- ⚠️ Stripe 本番化（PR #677）で `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` を足す前に、同じ枠の確保が必要
 
 ### 🪟 見た目はガラスモーフィズムで統一（2026-10-05 MK 確定）
 

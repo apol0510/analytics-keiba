@@ -206,7 +206,7 @@ const premiumSelectRaces = sortedRaces.map(raceData => {
 >
   {/* ak_session の idle TTL 延長（会員確定ページのみ）*/}
   <SessionKeepAlive />
-    <AccessControl requiredPlan="premium">
+    <AccessControl requiredPlan="premium" serverVerified={gate.ok === true} serverTier={gate.entitlements?.effectiveTier || ''}>
         <div class="page-container">
             <!-- ヘッダーセクション -->
             <div class="header-section">
