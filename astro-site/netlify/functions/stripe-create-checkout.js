@@ -13,6 +13,9 @@
  * - 金額は Stripe の Price が正本。クライアントから金額を受け取らない
  */
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'stripe-create-checkout' });
 import { planById, priceIdFor } from '../../src/lib/billing/stripePlans.js';
 import { decideSubscriptionSync } from '../../src/lib/billing/stripeSubscriptionSync.js';
 import {

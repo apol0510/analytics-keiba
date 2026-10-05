@@ -7,6 +7,9 @@
  *   → 404 no_subscription（Stripe で契約していない会員。銀行振込の会員など）
  */
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'stripe-portal' });
 import {
   getStripe, corsHeaders, readSessionRecordId, resolveSiteOrigin,
 } from '../../src/lib/billing/stripeRuntime.js';

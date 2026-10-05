@@ -14,6 +14,9 @@
  * 応答: 反映・対象外・要確認（管理者へ通知済み）は 200。一時的な失敗は 500（Stripe が再送する）。
  */
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'stripe-webhook' });
 import {
   getStripe, rawBody, stripeMode,
 } from '../../src/lib/billing/stripeRuntime.js';

@@ -10,6 +10,9 @@
  * 返すメールアドレスは「ログインリンクを送る先」を画面に出すためだけに使う。
  */
 
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+// Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
+installAirtableCallMeter({ source: 'stripe-checkout-complete' });
 import {
   getStripe, corsHeaders, readSessionRecordId, stripeMode,
 } from '../../src/lib/billing/stripeRuntime.js';
