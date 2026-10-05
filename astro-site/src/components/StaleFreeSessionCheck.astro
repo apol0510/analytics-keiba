@@ -1,0 +1,68 @@
+---
+/**
+ * 端末に残った「無料ログイン」が、いまは有料会員なら一度ログアウトさせ、ログインし直しへ案内する。
+ * 判定は `src/lib/auth/staleFreeSession.js`（純粋）と `/api/plan-status.json`（読むだけ）。
+ * 2026-10-05: 入金済みの旧銀行振込 Light 会員が、入金前の無料ログインのまま無料画面を見続けていた。
+ */
+---
+<div id="ak-relogin-notice" class="ak-relogin" role="status" hidden>
+  <p>有料プランが有効になっています。<strong>ログインし直すと</strong>、有料の予想をご覧いただけます。</p>
+  <a href="/login/" class="ak-relogin-btn">ログインする</a>
+  <button type="button" class="ak-relogin-close" aria-label="閉じる">×</button>
+</div>
+
+<style>
+  .ak-relogin { position: sticky; top: 0; z-index: 9999; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+    justify-content: center; padding: 10px 16px; background: #1e3a8a; color: #f8fafc; font-size: .92rem; }
+  .ak-relogin[hidden] { display: none; }
+  .ak-relogin p { margin: 0; }
+  .ak-relogin-btn { padding: 6px 14px; border-radius: 8px; background: #fbbf24; color: #1f1300; font-weight: 700; text-decoration: none; }
+  .ak-relogin-close { background: transparent; border: 0; color: #f8fafc; font-size: 1.1rem; cursor: pointer; }
+</style>
+
+<script>
+  import {
+    planStaleFreeCheck, shouldLogoutStaleFree, AUTH_LOCALSTORAGE_KEYS,
+    STALE_FREE_CHECK_KEY, STALE_FREE_NOTICE_KEY,
+  } from '../lib/auth/staleFreeSession.js';
+
+  const box = document.getElementById('ak-relogin-notice');
+  const get = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const set = (k, v) => { try { localStorage.setItem(k, v); } catch { /* 表示だけなので無視 */ } };
+
+  function showNotice() {
+    if (!box || location.pathname.startsWith('/login') || location.pathname.startsWith('/auth/')) return;
+    box.hidden = false;
+    box.querySelector('.ak-relogin-close')?.addEventListener('click', () => {
+      box.hidden = true;
+      try { localStorage.removeItem(STALE_FREE_NOTICE_KEY); } catch { /* noop */ }
+    });
+  }
+
+  // ログインし直したら案内を消す（有料ログイン後は user-plan が有料になる）
+  try {
+    const up = JSON.parse(get('user-plan') || 'null');
+    if (up && String(up.plan || '').toLowerCase() !== 'free') localStorage.removeItem(STALE_FREE_NOTICE_KEY);
+  } catch { /* noop */ }
+
+  if (get(STALE_FREE_NOTICE_KEY) === '1') showNotice();
+
+  const plan = planStaleFreeCheck({ userPlanRaw: get('user-plan'), lastCheckAt: get(STALE_FREE_CHECK_KEY), nowMs: Date.now() });
+  if (plan.check) {
+    set(STALE_FREE_CHECK_KEY, String(Date.now()));
+    fetch('/api/plan-status.json', {
+      method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: plan.email }),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (!shouldLogoutStaleFree(j)) return;
+        // 一度ログアウト（端末の無料ログインを消す）→ ログインし直しへ案内
+        AUTH_LOCALSTORAGE_KEYS.forEach((k) => { try { localStorage.removeItem(k); } catch { /* noop */ } });
+        set(STALE_FREE_NOTICE_KEY, '1');
+        showNotice();
+      })
+      .catch(() => { /* 確かめられなければ何もしない */ });
+  }
+
+</script>
