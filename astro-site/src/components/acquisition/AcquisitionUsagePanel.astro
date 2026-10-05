@@ -10,10 +10,15 @@
  */
 import '../../styles/acquisitionGlass.css';
 import { viewUrlFor } from '../../lib/acquisition/acquisitionServer.js';
-interface Props { usage: any | null; variant?: 'mini' | 'side' | 'full' }
-const { usage, variant = 'full' } = Astro.props;
+interface Props { usage: any | null; variant?: 'mini' | 'side' | 'full'; results?: Record<string, any> | null }
+const { usage, variant = 'full', results = null } = Astro.props;
 const jst = (iso: string) => { const t = new Date(Date.parse(iso) + 9 * 3600e3); return `${t.getUTCMonth() + 1}/${t.getUTCDate()} ${String(t.getUTCHours()).padStart(2, '0')}:${String(t.getUTCMinutes()).padStart(2, '0')}`; };
 const productLabel = { premium: 'Premium', srp: '三連複 選別' };
+// 商品チップの色（docs/GLASS_DESIGN_RULES.md: 紫=Premium／金=三連複の選別）
+const productTone = { premium: 'violet', srp: 'gold' };
+const yen = (n) => `¥${Number(n).toLocaleString('ja-JP')}`;
+// 結果チップ（2026-10-05 MK: 緑=的中・金=払戻・赤=不的中・黄=結果待ち）。results が無い（読めない）ときは出さない
+const resultOf = (key) => (results && results[key]) || null;
 ---
 {variant === 'mini' ? (
   <a class="ag-glass ag-tint-blue acq-usage-mini" href="/predictions/history/" aria-label="今月の活用状況（取得済みの予想へ）">
@@ -35,7 +40,7 @@ const productLabel = { premium: 'Premium', srp: '三連複 選別' };
         <>
           <div class="acq-usage-nums">
             <div class="ag-inset"><span>今月の取得数</span><strong data-usage="month-count">{usage.monthCount}</strong><em>件</em></div>
-            <div class="ag-inset"><span>利用日数</span><strong data-usage="active-days">{usage.activeDays}</strong><em>日</em></div>
+            <div class="ag-inset acq-num-days"><span>利用日数</span><strong data-usage="active-days">{usage.activeDays}</strong><em>日</em></div>
           </div>
           <dl class="acq-usage-cat">
             <div><dt>中央競馬</dt><dd data-usage="jra">{usage.byCategory.jra} 件</dd></div>
@@ -55,8 +60,14 @@ const productLabel = { premium: 'Premium', srp: '三連複 選別' };
               {usage.recent.map((e) => (
                 <li><a class="ag-inset" href={viewUrlFor(e.key)}>
                   <span class="acq-recent-when">{jst(e.at)}</span>
-                  <span class="acq-recent-race">{e.venueName} {e.raceNumber}R <small>{productLabel[e.product] || ''}</small></span>
+                  <span class="acq-recent-race">{e.venueName} {e.raceNumber}R <small class={`acq-prod ${productTone[e.product] || ''}`}>{productLabel[e.product] || ''}</small></span>
                   <span class="acq-recent-name">{e.raceName}</span>
+                  {(() => { const r = resultOf(e.key); if (!r || r.status === 'none') return null; return (
+                    <span class={`acq-result is-${r.status}`} data-result={r.status}>
+                      {r.status === 'hit' ? <><b>✓ 的中</b><span>{`${r.betType} ${r.combination}`}</span>{r.payout ? <em>{yen(r.payout)}</em> : null}</>
+                        : r.status === 'miss' ? <b>不的中</b> : <b>結果待ち</b>}
+                    </span>
+                  ); })()}
                 </a></li>
               ))}
             </ul>
@@ -69,8 +80,14 @@ const productLabel = { premium: 'Premium', srp: '三連複 選別' };
               {usage.recent.map((e) => (
                 <li><a class="ag-inset" href={viewUrlFor(e.key)}>
                   <span class="acq-recent-when">{jst(e.at)}</span>
-                  <span class="acq-recent-race">{e.venueName} {e.raceNumber}R <small>{productLabel[e.product] || ''}</small></span>
+                  <span class="acq-recent-race">{e.venueName} {e.raceNumber}R <small class={`acq-prod ${productTone[e.product] || ''}`}>{productLabel[e.product] || ''}</small></span>
                   <span class="acq-recent-name">{e.raceName}</span>
+                  {(() => { const r = resultOf(e.key); if (!r || r.status === 'none') return null; return (
+                    <span class={`acq-result is-${r.status}`} data-result={r.status}>
+                      {r.status === 'hit' ? <><b>✓ 的中</b><span>{`${r.betType} ${r.combination}`}</span>{r.payout ? <em>{yen(r.payout)}</em> : null}</>
+                        : r.status === 'miss' ? <b>不的中</b> : <b>結果待ち</b>}
+                    </span>
+                  ); })()}
                 </a></li>
               ))}
             </ul>
@@ -108,6 +125,24 @@ const productLabel = { premium: 'Premium', srp: '三連複 選別' };
   .acq-recent-when { grid-row: span 2; color: var(--ag-text-2); font-size: 0.78rem; }
   .acq-recent-race { font-weight: 800; color: #a5d8ff; }
   .acq-recent-race small { color: var(--ag-text-2); font-weight: 500; }
+  .acq-recent-race .acq-prod { display: inline-flex; margin-left: 4px; padding: 1px 9px; border-radius: 999px; font-size: 0.72rem; font-weight: 800; vertical-align: 2px; border: 1px solid; }
+  .acq-prod.violet { color: #c084fc; border-color: rgba(180,108,249,0.7); background: rgba(180,108,249,0.12); }
+  .acq-prod.gold { color: #fcd34d; border-color: rgba(252,211,77,0.6); background: rgba(252,211,77,0.10); }
+  /* 結果チップ（正本 GLASS_DESIGN_RULES.md: 緑=的中／金=払戻／赤=不的中／黄=結果待ち） */
+  .acq-recent a { position: relative; }
+  .acq-result { grid-column: 1 / -1; justify-self: start; display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; margin-top: 4px; padding: 3px 12px; border-radius: 999px; border: 1px solid; font-size: 0.8rem; }
+  .acq-result b { font-weight: 900; }
+  .acq-result.is-hit { color: #86efac; border-color: rgba(74,222,128,0.6); background: rgba(34,197,94,0.12); box-shadow: 0 0 16px rgba(74,222,128,0.22); }
+  .acq-result.is-hit span { color: #bbf7d0; }
+  .acq-result.is-hit em { font-style: normal; font-weight: 900; color: #fcd34d; }
+  .acq-result.is-miss { color: #fca5a5; border-color: rgba(248,113,113,0.45); background: rgba(239,68,68,0.08); }
+  .acq-result.is-pending { color: #fde047; border-color: rgba(250,204,21,0.5); background: rgba(250,204,21,0.08); }
+  @media (min-width: 640px) {
+    .acq-recent a { grid-template-columns: auto minmax(0, 1fr) auto; }
+    .acq-result { grid-column: 3; grid-row: 1 / span 2; align-self: center; justify-self: end; margin-top: 0; }
+  }
+  .acq-num-days strong { color: #86efac !important; }
+  .acq-num-days.ag-inset { border-color: rgba(74,222,128,0.35); background: rgba(34,197,94,0.07); }
   .acq-recent-name { color: var(--ag-text-2); font-size: 0.84rem; overflow-wrap: anywhere; }
   .acq-usage-recent-narrow > summary { cursor: pointer; font-weight: 800; min-height: 40px; display: flex; align-items: center; }
   .acq-usage-recent-narrow[open] > summary { margin-bottom: 10px; }
