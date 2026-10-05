@@ -505,7 +505,7 @@ test('Preview と Premium の画面は同じ部品（違いは mode・CTA・権�
   assert.match(list, /mode\?: 'premium' \| 'preview'/);
   // CTA は同じ位置（同じ acq-race-cta の中）・同じボタン部品（ag-cta acq-btn）
   const cta = list.slice(list.indexOf('<div class="acq-race-cta">'), list.indexOf('</article>'));
-  assert.match(cta, /isPreview \? \([\s\S]*class="ag-cta ag-cta-premium acq-btn acq-btn-preview" href="\/pricing\/"[\s\S]*\) : r\.acquired \? \([\s\S]*class="ag-cta acq-btn"/);
+  assert.match(cta, /isPreview \? \([\s\S]*class="ag-cta acq-btn acq-btn-preview" href="\/pricing\/"[\s\S]*\) : r\.acquired \? \([\s\S]*class="ag-cta acq-btn"/);
   // Preview は公開ページ（会員判定・Cookie を使わない）。Premium は認可あり
   for (const p of ['src/pages/free-prediction/jra.astro', 'src/pages/free-prediction/nankan.astro', 'src/pages/free-prediction/all.astro', 'src/pages/free-prediction/view.astro']) {
     const s = read(p);
@@ -543,12 +543,12 @@ test('Premium 導線 CTA は同じスタイル（明るい紫）・通常の取�
   assert.match(rule('.ag-cta.ag-cta-premium:active'), /translateY\(1px\)/, 'active で沈む');
   assert.match(rule('.ag-cta.ag-cta-premium:focus-visible'), /outline: 3px solid/, 'キーボードのフォーカスが見える');
   assert.match(css, /@media \(max-width: 759px\) \{ \.ag-cta\.ag-cta-premium \{ min-height: 52px/);
-  // /pricing/ への Premium 導線はすべて同じクラス（Preview・Premium 部品・関連導線）
+  // 2026-10-06 MK: /free-prediction/（Preview）は /premium-prediction/ と同じ青にそろえる。/pricing/ への導線も青の ag-cta
   const files = ['src/components/acquisition/AcquisitionRaceList.astro', 'src/components/acquisition/PremiumRaceBoard.astro', 'src/components/acquisition/AcquiredPredictionBody.astro', 'src/pages/free-prediction/view.astro', 'src/pages/free-prediction/jra.astro', 'src/pages/free-prediction/nankan.astro', 'src/pages/free-prediction/all.astro'];
   for (const f of files) {
     const tags = [...read(f).matchAll(/<a [^>]*href="\/pricing\/"[^>]*>/g)].map((m) => m[0]);
     assert.ok(tags.length > 0, f);
-    for (const t of tags) assert.match(t, /class="ag-cta ag-cta-premium/, `${f}: ${t}`);
+    for (const t of tags) { assert.match(t, /class="ag-cta[ "]/, `${f}: ${t}`); assert.doesNotMatch(t, /ag-cta-premium/, `${f}: Preview は紫にしない: ${t}`); }
   }
   // 通常の取得 CTA は Premium 色にしない
   assert.match(read('src/components/acquisition/AcquisitionRaceList.astro'), /<button type="submit" class="ag-cta acq-btn">/);
@@ -588,7 +588,7 @@ test('Preview の「Premium なら」パネル: たくさん使えるメリッ�
   assert.match(side, /使うほど 1 レースあたりがお得に/);
   assert.equal(/通常の買い目と、点数を絞った買い目/.test(side), false, '買い目の種類を強調しない');
   assert.equal(/Premiumでできること/.test(side), false);
-  assert.match(side, /class="ag-cta ag-cta-premium" href="\/pricing\/"/);
+  assert.match(side, /class="ag-cta" href="\/pricing\/"/);
   assert.match(read('src/components/acquisition/AcquisitionValuePanel.astro'), /<h2>本日の使用状況<\/h2>/);
 });
 

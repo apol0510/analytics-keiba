@@ -53,13 +53,13 @@ test('Premium と同じ部品で描画する（違いは mode だけ）', () => 
 
 test('有料 CTA（/pricing/）を Premium の取得ボタンと同じ位置に置く', () => {
   const preview = LIST.slice(LIST.indexOf('{isPreview ? ('), LIST.indexOf(') : r.acquired ? ('));
-  assert.match(preview, /<a class="ag-cta ag-cta-premium acq-btn acq-btn-preview" href="\/pricing\/">Premiumで予想を取得<\/a>/);
+  assert.match(preview, /<a class="ag-cta acq-btn acq-btn-preview" href="\/pricing\/">Premiumで予想を取得<\/a>/);
   assert.match(preview, /この予想を取得するにはPremium/);
   for (const { name, src } of PAGES) assert.ok(src.includes('href="/pricing/"'), `${name}: 料金ページへの導線が無い`);
 });
 
 test('プレビューであることをページ上部で伝える（Premiumを体験）', () => {
-  const banner = BOARD.indexOf('class="ag-glass ag-tint-violet preview-banner"');
+  const banner = BOARD.indexOf('class="ag-glass ag-tint-blue preview-banner"');
   assert.ok(banner > -1, '上部バナーが無い');
   assert.ok(banner < BOARD.indexOf('<AcquisitionVenueTabs'), 'バナーが会場タブより後ろ');
   assert.ok(banner < BOARD.indexOf('<AcquisitionRaceList'), 'バナーが一覧より後ろ');

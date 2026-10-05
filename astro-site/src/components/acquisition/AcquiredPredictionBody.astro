@@ -79,14 +79,14 @@ const metaFor = (r) => [
           <>
             {/* 2026-10-04 MK 確定: 有料版のプレビューなので買い目カードは 1 枚（馬単買い目）だけ */}
             <article class="ag-glass ag-tint-blue acq-sec acq-bet acq-locked-bet" data-kind="umatan-preview">
-              <header class="acq-head"><h3>馬単買い目</h3><span class="ag-pill violet">Premium</span></header>
+              <header class="acq-head"><h3>馬単買い目</h3><span class="ag-pill blue">Premium</span></header>
               <p class="acq-note">Premium では、通常の買い目と点数を絞った買い目を表示します。</p>
               <div class="betting-teaser ag-inset" aria-hidden="true">
                 <span class="acq-axis"><span class="acq-axis-label">軸</span><span class="ag-num lg acq-axis-num">●</span></span>
                 <span class="acq-arrow">⇔</span>
                 <span class="acq-partners">{[1, 2, 3, 4, 5].map(() => <span class="acq-pnum">●</span>)}</span>
               </div>
-              <a class="ag-cta ag-cta-premium acq-unlock" href="/pricing/">この予想を取得するにはPremium</a>
+              <a class="ag-cta acq-unlock" href="/pricing/">この予想を取得するにはPremium</a>
             </article>
           </>
         ) : !isSrp ? (

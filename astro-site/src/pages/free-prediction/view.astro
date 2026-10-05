@@ -50,18 +50,18 @@ const distanceText = (d) => { const s = String(d || ''); return /^\d+$/.test(s) 
             {c.startTime && <li class="ag-pill">{c.startTime} 発走</li>}
             {c.distance && <li class="ag-pill">{distanceText(c.distance)}</li>}
             {c.horseCount > 0 && <li class="ag-pill">{c.horseCount}頭</li>}
-            <li class="ag-pill violet">PREVIEW</li>
+            <li class="ag-pill blue">PREVIEW</li>
           </ul>
           <div class="acq-hero-state">
-            <a class="ag-cta ag-cta-premium" href="/pricing/">Premiumで予想を取得</a>
+            <a class="ag-cta" href="/pricing/">Premiumで予想を取得</a>
             <small>Premium では、この画面で買い目・AI 総合指数・分類まで見られます</small>
           </div>
         </header>
         <AcquiredPredictionBody content={c} />
-        <nav class="ag-glass ag-tint-violet acq-foot" aria-label="Premium">
+        <nav class="ag-glass ag-tint-blue acq-foot" aria-label="Premium">
           <p>Premium ではレース一覧から気になる予想を 1 件ずつ、何レースでも取得できます。</p>
           <div class="acq-foot-actions">
-            <a class="ag-cta ag-cta-premium" href="/pricing/">Premiumで予想を取得</a>
+            <a class="ag-cta" href="/pricing/">Premiumで予想を取得</a>
             <a class="ag-btn-ghost" href={listPath}>レース一覧に戻る</a>
           </div>
         </nav>
