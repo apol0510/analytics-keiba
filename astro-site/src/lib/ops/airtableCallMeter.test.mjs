@@ -63,6 +63,7 @@ test('見張り: API は月末見込み 90,000 回超で失敗、レコードは
   assert.equal(ok.topSources[0].source, 'a');
   const hot = days.map((d, i) => (i === 0 ? d : { ...d, total: 5000 }));
   assert.equal(evaluateApiUsage(hot, { now }).level, 'fail');
+  assert.equal(evaluateApiUsage([{ day: '2026-10-10', total: 51, bySource: {} }], { now }).level, 'pending', '丸 1 日分が無ければ未判定');
   assert.equal(evaluateRecords({ A: 40000, B: 5001 }).level, 'fail');
   assert.equal(evaluateRecords({ A: 42001 }).level, 'warn');
   assert.equal(evaluateRecords({ A: 20000 }).level, 'ok');
