@@ -346,6 +346,12 @@ CLAUDE.md 再編（2026-08-13）で旧セクションがどこへ行ったかの
 
 破ると本番事故になるものだけを並べる。**変更したくなったら、まず正本を読むこと。**
 
+### 🧱 Netlify Functions の env は AWS Lambda の 4KB 上限ぎりぎり（2026-10-05 実測）
+
+- production の env に **1 つ（約 60 バイト）足しただけで全 Function の作成が失敗し、本番 deploy が止まった**（`Your environment variables exceed the 4KB limit imposed by AWS Lambda`。ビルドログは `netlify logs -s deploy -f -u https://<deploy_id>--analytics-keiba.netlify.app` で取得）
+- 新しい秘密値は env に置かない（例: AI ラボの取込キーは SHA-256 を Redis に置く）。env を足すときは、使っていない変数を先に消して枠を作ってから
+- ⚠️ Stripe 本番化（PR #677）で `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` を足す前に、同じ枠の確保が必要
+
 ### 🪟 見た目はガラスモーフィズムで統一（2026-10-05 MK 確定）
 
 正本は [`GLASS_DESIGN_RULES.md`](./astro-site/docs/GLASS_DESIGN_RULES.md)（`npm run test:acquisition` で一部を検知）。

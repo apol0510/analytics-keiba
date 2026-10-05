@@ -92,8 +92,10 @@ test('保存: 1 日 1 キー・日付索引・AK 上位 5 頭は消えたら前�
 
 test('API/ページ: 取込は秘密ヘッダ必須・env 無しは 503／自動更新は ak_session の署名だけ（Airtable を呼ばない）・無料は通さない', () => {
   const ing = read('src/pages/api/ailab/ingest.js');
-  assert.match(ing, /if \(!secret \|\| secret\.length < 32\) return json\(503/);
-  assert.match(ing, /timingSafeEqual\(digest\(request\.headers\.get\('x-ailab-secret'\)/);
+  assert.match(ing, /redis\(\['GET', INGEST_KEY_HASH\]\)/, '照合先は Redis の SHA-256');
+  assert.match(ing, /not_configured/);
+  assert.match(ing, /timingSafeEqual\(digest\(given\), Buffer\.from\(expected, 'hex'\)\)/);
+  assert.doesNotMatch(ing.replace(/\/\*\*[\s\S]*?\*\//, ''), /process\.env\.AILAB/, '🛑 env に秘密値を置かない（Lambda 4KB 上限で本番 deploy が止まった）');
   assert.match(ing, /sanitizeIngest\(payload\)/);
   const view = read('src/pages/api/ailab/view.js');
   assert.match(view, /verifyPlanAccess\(/);
