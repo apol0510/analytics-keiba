@@ -10,7 +10,7 @@ const { day, canAcquire } = Astro.props;
 const top3 = day?.top3 || [];
 const gradeLabel = { A: '推奨度 A', B: '推奨度 B' };
 ---
-<section class="ag-glass srp-today" aria-label="本日の三連複 推奨レース">
+<section class="ag-glass ag-tint-gold srp-today" aria-label="本日の三連複 推奨レース">
   <header class="srp-today-head">
     <h2>👑 本日の三連複 推奨レース</h2>
     <p>{day ? `${day.recommended.length}レースを推奨（全${day.total}レース中）` : ''}</p>

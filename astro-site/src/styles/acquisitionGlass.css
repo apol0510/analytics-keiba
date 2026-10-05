@@ -78,6 +78,28 @@
 .ag-glass.ag-tint-blue::before { background: linear-gradient(90deg, transparent, rgba(147, 197, 253, 0.4), transparent); }
 .ag-tint-blue h2, .ag-tint-blue summary { color: #7cc4ff; }
 .ag-tint-blue .ag-inset { background: rgba(59, 130, 246, 0.08); border-color: rgba(96, 165, 250, 0.30); }
+/* 紫の色付きガラス面（Premium への案内）。正本 docs/GLASS_DESIGN_RULES.md（2026-10-06 MK: 無彩色の案内パネルを解消） */
+.ag-glass.ag-tint-violet {
+  --ag-text: #f3e8ff; --ag-text-2: rgba(216, 180, 254, 0.85);
+  color: var(--ag-text);
+  background: linear-gradient(155deg, rgba(180, 108, 249, 0.16) 0%, rgba(139, 92, 246, 0.08) 50%, rgba(124, 58, 237, 0.12) 100%);
+  border-color: rgba(192, 132, 252, 0.5);
+  box-shadow: 0 14px 34px rgba(10, 16, 48, 0.32), 0 0 26px rgba(168, 85, 247, 0.18);
+}
+.ag-glass.ag-tint-violet::before { background: linear-gradient(90deg, transparent, rgba(216, 180, 254, 0.45), transparent); }
+.ag-tint-violet h2 { color: #d8b4fe; }
+.ag-tint-violet .ag-inset { background: rgba(168, 85, 247, 0.08); border-color: rgba(192, 132, 252, 0.3); }
+/* 金の色付きガラス面（三連複の選別・目印）。正本 docs/GLASS_DESIGN_RULES.md */
+.ag-glass.ag-tint-gold {
+  --ag-text: #fef3c7; --ag-text-2: rgba(253, 230, 138, 0.82);
+  color: var(--ag-text);
+  background: linear-gradient(155deg, rgba(252, 211, 77, 0.13) 0%, rgba(245, 158, 11, 0.06) 50%, rgba(252, 211, 77, 0.09) 100%);
+  border-color: rgba(252, 211, 77, 0.5);
+  box-shadow: 0 14px 34px rgba(10, 16, 48, 0.32), 0 0 24px rgba(252, 211, 77, 0.14);
+}
+.ag-glass.ag-tint-gold::before { background: linear-gradient(90deg, transparent, rgba(253, 230, 138, 0.45), transparent); }
+.ag-tint-gold h2 { color: #fcd34d; }
+.ag-tint-gold .ag-inset { background: rgba(252, 211, 77, 0.07); border-color: rgba(252, 211, 77, 0.3); }
 .ag-glass::before { /* 上辺の光の反射 */
   content: ''; position: absolute; inset: 0 12% auto 12%; height: 1px; border-radius: 999px;
   background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.85), transparent);

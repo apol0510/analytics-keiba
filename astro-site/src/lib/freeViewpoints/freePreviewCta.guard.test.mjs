@@ -59,7 +59,7 @@ test('有料 CTA（/pricing/）を Premium の取得ボタンと同じ位置に�
 });
 
 test('プレビューであることをページ上部で伝える（Premiumを体験）', () => {
-  const banner = BOARD.indexOf('class="ag-glass preview-banner"');
+  const banner = BOARD.indexOf('class="ag-glass ag-tint-violet preview-banner"');
   assert.ok(banner > -1, '上部バナーが無い');
   assert.ok(banner < BOARD.indexOf('<AcquisitionVenueTabs'), 'バナーが会場タブより後ろ');
   assert.ok(banner < BOARD.indexOf('<AcquisitionRaceList'), 'バナーが一覧より後ろ');
