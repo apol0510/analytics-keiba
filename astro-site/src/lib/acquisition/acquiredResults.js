@@ -117,3 +117,21 @@ export function loadResultIndex({ root } = {}) {
   if (!root) cached = idx;
   return idx;
 }
+
+/**
+ * 結果の集計（取得履歴ページの成績）。分母は「結果が出た予想」だけ（結果待ち・買い目なしは含めない）。
+ * 払戻は 100 円あたりの配当（アーカイブの値）。合計や回収率は出さない（買った点数・金額は会員ごとに違うため）。
+ */
+export function summarizeResults(results) {
+  const list = Object.values(results || {}).filter(Boolean);
+  const hits = list.filter((r) => r.status === 'hit');
+  const settled = hits.length + list.filter((r) => r.status === 'miss').length;
+  const payouts = hits.map((r) => Number(r.payout)).filter((n) => Number.isFinite(n) && n > 0);
+  return {
+    settled,
+    hits: hits.length,
+    pending: list.filter((r) => r.status === 'pending').length,
+    hitRate: settled ? Math.round((hits.length / settled) * 1000) / 10 : null,
+    maxPayout: payouts.length ? Math.max(...payouts) : null,
+  };
+}
