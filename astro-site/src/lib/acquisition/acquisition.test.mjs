@@ -619,3 +619,8 @@ test('背景（ag-scene）は暗めの濃紺・光源は控えめ（2026-10-05 M
   const alphas = [...scene.matchAll(/radial-gradient\([^)]*rgba\(\d+, \d+, \d+, (0\.\d+)\)/g)].map((x) => Number(x[1]));
   assert.ok(alphas.length === 6 && Math.max(...alphas) <= 0.25, `光源が強い: ${alphas}`);
 });
+
+test('取得ボード（ag-scene）が直後の要素に重ならない: min-height を 0 に戻す（2026-10-05 穴馬抽出リンクが隠れた）', () => {
+  const board = read('src/components/acquisition/PremiumRaceBoard.astro');
+  assert.match(board, /\.acq-board \{[^}]*min-height: 0;[^}]*\}/, '.ag-scene の min-height: 100% をボードでは打ち消す');
+});
