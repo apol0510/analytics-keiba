@@ -98,6 +98,9 @@ const previewUrl = (key) => `/free-prediction/view/?key=${encodeURIComponent(key
   .acq-race { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 10px 12px; align-items: center; padding: 12px; min-width: 0; }
   /* 2026-10-05 MK: レースカードは乳白色を弱める（白の塗りを薄く・青紫寄りに）。ボタンが半透明なので、カードの白がボタンにも透けて乳白色に見えていた */
   .acq-race.ag-glass { background: linear-gradient(155deg, rgba(199, 210, 254, 0.08) 0%, rgba(129, 140, 248, 0.05) 45%, rgba(255, 255, 255, 0.03) 100%); }
+  /* 2026-10-05 MK: 白く感じる残りは「白い枠線・上辺の白い反射・内側の白ハイライト」。カードだけ青紫寄りの控えめな線へ */
+  .acq-race.ag-glass { border-color: rgba(165, 180, 252, 0.24); box-shadow: 0 14px 34px rgba(10, 16, 48, 0.32), inset 0 1px 0 rgba(199, 210, 254, 0.12); }
+  .acq-race.ag-glass::before { background: linear-gradient(90deg, transparent, rgba(199, 210, 254, 0.35), transparent); }
   .acq-race[id="acq-next"] { scroll-margin-top: 90px; }
   .acq-race.is-acquired { border-color: rgba(74,222,128,0.42); box-shadow: var(--ag-shadow), 0 0 22px rgba(74,222,128,0.12), var(--ag-hi); }
   .acq-race-no { display: grid; justify-items: center; padding: 8px 4px; }
