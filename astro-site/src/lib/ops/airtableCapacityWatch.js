@@ -10,6 +10,13 @@ export const API_FAIL_AT = 90000;
 export const RECORD_FAIL_AT = 45000;
 export const RECORD_WARN_AT = 42000;
 
+/** 数える table（読み取り専用トークンは meta API を読めないため固定の一覧。2026-10-05 実測の 13 table） */
+export const AIRTABLE_TABLES = Object.freeze([
+  'Customers', 'ScheduledEmails', 'EmailBlacklist', 'PointExchangeRequests', 'ProcessedWebhookEvents',
+  'AuthTokens', 'StepEnrollments', 'CampaignDeliveries', 'CampaignDeliveries_M5A3LiveTest',
+  'CampaignDeliveries_MarketingAutomation', 'PromotionalOffers', 'EmailEvents', 'CouponOperationHistory',
+]);
+
 function jstParts(now) {
   const d = new Date(now.getTime() + 9 * 3600000);
   const y = d.getUTCFullYear();
@@ -34,6 +41,8 @@ export function evaluateApiUsage(days, { now = new Date() } = {}) {
   const agg = {};
   for (const d of list.slice(1, 8)) for (const [s, n] of Object.entries(d.bySource || {})) agg[s] = (agg[s] || 0) + n;
   const topSources = Object.entries(agg).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([source, calls]) => ({ source, calls }));
+  // 丸 1 日分の計測が無いうちは判定しない（0 回の平均で「余裕あり」と言わない）
+  if (full.length === 0) return { monthToDate, avg7, projected: null, topSources, level: 'pending' };
   return { monthToDate, avg7, projected, topSources, level: projected > API_FAIL_AT ? 'fail' : 'ok' };
 }
 
