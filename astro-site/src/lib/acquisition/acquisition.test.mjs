@@ -777,3 +777,21 @@ test('会場が複数なら会場タブで切り替える（1 会場なら出さ
   assert.match(list, /openFor\(location\.hash\)/, '#acq-next が別の会場にあっても開く');
   assert.match(list, /\.acq-venue\[hidden\] \{ display: none !important; \}/);
 });
+
+test('ガラス面は必ず色付き（ag-tint-blue/violet/gold）か専用の色を持つ — 無彩色の ag-glass を置かない（2026-10-06 MK）', async () => {
+  const { readdirSync } = await import('node:fs');
+  const files = [
+    ...readdirSync(`${ROOT}src/components/acquisition`).filter((f) => f.endsWith('.astro')).map((f) => `src/components/acquisition/${f}`),
+    'src/pages/free-prediction/jra.astro', 'src/pages/free-prediction/nankan.astro', 'src/pages/free-prediction/all.astro',
+    'src/pages/free-prediction/view.astro', 'src/pages/predictions/view.astro', 'src/pages/predictions/history.astro', 'src/pages/ai-lab/index.astro',
+  ];
+  // 専用の色を CSS で持っているもの（レースカード・推奨度・三連複 中心）だけ許す
+  const OWN_COLOR = /\b(acq-race|acq-selection|narrowed|lab-race|lab-stats|lab-next)\b/;
+  const bad = [];
+  for (const f of files) {
+    for (const m of read(f).matchAll(/class=(?:"|\{`)(ag-glass[^"`]*)/g)) {
+      if (!/ag-tint-(blue|violet|gold)/.test(m[1]) && !OWN_COLOR.test(m[1])) bad.push(`${f}: ${m[1]}`);
+    }
+  }
+  assert.deepEqual(bad, []);
+});

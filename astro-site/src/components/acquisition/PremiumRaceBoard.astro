@@ -32,7 +32,7 @@ const VENUE_LEAD = { all: '中央・南関のレース', jra: '中央競馬の�
 <div class={`ag-scene acq-layout acq-board acq-board-${mode}`} data-board-mode={mode}>
   <div class="acq-main">
     {isPreview ? (
-      <section class="ag-glass preview-banner" aria-label="Premiumを体験">
+      <section class="ag-glass ag-tint-violet preview-banner" aria-label="Premiumを体験">
         <span class="ag-pill violet">PREVIEW</span>
         <h2>Premiumを体験</h2>
         <p>Premiumではこの画面から、気になるレースの予想を 1 件ずつ取得できます。月額料金だけで、何レースでも取得し放題。</p>
@@ -48,7 +48,7 @@ const VENUE_LEAD = { all: '中央・南関のレース', jra: '中央競馬の�
   </div>
   {isPreview ? (
     <aside class="acq-preview-side" aria-label="Premium なら">
-      <section class="ag-glass acq-preview-card">
+      <section class="ag-glass ag-tint-violet acq-preview-card">
         <span class="ag-pill violet acq-preview-badge">取得回数に上限なし</span>
         <h2>月額のまま、何レースでも。</h2>
         <p class="acq-preview-lead">中央・南関の全レースから、気になった予想をいくつでも取得できます。</p>
@@ -74,7 +74,7 @@ const VENUE_LEAD = { all: '中央・南関のレース', jra: '中央競馬の�
   .acq-main { display: grid; gap: 14px; align-content: start; min-width: 0; }
   .acq-heading { margin: 4px 0 0; font-size: clamp(1.3rem, 5vw, 1.7rem); letter-spacing: 0.02em; background: linear-gradient(90deg, #ffffff, #c7d2fe 60%, #a5f3fc); -webkit-background-clip: text; background-clip: text; color: transparent; }
   .acq-lead { margin: 0; color: var(--ag-text-2); font-size: 0.9rem; line-height: 1.6; }
-  .preview-banner { padding: 16px; display: grid; gap: 8px; border-color: rgba(196, 181, 253, 0.5); box-shadow: var(--ag-shadow), 0 0 32px rgba(167, 139, 250, 0.22), var(--ag-hi); }
+  .preview-banner { padding: 16px; display: grid; gap: 8px; }
   .preview-banner .ag-pill { width: fit-content; }
   .preview-banner h2 { margin: 0; font-size: 1.15rem; }
   .preview-banner p { margin: 0; color: var(--ag-text-2); font-size: 0.9rem; line-height: 1.6; }
@@ -83,12 +83,12 @@ const VENUE_LEAD = { all: '中央・南関のレース', jra: '中央競馬の�
   .acq-preview-card { padding: 16px; display: grid; gap: 10px; }
   .acq-preview-card h2 { margin: 0; font-size: 1.02rem; }
   .acq-preview-badge { width: fit-content; }
-  .acq-preview-card h2 { font-size: 1.2rem; letter-spacing: 0.02em; background: linear-gradient(90deg, #ffffff, #e9d5ff 60%, #c4b5fd); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .acq-preview-card h2 { font-size: 1.2rem; letter-spacing: 0.02em; color: #d8b4fe; }
   .acq-preview-lead { margin: 0; color: var(--ag-text-2); font-size: 0.88rem; line-height: 1.6; }
   .acq-benefits { list-style: none; margin: 2px 0 0; padding: 0; display: grid; gap: 10px; }
-  .acq-benefits li { display: grid; gap: 2px; padding: 10px 12px 10px 34px; position: relative; border-radius: 12px; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.14); }
+  .acq-benefits li { display: grid; gap: 2px; padding: 10px 12px 10px 34px; position: relative; border-radius: 12px; background: rgba(168,85,247,0.08); border: 1px solid rgba(192,132,252,0.3); }
   .acq-benefits li::before { content: '✓'; position: absolute; left: 12px; top: 10px; color: #c4b5fd; font-weight: 900; }
-  .acq-benefits strong { font-size: 0.92rem; color: var(--ag-text); }
+  .acq-benefits strong { font-size: 0.92rem; color: #e9d5ff; }
   .acq-benefits span { font-size: 0.8rem; color: var(--ag-text-2); line-height: 1.5; }
   @media (min-width: 1000px) {
     .acq-board { grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; margin: 20px 0 28px; padding: 24px; }

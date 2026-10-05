@@ -48,6 +48,16 @@
 - 白抜き・グラデーション文字で数字を強調する（同系色の単色で強調する）
 - 見本に無い新しい色系統を足す
 
+## 4-1. 共通の色付きガラス（クラス）
+
+| クラス | 役割 |
+|---|---|
+| `.ag-glass.ag-tint-blue` | 会員の操作・取得状況・一覧の枠・関連ページの枠 |
+| `.ag-glass.ag-tint-violet` | Premium への案内（体験バナー・「月額のまま、何レースでも。」パネル 等） |
+| `.ag-glass.ag-tint-gold` | 三連複の選別・目印 |
+
+`.ag-glass` を新しく置くときは、必ずどれかを付ける（`test:acquisition` が無彩色の `.ag-glass` を検知する）。
+
 ## 5. 実装
 
 - 共通 CSS: `astro-site/src/styles/acquisitionGlass.css`（`ag-` 接頭辞）

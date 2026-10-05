@@ -16,7 +16,7 @@ const TABS = [
   { key: 'nankan', label: '南関東競馬', href: HREF[mode].nankan },
 ];
 ---
-<nav class="ag-glass acq-venue-tabs" aria-label="会場">
+<nav class="ag-glass ag-tint-blue acq-venue-tabs" aria-label="会場">
   {TABS.map((t) => (
     <a href={t.href} class={t.key === active ? 'is-active' : ''} aria-current={t.key === active ? 'page' : undefined} data-venue-tab={t.key}>{t.label}</a>
   ))}
