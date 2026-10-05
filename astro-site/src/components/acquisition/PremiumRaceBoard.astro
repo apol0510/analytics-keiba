@@ -32,11 +32,11 @@ const VENUE_LEAD = { all: '中央・南関のレース', jra: '中央競馬の�
 <div class={`ag-scene acq-layout acq-board acq-board-${mode}`} data-board-mode={mode}>
   <div class="acq-main">
     {isPreview ? (
-      <section class="ag-glass ag-tint-violet preview-banner" aria-label="Premiumを体験">
-        <span class="ag-pill violet">PREVIEW</span>
+      <section class="ag-glass ag-tint-blue preview-banner" aria-label="Premiumを体験">
+        <span class="ag-pill blue">PREVIEW</span>
         <h2>Premiumを体験</h2>
         <p>Premiumではこの画面から、気になるレースの予想を 1 件ずつ取得できます。月額料金だけで、何レースでも取得し放題。</p>
-        <a class="ag-cta ag-cta-premium preview-banner-cta" href="/pricing/">Premiumのプランを見る</a>
+        <a class="ag-cta preview-banner-cta" href="/pricing/">Premiumのプランを見る</a>
       </section>
     ) : (
       <div class="acq-today-top"><AcquisitionValuePanel value={value} variant="today" basePath={basePath} /></div>
@@ -48,8 +48,8 @@ const VENUE_LEAD = { all: '中央・南関のレース', jra: '中央競馬の�
   </div>
   {isPreview ? (
     <aside class="acq-preview-side" aria-label="Premium なら">
-      <section class="ag-glass ag-tint-violet acq-preview-card">
-        <span class="ag-pill violet acq-preview-badge">取得回数に上限なし</span>
+      <section class="ag-glass ag-tint-blue acq-preview-card">
+        <span class="ag-pill blue acq-preview-badge">取得回数に上限なし</span>
         <h2>月額のまま、何レースでも。</h2>
         <p class="acq-preview-lead">中央・南関の全レースから、気になった予想をいくつでも取得できます。</p>
         <ul class="acq-benefits">
@@ -59,7 +59,7 @@ const VENUE_LEAD = { all: '中央・南関のレース', jra: '中央競馬の�
           <li><strong>全頭の過去走まで 1 画面</strong><span>新聞を広げなくても、出走馬を見比べられます</span></li>
           <li><strong>レース後すぐ答え合わせ</strong><span>取得した予想の的中・払戻がマイページに表示されます</span></li>
         </ul>
-        <a class="ag-cta ag-cta-premium" href="/pricing/">Premiumで予想を取得</a>
+        <a class="ag-cta" href="/pricing/">Premiumで予想を取得</a>
       </section>
     </aside>
   ) : (
@@ -83,12 +83,12 @@ const VENUE_LEAD = { all: '中央・南関のレース', jra: '中央競馬の�
   .acq-preview-card { padding: 16px; display: grid; gap: 10px; }
   .acq-preview-card h2 { margin: 0; font-size: 1.02rem; }
   .acq-preview-badge { width: fit-content; }
-  .acq-preview-card h2 { font-size: 1.2rem; letter-spacing: 0.02em; color: #d8b4fe; }
+  .acq-preview-card h2 { font-size: 1.2rem; letter-spacing: 0.02em; color: #7cc4ff; }
   .acq-preview-lead { margin: 0; color: var(--ag-text-2); font-size: 0.88rem; line-height: 1.6; }
   .acq-benefits { list-style: none; margin: 2px 0 0; padding: 0; display: grid; gap: 10px; }
-  .acq-benefits li { display: grid; gap: 2px; padding: 10px 12px 10px 34px; position: relative; border-radius: 12px; background: rgba(168,85,247,0.08); border: 1px solid rgba(192,132,252,0.3); }
-  .acq-benefits li::before { content: '✓'; position: absolute; left: 12px; top: 10px; color: #c4b5fd; font-weight: 900; }
-  .acq-benefits strong { font-size: 0.92rem; color: #e9d5ff; }
+  .acq-benefits li { display: grid; gap: 2px; padding: 10px 12px 10px 34px; position: relative; border-radius: 12px; background: rgba(59,130,246,0.08); border: 1px solid rgba(96,165,250,0.3); }
+  .acq-benefits li::before { content: '✓'; position: absolute; left: 12px; top: 10px; color: #7cc4ff; font-weight: 900; }
+  .acq-benefits strong { font-size: 0.92rem; color: #d6ebff; }
   .acq-benefits span { font-size: 0.8rem; color: var(--ag-text-2); line-height: 1.5; }
   @media (min-width: 1000px) {
     .acq-board { grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; margin: 20px 0 28px; padding: 24px; }
