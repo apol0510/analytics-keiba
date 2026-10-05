@@ -155,7 +155,6 @@ export const SANRENPUKU_UPSELL_STEPS = Object.freeze([
       '全レースの推奨度・見送り判定もご覧いただけます。',
       '',
       '気になるレースの予想を取得すると、通常買い目と中心買い目が表示されます。',
-      '取得した予想はいつでも見返せます。',
     ],
     benefitTitle: '対象と使い方',
     benefitItems: [
