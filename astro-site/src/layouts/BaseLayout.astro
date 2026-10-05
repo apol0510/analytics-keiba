@@ -1,6 +1,7 @@
 ---
 import '../styles/global.css';
 import BankApplicationEmailLock from '../components/BankApplicationEmailLock.astro';
+import StaleFreeSessionCheck from '../components/StaleFreeSessionCheck.astro';
 import { buildFullTitle } from '../lib/seo/pageTitle.mjs';
 
 export const prerender = true;
@@ -858,6 +859,7 @@ const fullTitle = buildFullTitle(title);
     <script src="/js/funnel-analytics.js" is:inline></script>
 </head>
 <body>
+    <StaleFreeSessionCheck />
     <!-- Header -->
     <header class="header">
         <div class="container">
