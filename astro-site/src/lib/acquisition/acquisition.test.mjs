@@ -519,7 +519,8 @@ test('サイトマップ: 会員限定の取得画面とプレビュー詳細は
 test('Premium 導線 CTA は同じスタイル（明るい紫）・通常の取得 CTA（青）・取得済み（緑）と分ける', () => {
   const css = read('src/styles/acquisitionGlass.css');
   // 色体系
-  assert.match(css, /--ag-cta: linear-gradient\(135deg, #3b82f6 0%, #2563eb 45%, #0284c7 100%\)/, '通常の操作は青');
+  assert.match(css, /--ag-cta: linear-gradient\(135deg, rgba\(59, 130, 246, 0\.2\d\)/, '通常の操作は青のガラス（メインバッジと同じ作り・2026-10-05 MK）');
+  assert.doesNotMatch(css.match(/--ag-cta: [^;]*;/)[0], /#3b82f6|rgba\(255, 255, 255/, 'ベタ塗り・白の光沢に戻さない');
   assert.match(css, /--ag-cta-premium: linear-gradient\(135deg, rgba\(180, 108, 249, 0\.1\d\)/, 'Premium 導線はメインバッジと同じ薄い紫のガラス（塗りつぶしにしない）');
   assert.doesNotMatch(css.match(/--ag-cta-premium: [^;]*;/)[0], /rgba\(255, 255, 255/, '白の光沢を重ねない（乳白色に見える）');
   const rule = (sel) => (css.match(new RegExp(`${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{[^}]*\\}`)) || [])[0] || '';
@@ -557,7 +558,7 @@ test('会場タブ＝イエロー系ガラス・日付タブ＝黄緑の乳白�
   assert.match(date, /color: #365314/);
   assert.match(date, /rgba\(236, 252, 203/);
   assert.match(list, /\.acq-dates a \{[^}]*color: #d9f99d[^}]*backdrop-filter: blur/);
-  assert.match(read('src/styles/acquisitionGlass.css'), /background: var\(--ag-cta\); color: #e0f2fe;/, '通常 CTA の文字は淡い青');
+  assert.match(read('src/styles/acquisitionGlass.css'), /background: var\(--ag-cta\); color: #7cc4ff;/, '通常 CTA の文字は青（同系色・2026-10-05 MK）');
 });
 
 test('Preview 詳細の買い目カードは 1 枚（馬単買い目）だけ（2026-10-04 MK 確定）', () => {
