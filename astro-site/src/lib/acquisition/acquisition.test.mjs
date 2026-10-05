@@ -520,9 +520,10 @@ test('Premium 導線 CTA は同じスタイル（明るい紫）・通常の取�
   const css = read('src/styles/acquisitionGlass.css');
   // 色体系
   assert.match(css, /--ag-cta: linear-gradient\(135deg, #3b82f6 0%, #2563eb 45%, #0284c7 100%\)/, '通常の操作は青');
-  assert.match(css, /--ag-cta-premium: linear-gradient\(135deg, #b46cf9 0%, #9b5cf6 35%, #7c3aed 70%, #5b5ff0 100%\)/, 'Premium 導線は明るい紫→青紫');
+  assert.match(css, /--ag-cta-premium: linear-gradient\(180deg, rgba\(255, 255, 255, [^)]*\)[^;]*linear-gradient\(135deg, rgba\(180, 108, 249, 0\.7\d\)[^;]*rgba\(91, 95, 240, 0\.7\d\) 100%\)/, 'Premium 導線は明るい紫→青紫の色付きガラス（濃いめの半透明＋光沢）');
   const rule = (sel) => (css.match(new RegExp(`${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{[^}]*\\}`)) || [])[0] || '';
   const base = rule('.ag-cta.ag-cta-premium');
+  assert.match(base, /backdrop-filter: blur\(14px\) saturate\(170%\)/, '色付きガラス: 背景ぼかし（2026-10-05 MK）');
   assert.match(base, /color: #e9d5ff/, '文字色はボタンと同系色（紫みのあるラベンダー・白に見せない）');
   assert.match(base, /border: 1px solid rgba\(237, 233, 254/);
   assert.match(base, /box-shadow: [^;]*rgba\(147, 51, 234/);

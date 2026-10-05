@@ -30,8 +30,9 @@
   /* CTA の色体系（2026-10-04 MK 確定）:
      通常の操作（予想を取得する・選択中のタブ）= 青 ／ Premium への導線 = 明るい紫 ／ 取得済み = 緑 */
   --ag-cta: linear-gradient(135deg, #3b82f6 0%, #2563eb 45%, #0284c7 100%);
-  --ag-cta-premium: linear-gradient(135deg, #b46cf9 0%, #9b5cf6 35%, #7c3aed 70%, #5b5ff0 100%);
-  --ag-cta-premium-hover: linear-gradient(135deg, #c084fc 0%, #a78bfa 30%, #8b5cf6 65%, #6366f1 100%);
+  /* 2026-10-05 MK 確定: 色付きガラス（紫は濃いめに残し、半透明＋背景ぼかし＋上面の光沢） */
+  --ag-cta-premium: linear-gradient(180deg, rgba(255, 255, 255, 0.24) 0%, rgba(255, 255, 255, 0.06) 48%, rgba(255, 255, 255, 0) 52%), linear-gradient(135deg, rgba(180, 108, 249, 0.78) 0%, rgba(155, 92, 246, 0.74) 35%, rgba(124, 58, 237, 0.72) 70%, rgba(91, 95, 240, 0.74) 100%);
+  --ag-cta-premium-hover: linear-gradient(180deg, rgba(255, 255, 255, 0.30) 0%, rgba(255, 255, 255, 0.08) 48%, rgba(255, 255, 255, 0) 52%), linear-gradient(135deg, rgba(192, 132, 252, 0.86) 0%, rgba(167, 139, 250, 0.82) 30%, rgba(139, 92, 246, 0.80) 65%, rgba(99, 102, 241, 0.82) 100%);
   --ag-radius: 18px;
 }
 
@@ -91,6 +92,7 @@
 /* Premium 導線（「Premiumで予想を取得」「Premiumのプランを見る」等）。Preview / Premium / 関連導線で同じ見た目にする */
 .ag-cta.ag-cta-premium {
   background: var(--ag-cta-premium);
+  -webkit-backdrop-filter: blur(14px) saturate(170%); backdrop-filter: blur(14px) saturate(170%);
   border: 1px solid rgba(237, 233, 254, 0.75);
   /* 2026-10-04 MK 確定: 文字色はボタンと同系色（淡いラベンダー） */
   color: #e9d5ff; /* 2026-10-04 MK: 白に見えないよう、はっきり紫みのあるラベンダー */
