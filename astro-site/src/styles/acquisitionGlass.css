@@ -66,6 +66,18 @@
   -webkit-backdrop-filter: var(--ag-blur);
   backdrop-filter: var(--ag-blur);
 }
+/* 青の色付きガラス面（会員の操作・取得状況）。正本 docs/GLASS_DESIGN_RULES.md（2026-10-05 MK）:
+   色付きの薄い半透明＋同系色の枠＋同系色の文字。白・グレーだけの無彩色ガラスにしない */
+.ag-glass.ag-tint-blue {
+  --ag-text: #d6ebff; --ag-text-2: rgba(147, 197, 253, 0.82);
+  color: var(--ag-text);
+  background: linear-gradient(155deg, rgba(59, 130, 246, 0.13) 0%, rgba(37, 99, 235, 0.07) 50%, rgba(2, 132, 199, 0.10) 100%);
+  border-color: rgba(96, 165, 250, 0.45);
+  box-shadow: 0 14px 34px rgba(10, 16, 48, 0.32), 0 0 22px rgba(59, 130, 246, 0.14);
+}
+.ag-glass.ag-tint-blue::before { background: linear-gradient(90deg, transparent, rgba(147, 197, 253, 0.4), transparent); }
+.ag-tint-blue h2, .ag-tint-blue summary { color: #7cc4ff; }
+.ag-tint-blue .ag-inset { background: rgba(59, 130, 246, 0.08); border-color: rgba(96, 165, 250, 0.30); }
 .ag-glass::before { /* 上辺の光の反射 */
   content: ''; position: absolute; inset: 0 12% auto 12%; height: 1px; border-radius: 999px;
   background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.85), transparent);
