@@ -14,6 +14,7 @@ import { loadAcquiredView, ACQUISITION_DOOR_PLANS } from '../../lib/acquisition/
 import { gatePaidPage, PAID_PAGE_HEADERS } from '../../lib/auth/paidPageGate.js';
 import { findRace } from '../../lib/acquisition/raceSource.js';
 import { buildPredictionContent } from '../../lib/acquisition/predictionContent.js';
+import { judgeAcquired, loadResultIndex } from '../../lib/acquisition/acquiredResults.js';
 
 // ── サーバー側認可（この行より前で本文を組み立てない）──
 const gate = await gatePaidPage({ request: Astro.request, requiredPlan: ACQUISITION_DOOR_PLANS, env: process.env });
@@ -43,6 +44,10 @@ if (c && c.product === 'premium' && !c.horses.some((h) => Array.isArray(h.recent
     pastUnavailable = true;
   }
 }
+// 結果（2026-10-05 MK・§2-5）: 取得時点の買い目×結果アーカイブ。読めなければ結果欄を出さない
+let result = null;
+if (c && v.entry) { try { result = judgeAcquired({ entry: v.entry, content: c, index: loadResultIndex() }); } catch { result = null; } }
+const yen = (n) => `¥${Number(n).toLocaleString('ja-JP')}`;
 const wd = ['日', '月', '火', '水', '木', '金', '土'];
 const dateBlock = (ymd) => { const t = new Date(`${ymd}T00:00:00Z`); return Number.isNaN(t.getTime()) ? { md: '', wd: '' } : { md: `${t.getUTCMonth() + 1}/${t.getUTCDate()}`, wd: wd[t.getUTCDay()] }; };
 const jstFull = (iso) => { const t = new Date(Date.parse(iso) + 9 * 3600e3); return `${t.getUTCFullYear()}/${String(t.getUTCMonth() + 1).padStart(2, '0')}/${String(t.getUTCDate()).padStart(2, '0')} ${String(t.getUTCHours()).padStart(2, '0')}:${String(t.getUTCMinutes()).padStart(2, '0')}`; };
@@ -57,7 +62,7 @@ const productName = p?.product === 'srp' ? 'Premium Sanrenpuku' : 'Premium';
     <a class="acq-back" href={listPath}>‹ レース一覧に戻る</a>
     {c ? (
       <>
-        <header class="ag-glass acq-hero" aria-label="レース情報">
+        <header class="ag-glass ag-tint-blue acq-hero" aria-label="レース情報">
           <div class="acq-hero-top">
             <div class="acq-date ag-inset"><strong>{dateBlock(c.date).md}</strong><span>({dateBlock(c.date).wd})</span></div>
             <div class="acq-hero-main">
@@ -76,8 +81,27 @@ const productName = p?.product === 'srp' ? 'Premium Sanrenpuku' : 'Premium';
             <small>取得日時 {jstFull(v.entry.at)}</small>
           </div>
         </header>
-        <AcquiredPredictionBody content={c} pastUnavailable={pastUnavailable} />
-        <nav class="ag-glass acq-foot" aria-label="取得済みの予想">
+        {result && result.status !== 'none' && (
+          <section class={`ag-glass ag-tint-blue acq-result-card is-${result.status}`} aria-label="レース結果" data-result={result.status}>
+            <h2>レース結果</h2>
+            {result.status === 'pending' ? (
+              <p class="acq-result-wait"><b>結果待ち</b><span>レースの結果が取り込まれると、ここに着順と的中が表示されます。</span></p>
+            ) : (
+              <div class="acq-result-body">
+                <ol class="acq-order">
+                  {result.order.map((n, i) => <li><span>{i + 1}着</span><b class={`ag-num rk rk-${i + 1}`}>{n}</b></li>)}
+                </ol>
+                <div class="acq-verdict">
+                  {result.status === 'hit' ? (
+                    <><span class="acq-verdict-chip is-hit">✓ 的中</span><span class="acq-verdict-line">{`${result.betType} ${result.combination}`}</span>{result.payout ? <span class="acq-verdict-pay">払戻 <b>{yen(result.payout)}</b><small>（100円あたり）</small></span> : null}</>
+                  ) : <span class="acq-verdict-chip is-miss">不的中</span>}
+                </div>
+              </div>
+            )}
+          </section>
+        )}
+        <AcquiredPredictionBody content={c} pastUnavailable={pastUnavailable} result={result} />
+        <nav class="ag-glass ag-tint-blue acq-foot" aria-label="取得済みの予想">
           <p>取得した予想は「取得済みの予想」に保存され、いつでも見返せます。</p>
           <div class="acq-foot-actions">
             <a class="ag-cta" href="/predictions/history/">取得済みの予想を見る</a>
@@ -86,7 +110,7 @@ const productName = p?.product === 'srp' ? 'Premium Sanrenpuku' : 'Premium';
         </nav>
       </>
     ) : v.status === 'not_acquired' ? (
-      <section class="ag-glass acq-view-empty">
+      <section class="ag-glass ag-tint-blue acq-view-empty">
         <h1>{p.venueName} {p.raceNumber}R の予想はまだ取得していません</h1>
         <p>予想の内容は、取得したあとに表示されます。</p>
         {v.canAcquire ? (
@@ -97,9 +121,9 @@ const productName = p?.product === 'srp' ? 'Premium Sanrenpuku' : 'Premium';
         ) : <p>この予想はご契約のプランでは取得できません。</p>}
       </section>
     ) : v.status === 'unavailable' ? (
-      <section class="ag-glass acq-view-empty"><h1>ただいま予想を表示できません</h1><p>時間をおいてもう一度お試しください。</p></section>
+      <section class="ag-glass ag-tint-blue acq-view-empty"><h1>ただいま予想を表示できません</h1><p>時間をおいてもう一度お試しください。</p></section>
     ) : (
-      <section class="ag-glass acq-view-empty"><h1>予想が見つかりませんでした</h1></section>
+      <section class="ag-glass ag-tint-blue acq-view-empty"><h1>予想が見つかりませんでした</h1></section>
     )}
   </main>
   </div>
@@ -110,6 +134,27 @@ const productName = p?.product === 'srp' ? 'Premium Sanrenpuku' : 'Premium';
   .acq-view-page > * { min-width: 0; }
   .acq-back { color: #bae6fd; text-decoration: none; font-weight: 700; width: fit-content; min-height: 40px; display: inline-flex; align-items: center; }
   .acq-hero { display: grid; gap: 12px; padding: 16px; }
+  /* レース結果（正本 GLASS_DESIGN_RULES.md: 緑=的中・金=払戻・赤=不的中・黄=結果待ち／着順は金・銀・銅） */
+  .acq-result-card { padding: 16px; display: grid; gap: 10px; }
+  .acq-result-card h2 { margin: 0; font-size: 1rem; }
+  .acq-result-card.is-hit { border-color: rgba(74,222,128,0.6); box-shadow: 0 14px 34px rgba(10,16,48,0.32), 0 0 26px rgba(74,222,128,0.2); }
+  .acq-result-card.is-pending { border-color: rgba(250,204,21,0.45); }
+  .acq-result-body { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; }
+  .acq-order { list-style: none; margin: 0; padding: 0; display: flex; gap: 10px; }
+  .acq-order li { display: grid; justify-items: center; gap: 4px; }
+  .acq-order li span { font-size: 0.74rem; color: var(--ag-text-2); }
+  .acq-order .ag-num { min-width: 44px; height: 44px; font-size: 1.2rem; }
+  .acq-verdict { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }
+  .acq-verdict-chip { display: inline-flex; padding: 4px 14px; border-radius: 999px; border: 1px solid; font-weight: 900; }
+  .acq-verdict-chip.is-hit { color: #86efac; border-color: rgba(74,222,128,0.6); background: rgba(34,197,94,0.14); box-shadow: 0 0 16px rgba(74,222,128,0.25); }
+  .acq-verdict-chip.is-miss { color: #fca5a5; border-color: rgba(248,113,113,0.45); background: rgba(239,68,68,0.08); }
+  .acq-verdict-line { font-weight: 800; color: #bbf7d0; }
+  .acq-verdict-pay { color: var(--ag-text-2); font-size: 0.85rem; }
+  .acq-verdict-pay b { color: #fcd34d; font-size: 1.3rem; font-weight: 900; }
+  .acq-verdict-pay small { margin-left: 2px; }
+  .acq-result-wait { margin: 0; display: grid; gap: 4px; }
+  .acq-result-wait b { justify-self: start; padding: 3px 12px; border-radius: 999px; border: 1px solid rgba(250,204,21,0.5); background: rgba(250,204,21,0.08); color: #fde047; }
+  .acq-result-wait span { font-size: 0.84rem; color: var(--ag-text-2); }
   .acq-hero-top { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 12px; align-items: center; }
   .acq-date { display: grid; justify-items: center; padding: 8px 12px; }
   .acq-date strong { font-size: 1.35rem; line-height: 1.1; }

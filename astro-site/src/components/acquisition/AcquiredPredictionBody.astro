@@ -11,8 +11,14 @@
  *   - Premium Sanrenpuku は推奨度・理由・三連複 通常／中心
  */
 import '../../styles/acquisitionGlass.css';
-interface Props { content: any; pastUnavailable?: boolean }
-const { content: c, pastUnavailable = false } = Astro.props;
+import { umatanLineHits, sanrenpukuLineHits } from '../../lib/acquisition/acquiredResults.js';
+interface Props { content: any; pastUnavailable?: boolean; result?: any }
+const { content: c, pastUnavailable = false, result = null } = Astro.props;
+// 結果（2026-10-05 MK・§2-5）: 当たった買い目の行を緑で示し、その行の 1・2 着の馬番を着順色にする（外れた行には付けない）
+const order = Array.isArray(result?.order) ? result.order : null;
+const umHit = (line) => !!(order && order.length >= 2 && umatanLineHits(line, order[0], order[1]));
+const srpHit = (line) => !!(order && order.length === 3 && sanrenpukuLineHits(line, order));
+const numRank = (hit, n) => { if (!hit || !order) return ''; const i = order.slice(0, isSrp ? 3 : 2).indexOf(Number(n)); return i === 0 ? ' rk-1' : i === 1 ? ' rk-2' : i === 2 ? ' rk-3' : ''; };
 const isSrp = c.product === 'srp';
 // Preview（/free-prediction/view/）: 公開してよい範囲だけ（buildPreviewContent）。買い目・指数・役割分類は描画しない
 const isPreview = c.preview === true;
@@ -60,7 +66,7 @@ const metaFor = (r) => [
 ---
 <div class="acq-body" data-product={c.product}>
   {isSrp && (
-    <section class={`ag-glass acq-sec acq-selection grade-${c.selection.grade}`} aria-label="レース選別">
+    <section class={`ag-glass acq-sec acq-selection grade-${c.selection.grade}${c.selection.grade === "A" || c.selection.grade === "B" ? "" : " ag-tint-blue"}`} aria-label="レース選別">
       <div class="acq-grade">{gradeLabel[c.selection.grade] || '見送り'}</div>
       <ul class="acq-reasons">{c.selection.reasons.map((r) => <li>{r}</li>)}</ul>
     </section>
@@ -72,7 +78,7 @@ const metaFor = (r) => [
         {isPreview ? (
           <>
             {/* 2026-10-04 MK 確定: 有料版のプレビューなので買い目カードは 1 枚（馬単買い目）だけ */}
-            <article class="ag-glass acq-sec acq-bet acq-locked-bet" data-kind="umatan-preview">
+            <article class="ag-glass ag-tint-blue acq-sec acq-bet acq-locked-bet" data-kind="umatan-preview">
               <header class="acq-head"><h3>馬単買い目</h3><span class="ag-pill violet">Premium</span></header>
               <p class="acq-note">Premium では、通常の買い目と点数を絞った買い目を表示します。</p>
               <div class="betting-teaser ag-inset" aria-hidden="true">
@@ -85,36 +91,36 @@ const metaFor = (r) => [
           </>
         ) : !isSrp ? (
           <>
-            <article class="ag-glass acq-sec acq-bet" data-kind="umatan-normal">
+            <article class="ag-glass ag-tint-blue acq-sec acq-bet" data-kind="umatan-normal">
               <header class="acq-head">
                 <h3>馬単 通常の買い目</h3>
                 <span class="ag-pill">{umatanTotal}点</span>
               </header>
               <p class="acq-note">{c.isMainRace ? '本命から相手 5 頭への馬単（一方向）です。' : '本命・対抗を軸に、相手との組み合わせ（表裏）で購入する買い目です。'}</p>
               <ul class="bet-list">
-                {c.umatan.normal.map((l) => { const p = splitLine(l.line); return (
-                  <li class="bet-item ag-inset">
-                    <span class="acq-axis"><span class="acq-axis-label">軸</span>{p.axis && <span class="ag-num lg acq-axis-num">{p.axis}</span>}</span>
+                {c.umatan.normal.map((l) => { const p = splitLine(l.line); const hit = umHit(l.line); return (
+                  <li class={`bet-item ag-inset${hit ? ' is-hit-line' : ''}`} data-hit={hit ? 'true' : undefined}>
+                    <span class="acq-axis"><span class="acq-axis-label">軸</span>{p.axis && <span class={`ag-num lg acq-axis-num${numRank(hit, p.axis)}`}>{p.axis}</span>}</span>
                     <span class="acq-arrow" aria-hidden="true">{p.arrow}</span>
-                    <span class="acq-partners">{p.partners.map((n) => <span class="acq-pnum">{n}</span>)}</span>
-                    <span class="ag-pill acq-line-pts">{l.points}点</span>
+                    <span class="acq-partners">{p.partners.map((n) => <span class={`acq-pnum${numRank(hit, n)}`}>{n}</span>)}</span>
+                    <span class={`ag-pill acq-line-pts${hit ? ' acq-hit-pill' : ''}`}>{hit ? `✓ 的中・${l.points}点` : `${l.points}点`}</span>
                   </li>
                 ); })}
               </ul>
             </article>
-            {c.umatan.narrowed && (() => { const p = splitLine(c.umatan.narrowed.line); return (
-              <article class="ag-glass acq-sec acq-bet" data-kind="umatan-narrowed">
+            {c.umatan.narrowed && (() => { const p = splitLine(c.umatan.narrowed.line); const hit = umHit(c.umatan.narrowed.line); return (
+              <article class="ag-glass ag-tint-blue acq-sec acq-bet" data-kind="umatan-narrowed">
                 <header class="acq-head">
                   <h3>馬単 点数を絞った買い目</h3>
                   <span class="ag-pill">{c.umatan.narrowed.points}点</span>
                 </header>
                 <p class="acq-note">本命を軸に、相手を評価上位 3 頭に絞った買い目です。</p>
                 <ul class="bet-list">
-                  <li class="bet-item ag-inset">
-                    <span class="acq-axis"><span class="acq-axis-label">軸</span>{p.axis && <span class="ag-num lg acq-axis-num">{p.axis}</span>}</span>
+                  <li class={`bet-item ag-inset${hit ? ' is-hit-line' : ''}`} data-hit={hit ? 'true' : undefined}>
+                    <span class="acq-axis"><span class="acq-axis-label">軸</span>{p.axis && <span class={`ag-num lg acq-axis-num${numRank(hit, p.axis)}`}>{p.axis}</span>}</span>
                     <span class="acq-arrow" aria-hidden="true">{p.arrow}</span>
-                    <span class="acq-partners">{p.partners.map((n) => <span class="acq-pnum">{n}</span>)}</span>
-                    <span class="ag-pill acq-line-pts">{c.umatan.narrowed.points}点</span>
+                    <span class="acq-partners">{p.partners.map((n) => <span class={`acq-pnum${numRank(hit, n)}`}>{n}</span>)}</span>
+                    <span class={`ag-pill acq-line-pts${hit ? ' acq-hit-pill' : ''}`}>{hit ? `✓ 的中・${c.umatan.narrowed.points}点` : `${c.umatan.narrowed.points}点`}</span>
                   </li>
                 </ul>
               </article>
@@ -122,13 +128,13 @@ const metaFor = (r) => [
           </>
         ) : (
           <>
-            <article class="ag-glass acq-sec acq-bet" data-kind="sanrenpuku-normal">
+            <article class="ag-glass ag-tint-blue acq-sec acq-bet" data-kind="sanrenpuku-normal">
               <header class="acq-head">
                 <h3>三連複 通常の買い目</h3>
                 <span class="ag-pill">{c.sanrenpuku.normal.reduce((s, l) => s + l.points, 0)}点</span>
               </header>
               {c.sanrenpuku.normal.length === 0 && <p class="acq-note">このレースは三連複の買い目を組めません。</p>}
-              <ul class="bet-list">{c.sanrenpuku.normal.map((l) => <li class="bet-item ag-inset"><span class="acq-srp-line">{l.line}</span><span class="ag-pill acq-line-pts">{l.points}点</span></li>)}</ul>
+              <ul class="bet-list">{c.sanrenpuku.normal.map((l) => { const hit = srpHit(l.line); return <li class={`bet-item ag-inset${hit ? ' is-hit-line' : ''}`} data-hit={hit ? 'true' : undefined}><span class="acq-srp-line">{l.line}</span><span class={`ag-pill acq-line-pts${hit ? ' acq-hit-pill' : ''}`}>{hit ? `✓ 的中・${l.points}点` : `${l.points}点`}</span></li>; })}</ul>
             </article>
             {c.sanrenpuku.center && (
               <article class="ag-glass acq-sec acq-bet narrowed" data-kind="sanrenpuku-center">
@@ -137,7 +143,7 @@ const metaFor = (r) => [
                   <span class="ag-pill gold">{c.sanrenpuku.center.points}点</span>
                 </header>
                 <p class="acq-note">本命を軸に、評価上位の相手で組んだ中心の買い目です。</p>
-                <ul class="bet-list"><li class="bet-item ag-inset"><span class="acq-srp-line">{c.sanrenpuku.center.line}</span><span class="ag-pill gold acq-line-pts">{c.sanrenpuku.center.points}点</span></li></ul>
+                <ul class="bet-list"><li class={`bet-item ag-inset${srpHit(c.sanrenpuku.center.line) ? ' is-hit-line' : ''}`} data-hit={srpHit(c.sanrenpuku.center.line) ? 'true' : undefined}><span class="acq-srp-line">{c.sanrenpuku.center.line}</span><span class={`ag-pill acq-line-pts${srpHit(c.sanrenpuku.center.line) ? ' acq-hit-pill' : ' gold'}`}>{srpHit(c.sanrenpuku.center.line) ? `✓ 的中・${c.sanrenpuku.center.points}点` : `${c.sanrenpuku.center.points}点`}</span></li></ul>
               </article>
             )}
           </>
@@ -146,7 +152,7 @@ const metaFor = (r) => [
     </section>
 
     <div class="acq-col-marks">
-      <section class="ag-glass acq-sec acq-marks" aria-label="印とAI総合指数">
+      <section class="ag-glass ag-tint-blue acq-sec acq-marks" aria-label="印とAI総合指数">
         <header class="acq-head"><h3>印と AI 総合指数</h3></header>
         <ul class="acq-mark-list">
           {main.map((h) => (
@@ -163,7 +169,7 @@ const metaFor = (r) => [
       </section>
 
       {groups.length > 0 && (
-        <section class="ag-glass acq-sec acq-groups" aria-label="連下・抑え・評価外">
+        <section class="ag-glass ag-tint-blue acq-sec acq-groups" aria-label="連下・抑え・評価外">
           {isPreview && <p class="acq-note acq-preview-note">連下・抑え・評価外の分類は Premium で表示されます。</p>}
           {groups.map((g) => (
             <div class={`acq-group ${g.cls}`} data-group={g.key}>
@@ -180,7 +186,7 @@ const metaFor = (r) => [
     </div>
   </div>
 
-  <section class="ag-glass acq-sec acq-past" aria-label="過去走" id="past-races">
+  <section class="ag-glass ag-tint-blue acq-sec acq-past" aria-label="過去走" id="past-races">
     <header class="acq-head"><h3>過去走 <small>全頭の直近のレース成績</small></h3></header>
     {pastUnavailable && <p class="acq-note">この予想の過去走は、現在表示できません。</p>}
     {!pastUnavailable && !hasPast && <p class="acq-note">過去走データはありません。</p>}
@@ -277,12 +283,16 @@ const metaFor = (r) => [
   .bet-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
   .bet-item { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 12px; border-left: 3px solid var(--ag-blue); }
   .narrowed .bet-item { border-left-color: var(--ag-gold); box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 0 22px rgba(252,211,77,0.10); }
-  .narrowed { border-color: rgba(252, 211, 77, 0.30); }
+  .narrowed { border-color: rgba(252, 211, 77, 0.45); background: linear-gradient(155deg, rgba(252,211,77,0.10), rgba(245,158,11,0.04)); }
+  .narrowed h3 { color: #fcd34d; }
   .acq-axis { display: inline-flex; align-items: center; gap: 6px; }
   .acq-axis-label { color: #bae6fd; font-weight: 800; font-size: 0.82rem; }
   .acq-axis-num { background: linear-gradient(135deg, #6366f1, #3b82f6); box-shadow: 0 0 14px rgba(99,102,241,0.55), inset 0 1px 0 rgba(255,255,255,0.35); }
   .acq-arrow { color: #e0e7ff; font-size: 1.15rem; font-weight: 700; }
   .acq-partners { display: flex; flex-wrap: wrap; gap: 6px; }
+  /* 当たった買い目の行（緑）。1・2（・3）着の馬番は着順色（rk-1 金／rk-2 銀／rk-3 銅） */
+  .bet-item.is-hit-line { border-color: rgba(74,222,128,0.6) !important; background: rgba(34,197,94,0.10) !important; box-shadow: 0 0 18px rgba(74,222,128,0.22); }
+  .ag-pill.acq-hit-pill { color: #86efac; border-color: rgba(74,222,128,0.6); background: rgba(34,197,94,0.14); font-weight: 900; }
   .acq-pnum { display: inline-grid; place-items: center; min-width: 30px; height: 30px; padding: 0 6px; border-radius: 8px; font-weight: 800; background: rgba(255,255,255,0.10); border: 1px solid rgba(255,255,255,0.18); }
   .narrowed .acq-pnum { border-color: rgba(252,211,77,0.45); color: #fef3c7; }
   .acq-srp-line { grid-column: 1 / 4; font-weight: 800; font-size: 1.02rem; word-break: break-all; }
@@ -362,8 +372,12 @@ const metaFor = (r) => [
   .acq-mark-index.acq-masked strong { background: none; background-clip: initial; -webkit-background-clip: initial; -webkit-text-fill-color: currentColor; color: var(--ag-text-2); filter: blur(6px); user-select: none; }
   .acq-preview-note { margin: 0 0 4px; }
   .acq-group.acq-preview-others h4 span { color: var(--ag-text-2); }
-  .acq-selection.grade-A { border-color: rgba(251,113,133,0.55); box-shadow: var(--ag-shadow), 0 0 26px rgba(244,63,94,0.18); }
-  .acq-selection.grade-B { border-color: rgba(251,191,36,0.55); }
+  /* 推奨度も色付きガラス（正本 GLASS_DESIGN_RULES.md）: A=ローズ／B=琥珀／見送り=青（無彩色にしない） */
+  .acq-selection.grade-A { border-color: rgba(251,113,133,0.55); background: linear-gradient(155deg, rgba(244,63,94,0.14), rgba(244,63,94,0.05)); box-shadow: var(--ag-shadow), 0 0 26px rgba(244,63,94,0.18); }
+  .acq-selection.grade-A .acq-grade { color: #fda4af; }
+  .acq-selection.grade-B { border-color: rgba(251,191,36,0.55); background: linear-gradient(155deg, rgba(251,191,36,0.12), rgba(251,191,36,0.04)); }
+  .acq-selection.grade-B .acq-grade { color: #fcd34d; }
+  .acq-selection.ag-tint-blue .acq-grade { color: #7cc4ff; }
   .acq-grade { font-weight: 900; font-size: 1.15rem; margin-bottom: 6px; }
   .acq-reasons { margin: 0; padding-left: 1.2em; line-height: 1.75; }
 
