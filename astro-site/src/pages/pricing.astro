@@ -132,7 +132,7 @@ const planTierByToken = buildPlanTierByToken();
                 <ul class="plan-features">
                     <li class="feature-item">
                         <span class="check-icon">✓</span>
-                        <span><strong>中央・南関 全レース（1R〜12R）の買い目</strong></span>
+                        <span><strong>中央・南関の全レース、予想を取得し放題</strong></span>
                     </li>
                     <li class="feature-item">
                         <span class="check-icon">✓</span>
@@ -173,7 +173,7 @@ const planTierByToken = buildPlanTierByToken();
                 <ul class="plan-features">
                     <li class="feature-item">
                         <span class="check-icon">✓</span>
-                        <span><strong>中央 全レースの買い目</strong></span>
+                        <span><strong>中央の全レース、予想を取得し放題</strong></span>
                     </li>
                     <li class="feature-item">
                         <span class="check-icon">✓</span>
@@ -214,7 +214,7 @@ const planTierByToken = buildPlanTierByToken();
                 <ul class="plan-features">
                     <li class="feature-item">
                         <span class="check-icon">✓</span>
-                        <span><strong>南関 全レースの買い目</strong></span>
+                        <span><strong>南関の全レース、予想を取得し放題</strong></span>
                     </li>
                     <li class="feature-item">
                         <span class="check-icon">✓</span>
@@ -285,6 +285,16 @@ const planTierByToken = buildPlanTierByToken();
         </div>
 
         <!-- その他のお支払い方法（銀行振込の年払い・買い切り）。主導線ではないので控えめに出す -->
+        <!-- 使い方（2026-10-05 MK: 取得し放題の趣旨を申込前に伝える） -->
+        <section class="howto" aria-label="ご利用の流れ">
+            <h2 class="howto-title">ご利用の流れ</h2>
+            <ol class="howto-steps">
+                <li><span class="howto-num">1</span><b>レースを選ぶ</b><small>今日の中央・南関のレース一覧から、気になるレースを選びます</small></li>
+                <li><span class="howto-num">2</span><b>予想を取得</b><small>ボタンひとつで、そのレースの予想（買い目・印・AI 総合指数・過去走）を取得。何件でも取得できます</small></li>
+                <li><span class="howto-num">3</span><b>マイページで見返す</b><small>取得した予想はいつでも見返せて、レース後は的中・不的中の答え合わせもできます</small></li>
+            </ol>
+        </section>
+
         <details class="other-payments" id="otherPayments">
             <summary>銀行振込（年払い・買い切り）をご希望の方</summary>
             <div class="other-payments-body">
@@ -340,15 +350,22 @@ const planTierByToken = buildPlanTierByToken();
                 <div class="faq-item">
                     <h3 class="faq-question">Q: Premium では何が見られますか？</h3>
                     <p class="faq-answer">
-                        全レース（1R〜12R）の買い目をご覧いただけます。加えて、詳細な投資戦略と優先サポートをご利用いただけます。<br>
+                        全レース（1R〜12R）の中から、気になるレースの予想（買い目・印・AI 総合指数・過去走）を 1 件ずつ取得できます。取得できる回数に上限はありません。加えて、詳細な投資戦略と優先サポートをご利用いただけます。<br>
                         Premium は中央（JRA）・南関の両方、中央版・南関版はそれぞれの会場のすべてのレースが対象です。
+                    </p>
+                </div>
+
+                <div class="faq-item">
+                    <h3 class="faq-question">Q: 取得できる回数に上限はありますか？</h3>
+                    <p class="faq-answer">
+                        ありません。月額の範囲で、対象のレースの予想を何件でも取得できます。取得した予想はマイページの「取得済みの予想」に残り、レース後の結果（的中・不的中）もそこで確認できます。
                     </p>
                 </div>
 
                 <div class="faq-item">
                     <h3 class="faq-question">Q: 中央版・南関版と Premium の違いは？</h3>
                     <p class="faq-answer">
-                        内容は同じで、見られる会場だけが違います。中央版は中央（JRA）だけ、南関版は南関だけ、Premium は両方です。<br>
+                        内容は同じで、予想を取得できる会場だけが違います。中央版は中央（JRA）だけ、南関版は南関だけ、Premium は両方です。<br>
                         中央は主に土日、南関は主に平日の開催です。両方ご覧になるなら、中央版と南関版を別々に契約するより <strong>Premium（¥4,980/月）の方が月 ¥980 お得</strong>です。
                     </p>
                 </div>
@@ -940,6 +957,16 @@ const planTierByToken = buildPlanTierByToken();
 
        !important は必須。.plan-button など「display を持つクラス」は同じ詳細度で
        後に定義されるため、!important 無しだと乗り換え価格のボタンが全員に見えてしまう。 */
+    /* ご利用の流れ（ページの他カードと同じ濃紺の面・青のアクセント） */
+    .howto { max-width: 960px; margin: 2.5rem auto 1.5rem; padding: 0 1rem; }
+    .howto-title { text-align: center; font-size: 1.3rem; margin: 0 0 1rem; color: #e2e8f0; }
+    .howto-steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+    .howto-steps li { display: grid; gap: 4px; padding: 16px; border-radius: 14px; background: linear-gradient(155deg, rgba(59,130,246,0.12), rgba(37,99,235,0.05)); border: 1px solid rgba(96,165,250,0.4); }
+    .howto-num { display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; border: 1px solid rgba(96,165,250,0.7); background: rgba(59,130,246,0.18); color: #7cc4ff; font-weight: 900; }
+    .howto-steps b { color: #7cc4ff; font-size: 1.02rem; }
+    .howto-steps small { color: #cbd5e1; font-size: 0.85rem; line-height: 1.6; }
+    @media (max-width: 720px) { .howto-steps { grid-template-columns: 1fr; } }
+
     [data-only-for] {
         display: none !important;
     }
