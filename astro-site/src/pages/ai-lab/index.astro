@@ -2,7 +2,7 @@
 /**
  * /ai-lab/ — AI ラボ（試験運用・中央のみ）。正本 docs/AI_LAB.md（2026-10-05 MK 確定）
  * - 有料会員だけ（gatePaidPage）。自動更新は /api/ailab/view/（ak_session の署名だけで確認）
- * - KAP の全頭期待値ランキング（金額・KAP の買い目は出さない）。発走後は AK 上位 5 頭と結果で答え合わせ
+ * - KAP の全頭 AI 勝率ランキング（🛑 オッズ・期待値・金額・KAP の買い目は出さない：KAP 契約）。発走後は AK 上位 5 頭と結果で答え合わせ
  * - KAP のダッシュボードと同じく、自動更新・次のレースへの自動追従・発走までのカウントダウン
  */
 export const prerender = false;
@@ -25,7 +25,7 @@ const initialJson = JSON.stringify(initial || null).replace(/</g, '\\u003c');
       <div>
         <p class="lab-kicker">AI ラボ <span>試験運用中</span></p>
         <h1>AI の見立てを、レースごとに</h1>
-        <p class="lab-lead">開発中の AI が、出走馬すべての「期待値」（AI 勝率 × 単勝オッズ）を出しています。レースが終わると、AK の上位 5 頭と結果で答え合わせができます。</p>
+        <p class="lab-lead">開発中の AI が、過去の走りから出走馬すべての「勝つ確率」を計算しています。レースが終わると、AK の上位 5 頭と結果で答え合わせができます。</p>
       </div>
       <div class="lab-live" id="lab-live" data-state="connecting"><i aria-hidden="true"></i><span id="lab-live-text">接続中</span><small id="lab-updated"></small></div>
     </header>
@@ -62,7 +62,7 @@ const initialJson = JSON.stringify(initial || null).replace(/</g, '\\u003c');
       el.appendChild(h('h2', null, ['これまでの答え合わせ（結果が出た全 ' + st.settled + ' レース）']));
       el.appendChild(h('div', { class: 'lab-stat-grid' }, [
         h('div', { class: 'ag-inset is-ak' }, [h('span', null, ['1着が AK 上位 5 頭に']), h('strong', null, [String(st.top5Hit)]), h('em', null, ['/ ' + st.settled + ' レース'])]),
-        h('div', { class: 'ag-inset is-ev' }, [h('span', null, ['勝ち馬が AI 期待値 上位 5 頭に']), h('strong', null, [String(st.evTop5)]), h('em', null, ['/ ' + st.evRanked + ' レース'])]) ])); }
+        h('div', { class: 'ag-inset is-ev' }, [h('span', null, ['勝ち馬が AI 勝率 上位 5 頭に']), h('strong', null, [String(st.aiTop5)]), h('em', null, ['/ ' + st.aiRanked + ' レース'])]) ])); }
     function renderDays() { var nav = $('lab-days'); nav.textContent = ''; (data.days || []).forEach(function (d) {
       var b = h('button', { type: 'button', class: 'lab-day' + (d.date === selDate ? ' is-active' : '') }, [d.date.slice(5).replace('-', '/')]);
       b.addEventListener('click', function () { selDate = d.date; $('lab-follow').checked = false; render(); }); nav.appendChild(b); }); }
@@ -76,7 +76,7 @@ const initialJson = JSON.stringify(initial || null).replace(/</g, '\\u003c');
         var res = h('div', { class: 'lab-result' }, [h('span', { class: 'lab-sub' }, ['結果'])]);
         r.result.order.forEach(function (n, i) { res.appendChild(h('b', { class: 'ag-num rk rk-' + (i + 1) }, [String(n)])); });
         if (r.result.winnerInAkTop5 != null) res.appendChild(h('span', { class: 'lab-chip ' + (r.result.winnerInAkTop5 ? 'is-hit' : 'is-miss') }, [r.result.winnerInAkTop5 ? '✓ 1着は AK 上位 5 頭' : '1着は AK 上位 5 頭の外']));
-        if (r.result.winnerEvRank != null) res.appendChild(h('span', { class: 'lab-chip is-info' }, ['勝ち馬の AI 期待値 ' + r.result.winnerEvRank + '位']));
+        if (r.result.winnerAiRank != null) res.appendChild(h('span', { class: 'lab-chip is-info' }, ['勝ち馬の AI 勝率 ' + r.result.winnerAiRank + '位']));
         card.appendChild(res); }
       if (r.akTop5) { var ak = h('div', { class: 'lab-ak' }, [h('span', { class: 'lab-sub' }, ['AK 上位 5 頭'])]);
         r.akTop5.forEach(function (x) { var win = r.result && r.result.order[0] === x.n; ak.appendChild(h('span', { class: 'lab-ak-horse ' + roleCls(x.role) + (win ? ' is-win' : '') }, [h('b', { class: 'ag-num' }, [String(x.n)]), h('small', null, [x.role])])); });
@@ -84,14 +84,14 @@ const initialJson = JSON.stringify(initial || null).replace(/</g, '\\u003c');
       else if (state === 'before') card.appendChild(h('p', { class: 'lab-note' }, ['AK の上位 5 頭は発走後に表示します（予想は「予想を取得」から）']));
       var winner = r.result ? r.result.order[0] : null;
       var top = r.ranking.slice(0, 6), rest = r.ranking.slice(6);
-      function table(rows) { var t = h('table', { class: 'lab-table' }, [h('tr', null, ['順位', '馬番', 'AI 勝率', 'オッズ', '期待値'].map(function (x) { return h('th', null, [x]); }))]);
-        rows.forEach(function (x) { t.appendChild(h('tr', { class: (x.ev != null && x.ev >= 1 ? 'ev-plus' : '') + (x.n === winner ? ' is-winner' : '') }, [
-          h('td', null, [x.rank != null ? String(x.rank) : '-']), h('td', null, [String(x.n) + (x.n === winner ? ' 🏆' : '')]), h('td', null, [pct(x.p)]),
-          h('td', null, [x.odds != null ? x.odds.toFixed(1) : '-']), h('td', null, [x.ev != null ? x.ev.toFixed(2) : '-'])])); }); return t; }
-      card.appendChild(h('div', { class: 'lab-sub' }, ['全頭の期待値ランキング（1.00 以上は緑）']));
+      var maxP = r.ranking.reduce(function (m, x) { return Math.max(m, x.p || 0); }, 0) || 1;
+      function table(rows) { var t = h('table', { class: 'lab-table' }, [h('tr', null, ['順位', '馬番', 'AI 勝率', ''].map(function (x) { return h('th', null, [x]); }))]);
+        rows.forEach(function (x) { var bar = h('span', { class: 'lab-bar' }, [h('i', { style: 'width:' + Math.round((x.p || 0) / maxP * 100) + '%' }, [])]);
+          t.appendChild(h('tr', { class: (x.rank != null && x.rank <= 3 ? 'is-top' : '') + (x.n === winner ? ' is-winner' : '') }, [
+          h('td', null, [x.rank != null ? String(x.rank) : '-']), h('td', null, [String(x.n) + (x.n === winner ? ' 🏆' : '')]), h('td', null, [pct(x.p)]), h('td', { class: 'lab-bar-cell' }, [bar])])); }); return t; }
+      card.appendChild(h('div', { class: 'lab-sub' }, ['全頭の AI 勝率ランキング']));
       card.appendChild(h('div', { class: 'lab-scroll' }, [table(top)]));
       if (rest.length) { var det = h('details', { class: 'lab-more' }, [h('summary', null, ['残り ' + rest.length + ' 頭を見る']), h('div', { class: 'lab-scroll' }, [table(rest)])]); card.appendChild(det); }
-      card.appendChild(h('p', { class: 'lab-foot' }, [(r.oddsBasis === 'decision' ? 'オッズは発走 10 分前の時点' : r.oddsBasis === 'latest' ? 'オッズは最新' : 'オッズ未取得') + (r.observedAt ? '（' + hm(r.observedAt) + ' 観測）' : '')]));
       return card; }
     function render() {
       var days = (data && data.days) || [];
@@ -193,7 +193,10 @@ const initialJson = JSON.stringify(initial || null).replace(/</g, '\\u003c');
   .lab-table { width: 100%; border-collapse: collapse; font-size: 0.84rem; font-variant-numeric: tabular-nums; }
   .lab-table th { text-align: left; font-size: 0.72rem; color: var(--ag-text-2); font-weight: 700; padding: 4px 6px; border-bottom: 1px solid rgba(96,165,250,0.25); }
   .lab-table td { padding: 5px 6px; border-bottom: 1px solid rgba(96,165,250,0.12); }
-  .lab-table tr.ev-plus td { color: #86efac; }
+  .lab-table tr.is-top td { color: #c084fc; font-weight: 700; }
+  .lab-bar-cell { width: 40%; }
+  .lab-bar { display: block; height: 8px; border-radius: 999px; background: rgba(180,108,249,0.12); overflow: hidden; }
+  .lab-bar i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, rgba(180,108,249,0.55), rgba(192,132,252,0.95)); }
   .lab-table tr.is-winner td { background: rgba(252,211,77,0.10); font-weight: 800; }
   .lab-more summary { cursor: pointer; color: #7cc4ff; font-size: 0.82rem; font-weight: 700; }
   .lab-empty { color: var(--ag-text-2); }

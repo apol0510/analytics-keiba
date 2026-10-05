@@ -2,16 +2,21 @@
  * aiLab.js — AI ラボ（試験運用・中央のみ）の純粋ロジック
  *
  * 正本: docs/AI_LAB.md（2026-10-05 MK 確定）
- *   - KAP（keiba-ai-predictor）の全頭の期待値（AI 勝率 × 単勝オッズ）を、レースごとにランキングで見せる
- *   - KAP が選んだ馬（穴馬に偏る）と金額は**受け取らない・保存しない・出さない**
+ *   - KAP（keiba-ai-predictor）の全頭の **AI 勝率**（独自能力モデル・人気/オッズを使わない）を、レースごとにランキングで見せる
+ *   - 🛑 **オッズ・期待値は受け取らない・保存しない・出さない**。KAP の契約（docs/stage-a-contract.md
+ *     「No external redistribution of odds」）。期待値はオッズを逆算できるので同じ扱い
+ *   - KAP が選んだ馬（穴馬に偏る）と金額も受け取らない
+ *   - 市場由来（market-implied）の勝率はオッズから作られているので受け取らない
  *   - 「選んだ馬」の代わりに **AK の上位 5 頭**（本命→対抗→単穴→連下最上位→連下・同役割は pt 降順）を出す。
  *     有料予想（1 件ずつ取得）の価値を守るため **発走後（結果が出たら）だけ** 出す
- *   - 答え合わせ: 1 着が AK 上位 5 頭に入ったか／勝ち馬は AI 期待値で何位だったか。成績は結果が出た全レースで数える
+ *   - 答え合わせ: 1 着が AK 上位 5 頭に入ったか／勝ち馬は AI 勝率で何位だったか。成績は結果が出た全レースで数える
  */
 import { getTop5Challengers } from '../../utils/mainRaceBetting.js';
 import { JRA_VENUES } from '../acquisition/predictionKey.js';
 
-export const INGEST_SCHEMA = 'ak_ailab_ingest.v1';
+export const INGEST_SCHEMA = 'ak_ailab_ingest.v2';
+// 受け取る勝率は独自能力モデルだけ（オッズ由来の market-implied は拒否）
+const MARKET_MODEL = /market/i;
 // JRA 場コード（race_id の 4 番目）→ 場名
 export const JRA_COURSE = Object.freeze({
   '01': '札幌', '02': '函館', '03': '福島', '04': '新潟', '05': '東京',
@@ -43,6 +48,7 @@ export function sanitizeIngest(payload) {
   if (p.market !== 'jra') return { ok: false, reason: 'market' };
   if (!DATE_RE.test(String(p.date))) return { ok: false, reason: 'date' };
   if (!Array.isArray(p.races) || p.races.length === 0 || p.races.length > MAX_RACES) return { ok: false, reason: 'races' };
+  if (typeof p.model_version !== 'string' || !p.model_version || MARKET_MODEL.test(p.model_version)) return { ok: false, reason: 'model' };
   const races = [];
   for (const r of p.races) {
     const id = parseKapRaceId(r?.race_id);
@@ -52,18 +58,12 @@ export function sanitizeIngest(payload) {
     for (const h of r.field) {
       const n = Number(h?.horse_number ?? h?.selection);
       if (!Number.isInteger(n) || n < 1 || n > MAX_HORSES) return { ok: false, reason: 'horse_number' };
-      const pc = finite(h?.p_calibrated, 0, 1);
-      const odds = finite(h?.odds, 1, 99999);
-      field.push({ n, p: pc, odds, ev: pc != null && odds != null ? Math.round(pc * odds * 10000) / 10000 : null });
+      // 🛑 オッズ・期待値は読まない（来ても捨てる）
+      field.push({ n, p: finite(h?.p_calibrated, 0, 1) });
     }
-    races.push({
-      raceId: String(r.race_id), venueName: id.venueName, venueId: id.venueId, raceNumber: id.raceNumber,
-      oddsBasis: r.odds_basis === 'decision' || r.odds_basis === 'latest' ? r.odds_basis : null,
-      observedAt: typeof r.observed_at === 'string' && Number.isFinite(Date.parse(r.observed_at)) ? r.observed_at : null,
-      field,
-    });
+    races.push({ raceId: String(r.race_id), venueName: id.venueName, venueId: id.venueId, raceNumber: id.raceNumber, field });
   }
-  return { ok: true, day: { date: p.date, model: typeof p.model_version === 'string' ? p.model_version.slice(0, 80) : null, races } };
+  return { ok: true, day: { date: p.date, model: p.model_version.slice(0, 80), races } };
 }
 
 /** AK の上位 5 頭（本命＋役割優先の上位 4 頭）。horses は AK の予想データ */
@@ -102,8 +102,8 @@ export function startMs(date, hhmm) {
  */
 export function dayView(day, { results, nowMs = Date.now() } = {}) {
   const races = (day?.races || []).map((r) => {
-    const ranking = r.field.slice().sort((a, b) => (b.ev ?? -1) - (a.ev ?? -1) || a.n - b.n)
-      .map((h, i) => ({ ...h, rank: h.ev == null ? null : i + 1 }));
+    const ranking = r.field.slice().sort((a, b) => (b.p ?? -1) - (a.p ?? -1) || a.n - b.n)
+      .map((h, i) => ({ n: h.n, p: h.p, rank: h.p == null ? null : i + 1 }));
     const res = results?.get(`${day.date}|${r.venueName}|${r.raceNumber}`) || null;
     const st = startMs(day.date, r.startTime);
     const finished = !!res || (st != null && nowMs >= st);
@@ -113,7 +113,7 @@ export function dayView(day, { results, nowMs = Date.now() } = {}) {
       ...r, ranking, finished, akTop5: top5,
       result: res ? { order: [res.first, res.second, res.third].filter(Boolean),
         winnerInAkTop5: top5 ? top5.some((h) => h.n === winner) : null,
-        winnerEvRank: ranking.find((h) => h.n === winner)?.rank ?? null } : null,
+        winnerAiRank: ranking.find((h) => h.n === winner)?.rank ?? null } : null,
     };
   });
   races.sort((a, b) => (a.venueName < b.venueName ? -1 : a.venueName > b.venueName ? 1 : a.raceNumber - b.raceNumber));
@@ -122,12 +122,12 @@ export function dayView(day, { results, nowMs = Date.now() } = {}) {
 
 /** 成績（結果が出た全レースで数える・都合のよいレースだけ選ばない） */
 export function labStats(views) {
-  let settled = 0, top5Hit = 0, evTop5 = 0, evRanked = 0;
+  let settled = 0, top5Hit = 0, aiTop5 = 0, aiRanked = 0;
   for (const v of views || []) for (const r of v.races || []) {
     if (!r.result || !Array.isArray(r.akTop5)) continue;
     settled += 1;
     if (r.result.winnerInAkTop5) top5Hit += 1;
-    if (r.result.winnerEvRank != null) { evRanked += 1; if (r.result.winnerEvRank <= 5) evTop5 += 1; }
+    if (r.result.winnerAiRank != null) { aiRanked += 1; if (r.result.winnerAiRank <= 5) aiTop5 += 1; }
   }
-  return { settled, top5Hit, evRanked, evTop5 };
+  return { settled, top5Hit, aiRanked, aiTop5 };
 }

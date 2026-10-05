@@ -262,7 +262,7 @@ CI・deploy・外部 API・scheduled job・将来日付・長時間 run 等の**
 | **有料予想の取得方式（1 予想ずつ）／Premium Sanrenpuku のレース選別** | [`PREDICTION_ACQUISITION.md`](./astro-site/docs/PREDICTION_ACQUISITION.md) |
 | **ガラス表現（色の役割・見本・やらないこと）** | [`GLASS_DESIGN_RULES.md`](./astro-site/docs/GLASS_DESIGN_RULES.md) |
 | **会員ランク（会員歴で決まる会員証）** | [`MEMBER_RANK.md`](./astro-site/docs/MEMBER_RANK.md) |
-| **AI ラボ（KAP の全頭期待値・AK 上位 5 頭で答え合わせ・自動更新）** | [`AI_LAB.md`](./astro-site/docs/AI_LAB.md) |
+| **AI ラボ（KAP の全頭 AI 勝率・AK 上位 5 頭で答え合わせ・自動更新／オッズは出さない）** | [`AI_LAB.md`](./astro-site/docs/AI_LAB.md) |
 | 予想ロジック（スコア・役割決定） | [`PREDICTION_LOGIC.md`](./astro-site/docs/PREDICTION_LOGIC.md) |
 | 買い目生成（メイン5点 / 通常2段 / 抑え判定） | [`MAIN_RACE_BETTING.md`](./astro-site/docs/MAIN_RACE_BETTING.md) |
 | 購入点数・回収率 | [`BET_POINT_LOGIC.md`](./astro-site/docs/BET_POINT_LOGIC.md) |
