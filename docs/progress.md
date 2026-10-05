@@ -118,7 +118,7 @@
 
 ---
 
-# 💳 Stripe 定期購読の導入（2026-10-02 MK 指示 / 進行中）
+# 💳 Stripe 定期購読の導入（2026-10-02 MK 指示 / 2026-10-05 本番販売開始）
 
 | 項目 | 状態 |
 |---|---|
@@ -138,13 +138,15 @@
 | Stripe 商品名（2026-10-02 MK 確定）| test / live の Product 名を Analytics Premium（中央＋南関）／中央／南関 に API で更新（ID・Price・金額・metadata 不変を確認）。単一源 productName・再発防止テスト |
 | CTA 横断監査（2026-10-02 MK 確定）| 実装・テスト固定済み（Light 購入 CTA は /pricing/ tier 1 の更新用だけ・キャンペーン割引から Light 除外・申込 Function で Light 新規/Premium 月払いを 409・Premium 会員は購入 CTA の代わりに三連複へ・AccessControl の Light 文言）。**Deploy Preview 実測**: Light / Light - Campaign / Premium Monthly の申込は 409（Customers 書き込み 0）・/light-campaign/ → /pricing/ 301・/pricing/ 状態別（未ログイン=3 プラン+無料 / 有料 Light=3 プラン+Light 更新 / 永久無料 Light=3 プラン（Light 購入なし）/ Premium 契約中=購入 CTA なし+三連複案内 / Premium 期限切れ=3 プラン）|
 | 販売開始条件（2026-10-02 MK 確定）| 審査完了・Payout は待たず、live の決済受付が可能なら開始。2026-10-02 実測: charges_enabled=false・card inactive・payouts_enabled=true・live Checkout 不可 → **決済受付不可のため merge 保留継続**（ビジネス URL は analytics.tirol.link へ変更済み）|
-| **待ち（実異常回避）** | **Stripe 審査中**（disabled_reason=under_review・card_payments inactive・pending_verification 1 件=other_compliance_inquiry）。live の Checkout 作成は `Your account cannot currently make live charges` で失敗。**この状態で merge すると月額が誰も買えなくなるため merge を保留** |
+| ~~待ち（実異常回避）~~ 解消（2026-10-05 審査通過） | **Stripe 審査中**（当時）（disabled_reason=under_review・card_payments inactive・pending_verification 1 件=other_compliance_inquiry）。live の Checkout 作成は `Your account cannot currently make live charges` で失敗。**この状態で merge すると月額が誰も買えなくなるため merge を保留** |
 | 自動検知 | scheduled-checks `stripe-live-activation-2026`（#679 `fd478947`・毎日 10:00 JST・GET /v1/account を読むだけ）。有効化で Issue「[自動測定] stripe-live-activation-2026」→ #677 merge・本番スモークへ。GitHub secret `STRIPE_ACCOUNT_READ_KEY` 登録済み。Actions 上の検証実行で審査中を正しく判定 | ／ 対話セッションでも 10 分ごとに `charges_enabled && card_payments=active` を監視し、検知したら #677 merge → 本番確認へ |
 | 事業サイト analytics.tirol.link（2026-10-02 決定）| repo `apol0510/analytics-tirol-link`（private・CI green）・Netlify `analytics-tirol-link`（GitHub 連携・`analytics-tirol-link.netlify.app` で 6 ページ 200・build/README は 404）・custom domain 設定済み。390/320px で横スクロールなし・secret/PII scan 0 |
 | 🚨 本番デプロイ失敗（2026-10-02 09:01〜10:17）| Stripe の env 6 件を production に入れた結果、関数 env が Lambda 4KB 上限を超え本番ビルドが全失敗（自動取込 3 件と #679・#683 が未反映）。env を外して Build Hook で復旧（10:17 ready・/refund/ 反映確認）。恒久対策: Price/ポータル ID はコード、env は秘密 2 つだけ（10:21 本番ビルドで収まることを確認）|
 | 事業サイト 公開（2026-10-02）| DNS（Cloudflare CNAME・DNS only）・`analytics@tirol.link`（Xserver）作成済み。HTTPS: Let's Encrypt（〜2026-12-31）・http→https 301・6 ページ + robots/sitemap 200・build/README 404・リンク切れ 0・320/390px 横スクロールなし。`analytics@tirol.link` へテスト 1 通 → SendGrid `delivered`（Xserver 受理）|
 | 事業サイトの方針変更（2026-10-02）| data.tirol.link と同じ一般的な事業者サイトへ変更・競馬固有の語を全削除（analytics-tirol-link #1 `2c062b1` 本番反映・禁止語 0・HTTPS・全ページ 200）|
-| 人の作業 | **なし**（2026-10-02 MK: 必要情報は送信済み・Stripe 側の審査中。ビジネス URL は analytics.tirol.link へ変更済み）|
+| ✅ 本番販売開始（2026-10-05）| Stripe 審査通過（charges_enabled=true・card_payments=active・disabled_reason なし／MK も確認）→ **PR #677 squash merge `341c73d5`・本番 deploy ready**。env 追加なし（production に rk_live / whsec は既存・4KB 上限内）。live 設定を API で確認: Price 3 件（¥4,980／¥2,980／¥2,980・月額・JPY・active）・ポータル active・Webhook enabled（`/.netlify/functions/stripe-webhook`・6 events・livemode）|
+| 本番スモーク（2026-10-05）| `/pricing/` 200・Stripe ボタン 3・金額表示 OK（「準備中」は未設定時のエラー文のみ）／live Checkout 作成 → `cs_live`・checkout.stripe.com・¥2,980 subscription → API で expire 済み／Webhook 無署名 400／portal 未ログイン 401／販売ゲート `checkStripeLiveSales`=open → 更新リマインド 2 本は live のまま（初回の実行ログ確認は 10/06 10:05 JST の実行後）。会員状態別の /pricing/ は本番で会員セッションを作れないため `test:pricing-tiers`・`test:billing` で担保 |
+| 人の作業 | **Live の領収書メール ON だけ**（Stripe ダッシュボード → 設定 → ビジネス → カスタマーへのメール `https://dashboard.stripe.com/settings/emails` → 支払い →「支払いの成功」）。API では設定・確認できない |
 | メール横断監査（2026-10-02 MK 確定）| 実装・テスト固定済み: Light を案内する 5 campaign は送信計画を作らない／オンボーディング step5 停止／有料 Light 会員の更新メールと /pricing/ は同額 Premium ¥4,980 を主導線（Light 更新は会員だけの控えめな行）／Premium 更新メールは 3 プラン／会場限定 Premium は三連複 campaign から除外／更新リマインド 2 本は Stripe live 決済が無効な間 dry-run。**有効化後に本番で更新リマインドが live に戻ることを確認する** |
 | 2026-10-03 再測定（MK: 本人確認・入金口座の設定完了の連絡後）| live: charges_enabled=false・card_payments inactive・disabled_reason=under_review・pending_verification=other_compliance_inquiry（currently_due / past_due は空＝こちらの提出物不足ではない）。live Checkout 作成は引き続き `cannot currently make live charges`。live 設定は正常（Price 3 件 active・¥4,980/¥2,980/¥2,980・商品名 Analytics Premium 系・ポータル at_period_end・Webhook enabled 6 イベント）。Deploy Preview（test）回帰: 3 プランとも Checkout URL 発行・Webhook 無署名 400・ポータル未ログイン 401。**merge は live 決済受付まで保留継続** |
 | 次（有効化後）| merge #677 → 本番デプロイ → 本番スモーク（/pricing/・Checkout URL 発行・Webhook 署名 400・portal 401）→ cleanup |
