@@ -101,7 +101,7 @@ const formattedDate = `${year}年${parseInt(month)}月${parseInt(day)}日`;
 >
   {/* ak_session の idle TTL 延長（会員確定ページのみ）*/}
   <SessionKeepAlive />
-    <AccessControl requiredPlan="Premium Sanrenpuku">
+    <AccessControl requiredPlan="Premium Sanrenpuku" serverVerified={gate.ok === true} serverTier={gate.entitlements?.effectiveTier || ''}>
 
         <!-- 三連複予想コンテンツ（Premium Sanrenpuku / Premium Full会員向け） -->
         <div id="sanrenpuku-content" class="page-container">
