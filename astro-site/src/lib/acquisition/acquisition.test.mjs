@@ -234,7 +234,7 @@ test('Premium 詳細の構成: レース情報・取得済み・馬単 通常・
   assert.match(glass, /@supports not/, 'ぼかし非対応ブラウザでも可読');
   assert.match(glass, /radial-gradient\([^)]*rgba\(96, 165, 250/, '背景に青の光源');
   assert.match(glass, /rgba\(196, 181, 253/, 'ラベンダーの光源');
-  assert.match(glass, /rgba\(255, 255, 255, 0\.10\), transparent/, '柔らかい白の光');
+  assert.match(glass, /rgba\(255, 255, 255, 0\.0\d\), transparent/, '柔らかい白の光（2026-10-05 暗め）');
   assert.match(glass, /rgba\(103, 232, 249/, 'シアンの光源');
 });
 
@@ -620,4 +620,12 @@ test('レースカードの枠線・上辺反射は白くしない（2026-10-05 
   assert.match(list, /\.acq-race\.ag-glass::before \{ background: linear-gradient\(90deg, transparent, rgba\(199, 210, 254, 0\.3\d\)/, '上辺の反射を弱める');
   const shadow = (list.match(/\.acq-race\.ag-glass \{ border-color[^}]*box-shadow: ([^;]*);/) || [])[1] || '';
   assert.ok(shadow && !/rgba\(255, 255, 255/.test(shadow), '内側の白ハイライトを使わない');
+});
+
+test('背景（ag-scene）は暗めの濃紺・光源は控えめ（2026-10-05 MK）', () => {
+  const css = read('src/styles/acquisitionGlass.css');
+  const scene = (css.match(/\.ag-scene \{[^}]*\}/) || [])[0] || '';
+  assert.match(scene, /linear-gradient\(180deg, #0d1640 0%, #0a1234 55%, #0c1538 100%\)/, '濃紺ベースを一段深く');
+  const alphas = [...scene.matchAll(/radial-gradient\([^)]*rgba\(\d+, \d+, \d+, (0\.\d+)\)/g)].map((x) => Number(x[1]));
+  assert.ok(alphas.length === 6 && Math.max(...alphas) <= 0.25, `光源が強い: ${alphas}`);
 });
