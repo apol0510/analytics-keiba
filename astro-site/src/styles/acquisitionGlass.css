@@ -30,9 +30,10 @@
   /* CTA の色体系（2026-10-04 MK 確定）:
      通常の操作（予想を取得する・選択中のタブ）= 青 ／ Premium への導線 = 明るい紫 ／ 取得済み = 緑 */
   --ag-cta: linear-gradient(135deg, #3b82f6 0%, #2563eb 45%, #0284c7 100%);
-  /* 2026-10-05 MK 確定: 色付きガラス（紫は濃いめに残し、半透明＋背景ぼかし＋上面の光沢） */
-  --ag-cta-premium: linear-gradient(180deg, rgba(255, 255, 255, 0.24) 0%, rgba(255, 255, 255, 0.06) 48%, rgba(255, 255, 255, 0) 52%), linear-gradient(135deg, rgba(180, 108, 249, 0.78) 0%, rgba(155, 92, 246, 0.74) 35%, rgba(124, 58, 237, 0.72) 70%, rgba(91, 95, 240, 0.74) 100%);
-  --ag-cta-premium-hover: linear-gradient(180deg, rgba(255, 255, 255, 0.30) 0%, rgba(255, 255, 255, 0.08) 48%, rgba(255, 255, 255, 0) 52%), linear-gradient(135deg, rgba(192, 132, 252, 0.86) 0%, rgba(167, 139, 250, 0.82) 30%, rgba(139, 92, 246, 0.80) 65%, rgba(99, 102, 241, 0.82) 100%);
+  /* 2026-10-05 MK 確定: メインバッジ（.ag-pill.gold）と同じガラス表現を紫で。
+     薄い色付きの半透明＋同系色の縁＋同系色の文字＋柔らかい発光。塗りつぶしにしない */
+  --ag-cta-premium: linear-gradient(180deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0) 55%), linear-gradient(135deg, rgba(192, 132, 252, 0.24) 0%, rgba(167, 139, 250, 0.20) 50%, rgba(129, 140, 248, 0.22) 100%);
+  --ag-cta-premium-hover: linear-gradient(180deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0) 55%), linear-gradient(135deg, rgba(192, 132, 252, 0.34) 0%, rgba(167, 139, 250, 0.30) 50%, rgba(129, 140, 248, 0.32) 100%);
   --ag-radius: 18px;
 }
 
@@ -93,17 +94,17 @@
 .ag-cta.ag-cta-premium {
   background: var(--ag-cta-premium);
   -webkit-backdrop-filter: blur(14px) saturate(170%); backdrop-filter: blur(14px) saturate(170%);
-  border: 1px solid rgba(237, 233, 254, 0.75);
-  /* 2026-10-04 MK 確定: 文字色はボタンと同系色（淡いラベンダー） */
-  color: #e9d5ff; /* 2026-10-04 MK: 白に見えないよう、はっきり紫みのあるラベンダー */
+  border: 1px solid rgba(196, 181, 253, 0.65);
+  /* 2026-10-04 MK 確定: 文字色はボタンと同系色（紫みのあるラベンダー・白に見せない） */
+  color: #e9d5ff;
   font-weight: 900;
   letter-spacing: 0.03em;
-  text-shadow: 0 1px 2px rgba(46, 16, 101, 0.8), 0 0 1px rgba(46, 16, 101, 0.6);
-  box-shadow: 0 10px 28px rgba(147, 51, 234, 0.5), 0 0 26px rgba(192, 132, 252, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.5), inset 0 -1px 0 rgba(46, 16, 101, 0.25);
+  text-shadow: 0 0 12px rgba(192, 132, 252, 0.45);
+  box-shadow: 0 0 22px rgba(167, 139, 250, 0.40), inset 0 1px 0 rgba(255, 255, 255, 0.22);
 }
-.ag-cta.ag-cta-premium:hover { background: var(--ag-cta-premium-hover); box-shadow: 0 12px 32px rgba(147, 51, 234, 0.62), 0 0 34px rgba(216, 180, 254, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.6); }
-.ag-cta.ag-cta-premium:active { transform: translateY(1px); background: var(--ag-cta-premium); box-shadow: 0 4px 14px rgba(147, 51, 234, 0.45), inset 0 2px 5px rgba(46, 16, 101, 0.35); }
-.ag-cta.ag-cta-premium:focus-visible { outline: 3px solid #f5f3ff; outline-offset: 3px; box-shadow: 0 0 0 6px rgba(167, 139, 250, 0.55), 0 10px 28px rgba(147, 51, 234, 0.5); }
+.ag-cta.ag-cta-premium:hover { background: var(--ag-cta-premium-hover); border-color: rgba(216, 180, 254, 0.85); box-shadow: 0 0 30px rgba(192, 132, 252, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.3); }
+.ag-cta.ag-cta-premium:active { transform: translateY(1px); background: var(--ag-cta-premium); box-shadow: 0 0 14px rgba(167, 139, 250, 0.35), inset 0 2px 5px rgba(46, 16, 101, 0.3); }
+.ag-cta.ag-cta-premium:focus-visible { outline: 3px solid #f5f3ff; outline-offset: 3px; box-shadow: 0 0 0 6px rgba(167, 139, 250, 0.45), 0 0 22px rgba(167, 139, 250, 0.4); }
 @media (max-width: 759px) { .ag-cta.ag-cta-premium { min-height: 52px; font-size: 1rem; } }
 .ag-btn-ghost {
   display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 18px; border-radius: 14px;
