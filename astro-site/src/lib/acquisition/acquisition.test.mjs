@@ -767,3 +767,13 @@ test('取得の説明は「制限があるように見える」言い方をし�
   }
   assert.match(read('src/components/acquisition/PremiumRaceBoard.astro'), /何レースでも取得し放題/);
 });
+
+test('会場が複数なら会場タブで切り替える（1 会場なら出さない）・次の取得レースの会場を開く（2026-10-06 MK）', () => {
+  const list = read('src/components/acquisition/AcquisitionRaceList.astro');
+  assert.match(list, /const useTabs = venues\.length > 1;/);
+  assert.match(list, /hidden=\{useTabs && v\.venueId !== activeVenue\}/, '選んでいない会場は隠す');
+  assert.match(list, /role="tablist" aria-label="会場"/);
+  assert.match(list, /v\.races\.some\(\(r\) => r\.key === nextKey\)/, '次に取得できるレースの会場を最初に開く');
+  assert.match(list, /openFor\(location\.hash\)/, '#acq-next が別の会場にあっても開く');
+  assert.match(list, /\.acq-venue\[hidden\] \{ display: none !important; \}/);
+});

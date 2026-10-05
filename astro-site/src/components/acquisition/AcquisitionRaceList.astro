@@ -30,6 +30,11 @@ const can = (r) => (typeof r.canAcquire === 'boolean' ? r.canAcquire : canAcquir
 // 「次のレースの予想を取得する」の飛び先＝最初の未取得で取得できるレース
 const nextKey = isPreview ? null : (venues.flatMap((v) => v.races).find((r) => !r.acquired && can(r))?.key || null);
 const previewUrl = (key) => `/free-prediction/view/?key=${encodeURIComponent(key)}`;
+// 2026-10-06 MK: 会場が複数あると縦に長いので会場ごとのタブで切り替える（1 会場ならタブを出さない）。
+// 最初に開く会場＝「次に取得できるレース」がある会場（無ければ先頭）。
+const useTabs = venues.length > 1;
+const activeVenue = useTabs ? (venues.find((v) => v.races.some((r) => r.key === nextKey)) || venues[0]).venueId : null;
+const tabId = (v) => `acq-venue-${v.venueId}`;
 ---
 <div class="acq-list" data-product={product}>
   {dates.length > 1 && (
@@ -39,8 +44,19 @@ const previewUrl = (key) => `/free-prediction/view/?key=${encodeURIComponent(key
   )}
   {acquiredUnknown && <p class="acq-warn">取得状況を確認できませんでした。取得済みの予想は「取得済みの予想」からご覧ください。</p>}
   {venues.length === 0 && <p class="acq-empty">この日の予想はまだありません。</p>}
+  {useTabs && (
+    <nav class="acq-course-tabs" role="tablist" aria-label="会場">
+      {venues.map((v) => (
+        <button type="button" role="tab" class={`acq-course-tab${v.venueId === activeVenue ? ' is-active' : ''}`}
+          id={`${tabId(v)}-tab`} aria-controls={tabId(v)} aria-selected={v.venueId === activeVenue ? 'true' : 'false'} data-venue={v.venueId}>
+          {v.venueName}<small>{v.races.length}R</small>
+        </button>
+      ))}
+    </nav>
+  )}
   {venues.map((v) => (
-    <section class="acq-venue">
+    <section class="acq-venue" id={useTabs ? tabId(v) : undefined} role={useTabs ? 'tabpanel' : undefined}
+      aria-labelledby={useTabs ? `${tabId(v)}-tab` : undefined} hidden={useTabs && v.venueId !== activeVenue}>
       <h2 class="acq-venue-title">{v.venueName}<small>{v.races.length}レース</small></h2>
       {v.races.map((r) => (
         <article class={`ag-glass acq-race${r.acquired ? ' is-acquired' : ''}`} data-key={r.key} id={r.key === nextKey ? 'acq-next' : undefined}>
@@ -82,9 +98,39 @@ const previewUrl = (key) => `/free-prediction/view/?key=${encodeURIComponent(key
     </section>
   ))}
 </div>
+{useTabs && (
+  <script is:inline>
+  (function () {
+    var list = document.currentScript && document.currentScript.previousElementSibling;
+    if (!list) return;
+    var tabs = [].slice.call(list.querySelectorAll('.acq-course-tab'));
+    function show(id) {
+      tabs.forEach(function (t) { var on = t.getAttribute('data-venue') === id; t.classList.toggle('is-active', on); t.setAttribute('aria-selected', on ? 'true' : 'false');
+        var panel = document.getElementById(t.getAttribute('aria-controls')); if (panel) panel.hidden = !on; });
+    }
+    tabs.forEach(function (t) { t.addEventListener('click', function () { show(t.getAttribute('data-venue')); }); });
+    // 「次のレースの予想を取得する」(#acq-next) が別の会場にあれば、その会場を開いてから移動する
+    function openFor(hash) { if (!hash) return; var el = document.getElementById(hash.replace(/^#/, '')); if (!el) return;
+      var panel = el.closest('.acq-venue'); if (panel && panel.hidden) { var t = list.querySelector('[aria-controls="' + panel.id + '"]'); if (t) show(t.getAttribute('data-venue')); }
+      requestAnimationFrame(function () { el.scrollIntoView({ block: 'start' }); }); }
+    if (location.hash) openFor(location.hash);
+    window.addEventListener('hashchange', function () { openFor(location.hash); });
+  })();
+  </script>
+)}
 
 <style>
   .acq-list { display: grid; gap: 16px; min-width: 0; }
+  /* 会場タブ（GLASS_DESIGN_RULES.md: 会場の切り替え＝黄。すべて/中央/南関タブより一段控えめなガラス） */
+  .acq-course-tabs { display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 6px; scrollbar-width: none; }
+  .acq-course-tabs::-webkit-scrollbar { display: none; }
+  .acq-course-tab { flex: 0 0 auto; display: inline-flex; align-items: baseline; gap: 6px; min-height: 42px; padding: 0 18px; border-radius: 12px; cursor: pointer; font: inherit; font-weight: 800; color: #fde68a; background: rgba(250, 204, 21, 0.08); border: 1px solid rgba(250, 204, 21, 0.35); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+  .acq-course-tab small { font-size: 0.74rem; color: rgba(253, 230, 138, 0.75); font-weight: 700; }
+  .acq-course-tab:hover { background: rgba(250, 204, 21, 0.14); }
+  .acq-course-tab.is-active { color: #fef3c7; background: linear-gradient(135deg, rgba(250, 204, 21, 0.32), rgba(234, 179, 8, 0.18)); border-color: rgba(253, 224, 71, 0.85); box-shadow: 0 0 18px rgba(250, 204, 21, 0.28); }
+  .acq-course-tab.is-active small { color: #fef3c7; }
+  .acq-course-tab:focus-visible { outline: 3px solid #fef9c3; outline-offset: 2px; }
+  .acq-venue[hidden] { display: none !important; }
   .acq-dates { display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 6px; scrollbar-width: none; }
   .acq-dates::-webkit-scrollbar { display: none; }
   /* 2026-10-04 MK 確定: 日付タブは黄緑の乳白色グラデーションのガラス。文字も黄緑の同系色 */
