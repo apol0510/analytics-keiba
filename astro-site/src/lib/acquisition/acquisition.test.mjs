@@ -802,9 +802,9 @@ test('一覧の取得ボタン（体験・会員とも）は小さく（幅い�
   assert.match(list, /<button type="submit" class="ag-cta acq-btn acq-btn-compact">/);
 });
 
-test('プレビューの買い目モザイクで軸を青い大きな四角にしない（「ー」・2026-10-06 MK）', () => {
+test('プレビューの買い目モザイクは同じ形の伏せ字だけ（軸ラベル・青い四角・矢印を置かない／2026-10-06 MK）', () => {
   const b = read('src/components/acquisition/AcquiredPredictionBody.astro');
   const teaser = b.slice(b.indexOf('class="betting-teaser'), b.indexOf('class="ag-cta acq-unlock"'));
-  assert.doesNotMatch(teaser, /acq-axis-num/);
-  assert.match(teaser, /<span class="acq-pnum acq-axis-mask">ー<\/span>/);
+  assert.doesNotMatch(teaser, /acq-axis-num|acq-axis-label|acq-arrow|acq-axis-mask/, '形や色の違う要素を置かない');
+  assert.match(teaser, /\[1, 2, 3, 4, 5, 6, 7\]\.map\(\(\) => <span class="acq-pnum">●<\/span>\)/, '同じ形の伏せ字だけ');
 });
