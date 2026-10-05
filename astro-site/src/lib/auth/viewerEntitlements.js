@@ -109,6 +109,8 @@ export function viewerProfile(fields) {
     // ⚠️ `Number(null)` は 0（有限）になる。列が無いときに 0pt と表示しないよう、
     //    値が有ることを先に確かめる。
     points: points === null || !Number.isFinite(Number(points)) ? null : Number(points),
+    // 会員ランク（docs/MEMBER_RANK.md）の起点。本人に既に表示している登録日だけを渡す
+    registeredAt: read(['登録日', 'RegisteredAt', 'RegistrationDate']),
   };
 }
 

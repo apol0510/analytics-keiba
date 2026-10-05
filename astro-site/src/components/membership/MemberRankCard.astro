@@ -1,0 +1,65 @@
+---
+/**
+ * 会員証カード（会員ランク・会員歴・次のランクまで）。正本 docs/MEMBER_RANK.md / docs/GLASS_DESIGN_RULES.md
+ * rank は memberRank() の結果。null（起点が読めない）のときは何も描画しない（推測でランクを出さない）。
+ */
+import '../../styles/acquisitionGlass.css';
+import { RANKS } from '../../lib/membership/memberRank.js';
+interface Props { rank: any | null; name?: string | null }
+const { rank, name = null } = Astro.props;
+const since = rank?.since ? `${rank.since.y}年${rank.since.m}月${rank.since.d}日` : '';
+const pct = rank ? Math.round(rank.progress * 100) : 0;
+---
+{rank && (
+  <section class={`ag-glass mr-card tone-${rank.rank.tone}`} aria-label="会員ランク" data-rank={rank.rank.key}>
+    <div class="mr-head">
+      <span class="mr-kicker">KEIBA Analytics 会員証</span>
+      <span class="mr-badge">{rank.rank.label}</span>
+    </div>
+    {name && <p class="mr-name">{name} 様</p>}
+    <p class="mr-tenure">会員歴 <strong data-rank-months>{rank.months}</strong><span>か月</span><small>（{since} ご登録）</small></p>
+    {rank.next ? (
+      <div class="mr-next">
+        <div class="mr-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={pct} aria-label={`${rank.next.label}までの進み具合`}><span style={`width:${pct}%`}></span></div>
+        <p>次のランク <b class={`mr-next-label tone-${rank.next.tone}`}>{rank.next.label}</b> まで あと <strong data-rank-to-next>{rank.monthsToNext}</strong> か月</p>
+      </div>
+    ) : (
+      <p class="mr-top">最上位ランクです。いつもご利用ありがとうございます。</p>
+    )}
+    <ol class="mr-steps" aria-label="ランクの一覧">
+      {RANKS.map((r) => <li class={`tone-${r.tone}${r.key === rank.rank.key ? ' is-current' : ''}${rank.months >= r.minMonths ? ' is-reached' : ''}`}><b>{r.label}</b><small>{r.minMonths === 0 ? 'ご登録から' : `${r.minMonths}か月〜`}</small></li>)}
+    </ol>
+  </section>
+)}
+
+<style>
+  /* 色付きガラス（正本 GLASS_DESIGN_RULES.md）: 薄い色の半透明＋同系色の枠＋同系色の文字。ランクごとに色が変わる */
+  .mr-card { --mr: 124, 196, 255; --mr-text: #7cc4ff; padding: 16px 18px; margin: 0 0 20px; display: grid; gap: 10px;
+    background: linear-gradient(155deg, rgba(var(--mr), 0.16) 0%, rgba(var(--mr), 0.06) 55%, rgba(var(--mr), 0.10) 100%);
+    border-color: rgba(var(--mr), 0.55); box-shadow: 0 14px 34px rgba(10, 16, 48, 0.32), 0 0 26px rgba(var(--mr), 0.18); color: #e2e8f0; }
+  .tone-blue { --mr: 96, 165, 250; --mr-text: #7cc4ff; }
+  .tone-bronze { --mr: 251, 146, 60; --mr-text: #fdba74; }
+  .tone-silver { --mr: 186, 230, 253; --mr-text: #e0f2fe; }
+  .tone-gold { --mr: 252, 211, 77; --mr-text: #fcd34d; }
+  .tone-violet { --mr: 192, 132, 252; --mr-text: #d8b4fe; }
+  .mr-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .mr-kicker { font-size: 0.78rem; letter-spacing: 0.08em; color: var(--mr-text); opacity: 0.85; font-weight: 700; }
+  .mr-badge { padding: 4px 14px; border-radius: 999px; border: 1px solid rgba(var(--mr), 0.75); background: rgba(var(--mr), 0.18); color: var(--mr-text); font-weight: 900; box-shadow: 0 0 16px rgba(var(--mr), 0.3); }
+  .mr-name { margin: 0; font-weight: 800; color: var(--mr-text); }
+  .mr-tenure { margin: 0; color: var(--mr-text); display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; }
+  .mr-tenure strong { font-size: 2rem; line-height: 1; }
+  .mr-tenure small { color: rgba(226, 232, 240, 0.7); font-size: 0.78rem; }
+  .mr-next { display: grid; gap: 6px; }
+  .mr-next p, .mr-top { margin: 0; font-size: 0.9rem; color: rgba(226, 232, 240, 0.85); }
+  .mr-next strong { font-size: 1.3rem; color: var(--mr-text); }
+  .mr-next-label { color: var(--mr-text); }
+  .mr-bar { height: 10px; border-radius: 999px; background: rgba(var(--mr), 0.12); border: 1px solid rgba(var(--mr), 0.35); overflow: hidden; }
+  .mr-bar span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, rgba(var(--mr), 0.55), rgba(var(--mr), 0.95)); box-shadow: 0 0 10px rgba(var(--mr), 0.6); }
+  .mr-steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
+  .mr-steps li { display: grid; justify-items: center; gap: 1px; padding: 6px 2px; border-radius: 10px; border: 1px solid rgba(var(--mr), 0.25); background: rgba(var(--mr), 0.05); color: var(--mr-text); opacity: 0.55; min-width: 0; }
+  .mr-steps li b { font-size: 0.74rem; white-space: nowrap; }
+  .mr-steps li small { font-size: 0.64rem; color: rgba(226, 232, 240, 0.7); white-space: nowrap; }
+  .mr-steps li.is-reached { opacity: 0.85; }
+  .mr-steps li.is-current { opacity: 1; border-color: rgba(var(--mr), 0.8); background: rgba(var(--mr), 0.16); box-shadow: 0 0 14px rgba(var(--mr), 0.3); }
+  @media (max-width: 420px) { .mr-steps li small { display: none; } }
+</style>
