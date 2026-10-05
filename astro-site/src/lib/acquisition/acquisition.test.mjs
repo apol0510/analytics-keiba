@@ -315,7 +315,7 @@ test('マイページ: 取得できる会員にだけ、本人（viewer.recordId
   assert.match(s, /loadMemberAcquisitions\(\{ recordId: viewer\.recordId/);
   assert.match(s, /const showAcquisition = viewer\.isMember && !!viewer\.recordId/);
   assert.match(s, /\{showAcquisition && \(/);
-  assert.match(s, /<AcquisitionUsagePanel usage=\{acquisitionUsage\} \/>/);
+  assert.match(s, /<AcquisitionUsagePanel usage=\{acquisitionUsage\} results=\{acquisitionResults\} \/>/);
 });
 
 test('一覧・本文のページは本人以外の recordId を受け取らない（クエリ・フォームに会員指定が無い）', () => {
@@ -642,4 +642,72 @@ test('ガラス表現の正本: 取得状況のパネルとマイページ導線
   assert.match(link, /border: 1px solid rgba\(96,165,250/, 'マイページ導線は青の枠');
   assert.match(link, /color: #7cc4ff/, 'マイページ導線は青の文字');
   assert.doesNotMatch(link, /color: inherit/, '文字色を白（継承）に戻さない');
+});
+
+// ── 取得した予想の結果（2026-10-05 MK・§2-5）──
+import { umatanLineHits, sanrenpukuLineHits, buildResultIndex, judgeAcquired } from './acquiredResults.js';
+import { readContentsFor } from './acquisitionStore.js';
+import { loadAcquiredResults } from './acquisitionServer.js';
+
+test('結果: 馬単は → 一方向／↔ 双方向・抑えは判定に含めない（importResults の checkUmatanHit と同じ）', () => {
+  assert.equal(umatanLineHits('3↔4.5.10.11.12', 3, 12), true);
+  assert.equal(umatanLineHits('3↔4.5.10.11.12', 12, 3), true, '↔ は裏目も的中');
+  assert.equal(umatanLineHits('3→4.5.10.11.12', 12, 3), false, '→ の裏目は不的中');
+  assert.equal(umatanLineHits('3→4.5.10.11.12', 3, 5), true);
+  assert.equal(umatanLineHits('3↔4.5(抑え9)', 3, 9), false, '抑えは馬単の判定に含めない');
+  assert.equal(umatanLineHits('壊れた行', 3, 4), false);
+});
+
+test('結果: 三連複フォーメーションは「軸 - 2列目 - 3列目(抑え…)」・抑えは 3 列目に含める', () => {
+  assert.equal(sanrenpukuLineHits('2 - 9.3.11 - 9.3.11.1.4.6(抑え8)', [9, 2, 6]), true);
+  assert.equal(sanrenpukuLineHits('2 - 9.3.11 - 9.3.11.1.4.6(抑え8)', [2, 3, 8]), true, '抑えは 3 列目');
+  assert.equal(sanrenpukuLineHits('2 - 9.3.11 - 9.3.11.1.4.6(抑え8)', [9, 3, 6]), false, '軸が来ていない');
+  assert.equal(sanrenpukuLineHits('2 - 9.3.11 - 9.3.11', [2, 3, 11]), true);
+  assert.equal(sanrenpukuLineHits('2 - 9.3.11 - 9.3.11', [2, 3, 3]), false);
+});
+
+test('結果: 取得時点の買い目×アーカイブ着順で 的中／不的中／結果待ち（推測で的中にしない）', () => {
+  const index = buildResultIndex({
+    umatan: [{ date: '2026-10-04', venue: '東京', races: [
+      { raceNumber: 1, venue: '東京', result: { first: { number: 3 }, second: { number: 12 }, third: { number: 4 } }, umatan: { combination: '3-12', payout: 960 } },
+      { raceNumber: 2, venue: '京都', result: { first: { number: 1 }, second: { number: 2 }, third: { number: 7 } }, umatan: { combination: '1-2', payout: 450 } },
+    ] }],
+    sanrenpuku: [{ 2026: { 10: { '04': [{ venue: '京都', races: [{ raceNumber: '2R', venue: '京都', payout: 1410 }] }] } } }],
+  });
+  const e = (product, venueName, raceNumber) => ({ product, date: '2026-10-04', venueName, raceNumber });
+  const um = (lines, narrowed) => ({ umatan: { normal: lines.map((line) => ({ line })), narrowed: narrowed ? { line: narrowed } : null } });
+  assert.deepEqual(judgeAcquired({ entry: e('premium', '東京', 1), content: um(['3↔4.5.10.11.12']), index }), { status: 'hit', betType: '馬単', combination: '3→12', payout: 960 });
+  assert.equal(judgeAcquired({ entry: e('premium', '東京', 1), content: um(['4↔5.6']), index }).status, 'miss');
+  assert.equal(judgeAcquired({ entry: e('premium', '東京', 1), content: um(['4↔5.6'], '3↔12.5'), index }).status, 'hit', '絞った買い目で当たっても的中');
+  assert.equal(judgeAcquired({ entry: e('premium', '東京', 9), content: um(['3↔12']), index }).status, 'pending', '着順が無い＝結果待ち');
+  const srp = (normal, center) => ({ sanrenpuku: { normal: normal.map((line) => ({ line })), center: center ? { line: center } : null } });
+  assert.deepEqual(judgeAcquired({ entry: e('srp', '京都', 2), content: srp(['1 - 2.3 - 2.3.7']), index }), { status: 'hit', betType: '三連複', combination: '1-2-7', payout: 1410 });
+  assert.equal(judgeAcquired({ entry: e('srp', '京都', 2), content: srp(['5 - 2.3 - 2.3.7']), index }).status, 'miss');
+  assert.equal(judgeAcquired({ entry: e('srp', '京都', 2), content: srp([]), index }).status, 'none', '買い目が無い（見送り等）は結果を出さない');
+});
+
+test('結果の読込: 本人の記録の ref だけで本文を読む・Redis 失敗は null（不的中や結果待ちに化けさせない）', async () => {
+  const redis = makeFakeRedis();
+  const content = { product: 'premium', cat: 'jra', date: '2026-10-04', raceNumber: 1, raceName: 'x', umatan: { normal: [{ line: '3↔12' }] } };
+  const { entry } = await acquirePrediction({ redis, recordId: 'recAAAAAAAAAAAAAA', key: 'premium:jra:2026-10-04:TOK:1', content });
+  const got = await readContentsFor({ redis, entries: [entry, { key: 'premium:jra:2026-10-04:TOK:2', ref: 'zz' }] });
+  assert.equal(got.size, 1, '形式外の ref は読まない');
+  const index = buildResultIndex({ umatan: [{ date: '2026-10-04', races: [{ raceNumber: 1, venue: '東京', result: { first: { number: 3 }, second: { number: 12 } }, umatan: { payout: 960 } }] }] });
+  const r = await loadAcquiredResults({ entries: [entry], env: {}, deps: { redis, index } });
+  assert.equal(r[entry.key].status, 'hit');
+  const bad = makeFakeRedis({ failOn: (c) => c === 'MGET' });
+  assert.equal(await loadAcquiredResults({ entries: [entry], env: {}, deps: { redis: bad, index } }), null);
+});
+
+test('マイページ直近の結果: 緑=的中・金=払戻・赤=不的中・黄=結果待ち／商品チップ 紫=Premium・金=三連複（正本 GLASS_DESIGN_RULES）', () => {
+  const panel = read('src/components/acquisition/AcquisitionUsagePanel.astro');
+  assert.match(panel, /\.acq-result\.is-hit \{ color: #86efac; border-color: rgba\(74,222,128/);
+  assert.match(panel, /\.acq-result\.is-hit em \{[^}]*color: #fcd34d/);
+  assert.match(panel, /\.acq-result\.is-miss \{ color: #fca5a5; border-color: rgba\(248,113,113/);
+  assert.match(panel, /\.acq-result\.is-pending \{ color: #fde047; border-color: rgba\(250,204,21/);
+  assert.match(panel, /\.acq-prod\.violet \{ color: #c084fc/);
+  assert.match(panel, /\.acq-prod\.gold \{ color: #fcd34d/);
+  assert.match(panel, /r\.status === 'none'\) return null/, '買い目が無いものは結果を出さない');
+  assert.match(read('src/pages/dashboard.astro'), /loadAcquiredResults\(\{ entries: acquisitionUsage\.recent/);
+  assert.ok(read('docs/GLASS_DESIGN_RULES.md').includes('的中'), '正本に結果の色を記載');
 });
