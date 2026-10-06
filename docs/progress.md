@@ -1,4 +1,4 @@
-# 🏇 取得済み予想（/predictions/view/）に出走表を復元（2026-10-07 MK 指摘 / **PR 待ち**）
+# 🏇 取得済み予想（/predictions/view/）に出走表を復元（2026-10-07 MK 指摘 / **本番反映済み**）
 
 | 項目 | 状態 |
 |---|---|
@@ -6,8 +6,10 @@
 | 原因 | データ（予想 JSON）には残っている（直近 3 開催で 騎手 約 95〜100%・調教師 / 斤量 / 性齢 / 父 ほぼ 100%）。新画面の本文（`predictionContent.horseRows`）が 馬番・馬名・騎手（印の 3 頭だけ表示）しか持っていなかった |
 | 対応 | 全馬に `profile`（性齢・斤量・騎手・調教師・父）。「出走表」（PC 表 / mobile カード）と印の横の 1 行。古い保存データは閲覧時に予想データから補う。Preview（無料）には出さない。正本 `astro-site/docs/PREDICTION_ACQUISITION.md` §2-1 |
 | test | `horseProfile.test.mjs`（書き方・全馬・Preview に出さない・画面・古い保存データの補完）。`check:safety` / build exit 0。実データ（中央 10/4・南関 10/7）で実部品を描画して PC / mobile を目視 |
-| branch | `feat/predictions-horse-profile`（worktree `analytics-keiba-horseprof`） |
-| 残り | PR / CI → merge（MK）→ 本番確認 → cleanup |
+| PR | #763 squash merge 済み（`929e3032`・本番 publish 2026-10-06 15:22 UTC）。CI green |
+| 本番 | **確認 OK**: 取得済み予想（南関 10/7 大井 12R・本変更より前に取得した保存データ）で出走表 14 頭・性齢 / 斤量 / 騎手 / 調教師 / 父 すべて表示、印 3 頭の横に 性齢・斤量・騎手。古い保存データの補完も動作 |
+| rollback | `929e3032` を revert（`profile` は追加項目のみ） |
+| cleanup | worktree `analytics-keiba-horseprof` / branch `feat/predictions-horse-profile` 削除 |
 
 ---
 
