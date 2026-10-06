@@ -15,15 +15,20 @@
  * 毎月の請求が成功すると期間が延び、`有効期限` も延びる。
  * 請求が止まれば（解約・カード失敗）**何も書かなくても**期限で自然に閲覧できなくなる（fail closed）。
  *
- * ## 期限の根拠は「支払い済みの請求書」だけ（2026-10-02 MK 確定の解約仕様）
+ * ## 期限の根拠は「支払い済みの請求書」だけ
  *
- * - **解約は即時失効ではない**。次回の更新が止まるだけで、**支払い済み期間の終わりまで**閲覧できる。
- *   最低利用期間・日割り返金は設けない。
- * - そのため期限は購読の `current_period_end` ではなく、**支払い済み請求書の期間の終わり（paidThrough）**から作る。
+ * - 期限は購読の `current_period_end` ではなく、**支払い済み請求書の期間の終わり（paidThrough）**から作る。
  *   `current_period_end` は更新日に**支払い前から**次の期間へ進むので、それで延ばすと
  *   カード決済が失敗しても 1 か月見られてしまう（実装初版の誤り）。
- * - 終了（canceled 等）でも期限は paidThrough の終わりまで残す。Stripe 画面で即時解約しても、
- *   支払い済みの期間は奪わない（実装初版は終了日＝当日で即時失効させていた）。
+ * - 会員の退会以外の終了（決済失敗の再試行切れ・管理者が Stripe 画面で解約）は、期限を paidThrough の終わりまで残す。
+ *
+ * ## 退会（2026-10-07 MK 確定・期間末解約は廃止）
+ *
+ * - 会員の退会は**即時**。退会確定の時点で有料権限を止め、残り期間は使えない。予約停止・解約取消は無い。
+ * - 退会は `stripeWithdrawal.js` が「購読の即時解約 → 退会フラグ + 期限を過去へ」を 1 回で行う。
+ *   購読には `cancellation_details.comment = ak_member_withdrawal` を付けるので、Customers への書込みが
+ *   失敗しても、後から届く終了イベント（ここ）が**同じ退会状態**へ収束させる（withdrawalFields）。
+ * - 再利用は新規契約。新しい購読の反映（!owned）が退会フラグを戻す。
  *
  * ## 書かない（conflict）ケース — 二重課金・権利の縮小を起こさない
  *
@@ -43,15 +48,17 @@ import { normalizePlan } from '../auth/planNormalization.js';
 /** 請求期間の終わりから閲覧を続ける猶予（カード再試行・Webhook 遅延の吸収） */
 export const STRIPE_GRACE_MS = 2 * 24 * 60 * 60 * 1000;
 
+/** 会員の退会で解約した購読の印（`cancellation_details.comment`）。stripeWithdrawal.js が付ける */
+export const MEMBER_WITHDRAWAL_COMMENT = 'ak_member_withdrawal';
+
 /** 権限を付ける状態 */
 const LIVE_STATUSES = new Set(['active', 'trialing']);
 /** 終わった状態（閲覧を止める） */
 const ENDED_STATUSES = new Set(['canceled', 'unpaid', 'incomplete_expired']);
 
 /**
- * Stripe の月額で契約中の会員か（退会フラグではなく Stripe の「次回更新を止める」で解約させる対象）。
- * 退会フラグ（WithdrawalRequested）は**その場で閲覧を止める**ため、支払い済み期間末まで使える
- * 解約仕様（2026-10-02 MK 確定）と矛盾し、しかも Stripe の課金は止まらない。
+ * Stripe の月額で契約している会員か（退会はマイページの「退会する」＝stripe-withdraw で購読ごと止める対象）。
+ * メールアドレスだけで呼べる process-withdrawal からは、購読を操作しない。
  */
 export function isStripeSubscriber(fields) {
   const f = fields || {};
@@ -74,8 +81,35 @@ export function snapshotSubscription(sub) {
     currentPeriodEnd: periodEnd,
     endedAt: Number(s.ended_at) || null,
     cancelAtPeriodEnd: s.cancel_at_period_end === true,
+    // 会員の退会で解約した購読か（Customers への書込みが失敗しても終了イベントで退会状態へ収束させる）
+    memberWithdrawal: String(s.cancellation_details?.comment || '') === MEMBER_WITHDRAWAL_COMMENT,
     metadata: s.metadata || {},
   };
+}
+
+const isTruthy = (v) => v === true || v === 1 || /^(true|1|yes)$/i.test(String(v ?? '').trim());
+
+/**
+ * 退会の状態（即時に有料権限を止める）。退会 API と終了イベントの**単一源**。
+ *
+ * - `WithdrawalRequested=true` … resolveMembership / resolveEntitlements がその場で無料扱いにする
+ * - `有効期限` … **昨日（JST）へ縮める**（延ばさない）。'YYYY-MM-DD' は当日 00:00 UTC（09:00 JST）に切れるため、
+ *   今日の日付ではその朝 9 時まで見られてしまう。残り期間は使えない（2026-10-07 MK 確定）
+ * - 既に退会済みなら理由・日付は書き換えない（二重処理でも同じ結果）
+ */
+export function withdrawalFields({ fields = {}, now = new Date(), reason = null } = {}) {
+  const yesterday = jstDateString(new Date(now.getTime() - 24 * 60 * 60 * 1000));
+  const current = String(fields['有効期限'] || '').trim();
+  const out = {
+    '有効期限': current && current < yesterday ? current : yesterday,
+    CancelledAt: now.toISOString(),
+  };
+  if (!isTruthy(fields.WithdrawalRequested)) {
+    out.WithdrawalRequested = true;
+    out.WithdrawalDate = jstDateString(now);
+    out.WithdrawalReason = reason ? String(reason).slice(0, 500) : '理由未記入';
+  }
+  return out;
 }
 
 /** 支払い済み期間の終わり（unix 秒）→ 有効中の `有効期限`（JST 暦日 + 猶予 2 日。更新時の決済待ちを吸収）*/
@@ -139,7 +173,12 @@ export function decideSubscriptionSync({ fields = {}, sub, env = {}, now = new D
   // ── 終了 ────────────────────────────────────────────────
   if (ENDED_STATUSES.has(sub.status)) {
     if (!owned) return { action: 'skip', reason: 'ended_not_owned' };
-    // 支払い済み期間の終わりまでは見られる（即時失効させない）。1 円も払われていなければ今日で終わり。
+    // 会員の退会（退会 API が付けた印・または退会フラグ済み）→ 即時失効の退会状態（withdrawalFields）
+    if (sub.memberWithdrawal === true || isTruthy(f.WithdrawalRequested)) {
+      const w = withdrawalFields({ fields: f, now });
+      return { action: 'write', reason: 'withdrawn', expiration: w['有効期限'], fields: w };
+    }
+    // 退会以外の終了（決済失敗・管理者の解約）: 支払い済み期間の終わりまでは見られる。1 円も払われていなければ今日で終わり。
     const endYmd = expirationAfterEnd(paidThrough) || jstDateString(now);
     const current = String(f['有効期限'] || '').trim();
     // 期限は**縮めるだけ**（延ばさない）。猶予 2 日の分だけ縮み、支払い済みの分は残る。

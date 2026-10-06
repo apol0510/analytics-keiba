@@ -7,7 +7,7 @@
  * | イベント | 何をするか |
  * |---|---|
  * | checkout.session.completed | 初回の付与 |
- * | customer.subscription.created / updated / deleted | 付与・プラン変更（ポータル）・終了 |
+ * | customer.subscription.created / updated / deleted | 付与・プラン変更（ポータル）・終了（退会 API が解約した購読は即時の退会状態へ収束）|
  * | invoice.paid / invoice.payment_succeeded | 毎月の更新で有効期限を延ばす |
  * | invoice.payment_failed | 何も書かない（期限で自然に止まる。Stripe が再試行する）|
  *

@@ -1,3 +1,16 @@
+# 🚪 Stripe 月額会員の即時退会（2026-10-07 MK 確定 / **実装中**）
+
+| 項目 | 状態 |
+|---|---|
+| 仕様 | **MK 確定**（2026-10-07）。期間末解約・予約停止・解約取消は廃止。退会は即時（残り期間は使えない）・再利用は新規契約。正本 `docs/spec.md`「退会」・`decisions.md` 2026-10-07・`astro-site/docs/STRIPE_BILLING.md`「退会」 |
+| 実装 | `stripeWithdrawal.js`（単一の状態遷移）・`stripe-withdraw`（セッション必須・confirm 必須）・マイページ「アカウント管理」（カード変更・請求書／プラン変更／退会する → 確認画面 → 確定）・`/withdrawal-complete/`・ポータルの解約を無効（`stripe-setup.mjs`・`stripe-portal` は AK 設定が無ければ 503）・refund / terms / legal / pricing FAQ / service-description / process-withdrawal・withdrawal-upsell の文言 |
+| test | `stripeWithdrawal.test.mjs`（15 件: 即時利用不可・未来の期限でも不可・予約停止を作らない・取消導線なし・ポータルで解約不可・他会員へ影響なし・二重退会（逐次・同時）・直 URL・再契約・不整合の収束）。`stripeDisplayPolicy.guard` を新仕様へ |
+| branch | `feat/immediate-withdrawal`（worktree `analytics-keiba-withdraw`） |
+| 残り | Stripe test mode 確認 → PR / CI → merge（MK）→ 本番のポータル設定（解約無効）→ 本番確認 → cleanup |
+| 再開地点 | このエントリの「残り」の先頭から |
+
+---
+
 # 🧾 #754 の残り 2 件: ニュースレターテンプレート 126% ／ トップ実績カードの非表示（2026-10-06 / **本番反映済み**）
 
 | 項目 | 状態 |

@@ -1,5 +1,6 @@
 /**
- * stripe-portal — Stripe のお支払い管理（カード変更・プラン変更・解約）を開く
+ * stripe-portal — Stripe のお支払い管理（カード変更・請求書・プラン変更）を開く
+ * 解約はポータルでは行わない（設定で無効。退会はマイページの「退会する」＝ stripe-withdraw・即時退会）
  *
  * POST（ログイン必須 / ak_session）
  *   → 200 { url }
@@ -41,9 +42,11 @@ exports.handler = async (event) => {
       return_url: `${resolveSiteOrigin(event.headers)}/dashboard/`,
       locale: 'ja',
     };
-    // scripts/stripe-setup.mjs が作る AK 用の設定（プラン切替・期間末解約）。未設定なら Stripe の既定
+    // scripts/stripe-setup.mjs が作る AK 用の設定（カード変更・請求書・プラン切替。解約は無効）。
+    // ⚠️ 未設定（bpc_ が無い）でも Stripe の既定設定は使わない＝既定設定は解約が有効なことがあるため fail closed
     const conf = portalConfigurationFor(env);
-    if (/^bpc_/.test(String(conf || ''))) params.configuration = conf;
+    if (!/^bpc_/.test(String(conf || ''))) return reply(503, { error: 'portal_not_configured' });
+    params.configuration = conf;
     const portal = await stripe.billingPortal.sessions.create(params);
     return reply(200, { url: portal.url });
   } catch (e) {

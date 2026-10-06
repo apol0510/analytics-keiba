@@ -25,7 +25,7 @@ import { buildPremiumConversionFields } from '../payments/premiumConversion.js';
 
 const TABLE = 'Customers';
 
-function airtable(env, fetchImpl) {
+export function airtable(env, fetchImpl) {
   const key = env.AIRTABLE_API_KEY;
   const base = env.AIRTABLE_BASE_ID;
   if (!key || !base) throw new Error('airtable_env_missing');
@@ -95,14 +95,22 @@ export async function applySubscription(input) {
   if (!subId) return { ok: false, action: 'skip', reason: 'no_subscription' };
   // ⚠️ Webhook と決済完了画面が**同時に**同じ購読を処理すると、未登録の人のレコードが
   //    2 件作られる。購読ごとの排他ロック（Redis SET NX）で 1 本ずつ通す。
-  if (!redis) return applySubscriptionLocked({ ...input, subId });
+  return withSubscriptionLock(redis, subId, () => applySubscriptionLocked({ ...input, subId }));
+}
+
+/**
+ * 購読ごとの排他ロック（Redis SET NX）。反映（applySubscription）と退会（stripeWithdrawal）が**同じ鍵**を使う。
+ * Redis が無い環境（Deploy Preview 等）ではそのまま実行する。取れなければ { action: 'busy' }。
+ */
+export async function withSubscriptionLock(redis, subId, fn) {
+  if (!redis) return fn();
   const key = `ak:stripe:lock:${subId}`;
   const token = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   for (let i = 0; i < 16; i += 1) {
     const got = await redis(['SET', key, token, 'NX', 'PX', '30000']);
     if (got === 'OK') {
       try {
-        return await applySubscriptionLocked({ ...input, subId });
+        return await fn();
       } finally {
         try {
           const cur = await redis(['GET', key]);

@@ -99,7 +99,7 @@ const planTierByToken = buildPlanTierByToken();
         <p class="plans-lead">中央と南関、どちらで勝負しますか？<br><span>両方なら Premium がお得です。</span></p>
         <!-- Premium（両会場）をご契約中の方にだけ CSS で表示（同じプランの購入ボタンの代わり）-->
         <div class="premium-member-note">
-            <p>Premium をご利用中です。月額プランの変更・解約はマイページの「お支払い管理」から行えます。</p>
+            <p>Premium をご利用中です。月額プランの変更・退会はマイページの「アカウント管理」から行えます。</p>
             <p class="premium-member-links">
                 <a href="/sanrenpuku-demo/" class="plan-button plan-button-annual">次は三連複を見る</a>
                 <a href="/dashboard/" class="plan-button plan-button-free">マイページへ</a>
@@ -409,10 +409,10 @@ const planTierByToken = buildPlanTierByToken();
                 </div>
 
                 <div class="faq-item">
-                    <h3 class="faq-question">Q: 解約はできますか？</h3>
+                    <h3 class="faq-question">Q: 解約（退会）はできますか？</h3>
                     <p class="faq-answer">
-                        ログイン後、マイページの「お支払い管理」から手続きいただけます。<br>
-                        解約すると次回以降の更新が停止し、お支払い済みの期間の終わりまではご利用いただけます。最低利用期間はなく、日割りでの返金は行っておりません。
+                        はい、いつでもできます。ログイン後、マイページの「アカウント管理」の「退会する」から手続きいただけます（確認画面のあとに確定します）。<br>
+                        退会すると、現在の利用期限を待たずにすぐにご利用いただけなくなり、以降の請求はありません。残りの期間のご利用を希望される場合は、退会せずにそのままご利用ください。最低利用期間はなく、日割りでの返金は行っておりません。再びご利用の場合は新しくお申し込みいただけます。
                     </p>
                 </div>
 
@@ -445,7 +445,7 @@ const planTierByToken = buildPlanTierByToken();
                 <div class="faq-item" data-hide-for="light">
                     <h3 class="faq-question">Q: プランの変更はできますか？</h3>
                     <p class="faq-answer">
-                        はい。月額プランは、マイページの「お支払い管理」から中央版・南関版と Premium を切り替えられます（差額は日割りで調整されます）。<br>
+                        はい。月額プランは、マイページの「アカウント管理」の「プラン変更」から中央版・南関版と Premium を切り替えられます（差額は日割りで調整されます）。<br>
                         その他のご相談はお気軽にお問い合わせください。
                     </p>
                 </div>
@@ -654,11 +654,11 @@ const planTierByToken = buildPlanTierByToken();
         var err = data.error || '';
         if (err === 'email_required') { showPanel(planId, true); return; }
         if (err === 'already_subscribed' && data.next === 'portal') {
-          showMessage('すでに月額プランをご契約中です。プランの変更（中央版・南関版 ⇄ Premium）や解約は「お支払い管理」から行えます。<br><br><button type="button" class="plan-button plan-button-annual" onclick="akOpenStripePortal()">お支払い管理を開く</button>');
+          showMessage('すでに月額プランをご契約中です。プランの変更（中央版・南関版 ⇄ Premium）は「お支払い管理」から行えます。<br><br><button type="button" class="plan-button plan-button-annual" onclick="akOpenStripePortal()">お支払い管理を開く</button>');
           return;
         }
         if (err === 'already_subscribed') {
-          showMessage('このメールアドレスは、すでに月額プランをご契約中です。<a href="/login/?next=/pricing/">ログイン</a>のうえ、マイページの「お支払い管理」からプランの変更・解約を行えます。');
+          showMessage('このメールアドレスは、すでに月額プランをご契約中です。<a href="/login/?next=/pricing/">ログイン</a>のうえ、マイページの「アカウント管理」からプランの変更・退会を行えます。');
           return;
         }
         if (err === 'already_premium') {

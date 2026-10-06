@@ -74,7 +74,7 @@ AK には性質の違う判定が 3 つあり、**それぞれ別モジュール
   こちらから配信停止手続きを行ってください**」と案内している
 - 退会処理が書くのは `WithdrawalRequested` / `WithdrawalDate` / `WithdrawalReason` / `有効期限` のみで、
   **`UnsubscribedAnalyticsKeiba` を書かない**
-- 処理内容も「Stripe 定期支払いの停止」「契約期間終了後は Free へ切替」＝課金・契約のみ
+- 処理内容も「課金の停止」「有料利用の即時終了」（2026-10-07 MK 確定: Stripe 月額は即時退会）＝課金・契約のみ
 
 退会者をマーケティングから外すことは、AK 自身が本人へ伝えた内容と矛盾する。
 **メールを止める意思表示は `UnsubscribedAnalyticsKeiba`（＋ provider suppression）が担う。**

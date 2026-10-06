@@ -150,7 +150,7 @@ test('三連複買い切り（LifetimeSanrenpuku）には触れない', () => {
   assert.equal('LifetimeSanrenpuku' in r.fields, false);
 });
 
-test('終了（期間末の解約）: 支払い済み期間の終わりまで残し、猶予分だけ縮める（延ばさない）', () => {
+test('退会以外の終了（決済失敗の再試行切れ・管理者の解約）: 支払い済み期間の終わりまで残し、猶予分だけ縮める（延ばさない）', () => {
   const fields = { StripeSubscriptionId: 'sub_1', '有効期限': '2026-11-04' };
   const r = decide({ fields, sub: sub({ status: 'canceled', endedAt: '2026-11-02T03:00:00Z' }), env: ENV, now: NOW });
   assert.equal(r.action, 'write');

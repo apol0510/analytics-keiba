@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
  * stripe-setup.mjs — AK の Stripe（商品・価格・Webhook・カスタマーポータル）を API で用意し、Netlify の env へ入れる
+ * カスタマーポータルはカード変更・請求書・プラン変更だけ（解約は無効。退会はマイページの stripe-withdraw）
  *
  * 何度実行しても同じ状態に収束する（Price は lookup_key、Webhook は URL で照合）。
  * **秘密鍵・Webhook 署名鍵は標準出力に出さない**（netlify env:set へ直接渡す）。
@@ -126,8 +127,8 @@ async function ensurePortal(priceIds) {
       invoice_history: { enabled: true },
       payment_method_update: { enabled: true },
       customer_update: { enabled: false },
-      // 解約は期間の終わりで（それまでは閲覧できる）
-      subscription_cancel: { enabled: true, mode: 'at_period_end', cancellation_reason: { enabled: true, options: ['too_expensive', 'unused', 'other'] } },
+      // 解約はポータルでは**させない**（2026-10-07 MK 確定: 退会はマイページの「退会する」で即時。期間末解約は廃止）
+      subscription_cancel: { enabled: false },
       // 中央版・南関版 ⇄ Premium の切替（差額は日割り）
       subscription_update: products.length === STRIPE_PLANS.length
         ? { enabled: true, default_allowed_updates: ['price'], proration_behavior: 'create_prorations', products }

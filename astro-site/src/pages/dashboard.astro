@@ -446,19 +446,40 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
                         </p>
                     </div>
 
-                    <!-- Stripe 月額の会員: カード変更・プラン変更・解約（Stripe のお支払い管理画面） -->
+                    <!-- Stripe 月額の会員: アカウント管理（2026-10-07 MK 確定）
+                         カード変更・請求書・プラン変更 = Stripe のお支払い管理（ポータル。解約は無効）
+                         退会 = このページの「退会する」→ 確認画面 → 確定（即時退会・stripe-withdraw）。期間末解約・解約取消は無い -->
                     <div id="stripe-billing-card" class="prediction-card premium" style="display: none;">
                         <div class="card-header">
-                            <h3>💳 お支払い管理</h3>
+                            <h3>⚙️ アカウント管理</h3>
                         </div>
                         <div class="race-info">
-                            <div class="race-title race-title-sm">カードの変更・プランの変更・解約</div>
-                            <div class="confidence">毎月自動で更新されます。解約後もお支払い済みの期間の終わりまでご利用いただけます。</div>
+                            <div class="race-title race-title-sm">月額プラン（クレジットカード）</div>
+                            <div class="confidence">毎月自動で更新されます。</div>
                         </div>
                         <div class="sanrenpuku-view-buttons">
-                            <button type="button" class="view-btn" onclick="akOpenStripePortal()">お支払い管理を開く</button>
+                            <button type="button" class="view-btn" onclick="akOpenStripePortal()">カード変更・請求書</button>
+                            <button type="button" class="view-btn" onclick="akOpenStripePortal()">プラン変更</button>
+                            <button type="button" class="view-btn ak-withdraw-open" id="ak-withdraw-open" onclick="akOpenWithdraw()">退会する</button>
                         </div>
                         <p class="stripe-billing-error" id="stripe-billing-error" style="display: none;">お支払い管理を開けませんでした。時間をおいて再度お試しいただくか、お問い合わせください。</p>
+                    </div>
+
+                    <!-- 退会の確認画面（「退会する」だけでは確定しない。ここで「退会を確定する」を押して初めて確定） -->
+                    <div id="ak-withdraw-modal" role="dialog" aria-modal="true" aria-labelledby="ak-withdraw-title" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 10000; align-items: center; justify-content: center; padding: 16px;">
+                        <div style="background: #1e293b; border-radius: 12px; padding: 1.5rem; max-width: 520px; width: 100%; color: #e2e8f0; line-height: 1.7;">
+                            <h3 id="ak-withdraw-title" style="color: #f87171; margin: 0 0 1rem;">退会の確認</h3>
+                            <p data-ak-withdraw-copy="immediate" style="margin: 0 0 0.75rem;"><strong>退会すると、現在の利用期限<span id="ak-withdraw-valid-until"></span>を待たずに、すぐにご利用いただけなくなります。</strong></p>
+                            <p data-ak-withdraw-copy="keep" style="margin: 0 0 0.75rem;">残りの期間のご利用を希望される場合は、退会せずにそのままご利用ください。</p>
+                            <p style="margin: 0 0 0.75rem; color: #94a3b8; font-size: 0.9rem;">退会後の取り消しはできません。今後の請求はなくなり、残りの期間分の返金はありません。再びご利用いただく場合は新しくお申し込みください。</p>
+                            <label for="ak-withdraw-reason" style="display: block; font-size: 0.9rem; color: #94a3b8; margin-bottom: 0.25rem;">退会の理由（任意）</label>
+                            <textarea id="ak-withdraw-reason" maxlength="500" style="width: 100%; min-height: 80px; padding: 0.75rem; border-radius: 8px; background: #0f172a; color: #e2e8f0; border: 1px solid #334155; box-sizing: border-box;"></textarea>
+                            <p id="ak-withdraw-error" role="alert" style="display: none; color: #fca5a5; margin: 0.75rem 0 0;"></p>
+                            <div style="display: flex; gap: 0.75rem; margin-top: 1rem; flex-wrap: wrap;">
+                                <button type="button" id="ak-withdraw-cancel" onclick="akCloseWithdraw()" style="flex: 1; min-width: 140px; padding: 0.9rem; background: #334155; color: #e2e8f0; border: none; border-radius: 8px; cursor: pointer;">やめる（そのまま利用する）</button>
+                                <button type="button" id="ak-withdraw-confirm" onclick="akConfirmWithdraw()" style="flex: 1; min-width: 140px; padding: 0.9rem; background: #ef4444; color: #fff; border: none; border-radius: 8px; font-weight: bold; cursor: pointer;">退会を確定する</button>
+                            </div>
+                        </div>
                     </div>
 
                     <!-- Premium予想（契約期間終了）: 期限切れ時に上のカードの代わりに表示。予想リンクは出さない。 -->
@@ -5552,11 +5573,11 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
             confirmBtn.disabled = true;
             confirmBtn.textContent = '処理中...';
 
-            // Stripe の月額会員は「お支払い管理」で解約する（次回更新の停止・支払い済み期間末まで利用可）。
-            // 退会フラグはその場で閲覧を止め、Stripe の課金も止まらないため使わない（2026-10-02）。
+            // Stripe の月額会員はアカウント管理の退会（確認画面 → 確定・即時退会・stripe-withdraw）へ（2026-10-07）。
+            // メールアドレスだけの process-withdrawal では購読を操作しない。
             const _sa = (typeof getServerAuth === 'function') ? getServerAuth() : null;
-            if (_sa && _sa.stripeBilling === true && typeof window.akOpenStripePortal === 'function') {
-                window.akOpenStripePortal();
+            if (_sa && _sa.stripeBilling === true && typeof window.akOpenWithdraw === 'function') {
+                window.akOpenWithdraw();
                 confirmBtn.disabled = false;
                 confirmBtn.textContent = '退会する';
                 return;
@@ -5852,7 +5873,7 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
       let currentAmount = 0;
       let currentPlanType = 'monthly';
 
-      // Stripe のお支払い管理（カード・プラン変更・解約）
+      // Stripe のお支払い管理（カード変更・請求書・プラン変更。解約はポータルでは行わない）
       window.akOpenStripePortal = async function () {
         const err = document.getElementById('stripe-billing-error');
         try {
@@ -5861,6 +5882,64 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
           if (res.ok && data.url) { location.href = data.url; return; }
         } catch (_) { /* 下で表示 */ }
         if (err) err.style.display = 'block';
+      };
+
+      // ── 退会（即時退会・2026-10-07 MK 確定）: 「退会する」→ 確認画面 → 「退会を確定する」の 2 段階 ──
+      // 二重送信は画面（送信中フラグ・ボタン無効化）とサーバー（ロック内で退会済みを確認・409）の両方で止める。
+      let akWithdrawInFlight = false;
+      window.akOpenWithdraw = function () {
+        const m = document.getElementById('ak-withdraw-modal');
+        if (!m) return;
+        const sa = (typeof getServerAuth === 'function') ? getServerAuth() : null;
+        const vu = sa && sa.profile && sa.profile.validUntil ? String(sa.profile.validUntil) : '';
+        const span = document.getElementById('ak-withdraw-valid-until');
+        if (span) span.textContent = /^\d{4}-\d{2}-\d{2}/.test(vu) ? `（${vu.slice(0, 10)} まで）` : '';
+        const err = document.getElementById('ak-withdraw-error');
+        if (err) err.style.display = 'none';
+        m.style.display = 'flex';
+      };
+      window.akCloseWithdraw = function () {
+        if (akWithdrawInFlight) return;
+        const m = document.getElementById('ak-withdraw-modal');
+        if (m) m.style.display = 'none';
+      };
+      window.akConfirmWithdraw = async function () {
+        if (akWithdrawInFlight) return;
+        akWithdrawInFlight = true;
+        const btn = document.getElementById('ak-withdraw-confirm');
+        const cancel = document.getElementById('ak-withdraw-cancel');
+        const err = document.getElementById('ak-withdraw-error');
+        if (btn) { btn.disabled = true; btn.textContent = '処理中...'; }
+        if (cancel) cancel.disabled = true;
+        const reasonEl = document.getElementById('ak-withdraw-reason');
+        const MESSAGES = {
+          already_withdrawn: '既に退会の手続きが完了しています。',
+          login_required: 'ログインの有効期限が切れました。ログインし直してから、もう一度お試しください。',
+          not_stripe_subscriber: 'クレジットカードの月額プランのご契約が見つかりませんでした。お問い合わせください。',
+          subscription_mismatch: 'ご契約の確認ができませんでした。お問い合わせください。',
+          busy: '処理が混み合っています。少し時間をおいてから、もう一度お試しください。',
+        };
+        try {
+          const res = await fetch('/.netlify/functions/stripe-withdraw', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ confirm: true, reason: reasonEl ? reasonEl.value : '' }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (res.ok && data.ok) {
+            if (typeof clearAuthLocalStorage === 'function') clearAuthLocalStorage();
+            location.href = '/withdrawal-complete/';
+            return;
+          }
+          if (data.error === 'already_withdrawn') { location.href = '/withdrawal-complete/'; return; }
+          throw new Error(MESSAGES[data.error] || '退会の手続きができませんでした。時間をおいて再度お試しいただくか、お問い合わせください。');
+        } catch (e) {
+          if (err) { err.textContent = e.message; err.style.display = 'block'; }
+          akWithdrawInFlight = false;
+          if (btn) { btn.disabled = false; btn.textContent = '退会を確定する'; }
+          if (cancel) cancel.disabled = false;
+        }
       };
 
       function openBankModal(planName, amount, planType = 'monthly') {

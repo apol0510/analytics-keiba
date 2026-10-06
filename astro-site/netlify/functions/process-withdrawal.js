@@ -70,33 +70,32 @@ export const handler = async (event, context) => {
             };
         }
 
-        // 1-b. Stripe の月額会員は退会フラグを立てない（2026-10-02 MK 確定: 解約は期間末失効）。
-        //      退会フラグはその場で閲覧を止め、しかも Stripe の課金は止まらない。
-        //      解約（次回更新の停止）はログイン後の「お支払い管理」で本人が行う。ここは案内だけ送る。
-        //      ⚠️ このエンドポイントはメールアドレスだけで呼べるため、ここから Stripe の購読を操作しない。
+        // 1-b. Stripe の月額会員はここでは退会させない（本人確認がメールアドレスだけのため購読を操作しない）。
+        //      退会はログイン後のマイページ「アカウント管理」の「退会する」（stripe-withdraw・即時退会）で行う。
+        //      ここは案内だけ送る（2026-10-07 MK 確定: 期間末解約は廃止・退会は即時）。
         if (isStripeSubscriber(customerRecord.fields)) {
             await sendEmailViaSendGrid({
                 to: email,
-                subject: '【解約のご案内】KEIBA Analytics',
+                subject: '【退会のご案内】KEIBA Analytics',
                 html: `
             <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
                 <p>KEIBA Analytics をご利用いただきありがとうございます。</p>
-                <p>月額プラン（クレジットカード）の解約は、ログイン後のマイページにある<strong>「お支払い管理」</strong>から行えます。</p>
-                <p>解約すると次回の更新が止まり、お支払い済みの期間の終わりまでは引き続きご利用いただけます。</p>
+                <p>月額プラン（クレジットカード）の退会は、ログイン後のマイページにある<strong>「アカウント管理」の「退会する」</strong>から行えます。</p>
+                <p>退会すると、現在の利用期限を待たずに<strong>すぐにご利用いただけなくなります</strong>。残りの期間のご利用を希望される場合は、退会せずにそのままご利用ください。</p>
                 <p><a href="https://analytics.keiba.link/login/">ログインはこちら</a></p>
                 <p>ご不明な点はこのメールにご返信ください。</p>
             </div>`,
                 replyTo: SUPPORT_EMAIL,
                 fromName: 'KEIBA Analytics サポート'
             });
-            console.log('[process-withdrawal] {"event":"stripe_subscriber_redirected_to_portal"}');
+            console.log('[process-withdrawal] {"event":"stripe_subscriber_redirected_to_account"}');
             return {
                 statusCode: 200,
                 headers,
                 body: JSON.stringify({
                     success: true,
                     stripe: true,
-                    message: '月額プラン（クレジットカード）の解約は、マイページの「お支払い管理」から行えます。ご案内をメールでお送りしました。'
+                    message: '月額プラン（クレジットカード）の退会は、マイページの「アカウント管理」から行えます。ご案内をメールでお送りしました。'
                 })
             };
         }
@@ -154,7 +153,7 @@ export const handler = async (event, context) => {
                     <p><strong>⚠️ 対応が必要です:</strong></p>
                     <ul>
                         <li>Airtableで退会処理を完了させてください</li>
-                        <li>Stripe定期支払いの停止確認</li>
+                        <li>（銀行振込の会員のため Stripe の操作は不要）</li>
                         <li>必要に応じて顧客へフォローアップ</li>
                     </ul>
                 </div>
@@ -196,9 +195,8 @@ export const handler = async (event, context) => {
                 <div style="background: #fef3c7; padding: 15px; border-radius: 8px; margin: 20px 0;">
                     <p><strong>⚠️ 今後の流れ:</strong></p>
                     <ul>
-                        <li>Stripe定期支払いの停止処理を行います</li>
-                        <li>現在のご契約期間終了までプレミアムコンテンツをご利用いただけます</li>
-                        <li>※契約期間終了後は自動的にFreeプランに切り替わります</li>
+                        <li>退会の受付と同時に、有料会員としてのご利用は終了しました（残りの期間はご利用いただけません）</li>
+                        <li>再びご利用いただく場合は、料金ページから新しくお申し込みください</li>
                     </ul>
                 </div>
 
