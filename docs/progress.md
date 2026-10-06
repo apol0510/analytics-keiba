@@ -223,6 +223,20 @@
 | 次（有効化後）| merge #677 → 本番デプロイ → 本番スモーク（/pricing/・Checkout URL 発行・Webhook 署名 400・portal 401）→ cleanup |
 | rollback | STRIPE_BILLING.md §5 |
 
+# 🧹 SendGrid 選別済み contacts の削除（2026-10-07 MK 指示 / 実施済み）
+
+| 項目 | 内容 |
+|---|---|
+| 目的 | 選別終了後も stored contacts 12,083 件が課金対象で、上位プランから下げられないため |
+| 削除条件（3 つ全部）| ① 選別 list（start-1〜3）・継続 list `ak-drm-engaged` のどれにも居ない ② KI segment（`registered_intelligence=true`）でない ③ AK 側の抑止台帳（blocked）に居る（本番 read-only `prospectIndexAudit` で 1 件ずつ照合）|
+| 削除数 | **10,683**（EXHAUSTED 10,314＝10 通無反応 / SUPPRESSED 369＝bounce 122・dropped 223・配信停止 24）。`DELETE /v3/marketing/contacts` 107 回・失敗 0 |
+| stored contacts | **12,083 → 1,403**（残りは継続 list 835＋選別 list 414＋KI 155 の和集合 1,400 と、削除後に増えた 3）|
+| 不変を確認 | list 人数（835 / 107 / 307 / 0）・KI segment 155・suppression（unsubscribes 6 / bounces 330 / spam 3 / invalid 5 / blocks 143 / ASM AK Marketing 47）・週次予約 10-07 / 10-10・AK 側（抑止 10,786 / 反応済み 809 / 継続 list 835）|
+| 変えていないもの | Email API プラン・Marketing プラン（課金変更 0）・AK Redis（書き込み 0）・env |
+| billable_count | 削除直後も 12,083 のまま（SendGrid の当月最大値の可能性。プラン変更前に再確認）|
+| rollback | 削除前の全件 export を `~/.analytics-keiba-ops/sendgrid-contacts-backup-20261006/`（repo 外・PII のため commit しない）に保存。必要なら `PUT /v3/marketing/contacts` で再投入（list には入れない）|
+| 残り | Marketing プランを最小へ下げる（課金変更＝MK 承認・管理画面操作）|
+
 # ⏳ 待ち状態と並行作業（2026-09-28 更新 / ルール: CLAUDE.md「⏳ 待ち時間は止まらず並行する」）
 
 | 何を待っているか | いつ・どう動くか | 人の作業 |
