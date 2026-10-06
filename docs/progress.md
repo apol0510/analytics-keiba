@@ -1,3 +1,16 @@
+# 🏇 取得済み予想（/predictions/view/）に出走表を復元（2026-10-07 MK 指摘 / **PR 待ち**）
+
+| 項目 | 状態 |
+|---|---|
+| 指摘 | リニューアル（#687 以降）で、以前の Premium ページにあった 騎手・調教師・斤量・性齢 が取得済み予想の画面に無い |
+| 原因 | データ（予想 JSON）には残っている（直近 3 開催で 騎手 約 95〜100%・調教師 / 斤量 / 性齢 / 父 ほぼ 100%）。新画面の本文（`predictionContent.horseRows`）が 馬番・馬名・騎手（印の 3 頭だけ表示）しか持っていなかった |
+| 対応 | 全馬に `profile`（性齢・斤量・騎手・調教師・父）。「出走表」（PC 表 / mobile カード）と印の横の 1 行。古い保存データは閲覧時に予想データから補う。Preview（無料）には出さない。正本 `astro-site/docs/PREDICTION_ACQUISITION.md` §2-1 |
+| test | `horseProfile.test.mjs`（書き方・全馬・Preview に出さない・画面・古い保存データの補完）。`check:safety` / build exit 0。実データ（中央 10/4・南関 10/7）で実部品を描画して PC / mobile を目視 |
+| branch | `feat/predictions-horse-profile`（worktree `analytics-keiba-horseprof`） |
+| 残り | PR / CI → merge（MK）→ 本番確認 → cleanup |
+
+---
+
 # 🚪 Stripe 月額会員の即時退会（2026-10-07 MK 確定 / **本番反映済み**）
 
 | 項目 | 状態 |

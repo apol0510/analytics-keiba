@@ -41,6 +41,15 @@ const gradeLabel = { A: '推奨度 A', B: '推奨度 B', skip: '見送り' };
 const LABELS = ['前走', '2走前', '3走前', '4走前', '5走前'];
 const byRole = c.horses.slice().sort((a, b) => (ROLE_ORDER[a.role] - ROLE_ORDER[b.role]) || (a.number - b.number));
 const hasPast = c.horses.some((h) => Array.isArray(h.recent));
+// 出走表の基本情報（2026-10-07・リニューアル前の Premium ページと同じ項目）。Preview には出さない（buildPreviewContent が持たない）
+const PROFILE_COLS = [
+  { key: 'sexAge', label: '性齢' }, { key: 'weight', label: '斤量', cls: 'num' }, { key: 'jockey', label: '騎手' },
+  { key: 'trainer', label: '調教師' }, { key: 'sire', label: '父' },
+];
+const byNumber = c.horses.slice().sort((a, b) => a.number - b.number);
+const profileCols = isPreview ? [] : PROFILE_COLS.filter((col) => c.horses.some((h) => h.profile && h.profile[col.key]));
+/** 印の横の 1 行（性齢・斤量・騎手）。基本情報が無い保存データは従来どおり騎手だけ */
+const markSub = (h) => (h.profile ? [h.profile.sexAge, h.profile.weight, h.profile.jockey].filter(Boolean).join('・') : h.jockey);
 /** "6↔4.8.10" → { axis, arrow, partners[] } */
 function splitLine(line) {
   const m = /^(\d+)\s*(↔|⇔|→|-)\s*(.+)$/.exec(String(line || ''));
@@ -158,7 +167,7 @@ const metaFor = (r) => [
             <li class={`acq-mark ag-inset ${ROLE_CLASS[h.role]}`}>
               <span class="acq-mark-role">{h.role}</span>
               <span class="ag-num lg">{h.number}</span>
-              <span class="acq-mark-name"><strong>{h.name}</strong>{h.jockey && <small>{h.jockey}</small>}</span>
+              <span class="acq-mark-name"><strong>{h.name}</strong>{markSub(h) && <small>{markSub(h)}</small>}</span>
               {isPreview
                 ? <span class="acq-mark-index acq-masked"><small>AI総合指数</small><strong aria-label="Premiumで表示">●●</strong></span>
                 : <span class="acq-mark-index"><small>AI総合指数</small><strong>{h.aiIndex ?? '—'}</strong></span>}
@@ -184,6 +193,35 @@ const metaFor = (r) => [
       )}
     </div>
   </div>
+
+  {profileCols.length > 0 && (
+    <section class="ag-glass ag-tint-blue acq-sec acq-entries" aria-label="出走表" id="entries">
+      <header class="acq-head"><h3>出走表 <small>性齢・斤量・騎手・調教師・父</small></h3></header>
+      <div class="acq-table-wrap acq-only-wide">
+        <table class="acq-table acq-entry-table">
+          <thead><tr><th class="num">馬番</th><th>馬名</th><th>印</th>{profileCols.map((col) => <th class={col.cls || ''}>{col.label}</th>)}</tr></thead>
+          <tbody>
+            {byNumber.map((h) => (
+              <tr class={ROLE_CLASS[h.role]}>
+                <td class="num"><span class="ag-num">{h.number}</span></td>
+                <td class="race"><strong>{h.name}</strong></td>
+                <td>{ROLE_LABEL[h.role] || h.role || '—'}</td>
+                {profileCols.map((col) => <td class={col.cls || ''}>{(h.profile && h.profile[col.key]) || '—'}</td>)}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <ol class="acq-entry-cards acq-only-narrow">
+        {byNumber.map((h) => (
+          <li class={`acq-entry-card ag-inset ${ROLE_CLASS[h.role] || ''}`}>
+            <div class="acq-entry-top"><span class="ag-num">{h.number}</span><strong>{h.name}</strong><span class="acq-past-role">{ROLE_LABEL[h.role] || h.role}</span></div>
+            {h.profile && <dl class="acq-rc-meta">{profileCols.filter((col) => h.profile[col.key]).map((col) => <div><dt>{col.label}</dt><dd>{h.profile[col.key]}</dd></div>)}</dl>}
+          </li>
+        ))}
+      </ol>
+    </section>
+  )}
 
   <section class="ag-glass ag-tint-blue acq-sec acq-past" aria-label="過去走" id="past-races">
     <header class="acq-head"><h3>過去走 <small>全頭の直近のレース成績</small></h3></header>
@@ -268,6 +306,10 @@ const metaFor = (r) => [
 </div>
 
 <style>
+  .acq-entry-cards { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+  .acq-entry-card { padding: 10px 12px; }
+  .acq-entry-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+  .acq-entry-table td.race strong { white-space: nowrap; }
   .acq-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
   .acq-body > *, .acq-grid > *, .unified-bet-card > *, .acq-past-list > *, .acq-col-marks > * { min-width: 0; }
   .acq-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }

@@ -10,10 +10,13 @@ import { getHorseAiIndex, isOsaeCandidate, isIneligibleHorse } from '../shared-p
 import { evaluateSanrenpukuRace } from './sanrenpukuSelection.js';
 import { PRODUCTS } from './predictionKey.js';
 import { recentRacesFor, historyRecordFor } from './pastRaces.js';
+import { parseSexAge } from '../horseEnrichment.js';
 
 /**
  * v1（2026-10-03 初版）: Premium にも三連複通常を入れていた・過去走なし
  * v2（2026-10-03 MK 確定）: Premium は馬単専用（三連複を入れない）・全馬に過去走（無料ページと同じ取り出し方）
+ *   2026-10-07: 全馬に出走表の基本情報 `profile`（性齢・斤量・騎手・調教師・父。リニューアル前の Premium ページと同じ項目）。
+ *   版は上げない（無い保存データは閲覧時に予想データから補う＝ /predictions/view/）
  */
 export const CONTENT_VERSION = 2;
 
@@ -47,6 +50,27 @@ function sanrenpukuLine(spec) {
   return spec ? { line: formatSanrenpukuLine(spec), points: spec.points } : null;
 }
 
+const text = (v) => (v === undefined || v === null ? '' : String(v).trim());
+
+/**
+ * 出走表の基本情報（表示専用）。リニューアル前の Premium ページ（2026-10-03 以前）と同じ項目・同じ書き方:
+ * 性齢「2歳牡」（解釈できなければ元の値）・斤量「56kg」・騎手・調教師・父。値の無い項目は入れない。全部無ければ null。
+ */
+export function horseProfile(h) {
+  const sa = parseSexAge(text(h?.age));
+  const sexAge = sa.ageNum != null && sa.gender ? `${sa.ageNum}歳${sa.gender}` : text(h?.age);
+  const w = text(h?.weight);
+  const out = {
+    sexAge,
+    weight: w && Number.isFinite(Number(w)) ? `${Number(w)}kg` : '',
+    jockey: text(h?.jockey),
+    trainer: text(h?.trainer),
+    sire: text(h?.sire),
+  };
+  for (const k of Object.keys(out)) if (!out[k]) delete out[k];
+  return Object.keys(out).length ? out : null;
+}
+
 function horseRows(horses, cat, raceInfo) {
   return (Array.isArray(horses) ? horses : [])
     .filter((h) => num(h) != null)
@@ -56,6 +80,7 @@ function horseRows(horses, cat, raceInfo) {
         number: num(h),
         name: String(h.horseName || h.name || ''),
         jockey: String(h.jockey || ''),
+        profile: horseProfile(h),
         role,
         aiIndex: getHorseAiIndex(h),
         recent: recentRacesFor(h, cat),

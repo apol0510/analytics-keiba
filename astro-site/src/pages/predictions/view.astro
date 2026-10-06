@@ -33,14 +33,24 @@ const listPath = p ? (p.product === 'srp'
 let c = v.status === 'ok' ? v.content : null;
 // v1（初版）の保存データ: Premium に三連複が入っていて過去走が無い。三連複は描画しない（部品側）。
 // 過去走は、予想データがまだ残っていれば今の取り出し方で補う（買い目・印・指数は保存時のまま変えない）。
+// 出走表の基本情報（性齢・斤量・騎手・調教師・父・2026-10-07）が無い保存データも、同じく予想データから補う（表示専用）。
 let pastUnavailable = false;
-if (c && c.product === 'premium' && !c.horses.some((h) => Array.isArray(h.recent))) {
+const needPast = !!(c && c.product === 'premium' && !c.horses.some((h) => Array.isArray(h.recent)));
+const needProfile = !!(c && c.horses.some((h) => h.profile === undefined));
+if (needPast || needProfile) {
   const found = findRace(p.cat, p.date, p.venue, p.raceNumber);
   if (found) {
-    const live = buildPredictionContent({ product: 'premium', cat: p.cat, venueName: p.venueName, race: found.race, venueTotalRaces: found.venue.totalRaces });
+    const live = buildPredictionContent({ product: c.product, cat: p.cat, venueName: p.venueName, race: found.race, venueTotalRaces: found.venue.totalRaces });
     const byNum = new Map(live.horses.map((h) => [h.number, h]));
-    c = { ...c, horses: c.horses.map((h) => ({ ...h, recent: byNum.get(h.number)?.recent || [], record: byNum.get(h.number)?.record || null })) };
-  } else {
+    c = { ...c, horses: c.horses.map((h) => {
+      const l = byNum.get(h.number);
+      return {
+        ...h,
+        ...(needPast ? { recent: l?.recent || [], record: l?.record || null } : {}),
+        ...(h.profile === undefined ? { profile: l?.profile || null } : {}),
+      };
+    }) };
+  } else if (needPast) {
     pastUnavailable = true;
   }
 }
