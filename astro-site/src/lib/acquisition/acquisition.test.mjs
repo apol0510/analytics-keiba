@@ -809,9 +809,10 @@ test('プレビューの買い目モザイクは同じ形の伏せ字だけ（�
   assert.match(teaser, /\[1, 2, 3, 4, 5, 6, 7\]\.map\(\(\) => <span class="acq-pnum">●<\/span>\)/, '同じ形の伏せ字だけ');
 });
 
-test('取得済みの「予想を見る」は小さく・緑の同系色ガラス（幅いっぱいの無彩色ボタンにしない／2026-10-06 MK）', () => {
+test('取得済みの「予想を見る」は小さく・色は従来の ag-btn-ghost のまま（2026-10-06 MK: 色は変えない）', () => {
   const list = read('src/components/acquisition/AcquisitionRaceList.astro');
-  assert.match(list, /<a class="acq-view" href=\{viewUrlFor\(r\.key\)\}>予想を見る<\/a>/);
-  assert.match(list, /\.acq-race-cta \.acq-view \{[^}]*min-height: 38px;[^}]*color: #86efac;[^}]*border: 1px solid rgba\(74, 222, 128/);
+  assert.match(list, /<a class="ag-btn-ghost acq-view" href=\{viewUrlFor\(r\.key\)\}>予想を見る<\/a>/);
+  assert.match(list, /\.acq-race-cta \.acq-view \{ width: auto; min-height: 38px;/);
+  assert.doesNotMatch(list.match(/\.acq-race-cta \.acq-view \{[^}]*\}/)[0], /color|background|border:/, '色は ag-btn-ghost のまま上書きしない');
   assert.doesNotMatch(list, /\.acq-race-cta \.acq-view \{ width: 100%/);
 });
