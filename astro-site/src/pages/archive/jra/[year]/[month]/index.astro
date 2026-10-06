@@ -1,5 +1,6 @@
 ---
 import { setPublicCdnCache } from '../../../../../lib/cdnCache.mjs';
+import ArchiveBasisNote from '../../../../components/ArchiveBasisNote.astro';
 import BaseLayout from '../../../../../layouts/BaseLayout.astro';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
@@ -93,7 +94,7 @@ setPublicCdnCache(Astro);
               <div class={`stat-value ${parseFloat(monthStats.returnRate) >= 100 ? 'profit' : 'loss'}`}>
                 {monthStats.returnRate}%
               </div>
-              <div class="stat-label">月間回収率</div>
+              <div class="stat-label">月間回収率（全買い目）</div>
             </div>
             <div class="stat-card">
               <div class="stat-value profit">¥{monthStats.totalPayout.toLocaleString()}</div>
@@ -173,8 +174,7 @@ setPublicCdnCache(Astro);
             <a href="/pricing/" class="btn-primary">💎 プレミアム予想を見る</a>
           </footer>
 
-          {/* 買い目点数に関する注記（intelligence 方式に合わせて点数は非公開）。最下部に控えめに表示。 */}
-          <p class="rule-note">※買い目は当社の予想ロジックに基づいて構成しています</p>
+          <ArchiveBasisNote />
         </>
       )}
     </div>

@@ -1,5 +1,6 @@
 ---
 import { setPublicCdnCache } from '../../../../lib/cdnCache.mjs';
+import ArchiveBasisNote from '../../../components/ArchiveBasisNote.astro';
 import BaseLayout from '../../../../layouts/BaseLayout.astro';
 import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join } from 'path';
@@ -141,7 +142,7 @@ setPublicCdnCache(Astro);
           {yearRecoveryRate != null && (
             <div class="stat-card">
               <div class="stat-value">{yearRecoveryRate}%</div>
-              <div class="stat-label">年間回収率</div>
+              <div class="stat-label">年間回収率（全買い目）</div>
             </div>
           )}
           <div class="stat-card">
@@ -209,6 +210,7 @@ setPublicCdnCache(Astro);
       <a href="/pricing/">プレミアム予想</a>
     </div>
   </div>
+  <ArchiveBasisNote />
 </BaseLayout>
 
 <style>

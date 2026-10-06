@@ -97,6 +97,7 @@ setPublicCdnCache(Astro);
               </div>
             )}
           </div>
+          <p class="sc-basis">購入点数・回収率は、この日に配信した<strong>全レースの買い目をすべて 100 円ずつ</strong>買った場合です（メインレース 5 点・その他のレース 最大 20 点）。</p>
         </section>
 
         {/* 会場ごと */}
@@ -166,7 +167,7 @@ setPublicCdnCache(Astro);
         ))}
 
         <p class="sc-note">
-          ※ メインレース以外は的中の有無のみ表示しています。全レースの買い目・印・指数はプレミアム予想でご覧いただけます。
+          ※ 5 点の買い目は<strong>メインレースだけ</strong>です（本命から相手 5 頭への馬単・一方向）。その他のレースは本命・対抗の 2 軸で<strong>最大 20 点</strong>（表裏）の買い目で、ここでは的中の有無のみ表示しています。全レースの買い目・印・指数はプレミアム予想でご覧いただけます。
         </p>
 
         {/* CTA */}
@@ -425,6 +426,8 @@ setPublicCdnCache(Astro);
   .sc-chip-mark { font-size: 0.85rem; line-height: 1; }
   .sc-chip.miss .sc-chip-mark { color: rgba(255, 255, 255, 0.4); }
 
+  .sc-basis { margin: 12px 0 0; font-size: 0.82rem; color: #94a3b8; line-height: 1.7; text-align: center; }
+  .sc-basis strong { color: #cbd5e1; }
   .sc-note {
     font-size: 0.78rem;
     color: #999;

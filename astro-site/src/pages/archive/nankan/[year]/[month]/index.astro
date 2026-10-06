@@ -1,5 +1,6 @@
 ---
 import { setPublicCdnCache } from '../../../../../lib/cdnCache.mjs';
+import ArchiveBasisNote from '../../../../components/ArchiveBasisNote.astro';
 import BaseLayout from '../../../../../layouts/BaseLayout.astro';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
@@ -53,7 +54,8 @@ days.forEach(dayKey => {
   totalHitRaces += dayData.hitRaces || 0;
   totalRaces += dayData.totalRaces || 0;
   const dayBetPoints = dayData.races.reduce((s: number, r: any) => s + (Number.isFinite(r.betPoints) ? r.betPoints : 0), 0);
-  if (dayBetPoints > 0) {
+  // 2026-10-06: 表示した買い目どおりに数え直した日（honest）だけを回収率に入れる（旧方式の日を混ぜない）
+  if (dayBetPoints > 0 && dayData.honest === true) {
     totalBetPointsMonth += dayBetPoints;
     payoutWithBetsMonth += dayData.totalPayout || 0;
   }
@@ -110,7 +112,7 @@ setPublicCdnCache(Astro);
           {recoveryRateMonth != null && (
             <div class="stat-card">
               <div class="stat-value">{recoveryRateMonth}%</div>
-              <div class="stat-label">月間回収率</div>
+              <div class="stat-label">月間回収率（全買い目）</div>
             </div>
           )}
           <div class="stat-card">
@@ -134,7 +136,7 @@ setPublicCdnCache(Astro);
           const dayHitRate = dayData.totalRaces > 0 ? Math.round((dayData.hitRaces / dayData.totalRaces) * 100) : 0;
           const totalBetPoints = dayData.races.reduce((sum: number, race: any) => sum + (Number.isFinite(race.betPoints) ? race.betPoints : 0), 0);
           const totalInvestment = totalBetPoints * 100;
-          const hasInvestment = totalInvestment > 0;
+          const hasInvestment = totalInvestment > 0 && dayData.honest === true;
           const recoveryRate = hasInvestment ? Math.round((dayData.totalPayout / totalInvestment) * 100) : null;
           return (
             <div class="day-section">
@@ -152,7 +154,7 @@ setPublicCdnCache(Astro);
                     📈 回収率: <span class="summary-value">{recoveryRate}%</span>
                   </div>
                 )}
-                {totalBetPoints > 0 && (
+                {hasInvestment && (
                   <div class="summary-item">
                     🎯 合計購入点数: <span class="summary-value">{totalBetPoints}点</span>
                   </div>
@@ -211,6 +213,7 @@ setPublicCdnCache(Astro);
       </div>
     </div>
   </div>
+  <ArchiveBasisNote />
 </BaseLayout>
 
 <style>
