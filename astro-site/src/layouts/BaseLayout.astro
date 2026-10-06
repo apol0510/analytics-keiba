@@ -1460,7 +1460,10 @@ const fullTitle = buildFullTitle(title);
 
         // 要素にアニメーションを適用
         document.addEventListener('DOMContentLoaded', function() {
-            document.querySelectorAll('.tech-card, .article-card, .stats-card').forEach(el => {
+            // .stats-card（トップのファーストビュー直下の実績カード）は隠さない。JS で opacity:0 にしてから
+            // IntersectionObserver で戻す方式は、非表示タブ・prerender・クローラ・スクリプト失敗時に
+            // カードが見えないまま残るため（値は SSR 済み・カウントアップは表示中のみ）
+            document.querySelectorAll('.tech-card, .article-card').forEach(el => {
                 el.style.opacity = '0';
                 el.style.transform = 'translateY(20px)';
                 el.style.transition = 'opacity 0.6s ease, transform 0.6s ease';
@@ -1504,7 +1507,7 @@ const fullTitle = buildFullTitle(title);
             // Stats section のカウントアップを観察（改良版）
             const statsObserver = new IntersectionObserver((entries) => {
                 entries.forEach(entry => {
-                    if (entry.isIntersecting && !entry.target.hasAttribute('data-animated')) {
+                    if (entry.isIntersecting && !entry.target.hasAttribute('data-animated') && document.visibilityState === 'visible') {
                         const targetAttr = entry.target.getAttribute('data-target');
                         const suffixAttr = entry.target.getAttribute('data-suffix') || '';
                         
