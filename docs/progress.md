@@ -1,3 +1,18 @@
+# 🧾 #754 の残り 2 件: ニュースレターテンプレート 126% ／ トップ実績カードの非表示（2026-10-06 / **本番反映済み**）
+
+| 項目 | 状態 |
+|---|---|
+| テンプレート | 管理画面ニュースレター（`admin-newsletter-simple.astro`）「先月の回収率156%達成」→「回収率126%」。メール / 配信テンプレート（同ページ・`src/lib/email-templates.js`・`netlify/functions/**`）を走査し旧固定 156% / 176% は他に 0 件。基本ニュースレターの「先週は6戦4勝・的中率66.7%」は週次例文（4/6 で内部整合）のため据え置き |
+| カード非表示の原因 | `BaseLayout` が DOMContentLoaded で `.stats-card` に inline `opacity:0` を付け、IntersectionObserver の callback でだけ 1 に戻していた。値も SSR では `0%` / `0+` で rAF のカウントアップでしか埋まらない。非表示タブ・prerender・クローラ・スクリーンショット・スクリプト失敗では IO / rAF が走らず opacity 0・「0%」のまま残る |
+| 修正 | `.stats-card` をフェード対象から外す・値を SSR で最終値（62% / 126% / 10,000+ / 50+）に・カウントアップは `visibilityState === 'visible'` のときだけ。数値・カード内容は不変（`.stats-card` を使う `beginner/lesson-06` も常時表示になる） |
+| test | `fixedMarketingStats.test.mjs` に配信テンプレート検査・`homeStatCardsVisibility.test.mjs` 新設（`test:marketing` → `check:safety` 組込）。`check:safety` / build exit 0 |
+| PR | #756 squash merge 済み（2026-10-06 12:01 UTC・`ba6dae7d`）。main Safety Check success |
+| 本番 | **反映済み・確認 OK**: トップ HTML の 4 カードが SSR で 62% / 126% / 10,000+ / 50+。非表示タブ条件（旧版で opacity 0・0% を再現した条件）でも 4 枚とも opacity 1・最終値、スクリーンショットで目視確認。`/admin-newsletter-simple/` 200・「回収率126%」・156% / 176% 0 件 |
+| rollback | `ba6dae7d` を revert（データ・schema 変更なし） |
+| cleanup | worktree `analytics-keiba-statcards` / branch `fix/newsletter-126-statcards` 削除 |
+
+---
+
 # ✅ 実績の購入点数は AI レース別算定 ＋ 固定マーケティング値 126% / 62%（2026-10-06 MK 確定 / **本番反映済み**）
 
 | 項目 | 状態 |
@@ -10,8 +25,8 @@
 | 本番 | **反映済み・smoke OK**（https://analytics.keiba.link）: 中央 年間 126.6%・南関 年間 121.8%・中央 10 月 116.4%・南関 10 月 104.9%・ショーケース中央 10/4 = 243 点・167%。トップ meta「的中率62%、回収率126%」・旧 156% 0 件・「厳選」0 件・主要ページ 200 |
 | rollback | `baa66291` を revert（archive の `race.aiBet` は追加項目のみで既存項目は不変のため、revert で旧表示に戻る） |
 | cleanup | 作業 worktree / branch（`feat/results-ai-points`）削除済み |
-| 観察（範囲外） | トップの統計カード（.stats-card）は本番でも従来から opacity 0 のままカウントアップしない（本 PR 前から同じ）。値は HTML 上 126% / 62% |
-| 未達（MK の内容判断） | `/beginner/` 分析記事の連動数値（76.2% / 193.9% 等）・`/about` の沿革とモデル指標・pro-demo 平均配当・管理画面テンプレートの「先月の回収率156%」。数字だけの置換では記事内が矛盾するため変更していない |
+| 観察（範囲外） | ~~トップの統計カードが opacity 0~~ → #756 で恒久修正・本番確認済み（下記） |
+| 未達（MK の内容判断） | `/beginner/` 分析記事の連動数値（76.2% / 193.9% 等）・`/about` の沿革とモデル指標・pro-demo 平均配当（管理画面テンプレートの「先月の回収率156%」は #756 で 126% へ整合済み）。数字だけの置換では記事内が矛盾するため変更していない |
 
 - 経緯: 前案 PR #753 は MK 却下。#754 初版の「算定した組で当たったときだけ払戻」は MK 確定仕様により削除
 
