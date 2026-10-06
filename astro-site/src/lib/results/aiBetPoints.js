@@ -1,25 +1,26 @@
 /**
  * aiBetPoints.js — 的中実績の「購入点数・回収率」を数える単一源（純粋関数・Node/SSR 安全）
  *
- * 【状態】MK 確認用 Preview（2026-10-06）。Preview 確認後に最終採否を決定。本番未採用。
- * 正本: docs/BET_POINT_LOGIC.md「検討中Preview仕様: AI レース別購入点数」
+ * 【状態】MK 確定仕様（2026-10-06）。本番反映は MK の Deploy Preview 目視後。
+ * 正本: docs/BET_POINT_LOGIC.md「MK確定仕様: 実績の購入点数は AI レース別算定」
  *
- * 目的: 実績を「全レース 5 点固定」でも「通常買い目 最大 20 点を全部買った前提」でもなく、
- *       Premium が実際に配信した買い目の範囲で、レースごとに AI が点数を算定して数える。
+ * 目的: 実績の購入点数を「全レース 5 点固定」にせず、レースごとに AI が算定する。
+ *       これは実績の購入点数の算定方式であり、Premium で提供する新しい買い目ではない。
  *
  * ルール（変えるときは docs と test を同時に直す）:
- *  - Premium の買い目（通常・点数を絞った買い目）は一切変えない。ここは実績の数え方だけ。
- *  - 算定対象 = 点数を絞った買い目（narrowUmatan）の組 ＋ 通常買い目の残りから AI が選んだ 2〜6 組。
- *    どの組も Premium の通常買い目に含まれる（第 3 の買い目は作らない・画面にも出さない）。
- *  - 追加の組数はレース前のデータだけで決める（本命の指数・本命と 2 番手の評価差・頭数・印）。結果は使わない。
+ *  - Premium の買い目（少ない買い目・通常買い目）は一切変えない。第 3 の買い目は作らない・画面にも出さない。
+ *  - AI が算定するのは購入点数だけ（race.aiBet = { v, points }）。
+ *    点数 = 少ない買い目（narrowUmatan）の組数 ＋ 通常買い目を参照した 2〜6 組。レース前のデータだけで決める（結果は使わない）。
  *  - 的中（✅）は通常買い目で判定する（importResults*.js の isHit をそのまま使う）。
- *  - 回収率の払戻は、勝ち組が算定した組に入っているときだけ数える（買っていない組の払戻は数えない）。
+ *  - 払戻は、通常買い目で記録されたそのレースの払戻（umatan.payout）をそのまま使う。
+ *  - 回収率 = 通常買い目で記録された払戻 ÷（AI レース別算定購入点数 × 100 円）。
  *  - 算定が無いレースを含む日は購入点数・回収率を出さない（推測で埋めない）。
  */
 import { narrowUmatan } from '../acquisition/predictionContent.js';
 import { SELECTION_RULES } from '../acquisition/sanrenpukuSelection.js';
 
-export const AI_BET_VERSION = 1;
+/** v1: 組の一覧も保存していた Preview 初版。v2: 点数だけを保存（MK 確定仕様） */
+export const AI_BET_VERSION = 2;
 /** 追加する組数の範囲（通常レース） */
 export const EXTRA_MIN = 2;
 export const EXTRA_MAX = 6;
@@ -95,10 +96,11 @@ function rankExtras(candidates, horses) {
 }
 
 /**
- * 1 レースの算定。予想データ（horses）と配信した通常買い目（bettingLines.umatan）から作る。
- * @returns {{ v:number, points:number, combos:string[] } | null}
+ * 点数の算定根拠（少ない買い目の組 ＋ 通常買い目から追加する組）。どの組も通常買い目の中。
+ * 実績計算の内部でだけ使う（保存しない・画面に出さない・払戻の判定には使わない）。
+ * @returns {string[] | null}
  */
-export function buildAiBet(horses, normalLines, { cat = 'nankan', horseCount } = {}) {
+export function aiPointBasis(horses, normalLines, { cat = 'nankan', horseCount } = {}) {
   const lines = (Array.isArray(normalLines) ? normalLines : []).filter(Boolean);
   const normal = uniq(lines.flatMap(expandUmatanLine));
   if (normal.length === 0) return null;
@@ -106,25 +108,27 @@ export function buildAiBet(horses, normalLines, { cat = 'nankan', horseCount } =
   const base = nar ? expandUmatanLine(nar.line).filter((c) => normal.includes(c)) : [];
   const rest = rankExtras(normal.filter((c) => !base.includes(c)), horses);
   const k = extraCount(horses, { cat, horseCount });
-  const combos = uniq([...base, ...rest.slice(0, k)]);
-  return { v: AI_BET_VERSION, points: combos.length, combos };
+  return uniq([...base, ...rest.slice(0, k)]);
+}
+
+/**
+ * 1 レースの実績用購入点数。予想データ（horses）と配信した通常買い目（bettingLines.umatan）から作る。
+ * @returns {{ v:number, points:number } | null}
+ */
+export function buildAiBet(horses, normalLines, opts = {}) {
+  const basis = aiPointBasis(horses, normalLines, opts);
+  return basis ? { v: AI_BET_VERSION, points: basis.length } : null;
 }
 
 const payoutOf = (race) => num(race?.umatan?.payout ?? race?.payout) ?? 0;
-const winCombo = (race) => {
-  const c = String(race?.umatan?.combination ?? race?.combination ?? '').split('-').map((x) => Number(x.trim()));
-  return c.length >= 2 && c.every(Number.isFinite) ? `${c[0]}-${c[1]}` : null;
-};
 const isHitOf = (race) => !!(race?.isHit ?? race?.hit);
 
-/** 1 レースの実績（的中は通常買い目、払戻は算定した組に入っていたときだけ） */
+/** 1 レースの実績（的中は通常買い目・払戻は通常買い目で記録された払戻・点数は AI 算定） */
 export function raceAiResult(race) {
-  const ai = race?.aiBet;
-  if (!ai || !Array.isArray(ai.combos) || !(ai.points > 0)) return null;
+  const points = num(race?.aiBet?.points);
+  if (!(points > 0)) return null;
   const hit = isHitOf(race);
-  const w = winCombo(race);
-  const covered = hit && w != null && ai.combos.includes(w);
-  return { points: ai.points, hit, covered, payout: covered ? payoutOf(race) : 0 };
+  return { points, hit, payout: hit ? payoutOf(race) : 0 };
 }
 
 /**

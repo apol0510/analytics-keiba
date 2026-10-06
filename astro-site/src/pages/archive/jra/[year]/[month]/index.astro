@@ -92,7 +92,7 @@ setPublicCdnCache(Astro);
             </div>
             {monthStats.returnRate != null && (
               <div class="stat-card">
-                <div class={`stat-value ${parseFloat(monthStats.returnRate) >= 100 ? 'profit' : 'loss'}`}>
+                <div class={`stat-value ${parseFloat(monthStats.returnRate) >= 100 ? 'profit' : ''}`}>
                   {monthStats.returnRate}%
                 </div>
                 <div class="stat-label">月間回収率</div>
@@ -136,7 +136,7 @@ setPublicCdnCache(Astro);
                   </div>
                   {dayAi.recoveryRate != null && (
                     <div class="summary-item">
-                      📈 回収率: <span class={`summary-value ${dayAi.recoveryRate >= 100 ? 'profit' : 'loss'}`}>{dayAi.recoveryRate}%</span>
+                      📈 回収率: <span class={`summary-value ${dayAi.recoveryRate >= 100 ? 'profit' : ''}`}>{dayAi.recoveryRate}%</span>
                     </div>
                   )}
                   {dayAi.points != null && (

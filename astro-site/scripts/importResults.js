@@ -298,8 +298,8 @@ function verifyResults(prediction, results) {
         third: { number: third.number, name: third.name }
       },
       bettingLines,
-      // 【MK 確認用 Preview・最終採否未定】実績用の AI レース別購入点数（表示用の買い目ではない）。
-      // 正本 docs/BET_POINT_LOGIC.md「検討中Preview仕様」／単一源 src/lib/results/aiBetPoints.js
+      // 【MK 確定仕様・本番反映は Preview 目視後】実績用の購入点数（AI レース別算定）。買い目ではない（点数だけ）。
+      // 正本 docs/BET_POINT_LOGIC.md「MK確定仕様: 実績の購入点数は AI レース別算定」／単一源 src/lib/results/aiBetPoints.js
       ...(() => {
         const aiBet = buildAiBet(predRace.horses, bettingLines, { cat: 'nankan', horseCount: predRace.raceInfo?.horseCount });
         return aiBet ? { aiBet } : {};

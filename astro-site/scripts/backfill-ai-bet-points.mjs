@@ -2,8 +2,8 @@
 /**
  * backfill-ai-bet-points.mjs — 既存の結果アーカイブへ「AI レース別購入点数」（race.aiBet）を付ける
  *
- * 【状態】MK 確認用 Preview（2026-10-06）。Preview 確認後に最終採否を決定。
- * 正本: docs/BET_POINT_LOGIC.md「検討中Preview仕様: AI レース別購入点数」／単一源 src/lib/results/aiBetPoints.js
+ * 【状態】MK 確定仕様（2026-10-06）。本番反映は MK の Deploy Preview 目視後。
+ * 正本: docs/BET_POINT_LOGIC.md「MK確定仕様: 実績の購入点数は AI レース別算定」／単一源 src/lib/results/aiBetPoints.js
  *
  * 既存フィールド（isHit / bettingLines / betPoints / returnRate 等）は一切変えない。race.aiBet を足すだけ。
  * 予想データ（src/data/predictions）が無いレースは付けない（その日は回収率を出さない）。
@@ -11,6 +11,7 @@
  *   node scripts/backfill-ai-bet-points.mjs            # 集計だけ（書き込まない）
  *   node scripts/backfill-ai-bet-points.mjs --apply    # 書き込む
  *   node scripts/backfill-ai-bet-points.mjs --days 2026-10-04,2026-10-05   # 日ごとのレース別点数一覧
+ *   node scripts/backfill-ai-bet-points.mjs --months 2026-10                # 月ごとの集計
  */
 import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -22,7 +23,9 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const D = join(root, 'src', 'data');
 const args = process.argv.slice(2);
 const APPLY = args.includes('--apply');
-const dayList = (args[args.indexOf('--days') + 1] || '').split(',').filter((x) => args.includes('--days') && x);
+const listArg = (flag) => (args.includes(flag) ? (args[args.indexOf(flag) + 1] || '').split(',').filter(Boolean) : []);
+const dayList = listArg('--days');
+const monthList = listArg('--months');
 
 const normVenue = (v) => String(v || '').replace(/競馬場?$/, '').trim();
 
@@ -75,9 +78,13 @@ for (const [cat, file] of [['jra', 'archiveResultsJra.json'], ['nankan', 'archiv
   console.log(`平均 ${(s.points / races.length).toFixed(1)} 点 / 最小 ${Math.min(...pts)} / 最大 ${Math.max(...pts)}`);
   console.log(`分布 ${Object.entries(dist).sort((a, b) => a[0] - b[0]).map(([k, v]) => `${k}点:${v}`).join(' ')}`);
   console.log(`的中率 ${s.hitRate}%（通常買い目）`);
-  console.log(`回収率 AI算定 ${s.recoveryRate}%（購入 ${s.points.toLocaleString()} 点・払戻 ¥${s.payout.toLocaleString()}）`);
+  console.log(`回収率 ${s.recoveryRate}%（購入 ${s.points.toLocaleString()} 点・払戻 ¥${s.payout.toLocaleString()}＝通常買い目で記録された払戻）`);
   console.log(`  比較: 5点固定 ${pct(totalPayout, fivePts * 100)}%（${fivePts.toLocaleString()} 点）／通常買い目全点 ${pct(totalPayout, normalPts * 100)}%（${normalPts.toLocaleString()} 点）`);
-  console.log(`  参考: 的中した払戻を全部数えた場合 ${pct(totalPayout, s.points * 100)}%（算定外の組の払戻も含む＝実際には買えない数字・不採用）`);
+
+  for (const month of monthList) {
+    const m = summarizeAiDays(arr.filter((e) => String(e.date).startsWith(month)));
+    console.log(`  [${cat} ${month}] ${m.fullDays}/${m.days} 日・的中率 ${m.hitRate}%・購入 ${m.points ?? '-'} 点・払戻 ¥${(m.payout ?? 0).toLocaleString()}・回収率 ${m.recoveryRate ?? '-'}%`);
+  }
 
   for (const day of dayList) {
     const e = arr.find((x) => x.date === day);
@@ -85,12 +92,12 @@ for (const [cat, file] of [['jra', 'archiveResultsJra.json'], ['nankan', 'archiv
     const d = summarizeAiDay(e);
     const byV = {};
     for (const r of e.races) byV[r.venue] = (byV[r.venue] || 0) + 1;
-    console.log(`\n  [${cat} ${day}] 合計 ${d.points ?? '-'} 点・回収率 ${d.recoveryRate ?? '-'}%`);
+    console.log(`\n  [${cat} ${day}] 合計 ${d.points ?? '-'} 点・払戻 ¥${(d.payout ?? 0).toLocaleString()}・回収率 ${d.recoveryRate ?? '-'}%`);
     for (const r of e.races) {
       const main = Number(r.raceNumber) === getMainRaceNumber(byV[r.venue]) ? '★' : ' ';
       const ai = r.aiBet;
       const win = String(r.umatan?.combination || '');
-      console.log(`   ${main}${(r.venue || '').padEnd(3, '　')}${String(r.raceNumber).padStart(2)}R  ${ai ? String(ai.points).padStart(2) + '点' : ' -  '}  通常${String(uniqLen(r.bettingLines)).padStart(2)}点  ${r.isHit ? '的中' : '　　'} ${win.padEnd(6)} ${r.isHit && ai ? (ai.combos.includes(win) ? '算定内' : '算定外') : ''}`);
+      console.log(`   ${main}${(r.venue || '').padEnd(3, '　')}${String(r.raceNumber).padStart(2)}R  ${ai ? String(ai.points).padStart(2) + '点' : ' -  '}  通常${String(uniqLen(r.bettingLines)).padStart(2)}点  ${r.isHit ? '的中' : '　　'} ${win.padEnd(6)} ${r.isHit ? '¥' + (Number(r.umatan?.payout) || 0).toLocaleString() : ''}`);
     }
   }
 

@@ -111,7 +111,7 @@ setPublicCdnCache(Astro);
             </div>
             {yearReturnRate != null && (
               <div class="stat-card">
-                <div class={`stat-value ${parseFloat(yearReturnRate) >= 100 ? 'profit' : 'loss'}`}>
+                <div class={`stat-value ${parseFloat(yearReturnRate) >= 100 ? 'profit' : ''}`}>
                   {yearReturnRate}%
                 </div>
                 <div class="stat-label">年間回収率</div>
@@ -148,7 +148,7 @@ setPublicCdnCache(Astro);
                   </div>
                   {m.returnRate != null && (
                     <div class="month-stat">
-                      <div class={`month-stat-value ${parseFloat(m.returnRate) >= 100 ? 'profit' : 'loss'}`}>{m.returnRate}%</div>
+                      <div class={`month-stat-value ${parseFloat(m.returnRate) >= 100 ? 'profit' : ''}`}>{m.returnRate}%</div>
                       <div class="month-stat-label">回収率</div>
                     </div>
                   )}
