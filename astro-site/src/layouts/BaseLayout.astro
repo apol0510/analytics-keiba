@@ -19,7 +19,7 @@ export interface Props {
 const SITE_BRAND = 'KEIBA Analytics';
 const SITE_BRAND_JA = '競馬アナリティクス';
 const SITE_TAGLINE = '中央競馬・地方競馬をAIで分析';
-const DEFAULT_DESCRIPTION = `${SITE_BRAND_JA}（${SITE_BRAND}）— ${SITE_TAGLINE}。XGBoost・LSTMによる高精度予想で的中率87%、回収率156%を実現。`;
+const DEFAULT_DESCRIPTION = `${SITE_BRAND_JA}（${SITE_BRAND}）— ${SITE_TAGLINE}。XGBoost・LSTMによる高精度予想で的中率62%、回収率126%を実現。`;
 
 const { title, description = DEFAULT_DESCRIPTION, image, type = 'website', canonical, noindex = false, heroPreload } = Astro.props;
 const canonicalURL = new URL(canonical ?? Astro.url.pathname, Astro.site);
@@ -1486,7 +1486,8 @@ const fullTitle = buildFullTitle(title);
                             element.innerHTML = current.toLocaleString() + suffix;
                         } else {
                             current = (progress * (end - start) + start);
-                            element.innerHTML = current.toFixed(1) + suffix;
+                            // 整数の目標値（例: 126% / 62%）は小数を付けない
+                            element.innerHTML = (Number.isInteger(end) ? Math.round(current) : current.toFixed(1)) + suffix;
                         }
                         
                         if (progress < 1) {

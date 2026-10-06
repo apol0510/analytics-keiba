@@ -243,7 +243,7 @@ const formattedDate = `${year}年${parseInt(month)}月${parseInt(day)}日`;
 const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || ''}${enhancedRaceInfo?.raceName !== 'レース情報未検出' && enhancedRaceInfo?.raceName ? ' ' + enhancedRaceInfo.raceName : ''}`;
 ---
 
-<BaseLayout title="中央競馬・南関競馬のAI予想｜無料予想・的中実績" description="KEIBA Analytics（競馬アナリティクス）— 中央競馬・地方競馬をAIで分析。XGBoost・LSTMによる高精度予想で的中率87%、回収率156%を実現。">
+<BaseLayout title="中央競馬・南関競馬のAI予想｜無料予想・的中実績" description="KEIBA Analytics（競馬アナリティクス）— 中央競馬・地方競馬をAIで分析。XGBoost・LSTMによる高精度予想で的中率62%、回収率126%を実現。">
             <!-- Hero Key Visual（ファーストビュー / PC・モバイルで切替） -->
             <section class="hero-keyvisual">
                 <picture>
@@ -271,7 +271,7 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                 <h1 class="hero-title">AI競馬予想で投資効率を最大化</h1>
                 <p class="hero-subtitle">
                     XGBoost・LSTM・ニューラルネットワークによる高精度分析で<br>
-                    的中率87%、回収率156%を実現
+                    的中率62%、回収率126%を実現
                 </p>
                 <p class="hero-description">
                     従来の感覚的予想から、データサイエンスによる科学的投資へ。<br>
@@ -294,7 +294,7 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                     <div class="stats-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; max-width: 100%; margin: 0 auto; padding: 0 10px;">
                         <!-- AI Model Accuracy -->
                         <div class="stats-card" style="background: linear-gradient(135deg, rgba(59, 130, 246, 0.15) 0%, rgba(139, 92, 246, 0.15) 100%); padding: 20px 15px; border-radius: 10px; text-align: center; border: 2px solid rgba(59, 130, 246, 0.2); transition: transform 0.3s, box-shadow 0.3s;">
-                            <div class="stats-number" data-target="87.3" data-suffix="%" style="font-size: 2.2rem; font-weight: 800; color: var(--success-color); margin-bottom: 8px; text-shadow: 0 2px 4px rgba(16, 185, 129, 0.3);">
+                            <div class="stats-number" data-target="62" data-suffix="%" style="font-size: 2.2rem; font-weight: 800; color: var(--success-color); margin-bottom: 8px; text-shadow: 0 2px 4px rgba(16, 185, 129, 0.3);">
                                 0%
                             </div>
                             <div style="color: var(--body-text-color); font-weight: 600; font-size: 0.95rem; margin-bottom: 5px;">
@@ -307,7 +307,7 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
 
                         <!-- Average Return Rate -->
                         <div class="stats-card" style="background: linear-gradient(135deg, rgba(16, 185, 129, 0.15) 0%, rgba(59, 130, 246, 0.15) 100%); padding: 20px 15px; border-radius: 10px; text-align: center; border: 2px solid rgba(16, 185, 129, 0.2); transition: transform 0.3s, box-shadow 0.3s;">
-                            <div class="stats-number" data-target="156" data-suffix="%" style="font-size: 2.2rem; font-weight: 800; color: var(--success-color); margin-bottom: 8px; text-shadow: 0 2px 4px rgba(16, 185, 129, 0.3);">
+                            <div class="stats-number" data-target="126" data-suffix="%" style="font-size: 2.2rem; font-weight: 800; color: var(--success-color); margin-bottom: 8px; text-shadow: 0 2px 4px rgba(16, 185, 129, 0.3);">
                                 0%
                             </div>
                             <div style="color: var(--body-text-color); font-weight: 600; font-size: 0.95rem; margin-bottom: 5px;">
@@ -1490,7 +1490,7 @@ document.addEventListener("DOMContentLoaded",function(){
             const d=Math.min((g-l)/i,1);
             let c;
             try{
-                r>=1e3?(c=Math.floor(d*(r-e)+e),t.innerHTML=c.toLocaleString()+a):(c=d*(r-e)+e,t.innerHTML=c.toFixed(1)+a),d<1&&window.requestAnimationFrame(u)
+                r>=1e3?(c=Math.floor(d*(r-e)+e),t.innerHTML=c.toLocaleString()+a):(c=d*(r-e)+e,t.innerHTML=(Number.isInteger(r)?Math.round(c):c.toFixed(1))+a),d<1&&window.requestAnimationFrame(u)
             }catch(f){
                 console.error("カウントアップエラー:",f),t.innerHTML=r+a
             }
