@@ -5890,6 +5890,8 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
       window.akOpenWithdraw = function () {
         const m = document.getElementById('ak-withdraw-modal');
         if (!m) return;
+        // 親要素の transform / backdrop-filter / display に左右されないよう body 直下へ移す（画面全体を覆う）
+        if (m.parentElement !== document.body) document.body.appendChild(m);
         const sa = (typeof getServerAuth === 'function') ? getServerAuth() : null;
         const vu = sa && sa.profile && sa.profile.validUntil ? String(sa.profile.validUntil) : '';
         const span = document.getElementById('ak-withdraw-valid-until');
