@@ -173,8 +173,10 @@ async function sendBatch({ url, apiKey, batch, fetchFn, sleepFn, requestTimeoutM
 /** 実行環境が対応していればリクエスト単位のタイムアウトを付ける（無ければ undefined） */
 function makeTimeoutSignal(ms) {
   try {
-    if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
-      return AbortSignal.timeout(ms);
+    // 素の `AbortSignal` は書かない（esbuild の改名で airtable SDK が壊れる。airtableCallMeter.js 参照）
+    const Signal = globalThis.AbortSignal;
+    if (Signal && typeof Signal.timeout === 'function') {
+      return Signal.timeout(ms);
     }
   } catch {
     // 実行環境が未対応でも送信自体は継続する
