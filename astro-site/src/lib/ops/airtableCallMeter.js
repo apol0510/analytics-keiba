@@ -72,7 +72,11 @@ export async function countAirtableCalls(source, n = 1, opts = {}) {
         ['HINCRBY', key, String(source || 'unknown'), String(n)],
         ['EXPIRE', key, String(METER_TTL_SEC)],
       ]),
-      signal: AbortSignal.timeout ? AbortSignal.timeout(800) : undefined,
+      // ⚠️ 素の `AbortSignal` と書かない（必ず globalThis 経由）。esbuild は同梱した
+      // abort-controller の `class AbortSignal` を `AbortSignal2` に改名してしまい、
+      // airtable SDK 内の node-fetch v2 が constructor.name で弾いて全 Airtable 呼び出しが落ちる
+      // （2026-10-05〜06 の全会員ログイン不能。airtableAbortSignalBundle.guard.test.mjs で固定）。
+      signal: globalThis.AbortSignal?.timeout ? globalThis.AbortSignal.timeout(800) : undefined,
     });
     return res.ok;
   } catch {
