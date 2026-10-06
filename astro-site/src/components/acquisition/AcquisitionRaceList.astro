@@ -80,7 +80,7 @@ const tabId = (v) => `acq-venue-${v.venueId}`;
             ) : r.acquired ? (
               <>
                 <span class="ag-done">✓ 取得済み</span>
-                <a class="ag-btn-ghost acq-view" href={viewUrlFor(r.key)}>予想を見る</a>
+                <a class="acq-view" href={viewUrlFor(r.key)}>予想を見る</a>
                 <small>取得 {jstTime(r.acquired.at)}</small>
               </>
             ) : can(r) ? (
@@ -163,18 +163,20 @@ const tabId = (v) => `acq-venue-${v.venueId}`;
   .acq-sel-reason { color: var(--ag-text-2); }
   .acq-race-cta { grid-column: 1 / -1; display: grid; gap: 6px; }
   .acq-race-cta form { display: grid; gap: 4px; margin: 0; }
-  .acq-race-cta .acq-btn, .acq-race-cta .acq-view { width: 100%; }
+  .acq-race-cta .acq-btn { width: 100%; }
   .acq-race-cta small { color: var(--ag-text-3); font-size: 0.72rem; text-align: center; }
   /* 2026-10-06 MK: 一覧の取得ボタンは小さく（体験＝Premiumで予想を取得／会員＝予想を取得する）。カード幅いっぱい・大きすぎると主張が強すぎる */
   .acq-race-cta .acq-btn-compact { width: auto; justify-self: center; min-height: 38px; padding: 0 18px; font-size: 0.86rem; border-radius: 12px; }
-  .acq-race.is-acquired .acq-race-cta { grid-template-columns: auto minmax(0, 1fr); align-items: center; }
-  .acq-race.is-acquired .acq-race-cta small { grid-column: 1 / -1; }
+  /* 2026-10-06 MK: 取得済みの「予想を見る」は小さく（取得ボタンと同じ 38px）。取得済み＝緑なので同系色のガラス */
+  .acq-race.is-acquired .acq-race-cta { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 6px 10px; }
+  .acq-race.is-acquired .acq-race-cta small { flex-basis: 100%; }
+  .acq-race-cta .acq-view { display: inline-flex; align-items: center; justify-content: center; min-height: 38px; padding: 0 18px; border-radius: 12px; font-size: 0.86rem; font-weight: 800; text-decoration: none; color: #86efac; background: rgba(34, 197, 94, 0.10); border: 1px solid rgba(74, 222, 128, 0.55); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+  .acq-race-cta .acq-view:hover { background: rgba(34, 197, 94, 0.18); border-color: #86efac; }
   .acq-warn, .acq-empty, .acq-locked { color: var(--ag-text-2); }
   .acq-preview-link { color: #bae6fd; font-weight: 700; }
   @media (min-width: 640px) {
     .acq-race { grid-template-columns: 64px minmax(0, 1fr) 230px; padding: 14px 16px; }
     .acq-race-cta .acq-btn { white-space: nowrap; }
     .acq-race-cta { grid-column: auto; }
-    .acq-race.is-acquired .acq-race-cta { grid-template-columns: 1fr; justify-items: center; }
   }
 </style>
