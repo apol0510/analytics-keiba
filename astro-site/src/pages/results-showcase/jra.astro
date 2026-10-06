@@ -33,7 +33,7 @@ const pageTitle = view
   ? `有料版 買い目実績【${CATEGORY_LABEL}】${dateLabel}`
   : `有料版 買い目実績【${CATEGORY_LABEL}】`;
 const pageDescription = view
-  ? `${dateLabel} ${view.venueLabel} 有料会員に配信したメインレースの買い目と結果。的中${view.hitRaces}/${view.totalRaces}・回収率${view.recoveryRate}%。毎日自動更新。`
+  ? `${dateLabel} ${view.venueLabel} 有料会員に配信したメインレースの買い目と結果。的中${view.hitRaces}/${view.totalRaces}。毎日自動更新。`
   : `${CATEGORY_LABEL}の有料版で配信したメインレース買い目の結果を毎日公開。`;
 
 // 【2026-08-31】公開ページなのでエッジに 5 分だけ載せる（Function 実行回数の削減）。
@@ -88,20 +88,13 @@ const jraDatePageExists = !!(view && view.date && existsSync(join(process.cwd(),
                 <div class="sc-stat-label">的中率</div>
               </div>
             )}
-            <div class="sc-stat">
-              <div class="sc-stat-value">{view.totalBetPoints}点</div>
-              <div class="sc-stat-label">購入点数</div>
-            </div>
-            {view.recoveryRate != null && (
+            {view.maxPayout != null && (
               <div class="sc-stat">
-                <div class={`sc-stat-value ${Number(view.recoveryRate) >= 100 ? 'profit' : ''}`}>
-                  {view.recoveryRate}%
-                </div>
-                <div class="sc-stat-label">回収率</div>
+                <div class="sc-stat-value profit">¥{view.maxPayout.toLocaleString()}</div>
+                <div class="sc-stat-label">最高配当</div>
               </div>
             )}
           </div>
-          <p class="sc-basis">購入点数・回収率は、この日に配信した<strong>全レースの買い目をすべて 100 円ずつ</strong>買った場合です（メインレース 5 点・その他のレース 最大 20 点）。</p>
         </section>
 
         {/* 会場ごと */}
@@ -121,7 +114,7 @@ const jraDatePageExists = !!(view && view.date && existsSync(join(process.cwd(),
                 </div>
 
                 <div class="sc-bet">
-                  <span class="sc-bet-label">配信買い目<span class="sc-bet-type">馬単 {g.mainRace.betPoints}点</span></span>
+                  <span class="sc-bet-label">配信買い目</span>
                   <div class="sc-bet-line">
                     <span class="sc-honmei">{g.mainRace.honmei}</span>
                     <span class="sc-arrow">{g.mainRace.displayArrow}</span>
@@ -171,7 +164,7 @@ const jraDatePageExists = !!(view && view.date && existsSync(join(process.cwd(),
         ))}
 
         <p class="sc-note">
-          ※ 5 点の買い目は<strong>メインレースだけ</strong>です（本命から相手 5 頭への馬単・一方向）。その他のレースは本命・対抗の 2 軸で<strong>最大 20 点</strong>（表裏）の買い目で、ここでは的中の有無のみ表示しています。全レースの買い目・印・指数はプレミアム予想でご覧いただけます。
+          ※ メインレース以外は的中の有無のみ表示しています。全レースの買い目・印・指数はプレミアム予想でご覧いただけます。
         </p>
 
         {/* CTA */}
@@ -430,8 +423,6 @@ const jraDatePageExists = !!(view && view.date && existsSync(join(process.cwd(),
   .sc-chip-mark { font-size: 0.85rem; line-height: 1; }
   .sc-chip.miss .sc-chip-mark { color: rgba(255, 255, 255, 0.4); }
 
-  .sc-basis { margin: 12px 0 0; font-size: 0.82rem; color: #94a3b8; line-height: 1.7; text-align: center; }
-  .sc-basis strong { color: #cbd5e1; }
   .sc-note {
     font-size: 0.78rem;
     color: #999;

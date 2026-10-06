@@ -1,6 +1,5 @@
 ---
 import { setPublicCdnCache } from '../../../../../lib/cdnCache.mjs';
-import ArchiveBasisNote from '../../../../../components/ArchiveBasisNote.astro';
 import BaseLayout from '../../../../../layouts/BaseLayout.astro';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
@@ -19,7 +18,7 @@ let monthStats = {
   totalBetAmount: 0,
   totalPayout: 0,
   hitRate: '0',
-  returnRate: '0'
+  maxPayout: 0
 };
 
 try {
@@ -37,12 +36,10 @@ try {
       monthStats.totalHitRaces += entry.hitRaces || 0;
       monthStats.totalBetAmount += entry.betAmount || 0;
       monthStats.totalPayout += entry.totalPayout || 0;
+      monthStats.maxPayout = Math.max(monthStats.maxPayout, (entry.races || []).reduce((m: number, r: any) => Math.max(m, r?.isHit ? Number(r?.umatan?.payout) || 0 : 0), 0));
     });
     if (monthStats.totalRaces > 0) {
       monthStats.hitRate = ((monthStats.totalHitRaces / monthStats.totalRaces) * 100).toFixed(1);
-    }
-    if (monthStats.totalBetAmount > 0) {
-      monthStats.returnRate = ((monthStats.totalPayout / monthStats.totalBetAmount) * 100).toFixed(1);
     }
   }
 } catch (error) {
@@ -54,7 +51,7 @@ const pageTitle = monthData.length > 0
   : '的中実績が見つかりません';
 
 const pageDescription = monthData.length > 0
-  ? `${year}年${parseInt(month)}月の中央競馬的中実績。開催日数${monthStats.totalDays}日、月間的中率${monthStats.hitRate}%、月間回収率${monthStats.returnRate}%、月間合計配当¥${monthStats.totalPayout.toLocaleString()}`
+  ? `${year}年${parseInt(month)}月の中央競馬的中実績。開催日数${monthStats.totalDays}日、月間的中率${monthStats.hitRate}%、最高配当¥${monthStats.maxPayout.toLocaleString()}、月間合計配当¥${monthStats.totalPayout.toLocaleString()}`
   : '中央競馬（JRA）の的中実績アーカイブ';
 
 // 【2026-08-31】公開ページなのでエッジに 5 分だけ載せる（Function 実行回数の削減）。
@@ -91,10 +88,8 @@ setPublicCdnCache(Astro);
               <div class="stat-label">月間的中率</div>
             </div>
             <div class="stat-card">
-              <div class={`stat-value ${parseFloat(monthStats.returnRate) >= 100 ? 'profit' : 'loss'}`}>
-                {monthStats.returnRate}%
-              </div>
-              <div class="stat-label">月間回収率（全買い目）</div>
+              <div class="stat-value profit">¥{monthStats.maxPayout.toLocaleString()}</div>
+              <div class="stat-label">月間最高配当</div>
             </div>
             <div class="stat-card">
               <div class="stat-value profit">¥{monthStats.totalPayout.toLocaleString()}</div>
@@ -115,8 +110,6 @@ setPublicCdnCache(Astro);
             // 全レースをラウンドロビン順にソートしてから的中のみ抽出
             const hitRaces = sortRacesByVenueAndNumber(dayData.races || [], dayData.venues)
               .filter((race: any) => race.isHit);
-            const dayBetPoints = dayData.totalBetPoints
-              || (dayData.races || []).reduce((s: number, r: any) => s + (Number(r.betPoints) || 0), 0);
 
             return (
               <section class="day-section">
@@ -131,12 +124,6 @@ setPublicCdnCache(Astro);
                 <div class="day-summary">
                   <div class="summary-item">
                     📊 的中率: <span class="summary-value">{dayData.hitRate}%</span>
-                  </div>
-                  <div class="summary-item">
-                    📈 回収率: <span class={`summary-value ${dayData.returnRate >= 100 ? 'profit' : 'loss'}`}>{dayData.returnRate}%</span>
-                  </div>
-                  <div class="summary-item">
-                    🎫 合計購入点数: <span class="summary-value">{dayBetPoints.toLocaleString()}点</span>
                   </div>
                   <div class="summary-item">
                     💰 合計配当: <span class="summary-value profit">¥{dayData.totalPayout.toLocaleString()}</span>
@@ -174,7 +161,8 @@ setPublicCdnCache(Astro);
             <a href="/pricing/" class="btn-primary">💎 プレミアム予想を見る</a>
           </footer>
 
-          <ArchiveBasisNote />
+          {/* 買い目点数に関する注記（intelligence 方式に合わせて点数は非公開）。最下部に控えめに表示。 */}
+          <p class="rule-note">※買い目は当社の予想ロジックに基づいて構成しています</p>
         </>
       )}
     </div>

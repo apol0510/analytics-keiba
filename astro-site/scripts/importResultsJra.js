@@ -6,7 +6,6 @@
  * keiba-data-sharedから中央競馬の結果データを取得し、予想と照合して的中判定を行う
  */
 
-import { applyHonestBetting } from '../src/lib/honestBetting.js';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
@@ -509,11 +508,6 @@ function saveArchive(date, venue, raceResults) {
     races: enrichedRaces,
     verifiedAt: new Date().toISOString()
   };
-
-  // 2026-10-06（MK 判断待ちの改訂案・docs/BET_POINT_LOGIC.md）: 購入点数・投資額・回収率は
-  // 「表示した買い目をすべて 100 円ずつ買った場合」で数え直す（メイン 5 点・通常 最大 20 点）。
-  // 上の 5 点固定は通常レース 20 点を 5 点として数えており、実態より回収率が大きく見えていた。
-  Object.assign(newEntry, applyHonestBetting(newEntry));
 
   // 既存エントリを削除（同じ日付があれば上書き）
   archive = archive.filter(entry => entry.date !== date);

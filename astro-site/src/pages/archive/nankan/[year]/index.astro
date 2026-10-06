@@ -1,6 +1,5 @@
 ---
 import { setPublicCdnCache } from '../../../../lib/cdnCache.mjs';
-import ArchiveBasisNote from '../../../../components/ArchiveBasisNote.astro';
 import BaseLayout from '../../../../layouts/BaseLayout.astro';
 import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join } from 'path';
@@ -56,8 +55,8 @@ let totalDays = 0;
 let totalPayoutYear = 0;
 let totalHitRaces = 0;
 let totalRaces = 0;
-// 年間回収率用：現在基準の日だけ購入点数を積算（年間配当と同じ基準に揃える）
-let totalBetPointsYear = 0;
+// 年間最高配当（的中レースの馬単払戻の最大値）
+let yearMaxPayout = 0;
 
 const monthSummaries = months.map(month => {
   const snapshotPath = join(dataDir, `archiveResults_${year}-${month}.json`);
@@ -80,7 +79,7 @@ const monthSummaries = months.map(month => {
     totalRaces += current.totalRaces;
     for (const dayKey of Object.keys(monthData)) {
       if (isCurrentBasisEntry(year, month, dayKey, monthData[dayKey])) {
-        totalBetPointsYear += monthData[dayKey].races.reduce((s: number, r: any) => s + (Number.isFinite(r.betPoints) ? r.betPoints : 0), 0);
+        for (const r of monthData[dayKey].races) if (r.hit) yearMaxPayout = Math.max(yearMaxPayout, Number(r.payout) || 0);
       }
     }
   }
@@ -98,8 +97,6 @@ const monthSummaries = months.map(month => {
 });
 
 const yearHitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) : 0;
-const totalInvestmentYear = totalBetPointsYear * 100;
-const yearRecoveryRate = totalInvestmentYear > 0 ? Math.round((totalPayoutYear / totalInvestmentYear) * 100) : null;
 const hasData = months.length > 0;
 const hasCurrentBasisData = totalRaces > 0;
 
@@ -139,10 +136,10 @@ setPublicCdnCache(Astro);
             <div class="stat-value">{yearHitRate}%</div>
             <div class="stat-label">年間的中率</div>
           </div>
-          {yearRecoveryRate != null && (
+          {yearMaxPayout > 0 && (
             <div class="stat-card">
-              <div class="stat-value">{yearRecoveryRate}%</div>
-              <div class="stat-label">年間回収率（全買い目）</div>
+              <div class="stat-value">¥{yearMaxPayout.toLocaleString()}</div>
+              <div class="stat-label">年間最高配当</div>
             </div>
           )}
           <div class="stat-card">
@@ -210,7 +207,6 @@ setPublicCdnCache(Astro);
       <a href="/pricing/">プレミアム予想</a>
     </div>
   </div>
-  <ArchiveBasisNote />
 </BaseLayout>
 
 <style>

@@ -160,6 +160,11 @@ export function buildShowcaseDay(dayEntry) {
     hitRate: dayEntry.hitRate ?? null,
     recoveryRate: dayEntry.recoveryRate ?? dayEntry.returnRate ?? null,
     totalPayout: Number(dayEntry.totalPayout) || 0,
+    // その日いちばん高かった馬単払戻（100 円あたり）。的中が無ければ null
+    maxPayout: dayEntry.races.reduce((m, r) => {
+      const p = r?.isHit ? Number(r?.umatan?.payout) || 0 : 0;
+      return p > m ? p : m;
+    }, 0) || null,
     verifiedAt: dayEntry.verifiedAt ?? null,
     venueGroups,
   };

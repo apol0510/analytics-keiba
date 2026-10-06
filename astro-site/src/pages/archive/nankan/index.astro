@@ -1,6 +1,5 @@
 ---
 import BaseLayout from '../../../layouts/BaseLayout.astro';
-import ArchiveBasisNote from '../../../components/ArchiveBasisNote.astro';
 import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { buildMergedMonthData, aggregateMonthByBasis, CURRENT_BASIS_START_LABEL, LEGACY_BASIS_END_LABEL } from '../../../lib/archiveMonthlyView.js';
@@ -172,7 +171,6 @@ const pageDescription = '南関競馬の全的中実績アーカイブ。マリ�
       <a href="/pricing/">プレミアム予想</a>
     </div>
   </div>
-  <ArchiveBasisNote />
 </BaseLayout>
 
 <style>
