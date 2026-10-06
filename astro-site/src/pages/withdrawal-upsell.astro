@@ -887,6 +887,13 @@ import BankApplicationEmailLock from '../components/BankApplicationEmailLock.ast
 
           const result = await response.json();
 
+          // Stripe の月額会員はここでは退会しない（案内メールだけ）。マイページの「アカウント管理」の「退会する」へ（2026-10-07）
+          if (response.ok && result.stripe === true) {
+            alert(result.message || '月額プラン（クレジットカード）の退会は、マイページの「アカウント管理」から行えます。');
+            window.location.href = '/dashboard/';
+            return;
+          }
+
           if (response.ok) {
             // 退会モーダル内のコンテンツを送信完了画面に置き換える
             const modalContent = modal.querySelector('div');

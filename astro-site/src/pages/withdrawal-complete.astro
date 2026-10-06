@@ -1,0 +1,32 @@
+---
+/**
+ * 退会完了（Stripe 月額会員の即時退会・2026-10-07 MK 確定）。
+ * マイページの「退会する」→ 確認画面 → 確定（stripe-withdraw）の後に来る。会員情報は読まない静的ページ。
+ */
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+<BaseLayout title="退会の手続きが完了しました | KEIBA Analytics" description="退会の手続きが完了しました。" noindex={true}>
+  <section class="withdrawal-complete">
+    <h1>退会の手続きが完了しました</h1>
+    <p>KEIBA Analytics をご利用いただき、ありがとうございました。</p>
+    <ul>
+      <li>月額プランのご契約は終了し、今後の請求はありません。</li>
+      <li>有料会員としてのご利用は終了しました（残りの期間はご利用いただけません）。</li>
+      <li>確認のメールをお送りしました。</li>
+    </ul>
+    <p>再びご利用いただく場合は、料金ページから新しくお申し込みください。</p>
+    <p class="actions">
+      <a class="btn" href="/pricing/">料金ページを見る</a>
+      <a class="btn secondary" href="/">トップへ戻る</a>
+    </p>
+  </section>
+</BaseLayout>
+
+<style>
+  .withdrawal-complete { max-width: 640px; margin: 48px auto; padding: 0 16px; color: #e2e8f0; line-height: 1.8; }
+  .withdrawal-complete h1 { font-size: 1.6rem; margin-bottom: 1rem; }
+  .withdrawal-complete ul { padding-left: 1.2rem; margin: 1rem 0; }
+  .actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 1.5rem; }
+  .btn { display: inline-block; padding: 0.75rem 1.25rem; border-radius: 8px; background: #3b82f6; color: #fff; text-decoration: none; }
+  .btn.secondary { background: #334155; }
+</style>

@@ -191,7 +191,7 @@ test('別の購読が生きている会員: 書かずに要確認（二重課金
   assert.equal(at.rows.get('recDDDDDDDDDDDDD1').fields.StripeSubscriptionId, 'sub_old');
 });
 
-test('解約後の deleted: 支払い済み期間の終わりまで残す（即時失効させない）', async () => {
+test('退会以外の終了（管理者の解約等）の deleted: 支払い済み期間の終わりまで残す（会員の退会は stripeWithdrawal.test で即時）', async () => {
   const at = fakeAirtable([{ id: 'recEEEEEEEEEEEEE1', fields: { Email: 'buyer@example.com', StripeSubscriptionId: 'sub_1', '有効期限': '2026-11-04' } }]);
   const stripe = fakeStripe({ sub_1: subObj({ status: 'canceled', ended_at: PERIOD_END }) });
   const r = await applySubscription({ stripe, env: ENV, subscription: 'sub_1', now: NOW, fetchImpl: at.fetchImpl });
@@ -211,7 +211,7 @@ test('Webhook イベント → 購読 ID（対象外は null）', () => {
 });
 
 
-// ═══ 2026-10-02 MK 確定: 解約は期間末失効・最低利用期間なし・日割り返金なし ═══════════════
+// ═══ 退会以外の終了（決済失敗・管理者の解約）は支払い済み期間末まで。会員の退会は即時（2026-10-07・stripeWithdrawal.test）═══
 import { resolveEntitlements, fromAirtableFields } from '../entitlements/resolveEntitlements.js';
 import { STRIPE_PLANS } from './stripePlans.js';
 
@@ -222,7 +222,7 @@ function canView(fields, iso) {
   return { jra: e.canViewPremiumJra, nankan: e.canViewPremiumNankan };
 }
 
-test('期間末失効: 解約予約（cancel_at_period_end）中は支払い済み期間の終わりまで見られる', async () => {
+test('Stripe 側で解約予約（cancel_at_period_end）が付いていても期限は変えない（AK は予約停止を作らない・防御的な扱い）', async () => {
   const at = fakeAirtable([{ id: 'recFFFFFFFFFFFFF1', fields: { Email: 'buyer@example.com', StripeSubscriptionId: 'sub_1', 'プラン': 'Premium', PlanType: 'Monthly', Status: 'active', PaymentMethod: 'Stripe', '有効期限': '2026-11-04' } }]);
   const stripe = fakeStripe({ sub_1: subObj({ cancel_at_period_end: true }) });
   await applySubscription({ stripe, env: ENV, subscription: 'sub_1', now: NOW, fetchImpl: at.fetchImpl });
@@ -231,7 +231,7 @@ test('期間末失効: 解約予約（cancel_at_period_end）中は支払い済�
   assert.deepEqual(canView(f, '2026-11-02T02:00:00Z'), { jra: true, nankan: true }, '支払い済み期間中は見られる');
 });
 
-test('期間末失効: Stripe 画面で即時解約されても、支払い済みの期間は奪わない（日割り返金もしない）', async () => {
+test('退会以外の終了: 管理者が Stripe 画面で即時解約しても、支払い済みの期間は奪わない（日割り返金もしない）', async () => {
   const at = fakeAirtable([{ id: 'recFFFFFFFFFFFFF2', fields: { Email: 'buyer@example.com', StripeSubscriptionId: 'sub_1', 'プラン': 'Premium', PlanType: 'Monthly', Status: 'active', PaymentMethod: 'Stripe', '有効期限': '2026-11-04' } }]);
   // 10/10 に即時解約。支払い済みは 11/02 まで
   const stripe = fakeStripe({ sub_1: subObj({ status: 'canceled', ended_at: Math.floor(at_('2026-10-10T00:00:00Z') / 1000) }) });
@@ -267,7 +267,7 @@ test('初回決済の処理中（支払い済みの請求書なし）は権限�
   assert.equal(at.rows.get('recFFFFFFFFFFFFF4').fields['プラン'], 'Free');
 });
 
-test('各プラン: 契約中は契約した会場だけ・期間末の後はどの会場も閉じる', async () => {
+test('各プラン: 契約中は契約した会場だけ・退会以外の終了は期間末の後にどの会場も閉じる', async () => {
   const PRICE = { 'premium': 'price_full', 'premium-jra': 'price_jra', 'premium-nankan': 'price_nankan' };
   const EXPECT = { 'premium': { jra: true, nankan: true }, 'premium-jra': { jra: true, nankan: false }, 'premium-nankan': { jra: false, nankan: true } };
   for (const plan of STRIPE_PLANS) {

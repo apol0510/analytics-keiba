@@ -1,5 +1,5 @@
 /**
- * stripeNotify.js — Stripe 決済の管理者通知（新規契約・要確認）
+ * stripeNotify.js — Stripe 決済の管理者通知（新規契約・退会・要確認）
  *
  * 銀行振込の申込と同じく support@ へ送る。**通知の失敗で決済の反映を止めない**（best effort）。
  * 秘密鍵・カード情報は一切載せない（Stripe から受け取っていない）。
@@ -20,6 +20,7 @@ const CONFLICT_TEXT = {
   duplicate_email_records: '同じメールアドレスの顧客レコードが複数あるため、権限を付与できませんでした。',
   duplicate_subscription_records: '同じ購読 ID を持つ顧客レコードが複数あります。',
   no_email: 'メールアドレスの無い購読です。権限は付与していません。',
+  withdrawal_record_write_failed: '退会で Stripe の購読は解約しましたが、Customers への書込みに失敗しました。終了イベント（customer.subscription.deleted）で退会状態へ収束するはずです。Airtable の WithdrawalRequested / 有効期限 を確認してください。',
 };
 
 export function makeStripeNotifier(env, { mode = 'test', send } = {}) {
@@ -37,6 +38,9 @@ export function makeStripeNotifier(env, { mode = 'test', send } = {}) {
       lines.push('');
       lines.push(`プラン: ${plan ? `${plan.label}（月額 ¥${plan.amountYen.toLocaleString('ja-JP')}）` : '不明'}`);
       lines.push(`有効期限: ${detail.expiration || '-'}（毎月の決済で自動延長）`);
+    } else if (kind === 'withdrawn') {
+      subject = `${prefix}【KEIBA Analytics】Stripe 退会（即時）`;
+      lines.push('Stripe 月額会員がマイページから退会しました。購読は即時解約・有料権限は停止済みです（作業は不要）。');
     } else {
       subject = `${prefix}【KEIBA Analytics】Stripe 要確認: ${detail.reason || kind}`;
       lines.push(CONFLICT_TEXT[detail.reason] || `要確認: ${detail.reason || kind}`);

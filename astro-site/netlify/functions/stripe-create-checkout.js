@@ -88,7 +88,7 @@ exports.handler = async (event) => {
       if (live) {
         return json(409, headers, {
           error: 'already_subscribed',
-          // ログイン中ならお支払い管理（プラン変更・解約）へ。未ログインならまずログイン。
+          // ログイン中ならお支払い管理（カード変更・プラン変更）へ。未ログインならまずログイン。
           next: sessionRecordId ? 'portal' : 'login',
         });
       }
