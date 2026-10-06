@@ -41,6 +41,16 @@ test('公開マーケティング UI に旧固定 176% が残らない', () => {
   for (const p of PUBLIC_UI) assert.doesNotMatch(strip(read(p)), /(?<![\d.])176(\.0)?\s*%/, `${p}: 旧固定 176%`);
 });
 
+test('管理画面ニュースレター / メール配信テンプレートに旧固定回収率 156% / 176% が残らない', () => {
+  const MAIL = ['src/pages/admin-newsletter-simple.astro', 'src/lib/email-templates.js',
+    ...walk('netlify/functions').filter((p) => /\.(m?js)$/.test(p) && !/\.test\./.test(p))];
+  for (const p of MAIL) {
+    const s = strip(read(p));
+    assert.doesNotMatch(s, /(?<![\d.])(156|176)(\.\d)?\s*%/, `${p}: 旧固定回収率`);
+  }
+  assert.match(read('src/pages/admin-newsletter-simple.astro'), /実績証明済み<\/strong>: 回収率126%/);
+});
+
 test('旧固定の代表値（87% / 87.3% / 72% / 78% / 89% / 203% / 265% / 平均回収率 120%）が訴求箇所に残らない', () => {
   const legacy = [
     /的中率\s*(<[^>]+>)?\s*(87|72|78)(\.\d)?%/,
