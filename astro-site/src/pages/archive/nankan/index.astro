@@ -1,6 +1,6 @@
 ---
 import BaseLayout from '../../../layouts/BaseLayout.astro';
-import ArchiveBasisNote from '../../components/ArchiveBasisNote.astro';
+import ArchiveBasisNote from '../../../components/ArchiveBasisNote.astro';
 import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { buildMergedMonthData, aggregateMonthByBasis, CURRENT_BASIS_START_LABEL, LEGACY_BASIS_END_LABEL } from '../../../lib/archiveMonthlyView.js';
