@@ -13,6 +13,7 @@ import crypto from 'crypto';
 
 import { createSharedClient, resolveSharedToken } from './lib/sharedFetch.mjs';
 import { exitDeferredOrFatal } from './lib/sharedCheckerSupport.mjs';
+import { buildAiBet } from '../src/lib/results/aiBetPoints.js';
 
 const LABEL = 'importResults.js';
 
@@ -297,6 +298,12 @@ function verifyResults(prediction, results) {
         third: { number: third.number, name: third.name }
       },
       bettingLines,
+      // 【MK 確定仕様・本番反映は Preview 目視後】実績用の購入点数（AI レース別算定）。買い目ではない（点数だけ）。
+      // 正本 docs/BET_POINT_LOGIC.md「MK確定仕様: 実績の購入点数は AI レース別算定」／単一源 src/lib/results/aiBetPoints.js
+      ...(() => {
+        const aiBet = buildAiBet(predRace.horses, bettingLines, { cat: 'nankan', horseCount: predRace.raceInfo?.horseCount });
+        return aiBet ? { aiBet } : {};
+      })(),
       isHit: hits.length > 0,
       hitLines: hits,
       umatan: {

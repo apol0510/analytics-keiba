@@ -7,6 +7,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 import HomeResultsShowcasePreview from '../components/HomeResultsShowcasePreview.astro';
 import archiveResults from '../data/archiveResults.json';
 import archiveResultsJra from '../data/archiveResultsJra.json';
+import { summarizeAiDay, AI_POINTS_NOTE } from '../lib/results/aiBetPoints.js';
 import { weeklyResults, dailyTabs, dailyResultsData } from './light-predictions.astro';
 import { pickLatestAndAdapt, pickLatestJraPrediction } from '../lib/adaptLatestPrediction.js';
 
@@ -36,11 +37,9 @@ const latestResult = getLatestDayData();
 // 昨日の結果データを作成 (新フィールド名: bettingPoints / isHit / umatan.payout / returnRate)
 const yesterdayResults = latestResult ? (() => {
     const races = Array.isArray(latestResult.races) ? latestResult.races : [];
-    const totalBetPoints = races.reduce((sum, r) => sum + (r.bettingPoints || r.betPoints || 0), 0);
-    const jsonRate = latestResult.returnRate ?? latestResult.recoveryRate;
-    const fallbackRate = totalBetPoints > 0
-        ? Math.round((latestResult.totalPayout / (totalBetPoints * 100)) * 100)
-        : 0;
+    // 購入点数・回収率は AI レース別算定（単一源 lib/results/aiBetPoints.js）。算定がそろわない日は出さない
+    const ai = summarizeAiDay(latestResult);
+    const totalBetPoints = ai.points;
     return {
         date: `${parseInt(latestResult.month)}月${parseInt(latestResult.day)}日`,
         track: latestResult.venue,
@@ -49,7 +48,7 @@ const yesterdayResults = latestResult ? (() => {
         hitRate: latestResult.totalRaces > 0 ? Math.round((latestResult.hitRaces / latestResult.totalRaces) * 100) : 0,
         totalPayout: latestResult.totalPayout,
         totalBetPoints,
-        recoveryRate: jsonRate ?? fallbackRate,
+        recoveryRate: ai.recoveryRate,
         results: races.map(race => ({
             raceNumber: race.raceNumber,
             result: (race.isHit ?? race.hit) ? 'win' : 'lose',
@@ -71,11 +70,9 @@ const latestJraResult = getLatestJraDayData();
 
 const yesterdayJraResults = latestJraResult ? (() => {
     const races = Array.isArray(latestJraResult.races) ? latestJraResult.races : [];
-    const totalBetPoints = races.reduce((sum, r) => sum + (r.bettingPoints || r.betPoints || 0), 0);
-    const jsonRate = latestJraResult.returnRate ?? latestJraResult.recoveryRate;
-    const fallbackRate = totalBetPoints > 0
-        ? Math.round((latestJraResult.totalPayout / (totalBetPoints * 100)) * 100)
-        : 0;
+    // 購入点数・回収率は AI レース別算定（単一源 lib/results/aiBetPoints.js）。算定がそろわない日は出さない
+    const ai = summarizeAiDay(latestJraResult);
+    const totalBetPoints = ai.points;
     // venues は文字列配列（例: ['京都','東京','福島']）か単一会場名
     const trackLabel = Array.isArray(latestJraResult.venues) && latestJraResult.venues.length > 0
         ? latestJraResult.venues.join('・')
@@ -88,7 +85,7 @@ const yesterdayJraResults = latestJraResult ? (() => {
         hitRate: latestJraResult.totalRaces > 0 ? Math.round((latestJraResult.hitRaces / latestJraResult.totalRaces) * 100) : 0,
         totalPayout: latestJraResult.totalPayout,
         totalBetPoints,
-        recoveryRate: jsonRate ?? fallbackRate,
+        recoveryRate: ai.recoveryRate,
     };
 })() : null;
 
@@ -246,7 +243,7 @@ const formattedDate = `${year}年${parseInt(month)}月${parseInt(day)}日`;
 const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || ''}${enhancedRaceInfo?.raceName !== 'レース情報未検出' && enhancedRaceInfo?.raceName ? ' ' + enhancedRaceInfo.raceName : ''}`;
 ---
 
-<BaseLayout title="中央競馬・南関競馬のAI予想｜無料予想・的中実績" description="KEIBA Analytics（競馬アナリティクス）— 中央競馬・地方競馬をAIで分析。XGBoost・LSTMによる高精度予想で的中率87%、回収率156%を実現。">
+<BaseLayout title="中央競馬・南関競馬のAI予想｜無料予想・的中実績" description="KEIBA Analytics（競馬アナリティクス）— 中央競馬・地方競馬をAIで分析。XGBoost・LSTMによる高精度予想で的中率62%、回収率126%を実現。">
             <!-- Hero Key Visual（ファーストビュー / PC・モバイルで切替） -->
             <section class="hero-keyvisual">
                 <picture>
@@ -274,7 +271,7 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                 <h1 class="hero-title">AI競馬予想で投資効率を最大化</h1>
                 <p class="hero-subtitle">
                     XGBoost・LSTM・ニューラルネットワークによる高精度分析で<br>
-                    的中率87%、回収率156%を実現
+                    的中率62%、回収率126%を実現
                 </p>
                 <p class="hero-description">
                     従来の感覚的予想から、データサイエンスによる科学的投資へ。<br>
@@ -297,7 +294,7 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                     <div class="stats-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; max-width: 100%; margin: 0 auto; padding: 0 10px;">
                         <!-- AI Model Accuracy -->
                         <div class="stats-card" style="background: linear-gradient(135deg, rgba(59, 130, 246, 0.15) 0%, rgba(139, 92, 246, 0.15) 100%); padding: 20px 15px; border-radius: 10px; text-align: center; border: 2px solid rgba(59, 130, 246, 0.2); transition: transform 0.3s, box-shadow 0.3s;">
-                            <div class="stats-number" data-target="87.3" data-suffix="%" style="font-size: 2.2rem; font-weight: 800; color: var(--success-color); margin-bottom: 8px; text-shadow: 0 2px 4px rgba(16, 185, 129, 0.3);">
+                            <div class="stats-number" data-target="62" data-suffix="%" style="font-size: 2.2rem; font-weight: 800; color: var(--success-color); margin-bottom: 8px; text-shadow: 0 2px 4px rgba(16, 185, 129, 0.3);">
                                 0%
                             </div>
                             <div style="color: var(--body-text-color); font-weight: 600; font-size: 0.95rem; margin-bottom: 5px;">
@@ -310,7 +307,7 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
 
                         <!-- Average Return Rate -->
                         <div class="stats-card" style="background: linear-gradient(135deg, rgba(16, 185, 129, 0.15) 0%, rgba(59, 130, 246, 0.15) 100%); padding: 20px 15px; border-radius: 10px; text-align: center; border: 2px solid rgba(16, 185, 129, 0.2); transition: transform 0.3s, box-shadow 0.3s;">
-                            <div class="stats-number" data-target="156" data-suffix="%" style="font-size: 2.2rem; font-weight: 800; color: var(--success-color); margin-bottom: 8px; text-shadow: 0 2px 4px rgba(16, 185, 129, 0.3);">
+                            <div class="stats-number" data-target="126" data-suffix="%" style="font-size: 2.2rem; font-weight: 800; color: var(--success-color); margin-bottom: 8px; text-shadow: 0 2px 4px rgba(16, 185, 129, 0.3);">
                                 0%
                             </div>
                             <div style="color: var(--body-text-color); font-weight: 600; font-size: 0.95rem; margin-bottom: 5px;">
@@ -410,19 +407,24 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                                 <span style="color: #94a3b8; font-size: 0.9rem;">📊 的中率:</span>
                                 <span style="color: #60a5fa; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">{yesterdayResults.hitRate}%</span>
                             </div>
-                            <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(139, 92, 246, 0.3); border-radius: 12px; padding: 15px 25px;">
-                                <span style="color: #94a3b8; font-size: 0.9rem;">📈 回収率:</span>
-                                <span style="color: #a78bfa; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">{yesterdayResults.recoveryRate}%</span>
-                            </div>
-                            <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 12px; padding: 15px 25px;">
-                                <span style="color: #94a3b8; font-size: 0.9rem;">🎯 合計購入点数:</span>
-                                <span style="color: #10b981; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">{yesterdayResults.totalBetPoints}点</span>
-                            </div>
+                            {yesterdayResults.recoveryRate != null && (
+                                <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(139, 92, 246, 0.3); border-radius: 12px; padding: 15px 25px;">
+                                    <span style="color: #94a3b8; font-size: 0.9rem;">📈 回収率:</span>
+                                    <span style="color: #a78bfa; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">{yesterdayResults.recoveryRate}%</span>
+                                </div>
+                            )}
+                            {yesterdayResults.totalBetPoints != null && (
+                                <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 12px; padding: 15px 25px;">
+                                    <span style="color: #94a3b8; font-size: 0.9rem;">🎯 合計購入点数:</span>
+                                    <span style="color: #10b981; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">{yesterdayResults.totalBetPoints}点</span>
+                                </div>
+                            )}
                             <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 12px; padding: 15px 25px;">
                                 <span style="color: #94a3b8; font-size: 0.9rem;">💰 合計配当:</span>
                                 <span style="color: #fbbf24; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">¥{yesterdayResults.totalPayout.toLocaleString()}</span>
                             </div>
                         </div>
+                        {yesterdayResults.recoveryRate != null && <p style="margin: -18px 0 24px; text-align: center; font-size: 0.72rem; color: rgba(203, 213, 225, 0.55);">※ {AI_POINTS_NOTE}</p>}
 
                         <!-- レース一覧（的中レースのみ表示） -->
                         <div style="display: grid; gap: 12px;">
@@ -441,7 +443,7 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                                             ✅ 的中
                                         </div>
                                         <div class="bet-info" style="color: #8b5cf6; font-size: 0.9rem; font-weight: 600;">
-                                            {race.betType}{race.betPoints}点
+                                            {race.betType}{race.aiBet?.points ?? ''}{race.aiBet ? '点' : ''}
                                         </div>
                                         <div class="payout" style="font-size: 1.2rem; font-weight: bold; color: #fbbf24; text-align: right;">
                                             ¥{race.payout.toLocaleString()}
@@ -482,19 +484,24 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                                     <span style="color: #94a3b8; font-size: 0.9rem;">📊 的中率:</span>
                                     <span style="color: #60a5fa; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">{yesterdayJraResults.hitRate}%</span>
                                 </div>
-                                <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(139, 92, 246, 0.3); border-radius: 12px; padding: 15px 25px;">
-                                    <span style="color: #94a3b8; font-size: 0.9rem;">📈 回収率:</span>
-                                    <span style="color: #a78bfa; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">{yesterdayJraResults.recoveryRate}%</span>
-                                </div>
-                                <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 12px; padding: 15px 25px;">
-                                    <span style="color: #94a3b8; font-size: 0.9rem;">🎯 合計購入点数:</span>
-                                    <span style="color: #10b981; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">{yesterdayJraResults.totalBetPoints}点</span>
-                                </div>
+                                {yesterdayJraResults.recoveryRate != null && (
+                                    <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(139, 92, 246, 0.3); border-radius: 12px; padding: 15px 25px;">
+                                        <span style="color: #94a3b8; font-size: 0.9rem;">📈 回収率:</span>
+                                        <span style="color: #a78bfa; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">{yesterdayJraResults.recoveryRate}%</span>
+                                    </div>
+                                )}
+                                {yesterdayJraResults.totalBetPoints != null && (
+                                    <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 12px; padding: 15px 25px;">
+                                        <span style="color: #94a3b8; font-size: 0.9rem;">🎯 合計購入点数:</span>
+                                        <span style="color: #10b981; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">{yesterdayJraResults.totalBetPoints}点</span>
+                                    </div>
+                                )}
                                 <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 12px; padding: 15px 25px;">
                                     <span style="color: #94a3b8; font-size: 0.9rem;">💰 合計配当:</span>
                                     <span style="color: #fbbf24; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">¥{yesterdayJraResults.totalPayout.toLocaleString()}</span>
                                 </div>
                             </div>
+                            {yesterdayJraResults.recoveryRate != null && <p style="margin: -18px 0 24px; text-align: center; font-size: 0.72rem; color: rgba(203, 213, 225, 0.55);">※ {AI_POINTS_NOTE}</p>}
 
                             <!-- レース個別一覧は /archive/jra/ で確認できるため、トップでは南関同様コンパクト表示 -->
 
@@ -1483,7 +1490,7 @@ document.addEventListener("DOMContentLoaded",function(){
             const d=Math.min((g-l)/i,1);
             let c;
             try{
-                r>=1e3?(c=Math.floor(d*(r-e)+e),t.innerHTML=c.toLocaleString()+a):(c=d*(r-e)+e,t.innerHTML=c.toFixed(1)+a),d<1&&window.requestAnimationFrame(u)
+                r>=1e3?(c=Math.floor(d*(r-e)+e),t.innerHTML=c.toLocaleString()+a):(c=d*(r-e)+e,t.innerHTML=(Number.isInteger(r)?Math.round(c):c.toFixed(1))+a),d<1&&window.requestAnimationFrame(u)
             }catch(f){
                 console.error("カウントアップエラー:",f),t.innerHTML=r+a
             }

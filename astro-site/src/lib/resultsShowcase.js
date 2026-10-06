@@ -21,6 +21,7 @@
 //   - 抑え除去は premium ページと同一正規表現を関数化して共有。
 // ─────────────────────────────────────────────────────────────
 
+import { summarizeAiDay } from './results/aiBetPoints.js';
 import { getMainRaceNumber } from '../utils/mainRaceBetting.js';
 
 /**
@@ -148,17 +149,17 @@ export function buildShowcaseDay(dayEntry) {
     };
   });
 
+  const ai = summarizeAiDay(dayEntry);
   return {
     date: dayEntry.date,
     venues,
     venueLabel: venues.join('・') || dayEntry.venue || '',
     totalRaces: Number(dayEntry.totalRaces) || dayEntry.races.length,
     hitRaces: Number(dayEntry.hitRaces) || dayEntry.races.filter((r) => r.isHit).length,
-    totalBetPoints:
-      Number(dayEntry.totalBetPoints) ||
-      dayEntry.races.reduce((s, r) => s + (Number(r.betPoints) || 0), 0),
+    // 購入点数・回収率は AI レース別算定（単一源 lib/results/aiBetPoints.js）。算定がそろわない日は null（出さない）
+    totalBetPoints: ai.points,
     hitRate: dayEntry.hitRate ?? null,
-    recoveryRate: dayEntry.recoveryRate ?? dayEntry.returnRate ?? null,
+    recoveryRate: ai.recoveryRate,
     totalPayout: Number(dayEntry.totalPayout) || 0,
     verifiedAt: dayEntry.verifiedAt ?? null,
     venueGroups,

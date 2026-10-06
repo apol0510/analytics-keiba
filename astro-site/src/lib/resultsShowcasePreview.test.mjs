@@ -260,7 +260,8 @@ test('集計は単一源の値をそのまま使う（一覧から数え直さ�
   const view = buildLatestShowcase([day]);
   assert.equal(p.hitRaces, view.hitRaces);
   assert.equal(p.totalRaces, view.totalRaces);
-  assert.equal(p.recoveryRate, Number(view.recoveryRate));
+  // 2026-10-06: 回収率は AI レース別算定（aiBet が無い日は null）。単一源の値をそのまま使うことだけを見る
+  assert.equal(p.recoveryRate, view.recoveryRate == null ? null : Number(view.recoveryRate));
 });
 
 test('回収率が無い日は null（0% などを捏造しない）', () => {

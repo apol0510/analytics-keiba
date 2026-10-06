@@ -4,6 +4,7 @@ import BaseLayout from '../../../../../layouts/BaseLayout.astro';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { buildMergedMonthData, dayKeyToInt, isCurrentBasisEntry, LEGACY_BASIS_END_LABEL } from '../../../../../lib/archiveMonthlyView.js';
+import { summarizeAiDay, summarizeAiDays, AI_POINTS_NOTE } from '../../../../../lib/results/aiBetPoints.js';
 
 export const prerender = false;
 
@@ -42,9 +43,6 @@ let perfectDays = 0;
 let totalPayoutMonth = 0;
 let totalHitRaces = 0;
 let totalRaces = 0;
-// 月間回収率用：購入点数のある日だけを分子・分母に算入（旧フォーマットの点数ゼロ日を除外）
-let totalBetPointsMonth = 0;
-let payoutWithBetsMonth = 0;
 
 days.forEach(dayKey => {
   const dayData = monthData[dayKey];
@@ -52,16 +50,11 @@ days.forEach(dayKey => {
   totalPayoutMonth += dayData.totalPayout || 0;
   totalHitRaces += dayData.hitRaces || 0;
   totalRaces += dayData.totalRaces || 0;
-  const dayBetPoints = dayData.races.reduce((s: number, r: any) => s + (Number.isFinite(r.betPoints) ? r.betPoints : 0), 0);
-  if (dayBetPoints > 0) {
-    totalBetPointsMonth += dayBetPoints;
-    payoutWithBetsMonth += dayData.totalPayout || 0;
-  }
 });
 
 const hitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) : 0;
-const totalInvestmentMonth = totalBetPointsMonth * 100;
-const recoveryRateMonth = totalInvestmentMonth > 0 ? Math.round((payoutWithBetsMonth / totalInvestmentMonth) * 100) : null;
+// 月間回収率は AI レース別算定（単一源 lib/results/aiBetPoints.js）。算定がそろった日だけで数える
+const recoveryRateMonth = summarizeAiDays(days.map((k) => monthData[k])).recoveryRate;
 const hasData = days.length > 0;
 // この月に旧集計基準（2026-04-14以前、または snapshot 由来の旧判定日）が含まれるか（参考実績の注記用）。
 const monthHasLegacyDays = days.some(dayKey => !isCurrentBasisEntry(year, month, dayKey, monthData[dayKey]));
@@ -111,6 +104,7 @@ setPublicCdnCache(Astro);
             <div class="stat-card">
               <div class="stat-value">{recoveryRateMonth}%</div>
               <div class="stat-label">月間回収率</div>
+              <div class="stat-sub">{AI_POINTS_NOTE}</div>
             </div>
           )}
           <div class="stat-card">
@@ -132,10 +126,10 @@ setPublicCdnCache(Astro);
           const dayData = monthData[dayKey];
           const dayNum = dayKeyToInt(dayKey);
           const dayHitRate = dayData.totalRaces > 0 ? Math.round((dayData.hitRaces / dayData.totalRaces) * 100) : 0;
-          const totalBetPoints = dayData.races.reduce((sum: number, race: any) => sum + (Number.isFinite(race.betPoints) ? race.betPoints : 0), 0);
-          const totalInvestment = totalBetPoints * 100;
-          const hasInvestment = totalInvestment > 0;
-          const recoveryRate = hasInvestment ? Math.round((dayData.totalPayout / totalInvestment) * 100) : null;
+          const dayAi = summarizeAiDay(dayData);
+          const totalBetPoints = dayAi.points ?? 0;
+          const hasInvestment = dayAi.recoveryRate != null;
+          const recoveryRate = dayAi.recoveryRate;
           return (
             <div class="day-section">
               <div class="day-header">
@@ -292,6 +286,7 @@ setPublicCdnCache(Astro);
       white-space: nowrap;
     }
 
+    .stat-sub { margin-top: 4px; font-size: 0.68rem; color: rgba(203, 213, 225, 0.55); }
     .stat-label {
       font-size: 0.95rem;
       color: #94a3b8;

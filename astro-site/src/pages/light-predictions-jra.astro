@@ -7,6 +7,7 @@ import RaceAccordionClickClose from '../components/RaceAccordionClickClose.astro
 import AccessControl from '../components/AccessControl.astro';
 import { processRaceData, normalizeHorseData, validateDataIntegrity, getHorseConfidenceFromMark, getPredictionDataWithStrategies, calculateProgressBarConfidence } from '../lib/shared-prediction-logic.js';
 import { convertToYesterdayResultsJra, getLatestDayDataJra } from '../lib/archive-utils.js';
+import { AI_POINTS_NOTE } from '../lib/results/aiBetPoints.js';
 import { PLAN_ACCESS } from '../lib/race-config.js';
 import RaceHorseSection from '../components/RaceHorseSection.astro';
 import { adaptNewToLegacy } from '../lib/adaptLatestPrediction.js';
@@ -198,11 +199,11 @@ const latestResult = getLatestDayDataJra();
             <div class="ai-metrics-headline">🚀 Premium プランの実績</div>
             <div class="ai-metrics">
                 <div class="metric">
-                    <div class="metric-value">72%</div>
+                    <div class="metric-value">62%</div>
                     <div class="metric-label">平均的中率</div>
                 </div>
                 <div class="metric">
-                    <div class="metric-value">176%</div>
+                    <div class="metric-value">126%</div>
                     <div class="metric-label">平均回収率</div>
                 </div>
                 <div class="metric">
@@ -242,15 +243,18 @@ const latestResult = getLatestDayDataJra();
                         <span style="color: #94a3b8; font-size: 0.9rem;">📊 的中率:</span>
                         <span style="color: #60a5fa; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">{yesterdayResults.hitRate}%</span>
                     </div>
-                    <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(139, 92, 246, 0.3); border-radius: 12px; padding: 15px 25px;">
-                        <span style="color: #94a3b8; font-size: 0.9rem;">📈 回収率:</span>
-                        <span style="color: #a78bfa; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">{yesterdayResults.recoveryRate}%</span>
-                    </div>
+                    {yesterdayResults.recoveryRate != null && (
+                        <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(139, 92, 246, 0.3); border-radius: 12px; padding: 15px 25px;">
+                            <span style="color: #94a3b8; font-size: 0.9rem;">📈 回収率:</span>
+                            <span style="color: #a78bfa; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">{yesterdayResults.recoveryRate}%</span>
+                        </div>
+                    )}
                     <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 12px; padding: 15px 25px;">
                         <span style="color: #94a3b8; font-size: 0.9rem;">💰 合計配当:</span>
                         <span style="color: #fbbf24; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">¥{Number(yesterdayResults.totalPayout || 0).toLocaleString()}</span>
                     </div>
                 </div>
+                {yesterdayResults.recoveryRate != null && <p style="margin: -18px 0 24px; text-align: center; font-size: 0.72rem; color: rgba(203, 213, 225, 0.55);">※ {AI_POINTS_NOTE}</p>}
 
                 <!-- 的中したレース一覧 -->
                 <div style="display: grid; gap: 12px;">

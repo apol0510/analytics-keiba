@@ -11,6 +11,7 @@ import AccessControl from '../components/AccessControl.astro';
 import ProgressBarConfidence from '../components/ProgressBarConfidence.astro';
 import { processRaceData, normalizeHorseData, getRoleDisplayConfig, validateDataIntegrity, getHorseConfidenceFromMark, calculateMarkBasedConfidence, convertToStarRating, getRecommendationStars, generateStandardizedBets, calculateScoreBasedStats, getPredictionDataWithStrategies, calculateProgressBarConfidence } from '../lib/shared-prediction-logic.js';
 import { convertToYesterdayResults, getLatestDayData, convertToSanrenpukuYesterdayResults, getLatestSanrenpukuDayData } from '../lib/archive-utils.js';
+import { AI_POINTS_NOTE } from '../lib/results/aiBetPoints.js';
 import { getRaceTier, PLAN_ACCESS } from '../lib/race-config.js';
 import { generateMinorHorseComment } from '../lib/horseEnrichment.js';
 import HorseMainCard from '../components/HorseMainCard.astro';
@@ -244,11 +245,11 @@ export const dailyResultsData = {
             <div class="ai-metrics-headline">🚀 Premium プランの実績</div>
             <div class="ai-metrics">
                 <div class="metric">
-                    <div class="metric-value">72%</div>
+                    <div class="metric-value">62%</div>
                     <div class="metric-label">平均的中率</div>
                 </div>
                 <div class="metric">
-                    <div class="metric-value">176%</div>
+                    <div class="metric-value">126%</div>
                     <div class="metric-label">平均回収率</div>
                 </div>
                 <div class="metric">
@@ -299,15 +300,18 @@ export const dailyResultsData = {
                         <span style="color: #94a3b8; font-size: 0.9rem;">📊 的中率:</span>
                         <span style="color: #60a5fa; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">{yesterdayResults.hitRate}%</span>
                     </div>
-                    <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(139, 92, 246, 0.3); border-radius: 12px; padding: 15px 25px;">
-                        <span style="color: #94a3b8; font-size: 0.9rem;">📈 回収率:</span>
-                        <span style="color: #a78bfa; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">{yesterdayResults.recoveryRate}%</span>
-                    </div>
+                    {yesterdayResults.recoveryRate != null && (
+                        <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(139, 92, 246, 0.3); border-radius: 12px; padding: 15px 25px;">
+                            <span style="color: #94a3b8; font-size: 0.9rem;">📈 回収率:</span>
+                            <span style="color: #a78bfa; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">{yesterdayResults.recoveryRate}%</span>
+                        </div>
+                    )}
                     <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 12px; padding: 15px 25px;">
                         <span style="color: #94a3b8; font-size: 0.9rem;">💰 合計配当:</span>
                         <span style="color: #fbbf24; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">¥{yesterdayResults.totalPayout.toLocaleString()}</span>
                     </div>
                 </div>
+                {yesterdayResults.recoveryRate != null && <p style="margin: -18px 0 24px; text-align: center; font-size: 0.72rem; color: rgba(203, 213, 225, 0.55);">※ {AI_POINTS_NOTE}</p>}
 
                 <!-- レース一覧（archiveと統一デザイン） -->
                 <!-- 🔧 2026-05-13 修正: 新フォーマット対応

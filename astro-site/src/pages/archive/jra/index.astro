@@ -2,6 +2,7 @@
 import BaseLayout from '../../../layouts/BaseLayout.astro';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
+import { summarizeAiDays, AI_POINTS_NOTE } from '../../../lib/results/aiBetPoints.js';
 
 export const prerender = true;
 
@@ -16,7 +17,7 @@ let allMonths: Array<{
   totalHitRaces: number;
   hitRate: string;
   totalPayout: number;
-  returnRate: string;
+  returnRate: string | null;
 }> = [];
 
 try {
@@ -49,7 +50,9 @@ try {
       });
 
       const hitRate = totalRaces > 0 ? ((totalHitRaces / totalRaces) * 100).toFixed(1) : '0.0';
-      const returnRate = totalBetAmount > 0 ? ((totalPayout / totalBetAmount) * 100).toFixed(1) : '0.0';
+      // 回収率は AI レース別算定（単一源 lib/results/aiBetPoints.js）。算定がそろった日だけで数える
+      const ai = summarizeAiDays(entries);
+      const returnRate = ai.recoveryRate != null ? ai.recoveryRate.toFixed(1) : null;
 
       allMonths.push({
         year,
@@ -136,10 +139,12 @@ const pageDescription = '中央競馬（JRA）の全的中実績アーカイブ�
                 <div class="month-stat-value">{monthData.hitRate}%</div>
                 <div class="month-stat-label">的中率</div>
               </div>
-              <div class="month-stat">
-                <div class={`month-stat-value ${parseFloat(monthData.returnRate) >= 100 ? 'profit' : 'loss'}`}>{monthData.returnRate}%</div>
-                <div class="month-stat-label">回収率</div>
-              </div>
+              {monthData.returnRate != null && (
+                <div class="month-stat">
+                  <div class={`month-stat-value ${parseFloat(monthData.returnRate) >= 100 ? 'profit' : ''}`}>{monthData.returnRate}%</div>
+                  <div class="month-stat-label">回収率</div>
+                </div>
+              )}
               <div class="month-stat">
                 <div class="month-stat-value">{monthData.daysCount}日</div>
                 <div class="month-stat-label">開催日数</div>
@@ -170,6 +175,7 @@ const pageDescription = '中央競馬（JRA）の全的中実績アーカイブ�
     </div>
 
     <div class="results-notice">
+      <p>※ {AI_POINTS_NOTE}です。</p>
       <p>※ 掲載されている的中率・収支データは、AIモデルが算出した買い目パターンに基づく理論値です。実際の収支はお客様の購入点数・金額配分により異なります。</p>
       <p>※ 本サービスで提示する買い目は複数パターンの候補を含むため、表示点数と集計上の基準点数が異なる場合があります。</p>
       <p>※ 過去の実績は将来の結果を保証するものではありません。馬券購入は自己責任でお願いいたします。</p>

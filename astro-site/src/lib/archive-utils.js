@@ -7,6 +7,7 @@ import archiveResults from '../data/archiveResults.json';
 import archiveResultsJra from '../data/archiveResultsJra.json';
 import archiveSanrenpukuResults from '../data/archiveSanrenpukuResults.json';
 import archiveSanrenpukuResultsJra from '../data/archiveSanrenpukuResultsJra.json';
+import { summarizeAiDay } from './results/aiBetPoints.js';
 
 /**
  * archiveResults.jsonから最新日のデータを取得
@@ -38,18 +39,13 @@ export function convertToYesterdayResults() {
     if (!latestData) return null;
 
     // 新フォーマット (配列形式 / importResults.js v2+):
-    //   race.bettingPoints / race.isHit / race.umatan.payout
-    //   latestData.returnRate (旧 recoveryRate 相当)
+    //   race.isHit / race.umatan.payout / race.aiBet.points
     const races = Array.isArray(latestData.races) ? latestData.races : [];
 
-    // 🔴 回収率: JSONの returnRate を優先。無ければ betPoints 相当から逆算 (フォールバック)
-    let recoveryRate = latestData.returnRate ?? latestData.recoveryRate ?? 0;
-    const totalBetPoints = races.reduce((sum, race) => sum + (race.bettingPoints || race.betPoints || 0), 0);
-
-    if (totalBetPoints > 0 && !latestData.returnRate && !latestData.recoveryRate) {
-        const totalInvestment = totalBetPoints * 100; // 1点=100円
-        recoveryRate = Math.round((latestData.totalPayout / totalInvestment) * 100);
-    }
+    // 購入点数・回収率は AI レース別算定（単一源 results/aiBetPoints.js）。算定がそろわない日は null（出さない）
+    const ai = summarizeAiDay(latestData);
+    const recoveryRate = ai.recoveryRate;
+    const totalBetPoints = ai.points;
 
     const hitRate = latestData.totalRaces > 0 ? Math.round((latestData.hitRaces / latestData.totalRaces) * 100) : 0;
 
@@ -102,15 +98,10 @@ export function convertToYesterdayResultsJra() {
 
     const races = Array.isArray(latestData.races) ? latestData.races : [];
 
-    // 回収率: JSON の returnRate を優先。無ければ totalBetPoints / totalInvestment / totalPayout から逆算
-    let recoveryRate = latestData.returnRate ?? latestData.recoveryRate ?? 0;
-    const totalBetPoints = latestData.totalBetPoints
-        ?? races.reduce((sum, race) => sum + (race.bettingPoints || race.betPoints || 0), 0);
-
-    if (totalBetPoints > 0 && !latestData.returnRate && !latestData.recoveryRate) {
-        const totalInvestment = totalBetPoints * 100;
-        recoveryRate = Math.round((latestData.totalPayout / totalInvestment) * 100);
-    }
+    // 購入点数・回収率は AI レース別算定（単一源 results/aiBetPoints.js）。算定がそろわない日は null（出さない）
+    const ai = summarizeAiDay(latestData);
+    const recoveryRate = ai.recoveryRate;
+    const totalBetPoints = ai.points;
 
     const hitRate = latestData.totalRaces > 0 ? Math.round((latestData.hitRaces / latestData.totalRaces) * 100) : 0;
 

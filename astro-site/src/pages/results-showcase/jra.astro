@@ -4,6 +4,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { buildLatestShowcase } from '../../lib/resultsShowcase.js';
+import { AI_POINTS_NOTE } from '../../lib/results/aiBetPoints.js';
 
 export const prerender = false;
 
@@ -33,7 +34,7 @@ const pageTitle = view
   ? `有料版 買い目実績【${CATEGORY_LABEL}】${dateLabel}`
   : `有料版 買い目実績【${CATEGORY_LABEL}】`;
 const pageDescription = view
-  ? `${dateLabel} ${view.venueLabel} 有料会員に配信したメインレースの買い目と結果。的中${view.hitRaces}/${view.totalRaces}・回収率${view.recoveryRate}%。毎日自動更新。`
+  ? `${dateLabel} ${view.venueLabel} 有料会員に配信したメインレースの買い目と結果。的中${view.hitRaces}/${view.totalRaces}${view.recoveryRate != null ? `・回収率${view.recoveryRate}%` : ''}。毎日自動更新。`
   : `${CATEGORY_LABEL}の有料版で配信したメインレース買い目の結果を毎日公開。`;
 
 // 【2026-08-31】公開ページなのでエッジに 5 分だけ載せる（Function 実行回数の削減）。
@@ -88,10 +89,12 @@ const jraDatePageExists = !!(view && view.date && existsSync(join(process.cwd(),
                 <div class="sc-stat-label">的中率</div>
               </div>
             )}
-            <div class="sc-stat">
-              <div class="sc-stat-value">{view.totalBetPoints}点</div>
-              <div class="sc-stat-label">購入点数</div>
-            </div>
+            {view.totalBetPoints != null && (
+              <div class="sc-stat">
+                <div class="sc-stat-value">{view.totalBetPoints}点</div>
+                <div class="sc-stat-label">購入点数</div>
+              </div>
+            )}
             {view.recoveryRate != null && (
               <div class="sc-stat">
                 <div class={`sc-stat-value ${Number(view.recoveryRate) >= 100 ? 'profit' : ''}`}>
@@ -101,6 +104,7 @@ const jraDatePageExists = !!(view && view.date && existsSync(join(process.cwd(),
               </div>
             )}
           </div>
+          {view.totalBetPoints != null && <p class="sc-ai-note">※ {AI_POINTS_NOTE}</p>}
         </section>
 
         {/* 会場ごと */}
@@ -120,7 +124,7 @@ const jraDatePageExists = !!(view && view.date && existsSync(join(process.cwd(),
                 </div>
 
                 <div class="sc-bet">
-                  <span class="sc-bet-label">配信買い目<span class="sc-bet-type">馬単 {g.mainRace.betPoints}点</span></span>
+                  <span class="sc-bet-label">配信買い目</span>
                   <div class="sc-bet-line">
                     <span class="sc-honmei">{g.mainRace.honmei}</span>
                     <span class="sc-arrow">{g.mainRace.displayArrow}</span>
@@ -429,6 +433,7 @@ const jraDatePageExists = !!(view && view.date && existsSync(join(process.cwd(),
   .sc-chip-mark { font-size: 0.85rem; line-height: 1; }
   .sc-chip.miss .sc-chip-mark { color: rgba(255, 255, 255, 0.4); }
 
+  .sc-ai-note { margin: 10px 0 0; font-size: 0.72rem; color: rgba(203, 213, 225, 0.55); text-align: right; }
   .sc-note {
     font-size: 0.78rem;
     color: #999;
