@@ -7,6 +7,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 import HomeResultsShowcasePreview from '../components/HomeResultsShowcasePreview.astro';
 import archiveResults from '../data/archiveResults.json';
 import archiveResultsJra from '../data/archiveResultsJra.json';
+import { summarizeAiDay, AI_POINTS_NOTE } from '../lib/results/aiBetPoints.js';
 import { weeklyResults, dailyTabs, dailyResultsData } from './light-predictions.astro';
 import { pickLatestAndAdapt, pickLatestJraPrediction } from '../lib/adaptLatestPrediction.js';
 
@@ -36,11 +37,9 @@ const latestResult = getLatestDayData();
 // 昨日の結果データを作成 (新フィールド名: bettingPoints / isHit / umatan.payout / returnRate)
 const yesterdayResults = latestResult ? (() => {
     const races = Array.isArray(latestResult.races) ? latestResult.races : [];
-    const totalBetPoints = races.reduce((sum, r) => sum + (r.bettingPoints || r.betPoints || 0), 0);
-    const jsonRate = latestResult.returnRate ?? latestResult.recoveryRate;
-    const fallbackRate = totalBetPoints > 0
-        ? Math.round((latestResult.totalPayout / (totalBetPoints * 100)) * 100)
-        : 0;
+    // 購入点数・回収率は AI レース別算定（単一源 lib/results/aiBetPoints.js）。算定がそろわない日は出さない
+    const ai = summarizeAiDay(latestResult);
+    const totalBetPoints = ai.points;
     return {
         date: `${parseInt(latestResult.month)}月${parseInt(latestResult.day)}日`,
         track: latestResult.venue,
@@ -49,7 +48,7 @@ const yesterdayResults = latestResult ? (() => {
         hitRate: latestResult.totalRaces > 0 ? Math.round((latestResult.hitRaces / latestResult.totalRaces) * 100) : 0,
         totalPayout: latestResult.totalPayout,
         totalBetPoints,
-        recoveryRate: jsonRate ?? fallbackRate,
+        recoveryRate: ai.recoveryRate,
         results: races.map(race => ({
             raceNumber: race.raceNumber,
             result: (race.isHit ?? race.hit) ? 'win' : 'lose',
@@ -71,11 +70,9 @@ const latestJraResult = getLatestJraDayData();
 
 const yesterdayJraResults = latestJraResult ? (() => {
     const races = Array.isArray(latestJraResult.races) ? latestJraResult.races : [];
-    const totalBetPoints = races.reduce((sum, r) => sum + (r.bettingPoints || r.betPoints || 0), 0);
-    const jsonRate = latestJraResult.returnRate ?? latestJraResult.recoveryRate;
-    const fallbackRate = totalBetPoints > 0
-        ? Math.round((latestJraResult.totalPayout / (totalBetPoints * 100)) * 100)
-        : 0;
+    // 購入点数・回収率は AI レース別算定（単一源 lib/results/aiBetPoints.js）。算定がそろわない日は出さない
+    const ai = summarizeAiDay(latestJraResult);
+    const totalBetPoints = ai.points;
     // venues は文字列配列（例: ['京都','東京','福島']）か単一会場名
     const trackLabel = Array.isArray(latestJraResult.venues) && latestJraResult.venues.length > 0
         ? latestJraResult.venues.join('・')
@@ -88,7 +85,7 @@ const yesterdayJraResults = latestJraResult ? (() => {
         hitRate: latestJraResult.totalRaces > 0 ? Math.round((latestJraResult.hitRaces / latestJraResult.totalRaces) * 100) : 0,
         totalPayout: latestJraResult.totalPayout,
         totalBetPoints,
-        recoveryRate: jsonRate ?? fallbackRate,
+        recoveryRate: ai.recoveryRate,
     };
 })() : null;
 
@@ -410,19 +407,24 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                                 <span style="color: #94a3b8; font-size: 0.9rem;">📊 的中率:</span>
                                 <span style="color: #60a5fa; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">{yesterdayResults.hitRate}%</span>
                             </div>
-                            <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(139, 92, 246, 0.3); border-radius: 12px; padding: 15px 25px;">
-                                <span style="color: #94a3b8; font-size: 0.9rem;">📈 回収率:</span>
-                                <span style="color: #a78bfa; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">{yesterdayResults.recoveryRate}%</span>
-                            </div>
-                            <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 12px; padding: 15px 25px;">
-                                <span style="color: #94a3b8; font-size: 0.9rem;">🎯 合計購入点数:</span>
-                                <span style="color: #10b981; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">{yesterdayResults.totalBetPoints}点</span>
-                            </div>
+                            {yesterdayResults.recoveryRate != null && (
+                                <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(139, 92, 246, 0.3); border-radius: 12px; padding: 15px 25px;">
+                                    <span style="color: #94a3b8; font-size: 0.9rem;">📈 回収率:</span>
+                                    <span style="color: #a78bfa; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">{yesterdayResults.recoveryRate}%</span>
+                                </div>
+                            )}
+                            {yesterdayResults.totalBetPoints != null && (
+                                <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 12px; padding: 15px 25px;">
+                                    <span style="color: #94a3b8; font-size: 0.9rem;">🎯 合計購入点数:</span>
+                                    <span style="color: #10b981; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">{yesterdayResults.totalBetPoints}点</span>
+                                </div>
+                            )}
                             <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 12px; padding: 15px 25px;">
                                 <span style="color: #94a3b8; font-size: 0.9rem;">💰 合計配当:</span>
                                 <span style="color: #fbbf24; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">¥{yesterdayResults.totalPayout.toLocaleString()}</span>
                             </div>
                         </div>
+                        {yesterdayResults.recoveryRate != null && <p style="margin: -18px 0 24px; text-align: center; font-size: 0.72rem; color: rgba(203, 213, 225, 0.55);">※ {AI_POINTS_NOTE}</p>}
 
                         <!-- レース一覧（的中レースのみ表示） -->
                         <div style="display: grid; gap: 12px;">
@@ -441,7 +443,7 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                                             ✅ 的中
                                         </div>
                                         <div class="bet-info" style="color: #8b5cf6; font-size: 0.9rem; font-weight: 600;">
-                                            {race.betType}{race.betPoints}点
+                                            {race.betType}{race.aiBet?.points ?? ''}{race.aiBet ? '点' : ''}
                                         </div>
                                         <div class="payout" style="font-size: 1.2rem; font-weight: bold; color: #fbbf24; text-align: right;">
                                             ¥{race.payout.toLocaleString()}
@@ -482,19 +484,24 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                                     <span style="color: #94a3b8; font-size: 0.9rem;">📊 的中率:</span>
                                     <span style="color: #60a5fa; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">{yesterdayJraResults.hitRate}%</span>
                                 </div>
-                                <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(139, 92, 246, 0.3); border-radius: 12px; padding: 15px 25px;">
-                                    <span style="color: #94a3b8; font-size: 0.9rem;">📈 回収率:</span>
-                                    <span style="color: #a78bfa; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">{yesterdayJraResults.recoveryRate}%</span>
-                                </div>
-                                <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 12px; padding: 15px 25px;">
-                                    <span style="color: #94a3b8; font-size: 0.9rem;">🎯 合計購入点数:</span>
-                                    <span style="color: #10b981; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">{yesterdayJraResults.totalBetPoints}点</span>
-                                </div>
+                                {yesterdayJraResults.recoveryRate != null && (
+                                    <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(139, 92, 246, 0.3); border-radius: 12px; padding: 15px 25px;">
+                                        <span style="color: #94a3b8; font-size: 0.9rem;">📈 回収率:</span>
+                                        <span style="color: #a78bfa; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">{yesterdayJraResults.recoveryRate}%</span>
+                                    </div>
+                                )}
+                                {yesterdayJraResults.totalBetPoints != null && (
+                                    <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 12px; padding: 15px 25px;">
+                                        <span style="color: #94a3b8; font-size: 0.9rem;">🎯 合計購入点数:</span>
+                                        <span style="color: #10b981; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">{yesterdayJraResults.totalBetPoints}点</span>
+                                    </div>
+                                )}
                                 <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 12px; padding: 15px 25px;">
                                     <span style="color: #94a3b8; font-size: 0.9rem;">💰 合計配当:</span>
                                     <span style="color: #fbbf24; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">¥{yesterdayJraResults.totalPayout.toLocaleString()}</span>
                                 </div>
                             </div>
+                            {yesterdayJraResults.recoveryRate != null && <p style="margin: -18px 0 24px; text-align: center; font-size: 0.72rem; color: rgba(203, 213, 225, 0.55);">※ {AI_POINTS_NOTE}</p>}
 
                             <!-- レース個別一覧は /archive/jra/ で確認できるため、トップでは南関同様コンパクト表示 -->
 

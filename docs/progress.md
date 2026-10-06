@@ -1,3 +1,11 @@
+# 🧪 実績の購入点数・回収率を AI レース別算定へ（2026-10-06 MK 指示 / **MK 確認用 Preview・未採用・本番未反映**）
+
+- 内容: 実績を「全レース 5 点固定」から「点数を絞った買い目＋通常買い目から 2〜6 組」のレース別算定へ。的中は通常買い目で判定、払戻は算定した組で当たったときだけ数える。Premium の買い目は不変
+- 正本: `astro-site/docs/BET_POINT_LOGIC.md`「検討中Preview仕様」／単一源 `src/lib/results/aiBetPoints.js`
+- 状態: Draft PR・Deploy Preview で MK 確認待ち。**merge・本番反映はしない**（採否は MK）
+- 不採用なら: PR を close（archive に足した `race.aiBet` も main に入らない）
+- 経緯: 前案 PR #753（全買い目で数える／点数・回収率を外す）は MK 却下
+
 # 💜 Premium CTA の文字色（2026-10-04 MK 指示 / 本番反映済み）
 
 | 項目 | 状態 |

@@ -3,6 +3,7 @@ import { setPublicCdnCache } from '../../../../lib/cdnCache.mjs';
 import BaseLayout from '../../../../layouts/BaseLayout.astro';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
+import { summarizeAiDays, AI_POINTS_NOTE } from '../../../../lib/results/aiBetPoints.js';
 
 export const prerender = false;
 
@@ -42,12 +43,14 @@ const monthSummaries = Array.from(monthsMap.entries())
       totalPayout += e.totalPayout || 0;
     });
     const hitRate = totalRaces > 0 ? ((totalHitRaces / totalRaces) * 100).toFixed(1) : '0.0';
-    const returnRate = totalBetAmount > 0 ? ((totalPayout / totalBetAmount) * 100).toFixed(1) : '0.0';
+    // 回収率は AI レース別算定（単一源 lib/results/aiBetPoints.js）
+    const aiM = summarizeAiDays(entries);
+    const returnRate = aiM.recoveryRate != null ? aiM.recoveryRate.toFixed(1) : null;
     return { month, daysCount: entries.length, totalRaces, totalHitRaces, totalBetAmount, totalPayout, hitRate, returnRate };
   })
   .sort((a, b) => b.month.localeCompare(a.month));
 
-// 年間合計（回収率は年間配当 ÷ 年間投資 = betAmount ベースで既存 JRA と整合）
+// 年間合計（回収率は AI レース別算定・単一源 lib/results/aiBetPoints.js）
 let yTotalDays = 0;
 let yTotalRaces = 0;
 let yTotalHitRaces = 0;
@@ -61,7 +64,8 @@ monthSummaries.forEach((m) => {
   yTotalPayout += m.totalPayout;
 });
 const yearHitRate = yTotalRaces > 0 ? ((yTotalHitRaces / yTotalRaces) * 100).toFixed(1) : '0.0';
-const yearReturnRate = yTotalBetAmount > 0 ? ((yTotalPayout / yTotalBetAmount) * 100).toFixed(1) : '0.0';
+const aiY = summarizeAiDays(yearEntries);
+const yearReturnRate = aiY.recoveryRate != null ? aiY.recoveryRate.toFixed(1) : null;
 
 const hasData = monthSummaries.length > 0;
 
@@ -69,7 +73,7 @@ const pageTitle = hasData
   ? `${year}年 中央競馬（JRA）的中実績アーカイブ`
   : `${year}年 中央競馬の的中実績はまだありません`;
 const pageDescription = hasData
-  ? `${year}年の中央競馬（JRA）全的中実績。年間的中率${yearHitRate}%・年間回収率${yearReturnRate}%・年間合計配当¥${yTotalPayout.toLocaleString()}の実績データ。`
+  ? `${year}年の中央競馬（JRA）全的中実績。年間的中率${yearHitRate}%・${yearReturnRate != null ? `年間回収率${yearReturnRate}%・` : ''}年間合計配当¥${yTotalPayout.toLocaleString()}の実績データ。`
   : `${year}年の中央競馬（JRA）の的中実績アーカイブ。`;
 
 // 【2026-08-31】公開ページなのでエッジに 5 分だけ載せる（Function 実行回数の削減）。
@@ -105,12 +109,14 @@ setPublicCdnCache(Astro);
               <div class="stat-value">{yearHitRate}%</div>
               <div class="stat-label">年間的中率</div>
             </div>
-            <div class="stat-card">
-              <div class={`stat-value ${parseFloat(yearReturnRate) >= 100 ? 'profit' : 'loss'}`}>
-                {yearReturnRate}%
+            {yearReturnRate != null && (
+              <div class="stat-card">
+                <div class={`stat-value ${parseFloat(yearReturnRate) >= 100 ? 'profit' : 'loss'}`}>
+                  {yearReturnRate}%
+                </div>
+                <div class="stat-label">年間回収率</div>
               </div>
-              <div class="stat-label">年間回収率</div>
-            </div>
+            )}
             <div class="stat-card">
               <div class="stat-value profit">¥{yTotalPayout.toLocaleString()}</div>
               <div class="stat-label">年間合計配当</div>
@@ -120,6 +126,7 @@ setPublicCdnCache(Astro);
               <div class="stat-label">年間的中レース数</div>
             </div>
           </section>
+          {yearReturnRate != null && <p class="ai-points-note">※ {AI_POINTS_NOTE}</p>}
 
           {/* 月別一覧 */}
           <section class="months-grid">
@@ -139,10 +146,12 @@ setPublicCdnCache(Astro);
                     <div class="month-stat-value">{m.hitRate}%</div>
                     <div class="month-stat-label">的中率</div>
                   </div>
-                  <div class="month-stat">
-                    <div class={`month-stat-value ${parseFloat(m.returnRate) >= 100 ? 'profit' : 'loss'}`}>{m.returnRate}%</div>
-                    <div class="month-stat-label">回収率</div>
-                  </div>
+                  {m.returnRate != null && (
+                    <div class="month-stat">
+                      <div class={`month-stat-value ${parseFloat(m.returnRate) >= 100 ? 'profit' : 'loss'}`}>{m.returnRate}%</div>
+                      <div class="month-stat-label">回収率</div>
+                    </div>
+                  )}
                   <div class="month-stat">
                     <div class="month-stat-value">{m.daysCount}日</div>
                     <div class="month-stat-label">開催日数</div>
@@ -173,6 +182,7 @@ setPublicCdnCache(Astro);
 </BaseLayout>
 
 <style lang="scss">
+  .ai-points-note { margin: -8px 0 20px; font-size: 0.72rem; color: rgba(203, 213, 225, 0.55); text-align: right; }
   .archive-jra-page {
     min-height: 100vh;
     padding: 2rem 1rem 3rem;
