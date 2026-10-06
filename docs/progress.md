@@ -235,7 +235,12 @@
 | 変えていないもの | Email API プラン・Marketing プラン（課金変更 0）・AK Redis（書き込み 0）・env |
 | billable_count | 削除直後も 12,083 のまま（SendGrid の当月最大値の可能性。プラン変更前に再確認）|
 | rollback | 削除前の全件 export を `~/.analytics-keiba-ops/sendgrid-contacts-backup-20261006/`（repo 外・PII のため commit しない）に保存。必要なら `PUT /v3/marketing/contacts` で再投入（list には入れない）|
-| 残り | Marketing プランを最小へ下げる（課金変更＝MK 承認・管理画面操作）|
+| プラン変更（2026-10-07 MK 指示・実施済み）| Marketing Campaigns **Advanced 20k（$100/月）→ Basic 5k（$15/月・5,000 contacts＋15,000 通/月・超過 $0.004/件）**。**適用は 2026-11-01**（10 月分は Advanced 20k 支払い済みで月末まで継続）。画面表示「Your plan will be downgraded to Basic 5k on November 1, 2026」で確認 |
+| 収容の根拠 | stored 1,400（上限 5,000）／週 2 回 × 835 名 ≒ 月 7,300 通（上限 15,000）。Basic は Automation 無しだが AK は Single Send 運用（Automation は Draft 1 件のみで稼働 0）|
+| 画面の注意 2 点 | ① **専用 IP 1 個を月末に失う**（Advanced 付帯・9/18 から）→ 取引メールは 9/18 以前と同じ共有 IP に戻る。コードに IP pool 依存なし ② 「12,083 contacts で超過」警告は**当月最大値**ベース。適用は 11/1 で現在 1,400 のため 11 月の超過は見込まない（11 月請求で確認）|
+| 次回請求見込み | 11/1: Basic 5k $15.00 ＋ Email API Essentials 50K $19.95 ＝ **$34.95**（10/1 は $119.95）。Email API は変更なし |
+| 変更後の不変確認 | list（835 / 107 / 307 / 0）・KI 155・suppression 全種・週次予約 10-07 / 10-10 すべて変更前と同値 |
+| 残り | 2026-11-01 以降に Your Products が Basic 5k 表示・11 月請求が $34.95 前後であることを確認（超過が載っていれば Claude へ）|
 
 # ⏳ 待ち状態と並行作業（2026-09-28 更新 / ルール: CLAUDE.md「⏳ 待ち時間は止まらず並行する」）
 
