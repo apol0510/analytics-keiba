@@ -18,7 +18,11 @@ const initialJson = JSON.stringify(initial ?? null).replace(/</g, '\\u003c');
       <span class="ailab-live" id="ailab-live" data-state="connecting"><i aria-hidden="true"></i><span id="ailab-live-text">接続中</span></span>
     </header>
     <main class="ailab-main">
-      <p class="ailab-note" id="ailab-notice">開発中の AI が、出走する全馬の「勝つ確率（AI 勝率）」を計算し、単勝オッズと掛け合わせた期待値を発走直前まで更新しています。</p>
+      <section class="ailab-hero" id="ailab-notice" aria-label="AI ラボとは">
+        <p class="ailab-hero-kicker">いま、AI を育てています</p>
+        <p class="ailab-hero-title">人気の裏に隠れた「本当の実力」を、全馬について数字で見つけ出す。</p>
+        <p class="ailab-note">開発中の AI が、出走する全馬の「勝つ確率（AI 勝率）」を計算し、単勝オッズと掛け合わせた期待値を発走直前まで更新しています。その成長の途中を、ありのままお見せしています。</p>
+      </section>
       <div id="ailab-status"></div>
       <section class="ailab-card ailab-navbar" id="ailab-nav" aria-label="開催場・レース">
         <select id="ailab-date" aria-label="日付"></select>
@@ -31,6 +35,31 @@ const initialJson = JSON.stringify(initial ?? null).replace(/</g, '\\u003c');
       </section>
       <section class="ailab-card" id="ailab-racecard" aria-live="polite"></section>
       <section class="ailab-card" id="ailab-field" aria-label="全頭の期待値"></section>
+      <section class="ailab-card ailab-vision" aria-label="AI ラボで目指していること">
+        <h2>AI ラボで目指していること</h2>
+        <p class="ailab-vision-lead">オッズは「みんながどう思っているか」を映す数字です。けれど、人気と実力はいつも一致するとは限りません。そのズレを、勘や印象ではなくデータで、出走する全馬について見つけ出す。それがこの AI の目標です。</p>
+        <div class="ailab-vision-grid">
+          <div class="ailab-vision-item">
+            <b>全馬を、同じ物差しで</b>
+            <p>人気馬も、注目されていない馬も。過去の走りから全出走馬の勝つ確率を計算し、オッズと比べた期待値として並べます。</p>
+          </div>
+          <div class="ailab-vision-item">
+            <b>発走直前まで、考え続ける</b>
+            <p>オッズは最後の瞬間まで動きます。AI もレース直前まで値を更新し続けます。その様子をライブでご覧いただけます。</p>
+          </div>
+          <div class="ailab-vision-item">
+            <b>中央も、南関も</b>
+            <p>性格の違う 2 つの舞台で、同じ AI を鍛えています。舞台が変わっても通用する「見る目」を目指しています。</p>
+          </div>
+        </div>
+        <h3>これから</h3>
+        <ol class="ailab-roadmap">
+          <li><b>学ぶ</b><span>レースが終わるたびに、AI の見立てと実際の結果を照らし合わせ、評価の精度を高めていきます。</span></li>
+          <li><b>確かめる</b><span>良い結果が一度出ただけでは満足しません。長い期間・多くのレースで通用するかを、厳しく検証します。</span></li>
+          <li><b>届ける</b><span>検証で十分な成果を確かめられたものから、会員の皆さまの予想に役立つ機能としてお届けすることを目指しています。</span></li>
+        </ol>
+        <p class="ailab-vision-close">AI と一緒に、競馬の新しい楽しみ方を。開発の進み具合は、この画面でそのままお伝えしていきます。</p>
+      </section>
       <section class="ailab-card ailab-about">
         <h2>この画面について</h2>
         <ul>
@@ -273,6 +302,22 @@ const initialJson = JSON.stringify(initial ?? null).replace(/</g, '\\u003c');
   .ailab th, .ailab td { border-bottom: 1px solid var(--line); padding: 4px 6px; text-align: left; white-space: nowrap; color: var(--fg); }
   .ailab th { color: var(--mute); font-weight: 600; }
   .ailab td.num { font-variant-numeric: tabular-nums; }
+  .ailab-hero { margin: 4px 0 6px; }
+  .ailab-hero-kicker { margin: 0; font-size: 12px; font-weight: 700; letter-spacing: .08em; color: var(--warn); }
+  .ailab-hero-title { margin: 4px 0; font-size: 18px; font-weight: 800; line-height: 1.5; color: var(--fg); }
+  .ailab-vision h2 { font-size: 17px; margin: 0 0 8px; color: var(--fg); }
+  .ailab-vision h3 { font-size: 15px; margin: 16px 0 8px; color: var(--fg); }
+  .ailab-vision-lead { margin: 0 0 12px; color: var(--fg); line-height: 1.8; }
+  .ailab-vision-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+  .ailab-vision-item { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--bg); }
+  .ailab-vision-item b { display: block; color: var(--acc); margin-bottom: 4px; }
+  .ailab-vision-item p { margin: 0; color: var(--mute); font-size: 13px; line-height: 1.7; }
+  .ailab-roadmap { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; counter-reset: step; }
+  .ailab-roadmap li { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; align-items: baseline; counter-increment: step; }
+  .ailab-roadmap li b { color: var(--ok); white-space: nowrap; }
+  .ailab-roadmap li b::before { content: counter(step) ". "; color: var(--mute); }
+  .ailab-roadmap li span { color: var(--mute); font-size: 13px; line-height: 1.7; }
+  .ailab-vision-close { margin: 14px 0 0; font-weight: 700; color: var(--fg); }
   .ailab-about h2 { font-size: 15px; margin: 0 0 6px; color: var(--fg); }
   .ailab-about ul { margin: 0; padding-left: 1.2em; color: var(--mute); font-size: 13px; }
   @media (max-width: 600px) {

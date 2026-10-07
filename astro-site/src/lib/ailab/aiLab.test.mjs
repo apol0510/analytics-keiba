@@ -285,3 +285,14 @@ test('画面の要素 id は重複しない（レースの選択と見出しの�
   const ids = [...read('src/components/ailab/AiLabBoard.astro').matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]);
   assert.deepEqual(ids.filter((x, i) => ids.indexOf(x) !== i), []);
 });
+
+test('画面: 開発の目的と今後（夢）を伝える。ただし成果・時期の約束や誇張はしない', () => {
+  const page = read('src/components/ailab/AiLabBoard.astro');
+  assert.match(page, /AI ラボで目指していること/);
+  assert.match(page, /<h3>これから<\/h3>/);
+  for (const step of ['学ぶ', '確かめる', '届ける']) assert.match(page, new RegExp(`<b>${step}</b>`));
+  const visible = page.replace(/<style[\s\S]*?<\/style>/g, '').replace(/<script[\s\S]*?<\/script>/g, '');
+  for (const ng of [/必ず/, /保証/, /絶対/, /儲か/, /回収率\s*\d/, /\d+\s*%\s*(以上|超)/, /年内|来月|\d{4}年\d{1,2}月/]) {
+    assert.equal(ng.test(visible), false, `誇張・約束の表現: ${ng}`);
+  }
+});
