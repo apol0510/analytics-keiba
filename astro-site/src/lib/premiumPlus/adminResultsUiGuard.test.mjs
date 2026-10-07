@@ -211,7 +211,20 @@ test('保存済み一覧: 行は textContent で組み立てる（innerHTML に�
   assert.match(body, /textContent = text/);
 });
 
-test('未来の日付は一覧で強調し、保存時は確認を挟む', () => {
+test('未来の日付は選べない・一覧で強調・保存しない', () => {
+  assert.match(PAGE, /\$\('date'\)\.max = todayJst\(\)/);
   assert.match(PAGE, /e\.date > today/);
-  assert.match(PAGE, /は未来の日付です/);
+  assert.match(PAGE, /は未来の日付のため保存できません/);
+});
+
+test('既定日は JST（toISOString の UTC 日付を既定日にしない）', () => {
+  assert.doesNotMatch(PAGE, /\$\('date'\)\.value = new Date\(\)\.toISOString/);
+});
+
+test('一覧の「編集」でフォームへ読み込み、同じ日付の保存は overwrite を明示する', () => {
+  assert.match(PAGE, /className = 'edit-row'/);
+  assert.match(PAGE, /startEdit\(e\)/);
+  assert.match(PAGE, /payload\.overwrite = true/);
+  assert.match(PAGE, /payload\.replaceDate = editing/);
+  assert.match(PAGE, /id="dateWarn"/);
 });

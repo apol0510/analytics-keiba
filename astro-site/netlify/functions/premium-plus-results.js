@@ -13,7 +13,8 @@
  *      PREMIUM_PLUS_ADMIN_SECRET
  *
  * action:
- *   upsert … 1 件追記 / 同日上書き
+ *   upsert … 1 件追記。未来日は 400、同日が既にあれば overwrite:true が無い限り 409、
+ *            replaceDate があれば元の日付を消して保存（日付の修正・1 コミット）
  *   remove … 指定日を削除（台帳に無い日付は 404・空コミットしない）
  *   list   … 台帳を読むだけ（コミットしない）。管理画面の「保存済み一覧」用
  *
@@ -23,7 +24,7 @@
 import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
 // Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
 installAirtableCallMeter({ source: 'premium-plus-results' });
-import { normalizeResult, upsertResult, removeResult, sortResults } from '../../src/lib/premiumPlusResults.js';
+import { normalizeResult, planUpsert, removeResult, sortResults } from '../../src/lib/premiumPlusResults.js';
 
 const FILE_PATH = 'astro-site/src/data/premiumPlusResults.json';
 
@@ -104,13 +105,17 @@ exports.handler = async (event) => {
       return json(404, { error: `${req.date} は台帳にありません` });
     }
 
-    // 更新
-    const nowIso = new Date().toISOString();
+    // 更新（保存可否の規則は planUpsert が単一源）
     let next, summary;
     if (action === 'upsert') {
-      next = upsertResult(arr, { ...req.entry, uploadedAt: nowIso });
-      const e = normalizeResult(req.entry);
-      summary = `${e.date} ${e.venue}${e.raceNumber || ''}R ${e.isHit ? '的中' : '不的中'}`;
+      const plan = planUpsert(arr, {
+        entry: req.entry,
+        overwrite: req.overwrite === true,
+        replaceDate: typeof req.replaceDate === 'string' ? req.replaceDate : null,
+        uploadedAt: new Date().toISOString(),
+      });
+      if (!plan.ok) return json(plan.status, { error: plan.error, ...(plan.existing ? { existing: plan.existing } : {}) });
+      ({ next, summary } = plan);
     } else {
       next = removeResult(arr, req.date);
       summary = `${req.date} 削除`;

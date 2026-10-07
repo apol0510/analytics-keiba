@@ -77,3 +77,29 @@ test('remove: 日付形式が不正なら 400', async () => {
   assert.equal(r.status, 400);
   assert.equal(puts.length, 0);
 });
+
+const entry = (date) => ({ date, venue: '船橋', raceNumber: 9, first: [1], second: [2], third: [3] });
+
+test('upsert: 未来の日付は 400 で PUT しない', async () => {
+  const r = await call({ action: 'upsert', entry: entry('2999-01-01') });
+  assert.equal(r.status, 400);
+  assert.equal(puts.length, 0);
+});
+
+test('upsert: 既存日付は overwrite なしで 409（PUT しない）、overwrite:true で PUT', async () => {
+  const r1 = await call({ action: 'upsert', entry: entry('2026-10-02') });
+  assert.equal(r1.status, 409);
+  assert.equal(r1.body.existing.date, '2026-10-02');
+  assert.equal(puts.length, 0);
+  const r2 = await call({ action: 'upsert', entry: entry('2026-10-02'), overwrite: true });
+  assert.equal(r2.status, 200);
+  assert.equal(puts.length, 1);
+});
+
+test('upsert: replaceDate で日付を直すと 1 コミットで元の日付が消える', async () => {
+  const r = await call({ action: 'upsert', entry: entry('2026-09-29'), replaceDate: '2026-10-29' });
+  assert.equal(r.status, 200);
+  assert.equal(puts.length, 1);
+  const next = JSON.parse(Buffer.from(puts[0].content, 'base64').toString('utf-8'));
+  assert.deepEqual(next.map((x) => x.date), ['2026-10-02', '2026-09-29']);
+});

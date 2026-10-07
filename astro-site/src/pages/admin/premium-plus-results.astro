@@ -9,7 +9,7 @@ import '../../styles/premiumPlusReceiptCard.css';
 <BaseLayout title="Premium Plus 結果入力（管理）">
   <div class="ppr">
     <h1>Premium Plus 結果入力</h1>
-    <p class="lead">配信した 1 鞍の結果を入力すると、git 台帳にコミット → Netlify 自動ビルド → <code>/premium-plus/</code> に反映されます（1 日 1 件・同日は上書き）。</p>
+    <p class="lead">配信した 1 鞍の結果を入力すると、git 台帳にコミット → Netlify 自動ビルド → <code>/premium-plus/</code> に反映されます（1 日 1 件）。保存済みの結果を直すときは、下の一覧の「編集」で読み込んでください。</p>
 
     <div class="card">
       <label>管理シークレット（PREMIUM_PLUS_ADMIN_SECRET・このタブのみ保持）</label>
@@ -19,7 +19,7 @@ import '../../styles/premiumPlusReceiptCard.css';
     <div class="editor">
     <div class="card form-card">
       <div class="grid">
-        <div><label>開催日</label><input type="date" id="date" /></div>
+        <div><label>開催日<small class="hint">今日より後の日付は選べません</small></label><input type="date" id="date" /><p id="dateWarn" class="date-warn" hidden></p></div>
         <div><label>サーキット</label>
           <select id="circuit">
             <option value="">自動（平日=南関 / 土日=中央）</option>
@@ -80,8 +80,12 @@ import '../../styles/premiumPlusReceiptCard.css';
         <div><label>受付番号（既定 0001・実スクショに合わせて変更可）</label><input type="text" id="receiptNo" value="0001" placeholder="0001" /></div>
         <div><label>受付時刻（任意）<small class="hint">受付日は「開催日」と同じ扱い。時刻だけ選択</small></label><input type="time" id="receiptTime" /></div>
       </div>
+      <div id="editBanner" class="edit-banner" hidden>
+        <span>✏️ 編集中: <b id="editDate"></b> の結果（保存すると上書きされます）</span>
+        <button id="cancelEdit" type="button">編集をやめる</button>
+      </div>
       <div class="actions">
-        <button id="save" class="primary">保存（追記 / 上書き）</button>
+        <button id="save" class="primary">保存（新規）</button>
         <button id="del" class="danger">この日付を削除</button>
       </div>
       <pre id="out" class="out"></pre>
@@ -188,7 +192,15 @@ import '../../styles/premiumPlusReceiptCard.css';
     .ppr .saved-row .h{min-width:9em;text-align:right;color:#93a4bd}
     .ppr .saved-row .h.hit{color:#f5c451}
     .ppr .saved-row .tag{color:#fca5a5;font-size:.75rem;font-weight:700}
-    .ppr .saved-row button{padding:6px 12px;font-weight:700;background-color:#2a1416;border-color:rgba(248,113,113,.6);color:#fca5a5}
+    .ppr .date-warn{margin:.4em 0 0;font-size:.78rem;line-height:1.45;color:#fcd34d}
+    .ppr .date-warn.bad{color:#fca5a5;font-weight:700}
+    .ppr .edit-banner{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:16px;padding:10px 12px;border:1px solid rgba(245,196,81,.6);border-radius:10px;background:rgba(245,196,81,.08);color:#f5c451;font-size:.88rem}
+    .ppr .edit-banner[hidden],.ppr .date-warn[hidden]{display:none}
+    .ppr .edit-banner button{padding:6px 12px;font-weight:700}
+    .ppr .saved-row.editing{border-color:rgba(245,196,81,.8);box-shadow:0 0 0 1px rgba(245,196,81,.5) inset}
+    .ppr .saved-row .edit-row{background-color:#111c33;border-color:rgba(96,165,250,.45);color:#cfe0ff}
+    .ppr .saved-row .edit-row:hover:not([disabled]){background-color:#1b2a47;border-color:rgba(96,165,250,.7)}
+    .ppr .saved-row .del-row{padding:6px 12px;font-weight:700;background-color:#2a1416;border-color:rgba(248,113,113,.6);color:#fca5a5}
     .ppr .saved-row button:hover:not([disabled]){background-color:#3a1a1d;border-color:rgba(248,113,113,.85)}
     @media(max-width:560px){.ppr .saved-row{flex-wrap:wrap}.ppr .saved-row .h{min-width:0;text-align:left}}
   </style>
@@ -203,8 +215,10 @@ import '../../styles/premiumPlusReceiptCard.css';
     const savedSecret = sessionStorage.getItem('pprSecret');
     if (savedSecret) $('secret').value = savedSecret;
     $('secret').addEventListener('change', () => sessionStorage.setItem('pprSecret', $('secret').value.trim()));
-    // 既定日 = 今日
-    try { $('date').value = new Date().toISOString().slice(0, 10); } catch {}
+    // 既定日 = 今日（JST）。今日より後は選べない（2026-10-07 に 10/29 を誤保存した再発防止）。
+    // ⚠️ toISOString() の UTC 日付を使わない（JST 0〜9 時に前日になる）。
+    function todayJst(){ return new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10); }
+    try { $('date').max = todayJst(); $('date').value = todayJst(); } catch {}
 
     // 的中組合せ: 1着→2着→3着 の馬番セレクト（1〜18）を生成
     ['hit1','hit2','hit3'].forEach((id, i) => {
@@ -344,8 +358,6 @@ import '../../styles/premiumPlusReceiptCard.css';
         receiptAt: receiptAt(),
       };
     }
-    // 今日（JST）YYYY-MM-DD。結果は開催後に入れるので、これより後の日付は入力ミス。
-    function todayJst(){ return new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10); }
     async function call(payload){
       const adminKey = $('secret').value.trim();
       if(!adminKey) throw new Error('管理シークレットを入力してください');
@@ -367,6 +379,7 @@ import '../../styles/premiumPlusReceiptCard.css';
     }
     function removeDate(date){
       if(!confirm(date+' の結果を台帳から削除しますか？')) return;
+      if(date === editing) setEditing(null);
       post({action:'remove', date});
     }
     // 保存済み一覧。行は textContent で組み立てる（レース名を HTML として解釈しない）。
@@ -377,17 +390,23 @@ import '../../styles/premiumPlusReceiptCard.css';
       try{
         const j = await call({action:'list'});
         const today = todayJst();
+        saved = new Map(j.entries.map((e) => [e.date, e]));
+        updateDateWarn();
         box.innerHTML = '';
         if(!j.entries.length){ box.innerHTML = '<p class="saved-empty">保存済みの結果はありません。</p>'; return; }
         for(const e of j.entries){
           const row = document.createElement('div');
           const future = e.date > today;
-          row.className = 'saved-row' + (future ? ' future' : '');
+          row.className = 'saved-row' + (future ? ' future' : '') + (e.date === editing ? ' editing' : '');
           const cell = (cls, text) => { const x = document.createElement('span'); x.className = cls; x.textContent = text; row.appendChild(x); return x; };
           cell('d', e.date);
           cell('r', `${e.venue||''}${e.raceNumber ? e.raceNumber+'R' : ''} ${e.raceName||''}`.trim() || '—');
           cell('h' + (e.isHit ? ' hit' : ''), e.isHit ? `的中 ¥${Number(e.payout||0).toLocaleString()}` : '不的中');
           if(future) cell('tag', '未来の日付');
+          const ed = document.createElement('button');
+          ed.type = 'button'; ed.className = 'edit-row'; ed.textContent = '編集';
+          ed.addEventListener('click', () => startEdit(e));
+          row.appendChild(ed);
           const b = document.createElement('button');
           b.type = 'button'; b.className = 'del-row'; b.textContent = '削除';
           b.addEventListener('click', () => removeDate(e.date));
@@ -396,12 +415,109 @@ import '../../styles/premiumPlusReceiptCard.css';
         }
       }catch(e){ box.innerHTML = ''; const p = document.createElement('p'); p.className = 'saved-empty'; p.textContent = '❌ '+e.message; box.appendChild(p); }
     }
+    // ── 編集・重複・未来日の防止 ─────────────────────────────────────
+    // 保存可否の最終判定は Function 側（planUpsert）。ここは気付かせるための前段。
+    let saved = new Map();   // 台帳の date → entry（一覧の読み込みで更新）
+    let editing = null;      // 編集中の元の日付（新規入力なら null）
+    const describe = (e) => `${e.venue||''}${e.raceNumber ? e.raceNumber+'R' : ''} ${e.isHit ? '的中 ¥'+Number(e.payout||0).toLocaleString() : '不的中'}`.trim();
+    function updateDateWarn(){
+      const w = $('dateWarn'), d = $('date').value.trim();
+      w.classList.remove('bad');
+      if (d && d > todayJst()) { w.textContent = `⛔ ${d} は未来の日付です。保存できません`; w.classList.add('bad'); w.hidden = false; return; }
+      const ex = d && d !== editing ? saved.get(d) : null;
+      if (ex) { w.textContent = `⚠️ ${d} は保存済みです（${describe(ex)}）。直す場合は一覧の「編集」を使ってください`; w.hidden = false; return; }
+      w.hidden = true;
+    }
+    function setPick(pickId, nums){
+      const c = $(pickId), list = (nums || []).map(Number);
+      c.querySelectorAll('.chip').forEach((b) => b.classList.toggle('on', list.includes(+b.dataset.n)));
+      $(c.dataset.target).value = [...list].sort((a, b) => a - b).join(',');
+    }
+    function fillForm(e){
+      $('date').value = e.date || todayJst();
+      $('circuit').value = e.circuit || '';
+      $('venue').value = e.venue || '';
+      $('raceNumber').value = e.raceNumber || '';
+      $('raceName').value = e.raceName || '';
+      setPick('pick-first', e.first); setPick('pick-second', e.second); setPick('pick-third', e.third);
+      const us = String(e.unitStake || 1000);
+      if (![...$('unitStake').options].some((o) => o.value === us)) $('unitStake').add(new Option(`各${Number(us).toLocaleString()}円`, us));
+      $('unitStake').value = us;
+      $('isHit').checked = !!e.isHit;
+      $('payout').value = e.isHit && e.payout ? String(e.payout) : '';
+      const hc = String(e.hitCombo || '').split('-');
+      ['hit1','hit2','hit3'].forEach((id, i) => { $(id).value = hc[i] || ''; });
+      $('unitPayout').value = e.unitPayout ? String(e.unitPayout) : '';
+      $('imageFile').value = e.imageFile || '';
+      $('receiptNo').value = e.receiptNo || '0001';
+      const t = String(e.receiptAt || '').match(/(\d{1,2}):(\d{2})/);
+      $('receiptTime').value = t ? `${t[1].padStart(2, '0')}:${t[2]}` : '';
+      refreshAll();
+    }
+    function setEditing(date){
+      editing = date;
+      $('editBanner').hidden = !date;
+      $('editDate').textContent = date || '';
+      $('save').textContent = date ? '変更を保存' : '保存（新規）';
+      document.querySelectorAll('.saved-row').forEach((r) => r.classList.toggle('editing', !!date && r.querySelector('.d')?.textContent === date));
+      updateDateWarn();
+    }
+    function startEdit(e){
+      fillForm(e);
+      setEditing(e.date);
+      $('out').textContent = `${e.date} の結果を読み込みました。直して「変更を保存」を押してください`;
+      document.querySelector('.form-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+    function cancelEdit(){
+      fillForm({ date: todayJst() });
+      setEditing(null);
+      $('out').textContent = '';
+    }
+    async function sendUpsert(payload){
+      const adminKey = $('secret').value.trim();
+      if(!adminKey){ $('out').textContent='管理シークレットを入力してください'; return; }
+      $('out').textContent='送信中…';
+      try{
+        let res = await fetch(API,{ method:'POST', headers:{'Content-Type':'application/json','x-admin-secret':adminKey}, body:JSON.stringify(payload) });
+        let j = await res.json().catch(() => ({}));
+        // 一覧が古くて重複に気付けなかった場合も、サーバーが 409 で止める → ここで初めて確認する
+        if (res.status === 409 && j.existing && !payload.overwrite) {
+          if (!confirm(`${j.existing.date} は既に保存されています（${describe(j.existing)}）。上書きしますか？`)) { cancelled(); return; }
+          payload = { ...payload, overwrite: true };
+          res = await fetch(API,{ method:'POST', headers:{'Content-Type':'application/json','x-admin-secret':adminKey}, body:JSON.stringify(payload) });
+          j = await res.json().catch(() => ({}));
+        }
+        if (!res.ok) { $('out').textContent = `❌ ${res.status}: ${j.error||''} ${j.detail||''}`; return; }
+        if (editing) cancelEdit();
+        $('out').textContent = `✅ 保存完了: ${j.summary}（台帳 ${j.count} 件）\nNetlify ビルド後に /premium-plus/ へ反映されます`;
+        loadList();
+      }catch(e){ $('out').textContent='❌ 通信エラー: '+e.message; }
+    }
+    const cancelled = () => { $('out').textContent = '保存を取りやめました（台帳は変わっていません）'; };
     $('save').addEventListener('click',()=>{
-      const d = $('date').value.trim();
-      if(d && d > todayJst() && !confirm(d+' は未来の日付です。このまま保存しますか？')) return;
-      post({action:'upsert', entry:entry()});
+      const e = entry(), d = e.date;
+      if (!d) { $('out').textContent = '開催日を入れてください'; return; }
+      if (d > todayJst()) { $('out').textContent = `❌ ${d} は未来の日付のため保存できません`; updateDateWarn(); return; }
+      const payload = { action: 'upsert', entry: e };
+      const ex = saved.get(d);
+      if (editing) {
+        if (d !== editing) {
+          if (!confirm(`日付を ${editing} → ${d} に直します。${editing} の結果は消えます。よろしいですか？`)) return cancelled();
+          payload.replaceDate = editing;
+          if (ex) { if (!confirm(`${d} にも既に結果があります（${describe(ex)}）。上書きしますか？`)) return cancelled(); payload.overwrite = true; }
+        } else {
+          payload.overwrite = true; // 同じ日付の編集＝その日の上書き
+        }
+      } else if (ex) {
+        if (!confirm(`${d} は既に保存されています（${describe(ex)}）。上書きしますか？\n直したいだけなら一覧の「編集」を使ってください。`)) return cancelled();
+        payload.overwrite = true;
+      }
+      sendUpsert(payload);
     });
-    $('del').addEventListener('click',()=>removeDate($('date').value.trim()));
+    $('del').addEventListener('click',()=>removeDate(editing || $('date').value.trim()));
+    $('cancelEdit').addEventListener('click', cancelEdit);
+    $('date').addEventListener('change', updateDateWarn);
+    $('date').addEventListener('input', updateDateWarn);
     $('reload').addEventListener('click', loadList);
     $('secret').addEventListener('change', loadList);
     loadList();
