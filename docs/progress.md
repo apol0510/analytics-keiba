@@ -1,4 +1,4 @@
-# 🧪 AI ラボを中央・南関の共通 UI に（全頭のオッズ・期待値・カウントダウン・2026-10-07 MK 確定 / **実装中**）
+# 🧪 AI ラボを中央・南関の共通 UI に（全頭のオッズ・期待値・カウントダウン・2026-10-07 MK 確定 / **本番反映済み**）
 
 | 項目 | 状態 |
 |---|---|
@@ -6,10 +6,11 @@
 | AK | `aiLab.js`（判定・表示の単一源・ブラウザと共通）・`aiLabStore.js`（`ak:ailab:v2:{market}`）・`aiLabServer.js`・取込 / 自動更新 API・`AiLabBoard.astro`（中央・南関共通）・マイページの入口文言 |
 | KAP | `scripts/ailab_export.py` v3（中央・南関・全頭のオッズ・期待値・dashboard と同じ値）・`stage-a-contract.md` の AI ラボ例外・D-2026-10-07a |
 | test | AK `aiLab.test.mjs` 14 件（JST 境界・カウントダウン・自動追従・前後レース・全頭・fail closed・market 分離・◎/買い目なし）・KAP `test_ailab_export.py` 6 件 |
-| branch | AK `feat/ailab-unified`（worktree `analytics-keiba-ailab`）・KAP `feat/ailab-export-odds-ev`（worktree `keiba-ai-predictor-ailab`） |
-| 残り | AK PR / CI → merge → 本番 → KAP PR / CI → merge → KAP 本 checkout を fast-forward（launchd が読む）→ 本番 /ai-lab/ で中央・南関を確認 → cleanup |
-| 再開地点 | 「残り」の先頭から |
-
+| PR | AK #769 squash `da6cf57c`（本番 publish 済み）・KAP #246 squash `572fec64`。CI green |
+| 本番 | **反映済み**: KAP の本 checkout（launchd が読む）を fast-forward・export v3 を AK が受信（南関 12 レース・HTTP 200）。本番 /ai-lab/ で 南関（既定）大井 12 レース・自動追従 1R・カウントダウン・「データ HH:MM:SS 更新」・評価前の表示、中央タブ（データ待ちの表示）・タブ往復・前後レース / 固定、スマホ 390px（横スクロールなし）を確認 |
+| 待ち | 全頭のオッズ・期待値の数値表示の本番確認は、南関の評価（発走約 10 分前）が出てから（fleet item `b7a585c5`・評価ファイルの出現で自動再開）。中央は次の開催日（土日）から |
+| rollback | AK `da6cf57c` / KAP `572fec64` を revert（KAP は本 checkout も ff）。Redis `ak:ailab:v2:*` は 180 日 TTL |
+| cleanup | worktree / branch（AK `feat/ailab-unified`・KAP `feat/ailab-export-odds-ev`）削除 |
 ---
 
 # 🏇 取得済み予想（/predictions/view/）に出走表を復元（2026-10-07 MK 指摘 / **本番反映済み**）
