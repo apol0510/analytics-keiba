@@ -19,7 +19,7 @@ const initialJson = JSON.stringify(initial ?? null).replace(/</g, '\\u003c');
     </header>
     <main class="ailab-main">
       <section class="ailab-hero" id="ailab-notice" aria-label="AI ラボとは">
-        <p class="ailab-hero-kicker">いま、AI を育てています</p>
+        <p class="ailab-hero-kicker">いまの AI 予想とは別に、次世代の AI も育てています</p>
         <p class="ailab-hero-title">人気の裏に隠れた「本当の実力」を、全馬について数字で見つけ出す。</p>
         <p class="ailab-note">開発中の AI が、出走する全馬の「勝つ確率（AI 勝率）」を計算し、単勝オッズと掛け合わせた期待値を発走直前まで更新しています。その成長の途中を、ありのままお見せしています。</p>
       </section>
@@ -56,9 +56,9 @@ const initialJson = JSON.stringify(initial ?? null).replace(/</g, '\\u003c');
         <ol class="ailab-roadmap">
           <li><b>学ぶ</b><span>レースが終わるたびに、AI の見立てと実際の結果を照らし合わせ、評価の精度を高めていきます。</span></li>
           <li><b>確かめる</b><span>良い結果が一度出ただけでは満足しません。長い期間・多くのレースで通用するかを、厳しく検証します。</span></li>
-          <li><b>届ける</b><span>検証で十分な成果を確かめられたものから、会員の皆さまの予想に役立つ機能としてお届けすることを目指しています。</span></li>
+          <li><b>届ける</b><span>検証で十分な成果を確かめられたものから、将来、ここまで一緒に歩んでくださった会員の皆さまへ、予想に役立つ機能としてお届けしたいと考えています。</span></li>
         </ol>
-        <p class="ailab-vision-close">AI と一緒に、競馬の新しい楽しみ方を。開発の進み具合は、この画面でそのままお伝えしていきます。</p>
+        <p class="ailab-vision-close">支えてくださっている会員の皆さまに、いつかこの AI をお届けできる日を目指して、開発を続けています。開発の進み具合は、この画面でそのままお伝えしていきます。</p>
       </section>
       <section class="ailab-card ailab-about">
         <h2>この画面について</h2>
@@ -187,7 +187,7 @@ const initialJson = JSON.stringify(initial ?? null).replace(/</g, '\\u003c');
       const d = raceDisplay(r, { nowMs: now(), receivedAt: view.day.receivedAt });
       if (d.message) box.appendChild(h('div', { class: d.state === 'pending' ? 'ailab-mute' : 'ailab-banner' }, d.message));
       if (!d.rows.length) return;
-      const t = h('table', {}, h('tr', {}, ['馬番', '馬名', 'AI 勝率', 'オッズ', '期待値', '印'].map((x) => h('th', {}, x))));
+      const t = h('table', {}, h('tr', {}, ['馬番', '馬名', 'AI 勝率', 'オッズ', '期待値', ''].map((x) => h('th', {}, x))));
       for (const row of d.rows) {
         t.appendChild(h('tr', {}, h('td', { class: 'num' }, String(row.n)), h('td', {}, row.name || '-'),
           h('td', { class: 'num' }, row.p), h('td', { class: 'num' }, row.odds), h('td', { class: 'num' }, row.ev),
