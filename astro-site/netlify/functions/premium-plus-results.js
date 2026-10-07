@@ -12,13 +12,18 @@
  * env: GITHUB_TOKEN / GITHUB_REPO_OWNER / GITHUB_REPO_NAME / GITHUB_BRANCH /
  *      PREMIUM_PLUS_ADMIN_SECRET
  *
+ * action:
+ *   upsert … 1 件追記 / 同日上書き
+ *   remove … 指定日を削除（台帳に無い日付は 404・空コミットしない）
+ *   list   … 台帳を読むだけ（コミットしない）。管理画面の「保存済み一覧」用
+ *
  * 判定の単一源: src/lib/premiumPlusResults.js（normalize / upsert / remove）
  */
 
 import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
 // Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
 installAirtableCallMeter({ source: 'premium-plus-results' });
-import { normalizeResult, upsertResult, removeResult } from '../../src/lib/premiumPlusResults.js';
+import { normalizeResult, upsertResult, removeResult, sortResults } from '../../src/lib/premiumPlusResults.js';
 
 const FILE_PATH = 'astro-site/src/data/premiumPlusResults.json';
 
@@ -68,8 +73,8 @@ exports.handler = async (event) => {
     const norm = normalizeResult(req.entry);
     if (!norm) return json(400, { error: '入力が不正です（日付 / 1着1頭 / 2着・3着 が必要）' });
   } else if (action === 'remove') {
-    if (!req.date) return json(400, { error: 'date が必要です' });
-  } else {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(req.date || ''))) return json(400, { error: 'date が必要です（YYYY-MM-DD）' });
+  } else if (action !== 'list') {
     return json(400, { error: `未知の action: ${action}` });
   }
 
@@ -90,6 +95,13 @@ exports.handler = async (event) => {
     } else if (getRes.status !== 404) {
       const t = await getRes.text();
       return json(502, { error: `GitHub 取得失敗: ${getRes.status}`, detail: t.slice(0, 300) });
+    }
+
+    if (action === 'list') {
+      return json(200, { success: true, action, count: arr.length, entries: sortResults(arr) });
+    }
+    if (action === 'remove' && !arr.some((e) => e && e.date === req.date)) {
+      return json(404, { error: `${req.date} は台帳にありません` });
     }
 
     // 更新
