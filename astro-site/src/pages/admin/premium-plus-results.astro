@@ -347,9 +347,9 @@ import '../../styles/premiumPlusReceiptCard.css';
     // 今日（JST）YYYY-MM-DD。結果は開催後に入れるので、これより後の日付は入力ミス。
     function todayJst(){ return new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10); }
     async function call(payload){
-      const secret = $('secret').value.trim();
-      if(!secret) throw new Error('管理シークレットを入力してください');
-      const res = await fetch(API,{ method:'POST', headers:{'Content-Type':'application/json','x-admin-secret':secret}, body:JSON.stringify(payload) });
+      const adminKey = $('secret').value.trim();
+      if(!adminKey) throw new Error('管理シークレットを入力してください');
+      const res = await fetch(API,{ method:'POST', headers:{'Content-Type':'application/json','x-admin-secret':adminKey}, body:JSON.stringify(payload) });
       const j = await res.json().catch(() => ({}));
       if(!res.ok) throw new Error(`${res.status}: ${j.error||''} ${j.detail||''}`.trim());
       return j;

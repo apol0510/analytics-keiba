@@ -9,7 +9,7 @@
  */
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-const SECRET = 'test-secret-local-only';
+const ADMIN_KEY = 'local-test-value';
 const LEDGER = [
   { date: '2026-10-29', venue: '船橋', raceNumber: null, first: [1], second: [2], third: [3], isHit: false, payout: 0 },
   { date: '2026-10-02', venue: '船橋', raceNumber: 10, first: [1], second: [2], third: [3], isHit: true, payout: 45500 },
@@ -18,9 +18,11 @@ const LEDGER = [
 let puts;
 beforeEach(() => {
   puts = [];
-  Object.assign(process.env, {
-    PREMIUM_PLUS_ADMIN_SECRET: SECRET, GITHUB_TOKEN: 't', GITHUB_REPO_OWNER: 'o', GITHUB_REPO_NAME: 'r', GITHUB_BRANCH: 'main',
-  });
+  // ダミー値のみ（本物の認証情報ではない）
+  for (const [k, v] of [
+    ['PREMIUM_PLUS_ADMIN_SECRET', ADMIN_KEY], ['GITHUB_TOKEN', 'dummy'],
+    ['GITHUB_REPO_OWNER', 'o'], ['GITHUB_REPO_NAME', 'r'], ['GITHUB_BRANCH', 'main'],
+  ]) process.env[k] = v;
   globalThis.fetch = async (url, opts = {}) => {
     if ((opts.method || 'GET') === 'PUT') {
       puts.push(JSON.parse(opts.body));
@@ -39,8 +41,8 @@ globalThis.exports = {};
 globalThis.module = { exports: globalThis.exports };
 await import('../../../netlify/functions/premium-plus-results.js');
 const { handler } = globalThis.exports;
-const call = (body, secret = SECRET) =>
-  handler({ httpMethod: 'POST', headers: { 'x-admin-secret': secret }, body: JSON.stringify(body) })
+const call = (body, key = ADMIN_KEY) =>
+  handler({ httpMethod: 'POST', headers: { 'x-admin-secret': key }, body: JSON.stringify(body) })
     .then((r) => ({ status: r.statusCode, body: JSON.parse(r.body) }));
 
 test('list: 台帳を新しい順で返し、コミットしない', async () => {
