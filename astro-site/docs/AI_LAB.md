@@ -51,6 +51,9 @@ KAP（MK の PC・launchd com.keiba.ailab-export・2 分ごと）
 - 画面データは全員共通なので、関数内で market・日付ごとに 15 秒キャッシュする。
 - 日付の既定: 今日（JST）のデータがあれば今日、無ければ直近。最初に開く market: 今日これから発走するレースがある market（早い方）→ 今日のデータがある market → 直近。`?market=` で指定可。
 - MK の PC が止まっている間は更新が止まる（画面の「データ HH:MM:SS 更新」と §2 の fail closed）。
+- ⚠️ launchd `com.keiba.ailab-export` は **`ProcessType: Standard`**（2026-10-07 変更）。`Background` だと macOS が CPU / I/O を最低優先にし、
+  2 秒で終わる送信が約 4.5 分かかっていた（生成 17:15 → 受信 17:20）。発走 10 分前に出る評価が発走直前まで画面に出ない原因だった。
+  plist は MK の PC にだけある（KAP の repo に雛形なし）。作り直すときも Standard にする。
 - 取込の秘密値は MK の PC（`~/.analytics-keiba-ops/ailab-ingest-secret`、権限 600）にだけ置き、AK 側は **その SHA-256 をコード定数 `INGEST_KEY_SHA256`（`aiLabStore.js`）に置いて照合**する（キーそのものは commit しない）。ローテーションは「PC のファイルを作り直す → 定数を差し替えて deploy」。
 - 🛑 **Netlify の env に秘密値を足さない**。Functions の env は AWS Lambda の 4KB 上限ぎりぎりで、2026-10-05 に 1 つ足しただけで全 Function の作成が失敗し、本番 deploy が 2 回止まった。
 - 旧キー `ak:ailab:v1:jra:*`（2026-10-05 版）は読まない（TTL で消える）。
