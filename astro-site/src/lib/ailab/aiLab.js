@@ -4,7 +4,8 @@
  * 正本: docs/AI_LAB.md（2026-10-07 MK 確定・2026-10-05 版を置き換え）
  *   - KAP の Stage A dashboard（127.0.0.1:8766）の UI を基準に、中央・南関を**同じ UI**で見せる
  *   - **全出走馬**の AI 勝率・単勝オッズ・期待値（AI 勝率 × 単勝オッズ）と、発走までのカウントダウン・自動追従・自動更新
- *   - 🛑 出さない: 買い目・◎・選んだ馬・推奨馬・金額・的中／不的中の競わせ方。特定の馬だけを強調しない（馬番順・色付けなし）
+ *   - 🛑 出さない: 買い目・KAP が選んだ馬・推奨・金額・的中／不的中の競わせ方。特定の馬だけを強調しない（馬番順・色付けなし）
+ *   - 各馬の期待値の横に AK の印（上位 5 頭 ◎○▲△△・2026-10-07 MK 追記）。印は取込時に aiLabAk.attachAk が添える
  *   - 🛑 欠損・不整合・更新停止は **数値を出さない（fail closed）**。推測で埋めない
  *
  * ⚠️ このファイルは Node 専用の import を持たない（ブラウザにも同梱する）。
@@ -111,33 +112,6 @@ export function sanitizeIngest(payload) {
   return { ok: true, day: { market: p.market, date: p.date, generatedAt: new Date(generatedMs).toISOString(), races } };
 }
 
-/**
- * 馬名を AK の予想データ（loadDay の venues）から添える（表示用・無ければ馬番だけ）。
- * 突き合わせは 場名 + R + 馬番。
- */
-export function attachNames(day, akVenues) {
-  const names = new Map();
-  for (const v of akVenues || []) {
-    for (const r of v.races || []) {
-      for (const h of r.horses || []) {
-        const n = Number(h?.horseNumber ?? h?.number);
-        const name = String(h?.horseName || h?.name || '').trim();
-        if (Number.isInteger(n) && name) names.set(`${v.venueName}|${Number(r.raceInfo?.raceNumber)}|${n}`, name.slice(0, 40));
-      }
-    }
-  }
-  return {
-    ...day,
-    races: day.races.map((r) => ({
-      ...r,
-      field: r.field.map((h) => {
-        const name = names.get(`${r.venueName}|${r.raceNumber}|${h.n}`);
-        return name ? { ...h, name } : h;
-      }),
-    })),
-  };
-}
-
 // ── 表示（ブラウザと共通）────────────────────────────────────────────
 
 /** ISO → JST の 'HH:MM'（ブラウザのタイムゾーンに依らない） */
@@ -234,6 +208,7 @@ export function raceDisplay(race, { nowMs, receivedAt = null } = {}) {
     p: h.p == null ? '-' : `${(h.p * 100).toFixed(1)}%`,
     odds: valuesShown ? fixed(h.odds, 1) : '-',
     ev: valuesShown && h.odds != null ? fixed(h.ev, 2) : '-',
+    mark: typeof h.mark === 'string' ? h.mark : '',
   }));
   const basis = race.oddsBasis === 'decision' ? `判断時刻（発走${DECISION_LEAD_MIN}分前）時点のオッズ`
     : race.oddsBasis === 'latest' ? '最新のオッズ' : 'オッズ';
