@@ -5,6 +5,7 @@
 import { listDates, loadDay } from './aiLabStore.js';
 import { MARKETS, jstDate } from './aiLab.js';
 import { makeRedisCmd } from '../premiumPlus/premiumPlusFunnelServer.js';
+import { loadResultIndex } from '../acquisition/acquiredResults.js';
 import { ALL_MEMBER_PLANS } from '../auth/pageAccess.js';
 
 /** 自動更新を通す ak_session のプラン（無料は通さない） */
@@ -32,13 +33,29 @@ export async function loadMarketView({ env, market, date = null, nowMs = Date.no
     const today = jstDate(nowMs);
     const chosen = want && dates.includes(want) ? want : (dates.includes(today) ? today : (dates[0] || null));
     const day = chosen ? await loadDay(redis, market, chosen) : null;
-    value = { market, dates, date: chosen, day };
+    value = { market, dates, date: chosen, day: day ? withResults(day, deps.index || safeResultIndex()) : null };
   } catch (e) {
     console.error('[ailab] load failed:', e?.message || 'unknown');
     return null;
   }
   if (!deps.redis) cache.set(key, { at: nowMs, value });
   return { ...value, serverNow: new Date(nowMs).toISOString() };
+}
+
+function safeResultIndex() {
+  try { return loadResultIndex(); } catch { return null; }
+}
+
+/** 結果アーカイブ（AK の結果・1〜3 着）を添える。払戻は添えない */
+export function withResults(day, index) {
+  if (!index || typeof index.get !== 'function') return day;
+  return {
+    ...day,
+    races: day.races.map((r) => {
+      const hit = index.get(`${day.date}|${r.venueName}|${r.raceNumber}`);
+      return hit ? { ...r, result: { first: hit.first, second: hit.second, third: hit.third ?? null } } : r;
+    }),
+  };
 }
 
 /**
