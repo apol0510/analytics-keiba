@@ -1,3 +1,17 @@
+# 🧪 AI ラボを中央・南関の共通 UI に（全頭のオッズ・期待値・カウントダウン・2026-10-07 MK 確定 / **実装中**）
+
+| 項目 | 状態 |
+|---|---|
+| 仕様 | **MK 確定**（2026-10-07・2026-10-05 版を置き換え）。正本 `astro-site/docs/AI_LAB.md`・`decisions.md` 2026-10-07・`spec.md`「AI ラボ」 |
+| AK | `aiLab.js`（判定・表示の単一源・ブラウザと共通）・`aiLabStore.js`（`ak:ailab:v2:{market}`）・`aiLabServer.js`・取込 / 自動更新 API・`AiLabBoard.astro`（中央・南関共通）・マイページの入口文言 |
+| KAP | `scripts/ailab_export.py` v3（中央・南関・全頭のオッズ・期待値・dashboard と同じ値）・`stage-a-contract.md` の AI ラボ例外・D-2026-10-07a |
+| test | AK `aiLab.test.mjs` 14 件（JST 境界・カウントダウン・自動追従・前後レース・全頭・fail closed・market 分離・◎/買い目なし）・KAP `test_ailab_export.py` 6 件 |
+| branch | AK `feat/ailab-unified`（worktree `analytics-keiba-ailab`）・KAP `feat/ailab-export-odds-ev`（worktree `keiba-ai-predictor-ailab`） |
+| 残り | AK PR / CI → merge → 本番 → KAP PR / CI → merge → KAP 本 checkout を fast-forward（launchd が読む）→ 本番 /ai-lab/ で中央・南関を確認 → cleanup |
+| 再開地点 | 「残り」の先頭から |
+
+---
+
 # 🏇 取得済み予想（/predictions/view/）に出走表を復元（2026-10-07 MK 指摘 / **本番反映済み**）
 
 | 項目 | 状態 |

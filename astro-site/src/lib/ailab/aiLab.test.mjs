@@ -1,114 +1,287 @@
-// AI ラボ（docs/AI_LAB.md・2026-10-05 MK 確定）
+// AI ラボ（docs/AI_LAB.md・2026-10-07 MK 確定）: 中央・南関を同じ UI で・全頭のオッズ・期待値・カウントダウン
+// 値はすべて合成（実オッズは使わない）
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { parseKapRaceId, sanitizeIngest, akTop5, attachAk, dayView, labStats, INGEST_SCHEMA } from './aiLab.js';
-import { saveDay, loadRecentDays, dayKey } from './aiLabStore.js';
-import { loadLabView, AILAB_POLL_PLANS } from './aiLabServer.js';
-import { buildResultIndex } from '../acquisition/acquiredResults.js';
-import { makeFakeRedis } from '../acquisition/fakeRedis.test-helper.mjs';
+import {
+  parseRaceId, sanitizeIngest, attachNames, countdown, followTarget, buildNav, raceDisplay,
+  jstHm, jstHms, jstDate, INGEST_SCHEMA, STALE_MS, MARKETS,
+} from './aiLab.js';
+import { saveDay, loadDay, listDates, dayKey } from './aiLabStore.js';
+import { loadMarketView, pickInitialMarket, AILAB_POLL_PLANS } from './aiLabServer.js';
+
+/** SET / GET / ZADD / ZREVRANGE だけの最小の Redis（保存の検証用） */
+function makeFakeRedis() {
+  const kv = new Map();
+  const z = new Map();
+  return async ([cmd, key, ...a]) => {
+    if (cmd === 'SET') { kv.set(key, a[0]); return 'OK'; }
+    if (cmd === 'GET') return kv.has(key) ? kv.get(key) : null;
+    if (cmd === 'ZADD') { const m = z.get(key) || new Map(); m.set(a[1], Number(a[0])); z.set(key, m); return 1; }
+    if (cmd === 'ZREVRANGE') {
+      const list = [...(z.get(key) || new Map()).entries()].sort((x, y) => y[1] - x[1]).map(([v]) => v);
+      return list.slice(Number(a[0]), Number(a[1]) + 1);
+    }
+    throw new Error(`unsupported ${cmd}`);
+  };
+}
 
 const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 const read = (rel) => readFileSync(`${ROOT}${rel}`, 'utf8');
 
-const payload = (extra = {}) => ({
-  schema: INGEST_SCHEMA, market: 'jra', date: '2026-10-04', model_version: 'kap-ability-v3-rf.v1',
-  races: [{ race_id: '2026-10-04-05-11', odds_basis: 'decision', observed_at: '2026-10-04T06:34:21.110Z',
-    // KAP の買い目・金額が混ざって来ても保存しない
-    picked: ['11'], stake: 300, recommended_stake: 2100,
-    field: [
-      { selection: '11', horse_number: 11, p_calibrated: 0.0373, odds: 103.0, ev: 3.84, stake: 300, picked: true },
-      { selection: '04', horse_number: 4, p_calibrated: 0.1555, odds: 1.7 },
-      { selection: '07', horse_number: 7, p_calibrated: 0.0073, odds: null },
-    ] }],
+const horse = (n, p, odds) => ({ horse_number: n, p_calibrated: p, odds, ev: odds == null || p == null ? null : Math.round(p * odds * 10000) / 10000 });
+const race = (id, start, field, extra = {}) => ({
+  race_id: id, race_start_at: start, status: 'ok', model_version: 'kap-ability-v3-rf.v1',
+  odds_basis: 'latest', odds_observed_at: '2026-10-07T10:58:00.000Z', field, ...extra,
+});
+const nankan = (extra = {}) => ({
+  schema: INGEST_SCHEMA, market: 'nankan', date: '2026-10-07', generated_at: '2026-10-07T10:59:00.000Z',
+  races: [
+    race('2026-10-07-OI-11', '2026-10-07T11:10:00.000Z', [horse(2, 0.1, 8.5), horse(1, 0.25, 5.0), horse(3, 0.05, null)]),
+    race('2026-10-07-OI-12', '2026-10-07T11:45:00.000Z', [], { status: 'no_predictions', model_version: null }),
+  ],
   ...extra,
 });
-
-test('race_id は JRA 場コードで読む（05=東京・08=京都）・範囲外は弾く', () => {
-  assert.deepEqual(parseKapRaceId('2026-10-04-05-11'), { date: '2026-10-04', venueName: '東京', venueId: 'TOK', raceNumber: 11 });
-  assert.equal(parseKapRaceId('2026-10-04-08-01').venueName, '京都');
-  assert.equal(parseKapRaceId('2026-10-04-11-01'), null);
-  assert.equal(parseKapRaceId('2026-10-04-05-13'), null);
-  assert.equal(parseKapRaceId('x'), null);
+const jra = () => ({
+  schema: INGEST_SCHEMA, market: 'jra', date: '2026-10-04', generated_at: '2026-10-04T05:30:00.000Z',
+  races: [
+    race('2026-10-04-05-11', '2026-10-04T06:45:00.000Z', [horse(1, 0.3, 3.2), horse(2, 0.2, 6.0)]),
+    race('2026-10-04-08-11', '2026-10-04T06:25:00.000Z', [horse(1, 0.15, 7.0)]),
+  ],
 });
 
-test('取込: 保存するのは全頭の AI 勝率だけ（🛑 オッズ・期待値・KAP の買い目・金額は落とす＝KAP 契約）', () => {
-  const s = sanitizeIngest(payload());
+test('race_id: 中央（場コード 2 桁）・南関（OI/KA/FU/UR）を読む・範囲外は弾く', () => {
+  assert.deepEqual(parseRaceId('2026-10-04-05-11'), { market: 'jra', date: '2026-10-04', venueCode: '05', venueName: '東京', raceNumber: 11 });
+  assert.deepEqual(parseRaceId('2026-10-07-OI-1'), { market: 'nankan', date: '2026-10-07', venueCode: 'OI', venueName: '大井', raceNumber: 1 });
+  assert.equal(parseRaceId('2026-10-07-FU-12').venueName, '船橋');
+  for (const bad of ['2026-10-04-11-01', '2026-10-04-05-13', '2026-10-07-XX-1', '2026-10-07-OI-0', '', null]) assert.equal(parseRaceId(bad), null, String(bad));
+});
+
+test('取込: 全頭の AI 勝率・オッズ・期待値を保存し、買い目・金額・判断は落とす', () => {
+  const p = nankan();
+  p.races[0].picked = ['02']; p.races[0].stake = 300;
+  p.races[0].field[0].stake = 300; p.races[0].field[0].picked = true; p.races[0].field[0].decision = 'BUY';
+  const s = sanitizeIngest(p);
   assert.equal(s.ok, true);
-  const r = s.day.races[0];
-  assert.deepEqual(Object.keys(r).sort(), ['field', 'raceId', 'raceNumber', 'venueId', 'venueName'].sort());
-  assert.deepEqual(r.field[0], { n: 11, p: 0.0373 });
-  assert.doesNotMatch(JSON.stringify(s.day), /stake|picked|odds|"ev"|103/);
-  assert.equal(sanitizeIngest(payload({ model_version: 'market-implied.v1' })).reason, 'model', 'オッズ由来の勝率は受け取らない');
-  assert.equal(sanitizeIngest(payload({ model_version: undefined })).reason, 'model');
-  for (const [bad, reason] of [[{ schema: 'x' }, 'schema'], [{ market: 'nankan' }, 'market'], [{ date: '2026/10/04' }, 'date'],
-    [{ races: [] }, 'races'], [{ races: [{ race_id: '2026-10-05-05-11', field: [] }] }, 'race_id']]) {
-    assert.equal(sanitizeIngest(payload(bad)).reason, reason, reason);
-  }
+  const r = s.day.races.find((x) => x.raceId === '2026-10-07-OI-11');
+  assert.deepEqual(r.field, [
+    { n: 1, p: 0.25, odds: 5.0, ev: 1.25 },
+    { n: 2, p: 0.1, odds: 8.5, ev: 0.85 },
+    { n: 3, p: 0.05, odds: null, ev: null },
+  ]);
+  assert.equal(r.status, 'ok');
+  assert.equal(r.oddsBasis, 'latest');
+  const text = JSON.stringify(s.day);
+  for (const banned of ['picked', 'stake', 'BUY']) assert.equal(text.includes(banned), false, banned);
+  // 評価前のレースも一覧には出す（値なし）
+  const pending = s.day.races.find((x) => x.raceId === '2026-10-07-OI-12');
+  assert.equal(pending.status, 'pending'); assert.deepEqual(pending.field, []);
 });
 
-test('AK 上位 5 頭 = 本命＋役割優先（対抗→単穴→連下最上位→連下・同役割は pt 降順）', () => {
-  const horses = [
-    { horseNumber: 6, role: '本命', pt: 190 }, { horseNumber: 3, role: '連下', pt: 157 }, { horseNumber: 18, role: '対抗', pt: 184 },
-    { horseNumber: 14, role: '連下', pt: 160 }, { horseNumber: 2, role: '単穴', pt: 165 }, { horseNumber: 8, role: '連下', pt: 151 },
-    { horseNumber: 11, role: '補欠', pt: 150 },
+test('取込: fail closed（不正なら保存しない／欠損・範囲外・食い違いは null）', () => {
+  assert.equal(sanitizeIngest({ ...nankan(), schema: 'ak_ailab_ingest.v2' }).reason, 'schema');
+  assert.equal(sanitizeIngest({ ...nankan(), market: 'kyoto' }).reason, 'market');
+  assert.equal(sanitizeIngest({ ...nankan(), generated_at: 'x' }).reason, 'generated_at');
+  const wrongMarket = nankan(); wrongMarket.races[0].race_id = '2026-10-07-05-11';
+  assert.equal(sanitizeIngest(wrongMarket).reason, 'race_id');
+  const wrongDate = nankan(); wrongDate.races[0].race_id = '2026-10-06-OI-11';
+  assert.equal(sanitizeIngest(wrongDate).reason, 'race_id');
+  const dupHorse = nankan(); dupHorse.races[0].field.push(horse(1, 0.1, 9));
+  assert.equal(sanitizeIngest(dupHorse).reason, 'horse_number');
+  const noStart = nankan(); noStart.races[0].race_start_at = null;
+  assert.equal(sanitizeIngest(noStart).reason, 'race_start_at');
+  // 値の不正は馬ごとに null（推測しない）
+  const bad = nankan();
+  bad.races[0].field = [
+    { horse_number: 1, p_calibrated: 1.5, odds: 4.0, ev: 6.0 },          // 勝率が範囲外 → p null（期待値は検算できないがオッズと値は残す）
+    { horse_number: 2, p_calibrated: 0.2, odds: 1.0, ev: 0.2 },          // オッズ 1.0 以下 → オッズ・期待値 null
+    { horse_number: 3, p_calibrated: 0.2, odds: 5.0, ev: 3.0 },          // 期待値が 勝率×オッズ と食い違う → 期待値 null
+    { horse_number: 4, p_calibrated: 0.2, odds: null, ev: 1.2 },         // オッズが無いのに期待値 → 期待値 null
   ];
-  assert.deepEqual(akTop5(horses).map((h) => [h.n, h.role]), [[6, '本命'], [18, '対抗'], [2, '単穴'], [14, '連下'], [3, '連下']]);
+  const f = sanitizeIngest(bad).day.races.find((x) => x.raceId === '2026-10-07-OI-11').field;
+  assert.deepEqual(f, [
+    { n: 1, p: null, odds: 4.0, ev: 6.0 },
+    { n: 2, p: 0.2, odds: null, ev: null },
+    { n: 3, p: 0.2, odds: 5.0, ev: null },
+    { n: 4, p: 0.2, odds: null, ev: null },
+  ]);
+  // 市場由来（オッズから作った）勝率のレースは値を出さない
+  const mi = nankan(); mi.races[0].model_version = 'market-implied.v1';
+  assert.equal(sanitizeIngest(mi).day.races.find((x) => x.raceId === '2026-10-07-OI-11').status, 'pending');
 });
 
-test('画面: AI 勝率ランキング・AK 上位 5 頭は発走後だけ・答え合わせ（1着が上位 5 頭か／勝ち馬の AI 勝率順位）', () => {
-  const day = attachAk(sanitizeIngest(payload()).day, [{ venueId: 'TOK', races: [{ raceInfo: { raceNumber: 11, startTime: '15:45' },
-    horses: [{ horseNumber: 4, role: '本命', pt: 1 }, { horseNumber: 11, role: '対抗', pt: 1 }] }] }]);
-  const before = dayView(day, { results: new Map(), nowMs: Date.parse('2026-10-04T15:00:00+09:00') });
-  assert.equal(before.races[0].akTop5, null, '発走前は AK の予想を出さない（有料予想の価値を守る）');
-  assert.deepEqual(before.races[0].ranking.map((h) => [h.n, h.rank]), [[4, 1], [11, 2], [7, 3]]);
-  const results = buildResultIndex({ umatan: [{ date: '2026-10-04', races: [{ raceNumber: 11, venue: '東京', result: { first: { number: 4 }, second: { number: 11 }, third: { number: 7 } } }] }] });
-  const after = dayView(day, { results, nowMs: Date.parse('2026-10-04T16:00:00+09:00') });
-  assert.deepEqual(after.races[0].akTop5.map((h) => h.n), [4, 11]);
-  assert.deepEqual(after.races[0].result, { order: [4, 11, 7], winnerInAkTop5: true, winnerAiRank: 1 });
-  assert.deepEqual(labStats([after]), { settled: 1, top5Hit: 1, aiRanked: 1, aiTop5: 1 });
-  assert.deepEqual(labStats([before]), { settled: 0, top5Hit: 0, aiRanked: 0, aiTop5: 0 }, '結果の無いレースは数えない');
+test('馬名は AK の予想データから添える（無ければ馬番だけ）', () => {
+  const day = sanitizeIngest(nankan()).day;
+  const named = attachNames(day, [{ venueName: '大井', races: [{ raceInfo: { raceNumber: 11 }, horses: [{ horseNumber: 1, horseName: 'テストホースA' }] }] }]);
+  const f = named.races.find((r) => r.raceId === '2026-10-07-OI-11').field;
+  assert.equal(f[0].name, 'テストホースA');
+  assert.equal(f[1].name, undefined);
 });
 
-test('保存: 1 日 1 キー・日付索引・AK 上位 5 頭は消えたら前の値を保つ／画面データ', async () => {
+test('JST 境界: 時刻表示はブラウザの TZ に依らず JST・日付をまたぐ', () => {
+  assert.equal(jstHm('2026-10-07T14:59:59.000Z'), '23:59');
+  assert.equal(jstHm('2026-10-07T15:00:00.000Z'), '00:00');
+  assert.equal(jstHms('2026-10-07T10:58:07.000Z'), '19:58:07');
+  assert.equal(jstDate(Date.parse('2026-10-07T14:59:59.999Z')), '2026-10-07');
+  assert.equal(jstDate(Date.parse('2026-10-07T15:00:00.000Z')), '2026-10-08');
+  assert.equal(jstHm('bad'), '-');
+});
+
+test('カウントダウン: 発走時刻ちょうどで「発走済み」・1 秒前は 0分01秒・時間表示', () => {
+  const start = '2026-10-07T11:10:00.000Z';
+  const t = Date.parse(start);
+  assert.deepEqual(countdown(start, t), { started: true, seconds: 0, text: '発走済み' });
+  assert.equal(countdown(start, t + 5000).text, '発走済み');
+  assert.equal(countdown(start, t - 1000).text, '0分01秒');
+  assert.equal(countdown(start, t - 999).text, '0分01秒');
+  assert.equal(countdown(start, t - 61_000).text, '1分01秒');
+  assert.equal(countdown(start, t - 3_725_000).text, '1時間2分05秒');
+  assert.equal(countdown(null, t).text, '-');
+});
+
+test('自動追従: これから発走する一番早いレース（開催場をまたぐ）→ 発走したら次 → 全部発走済みなら最後', () => {
+  const day = sanitizeIngest(jra()).day; // 京都 11R 15:25 JST・東京 11R 15:45 JST
+  const kyoto = '2026-10-04-08-11';
+  const tokyo = '2026-10-04-05-11';
+  assert.equal(followTarget(day.races, Date.parse('2026-10-04T06:00:00Z')), kyoto);
+  assert.equal(followTarget(day.races, Date.parse('2026-10-04T06:25:00Z')), tokyo, '発走時刻ちょうどで次へ');
+  assert.equal(followTarget(day.races, Date.parse('2026-10-04T07:30:00Z')), tokyo, '全部発走済みなら最後');
+  assert.equal(followTarget([], Date.now()), null);
+});
+
+test('前後レース・開催場は同じ開催場の R 番号順（dashboard と同じ）', () => {
+  const p = nankan();
+  p.races.push(race('2026-10-07-OI-10', '2026-10-07T10:35:00.000Z', [horse(1, 0.2, 4)]));
+  const day = sanitizeIngest(p).day;
+  const nav = buildNav(day.races, '2026-10-07-OI-11');
+  assert.deepEqual(nav.venues.map((v) => [v.name, v.races]), [['大井', ['2026-10-07-OI-10', '2026-10-07-OI-11', '2026-10-07-OI-12']]]);
+  assert.equal(nav.prev, '2026-10-07-OI-10');
+  assert.equal(nav.next, '2026-10-07-OI-12');
+  const j = buildNav(sanitizeIngest(jra()).day.races, '2026-10-04-05-11');
+  assert.deepEqual(j.venues.map((v) => v.name), ['東京', '京都']);
+  assert.equal(j.prev, null); assert.equal(j.next, null);
+});
+
+test('全頭表示: 馬番順・強調なし・オッズと期待値・AI 勝率（中央・南関とも同じ形）', () => {
+  for (const [p, id] of [[nankan(), '2026-10-07-OI-11'], [jra(), '2026-10-04-05-11']]) {
+    const day = sanitizeIngest(p).day;
+    const r = day.races.find((x) => x.raceId === id);
+    const now = Date.parse(r.startAt) - 5 * 60 * 1000;
+    const d = raceDisplay(r, { nowMs: now, receivedAt: new Date(now - 60_000).toISOString() });
+    // テストのため観測時刻を「今」の直前にする
+    const d2 = raceDisplay({ ...r, oddsObservedAt: new Date(now - 60_000).toISOString() }, { nowMs: now, receivedAt: new Date(now - 60_000).toISOString() });
+    assert.equal(d2.state, 'ok'); assert.equal(d2.valuesShown, true);
+    assert.deepEqual(d2.rows.map((x) => x.n), r.field.map((x) => x.n).sort((a, b) => a - b), '全頭・馬番順');
+    for (const row of d2.rows) assert.deepEqual(Object.keys(row).sort(), ['ev', 'n', 'name', 'odds', 'p'], '強調・印・買い目の項目が無い');
+    assert.ok(d2.oddsNote.includes('観測'));
+    assert.ok(d.state === 'ok');
+  }
+  const r = sanitizeIngest(nankan()).day.races[0];
+  const now = Date.parse('2026-10-07T11:00:00.000Z');
+  const d = raceDisplay(r, { nowMs: now, receivedAt: '2026-10-07T10:59:30.000Z' });
+  assert.deepEqual(d.rows.map((x) => [x.n, x.p, x.odds, x.ev]), [[1, '25.0%', '5.0', '1.25'], [2, '10.0%', '8.5', '0.85'], [3, '5.0%', '-', '-']]);
+});
+
+test('fail closed: 評価前・データ更新停止・オッズ観測が古い／無い は数値を出さない。発走後は判断時点の値を出す', () => {
+  const r = sanitizeIngest(nankan()).day.races[0]; // 発走 20:10 JST・オッズ観測 19:58 JST
+  const before = Date.parse('2026-10-07T11:00:00.000Z');
+  // 評価前（予測なし）
+  const pend = raceDisplay(sanitizeIngest(nankan()).day.races[1], { nowMs: before, receivedAt: '2026-10-07T10:59:00.000Z' });
+  assert.equal(pend.state, 'pending'); assert.deepEqual(pend.rows, []); assert.match(pend.message, /10 分前/);
+  // データの受信が古い（更新停止）
+  const stale = raceDisplay(r, { nowMs: before, receivedAt: new Date(before - STALE_MS - 1).toISOString() });
+  assert.equal(stale.valuesShown, false); assert.ok(stale.rows.every((x) => x.odds === '-' && x.ev === '-'));
+  assert.ok(stale.rows.every((x) => x.p !== '-'), 'AI 勝率は出す');
+  // オッズの観測が古い
+  const oldObs = raceDisplay(r, { nowMs: Date.parse('2026-10-07T11:09:00.000Z'), receivedAt: '2026-10-07T11:08:30.000Z' });
+  assert.equal(oldObs.valuesShown, false); assert.match(oldObs.message, /オッズの更新/);
+  // 観測時刻が無い
+  const noObs = raceDisplay({ ...r, oddsObservedAt: null }, { nowMs: before, receivedAt: '2026-10-07T10:59:30.000Z' });
+  assert.equal(noObs.valuesShown, false);
+  // 発走後: 判断時点（固定）の値なので古さで隠さない
+  const after = raceDisplay({ ...r, oddsBasis: 'decision' }, { nowMs: Date.parse('2026-10-07T12:00:00.000Z'), receivedAt: '2026-10-07T10:00:00.000Z' });
+  assert.equal(after.started, true); assert.equal(after.valuesShown, true); assert.match(after.oddsNote, /判断時刻/);
+});
+
+test('保存: market ごと・1 日 1 キー・受信時刻を添える／画面データは今日→直近／Redis 不可は null', async () => {
   const redis = makeFakeRedis();
-  const calls = [];
-  const r2 = async (args) => { calls.push(args[0]); if (args[0] === 'ZADD') { (r2.z ||= new Map()).set(args[3], Number(args[2])); return 1; }
-    if (args[0] === 'ZREVRANGE') return [...(r2.z || new Map()).entries()].sort((a, b) => b[1] - a[1]).map((x) => x[0]);
-    return redis(args.slice(0, 3)); };
-  const day = attachAk(sanitizeIngest(payload()).day, [{ venueId: 'TOK', races: [{ raceInfo: { raceNumber: 11, startTime: '15:45' }, horses: [{ horseNumber: 4, role: '本命', pt: 1 }] }] }]);
-  await saveDay(r2, day);
-  const again = await saveDay(r2, attachAk(sanitizeIngest(payload()).day, []));
-  assert.deepEqual(again.races[0].akTop5, [{ n: 4, role: '本命' }], 'AK 側の予想が消えても保存済みを保つ');
-  assert.equal(again.races[0].startTime, '15:45');
-  assert.equal(dayKey('2026-10-04'), 'ak:ailab:v1:jra:day:2026-10-04');
-  const days = await loadRecentDays(r2);
-  assert.equal(days.length, 1);
-  const view = await loadLabView({ deps: { redis: r2, index: new Map() }, nowMs: Date.parse('2026-10-04T16:00:00+09:00') });
-  assert.equal(view.days[0].races[0].akTop5[0].n, 4);
-  assert.ok(view.serverNow);
+  const now = Date.parse('2026-10-07T11:00:00.000Z');
+  await saveDay(redis, sanitizeIngest(nankan()).day, { nowMs: now });
+  await saveDay(redis, sanitizeIngest(jra()).day, { nowMs: now });
+  assert.equal(dayKey('nankan', '2026-10-07'), 'ak:ailab:v2:nankan:day:2026-10-07');
+  assert.throws(() => dayKey('kyoto', '2026-10-07'));
+  assert.deepEqual(await listDates(redis, 'nankan'), ['2026-10-07']);
+  const d = await loadDay(redis, 'nankan', '2026-10-07');
+  assert.equal(d.receivedAt, '2026-10-07T11:00:00.000Z');
+  assert.equal(await loadDay(redis, 'jra', '2026-10-07'), null, '他 market の日を混ぜない');
+  const vn = await loadMarketView({ market: 'nankan', nowMs: now, deps: { redis } });
+  assert.equal(vn.date, '2026-10-07'); assert.equal(vn.day.races.length, 2);
+  const vj = await loadMarketView({ market: 'jra', nowMs: now, deps: { redis } });
+  assert.equal(vj.date, '2026-10-04', '今日が無ければ直近');
+  assert.equal(await loadMarketView({ market: 'kyoto', deps: { redis } }), null);
+  assert.equal(await loadMarketView({ market: 'jra', deps: { redis: async () => { throw new Error('down'); } } }), null);
+  // 最初に開く market: 今日これから発走がある market
+  assert.equal(pickInitialMarket([vj, vn], { nowMs: now }), 'nankan');
+  assert.equal(pickInitialMarket([vj, vn], { nowMs: now, requested: 'jra' }), 'jra');
+  assert.equal(pickInitialMarket([vj, { ...vn, date: null, day: null }], { nowMs: now }), 'jra');
+});
+
+test('中央と南関は同じ処理・同じ画面（market で分岐しない）／片方の変更で他方を壊さない', async () => {
+  assert.deepEqual(MARKETS, ['jra', 'nankan']);
+  const redis = makeFakeRedis();
+  await saveDay(redis, sanitizeIngest(jra()).day);
+  await saveDay(redis, sanitizeIngest(nankan()).day);
+  // 南関を上書きしても中央は変わらない
+  const before = JSON.stringify(await loadDay(redis, 'jra', '2026-10-04'));
+  const n2 = nankan(); n2.races = [n2.races[0]];
+  await saveDay(redis, sanitizeIngest(n2).day);
+  assert.equal(JSON.stringify(await loadDay(redis, 'jra', '2026-10-04')), before);
+  const page = read('src/components/ailab/AiLabBoard.astro');
+  assert.match(page, /data-market="jra"/); assert.match(page, /data-market="nankan"/);
+  // 画面の描画は market で分岐しない（ラベルだけ MARKET_LABEL）
+  const script = page.slice(page.indexOf('<script>'));
+  assert.equal(/market\s*===\s*'(jra|nankan)'/.test(script), false);
+});
+
+test('画面: 全頭表・カウントダウン・自動追従・自動更新・データ鮮度。🛑 ◎・買い目・推奨・金額・的中の表示が無い', () => {
+  const page = read('src/components/ailab/AiLabBoard.astro');
+  const script = page.slice(page.indexOf('<script>'));
+  assert.match(script, /\['馬番', '馬名', 'AI 勝率', 'オッズ', '期待値'\]/);
+  assert.match(script, /raceDisplay\(r,/);
+  assert.match(script, /id: 'ailab-countdown'/);
+  assert.match(script, /followTarget\(list, now\(\)\)/);
+  assert.match(script, /POLL_MS = 30000/);
+  assert.match(script, /データ \$\{jstHms\(rec\)\} 更新/);
+  assert.match(page, /id="ailab-prev"/); assert.match(page, /id="ailab-next"/); assert.match(page, /id="ailab-follow"/);
+  const visible = page.replace(/<!--[\s\S]*?-->/g, '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  for (const banned of ['◎', '買い目', '推奨', '的中', '購入金額', 'stake', 'picked', 'akTop5']) {
+    const allowed = banned === '買い目' ? visible.replace('買い目を出したりはしていません', '') : banned === '推奨' ? visible.replace('購入をすすめるものではありません', '') : visible;
+    assert.equal(allowed.includes(banned), false, banned);
+  }
+  // 行の強調（色付け・印）をしない
+  assert.equal(/ev-plus|ev-picked|is-next|highlight/.test(page), false);
 });
 
 test('API/ページ: 取込は秘密ヘッダ必須・env 無しは 503／自動更新は ak_session の署名だけ（Airtable を呼ばない）・無料は通さない', () => {
-  const ing = read('src/pages/api/ailab/ingest.js');
-  assert.match(ing, /timingSafeEqual\(digest\(given\), Buffer\.from\(INGEST_KEY_SHA256, 'hex'\)\)/, '照合はハッシュ同士・timing-safe');
-  assert.match(read('src/lib/ailab/aiLabStore.js'), /export const INGEST_KEY_SHA256 = '[0-9a-f]{64}';/, 'コードにあるのはハッシュだけ');
-  assert.doesNotMatch(ing.replace(/\/\*\*[\s\S]*?\*\//, ''), /process\.env\.AILAB/, '🛑 env に秘密値を置かない（Lambda 4KB 上限で本番 deploy が止まった）');
-  assert.match(ing, /sanitizeIngest\(payload\)/);
+  const ingest = read('src/pages/api/ailab/ingest.js');
+  assert.match(ingest, /x-ailab-secret/); assert.match(ingest, /timingSafeEqual/);
+  assert.match(ingest, /sanitizeIngest\(payload\)/);
   const view = read('src/pages/api/ailab/view.js');
-  assert.match(view, /verifyPlanAccess\(/);
-  assert.doesNotMatch(view.replace(/\/\*\*[\s\S]*?\*\//, ''), /gatePaidPage|airtable/i);
-  assert.ok(!AILAB_POLL_PLANS.includes('free') && AILAB_POLL_PLANS.includes('premium') && AILAB_POLL_PLANS.includes('light'));
+  const viewCode = view.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.match(viewCode, /verifyPlanAccess/); assert.equal(/airtable/i.test(viewCode), false);
+  assert.match(view, /MARKETS\.includes\(market\)/);
+  assert.equal(AILAB_POLL_PLANS.includes('free'), false);
   const page = read('src/pages/ai-lab/index.astro');
-  assert.match(page, /gatePaidPage\(\{ request: Astro\.request, requiredPlan: \['standard', 'premium', 'Premium Sanrenpuku'\]/);
-  assert.match(page, /var POLL_MS = 30000;/, '30 秒ごとに自動更新');
-  assert.match(page, /setInterval\(tick, 1000\)/, '発走までのカウントダウン');
-  assert.match(page, /自動追従/);
-  assert.match(page, /<style is:global>/, 'JS で描く要素にも当たる');
-  assert.match(page, /\.lab-page \[hidden\] \{ display: none !important; \}/, 'hidden を display 指定で潰さない');
-  assert.doesNotMatch(page, /実際の購入は行っていません|実購入なし|仮想注文/, '実購入なしを訴求しない（MK）');
-  assert.doesNotMatch(page, /stake|推奨金額/, '金額は出さない');
-  assert.doesNotMatch(page.replace(/\/\*\*[\s\S]*?\*\//, ''), /オッズ|期待値|odds/, '🛑 オッズ・期待値を出さない（KAP 契約）');
-  assert.match(read('src/pages/dashboard.astro'), /href="\/ai-lab\/"/);
+  assert.match(page, /gatePaidPage\(/);
+  assert.match(page, /<AiLabBoard initial=\{initial\} market=\{market\} \/>/, '中央・南関で同じ部品');
+  const board = read('src/components/ailab/AiLabBoard.astro');
+  assert.match(board, /import \{[^}]*raceDisplay[^}]*\} from '..\/..\/lib\/ailab\/aiLab.js'/, 'ブラウザも同じ判定（単一源）を使う');
+  // aiLab.js はブラウザに同梱する: Node 専用の import を持たない
+  assert.equal(/from '(node:|\.\.\/)/.test(read('src/lib/ailab/aiLab.js')), false);
+});
+
+test('画面の要素 id は重複しない（レースの選択と見出しの取り違え防止）', () => {
+  const ids = [...read('src/components/ailab/AiLabBoard.astro').matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(ids.filter((x, i) => ids.indexOf(x) !== i), []);
 });

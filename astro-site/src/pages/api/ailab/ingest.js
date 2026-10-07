@@ -1,14 +1,15 @@
 /**
- * POST /api/ailab/ingest/ — KAP（MK の PC）から 1 日分の全頭期待値を受け取る。正本 docs/AI_LAB.md
+ * POST /api/ailab/ingest/ — KAP（MK の PC）から 1 日・1 market 分の全レース・全頭の AI 勝率・単勝オッズ・期待値を受け取る。
+ * 正本 docs/AI_LAB.md（2026-10-07 MK 確定）
  * - 認証: x-ailab-secret の SHA-256 を、コードの INGEST_KEY_SHA256（キーそのものは PC にだけある）と timing-safe に照合
  *   🛑 env に置かない: Netlify Functions の env は AWS Lambda の 4KB 上限に近く、1 つ足しただけで
  *      全 Function の作成が失敗し本番 deploy が止まった（2026-10-05 実測）
- * - 受け取るのは全頭の AI 勝率・オッズだけ。KAP の買い目・金額は保存しない（sanitizeIngest が落とす）
- * - AK の上位 5 頭は取込時に AK の予想から添える（SSR に残る直近日だけ・以降は保存済みを保つ）
+ * - 保存するのは sanitizeIngest が残した項目だけ（買い目・選んだ馬・金額・判断は落とす）
+ * - 馬名は AK の予想データ（SSR に残る直近日）から添える（表示用・無ければ馬番だけ）
  */
 export const prerender = false;
 import { timingSafeEqual, createHash } from 'node:crypto';
-import { sanitizeIngest, attachAk } from '../../../lib/ailab/aiLab.js';
+import { sanitizeIngest, attachNames } from '../../../lib/ailab/aiLab.js';
 import { saveDay, INGEST_KEY_SHA256 } from '../../../lib/ailab/aiLabStore.js';
 import { loadDay } from '../../../lib/acquisition/raceSource.js';
 import { makeRedisCmd } from '../../../lib/premiumPlus/premiumPlusFunnelServer.js';
@@ -29,10 +30,11 @@ export async function POST({ request }) {
   const s = sanitizeIngest(payload);
   if (!s.ok) return json(400, { ok: false, error: s.reason });
   let akVenues = [];
-  try { akVenues = loadDay('jra', s.day.date, { pastRaces: false }); } catch { akVenues = []; }
+  try { akVenues = loadDay(s.day.market, s.day.date, { pastRaces: false }); } catch { akVenues = []; }
   try {
-    const saved = await saveDay(redis, attachAk(s.day, akVenues));
-    return json(200, { ok: true, date: saved.date, races: saved.races.length, withAkTop5: saved.races.filter((r) => r.akTop5).length });
+    const saved = await saveDay(redis, attachNames(s.day, akVenues));
+    return json(200, { ok: true, market: saved.market, date: saved.date, races: saved.races.length,
+      evaluated: saved.races.filter((r) => r.status === 'ok').length });
   } catch (e) {
     console.error('[ailab] save failed:', e?.message || 'unknown');
     return json(503, { ok: false, error: 'save_failed' });

@@ -1,11 +1,15 @@
 /**
- * aiLabStore.js — AI ラボの保存（Upstash Redis）。正本 docs/AI_LAB.md
- *   ak:ailab:v1:jra:day:{YYYY-MM-DD}  STRING  1 日分（KAP の全頭期待値＋AK 上位 5 頭）。180 日で消える
- *   ak:ailab:v1:jra:days              ZSET    保存済みの日付（score=YYYYMMDD）
+ * aiLabStore.js — AI ラボの保存（Upstash Redis）。正本 docs/AI_LAB.md（2026-10-07）
+ *   ak:ailab:v2:{market}:day:{YYYY-MM-DD}  STRING  1 日分（全レース・全頭の AI 勝率・単勝オッズ・期待値）。180 日で消える
+ *   ak:ailab:v2:{market}:days              ZSET    保存済みの日付（score=YYYYMMDD）
+ * 旧 ak:ailab:v1:jra:*（2026-10-05 版・AI 勝率と AK 上位 5 頭）は読まない（TTL で消える）。
  */
+import { MARKETS } from './aiLab.js';
+
 const DAY_TTL = 180 * 24 * 3600;
-export const dayKey = (date) => `ak:ailab:v1:jra:day:${date}`;
-export const DAYS_KEY = 'ak:ailab:v1:jra:days';
+const assertMarket = (m) => { if (!MARKETS.includes(m)) throw new Error('unknown_market'); };
+export const dayKey = (market, date) => { assertMarket(market); return `ak:ailab:v2:${market}:day:${date}`; };
+export const daysKey = (market) => { assertMarket(market); return `ak:ailab:v2:${market}:days`; };
 /**
  * 取込キーの照合値＝MK の PC にだけある 256bit 乱数キーの SHA-256（hex）。docs/AI_LAB.md
  * 🛑 キーそのものは commit しない（ここにあるのは逆算できないハッシュだけ）。env にも置かない（Lambda 4KB 上限）。
@@ -14,29 +18,25 @@ export const DAYS_KEY = 'ak:ailab:v1:jra:days';
 export const INGEST_KEY_SHA256 = '28eb3c32cb394a7aa2149266cc2b91620d59ce1d4a17e9e802bed132c0baf708';
 const parse = (s) => { try { return JSON.parse(s); } catch { return null; } };
 
-/** 1 日分を保存する。新しいデータに AK 上位 5 頭が無いレース（AK 側の予想が既に無い等）は保存済みの値を残す */
-export async function saveDay(redis, day) {
+/** 1 日分を保存する（KAP が毎回その日の全レースを送るので、丸ごと置き換える）。受信時刻を添える */
+export async function saveDay(redis, day, { nowMs = Date.now() } = {}) {
   if (typeof redis !== 'function') throw new Error('redis_unavailable');
-  const prev = parse(await redis(['GET', dayKey(day.date)]));
-  const prevBy = new Map((prev?.races || []).map((r) => [r.raceId, r]));
-  const merged = {
-    ...day,
-    updatedAt: new Date().toISOString(),
-    races: day.races.map((r) => {
-      const p = prevBy.get(r.raceId);
-      return { ...r, akTop5: r.akTop5 || p?.akTop5 || null, startTime: r.startTime || p?.startTime || null };
-    }),
-  };
-  await redis(['SET', dayKey(day.date), JSON.stringify(merged), 'EX', String(DAY_TTL)]);
-  await redis(['ZADD', DAYS_KEY, String(Number(day.date.replace(/-/g, ''))), day.date]);
-  return merged;
+  const saved = { ...day, receivedAt: new Date(nowMs).toISOString() };
+  await redis(['SET', dayKey(day.market, day.date), JSON.stringify(saved), 'EX', String(DAY_TTL)]);
+  await redis(['ZADD', daysKey(day.market), String(Number(day.date.replace(/-/g, ''))), day.date]);
+  return saved;
 }
 
-/** 新しい順に最大 limit 日 */
-export async function loadRecentDays(redis, { limit = 14 } = {}) {
+/** 保存済みの日付（新しい順に最大 limit 日） */
+export async function listDates(redis, market, { limit = 14 } = {}) {
   if (typeof redis !== 'function') throw new Error('redis_unavailable');
-  const dates = await redis(['ZREVRANGE', DAYS_KEY, '0', String(Math.max(0, limit - 1))]);
-  if (!Array.isArray(dates) || dates.length === 0) return [];
-  const got = await redis(['MGET', ...dates.map(dayKey)]);
-  return (Array.isArray(got) ? got : []).map(parse).filter((d) => d && d.date);
+  const dates = await redis(['ZREVRANGE', daysKey(market), '0', String(Math.max(0, limit - 1))]);
+  return Array.isArray(dates) ? dates.filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(String(d))) : [];
+}
+
+/** 1 日分（無ければ null） */
+export async function loadDay(redis, market, date) {
+  if (typeof redis !== 'function') throw new Error('redis_unavailable');
+  const d = parse(await redis(['GET', dayKey(market, date)]));
+  return d && d.date === date && d.market === market ? d : null;
 }
