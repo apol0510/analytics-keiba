@@ -332,3 +332,9 @@ test('上部の見出しは「いまの AI 予想とは別に、次世代の AI 
   assert.match(board, /いまの AI 予想とは別に、次世代の AI も育てています/);
   assert.equal(/>いま、AI を育てています</.test(board), false);
 });
+
+test('会員の皆さまへ将来お届けしたい想いを伝える（約束・時期は書かない・2026-10-07 MK）', () => {
+  const board = read('src/components/ailab/AiLabBoard.astro');
+  assert.match(board, /将来、ここまで一緒に歩んでくださった会員の皆さまへ/);
+  assert.match(board, /支えてくださっている会員の皆さまに、いつかこの AI をお届けできる日を目指して/);
+});
