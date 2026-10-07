@@ -248,7 +248,7 @@ test('中央と南関は同じ処理・同じ画面（market で分岐しない�
 test('画面: 全頭表・カウントダウン・自動追従・自動更新・データ鮮度。🛑 買い目・推奨・金額・的中の表示が無い', () => {
   const page = read('src/components/ailab/AiLabBoard.astro');
   const script = page.slice(page.indexOf('<script>'));
-  assert.match(script, /\['馬番', '馬名', 'AI 勝率', 'オッズ', '期待値', '印'\]/);
+  assert.match(script, /\['馬番', '馬名', 'AI 勝率', 'オッズ', '期待値', ''\]/, '印の列は見出しなし（2026-10-07 MK）');
   assert.match(script, /raceDisplay\(r,/);
   assert.match(script, /id: 'ailab-countdown'/);
   assert.match(script, /followTarget\(list, now\(\)\)/);
@@ -325,4 +325,10 @@ test('AK の印（2026-10-07 MK 追記）: 上位 5 頭に ◎本命 ○対抗 �
   assert.match(board, /'◎本命 ○対抗 ▲単穴 △連下'/);
   assert.equal(/AK 印/.test(board), false, '「AK 印」と書かない（2026-10-07 MK）');
   assert.equal(/ev-plus|ev-picked|highlight/.test(board), false, '印の馬の行を強調しない');
+});
+
+test('上部の見出しは「いまの AI 予想とは別に、次世代の AI も育てています」（今まで AI が無かったと誤解させない・2026-10-07 MK）', () => {
+  const board = read('src/components/ailab/AiLabBoard.astro');
+  assert.match(board, /いまの AI 予想とは別に、次世代の AI も育てています/);
+  assert.equal(/>いま、AI を育てています</.test(board), false);
 });
