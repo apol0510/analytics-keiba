@@ -196,3 +196,22 @@ test('プレビューの払戻単価がコンマ付きで桁落ちしない', ()
   assert.doesNotMatch(PAGE, /unitPayout: isHit \? \(parseInt\(e\.unitPayout, 10\)/);
   assert.match(PAGE, /unitPayout: isHit \? Math\.max\(0, parseInt\(String\(e\.unitPayout \|\| ''\)\.replace/);
 });
+
+// ── 保存済み一覧からの削除（2026-10-07: 未来日 10/29 を誤保存して削除導線が無かった）────
+test('保存済み一覧: list で読み込み、行ごとに削除ボタンがある', () => {
+  assert.match(PAGE, /id="savedList"/);
+  assert.match(PAGE, /action:'list'/);
+  assert.match(PAGE, /className = 'del-row'/);
+  assert.match(PAGE, /removeDate\(e\.date\)/);
+});
+
+test('保存済み一覧: 行は textContent で組み立てる（innerHTML にレース名を入れない）', () => {
+  const body = PAGE.slice(PAGE.indexOf('async function loadList'), PAGE.indexOf("$('save').addEventListener"));
+  assert.doesNotMatch(body, /innerHTML\s*[+]?=\s*`/);
+  assert.match(body, /textContent = text/);
+});
+
+test('未来の日付は一覧で強調し、保存時は確認を挟む', () => {
+  assert.match(PAGE, /e\.date > today/);
+  assert.match(PAGE, /は未来の日付です/);
+});

@@ -95,6 +95,14 @@ import '../../styles/premiumPlusReceiptCard.css';
       </div>
     </div>
     </div>
+
+    <div class="card saved">
+      <div class="saved-head">
+        <div>保存済み一覧 <small>誤って保存した日付はここから削除できます（未来の日付は赤で表示）</small></div>
+        <button id="reload" type="button">一覧を読み込む</button>
+      </div>
+      <div id="savedList" class="saved-list"><p class="saved-empty">管理シークレットを入力して「一覧を読み込む」を押してください。</p></div>
+    </div>
   </div>
 
   <style is:global>
@@ -166,6 +174,23 @@ import '../../styles/premiumPlusReceiptCard.css';
     .ppr .preview .pp-cards{display:flex;flex-direction:column;gap:16px}
     .ppr .preview .preview-hint{color:#6f819c;font-size:.82rem;text-align:center;padding:1.5rem 0;margin:0}
     @media(max-width:560px){.ppr .grid{grid-template-columns:1fr}}
+    /* 保存済み一覧（行は JS 生成） */
+    .ppr .saved{margin-top:16px}
+    .ppr .saved-head{display:flex;align-items:center;justify-content:space-between;gap:12px;font-weight:700;margin-bottom:12px}
+    .ppr .saved-head small{display:block;font-weight:400;color:#6f819c;font-size:.72rem;margin-top:.25em}
+    .ppr .saved-head button{padding:8px 14px;font-weight:700}
+    .ppr .saved-list{display:flex;flex-direction:column;gap:6px}
+    .ppr .saved-empty{color:#6f819c;font-size:.85rem;margin:0}
+    .ppr .saved-row{display:flex;align-items:center;gap:12px;padding:8px 10px;border:1px solid rgba(148,163,184,.14);border-radius:8px;background:#0b1120;font-size:.88rem}
+    .ppr .saved-row.future{border-color:rgba(248,113,113,.7);background:#2a1416}
+    .ppr .saved-row .d{font-weight:700;min-width:7.5em}
+    .ppr .saved-row .r{flex:1;color:#cfe0ff}
+    .ppr .saved-row .h{min-width:9em;text-align:right;color:#93a4bd}
+    .ppr .saved-row .h.hit{color:#f5c451}
+    .ppr .saved-row .tag{color:#fca5a5;font-size:.75rem;font-weight:700}
+    .ppr .saved-row button{padding:6px 12px;font-weight:700;background-color:#2a1416;border-color:rgba(248,113,113,.6);color:#fca5a5}
+    .ppr .saved-row button:hover:not([disabled]){background-color:#3a1a1d;border-color:rgba(248,113,113,.85)}
+    @media(max-width:560px){.ppr .saved-row{flex-wrap:wrap}.ppr .saved-row .h{min-width:0;text-align:left}}
   </style>
 
   <script>
@@ -319,6 +344,16 @@ import '../../styles/premiumPlusReceiptCard.css';
         receiptAt: receiptAt(),
       };
     }
+    // 今日（JST）YYYY-MM-DD。結果は開催後に入れるので、これより後の日付は入力ミス。
+    function todayJst(){ return new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10); }
+    async function call(payload){
+      const adminKey = $('secret').value.trim();
+      if(!adminKey) throw new Error('管理シークレットを入力してください');
+      const res = await fetch(API,{ method:'POST', headers:{'Content-Type':'application/json','x-admin-secret':adminKey}, body:JSON.stringify(payload) });
+      const j = await res.json().catch(() => ({}));
+      if(!res.ok) throw new Error(`${res.status}: ${j.error||''} ${j.detail||''}`.trim());
+      return j;
+    }
     async function post(payload){
       const secret = $('secret').value.trim();
       if(!secret){ $('out').textContent='管理シークレットを入力してください'; return; }
@@ -327,10 +362,49 @@ import '../../styles/premiumPlusReceiptCard.css';
         const res = await fetch(API,{ method:'POST', headers:{'Content-Type':'application/json','x-admin-secret':secret}, body:JSON.stringify(payload) });
         const j = await res.json();
         $('out').textContent = res.ok ? `✅ ${j.action} 完了: ${j.summary}（台帳 ${j.count} 件）\nNetlify ビルド後に /premium-plus/ へ反映されます` : `❌ ${res.status}: ${j.error||''} ${j.detail||''}`;
+        if(res.ok) loadList();
       }catch(e){ $('out').textContent='❌ 通信エラー: '+e.message; }
     }
-    $('save').addEventListener('click',()=>post({action:'upsert', entry:entry()}));
-    $('del').addEventListener('click',()=>{ if(confirm($('date').value+' を削除しますか？')) post({action:'remove', date:$('date').value.trim()}); });
+    function removeDate(date){
+      if(!confirm(date+' の結果を台帳から削除しますか？')) return;
+      post({action:'remove', date});
+    }
+    // 保存済み一覧。行は textContent で組み立てる（レース名を HTML として解釈しない）。
+    async function loadList(){
+      const box = $('savedList');
+      if(!$('secret').value.trim()) return;
+      box.innerHTML = '<p class="saved-empty">読み込み中…</p>';
+      try{
+        const j = await call({action:'list'});
+        const today = todayJst();
+        box.innerHTML = '';
+        if(!j.entries.length){ box.innerHTML = '<p class="saved-empty">保存済みの結果はありません。</p>'; return; }
+        for(const e of j.entries){
+          const row = document.createElement('div');
+          const future = e.date > today;
+          row.className = 'saved-row' + (future ? ' future' : '');
+          const cell = (cls, text) => { const x = document.createElement('span'); x.className = cls; x.textContent = text; row.appendChild(x); return x; };
+          cell('d', e.date);
+          cell('r', `${e.venue||''}${e.raceNumber ? e.raceNumber+'R' : ''} ${e.raceName||''}`.trim() || '—');
+          cell('h' + (e.isHit ? ' hit' : ''), e.isHit ? `的中 ¥${Number(e.payout||0).toLocaleString()}` : '不的中');
+          if(future) cell('tag', '未来の日付');
+          const b = document.createElement('button');
+          b.type = 'button'; b.className = 'del-row'; b.textContent = '削除';
+          b.addEventListener('click', () => removeDate(e.date));
+          row.appendChild(b);
+          box.appendChild(row);
+        }
+      }catch(e){ box.innerHTML = ''; const p = document.createElement('p'); p.className = 'saved-empty'; p.textContent = '❌ '+e.message; box.appendChild(p); }
+    }
+    $('save').addEventListener('click',()=>{
+      const d = $('date').value.trim();
+      if(d && d > todayJst() && !confirm(d+' は未来の日付です。このまま保存しますか？')) return;
+      post({action:'upsert', entry:entry()});
+    });
+    $('del').addEventListener('click',()=>removeDate($('date').value.trim()));
+    $('reload').addEventListener('click', loadList);
+    $('secret').addEventListener('change', loadList);
+    loadList();
     refreshAll();
   </script>
 </BaseLayout>
