@@ -1,0 +1,284 @@
+---
+/**
+ * AiLabBoard — AI ラボの画面（中央・南関で共通・market はデータで切り替える）。正本 docs/AI_LAB.md（2026-10-07）
+ * KAP の Stage A dashboard（127.0.0.1:8766）の UI（ダーク基調・カード・開催場/レース/前後/自動追従・カウントダウン）を基準にする。
+ * 判定・表示の規則はすべて src/lib/ailab/aiLab.js（サーバーと同じ単一源）。
+ */
+interface Props { initial: any; market: 'jra' | 'nankan' }
+const { initial, market } = Astro.props;
+const initialJson = JSON.stringify(initial ?? null).replace(/</g, '\\u003c');
+---
+  <div class="ailab" id="ailab" data-market={market}>
+    <header class="ailab-head">
+      <h1>AI ラボ <span class="ailab-badge">開発中・試験運用</span></h1>
+      <div class="ailab-tabs" role="tablist" aria-label="中央・南関">
+        <button type="button" role="tab" data-market="jra">中央（JRA）</button>
+        <button type="button" role="tab" data-market="nankan">南関</button>
+      </div>
+      <span class="ailab-live" id="ailab-live" data-state="connecting"><i aria-hidden="true"></i><span id="ailab-live-text">接続中</span></span>
+    </header>
+    <main class="ailab-main">
+      <p class="ailab-note" id="ailab-notice">開発中の AI が、出走する全馬の「勝つ確率（AI 勝率）」を計算し、単勝オッズと掛け合わせた期待値を発走直前まで更新しています。</p>
+      <div id="ailab-status"></div>
+      <section class="ailab-card ailab-navbar" id="ailab-nav" aria-label="開催場・レース">
+        <select id="ailab-date" aria-label="日付"></select>
+        <select id="ailab-venue" aria-label="開催場"></select>
+        <select id="ailab-race" aria-label="レース"></select>
+        <button type="button" id="ailab-prev">◀ 前レース</button>
+        <button type="button" id="ailab-next">次レース ▶</button>
+        <label class="ailab-follow" id="ailab-follow-label"><input type="checkbox" id="ailab-follow" checked /><span id="ailab-follow-text">自動追従 ON（次のレースへ自動で移る）</span></label>
+        <span class="ailab-mute" id="ailab-empty" hidden>この日のレースはまだありません</span>
+      </section>
+      <section class="ailab-card" id="ailab-racecard" aria-live="polite"></section>
+      <section class="ailab-card" id="ailab-field" aria-label="全頭の期待値"></section>
+      <section class="ailab-card ailab-about">
+        <h2>この画面について</h2>
+        <ul>
+          <li>出走する<strong>全馬</strong>を同じ基準で評価しています（特定の馬を選んだり、買い目を出したりはしていません）。</li>
+          <li>期待値 = AI 勝率 × 単勝オッズ。オッズの変化に合わせて、発走直前まで自動で更新されます。</li>
+          <li>AI の評価は発走の約 10 分前に出ます。研究・開発中の数値のため、馬券の購入をすすめるものではありません。</li>
+        </ul>
+      </section>
+      <noscript><p class="ailab-note">この画面は JavaScript で自動更新します。</p></noscript>
+    </main>
+  </div>
+  <script is:inline id="ailab-initial" type="application/json" set:html={initialJson}></script>
+  <script>
+    import { MARKET_LABEL, buildNav, countdown, followTarget, jstHm, jstHms, raceDisplay, DECISION_LEAD_MIN } from '../../lib/ailab/aiLab.js';
+
+    const POLL_MS = 30000;
+    const $ = (id) => document.getElementById(id);
+    const h = (tag, attrs, ...kids) => {
+      const e = document.createElement(tag);
+      for (const [k, v] of Object.entries(attrs || {})) { if (v == null) continue; if (k === 'class') e.className = v; else e.setAttribute(k, v); }
+      for (const k of kids.flat()) { if (k == null) continue; e.appendChild(typeof k === 'object' ? k : document.createTextNode(String(k))); }
+      return e;
+    };
+    let view = null;
+    try { view = JSON.parse($('ailab-initial').textContent); } catch { view = null; }
+    const ST = { market: $('ailab').dataset.market, date: null, raceId: null, follow: true };
+    let skew = 0;
+    const now = () => Date.now() + skew;
+    const races = () => (view && view.day && Array.isArray(view.day.races) ? view.day.races : []);
+
+    function readUrl() {
+      const p = new URLSearchParams(location.search);
+      if (p.get('market')) ST.market = p.get('market');
+      ST.date = p.get('date');
+      ST.raceId = p.get('race');
+      ST.follow = !ST.raceId;
+    }
+    function syncUrl() {
+      const q = new URLSearchParams();
+      q.set('market', ST.market);
+      if (ST.date) q.set('date', ST.date);
+      if (!ST.follow && ST.raceId) q.set('race', ST.raceId);
+      const url = `?${q}`;
+      if (url !== location.search) history.replaceState(null, '', url);
+    }
+    function setLive(state, text) { const l = $('ailab-live'); l.dataset.state = state; $('ailab-live-text').textContent = text; }
+
+    /** 表示するレース: 自動追従 ON は followTarget、OFF は固定（その日に無ければ追従へ戻す） */
+    function currentRaceId() {
+      const list = races();
+      if (!ST.follow && list.some((r) => r.raceId === ST.raceId)) return ST.raceId;
+      return followTarget(list, now());
+    }
+
+    function renderTabs() {
+      for (const b of document.querySelectorAll('.ailab-tabs button')) {
+        const on = b.dataset.market === ST.market;
+        b.classList.toggle('on', on); b.setAttribute('aria-selected', on ? 'true' : 'false');
+      }
+    }
+
+    let navSig = '';
+    function renderNav(cur) {
+      const list = races();
+      const has = list.length > 0;
+      for (const id of ['ailab-venue', 'ailab-race', 'ailab-prev', 'ailab-next', 'ailab-follow-label']) $(id).hidden = !has;
+      $('ailab-empty').hidden = has;
+      const dsel = $('ailab-date');
+      const dates = (view && view.dates) || [];
+      dsel.hidden = dates.length < 2;
+      const dsig = dates.join(',') + '|' + (view && view.date);
+      if (dsel.dataset.sig !== dsig && document.activeElement !== dsel) {
+        dsel.dataset.sig = dsig; dsel.textContent = '';
+        for (const d of dates) dsel.appendChild(h('option', { value: d }, d));
+        if (view && view.date) dsel.value = view.date;
+      }
+      if (!has) return;
+      const nav = buildNav(list, cur);
+      const byId = new Map(list.map((r) => [r.raceId, r]));
+      const curRace = byId.get(cur);
+      const v0 = nav.venues.find((v) => curRace && v.code === curRace.venueCode) || nav.venues[0];
+      const label = (r) => `${r.raceNumber}R ${jstHm(r.startAt)}${countdown(r.startAt, now()).started ? ' 発走済' : ''}`;
+      const sig = JSON.stringify([nav.venues.map((v) => v.code), v0.code, v0.races.map((id) => label(byId.get(id)))]);
+      const vsel = $('ailab-venue');
+      const rsel = $('ailab-race');
+      if (sig !== navSig && document.activeElement !== vsel && document.activeElement !== rsel) {
+        navSig = sig;
+        vsel.textContent = ''; for (const v of nav.venues) vsel.appendChild(h('option', { value: v.code }, v.name));
+        rsel.textContent = ''; for (const id of v0.races) rsel.appendChild(h('option', { value: id }, label(byId.get(id))));
+      }
+      if (document.activeElement !== vsel) vsel.value = v0.code;
+      if (document.activeElement !== rsel && cur) rsel.value = cur;
+      vsel.onchange = () => {
+        const v = nav.venues.find((x) => x.code === vsel.value); if (!v) return;
+        go(v.races.find((id) => !countdown(byId.get(id).startAt, now()).started) || v.races[v.races.length - 1]);
+      };
+      $('ailab-prev').disabled = !nav.prev; $('ailab-prev').onclick = () => go(nav.prev);
+      $('ailab-next').disabled = !nav.next; $('ailab-next').onclick = () => go(nav.next);
+      $('ailab-follow').checked = ST.follow;
+      $('ailab-follow-label').classList.toggle('on', ST.follow);
+      $('ailab-follow-text').textContent = ST.follow ? '自動追従 ON（次のレースへ自動で移る）' : '自動追従 OFF（このレースに固定）';
+    }
+
+    function renderRace(cur) {
+      const box = $('ailab-racecard');
+      box.textContent = '';
+      const r = races().find((x) => x.raceId === cur);
+      if (!r) {
+        box.appendChild(h('div', { class: 'ailab-mute' }, view && view.date
+          ? `${MARKET_LABEL[ST.market]}のこの日のレースはまだありません`
+          : `${MARKET_LABEL[ST.market]}のデータはまだありません。開催日に、レース前から順に表示されます。`));
+        return;
+      }
+      box.appendChild(h('div', { class: 'ailab-mute' }, `${MARKET_LABEL[ST.market]} / ${view.date} / AI の評価は発走${DECISION_LEAD_MIN}分前に確定`));
+      box.appendChild(h('div', { class: 'ailab-big' }, `${r.venueName} ${r.raceNumber}R`));
+      box.appendChild(h('div', {}, '発走まで ', h('b', { id: 'ailab-countdown' }, countdown(r.startAt, now()).text), `（発走 ${jstHm(r.startAt)}）`));
+    }
+
+    function renderField(cur) {
+      const box = $('ailab-field');
+      box.textContent = '';
+      const r = races().find((x) => x.raceId === cur);
+      box.appendChild(h('h2', { class: 'ailab-sec' }, '全頭の期待値 ', h('span', { class: 'ailab-note' }, '（AI 勝率 × 単勝オッズ）')));
+      if (!r) { box.appendChild(h('div', { class: 'ailab-mute' }, '-')); return; }
+      const d = raceDisplay(r, { nowMs: now(), receivedAt: view.day.receivedAt });
+      if (d.message) box.appendChild(h('div', { class: d.state === 'pending' ? 'ailab-mute' : 'ailab-banner' }, d.message));
+      if (!d.rows.length) return;
+      const t = h('table', {}, h('tr', {}, ['馬番', '馬名', 'AI 勝率', 'オッズ', '期待値'].map((x) => h('th', {}, x))));
+      for (const row of d.rows) {
+        t.appendChild(h('tr', {}, h('td', { class: 'num' }, String(row.n)), h('td', {}, row.name || '-'),
+          h('td', { class: 'num' }, row.p), h('td', { class: 'num' }, row.odds), h('td', { class: 'num' }, row.ev)));
+      }
+      box.appendChild(h('div', { class: 'ailab-scroll' }, t));
+      if (d.oddsNote) box.appendChild(h('div', { class: 'ailab-mute' }, d.oddsNote));
+    }
+
+    function renderStatus() {
+      const st = $('ailab-status');
+      st.textContent = '';
+      const rec = view && view.day && view.day.receivedAt;
+      if (!view) { setLive('error', '読み込めません'); return; }
+      if (rec) setLive(Date.now() - Date.parse(rec) + skew > 10 * 60 * 1000 ? 'stale' : 'live', `データ ${jstHms(rec)} 更新`);
+      else setLive('idle', 'データ待ち');
+    }
+
+    let shown = null;
+    function render() {
+      renderTabs();
+      const cur = currentRaceId();
+      shown = cur;
+      renderStatus();
+      renderNav(cur);
+      renderRace(cur);
+      renderField(cur);
+    }
+
+    function go(id) { if (!id) return; ST.raceId = id; ST.follow = false; syncUrl(); render(); }
+    $('ailab-follow').onchange = () => { ST.follow = $('ailab-follow').checked; if (!ST.follow) ST.raceId = shown; syncUrl(); render(); };
+    $('ailab-race').onchange = () => go($('ailab-race').value);
+    $('ailab-date').onchange = () => { ST.date = $('ailab-date').value; ST.follow = true; ST.raceId = null; syncUrl(); load(); };
+    for (const b of document.querySelectorAll('.ailab-tabs button')) {
+      b.onclick = () => { if (ST.market === b.dataset.market) return; ST.market = b.dataset.market; ST.date = null; ST.raceId = null; ST.follow = true; navSig = ''; syncUrl(); view = null; render(); load(); };
+    }
+
+    let gen = 0;
+    async function load() {
+      const my = ++gen;
+      const q = new URLSearchParams({ market: ST.market });
+      if (ST.date) q.set('date', ST.date);
+      try {
+        const res = await fetch(`/api/ailab/view/?${q}`, { credentials: 'include', cache: 'no-store' });
+        if (my !== gen) return;
+        if (res.status === 401) { setLive('error', 'ログインの有効期限が切れました（再読み込みしてください）'); return; }
+        const d = await res.json();
+        if (!d.ok) throw new Error(d.error || 'error');
+        if (d.serverNow) skew = Date.parse(d.serverNow) - Date.now();
+        view = d;
+        render();
+      } catch {
+        if (my === gen) setLive('error', '更新できませんでした（自動で再試行します）');
+      }
+    }
+
+    // 1 秒ごと: カウントダウンと、自動追従の切替（発走時刻を過ぎたら次のレースへ）
+    setInterval(() => {
+      if (ST.follow && currentRaceId() !== shown) { render(); return; }
+      const r = races().find((x) => x.raceId === shown);
+      const el = $('ailab-countdown');
+      if (r && el) el.textContent = countdown(r.startAt, now()).text;
+    }, 1000);
+    setInterval(() => { if (!document.hidden) load(); }, POLL_MS);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) load(); });
+
+    readUrl();
+    if (view && view.serverNow) skew = Date.parse(view.serverNow) - Date.now();
+    if (view && view.market !== ST.market) { view = null; load(); }
+    syncUrl();
+    render();
+  </script>
+
+<style is:global>
+  .ailab {
+    --bg: #12151b; --card: #1b2029; --fg: #e8ebf1; --mute: #98a2b3; --line: #2c3340;
+    --acc: #8ea2ff; --ok: #5fd08a; --warn: #f0b54a; --bad: #ff8a80; --badb: #3a1716; --waitb: #1b2240;
+    background: var(--bg); color: var(--fg);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
+    min-height: 70vh;
+  }
+  .ailab *, .ailab *::before, .ailab *::after { box-sizing: border-box; }
+  .ailab [hidden] { display: none !important; }
+  .ailab-head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 12px 16px;
+    border-bottom: 1px solid var(--line); background: var(--card); position: sticky; top: 0; z-index: 2; }
+  .ailab-head h1 { font-size: 16px; margin: 0; color: var(--fg); }
+  .ailab-badge { font-size: 12px; font-weight: 600; color: var(--warn); border: 1px solid var(--warn); border-radius: 999px; padding: 1px 8px; margin-left: 6px; }
+  .ailab-tabs { display: flex; gap: 6px; }
+  .ailab-tabs button { border: 1px solid var(--line); background: var(--card); color: var(--fg); padding: 6px 14px;
+    border-radius: 999px; cursor: pointer; font-size: 14px; }
+  .ailab-tabs button.on { background: var(--acc); color: #0b1020; border-color: var(--acc); font-weight: 700; }
+  .ailab-live { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--mute); margin-left: auto; }
+  .ailab-live i { width: 8px; height: 8px; border-radius: 50%; background: var(--mute); }
+  .ailab-live[data-state="live"] i { background: var(--ok); }
+  .ailab-live[data-state="stale"] i, .ailab-live[data-state="idle"] i { background: var(--warn); }
+  .ailab-live[data-state="error"] i { background: var(--bad); }
+  .ailab-main { padding: 12px 16px 40px; max-width: 1280px; margin: 0 auto; }
+  .ailab-card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin: 10px 0; }
+  .ailab-navbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .ailab-navbar select { font-size: 14px; padding: 4px; background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; max-width: 100%; }
+  .ailab-navbar button { border: 1px solid var(--line); background: var(--card); color: var(--fg); padding: 5px 12px;
+    border-radius: 8px; cursor: pointer; font-size: 14px; }
+  .ailab-navbar button:disabled { opacity: .4; cursor: default; }
+  .ailab-follow { display: inline-flex; gap: 4px; align-items: center; cursor: pointer; }
+  .ailab-follow.on { color: var(--ok); font-weight: 700; }
+  .ailab-mute { color: var(--mute); }
+  .ailab-note { font-size: 12px; color: var(--mute); margin: 4px 0; }
+  .ailab-big { font-size: 28px; font-weight: 700; }
+  .ailab-sec { font-size: 15px; margin: 0 0 6px; color: var(--fg); }
+  .ailab-banner { padding: 10px 14px; border-radius: 10px; background: var(--badb); color: var(--bad); margin: 6px 0 10px; }
+  .ailab-scroll { overflow-x: auto; }
+  .ailab table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  .ailab th, .ailab td { border-bottom: 1px solid var(--line); padding: 4px 6px; text-align: left; white-space: nowrap; color: var(--fg); }
+  .ailab th { color: var(--mute); font-weight: 600; }
+  .ailab td.num { font-variant-numeric: tabular-nums; }
+  .ailab-about h2 { font-size: 15px; margin: 0 0 6px; color: var(--fg); }
+  .ailab-about ul { margin: 0; padding-left: 1.2em; color: var(--mute); font-size: 13px; }
+  @media (max-width: 600px) {
+    .ailab-head { padding: 10px 12px; }
+    .ailab-live { margin-left: 0; width: 100%; }
+    .ailab-main { padding: 8px 10px 32px; }
+    .ailab-big { font-size: 22px; }
+  }
+</style>
