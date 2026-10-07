@@ -248,7 +248,7 @@ test('中央と南関は同じ処理・同じ画面（market で分岐しない�
 test('画面: 全頭表・カウントダウン・自動追従・自動更新・データ鮮度。🛑 買い目・推奨・金額・的中の表示が無い', () => {
   const page = read('src/components/ailab/AiLabBoard.astro');
   const script = page.slice(page.indexOf('<script>'));
-  assert.match(script, /\['馬番', '馬名', 'AI 勝率', 'オッズ', '期待値', 'AK 印'\]/);
+  assert.match(script, /\['馬番', '馬名', 'AI 勝率', 'オッズ', '期待値', '印'\]/);
   assert.match(script, /raceDisplay\(r,/);
   assert.match(script, /id: 'ailab-countdown'/);
   assert.match(script, /followTarget\(list, now\(\)\)/);
@@ -322,6 +322,7 @@ test('AK の印（2026-10-07 MK 追記）: 上位 5 頭に ◎本命 ○対抗 �
   assert.deepEqual(d.rows.map((x) => x.mark), ['', '◎', '▲', '○', '△', '△', '', '']);
   assert.equal(d.rows.length, 8, '全頭');
   const board = read('src/components/ailab/AiLabBoard.astro');
-  assert.match(board, /AK 印: ◎本命 ○対抗 ▲単穴 △連下/);
+  assert.match(board, /'◎本命 ○対抗 ▲単穴 △連下'/);
+  assert.equal(/AK 印/.test(board), false, '「AK 印」と書かない（2026-10-07 MK）');
   assert.equal(/ev-plus|ev-picked|highlight/.test(board), false, '印の馬の行を強調しない');
 });
