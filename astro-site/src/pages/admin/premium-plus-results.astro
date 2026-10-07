@@ -355,12 +355,15 @@ import '../../styles/premiumPlusReceiptCard.css';
       return j;
     }
     async function post(payload){
+      const secret = $('secret').value.trim();
+      if(!secret){ $('out').textContent='管理シークレットを入力してください'; return; }
       $('out').textContent='送信中…';
       try{
-        const j = await call(payload);
-        $('out').textContent = `✅ ${j.action} 完了: ${j.summary}（台帳 ${j.count} 件）\nNetlify ビルド後に /premium-plus/ へ反映されます`;
-        loadList();
-      }catch(e){ $('out').textContent='❌ '+e.message; }
+        const res = await fetch(API,{ method:'POST', headers:{'Content-Type':'application/json','x-admin-secret':secret}, body:JSON.stringify(payload) });
+        const j = await res.json();
+        $('out').textContent = res.ok ? `✅ ${j.action} 完了: ${j.summary}（台帳 ${j.count} 件）\nNetlify ビルド後に /premium-plus/ へ反映されます` : `❌ ${res.status}: ${j.error||''} ${j.detail||''}`;
+        if(res.ok) loadList();
+      }catch(e){ $('out').textContent='❌ 通信エラー: '+e.message; }
     }
     function removeDate(date){
       if(!confirm(date+' の結果を台帳から削除しますか？')) return;
