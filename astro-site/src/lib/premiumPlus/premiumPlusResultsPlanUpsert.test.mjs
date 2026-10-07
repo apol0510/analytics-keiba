@@ -65,3 +65,11 @@ test('編集元の日付が台帳に無ければ 409（古い画面からの保�
 test('入力不正は 400', () => {
   assert.equal(planUpsert(LEDGER, { entry: { date: '2026-10-05' }, today: TODAY }).status, 400);
 });
+
+test('不的中でも結果（着順）は保持し、払戻は 0 にする', async () => {
+  const { normalizeResult } = await import('../premiumPlusResults.js');
+  const n = normalizeResult(e('2026-09-28', { isHit: false, hitCombo: '10-8-7', payout: '' }));
+  assert.equal(n.isHit, false);
+  assert.equal(n.hitCombo, '10-8-7');
+  assert.equal(n.payout, 0);
+});

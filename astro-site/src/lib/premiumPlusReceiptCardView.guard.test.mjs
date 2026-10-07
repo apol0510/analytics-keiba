@@ -105,7 +105,7 @@ test('ドリフト検知: 本番コンポーネントも矢印表記の変数を
   const component = read('../components/premium-plus/PremiumPlusReceiptCardV2.astro');
   assert.ok(component.includes("wArr.join('→')"), 'コンポーネントに wDisp（矢印表記）が無い');
   assert.ok(component.includes("wArr.map(pad2).join('→')"), 'コンポーネントに wDispPad（ゼロ埋め矢印）が無い');
-  assert.ok(component.includes('{isHit ? wDisp'), '結果 行が矢印表記を使っていない');
+  assert.ok(component.includes("<b>{wDisp || '—'}</b>"), '結果 行が矢印表記を使っていない');
   assert.ok(component.includes('<span>{wDispPad}</span>'), '払戻単価 行がゼロ埋め矢印を使っていない');
 });
 
@@ -462,5 +462,40 @@ test('JRA: 払戻金額は 的中=payout / 不的中=0（否定表現ではな�
     assert.ok(hits.length >= 2,
       `${label}: 「isHit ? payout : 0」が ${hits.length} 箇所しかない（合計行と明細行の両方で使うべき）`);
     assert.ok(/class="rc red"/.test(jra), `${label}: 払戻金額の赤字指定（.rc.red）が無い`);
+  }
+});
+
+// ── 2026-10-07: 不的中でも結果（着順）を出す・払戻は出さない・SPAT4 レース名を少し太く ──
+const MISS = { date: '2026-09-28', circuit: 'nankan', service: 'spat4', venue: '船橋', raceNumber: 12, first: [10], second: [5, 8, 12], third: [5, 6, 8, 9, 12], points: 12, unitStake: 1000, stake: 12000, isHit: false, payout: 0, hitCombo: '10-8-7' };
+
+test('不的中: 結果（着順）を矢印で出し、払戻の欄は出さない', () => {
+  const html = renderReceiptCardHtml(MISS);
+  assert.match(html, /<span>結果<\/span><b>10→8→7<\/b>/);
+  assert.doesNotMatch(html, /<span>払戻<\/span>/);
+  assert.doesNotMatch(html, /class="pp-num[^"]*win/, '不的中で馬番を的中色にしない');
+});
+
+test('不的中で結果未入力なら —（払戻欄は出さない）', () => {
+  const html = renderReceiptCardHtml({ ...MISS, hitCombo: '' });
+  assert.match(html, /<span>結果<\/span><b>—<\/b>/);
+  assert.doesNotMatch(html, /<span>払戻<\/span>/);
+});
+
+test('的中: 結果と払戻を出す（従来どおり）', () => {
+  const html = renderReceiptCardHtml({ ...MISS, isHit: true, payout: 125600, hitCombo: '10-8-9' });
+  assert.match(html, /<span>結果<\/span><b>10→8→9<\/b>/);
+  assert.match(html, /<span>払戻<\/span><b class="pay">¥125,600<\/b>/);
+});
+
+test('ドリフト検知: 本番コンポーネントも 払戻は的中時だけ・結果は常に表示', () => {
+  const component = read('../components/premium-plus/PremiumPlusReceiptCardV2.astro');
+  assert.ok(component.includes(`{isHit && <div class="pp-mi"><span>払戻</span>`), '本番の払戻が的中時限定になっていない');
+  assert.doesNotMatch(component, /<span>払戻<\/span><b class=\{isHit/);
+});
+
+test('SPAT4 レース名（船橋12R）は少し太字（600）を全コピーで一致', () => {
+  for (const f of ['../styles/premiumPlusReceiptCard.css', '../components/premium-plus/PremiumPlusReceiptCardV2.astro', '../pages/premium-plus-v2.astro']) {
+    const line = read(f).split('\n').find((l) => l.includes('.vref.spat .bet .race'));
+    assert.ok(line && /font-weight:\s*600/.test(line), `${f} のレース名が font-weight: 600 でない`);
   }
 });

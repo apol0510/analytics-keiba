@@ -116,7 +116,9 @@ export function normalizeResult(input) {
     stake: points * unitStake,
     isHit,
     payout: isHit ? payout : 0,
-    hitCombo: isHit && typeof input.hitCombo === 'string' ? input.hitCombo.trim() : '',
+    // 結果（着順 1着-2着-3着）。的中・不的中どちらも保持する（2026-10-07〜。以前は的中時のみ）。
+    // 名前は過去データ互換のため hitCombo のまま。的中かどうかは isHit で判定する。
+    hitCombo: typeof input.hitCombo === 'string' ? input.hitCombo.trim() : '',
     unitPayout: isHit ? Math.max(0, toInt(input.unitPayout)) : 0,
     // 投票内容照会の受付ヘッダ（そっくりカードの再現度用・任意）。管理者が実スクショから
     // 受付番号 / 受付日時 をそのまま書き写す。未入力なら受付番号行は出さず、受付日時は

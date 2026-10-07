@@ -67,15 +67,16 @@ import '../../styles/premiumPlusReceiptCard.css';
         </div>
         <div class="chk"><label><input type="checkbox" id="isHit" /> 的中</label>
           <span id="ptsPreview" class="pts">点数: — / 合計: —</span></div>
-        <div><label>払戻金額（合計・的中時）<small class="hint">実際に戻ってきた総額。カードの「払戻」に表示</small></label><input type="text" inputmode="numeric" autocomplete="off" id="payout" placeholder="599000" /></div>
-        <div class="wide"><label>的中組合せ（的中時・1着→2着→3着の馬番を選択）</label>
+        <div><label>払戻金額（合計・的中時のみ）<small class="hint">実際に戻ってきた総額。不的中のときは入力不要（カードにも出しません）</small></label><input type="text" inputmode="numeric" autocomplete="off" id="payout" placeholder="599000" /></div>
+        <div class="wide"><label>結果（レースの着順・1着→2着→3着の馬番）<small class="hint">的中・不的中どちらも入力。カードの「結果」に表示されます</small></label>
           <div class="combo3">
             <select id="hit1"></select><span class="arw">→</span>
             <select id="hit2"></select><span class="arw">→</span>
             <select id="hit3"></select>
           </div>
+          <p id="resultHint" class="date-warn" hidden></p>
         </div>
-        <div><label>払戻単価（1組あたり配当・任意）<small class="hint">JRAカードのみ表示。南関(SPAT4)は空欄でOK</small></label><input type="text" inputmode="numeric" autocomplete="off" id="unitPayout" placeholder="（通常は空欄）" /></div>
+        <div><label>払戻単価（1組あたり配当・的中時のみ・任意）<small class="hint">JRAカードのみ表示。南関(SPAT4)は空欄でOK</small></label><input type="text" inputmode="numeric" autocomplete="off" id="unitPayout" placeholder="（通常は空欄）" /></div>
         <div class="wide"><label>実スクショ画像パス（任意・後日）</label><input type="text" id="imageFile" placeholder="/premium-plus-proof/2026-07-22.png" /></div>
         <div><label>受付番号（既定 0001・実スクショに合わせて変更可）</label><input type="text" id="receiptNo" value="0001" placeholder="0001" /></div>
         <div><label>受付時刻（任意）<small class="hint">受付日は「開催日」と同じ扱い。時刻だけ選択</small></label><input type="time" id="receiptTime" /></div>
@@ -312,7 +313,20 @@ import '../../styles/premiumPlusReceiptCard.css';
       hint.style.display = 'none';
       el.innerHTML = renderReceiptCardHtml(card);
     }
-    function refreshAll(){ updatePreview(); updateCardPreview(); }
+    // 不的中なら払戻欄は入力不要（無効化）。結果と「的中」チェックが食い違えば知らせる。
+    function syncHitFields(){
+      const hit = $('isHit').checked;
+      for (const id of ['payout', 'unitPayout']) $(id).disabled = !hit;
+      const w = $('resultHint'), r = [$('hit1').value, $('hit2').value, $('hit3').value].map(Number);
+      const F = nums($('first').value), S = nums($('second').value), T = nums($('third').value);
+      w.classList.remove('bad');
+      if (r.some((n) => !n) || !F.length || !S.length || !T.length) { w.hidden = true; return; }
+      const covered = F.includes(r[0]) && S.includes(r[1]) && T.includes(r[2]);
+      if (covered && !hit) { w.textContent = `⚠️ 結果 ${r.join('→')} は買い目に含まれています。「的中」にチェックが必要では？`; w.classList.add('bad'); w.hidden = false; return; }
+      if (!covered && hit) { w.textContent = `⚠️ 結果 ${r.join('→')} は買い目に含まれていません。「的中」で合っていますか？`; w.classList.add('bad'); w.hidden = false; return; }
+      w.hidden = true;
+    }
+    function refreshAll(){ syncHitFields(); updatePreview(); updateCardPreview(); }
     // フォーム内の全入力変化（text/number は input、select/checkbox/date/time は change）で再描画
     const formGrid = document.querySelector('.grid');
     formGrid.addEventListener('input', refreshAll);
@@ -350,9 +364,10 @@ import '../../styles/premiumPlusReceiptCard.css';
         third: $('third').value.trim(),
         unitStake: $('unitStake').value,
         isHit: $('isHit').checked,
-        payout: $('payout').value.trim(),
+        // 不的中なら払戻は送らない（payout>0 だと保存時に的中扱いになるため）
+        payout: $('isHit').checked ? $('payout').value.trim() : '',
         hitCombo: hitCombo(),
-        unitPayout: $('unitPayout').value.trim(),
+        unitPayout: $('isHit').checked ? $('unitPayout').value.trim() : '',
         imageFile: $('imageFile').value.trim() || undefined,
         receiptNo: $('receiptNo').value.trim() || undefined,
         receiptAt: receiptAt(),
@@ -401,7 +416,8 @@ import '../../styles/premiumPlusReceiptCard.css';
           const cell = (cls, text) => { const x = document.createElement('span'); x.className = cls; x.textContent = text; row.appendChild(x); return x; };
           cell('d', e.date);
           cell('r', `${e.venue||''}${e.raceNumber ? e.raceNumber+'R' : ''} ${e.raceName||''}`.trim() || '—');
-          cell('h' + (e.isHit ? ' hit' : ''), e.isHit ? `的中 ¥${Number(e.payout||0).toLocaleString()}` : '不的中');
+          const res = String(e.hitCombo || '').split('-').filter(Boolean).join('→');
+          cell('h' + (e.isHit ? ' hit' : ''), e.isHit ? `的中 ¥${Number(e.payout||0).toLocaleString()}` : `不的中${res ? '（' + res + '）' : '・結果未入力'}`);
           if(future) cell('tag', '未来の日付');
           const ed = document.createElement('button');
           ed.type = 'button'; ed.className = 'edit-row'; ed.textContent = '編集';
