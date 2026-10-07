@@ -6,11 +6,11 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
   parseRaceId, sanitizeIngest, countdown, followTarget, buildNav, raceDisplay,
-  jstHm, jstHms, jstDate, INGEST_SCHEMA, STALE_MS, MARKETS,
+  jstHm, jstHms, jstDate, INGEST_SCHEMA, STALE_MS, MARKETS, resultLine,
 } from './aiLab.js';
 import { saveDay, loadDay, listDates, dayKey } from './aiLabStore.js';
 import { attachAk, akTop5Marks } from './aiLabAk.js';
-import { loadMarketView, pickInitialMarket, AILAB_POLL_PLANS } from './aiLabServer.js';
+import { loadMarketView, pickInitialMarket, withResults, AILAB_POLL_PLANS } from './aiLabServer.js';
 
 /** SET / GET / ZADD / ZREVRANGE だけの最小の Redis（保存の検証用） */
 function makeFakeRedis() {
@@ -174,7 +174,7 @@ test('全頭表示: 馬番順・強調なし・オッズと期待値・AI 勝率
     const d2 = raceDisplay({ ...r, oddsObservedAt: new Date(now - 60_000).toISOString() }, { nowMs: now, receivedAt: new Date(now - 60_000).toISOString() });
     assert.equal(d2.state, 'ok'); assert.equal(d2.valuesShown, true);
     assert.deepEqual(d2.rows.map((x) => x.n), r.field.map((x) => x.n).sort((a, b) => a - b), '全頭・馬番順');
-    for (const row of d2.rows) assert.deepEqual(Object.keys(row).sort(), ['ev', 'mark', 'n', 'name', 'odds', 'p'], '強調・買い目の項目が無い（印は AK の印だけ）');
+    for (const row of d2.rows) assert.deepEqual(Object.keys(row).sort(), ['ev', 'mark', 'n', 'name', 'odds', 'p', 'rank'], '強調・買い目の項目が無い（印は AK の印だけ）');
     assert.ok(d2.oddsNote.includes('観測'));
     assert.ok(d.state === 'ok');
   }
@@ -248,7 +248,7 @@ test('中央と南関は同じ処理・同じ画面（market で分岐しない�
 test('画面: 全頭表・カウントダウン・自動追従・自動更新・データ鮮度。🛑 買い目・推奨・金額・的中の表示が無い', () => {
   const page = read('src/components/ailab/AiLabBoard.astro');
   const script = page.slice(page.indexOf('<script>'));
-  assert.match(script, /\['馬番', '馬名', 'AI 勝率', 'オッズ', '期待値', ''\]/, '印の列は見出しなし（2026-10-07 MK）');
+  assert.match(script, /\['馬番', '馬名', 'AI 勝率', 'オッズ', '期待値', '', \.\.\.\(hasRank \? \['着順'\] : \[\]\)\]/, '印の列は見出しなし・着順は結果があるときだけ（2026-10-07 MK）');
   assert.match(script, /raceDisplay\(r,/);
   assert.match(script, /id: 'ailab-countdown'/);
   assert.match(script, /followTarget\(list, now\(\)\)/);
@@ -337,4 +337,36 @@ test('会員の皆さまへ将来お届けしたい想いを伝える（約束�
   const board = read('src/components/ailab/AiLabBoard.astro');
   assert.match(board, /将来、ここまで一緒に歩んでくださった会員の皆さまへ/);
   assert.match(board, /支えてくださっている会員の皆さまに、いつかこの AI をお届けできる日を目指して/);
+});
+
+test('評価待ちの文言: 判断時刻（発走 10 分前）を過ぎたら「取り込んでいます（まもなく表示されます）」・境界は 10 分前ちょうど', () => {
+  const r = sanitizeIngest(nankan()).day.races.find((x) => x.raceId === '2026-10-07-OI-12'); // 発走 11:45Z・評価前
+  const start = Date.parse(r.startAt);
+  assert.match(raceDisplay(r, { nowMs: start - 10 * 60 * 1000 - 1 }).message, /約 10 分前に出ます/);
+  assert.match(raceDisplay(r, { nowMs: start - 10 * 60 * 1000 }).message, /取り込んでいます（まもなく表示されます）/);
+  assert.match(raceDisplay(r, { nowMs: start - 1 }).message, /まもなく表示されます/);
+  assert.match(raceDisplay(r, { nowMs: start }).message, /評価はありません/);
+});
+
+test('着順（結果アーカイブの 1〜3 着）: レースと全頭の行に添える・的中の判定はしない・結果前は待ちの案内', () => {
+  const day = sanitizeIngest(nankan()).day;
+  const index = new Map([['2026-10-07|大井|11', { first: 2, second: 3, third: 1, umatanPayout: 999, sanrenpukuPayout: 999 }]]);
+  const withR = withResults(day, index);
+  const r = withR.races.find((x) => x.raceId === '2026-10-07-OI-11');
+  assert.deepEqual(r.result, { first: 2, second: 3, third: 1 }, '払戻は添えない');
+  assert.equal(withR.races.find((x) => x.raceId === '2026-10-07-OI-12').result, undefined);
+  const after = Date.parse(r.startAt) + 3600e3;
+  assert.deepEqual(resultLine(r, { nowMs: after }), { state: 'result', order: [2, 3, 1] });
+  const d = raceDisplay(r, { nowMs: after, receivedAt: '2026-10-07T10:59:00.000Z' });
+  assert.deepEqual(d.rows.map((x) => [x.n, x.rank]), [[1, 3], [2, 1], [3, 2]]);
+  // 結果前: 発走前は何も出さない・発走後は「全レース終了後に表示」
+  const noRes = withR.races.find((x) => x.raceId === '2026-10-07-OI-12');
+  assert.deepEqual(resultLine(noRes, { nowMs: Date.parse(noRes.startAt) - 1 }), { state: 'none' });
+  assert.match(resultLine(noRes, { nowMs: Date.parse(noRes.startAt) + 1 }).text, /全レース終了後/);
+  assert.equal(withResults(day, null), day, '索引が読めなければそのまま');
+  const board = read('src/components/ailab/AiLabBoard.astro');
+  assert.match(board, /resultLine\(r, \{ nowMs: now\(\) \}\)/);
+  assert.match(board, /\$\{row\.rank\}着/);
+  const visible = board.replace(/<style[\s\S]*?<\/style>/g, '');
+  assert.equal(/的中|不的中|ハズレ/.test(visible), false, '的中の判定を出さない');
 });

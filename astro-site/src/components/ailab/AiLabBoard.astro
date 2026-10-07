@@ -73,7 +73,7 @@ const initialJson = JSON.stringify(initial ?? null).replace(/</g, '\\u003c');
   </div>
   <script is:inline id="ailab-initial" type="application/json" set:html={initialJson}></script>
   <script>
-    import { MARKET_LABEL, buildNav, countdown, followTarget, jstHm, jstHms, raceDisplay, DECISION_LEAD_MIN } from '../../lib/ailab/aiLab.js';
+    import { MARKET_LABEL, buildNav, countdown, followTarget, jstHm, jstHms, raceDisplay, resultLine, DECISION_LEAD_MIN } from '../../lib/ailab/aiLab.js';
 
     const POLL_MS = 30000;
     const $ = (id) => document.getElementById(id);
@@ -176,6 +176,9 @@ const initialJson = JSON.stringify(initial ?? null).replace(/</g, '\\u003c');
       box.appendChild(h('div', { class: 'ailab-mute' }, `${MARKET_LABEL[ST.market]} / ${view.date} / AI の評価は発走${DECISION_LEAD_MIN}分前に確定`));
       box.appendChild(h('div', { class: 'ailab-big' }, `${r.venueName} ${r.raceNumber}R`));
       box.appendChild(h('div', {}, '発走まで ', h('b', { id: 'ailab-countdown' }, countdown(r.startAt, now()).text), `（発走 ${jstHm(r.startAt)}）`));
+      const res = resultLine(r, { nowMs: now() });
+      if (res.state === 'result') box.appendChild(h('div', { class: 'ailab-result' }, '着順 ', res.order.map((n, i) => h('span', { class: 'ailab-rank' }, `${i + 1}着 ${n}`))));
+      else if (res.state === 'waiting') box.appendChild(h('div', { class: 'ailab-mute' }, res.text));
     }
 
     function renderField(cur) {
@@ -187,11 +190,13 @@ const initialJson = JSON.stringify(initial ?? null).replace(/</g, '\\u003c');
       const d = raceDisplay(r, { nowMs: now(), receivedAt: view.day.receivedAt });
       if (d.message) box.appendChild(h('div', { class: d.state === 'pending' ? 'ailab-mute' : 'ailab-banner' }, d.message));
       if (!d.rows.length) return;
-      const t = h('table', {}, h('tr', {}, ['馬番', '馬名', 'AI 勝率', 'オッズ', '期待値', ''].map((x) => h('th', {}, x))));
+      const hasRank = d.rows.some((row) => row.rank);
+      const t = h('table', {}, h('tr', {}, ['馬番', '馬名', 'AI 勝率', 'オッズ', '期待値', '', ...(hasRank ? ['着順'] : [])].map((x) => h('th', {}, x))));
       for (const row of d.rows) {
         t.appendChild(h('tr', {}, h('td', { class: 'num' }, String(row.n)), h('td', {}, row.name || '-'),
           h('td', { class: 'num' }, row.p), h('td', { class: 'num' }, row.odds), h('td', { class: 'num' }, row.ev),
-          h('td', { class: 'ailab-mark' }, row.mark || '')));
+          h('td', { class: 'ailab-mark' }, row.mark || ''),
+          hasRank ? h('td', { class: 'num' }, row.rank ? `${row.rank}着` : '') : null));
       }
       box.appendChild(h('div', { class: 'ailab-scroll' }, t));
       if (d.rows.some((row) => row.mark)) box.appendChild(h('div', { class: 'ailab-mute' }, '◎本命 ○対抗 ▲単穴 △連下'));
@@ -303,6 +308,8 @@ const initialJson = JSON.stringify(initial ?? null).replace(/</g, '\\u003c');
   .ailab table { border-collapse: collapse; width: 100%; font-size: 13px; }
   .ailab th, .ailab td { border-bottom: 1px solid var(--line); padding: 4px 6px; text-align: left; white-space: nowrap; color: var(--fg); }
   .ailab th { color: var(--mute); font-weight: 600; }
+  .ailab-result { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; }
+  .ailab-rank { font-weight: 700; }
   .ailab td.ailab-mark { font-weight: 700; text-align: center; }
   .ailab td.num { font-variant-numeric: tabular-nums; }
   .ailab-hero { margin: 4px 0 6px; }

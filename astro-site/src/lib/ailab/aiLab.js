@@ -179,6 +179,28 @@ export function buildNav(races, raceId) {
 
 const fixed = (v, d) => (v == null ? '-' : v.toFixed(d));
 
+/** 着順（1〜3 着だけ・結果アーカイブ由来）。無ければ null */
+function rankOf(result, n) {
+  if (!result) return null;
+  if (result.first === n) return 1;
+  if (result.second === n) return 2;
+  if (result.third === n) return 3;
+  return null;
+}
+
+/**
+ * レースの結果（1〜3 着の馬番）の表示。結果は当日の全レース終了後にまとめて入る（中央 17 時台・南関 21 時台）。
+ * 的中・不的中の判定はしない（着順の事実だけ）。
+ */
+export function resultLine(race, { nowMs }) {
+  const started = isoMs(race?.startAt) != null && isoMs(race.startAt) <= nowMs;
+  const r = race?.result;
+  if (r && Number.isInteger(r.first) && Number.isInteger(r.second)) {
+    return { state: 'result', order: [r.first, r.second, r.third].filter((x) => Number.isInteger(x)) };
+  }
+  return started ? { state: 'waiting', text: '着順は当日の全レース終了後に表示されます' } : { state: 'none' };
+}
+
 /**
  * 1 レースの全頭の表示行（馬番順・強調なし）と、値を出せない理由。
  * fail closed:
@@ -191,8 +213,12 @@ const fixed = (v, d) => (v == null ? '-' : v.toFixed(d));
 export function raceDisplay(race, { nowMs, receivedAt = null } = {}) {
   const started = isoMs(race?.startAt) != null && isoMs(race.startAt) <= nowMs;
   if (!race || race.status !== 'ok' || !Array.isArray(race.field) || race.field.length === 0) {
+    // 判断時刻（発走 10 分前）を過ぎたのに未着 = 取込待ち（送信は 2 分ごと）。それより前は「10 分前に出ます」
+    const pastDecision = isoMs(race?.startAt) != null && nowMs >= isoMs(race.startAt) - DECISION_LEAD_MIN * 60 * 1000;
     return { state: 'pending', rows: [], started, valuesShown: false, oddsNote: null,
-      message: started ? 'このレースの AI の評価はありません' : `AI の評価は発走の約 ${DECISION_LEAD_MIN} 分前に出ます` };
+      message: started ? 'このレースの AI の評価はありません'
+        : pastDecision ? 'AI の評価を取り込んでいます（まもなく表示されます）'
+          : `AI の評価は発走の約 ${DECISION_LEAD_MIN} 分前に出ます` };
   }
   const recvMs = isoMs(receivedAt);
   const obsMs = isoMs(race.oddsObservedAt);
@@ -209,6 +235,7 @@ export function raceDisplay(race, { nowMs, receivedAt = null } = {}) {
     odds: valuesShown ? fixed(h.odds, 1) : '-',
     ev: valuesShown && h.odds != null ? fixed(h.ev, 2) : '-',
     mark: typeof h.mark === 'string' ? h.mark : '',
+    rank: rankOf(race.result, h.n),
   }));
   const basis = race.oddsBasis === 'decision' ? `判断時刻（発走${DECISION_LEAD_MIN}分前）時点のオッズ`
     : race.oddsBasis === 'latest' ? '最新のオッズ' : 'オッズ';
