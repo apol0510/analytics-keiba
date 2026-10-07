@@ -5,11 +5,12 @@
  *   🛑 env に置かない: Netlify Functions の env は AWS Lambda の 4KB 上限に近く、1 つ足しただけで
  *      全 Function の作成が失敗し本番 deploy が止まった（2026-10-05 実測）
  * - 保存するのは sanitizeIngest が残した項目だけ（買い目・選んだ馬・金額・判断は落とす）
- * - 馬名は AK の予想データ（SSR に残る直近日）から添える（表示用・無ければ馬番だけ）
+ * - 馬名と AK の印（上位 5 頭 ◎○▲△△）は AK の予想データ（SSR に残る直近日）から添える（無ければ添えない）
  */
 export const prerender = false;
 import { timingSafeEqual, createHash } from 'node:crypto';
-import { sanitizeIngest, attachNames } from '../../../lib/ailab/aiLab.js';
+import { sanitizeIngest } from '../../../lib/ailab/aiLab.js';
+import { attachAk } from '../../../lib/ailab/aiLabAk.js';
 import { saveDay, INGEST_KEY_SHA256 } from '../../../lib/ailab/aiLabStore.js';
 import { loadDay } from '../../../lib/acquisition/raceSource.js';
 import { makeRedisCmd } from '../../../lib/premiumPlus/premiumPlusFunnelServer.js';
@@ -32,7 +33,7 @@ export async function POST({ request }) {
   let akVenues = [];
   try { akVenues = loadDay(s.day.market, s.day.date, { pastRaces: false }); } catch { akVenues = []; }
   try {
-    const saved = await saveDay(redis, attachNames(s.day, akVenues));
+    const saved = await saveDay(redis, attachAk(s.day, akVenues));
     return json(200, { ok: true, market: saved.market, date: saved.date, races: saved.races.length,
       evaluated: saved.races.filter((r) => r.status === 'ok').length });
   } catch (e) {

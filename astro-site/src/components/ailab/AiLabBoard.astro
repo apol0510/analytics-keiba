@@ -187,12 +187,14 @@ const initialJson = JSON.stringify(initial ?? null).replace(/</g, '\\u003c');
       const d = raceDisplay(r, { nowMs: now(), receivedAt: view.day.receivedAt });
       if (d.message) box.appendChild(h('div', { class: d.state === 'pending' ? 'ailab-mute' : 'ailab-banner' }, d.message));
       if (!d.rows.length) return;
-      const t = h('table', {}, h('tr', {}, ['馬番', '馬名', 'AI 勝率', 'オッズ', '期待値'].map((x) => h('th', {}, x))));
+      const t = h('table', {}, h('tr', {}, ['馬番', '馬名', 'AI 勝率', 'オッズ', '期待値', 'AK 印'].map((x) => h('th', {}, x))));
       for (const row of d.rows) {
         t.appendChild(h('tr', {}, h('td', { class: 'num' }, String(row.n)), h('td', {}, row.name || '-'),
-          h('td', { class: 'num' }, row.p), h('td', { class: 'num' }, row.odds), h('td', { class: 'num' }, row.ev)));
+          h('td', { class: 'num' }, row.p), h('td', { class: 'num' }, row.odds), h('td', { class: 'num' }, row.ev),
+          h('td', { class: 'ailab-mark' }, row.mark || '')));
       }
       box.appendChild(h('div', { class: 'ailab-scroll' }, t));
+      if (d.rows.some((row) => row.mark)) box.appendChild(h('div', { class: 'ailab-mute' }, 'AK 印: ◎本命 ○対抗 ▲単穴 △連下（AK の予想の上位 5 頭）'));
       if (d.oddsNote) box.appendChild(h('div', { class: 'ailab-mute' }, d.oddsNote));
     }
 
@@ -301,6 +303,7 @@ const initialJson = JSON.stringify(initial ?? null).replace(/</g, '\\u003c');
   .ailab table { border-collapse: collapse; width: 100%; font-size: 13px; }
   .ailab th, .ailab td { border-bottom: 1px solid var(--line); padding: 4px 6px; text-align: left; white-space: nowrap; color: var(--fg); }
   .ailab th { color: var(--mute); font-weight: 600; }
+  .ailab td.ailab-mark { font-weight: 700; text-align: center; }
   .ailab td.num { font-variant-numeric: tabular-nums; }
   .ailab-hero { margin: 4px 0 6px; }
   .ailab-hero-kicker { margin: 0; font-size: 12px; font-weight: 700; letter-spacing: .08em; color: var(--warn); }

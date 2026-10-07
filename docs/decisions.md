@@ -5112,3 +5112,10 @@ R1（本番での開封実測）/ R2・R3（実配信）は残件のまま。
 
 ### 実装
 - 正本 `astro-site/docs/AI_LAB.md`。KAP `scripts/ailab_export.py`（`ak_ailab_ingest.v3`）→ `/api/ailab/ingest/` → Redis `ak:ailab:v2:{market}:*` → `/api/ailab/view/` → `AiLabBoard`（中央・南関共通）
+
+## 2026-10-07（追記）— AI ラボの各馬の期待値の横に AK の印（上位 5 頭）を出す（**MK 確定**）
+
+- 決定: 全頭表示のまま、期待値の横の列に AK の印の上位 5 頭（◎本命 ○対抗 ▲単穴 △連下最上位 △連下）を出す。同日の「◎を出さない」を仕様変更
+- 変えないもの: 全頭表示・馬番順・行の強調なし・KAP の選んだ馬／買い目／金額／的中の競わせ方は出さない
+- 上位 5 頭は既存の単一源（本命 ＋ getTop5Challengers）・記号は公開ページと同じ。発走前も出す（無料プレビューが上位 4 頭の印を既に公開しているため、新たに見えるのは 5 頭目の △ だけ）
+- 正本 `astro-site/docs/AI_LAB.md`
