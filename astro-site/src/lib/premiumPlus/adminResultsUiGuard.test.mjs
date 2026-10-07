@@ -196,3 +196,35 @@ test('プレビューの払戻単価がコンマ付きで桁落ちしない', ()
   assert.doesNotMatch(PAGE, /unitPayout: isHit \? \(parseInt\(e\.unitPayout, 10\)/);
   assert.match(PAGE, /unitPayout: isHit \? Math\.max\(0, parseInt\(String\(e\.unitPayout \|\| ''\)\.replace/);
 });
+
+// ── 保存済み一覧からの削除（2026-10-07: 未来日 10/29 を誤保存して削除導線が無かった）────
+test('保存済み一覧: list で読み込み、行ごとに削除ボタンがある', () => {
+  assert.match(PAGE, /id="savedList"/);
+  assert.match(PAGE, /action:'list'/);
+  assert.match(PAGE, /className = 'del-row'/);
+  assert.match(PAGE, /removeDate\(e\.date\)/);
+});
+
+test('保存済み一覧: 行は textContent で組み立てる（innerHTML にレース名を入れない）', () => {
+  const body = PAGE.slice(PAGE.indexOf('async function loadList'), PAGE.indexOf("$('save').addEventListener"));
+  assert.doesNotMatch(body, /innerHTML\s*[+]?=\s*`/);
+  assert.match(body, /textContent = text/);
+});
+
+test('未来の日付は選べない・一覧で強調・保存しない', () => {
+  assert.match(PAGE, /\$\('date'\)\.max = todayJst\(\)/);
+  assert.match(PAGE, /e\.date > today/);
+  assert.match(PAGE, /は未来の日付のため保存できません/);
+});
+
+test('既定日は JST（toISOString の UTC 日付を既定日にしない）', () => {
+  assert.doesNotMatch(PAGE, /\$\('date'\)\.value = new Date\(\)\.toISOString/);
+});
+
+test('一覧の「編集」でフォームへ読み込み、同じ日付の保存は overwrite を明示する', () => {
+  assert.match(PAGE, /className = 'edit-row'/);
+  assert.match(PAGE, /startEdit\(e\)/);
+  assert.match(PAGE, /payload\.overwrite = true/);
+  assert.match(PAGE, /payload\.replaceDate = editing/);
+  assert.match(PAGE, /id="dateWarn"/);
+});

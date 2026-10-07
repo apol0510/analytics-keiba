@@ -148,6 +148,38 @@ export function removeResult(entries, date) {
   return sortResults((entries || []).filter((e) => e && e.date !== date));
 }
 
+/** 今日（JST）YYYY-MM-DD。結果は開催後に入れるので、これより後の日付は入力ミス。 */
+export function todayJst(now = Date.now()) {
+  return new Date(now + 9 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+/**
+ * 保存（upsert）の可否を決める。管理画面と Function で同じ規則を使う単一源。
+ *   - 未来の日付は保存しない（2026-10-07 に 10/29 を誤保存した再発防止）
+ *   - 同じ日付が既にあれば、overwrite を明示しない限り 409（気付かない上書きを防ぐ）
+ *   - replaceDate（編集中に日付を直した）: 元の日付を消して新しい日付で保存（1 コミット）
+ * 戻り値: { ok:true, next, summary } / { ok:false, status, error, existing? }
+ */
+export function planUpsert(entries, { entry, overwrite = false, replaceDate = null, today = todayJst(), uploadedAt } = {}) {
+  const arr = (entries || []).filter(Boolean);
+  const n = normalizeResult(entry);
+  if (!n) return { ok: false, status: 400, error: '入力が不正です（日付 / 1着1頭 / 2着・3着 が必要）' };
+  if (n.date > today) return { ok: false, status: 400, error: `未来の日付（${n.date}）は保存できません（今日は ${today}）` };
+  const from = replaceDate && replaceDate !== n.date ? replaceDate : null;
+  if (from && !arr.some((e) => e.date === from)) {
+    return { ok: false, status: 409, error: `編集元の ${from} が台帳にありません（一覧を読み込み直してください）` };
+  }
+  const existing = arr.find((e) => e.date === n.date);
+  if (existing && !overwrite) {
+    return { ok: false, status: 409, error: `${n.date} は既に保存されています`, existing };
+  }
+  const base = from ? arr.filter((e) => e.date !== from) : arr;
+  const next = upsertResult(base, { ...entry, ...(uploadedAt ? { uploadedAt } : {}) });
+  const label = `${n.date} ${n.venue}${n.raceNumber || ''}R ${n.isHit ? '的中' : '不的中'}`;
+  const summary = from ? `${from} → ${label}（日付修正）` : existing ? `${label}（上書き）` : label;
+  return { ok: true, next, summary };
+}
+
 /** 2桁ゼロ埋め表記（06 / 11）。投票内容照会の馬番表示に使う。 */
 export function pad2(n) {
   const v = toInt(n);
