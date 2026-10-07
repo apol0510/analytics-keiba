@@ -112,8 +112,10 @@ const circuitLabel = service === 'jra' ? '中央' : '南関';
       </div>
       <div class="pp-meta">
         <div class="pp-mi"><span>投票額</span><b>{yen(stake)}</b></div>
-        <div class="pp-mi"><span>結果</span><b>{isHit ? wDisp : '—'}</b></div>
-        <div class="pp-mi"><span>払戻</span><b class={isHit ? 'pay' : ''}>{isHit ? yen(payout) : '—'}</b></div>
+        {/* 結果（着順）は的中・不的中とも表示。払戻は不的中なら欄ごと出さない（2026-10-07 MK 指定）。
+               管理画面プレビュー（premiumPlusReceiptCardView.js）と同一。 */}
+        <div class="pp-mi"><span>結果</span><b>{wDisp || '—'}</b></div>
+        {isHit && <div class="pp-mi"><span>払戻</span><b class="pay">{yen(payout)}</b></div>}
       </div>
     </div>
     <div class="pp-right">
@@ -254,7 +256,7 @@ const circuitLabel = service === 'jra' ? '中央' : '南関';
      c1 は日付が上端（vertical-align:top のまま）、c2/c3 だけ中央寄せにして実物に揃える。 */
   .vref.spat .bet .c2 { width: 30%; text-align: left; vertical-align: middle; }
   .vref.spat .bet .c3 { width: 30%; white-space: nowrap; text-align: right; padding-right: 7px; vertical-align: middle; }
-  .vref.spat .bet .race { font-size: 20px; color: #2e7dea; text-decoration: underline; }
+  .vref.spat .bet .race { font-size: 20px; color: #2e7dea; text-decoration: underline; font-weight: 600; }
   .vref.spat .bet .c2 b { font-weight: bold; }
   .vref.spat .bet .hit { color: #e60000; }
   .vref.spat .notes { border-top: 7px solid #999; padding: 8px 8px 10px; font-size: 14px; color: #111; }

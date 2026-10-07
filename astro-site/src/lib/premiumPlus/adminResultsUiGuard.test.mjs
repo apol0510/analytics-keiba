@@ -228,3 +228,10 @@ test('一覧の「編集」でフォームへ読み込み、同じ日付の保�
   assert.match(PAGE, /payload\.replaceDate = editing/);
   assert.match(PAGE, /id="dateWarn"/);
 });
+
+test('不的中は払戻を送らない・欄を無効化・結果と的中チェックの食い違いを知らせる', () => {
+  assert.match(PAGE, /payout: \$\('isHit'\)\.checked \? \$\('payout'\)\.value\.trim\(\) : ''/);
+  assert.match(PAGE, /\$\(id\)\.disabled = !hit/);
+  assert.match(PAGE, /id="resultHint"/);
+  assert.match(PAGE, /は買い目に含まれています/);
+});

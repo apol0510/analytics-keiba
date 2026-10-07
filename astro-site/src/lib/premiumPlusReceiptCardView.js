@@ -181,8 +181,8 @@ export function renderReceiptCardHtml(card) {
         </div>
         <div class="pp-meta">
           <div class="pp-mi"><span>投票額</span><b>${esc(yen(stake))}</b></div>
-          <div class="pp-mi"><span>結果</span><b>${isHit ? esc(wDisp) : '—'}</b></div>
-          <div class="pp-mi"><span>払戻</span><b class="${isHit ? 'pay' : ''}">${isHit ? esc(yen(payout)) : '—'}</b></div>
+          <div class="pp-mi"><span>結果</span><b>${wDisp ? esc(wDisp) : '—'}</b></div>
+          ${isHit ? `<div class="pp-mi"><span>払戻</span><b class="pay">${esc(yen(payout))}</b></div>` : ''}
         </div>
       </div>
       <div class="pp-right">${right}</div>
