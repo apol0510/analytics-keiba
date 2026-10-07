@@ -493,9 +493,12 @@ test('ドリフト検知: 本番コンポーネントも 払戻は的中時だ�
   assert.doesNotMatch(component, /<span>払戻<\/span><b class=\{isHit/);
 });
 
-test('SPAT4 レース名（船橋12R）は少し太字（600）を全コピーで一致', () => {
+// ヒラギノ角ゴ Pro は W3/W6 の 2 段階のみで font-weight 600 は通常の太字と同じになる（2026-10-07 MK「思ったより太い」）。
+// 輪郭 0.4px で「少しだけ」太らせる。font-weight は上げない。
+test('SPAT4 レース名（船橋12R）は輪郭 0.4px で少しだけ太く（全コピーで一致・font-weight は上げない）', () => {
   for (const f of ['../styles/premiumPlusReceiptCard.css', '../components/premium-plus/PremiumPlusReceiptCardV2.astro', '../pages/premium-plus-v2.astro']) {
     const line = read(f).split('\n').find((l) => l.includes('.vref.spat .bet .race'));
-    assert.ok(line && /font-weight:\s*600/.test(line), `${f} のレース名が font-weight: 600 でない`);
+    assert.ok(line && /-webkit-text-stroke:\s*\.4px currentColor/.test(line), `${f} のレース名に輪郭 0.4px が無い`);
+    assert.ok(!/font-weight/.test(line), `${f} のレース名に font-weight がある（太くなりすぎる）`);
   }
 });
