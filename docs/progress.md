@@ -1,11 +1,13 @@
-# 🏷 AI ラボの期待値の横に AK の印（上位 5 頭）を追加（2026-10-07 MK 確定 / **PR 待ち**）
+# 🏷 AI ラボの期待値の横に AK の印（上位 5 頭）を追加（2026-10-07 MK 確定 / **本番反映済み**）
 
 | 項目 | 状態 |
 |---|---|
 | 仕様 | 全頭表示のまま「AK 印」列（◎○▲△△）。同日の「◎を出さない」を仕様変更。正本 `AI_LAB.md`・`decisions.md` 2026-10-07（追記） |
 | 実装 | `aiLabAk.js`（馬名・印を取込時に添える）・`raceDisplay` の行に印・`AiLabBoard` に列と凡例 |
 | test | `aiLab.test.mjs`（上位 5 頭の選び方・記号・取込時に添える・KAP からの印は保存しない・全頭のまま・行を強調しない） |
-| 残り | PR / CI → merge（MK・#774 の後）→ 本番確認（次の取込から印が付く）→ cleanup |
+| PR | #775 squash `1cd3e4f0`（#774 の後に main を通常マージで追随）。CI green |
+| 本番 | **確認 OK**（2026-10-07 16:38 の取込以降）: 南関の評価済み 5 レースすべてで印 5 頭（◎○▲△△）。大井 5R の画面で AK 印列・凡例・全頭 12 頭・行の強調なし |
+| cleanup | worktree / branch（`feat/ailab-ak-marks`・`copy/ailab-vision`）削除 |
 
 ---
 
@@ -19,7 +21,8 @@
 | test | AK `aiLab.test.mjs` 14 件（JST 境界・カウントダウン・自動追従・前後レース・全頭・fail closed・market 分離・◎/買い目なし）・KAP `test_ailab_export.py` 6 件 |
 | PR | AK #769 squash `da6cf57c`（本番 publish 済み）・KAP #246 squash `572fec64`。CI green |
 | 本番 | **反映済み**: KAP の本 checkout（launchd が読む）を fast-forward・export v3 を AK が受信（南関 12 レース・HTTP 200）。本番 /ai-lab/ で 南関（既定）大井 12 レース・自動追従 1R・カウントダウン・「データ HH:MM:SS 更新」・評価前の表示、中央タブ（データ待ちの表示）・タブ往復・前後レース / 固定、スマホ 390px（横スクロールなし）を確認 |
-| 待ち | 全頭のオッズ・期待値の数値表示の本番確認は、南関の評価（発走約 10 分前）が出てから（fleet item `b7a585c5`・評価ファイルの出現で自動再開）。中央は次の開催日（土日）から |
+| 数値表示 | **本番確認 OK**（2026-10-07 16:36〜）: 南関の評価済み 5 レース（大井 1〜5R）で全頭のオッズ・期待値を表示（大井 4R のオッズ欠損 1 頭は `-`）。判断時刻時点の注記・馬名あり。確認は DOM の件数だけ（実オッズ値は会話に出していない）。中央は次の開催日（土日）から |
+| 目的・今後 | #774 で「AI ラボで目指していること」「これから（学ぶ・確かめる・届ける）」を掲載（本番確認済み） |
 | rollback | AK `da6cf57c` / KAP `572fec64` を revert（KAP は本 checkout も ff）。Redis `ak:ailab:v2:*` は 180 日 TTL |
 | cleanup | worktree / branch（AK `feat/ailab-unified`・KAP `feat/ailab-export-odds-ev`）削除 |
 ---
