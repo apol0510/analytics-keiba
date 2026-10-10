@@ -66,6 +66,7 @@ const initialJson = JSON.stringify(initial ?? null).replace(/</g, '\\u003c');
           <li>出走する<strong>全馬</strong>を同じ基準で評価しています（特定の馬を選んだり、買い目を出したりはしていません）。</li>
           <li>期待値 = AI 勝率 × 単勝オッズ。オッズの変化に合わせて、発走直前まで自動で更新されます。</li>
           <li>AI の評価は発走の約 10 分前に出ます。研究・開発中の数値のため、馬券の購入をすすめるものではありません。</li>
+          <li>障害レースは対象外です（AI は平地のレースだけを評価しています）。そのため、レース番号が飛ぶことがあります。</li>
         </ul>
       </section>
       <noscript><p class="ailab-note">この画面は JavaScript で自動更新します。</p></noscript>

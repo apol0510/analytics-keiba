@@ -400,3 +400,8 @@ test('発走後の表示: 「発走済み（HH:MM 発走）」・着順の目安
   assert.match(board, /el\.dataset\.started === '1'/);
   assert.equal(/発走まで ', h\('b', \{ id: 'ailab-countdown' \}, countdown/.test(board), false);
 });
+
+test('障害レースは対象外と明示する（レース一覧で番号が飛んで見えるため・2026-10-10 京都 4R）', () => {
+  const page = read('src/components/ailab/AiLabBoard.astro');
+  assert.match(page, /障害レースは対象外です（AI は平地のレースだけを評価しています）/);
+});
