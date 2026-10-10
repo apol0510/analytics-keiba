@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
   parseRaceId, sanitizeIngest, countdown, followTarget, buildNav, raceDisplay,
-  jstHm, jstHms, jstDate, INGEST_SCHEMA, STALE_MS, MARKETS, resultLine,
+  jstHm, jstHms, jstDate, INGEST_SCHEMA, STALE_MS, MARKETS, resultLine, startLine, nextUpcoming, RESULT_ETA,
 } from './aiLab.js';
 import { saveDay, loadDay, listDates, dayKey } from './aiLabStore.js';
 import { attachAk, akTop5Marks } from './aiLabAk.js';
@@ -202,7 +202,7 @@ test('fail closed: 評価前・データ更新停止・オッズ観測が古い�
   assert.equal(noObs.valuesShown, false);
   // 発走後: 判断時点（固定）の値なので古さで隠さない
   const after = raceDisplay({ ...r, oddsBasis: 'decision' }, { nowMs: Date.parse('2026-10-07T12:00:00.000Z'), receivedAt: '2026-10-07T10:00:00.000Z' });
-  assert.equal(after.started, true); assert.equal(after.valuesShown, true); assert.match(after.oddsNote, /判断時刻/);
+  assert.equal(after.started, true); assert.equal(after.valuesShown, true); assert.match(after.oddsNote, /発走10分前（\d\d:\d\d 観測）の値です。発走後は更新しません/);
 });
 
 test('保存: market ごと・1 日 1 キー・受信時刻を添える／画面データは今日→直近／Redis 不可は null', async () => {
@@ -365,8 +365,38 @@ test('着順（結果アーカイブの 1〜3 着）: レースと全頭の行�
   assert.match(resultLine(noRes, { nowMs: Date.parse(noRes.startAt) + 1 }).text, /全レース終了後/);
   assert.equal(withResults(day, null), day, '索引が読めなければそのまま');
   const board = read('src/components/ailab/AiLabBoard.astro');
-  assert.match(board, /resultLine\(r, \{ nowMs: now\(\) \}\)/);
+  assert.match(board, /resultLine\(r, \{ nowMs: now\(\), market: ST\.market \}\)/);
   assert.match(board, /\$\{row\.rank\}着/);
   const visible = board.replace(/<style[\s\S]*?<\/style>/g, '');
   assert.equal(/的中|不的中|ハズレ/.test(visible), false, '的中の判定を出さない');
+});
+
+test('発走後の表示: 「発走済み（HH:MM 発走）」・着順の目安時刻・オッズは発走 10 分前で固定と明示・次に発走するレースへの案内', () => {
+  const start = '2026-10-10T01:47:00.000Z'; // 10:47 JST
+  const t = Date.parse(start);
+  assert.deepEqual(startLine(start, t - 61_000), { started: false, lead: '発走まで ', value: '1分01秒', tail: '（発走 10:47）' });
+  assert.deepEqual(startLine(start, t), { started: true, lead: '', value: '発走済み', tail: '（10:47 発走）' }, '「発走まで 発走済み」と並べない');
+  // 着順待ち: market ごとの目安（market 不明なら目安なし）
+  const r = { raceId: '2026-10-10-08-03', startAt: start, venueName: '京都', raceNumber: 3 };
+  assert.equal(resultLine(r, { nowMs: t + 1, market: 'jra' }).text, '着順は当日の全レース終了後（17 時台）に表示されます');
+  assert.equal(resultLine(r, { nowMs: t + 1, market: 'nankan' }).text, '着順は当日の全レース終了後（21 時台）に表示されます');
+  assert.equal(resultLine(r, { nowMs: t + 1 }).text, '着順は当日の全レース終了後に表示されます');
+  assert.deepEqual(Object.keys(RESULT_ETA), MARKETS);
+  // 次に発走するレース: 全開催場で一番早いもの。発走前のレースを見ているとき・全部終わったときは null
+  const races = [
+    r,
+    { raceId: '2026-10-10-08-04', startAt: '2026-10-10T02:20:00.000Z', venueName: '京都', raceNumber: 4 },
+    { raceId: '2026-10-10-05-04', startAt: '2026-10-10T02:05:00.000Z', venueName: '東京', raceNumber: 4 },
+  ];
+  assert.deepEqual(nextUpcoming(races, r.raceId, t + 60_000), { raceId: '2026-10-10-05-04', label: '東京 4R', startAt: '2026-10-10T02:05:00.000Z' });
+  assert.equal(nextUpcoming(races, '2026-10-10-08-04', t + 60_000), null, '発走前のレースでは出さない');
+  assert.equal(nextUpcoming(races, r.raceId, Date.parse('2026-10-10T03:00:00.000Z')), null, '全レース発走済みなら出さない');
+  assert.equal(nextUpcoming(races, 'nope', t + 60_000), null);
+  // 画面: 発走の行は startLine・跨いだら描き直す・次レースのボタンは自動追従 ON に戻す
+  const board = read('src/components/ailab/AiLabBoard.astro');
+  assert.match(board, /startLine\(r\.startAt, now\(\)\)/);
+  assert.match(board, /nextUpcoming\(races\(\), r\.raceId, now\(\)\)/);
+  assert.match(board, /b\.onclick = \(\) => \{ ST\.follow = true;/);
+  assert.match(board, /el\.dataset\.started === '1'/);
+  assert.equal(/発走まで ', h\('b', \{ id: 'ailab-countdown' \}, countdown/.test(board), false);
 });

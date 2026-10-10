@@ -73,7 +73,7 @@ const initialJson = JSON.stringify(initial ?? null).replace(/</g, '\\u003c');
   </div>
   <script is:inline id="ailab-initial" type="application/json" set:html={initialJson}></script>
   <script>
-    import { MARKET_LABEL, buildNav, countdown, followTarget, jstHm, jstHms, raceDisplay, resultLine, DECISION_LEAD_MIN } from '../../lib/ailab/aiLab.js';
+    import { MARKET_LABEL, buildNav, countdown, followTarget, jstHm, jstHms, nextUpcoming, raceDisplay, resultLine, startLine, DECISION_LEAD_MIN } from '../../lib/ailab/aiLab.js';
 
     const POLL_MS = 30000;
     const $ = (id) => document.getElementById(id);
@@ -175,10 +175,18 @@ const initialJson = JSON.stringify(initial ?? null).replace(/</g, '\\u003c');
       }
       box.appendChild(h('div', { class: 'ailab-mute' }, `${MARKET_LABEL[ST.market]} / ${view.date} / AI の評価は発走${DECISION_LEAD_MIN}分前に確定`));
       box.appendChild(h('div', { class: 'ailab-big' }, `${r.venueName} ${r.raceNumber}R`));
-      box.appendChild(h('div', {}, '発走まで ', h('b', { id: 'ailab-countdown' }, countdown(r.startAt, now()).text), `（発走 ${jstHm(r.startAt)}）`));
-      const res = resultLine(r, { nowMs: now() });
+      const sl = startLine(r.startAt, now());
+      box.appendChild(h('div', {}, sl.lead, h('b', { id: 'ailab-countdown', 'data-started': sl.started ? '1' : '0' }, sl.value), sl.tail));
+      const res = resultLine(r, { nowMs: now(), market: ST.market });
       if (res.state === 'result') box.appendChild(h('div', { class: 'ailab-result' }, '着順 ', res.order.map((n, i) => h('span', { class: 'ailab-rank' }, `${i + 1}着 ${n}`))));
       else if (res.state === 'waiting') box.appendChild(h('div', { class: 'ailab-mute' }, res.text));
+      // 発走済みのレースを見ているとき: 次に発走するレースへ 1 回で移れる（押すと自動追従 ON）
+      const nx = nextUpcoming(races(), r.raceId, now());
+      if (nx) {
+        const b = h('button', { type: 'button', class: 'ailab-nextup' }, `次に発走: ${nx.label}（${jstHm(nx.startAt)} 発走）▶`);
+        b.onclick = () => { ST.follow = true; ST.raceId = null; syncUrl(); render(); };
+        box.appendChild(h('div', {}, b));
+      }
     }
 
     function renderField(cur) {
@@ -255,6 +263,8 @@ const initialJson = JSON.stringify(initial ?? null).replace(/</g, '\\u003c');
       if (ST.follow && currentRaceId() !== shown) { render(); return; }
       const r = races().find((x) => x.raceId === shown);
       const el = $('ailab-countdown');
+      // 発走時刻を跨いだら行ごと描き直す（「発走まで」→「発走済み（HH:MM 発走）」・次レースの案内）
+      if (r && el && countdown(r.startAt, now()).started !== (el.dataset.started === '1')) { render(); return; }
       if (r && el) el.textContent = countdown(r.startAt, now()).text;
     }, 1000);
     setInterval(() => { if (!document.hidden) load(); }, POLL_MS);
@@ -308,6 +318,8 @@ const initialJson = JSON.stringify(initial ?? null).replace(/</g, '\\u003c');
   .ailab table { border-collapse: collapse; width: 100%; font-size: 13px; }
   .ailab th, .ailab td { border-bottom: 1px solid var(--line); padding: 4px 6px; text-align: left; white-space: nowrap; color: var(--fg); }
   .ailab th { color: var(--mute); font-weight: 600; }
+  .ailab-nextup { margin-top: 8px; border: 1px solid var(--acc); background: var(--card); color: var(--fg); padding: 6px 12px;
+    border-radius: 8px; font-size: 14px; cursor: pointer; max-width: 100%; white-space: normal; text-align: left; }
   .ailab-result { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; }
   .ailab-rank { font-weight: 700; }
   .ailab td.ailab-mark { font-weight: 700; text-align: center; }

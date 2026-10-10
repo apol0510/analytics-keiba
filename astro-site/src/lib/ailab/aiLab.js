@@ -145,6 +145,29 @@ export function countdown(startAt, nowMs) {
   return { started: false, seconds: sec, text: `${hr > 0 ? `${hr}時間` : ''}${m}分${String(s).padStart(2, '0')}秒` };
 }
 
+/**
+ * 発走の行（発走前はカウントダウン・発走後は「発走済み（HH:MM 発走）」）。
+ * 発走後に「発走まで 発走済み」と並べない。
+ */
+export function startLine(startAt, nowMs) {
+  const c = countdown(startAt, nowMs);
+  const at = jstHm(startAt);
+  if (c.started) return { started: true, lead: '', value: '発走済み', tail: `（${at} 発走）` };
+  return { started: false, lead: '発走まで ', value: c.text, tail: `（発走 ${at}）` };
+}
+
+/**
+ * 発走済みのレースを見ているときの「次に発走するレース」（全開催場で一番早い・自分以外）。無ければ null。
+ * @returns {null | { raceId, label, startAt }}
+ */
+export function nextUpcoming(races, currentId, nowMs) {
+  const cur = (races || []).find((r) => r.raceId === currentId);
+  if (!cur || isoMs(cur.startAt) == null || isoMs(cur.startAt) > nowMs) return null;
+  const id = (races || []).some((r) => isoMs(r.startAt) > nowMs) ? followTarget(races, nowMs) : null;
+  const r = id && races.find((x) => x.raceId === id);
+  return r ? { raceId: r.raceId, label: `${r.venueName} ${r.raceNumber}R`, startAt: r.startAt } : null;
+}
+
 /** 自動追従の対象: これから発走するうち一番早いレース。全部発走済みなら最後のレース。無ければ null */
 export function followTarget(races, nowMs) {
   const list = (races || []).filter((r) => isoMs(r.startAt) != null);
@@ -188,17 +211,21 @@ function rankOf(result, n) {
   return null;
 }
 
+/** 結果（着順）がまとめて入る時刻の目安（docs/AI_LAB.md・結果アーカイブの取込時刻） */
+export const RESULT_ETA = Object.freeze({ jra: '17 時台', nankan: '21 時台' });
+
 /**
  * レースの結果（1〜3 着の馬番）の表示。結果は当日の全レース終了後にまとめて入る（中央 17 時台・南関 21 時台）。
  * 的中・不的中の判定はしない（着順の事実だけ）。
  */
-export function resultLine(race, { nowMs }) {
+export function resultLine(race, { nowMs, market = null }) {
   const started = isoMs(race?.startAt) != null && isoMs(race.startAt) <= nowMs;
   const r = race?.result;
   if (r && Number.isInteger(r.first) && Number.isInteger(r.second)) {
     return { state: 'result', order: [r.first, r.second, r.third].filter((x) => Number.isInteger(x)) };
   }
-  return started ? { state: 'waiting', text: '着順は当日の全レース終了後に表示されます' } : { state: 'none' };
+  const eta = RESULT_ETA[market];
+  return started ? { state: 'waiting', text: `着順は当日の全レース終了後${eta ? `（${eta}）` : ''}に表示されます` } : { state: 'none' };
 }
 
 /**
@@ -241,6 +268,9 @@ export function raceDisplay(race, { nowMs, receivedAt = null } = {}) {
     : race.oddsBasis === 'latest' ? '最新のオッズ' : 'オッズ';
   return {
     state: 'ok', rows, started, valuesShown, message,
-    oddsNote: valuesShown ? `${basis}（${jstHm(race.oddsObservedAt)} 観測）` : null,
+    oddsNote: !valuesShown ? null
+      : started && race.oddsBasis === 'decision'
+        ? `オッズ・期待値は発走${DECISION_LEAD_MIN}分前（${jstHm(race.oddsObservedAt)} 観測）の値です。発走後は更新しません`
+        : `${basis}（${jstHm(race.oddsObservedAt)} 観測）`,
   };
 }
