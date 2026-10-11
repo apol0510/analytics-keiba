@@ -1,3 +1,17 @@
+# 💳 fincode byGMO（代替決済の優先候補）Sandbox 実装（2026-10-11 MK 確定 / **実装・テスト済み・Sandbox E2E は鍵待ち・本番審査は未申請**）
+
+| 項目 | 状態 |
+|---|---|
+| 方針 | fincode を優先して Sandbox E2E。販売は閉じたまま（`CARD_SALES_OPEN=false`・本番サイトはどのキーも受け付けない）。月払いは扱わない。正本 `astro-site/docs/FINCODE_BILLING.md`・`decisions.md` 2026-10-11（追記 2）|
+| 実装 | `cardOneTime.js`（商品・申込前判定・反映＝決済会社共通）／`fincode/fincodeCore.js`・`fincodeServer.js`・`fincodeNotify.js`／Functions `fincode-create-session` / `fincode-webhook` / `fincode-order-status`／`/checkout/card-complete/` |
+| test | `test:billing` 98 pass（購入→照会→反映・再送・同時着信・pending 回復・金額 / 会員 / 商品 / 未確定の不一致・本番サイトでのテストキー拒否・買い切り会員・更新・返金の戻し・再契約・不正な recordId）|
+| 本番審査 | **未申請**。取扱可否は一次情報で確認できず、第三者記事に「禁止商材（賭博、ギャンブルなど）」の否認理由の引用あり。規約 §5.7 は後日否認で既決済を遡及解除できる。→ MK が本番申請で事業内容を正確に記載（言い換えない）。全ブランド承認が可否の判断 |
+| Sandbox E2E | **待ち**: テスト秘密鍵・Webhook 署名文字列（MK の管理画面操作）。受領後に Deploy Preview の env 設定 → テストカードで購入〜返金まで実施（手順 FINCODE_BILLING.md §4）|
+| 次作業 | ①PR / CI ②鍵受領後の Sandbox E2E ③本番審査の結果に応じて販売開始の可否を MK が判断（自動では開かない）|
+| 再開条件 | 鍵の受領（Sandbox）／本番審査の承認＋ MK の販売開始決定（本番）|
+
+---
+
 # 🛑 新規の月払いを全面停止・販売は銀行振込の年払い・買い切りだけ（2026-10-11 MK 確定 / **Phase 1 実装中**）
 
 | 項目 | 状態 |
