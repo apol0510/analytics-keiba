@@ -36,16 +36,6 @@ test('販売ゲート: 閉鎖・審査・読めない・鍵なしはすべて受
   assert.equal((await checkStripeLiveSales(K, { fetchImpl: fake({ charges_enabled: true, capabilities: { card_payments: 'active' } }) })).open, true);
 });
 
-test('/pricing/: stripe_sales_paused は一時停止と既存の銀行振込の入口を示す（汎用エラーにしない）', () => {
-  const s = read('../../pages/pricing.astro');
-  const i = s.indexOf("err === 'stripe_sales_paused'");
-  assert.ok(i > 0);
-  const block = s.slice(i, i + 700);
-  assert.match(block, /カード決済（月額）のお申し込みを一時停止/);
-  assert.match(block, /#otherPayments/);
-  assert.match(s, /<details class="other-payments" id="otherPayments">/);
-});
-
 test('scheduled-checks: 再有効化の検知が登録され、完了時の次の作業は登録の next を使う', () => {
   const reg = JSON.parse(read('../../../../ops/scheduled-checks.json'));
   assert.deepEqual(validateRegistry(reg), []);

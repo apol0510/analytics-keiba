@@ -584,7 +584,9 @@ test('Preview の「Premium なら」パネル: たくさん使えるメリッ�
   const board = read('src/components/acquisition/PremiumRaceBoard.astro');
   const side = board.slice(board.indexOf('<aside class="acq-preview-side"'), board.indexOf('</aside>'));
   assert.match(side, /取得回数に上限なし/);
-  assert.match(side, /月額のまま、何レースでも。/);
+  // 2026-10-11: 新規の月払いは全面停止のため「月額」を見出しに使わない（年払い・買い切りでも成り立つ表現）
+  assert.match(side, /追加料金なしで、何レースでも。/);
+  assert.doesNotMatch(side, /月額/);
   assert.match(side, /使うほど 1 レースあたりがお得に/);
   assert.equal(/通常の買い目と、点数を絞った買い目/.test(side), false, '買い目の種類を強調しない');
   assert.equal(/Premiumでできること/.test(side), false);
