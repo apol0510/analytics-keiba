@@ -1,3 +1,23 @@
+# 🚨 AK の Stripe アカウントに閉鎖通知（2026-10-11 / **新規申込の停止を恒久化・未確認事項あり**）
+
+| 項目 | 状態 |
+|---|---|
+| 発生 | 2026-10-11 MK に AK 用 Stripe アカウント（analytics）の閉鎖通知。対象は AK のみ（KI・他の Stripe アカウントは調査・変更していない） |
+| 閉鎖の理由 | **未取得**。通知本文は会話に未提示。API（制限付き鍵）の `requirements.disabled_reason` は空で読めない。→ 通知本文または Stripe ダッシュボードの表示で確認して追記する |
+| アカウント状態（2026-10-11 read-only 実測）| `charges_enabled=false`・`card_payments=inactive`（jcb / link 等も inactive）・`payouts_enabled=true`・入金スケジュール 毎週金曜（delay 4 日）・details_submitted=true |
+| 未決済・入金予定 | **未取得**。残高・入金（payouts）・請求書・購読一覧の API 読取りは Claude Code の harness が拒否（鍵を扱う操作）。迂回していない。→ Stripe ダッシュボード「残高」「入金」「サブスクリプション」で確認して追記する |
+| 既存 Stripe 会員 | 記録上の live 契約は **1 件**（2026-10-07 時点 active・解約予約 0）。最新件数・次回請求日は未取得。権限は書き換えない設計: `有効期限`=支払い済み期間末 +2 日で自然に閉じる／更新請求の失敗（past_due）では書かない／購読終了時は Webhook が支払い済み期間末の翌暦日へ縮めるだけ＝**支払い済み期間の誤失効なし**。AK から顧客への通知なし（Webhook 通知は管理者宛のみ）。受付不可の間は請求自体が成立しないため**二重請求なし** |
+| 既存会員（銀行振込・買い切り・無料特典）| 影響なし。権限判定（`resolveEntitlements`）は Stripe の状態を読まない。入金確認フロー（`confirm-bank-payment`）も Stripe 非依存 |
+| 新規 Stripe 決済 | 修正前: Checkout 作成が Stripe に拒否され「お申し込みを開始できませんでした」（汎用エラー・顧客レコードの読込は発生）。**修正: `stripe-create-checkout` が販売ゲート（`stripeSalesGate.js` の単一源）で先に止め 503 `stripe_sales_paused`、`/pricing/` は一時停止と既存の銀行振込（年払い・買い切り）の入口を表示**。決済会社の切替・Stripe 上の情報削除はしていない |
+| 自動更新リマインド | 既存の販売ゲートで dry-run（送信 0）＝Stripe 月額へ誘導する誤案内は出ない。⚠️ その代わり **銀行振込の月払い会員（Light / Premium）に期限前リマインドが届かない**（月払い銀行振込は新規停止済みのため案内先が無い）。案内先をどうするかは **MK の事業判断**（年払い銀行振込へ誘導する等）。決まるまで変更しない |
+| 再開の検知 | scheduled-checks `stripe-live-reactivation-2026`（毎日 10:00 JST・〜2027-03-31）。再有効化で Issue を記録し、新規申込は販売ゲートが自動で再開（コード・env 変更不要）。閉鎖で鍵が無効化されたら job 赤で知らせる |
+| 正本 | `astro-site/docs/STRIPE_BILLING.md` §6（受付不可の間の挙動）・§5（「STRIPE_PRICE_* の unset で止まる」は誤りだったので訂正） |
+| test | `stripeSalesPause.guard.test.mjs`（ゲートが顧客レコード・Stripe 操作より前・fail closed・pricing の案内・再有効化検知の登録）。`test:billing` 63 件・ops 44 件 pass |
+| 残り（MK）| ①閉鎖理由・未決済残高・入金予定・既存購読の次回請求日を Stripe ダッシュボードで確認（Claude は読めない） ②再審査の申立ての要否 ③銀行振込月払い会員の更新案内先 ④既存 Stripe 会員への個別連絡の要否（現状は何も送らない） |
+| rollback | 本 PR を revert（販売ゲートが外れ、Stripe の拒否による汎用エラー表示に戻るだけ。権限・データの変更なし） |
+
+---
+
 # 🏁 AI ラボに着順・評価待ちの文言（2026-10-07 MK / **PR 待ち**）
 
 | 項目 | 状態 |

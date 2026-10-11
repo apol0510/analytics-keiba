@@ -6,6 +6,7 @@
  *   → 400 invalid_plan / email_required
  *   → 409 already_subscribed / already_premium （二重課金を作らない）
  *   → 503 billing_not_configured / plan_not_configured（推測で続けない）
+ *   → 503 stripe_sales_paused（Stripe アカウントが決済を受け付けていない。2026-10-11 閉鎖通知の対応）
  *
  * - ログイン中（ak_session）はそのレコードに紐付ける（メールは Airtable の値。入力値を使わない）
  * - 未ログインは入力メールで受け付ける。決済後のログインはマジックリンク（本人のメールに届く）なので、
@@ -22,6 +23,7 @@ import {
   getStripe, resolveSiteOrigin, corsHeaders, readSessionRecordId,
 } from '../../src/lib/billing/stripeRuntime.js';
 import { formulaString, normalizeEmail } from '../../src/lib/billing/stripeServer.js';
+import { checkStripeLiveSales } from '../../src/lib/billing/stripeSalesGate.js';
 
 const LIVE = new Set(['active', 'trialing', 'past_due', 'incomplete', 'unpaid']);
 
@@ -53,6 +55,15 @@ exports.handler = async (event) => {
   if (!stripe || !env.AIRTABLE_API_KEY || !env.AIRTABLE_BASE_ID) return json(503, headers, { error: 'billing_not_configured' });
   const priceId = priceIdFor(plan, env);
   if (!priceId) return json(503, headers, { error: 'plan_not_configured' });
+
+  // Stripe アカウントが決済を受け付けていない間（審査・停止・閉鎖）は、顧客レコードにも Stripe にも触れずに止める。
+  // 2026-10-11: 閉鎖通知で charges_enabled=false となり、Checkout 作成が Stripe に拒否されて汎用エラーになっていた。
+  // 判定は更新リマインドと同じ単一源（読めない・失敗も「受付不可」= fail closed）。
+  const sales = await checkStripeLiveSales(env);
+  if (!sales.open) {
+    console.log(JSON.stringify({ event: 'stripe_checkout_paused', plan: plan.id, reason: sales.reason }));
+    return json(503, headers, { error: 'stripe_sales_paused' });
+  }
 
   try {
     // ── 誰の申込か ──
