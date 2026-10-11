@@ -52,6 +52,6 @@ export function renderStripeActivationMarkdown({ check, result }) {
     `| カード決済 | ${result.cardPayments} |`,
     `| 入金（payouts_enabled） | ${result.payoutsEnabled ? '有効' : '無効'} |`,
     '',
-    '**次の作業**: PR #677（Stripe 定期購読）を merge → 本番デプロイ → 本番スモーク（`astro-site/docs/STRIPE_BILLING.md`）。',
+    `**次の作業**: ${check.next || 'PR #677（Stripe 定期購読）を merge → 本番デプロイ → 本番スモーク（`astro-site/docs/STRIPE_BILLING.md`）。'}`,
   ].join('\n');
 }

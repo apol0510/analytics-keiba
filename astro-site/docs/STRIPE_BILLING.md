@@ -131,8 +131,23 @@ Stripe ダッシュボードで人が行うのは: アカウント作成・本�
 
 ## 5. ロールバック
 
-- 販売を止める: production の `STRIPE_PRICE_*` を unset → 再デプロイ（ボタンは「準備中」表示・503）。既存契約の課金は Stripe 側で継続する。
+- 販売を止める: Price ID はコード（`STRIPE_IDS`）に持つため、`STRIPE_PRICE_*` の unset では止まらない。Stripe アカウントが決済を受け付けない間は §6 の販売ゲートで自動的に止まる。意図して止めるときは revert PR。既存契約の課金は Stripe 側で継続する。
 - コードを戻す: revert PR → merge。`VenueAccess` が入った会員がいる場合、旧コードは会場を見ないため**両会場が開く**（閉じる方向の事故にはならない）。
 - 課金を止める: Stripe ダッシュボードで該当購読を解約（Webhook が期限を縮める）。
 - 退会機能（2026-10-07）を戻す: revert PR → merge。マイページの「退会する」が消えるだけで、退会済みの会員の状態（退会フラグ・期限）は戻さない（再利用は新規契約）。
   ポータル設定（解約無効）は Stripe 側の設定なので別に戻す必要がある（`subscription_cancel` を再有効化）。期間末解約に戻すかは MK の事業判断。
+
+## 6. Stripe アカウントが決済を受け付けない間（審査・停止・閉鎖 / 2026-10-11 閉鎖通知で追加）
+
+判定は単一源 `src/lib/billing/stripeSalesGate.js`（`GET /v1/account` の `charges_enabled` かつ `card_payments=active`。読めない・鍵無効・通信失敗も「受付不可」）。
+
+| 経路 | 受付不可の間の挙動 |
+|---|---|
+| 新規申込 `stripe-create-checkout` | 顧客レコードも Stripe も触らずに `503 stripe_sales_paused`。`/pricing/` は「カード決済（月額）の一時停止」と既存の銀行振込（年払い・買い切り）の入口を表示 |
+| 更新リマインド（Light / Premium 月払い・銀行振込会員向け）| dry-run（送信 0）。本文の主導線が Stripe 月額のため |
+| 既存 Stripe 会員の権限 | **書き換えない**。`有効期限` は支払い済み期間末 +2 日のまま自然に閉じる。更新請求が失敗（past_due）しても書かない。購読が終了（canceled / unpaid）すれば Webhook が支払い済み期間末の翌暦日へ縮める（延ばさない）。支払い済み期間は失効させない |
+| 顧客への通知 | AK からは送らない（Webhook の通知は管理者宛のみ）。Stripe 自身の請求失敗メールは Stripe ダッシュボードの設定に従う |
+| 退会 `stripe-withdraw` | Stripe の解約 API が失敗すると何も変えない（502）。受付不可の間は新たな請求も成立しないため二重請求にはならない |
+| 再開 | 受付が戻れば販売ゲートが自動で開く（コード・env 変更不要）。検知は scheduled-checks `stripe-live-reactivation-2026`（毎日 10:00 JST） |
+
+⚠️ 決済会社の切替・Stripe 上の情報（商品・規約・特商法の記載）の削除はしない（再審査を妨げる）。判断は MK。
