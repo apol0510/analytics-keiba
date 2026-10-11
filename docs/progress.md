@@ -8,7 +8,8 @@
 | test | `test:billing` 120 pass（Paddle 9: 署名・金額・origin・再送・同時着信・承認済み全額返金だけ戻す・再購入・二重購入の疑い／PayPal 9: capture 冪等・戻り先と Webhook の同時・検証 API・保留・一部返金・リバーサル・再購入／guard 4: 全社販売停止・定期課金 API を使わない・PATCH は共通層だけ・計測とログ）。build・check:safety 通過 |
 | 取扱可否（一次情報）| Paddle: 禁止リストに Betting-related products・Sports forecasting/odds making（賞金を伴うもの）→ **書面確認が要る**。PayPal 日本: 「競馬またはドッグレース」「ギャンブルを助長するその他の事業」は**事前承認**区分（承認前の受付は規約違反）。→ 本番申込で事業内容を正確に申告し、承認を得てから有効化 |
 | Sandbox E2E | **待ち**: MK の Sandbox アカウント開設と鍵（手順 CARD_PAYMENT_PROVIDERS.md §4）。受領後に deploy-preview env → 購入〜返金〜再購入 |
-| 次作業 | ①PR / CI ②鍵受領後の Sandbox E2E ③各社の審査・承認後に MK が販売開始を判断（自動では開かない）|
+| PR / CI | **#789**（`feat/card-providers`・#787→#788 の上に積み）CI green。Deploy Preview 実測: 鍵なしで paddle-create-checkout / paypal-create-order / paypal-capture = 503 `*_key_missing`、paddle-webhook 署名なし 401、card-order-status 未ログイン 401、旧 paypal-webhook 410、/checkout/paddle/ は「受け付けていません」表示 |
+| 次作業 | ①MK merge（#787→#788→#789。後続の docs 競合は両方残して解消）②鍵受領後の Sandbox E2E ③各社の審査・承認後に MK が販売開始を判断（自動では開かない）|
 | 再開条件 | `~/.analytics-keiba-ops/card-sandbox.env` の作成（Sandbox）／各社の取扱承認＋MK の販売開始決定（本番）|
 
 ---
