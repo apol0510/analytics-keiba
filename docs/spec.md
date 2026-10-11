@@ -63,7 +63,7 @@
 > 月額を案内する更新リマインド（Light / Premium 月払い）は月払いが閉じている間は実送信しない。既存の有料 Light 会員の銀行振込更新は維持（新規ではないため）。
 > 根拠 `decisions.md` 2026-10-11。
 
-> **代替決済（2026-10-11 MK 確定）**: 候補は fincode byGMO（優先）・Paddle・PayPal。営業商談型は候補にしない。直近の販売は銀行振込のみ・新規月払いは停止のまま（決済会社の準備で自動再開しない）。根拠 `decisions.md` 2026-10-11（追記 2）。
+> **代替決済（2026-10-11 MK 確定）**: 候補は fincode byGMO（優先・実装の正本 `astro-site/docs/FINCODE_BILLING.md`・販売は `CARD_SALES_OPEN=false` で閉じたまま）・Paddle・PayPal。営業商談型は候補にしない。直近の販売は銀行振込のみ・新規月払いは停止のまま（決済会社の準備で自動再開しない）。根拠 `decisions.md` 2026-10-11（追記 2）。
 >
 > **決済関連名称（決済会社をまたいで共通）に競馬関連の語（KEIBA / 競馬 / 馬券）を使わない。基本名称は「Analytics Premium」**（2026-10-11 MK 確定・単一源 `paymentDisplayNames.js`・`decisions.md` 2026-10-11 追記）。サイト名・ドメイン・サービス説明・法定表示は対象外。
 >
