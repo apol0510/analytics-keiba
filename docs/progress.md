@@ -1,3 +1,15 @@
+# ⛔ Paddle / PayPal 導入の前提確認（2026-10-11 / **実装停止・事業者の書面確認待ち**）
+
+| 項目 | 状態 |
+|---|---|
+| 指示 | Phase 4: Paddle（新規 TIROL DATA LABO 名義）を本命に Sandbox E2E。Phase 5: PayPal を予備に Sandbox E2E |
+| 調査結果 | **Paddle**: AUP（https://paddle.com/support/aup・2026-04-13 更新）は Gambling を **Prohibited**（申請で通る Restricted ではない）。「Betting-related products」「Sports forecasting/odds making…」を明記。競馬予想の有料提供は該当する可能性が高い。**PayPal（日本）**: 利用規定ポリシー（https://www.paypal.com/jp/legalhub/paypal/acceptableuse-full）で「競馬…ギャンブルを助長するその他の事業」は**事前承認が必要**。承認なしの取引は禁止行為 |
+| 判断 | 実害（アカウント停止・売上保留）を避けるため **Paddle / PayPal の実装は開始しない**。審査で事業内容を「データ分析」と言い換えて通すことはしない（虚偽申告）。決済名称の禁止語ルール（Phase 3）は表示名の統一であり、事業内容の申告を偽るものではない |
+| 再開条件 | Paddle: 本商品（競馬データ・予想の有料提供）が利用可能である旨の**書面回答**。PayPal: 日本の営業チームからの**事前承認**。いずれかが得られたら、決済会社共通の権利層（1 会員 1 継続契約・会員単位ロック・event_id 冪等・支払い済み期間で期限）から実装する |
+| 当面の販売 | 銀行振込の年払い・買い切り（#786）を維持 |
+
+---
+
 # 🏷 決済関連名称の禁止語を決済会社共通で固定（2026-10-11 MK 確定 / **Phase 3・PR 中**）
 
 | 項目 | 状態 |
