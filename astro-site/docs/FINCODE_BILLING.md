@@ -1,6 +1,7 @@
-# fincode byGMO（カード決済・代替決済の優先候補）— 実装と運用の正本
+# fincode byGMO（カード決済・代替決済の候補・本番審査結果待ち）— 実装と運用の正本
 
-方針の根拠は `docs/decisions.md` 2026-10-11（追記 2）。販売の開始は MK の明示決定まで行わない。
+方針の根拠は `docs/decisions.md` 2026-10-11（追記 2・追記 3）。追記 3 で優先順位は Paddle（第一）・PayPal（第二）となり、fincode は審査結果待ちで候補として維持。
+共通の会員権限層（`entitlementLedger.js`）と他社は `CARD_PAYMENT_PROVIDERS.md`。販売の開始は MK の明示決定まで行わない。
 
 ## 0. いまの状態（2026-10-11）
 
@@ -8,7 +9,7 @@
 |---|---|
 | アカウント | MK が新規登録済み（TIROL DATA LABO）。テスト環境は登録直後から利用可 |
 | 本番審査 | **未申請**。取扱可否（競馬データ・予想の有料提供）は一次情報で確認できていない。第三者の記事で FAQ の否認理由に「禁止商材（賭博、ギャンブルなど）」と引用あり。規約 §5.7 は「後日の否認で既決済を遡及解除」できる → **本番申請で事業内容を正確に記載し、全ブランド承認を可否の判断とする**（言い換えて通さない） |
-| 販売 | **閉じている**（`CARD_SALES_OPEN = false`・コード。env では開かない）。本番サイトはテストキーも本番キーも受け付けない |
+| 販売 | **閉じている**（`cardSales.js` の `CARD_SALES_OPEN.fincode = false`・コード。env では開かない）。本番サイトはテストキーも本番キーも受け付けない |
 | 売る商品 | 銀行振込と同じ一回払いだけ（Premium 年払い ¥49,800／Light 会員 ¥44,820・買い切り ¥78,000）。**月払いは扱わない** |
 
 ## 1. 全体像
@@ -29,7 +30,7 @@ fincode → POST fincode-webhook（Fincode-Signature を定数時間比較）
 |---|---|
 | `src/lib/billing/cardOneTime.js` | 一回払い商品・申込前判定・会員反映（決済会社共通の単一源）|
 | `src/lib/billing/fincode/fincodeCore.js` | 販売可否・キーとサイトの組合せ・決済画面の本文・署名・照合・返金の戻し（純粋）|
-| `src/lib/billing/fincode/fincodeServer.js` | fincode API・Airtable・Redis（会員ロック・注文の状態）|
+| `src/lib/billing/fincode/fincodeServer.js` | fincode API の照会。会員への反映は共通の `entitlementLedger.js`（会員ロック・注文の状態・二重購入の疑い）|
 | `src/lib/billing/fincode/fincodeNotify.js` | 管理者通知（support@・顧客には送らない）|
 | `netlify/functions/fincode-{create-session,webhook,order-status}.js` | 入口 |
 | `src/pages/checkout/card-complete.astro` | 決済後の戻り先（SSR・POST を受ける）|
@@ -40,6 +41,7 @@ fincode → POST fincode-webhook（Fincode-Signature を定数時間比較）
 - **申込前**: 買い切り会員・生きている Stripe 月額・資格のない会員価格は決済を作らない。
 - **反映は Webhook だけ**。通知の中身は信じず API で照会。success_url は支払いの証明にしない。
 - **会員ごとのロック**（`ak:billing:member-lock:{recordId}`）。決済会社をまたいで同じ鍵を使う前提。
+- **二重購入の疑い**（共通層）: 同じ会員に別決済の付与が 30 分以内にあれば権限を変えず管理者へ。
 - **注文ごとの状態** `ak:card:fincode:applied:{order}`: PATCH の前に pending（付与前の値と付与する値を保存）→ PATCH → done。
   再送で pending を見たら、レコードが付与後の値なら done にするだけ（年払いの二重延長を防ぐ）。Redis が無ければ反映しない（再送させる）。
 - **期限**: 年払いは Premium の残りがあればその翌日から 1 年（縮めない）。Light の残りは持ち越さない。買い切りは 2099-12-31。

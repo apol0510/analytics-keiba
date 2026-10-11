@@ -15,17 +15,16 @@
 
 import { timingSafeEqual } from 'node:crypto';
 import { cardProductById } from '../cardOneTime.js';
+import { CARD_SALES_OPEN as SALES, PRODUCTION_ORIGIN, resolveCardMode } from '../cardSales.js';
 
+export const PROVIDER = 'fincode';
 /**
- * カード決済（fincode 経由の Premium 年払い・買い切り）の**本番受付**を開くか。
- * 2026-10-11 MK 確定: 直近の販売は銀行振込のみ。決済会社の準備が整っても自動では開かない。
- * 開くのは MK の明示決定でこの値を変える PR だけ（env では開かない）。
+ * fincode の**本番受付**を開くか。単一源は cardSales.js の CARD_SALES_OPEN.fincode（MK の明示決定で変える PR だけ）。
  */
-export const CARD_SALES_OPEN = false;
+export const CARD_SALES_OPEN = SALES[PROVIDER];
+export { PRODUCTION_ORIGIN };
 
 export const FINCODE_API = Object.freeze({ test: 'https://api.test.fincode.jp', live: 'https://api.fincode.jp' });
-export const PRODUCTION_ORIGIN = 'https://analytics.keiba.link';
-export const PROVIDER = 'fincode';
 
 /** 受け付けるイベント（決済の確定・取消） */
 export const GRANT_EVENTS = Object.freeze(['payments.card.exec', 'payments.card.capture', 'payments.card.secure']);
@@ -45,16 +44,8 @@ export function keyMode(key) {
  * @returns {{ ok: true, mode: 'test'|'live', apiBase: string } | { ok: false, reason: string }}
  */
 export function resolveFincodeMode({ key, origin, salesOpen = CARD_SALES_OPEN } = {}) {
-  const mode = keyMode(key);
-  if (!mode) return { ok: false, reason: 'fincode_key_missing' };
-  const isProdSite = String(origin || '') === PRODUCTION_ORIGIN;
-  if (isProdSite) {
-    if (mode !== 'live') return { ok: false, reason: 'test_key_on_production' };
-    if (!salesOpen) return { ok: false, reason: 'card_sales_not_open' };
-    return { ok: true, mode, apiBase: FINCODE_API.live };
-  }
-  if (mode !== 'test') return { ok: false, reason: 'live_key_outside_production' };
-  return { ok: true, mode, apiBase: FINCODE_API.test };
+  const r = resolveCardMode({ provider: PROVIDER, keyMode: keyMode(key), origin, salesOpen });
+  return r.ok ? { ...r, apiBase: FINCODE_API[r.mode] } : r;
 }
 
 /** 注文 ID（fincode の order_id）。決済は削除できないので毎回新しく作る（推測されにくい乱数） */
@@ -135,30 +126,5 @@ export function matchPayment({ payment, reservation }) {
   return { ok: false, reason: `status_${status.toLowerCase() || 'unknown'}` };
 }
 
-/** 付与前の状態（返金時に戻すため）。権限に関わる列だけ */
-export const SNAPSHOT_FIELDS = Object.freeze(['プラン', 'PlanType', 'Status', '有効期限', 'PaidAt', 'PaymentMethod', 'VenueAccess', 'WithdrawalRequested', 'WithdrawalDate', 'WithdrawalReason']);
-
-export function snapshotFields(fields = {}) {
-  const out = {};
-  for (const k of SNAPSHOT_FIELDS) out[k] = Object.prototype.hasOwnProperty.call(fields, k) ? fields[k] : null;
-  return out;
-}
-
-/**
- * 返金（取消）→ 付与前に戻す値。
- * 付与後に別の変更（別の購入・管理者の変更）が入っていたら戻さない（conflict・管理者へ）。
- * @returns {{ action: 'revert', fields } | { action: 'conflict', reason } | { action: 'noop', reason }}
- */
-export function decideRefundRevert({ current = {}, applied }) {
-  if (!applied || !applied.grantFields || !applied.before) return { action: 'noop', reason: 'not_applied' };
-  if (applied.reverted) return { action: 'noop', reason: 'already_reverted' };
-  for (const [k, v] of Object.entries(applied.grantFields)) {
-    if (k === 'PaidAt') continue;
-    const cur = current[k] === undefined ? null : current[k];
-    const norm = (x) => (x === '' || x === undefined ? null : x);
-    if (norm(cur) !== norm(v) && !(typeof v === 'boolean' && Boolean(cur) === v)) {
-      return { action: 'conflict', reason: `changed_after_grant:${k}` };
-    }
-  }
-  return { action: 'revert', fields: { ...applied.before } };
-}
+// 返金の戻しは決済会社共通の単一源（cardRefund.js）。互換のため再エクスポート
+export { SNAPSHOT_FIELDS, snapshotFields, decideRefundRevert } from '../cardRefund.js';

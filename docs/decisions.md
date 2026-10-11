@@ -1,3 +1,16 @@
+# 2026-10-11（追記 3）— 代替決済は Paddle（第一）・PayPal（第二）を並行推進・fincode は審査結果待ちで維持（MK 確定）
+
+- 優先順位を改める: **Paddle を第一優先、PayPal を第二優先**として並行推進。**fincode は本番審査結果待ち**で候補として維持（追記 2 の「fincode 優先」はこれで置き換え）。
+- Paddle は旧アカウントを使わず **TIROL DATA LABO 本人名義で新規開設**。PayPal も**新規アカウント**。KI・他事業の Stripe アカウントは使わない・変えない。
+- **銀行振込販売を維持**。**新規月払いは停止のまま**（MK の新しい決定なく再開しない）。売るのは一回払い（年払い・買い切り）だけで、定期課金（Paddle の定期価格・PayPal Subscriptions）は作らない。
+- 一般的な懸念だけを理由に Sandbox 実装・技術的準備を止めない。契約・審査が未完了でも進められる技術作業は進める。**本番決済の有効化は、各決済事業者が AK の取扱商品を承認したあと**（`cardSales.js` の `CARD_SALES_OPEN` を MK の決定で変える PR だけ）。
+- 決済会社に依存しない共通の会員権限層（`entitlementLedger.js`）を置き、fincode も載せ替えた。権限の書き換えはここだけ。
+- 2026-10-11 の Paddle / PayPal「書面確認まで実装しない」判断（progress「Paddle / PayPal 導入の前提確認」）は、**本番申込・本番有効化**について維持し、Sandbox 実装には適用しない。
+- 申請では事業内容（競馬データ・予想の有料提供）を正確に申告し、表示名は確定済みの「Analytics Premium」を使う（名称の統一は事業内容の言い換えではない）。
+- 正本: `astro-site/docs/CARD_PAYMENT_PROVIDERS.md`。固定: `cardSales.guard.test.mjs`・`paddle.test.mjs`・`paypal.test.mjs`。
+
+---
+
 # 2026-10-11 — 新規の月払いを全面停止・販売は銀行振込の年払い・買い切りだけ（MK 確定）
 
 - 背景: AK 用 Stripe アカウントに閉鎖通知（charges_enabled=false）。
