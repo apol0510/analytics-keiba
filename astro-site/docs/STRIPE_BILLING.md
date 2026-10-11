@@ -1,5 +1,7 @@
 # Stripe 定期購読（Premium / 中央版 / 南関版）— 実装と運用の正本
 
+> 🛑 **2026-10-11 MK 確定: 新規の月払いは全面停止**（`MONTHLY_SALES_OPEN = false`・`stripe-create-checkout` は 410 `monthly_sales_ended`）。Stripe が復旧しても再開しない。以下は既存契約の反映・退会・運用の正本として残す。
+
 商品・価格の決定は `docs/spec.md`「Stripe 定期購読」、経緯は `docs/decisions.md` 2026-10-02。
 
 ## 1. 全体像

@@ -77,7 +77,17 @@ test('本文: 価格は /pricing/ の Premium 月額（Stripe）と同じ・割�
   const pricing = readFileSync(`${ROOT}src/pages/pricing.astro`, 'utf8');
   const { planById } = await import('../../billing/stripePlans.js');
   assert.equal(planById('premium').amountYen, PREMIUM_MONTHLY_YEN, 'Stripe の Premium 月額と本文の金額がずれている');
-  assert.match(pricing, /data-checkout="premium"/, '/pricing/ に Premium 月額（Stripe）の申込ボタンが無い');
+  // 2026-10-11 MK 確定: 新規の月払いは全面停止（/pricing/ に月額の申込ボタンは無い）。
+  // この本文は Stripe 月額を案内するため、月払いが閉じている間は cron が実送信しない（dry-run 固定）ことを固定する。
+  const { MONTHLY_SALES_OPEN } = await import('../../billing/stripePlans.js');
+  if (!MONTHLY_SALES_OPEN) {
+    assert.doesNotMatch(pricing, /data-checkout=/);
+    const cron = readFileSync(`${ROOT}netlify/functions/cron-premium-renewal-reminder.js`, 'utf8');
+    assert.match(cron, /const sales = MONTHLY_SALES_OPEN \? await checkStripeLiveSales\(process\.env\) : \{ open: false, reason: 'monthly_sales_ended' \};/);
+    assert.match(cron, /const mode = gateModeOnStripeSales\(resolveMode\(process\.env\), sales\);/);
+  } else {
+    assert.match(pricing, /data-checkout="premium"/, '/pricing/ に Premium 月額（Stripe）の申込ボタンが無い');
+  }
   assert.equal(/openBankModal\('Premium Monthly'/.test(pricing), false, '販売終了した銀行振込の月払いが /pricing/ に残っている');
   for (const stage of [STAGE.PRE, STAGE.POST]) {
     const m = renderPremiumRenewalEmail({ stage, cycle: '2026-10-05', name: '山田' });

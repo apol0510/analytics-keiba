@@ -37,7 +37,7 @@ export function decideBankProductAvailability({ planName, planType, fields, look
     return {
       ok: false,
       code: DISCONTINUED_CODE.PREMIUM_MONTHLY,
-      message: 'Premium の月額プランは、料金ページからクレジットカードでお申し込みください（銀行振込の月払いは受付を終了しました）。既にお振込み済みの場合はお問い合わせください。',
+      message: '月払いのお申し込みは受付を終了しました。Premium は料金ページの年払い・買い切り（銀行振込）からお申し込みください。既にお振込み済みの場合はお問い合わせください。',
     };
   }
   if (plan === 'light') {
@@ -52,7 +52,7 @@ export function decideBankProductAvailability({ planName, planType, fields, look
       return {
         ok: false,
         code: DISCONTINUED_CODE.LIGHT_NEW,
-        message: 'Light プランは新規のお申し込みを終了しました。料金ページの Premium（中央版・南関版）をご覧ください。既にお振込み済みの場合はお問い合わせください。',
+        message: 'Light プランは新規のお申し込みを終了しました。料金ページの Premium（年払い・買い切り）をご覧ください。既にお振込み済みの場合はお問い合わせください。',
       };
     }
   }

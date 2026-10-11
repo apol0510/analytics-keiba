@@ -115,7 +115,7 @@ test('guard: 乗り換え特典価格が Functions のプラン名正規化を�
   );
   assert.ok(src.includes('¥44,820'), 'カード/FAQ に乗り換え価格が無い');
   // 2026-10-02: 「Light を続けるより年払いが ¥14,940 お得」の FAQ は撤去（Light 継続を前提にしない）。乗り換え価格の説明は残す
-  assert.ok(src.includes('乗り換え特典価格（¥44,820/年）'), '乗り換え特典価格の案内が無い');
+  assert.ok(src.includes('乗り換え特典価格（<strong>¥44,820/年</strong>）'), '乗り換え特典価格の案内が無い');
 
   // bank-transfer-application.js の正規化を再現して planName='Premium' / planType='Annual' を確認
   const productName = 'Premium Annual - Campaign (¥44,820/年)';
@@ -168,7 +168,8 @@ test('guard: FAQ の Light 年間換算がカード表示価格と整合する',
 
   assert.ok(src.includes("openBankModal('Light', 4980, 'monthly')"), 'Light の価格が変わった');
   assert.ok(src.includes("openBankModal('Premium Annual', 49800, 'annual')"), 'プレミアム年払いの価格が変わった');
-  // 2026-10-02: Light 会員向け FAQ は「同額で中央＋南関の全レースの Premium へ」を主訴求にする（Light 継続は勧めない）
-  assert.ok(src.includes('Light と Premium（月額）の違いは？'), 'Light → Premium の比較 FAQ が無い');
+  // 2026-10-11: 新規の月払いは全面停止。Light 会員向け FAQ は Premium 年払い（乗り換え特典）への変更手順を案内する
+  assert.equal(src.includes('Light と Premium（月額）の違いは？'), false, '月額 Premium との比較 FAQ が残っている');
+  assert.ok(src.includes('乗り換え特典価格で申し込む」から銀行振込'), 'Light → Premium 年払いの変更手順 FAQ が無い');
   assert.equal(src.includes('¥59,760'), false, 'Light 継続を前提にした比較が残っている');
 });

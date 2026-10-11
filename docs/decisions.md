@@ -1,3 +1,18 @@
+# 2026-10-11 — 新規の月払いを全面停止・販売は銀行振込の年払い・買い切りだけ（MK 確定）
+
+- 背景: AK 用 Stripe アカウントに閉鎖通知（charges_enabled=false）。
+- **新規の月払い（Stripe 月額 Premium ¥4,980・中央版／南関版 ¥2,980）を全面停止**。Stripe が復旧しても**自動で再開しない**。再開は MK の次回明示決定でのみ。
+- 単一源: `stripePlans.js` の `MONTHLY_SALES_OPEN = false`（env や Stripe の状態では開かない）。
+- サーバー強制: `stripe-create-checkout` は body の解析・Stripe・顧客レコードに触れる前に 410 `monthly_sales_ended`（URL 直打ち・直 POST でも迂回不可）。銀行振込の月払いは従来どおり 409（案内文を年払い・買い切りへ）。
+- 販売導線: `/pricing/` の主カードを Premium 年払い（¥49,800／Light 会員 ¥44,820）・買い切り（¥78,000）の銀行振込へ。月額カード・Checkout の JS / パネルは削除。dashboard の購入モーダル・`/premium-upgrade/`・spring-campaign・取得 Preview の「月額」表現を削除。
+- **金額・商品権利・販売条件は変えない**。
+- 既存の月額契約者: 支払い済み権利・Webhook 反映・退会・カード変更は止めない。dashboard の「Premium（¥4,980/月）へ変更」ボタン（会場版→Premium のプラン変更の勧誘）は削除。お支払い管理（ポータル）の「プラン変更」は既存契約の管理として残す（Stripe 側のポータル設定は変えていない）。
+- 更新リマインド（Light / Premium 月払い）は本文の主導線が Stripe 月額のため、月払いが閉じている間は dry-run 固定。銀行振込の月払い会員に期限前の案内が届かない点と、本文を年払いへ書き換えるかは MK 判断事項。
+- 既存の有料 Light 会員の銀行振込更新（¥4,980/30日）は「新規」ではないため維持（Light 会員にだけ表示）。止めるかは MK 判断事項。
+- 固定: `monthlySalesStop.guard.test.mjs`（ゲート位置・env で開かない・pricing・他ページ・リマインド・銀行振込・既存契約の経路に入れない）。
+
+---
+
 # 2026-10-11 — Stripe の顧客向け表示から「KEIBA」を完全に除外する（MK 確定）
 
 - 対象: Stripe 上で顧客に見えるもの全部（Product 名・カード明細表記・Checkout・Price・Subscription・請求書・領収書・カスタマーポータル）。名称は確定名称「**Analytics Premium**」に統一する。

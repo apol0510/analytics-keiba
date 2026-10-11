@@ -24,6 +24,13 @@
  */
 
 /**
+ * 新規の月払い（Stripe 月額・会場版を含む）を受け付けるか。
+ * 2026-10-11 MK 確定: **全面停止**。Stripe が復旧しても自動で再開しない（env や Stripe の状態では開かない）。
+ * 再開は MK の次回明示決定でこの値を変える PR だけ。既存の月額契約者の支払い済み権利・Webhook 反映・退会は従来どおり。
+ */
+export const MONTHLY_SALES_OPEN = false;
+
+/**
  * Stripe 上で顧客に見える名前（Product 名以外）の単一源（2026-10-11 MK 確定）。
  * Stripe 関連の顧客向け表示（明細・Checkout・請求書・領収書・ポータル）から「KEIBA」を完全に除外し、
  * 確定名称「Analytics Premium」に統一する。AK のサイト名・ドメイン・サービス内容は変えない。
