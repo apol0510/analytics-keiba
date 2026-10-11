@@ -49,9 +49,10 @@ function world({ fields = { 'プラン': 'Free', Email: 'a+fincode-e2e@example.c
 const pay = (orderId, productId, amount, status = 'CAPTURED', recordId = REC) => ({
   id: orderId, order_id: orderId, amount, status, client_field_1: recordId, client_field_2: productId, process_date: '2026/10/11 12:00:00', access_id: 'a1',
 });
-const run = (w, event, orderId, origin = PREVIEW) => handleFincodeEvent({
-  env: ENV, origin, event, orderId, redis: w.redisCmd, notify: w.notify, fetchImpl: w.fetch,
+const run = (w, event, orderId, origin = PREVIEW, now) => handleFincodeEvent({
+  env: ENV, origin, event, orderId, redis: w.redisCmd, notify: w.notify, fetchImpl: w.fetch, ...(now ? { now } : {}),
 });
+const LATER = () => Date.now() + 60 * 60 * 1000; // 二重購入の疑い（30 分以内）を越えた別の日の更新
 
 test('販売は閉じている。本番サイトではテストキー・販売前の本番キーとも受け付けない。Preview は本番キーを受け付けない', () => {
   assert.equal(CARD_SALES_OPEN, false);
@@ -60,8 +61,8 @@ test('販売は閉じている。本番サイトではテストキー・販売�
   assert.equal(resolveFincodeMode({ key: 'm_prod_x', origin: PREVIEW }).reason, 'live_key_outside_production');
   assert.equal(resolveFincodeMode({ key: '', origin: PREVIEW }).reason, 'fincode_key_missing');
   assert.equal(resolveFincodeMode({ key: 'm_test_x', origin: PREVIEW }).apiBase, 'https://api.test.fincode.jp');
-  const src = readFileSync(fileURLToPath(new URL('./fincodeCore.js', import.meta.url)), 'utf8');
-  assert.match(src, /export const CARD_SALES_OPEN = false;/);
+  const src = readFileSync(fileURLToPath(new URL('../cardSales.js', import.meta.url)), 'utf8');
+  assert.match(src, /\n  fincode: false,\n/);
 });
 
 test('決済画面: 金額はサーバー・即時売上（CAPTURE）・3DS2 必須・メールを載せない・禁止語なし', () => {
@@ -177,7 +178,10 @@ test('更新（年払いの再購入）は残りの期限から 1 年・返金�
   const w = world({ payments: { [o1]: pay(o1, 'premium-annual', 49800), [o2]: pay(o2, 'premium-annual', 49800) } });
   await run(w, 'payments.card.exec', o1);
   assert.equal(w.fields['有効期限'], '2027-10-11');
-  await run(w, 'payments.card.exec', o2); // 更新
+  assert.equal((await run(w, 'payments.card.exec', o2)).result, 'conflict_possible_duplicate_purchase', '30 分以内の別決済は二重購入の疑い');
+  assert.equal(w.fields['有効期限'], '2027-10-11');
+  w.redis.delete(`ak:card:fincode:applied:${o2}`);
+  await run(w, 'payments.card.exec', o2, PREVIEW, LATER); // 更新（時間を置いた再購入）
   assert.equal(w.fields['有効期限'], '2028-10-11');
   // 2 本目を返金 → 1 本目の状態へ戻る
   w.payments[o2] = { ...w.payments[o2], status: 'CANCELED' };

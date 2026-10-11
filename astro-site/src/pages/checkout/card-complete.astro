@@ -1,10 +1,14 @@
 ---
-// カード決済（fincode）の戻り先（success_url）。fincode は POST でリダイレクトしてくるため SSR で受ける。
-// ⚠️ ここへの遷移は支払いの証明ではない。反映は fincode-webhook（API 照会のうえ）だけが行い、この画面は状態を表示するだけ。
+// カード決済の戻り先（決済会社共通）。fincode は POST でリダイレクトしてくるため SSR で受ける。
+// ?provider=fincode|paddle|paypal&order=…（provider 省略時は fincode）
+// ⚠️ ここへの遷移は支払いの証明ではない。反映は各 Webhook（と PayPal の capture）が API 照会のうえ行い、この画面は状態を表示するだけ。
 export const prerender = false;
 import BaseLayout from '../../layouts/BaseLayout.astro';
+const ORDER_RE = { fincode: /^ak-[a-z-]+-[a-z0-9]+$/i, paddle: /^txn_[a-z0-9]{10,40}$/, paypal: /^[A-Z0-9]{10,24}$/ };
+const provider = Astro.url.searchParams.get('provider') || 'fincode';
 const order = Astro.url.searchParams.get('order') || '';
-const safeOrder = /^ak-[a-z-]+-[a-z0-9]+$/i.test(order) ? order : '';
+const safeProvider = ORDER_RE[provider] ? provider : '';
+const safeOrder = safeProvider && ORDER_RE[safeProvider].test(order) ? order : '';
 ---
 
 <BaseLayout title="お申し込みありがとうございます" noindex={true}>
@@ -18,7 +22,7 @@ const safeOrder = /^ak-[a-z-]+-[a-z0-9]+$/i.test(order) ? order : '';
   </main>
 </BaseLayout>
 
-<script is:inline define:vars={{ order: safeOrder }}>
+<script is:inline define:vars={{ order: safeOrder, provider: safeProvider }}>
   (function () {
     var $ = function (id) { return document.getElementById(id); };
     function show(icon, title, text, links) {
@@ -31,11 +35,12 @@ const safeOrder = /^ak-[a-z-]+-[a-z0-9]+$/i.test(order) ? order : '';
     var tries = 0;
     function poll() {
       tries += 1;
-      fetch('/.netlify/functions/fincode-order-status?order=' + encodeURIComponent(order), { credentials: 'include' })
+      fetch('/.netlify/functions/card-order-status?provider=' + encodeURIComponent(provider) + '&order=' + encodeURIComponent(order), { credentials: 'include' })
         .then(function (r) { return r.json().catch(function () { return {}; }).then(function (d) { return { s: r.status, d: d }; }); })
         .then(function (x) {
           var st = x.d && x.d.status;
           if (st === 'active') return show('✅', 'お申し込みが完了しました', 'Premium（中央＋南関）をご利用いただけます。', [['中央の Premium 予想へ', '/premium-prediction/jra/'], ['南関の Premium 予想へ', '/premium-prediction/nankan/']]);
+          if (st === 'refunded') return show('↩️', 'このお支払いは返金済みです', 'ご不明点はお問い合わせください。', [['お問い合わせ', '/contact/']]);
           if (st === 'needs_support') return show('📩', 'お支払いを確認しました', 'ご契約内容の確認が必要なため、担当よりご連絡いたします。', [['お問い合わせ', '/contact/']]);
           if (x.s === 401) return show('🔑', 'ログインしてご確認ください', 'お支払いの反映はログイン後のマイページでご確認いただけます。', [['ログイン', '/login/?next=/dashboard/']]);
           if (tries < 20) return setTimeout(poll, 3000);

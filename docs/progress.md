@@ -1,4 +1,20 @@
-# 💳 fincode byGMO（代替決済の優先候補）Sandbox 実装（2026-10-11 MK 確定 / **実装・テスト済み・Sandbox E2E は鍵待ち・本番審査は未申請**）
+# 💳 代替決済 Paddle（第一）・PayPal（第二）並行推進＋共通会員権限層（2026-10-11 MK 確定 / **Sandbox 実装・テスト済み・E2E は鍵待ち・本番は各社承認待ち**）
+
+| 項目 | 状態 |
+|---|---|
+| 方針 | Paddle 第一・PayPal 第二を並行。fincode は本番審査結果待ちで維持。Paddle は TIROL DATA LABO 名義で新規・PayPal も新規。銀行振込は維持・新規月払いは停止のまま・定期課金は作らない。本番受付は各社が取扱商品を承認後、MK の決定で `cardSales.js` を変える PR だけ。正本 `astro-site/docs/CARD_PAYMENT_PROVIDERS.md`・`decisions.md` 2026-10-11（追記 3）|
+| 実装 | 共通層 `cardSales.js`・`entitlementLedger.js`・`cardRefund.js`・`cardNotify.js`・`cardE2E.js`（fincode も載せ替え）／Paddle `paddle/paddleCore.js`・`paddleServer.js`・Functions `paddle-create-checkout`・`paddle-webhook`・`/checkout/paddle/`／PayPal `paypal/paypalCore.js`・`paypalServer.js`・Functions `paypal-create-order`・`paypal-capture`・`paypal-order-webhook`・`/checkout/paypal-return/`／共通 `card-order-status`・`/checkout/card-complete/?provider=` |
+| 防止策 | 会員ロック（決済会社共通）・決済ごとの pending→done・**30 分以内の別決済は二重購入の疑いとして付与せず管理者へ**・全額返金だけ戻す（一部返金・付与後の変更は管理者へ）・反映は API 照会だけ・顧客へは送らない |
+| test | `test:billing` 120 pass（Paddle 9: 署名・金額・origin・再送・同時着信・承認済み全額返金だけ戻す・再購入・二重購入の疑い／PayPal 9: capture 冪等・戻り先と Webhook の同時・検証 API・保留・一部返金・リバーサル・再購入／guard 4: 全社販売停止・定期課金 API を使わない・PATCH は共通層だけ・計測とログ）。build・check:safety 通過 |
+| 取扱可否（一次情報）| Paddle: 禁止リストに Betting-related products・Sports forecasting/odds making（賞金を伴うもの）→ **書面確認が要る**。PayPal 日本: 「競馬またはドッグレース」「ギャンブルを助長するその他の事業」は**事前承認**区分（承認前の受付は規約違反）。→ 本番申込で事業内容を正確に申告し、承認を得てから有効化 |
+| Sandbox E2E | **待ち**: MK の Sandbox アカウント開設と鍵（手順 CARD_PAYMENT_PROVIDERS.md §4）。受領後に deploy-preview env → 購入〜返金〜再購入 |
+| PR / CI | **#789**（`feat/card-providers`・#787→#788 の上に積み）CI green。Deploy Preview 実測: 鍵なしで paddle-create-checkout / paypal-create-order / paypal-capture = 503 `*_key_missing`、paddle-webhook 署名なし 401、card-order-status 未ログイン 401、旧 paypal-webhook 410、/checkout/paddle/ は「受け付けていません」表示 |
+| 次作業 | ①MK merge（#787→#788→#789。後続の docs 競合は両方残して解消）②鍵受領後の Sandbox E2E ③各社の審査・承認後に MK が販売開始を判断（自動では開かない）|
+| 再開条件 | `~/.analytics-keiba-ops/card-sandbox.env` の作成（Sandbox）／各社の取扱承認＋MK の販売開始決定（本番）|
+
+---
+
+# 💳 fincode byGMO（代替決済の候補・追記 3 で審査結果待ちへ）Sandbox 実装（2026-10-11 MK 確定 / **#788 merge 済み `c94f6e47`・本番で受付拒否を実測（fincode-create-session 503 fincode_key_missing／webhook 署名なし 401）・Sandbox E2E は鍵待ち・本番審査は結果待ち**）
 
 | 項目 | 状態 |
 |---|---|
@@ -24,7 +40,7 @@
 
 ---
 
-# ⛔ Paddle / PayPal 導入の前提確認（2026-10-11 / **候補として維持・実装は事業者の書面確認待ち**）
+# ⛔ Paddle / PayPal 導入の前提確認（2026-10-11 / **追記 3 で Sandbox 実装は着手済み。本番申込・有効化は事業者の承認待ちのまま**）
 
 | 項目 | 状態 |
 |---|---|

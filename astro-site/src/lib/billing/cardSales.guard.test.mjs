@@ -1,0 +1,53 @@
+/**
+ * カード決済（決済会社共通）の販売停止と月払い停止を固定する guard。
+ * 2026-10-11 MK 確定: 直近は銀行振込のみ。Paddle（第一）・PayPal（第二）・fincode（審査待ち）は Sandbox だけ。
+ * 本番受付は各社が取扱商品を承認したあと、MK の明示決定で cardSales.js を変える PR だけ。
+ */
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync, readdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { CARD_SALES_OPEN, resolveCardMode, PRODUCTION_ORIGIN } from './cardSales.js';
+import { CARD_PRODUCTS } from './cardOneTime.js';
+import { MONTHLY_SALES_OPEN } from './stripePlans.js';
+
+const root = (p) => fileURLToPath(new URL(`../../../${p}`, import.meta.url));
+const read = (p) => readFileSync(root(p), 'utf8');
+
+test('全決済会社の本番受付は閉じている（コード定数・env では開かない）', () => {
+  assert.deepEqual({ ...CARD_SALES_OPEN }, { paddle: false, paypal: false, fincode: false });
+  assert.ok(Object.isFrozen(CARD_SALES_OPEN));
+  const src = read('src/lib/billing/cardSales.js');
+  assert.equal(/process\.env|import\.meta\.env/.test(src), false, '販売可否を env から読まない');
+  for (const p of ['paddle', 'paypal', 'fincode']) {
+    assert.equal(resolveCardMode({ provider: p, keyMode: 'live', origin: PRODUCTION_ORIGIN }).reason, 'card_sales_not_open', p);
+    assert.equal(resolveCardMode({ provider: p, keyMode: 'test', origin: PRODUCTION_ORIGIN }).reason, 'test_key_on_production', p);
+  }
+});
+
+test('新規の月払いは作らない: 商品は一回払いだけ・定期課金 API を呼ばない', () => {
+  assert.equal(MONTHLY_SALES_OPEN, false);
+  assert.deepEqual(CARD_PRODUCTS.map((p) => p.planType).sort(), ['Annual', 'Annual', 'Lifetime']);
+  const libs = ['paddle/paddleCore.js', 'paddle/paddleServer.js', 'paypal/paypalCore.js', 'paypal/paypalServer.js']
+    .map((f) => read(`src/lib/billing/${f}`)).join('\n');
+  assert.equal(/billing_cycle|\/v1\/billing\/|\/subscriptions/.test(libs), false, 'Paddle 定期価格・PayPal Subscriptions を使わない');
+});
+
+test('会員権限の書き換えは共通層（entitlementLedger）だけ: アダプタは Airtable を直接 PATCH しない', () => {
+  for (const f of ['paddle/paddleServer.js', 'paypal/paypalServer.js', 'fincode/fincodeServer.js']) {
+    const s = read(`src/lib/billing/${f}`);
+    assert.equal(/\.patch\(/.test(s), false, `${f} は at.patch を呼ばない`);
+    assert.match(s, /from '\.\.\/entitlementLedger\.js'/, f);
+  }
+});
+
+test('カード決済の Function はすべて Airtable 計測を入れ、ログにメール・鍵を出さない', () => {
+  const dir = root('netlify/functions');
+  const files = readdirSync(dir).filter((f) => /^(paddle-|paypal-(create-order|capture|order-webhook)|card-order-status|fincode-)/.test(f));
+  assert.ok(files.length >= 9, files.join(','));
+  for (const f of files) {
+    const s = readFileSync(`${dir}/${f}`, 'utf8');
+    assert.match(s, /installAirtableCallMeter\(\{ source: '/, f);
+    assert.equal(/console\.(log|error)\([^)]*(Email|email|_SECRET|_API_KEY)/.test(s), false, f);
+  }
+});
