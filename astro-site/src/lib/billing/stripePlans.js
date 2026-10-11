@@ -23,6 +23,27 @@
  *    Live の Price 金額を後から編集しない（既存契約者の価格が変わる）。変えるときは新しい Price を作る。
  */
 
+/**
+ * Stripe 上で顧客に見える名前（Product 名以外）の単一源（2026-10-11 MK 確定）。
+ * Stripe 関連の顧客向け表示（明細・Checkout・請求書・領収書・ポータル）から「KEIBA」を完全に除外し、
+ * 確定名称「Analytics Premium」に統一する。AK のサイト名・ドメイン・サービス内容は変えない。
+ *
+ * - STRIPE_STATEMENT_DESCRIPTOR: カード明細の表記（Product の statement_descriptor）。
+ *   Stripe の制約: 5〜22 文字・英字を含む・< > \ ' " * を含まない。
+ * - STRIPE_PORTAL_HEADLINE: カスタマーポータルの見出し。
+ */
+export const STRIPE_STATEMENT_DESCRIPTOR = 'ANALYTICS PREMIUM';
+export const STRIPE_PORTAL_HEADLINE = 'Analytics Premium お支払い管理';
+
+/** Stripe の顧客向け表示に使ってはいけない語（大文字小文字を問わない） */
+export const STRIPE_BANNED_DISPLAY_WORDS = Object.freeze(['KEIBA']);
+
+/** 顧客向け表示の文字列が禁止語を含むか（純粋） */
+export function hasBannedStripeDisplayWord(text) {
+  const t = String(text || '').toUpperCase();
+  return STRIPE_BANNED_DISPLAY_WORDS.some((w) => t.includes(w));
+}
+
 export const STRIPE_PLANS = Object.freeze([
   Object.freeze({
     id: 'premium',

@@ -23,7 +23,9 @@ import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import Stripe from 'stripe';
-import { STRIPE_PLANS, STRIPE_IDS } from '../src/lib/billing/stripePlans.js';
+import {
+  STRIPE_PLANS, STRIPE_IDS, STRIPE_STATEMENT_DESCRIPTOR, STRIPE_PORTAL_HEADLINE, hasBannedStripeDisplayWord,
+} from '../src/lib/billing/stripePlans.js';
 
 export const WEBHOOK_EVENTS = [
   'checkout.session.completed',
@@ -47,6 +49,8 @@ function arg(name) {
 const apply = process.argv.includes('--apply');
 // Product 名だけを stripePlans.js の productName に揃える（Price・Webhook・ポータル・env には一切触れない）
 const productsOnly = process.argv.includes('--products-only');
+// 顧客に見える名前だけを揃える（Product 名・明細表記・ポータル見出し。Price・Webhook・ポータル機能・env には触れない）
+const namesOnly = process.argv.includes('--names-only');
 const context = arg('context');
 const site = String(arg('site') || '').replace(/\/$/, '');
 
@@ -93,7 +97,7 @@ async function ensurePrices() {
     const product = await stripe.products.create({
       name: plan.productName,
       metadata: { ak_plan: plan.id },
-      statement_descriptor: 'KEIBA ANALYTICS',
+      statement_descriptor: STRIPE_STATEMENT_DESCRIPTOR,
     });
     const price = await stripe.prices.create({
       product: product.id,
@@ -118,7 +122,7 @@ async function ensurePortal(priceIds) {
   }
   const params = {
     business_profile: {
-      headline: 'KEIBA Analytics お支払い管理',
+      headline: STRIPE_PORTAL_HEADLINE,
       privacy_policy_url: 'https://analytics.keiba.link/privacy/',
       terms_of_service_url: 'https://analytics.keiba.link/terms/',
     },
@@ -161,27 +165,69 @@ async function ensureWebhook() {
 const acct = await stripe.accounts.retrieve();
 console.log(`Stripe: ${live ? 'LIVE' : 'TEST'} / アカウント ${acct.settings?.dashboard?.display_name || acct.business_profile?.name || '(名称未設定)'} / Netlify context: ${context} / ${apply ? '書き込み' : '下見'}`);
 
-/** 既存 Price の Product 名を productName に揃える（名前以外は変えない）*/
-async function syncProductNames() {
+/** 既存 Price の Product 名を productName に揃える（名前以外は変えない）。withDescriptor なら明細表記も揃える */
+async function syncProductNames({ withDescriptor = false } = {}) {
   for (const plan of STRIPE_PLANS) {
     const found = await stripe.prices.list({ lookup_keys: [LOOKUP_KEY[plan.id]], active: true, limit: 1, expand: ['data.product'] });
     const price = found.data[0];
     if (!price) { console.log(`- ${plan.id}: Price が無い（--apply で作成）`); continue; }
     const product = price.product;
-    if (product.name === plan.productName) { console.log(`✔ ${plan.id}: Product 名は一致（${plan.productName}）`); continue; }
-    console.log(`＋ ${plan.id}: Product 名「${product.name}」→「${plan.productName}」${apply ? '' : '（下見）'}`);
-    if (apply) await stripe.products.update(product.id, { name: plan.productName });
+    const update = {};
+    if (product.name !== plan.productName) update.name = plan.productName;
+    if (withDescriptor && product.statement_descriptor !== STRIPE_STATEMENT_DESCRIPTOR) update.statement_descriptor = STRIPE_STATEMENT_DESCRIPTOR;
+    if (!Object.keys(update).length) { console.log(`✔ ${plan.id}: Product 名${withDescriptor ? '・明細表記' : ''}は一致（${plan.productName}）`); continue; }
+    if (update.name) console.log(`＋ ${plan.id}: Product 名「${product.name}」→「${update.name}」${apply ? '' : '（下見）'}`);
+    if (update.statement_descriptor) console.log(`＋ ${plan.id}: 明細表記「${product.statement_descriptor || '(なし)'}」→「${update.statement_descriptor}」${apply ? '' : '（下見）'}`);
+    if (apply) await stripe.products.update(product.id, update);
   }
 }
 
-if (productsOnly) {
-  await syncProductNames();
-  console.log(apply ? '完了（Product 名のみ）' : '下見のみ（--apply で書き込み）');
+/** ポータルの見出しだけを揃える（機能・商品・戻り先は変えない） */
+async function syncPortalHeadline() {
+  const list = await stripe.billingPortal.configurations.list({ limit: 20 });
+  const mine = list.data.find((c) => c.metadata?.ak === 'portal' && c.active);
+  if (!mine) { console.log('- カスタマーポータル設定が無い（--apply で作成）'); return; }
+  const cur = mine.business_profile?.headline || '';
+  if (cur === STRIPE_PORTAL_HEADLINE) { console.log(`✔ ポータル見出しは一致（${cur}）`); return; }
+  console.log(`＋ ポータル見出し「${cur || '(なし)'}」→「${STRIPE_PORTAL_HEADLINE}」${apply ? '' : '（下見）'}`);
+  if (apply) await stripe.billingPortal.configurations.update(mine.id, { business_profile: { headline: STRIPE_PORTAL_HEADLINE } });
+}
+
+/** アカウント側の表示（API では変えない。Stripe ダッシュボードの設定）に禁止語が残っていないかを読むだけ */
+function reportAccountDisplay(a) {
+  const items = {
+    'ビジネス名（business_profile.name）': a.business_profile?.name,
+    'ダッシュボード表示名（settings.dashboard.display_name）': a.settings?.dashboard?.display_name,
+    '明細表記（settings.payments.statement_descriptor）': a.settings?.payments?.statement_descriptor,
+    '明細表記 カナ（settings.payments.statement_descriptor_kana）': a.settings?.payments?.statement_descriptor_kana,
+    '明細表記 漢字（settings.payments.statement_descriptor_kanji）': a.settings?.payments?.statement_descriptor_kanji,
+    '明細プレフィックス（settings.card_payments.statement_descriptor_prefix）': a.settings?.card_payments?.statement_descriptor_prefix,
+    'プレフィックス カナ（settings.card_payments.statement_descriptor_prefix_kana）': a.settings?.card_payments?.statement_descriptor_prefix_kana,
+    'プレフィックス 漢字（settings.card_payments.statement_descriptor_prefix_kanji）': a.settings?.card_payments?.statement_descriptor_prefix_kanji,
+  };
+  let bad = 0;
+  for (const [label, v] of Object.entries(items)) {
+    if (v === undefined || v === null || v === '') { console.log(`  ・${label}: (読めない / 未設定)`); continue; }
+    const ng = hasBannedStripeDisplayWord(v);
+    if (ng) bad += 1;
+    console.log(`  ${ng ? '✖' : '✔'} ${label}: ${ng ? '「KEIBA」を含む → Stripe ダッシュボードで変更が必要' : 'OK'}`);
+  }
+  return bad;
+}
+
+if (productsOnly || namesOnly) {
+  await syncProductNames({ withDescriptor: namesOnly });
+  if (namesOnly) {
+    await syncPortalHeadline();
+    console.log('アカウント側の表示（API では変更しない）:');
+    reportAccountDisplay(acct);
+  }
+  console.log(apply ? `完了（${namesOnly ? '顧客向けの名前のみ' : 'Product 名のみ'}）` : '下見のみ（--apply で書き込み）');
   process.exit(0);
 }
 
 const priceIds = await ensurePrices();
-await syncProductNames();
+await syncProductNames({ withDescriptor: true });
 const portalId = await ensurePortal(priceIds);
 const webhookSecret = await ensureWebhook();
 

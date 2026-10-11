@@ -1,3 +1,21 @@
+# 🏷 Stripe の顧客向け表示から「KEIBA」を除外（2026-10-11 MK 確定 / **test 反映済み・live 反映は MK の 1 操作待ち**）
+
+| 項目 | 状態 |
+|---|---|
+| 方針 | Stripe 関連の顧客向け表示（Product 名・明細・Checkout・請求書・領収書・ポータル）から「KEIBA」を完全に除外し「Analytics Premium」に統一。正本 `decisions.md` 2026-10-11・`spec.md`「Stripe 定期購読」・`STRIPE_BILLING.md` §3 |
+| 調査（下見で実測）| Product 名は test / live とも「Analytics Premium …」（10/02 済み）。**残存**: 3 商品の `statement_descriptor`=`KEIBA ANALYTICS`（カード明細）・ポータル見出し「KEIBA Analytics お支払い管理」。アカウント側のビジネス名・表示名・明細表記（live はカナ・漢字も）に KEIBA なし。Checkout の `description` は productName・custom_text なし |
+| 実装 | 単一源 `STRIPE_STATEMENT_DESCRIPTOR`=`ANALYTICS PREMIUM`・`STRIPE_PORTAL_HEADLINE`・禁止語判定（`stripePlans.js`）。`stripe-setup.mjs` は直書きをやめ、`--names-only`（名前だけ同期＋アカウント表示の点検）を追加。通常の setup も明細表記を揃える |
+| test | `stripeDisplayNames.guard.test.mjs` 5 件。`test:billing` 64 pass |
+| Stripe test | `--names-only --apply` 済み → 再下見で 3 商品・ポータルとも一致 |
+| Stripe live | **未反映**。live への書込みを Claude Code の harness が拒否（迂回しない）。MK の 1 操作: 下記コマンド。Price・金額・購読・Webhook・ポータル機能・顧客データは変えない（名前だけ・元に戻すのも同コマンドで可能） |
+| 対象外 | AK のサイト名・ドメイン・サービス内容・規約／特商法・AK が送るメール（Stripe の表示ではない）。Webhook の description `analytics-keiba` は顧客に見えない内部名のため変更しない |
+| 既知の限界 | 既に発行済みの請求書・領収書・明細は Stripe 側で過去分を書き換えない（新しい請求から反映） |
+
+live 反映コマンド（鍵は表示されない。merge 後は最新 main の `astro-site/scripts/stripe-setup.mjs` でも同じ）:
+`STRIPE_KEY_FILE=~/.analytics-keiba-ops/stripe-live-key node /Users/user/Projects/analytics-keiba-stripename/astro-site/scripts/stripe-setup.mjs --context production --site https://analytics.keiba.link --names-only --apply`
+
+---
+
 # 🏁 AI ラボに着順・評価待ちの文言（2026-10-07 MK / **PR 待ち**）
 
 | 項目 | 状態 |

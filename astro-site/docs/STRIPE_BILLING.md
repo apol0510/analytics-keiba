@@ -97,6 +97,13 @@ STRIPE_KEY_FILE=~/.analytics-keiba-ops/stripe-live-key node <worktree>/astro-sit
   --context production --site https://analytics.keiba.link --products-only [--apply]
 ```
 
+**顧客に見える名前を揃える**（Product 名・カード明細表記 `STRIPE_STATEMENT_DESCRIPTOR`・ポータル見出し `STRIPE_PORTAL_HEADLINE`。2026-10-11 MK 確定で「KEIBA」を除外）。アカウント側の表示（ビジネス名・明細表記）は読んで点検するだけ:
+
+```bash
+STRIPE_KEY_FILE=~/.analytics-keiba-ops/stripe-live-key node <worktree>/astro-site/scripts/stripe-setup.mjs \
+  --context production --site https://analytics.keiba.link --names-only [--apply]
+```
+
 ⚠️ `--products-only` を付けずに `--apply` すると Webhook を作り直し、署名鍵が変わる（env 更新と再デプロイが要る）。
 スクリプトは test 鍵を production に、live 鍵を production 以外に入れると止まる。
 

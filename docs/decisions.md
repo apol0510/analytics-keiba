@@ -1,3 +1,13 @@
+# 2026-10-11 — Stripe の顧客向け表示から「KEIBA」を完全に除外する（MK 確定）
+
+- 対象: Stripe 上で顧客に見えるもの全部（Product 名・カード明細表記・Checkout・Price・Subscription・請求書・領収書・カスタマーポータル）。名称は確定名称「**Analytics Premium**」に統一する。
+- 単一源: `stripePlans.js` の `productName`（2026-10-02 済み）・`STRIPE_STATEMENT_DESCRIPTOR = 'ANALYTICS PREMIUM'`・`STRIPE_PORTAL_HEADLINE = 'Analytics Premium お支払い管理'`・禁止語 `STRIPE_BANNED_DISPLAY_WORDS`。
+- 2026-10-02 の対応は Product 名だけで、Product の `statement_descriptor: 'KEIBA ANALYTICS'`（カード明細）とポータル見出し「KEIBA Analytics お支払い管理」が残っていた。`stripe-setup.mjs --names-only` で名前だけを揃える（Price・金額・購読・Webhook・ポータル機能・env・顧客データには触れない）。アカウント側（ビジネス名・明細表記・カナ・漢字）は API で変えず読んで点検するだけ（live / test とも KEIBA なし）。
+- 決済名称と、商品・サービス内容の説明は区別する。AK のサイト名・ドメイン（analytics.keiba.link）・サービス内容・規約・特商法の記載、AK が送るメールは変更しない（再審査に必要な事業情報は正確に維持）。
+- 固定: `stripeDisplayNames.guard.test.mjs`（禁止語・明細表記の Stripe 制約・setup の直書き禁止・Checkout）。
+
+---
+
 # 2026-10-04（追記 4）— 「本日の使用状況」へ改称・Preview の訴求を「何レースでも使える」へ（MK 確定）
 
 - 「本日の活用状況」→「本日の使用状況」（今月の活用状況はそのまま）。
