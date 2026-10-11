@@ -14,7 +14,7 @@
 
 ---
 
-# 💳 fincode byGMO（代替決済の候補・追記 3 で審査結果待ちへ）Sandbox 実装（2026-10-11 MK 確定 / **実装・テスト済み・Sandbox E2E は鍵待ち・本番審査は結果待ち**）
+# 💳 fincode byGMO（代替決済の候補・追記 3 で審査結果待ちへ）Sandbox 実装（2026-10-11 MK 確定 / **#788 merge 済み `c94f6e47`・本番で受付拒否を実測（fincode-create-session 503 fincode_key_missing／webhook 署名なし 401）・Sandbox E2E は鍵待ち・本番審査は結果待ち**）
 
 | 項目 | 状態 |
 |---|---|
