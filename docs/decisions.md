@@ -1,3 +1,13 @@
+# 2026-10-11（追記）— 決済関連名称から競馬関連の語を排除する（MK 確定・決済会社共通）
+
+- 対象: 決済アカウントの表示名・Product / Price 表示名・カード明細名・Checkout・請求書・領収書・ポータル見出し・決済会社が送る顧客向け決済メール・**Paddle / PayPal の顧客向け決済名称**。基本名称は「**Analytics Premium**」。
+- 禁止語: `KEIBA`（keiba / Keiba / 全角を含む）・`競馬`・`馬券`。単一源 `src/lib/billing/paymentDisplayNames.js`（`PAYMENT_BANNED_WORDS`・`hasBannedPaymentWord`・`assertPaymentDisplayName`）。Stripe の判定もこれを使う。新しい決済会社の商品名・表示名は `assertPaymentDisplayName` を通してから作る（禁止語なら作らない）。
+- 対象外: AK のサイト名・ドメイン・提供サービス・法定表示・必要な事業説明。名称の制約と商品内容の説明を区別する。
+- 未決（MK 判断）: ①AK が自分で送る決済まわりのメール（入金完了報告の受付・入金確認・退会完了）の差出人名と本文中のサイト名「KEIBA Analytics」、署名の「南関競馬の次世代予想プラットフォーム」。サイト名は対象外のため今回は変えていない ②既存 Stripe 商品名の「中央」「南関」（競馬の開催区分を指す語）を禁止語に含めるか（含める場合は live の商品名変更が要る）。
+- 固定: `paymentDisplayNames.guard.test.mjs`。
+
+---
+
 # 2026-10-11 — Stripe の顧客向け表示から「KEIBA」を完全に除外する（MK 確定）
 
 - 対象: Stripe 上で顧客に見えるもの全部（Product 名・カード明細表記・Checkout・Price・Subscription・請求書・領収書・カスタマーポータル）。名称は確定名称「**Analytics Premium**」に統一する。

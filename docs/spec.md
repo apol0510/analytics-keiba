@@ -56,6 +56,8 @@
 
 # Stripe 定期購読（2026-10-02 MK 確定 / 根拠 `decisions.md` 2026-10-02）
 
+> **決済関連名称（決済会社をまたいで共通）に競馬関連の語（KEIBA / 競馬 / 馬券）を使わない。基本名称は「Analytics Premium」**（2026-10-11 MK 確定・単一源 `paymentDisplayNames.js`・`decisions.md` 2026-10-11 追記）。サイト名・ドメイン・サービス説明・法定表示は対象外。
+>
 > **Stripe の顧客向け表示（Product 名・カード明細・Checkout・請求書・領収書・ポータル）に「KEIBA」を使わない。名称は「Analytics Premium」**（2026-10-11 MK 確定 / `decisions.md` 2026-10-11）。単一源 `stripePlans.js`。AK のサイト名・ドメイン・サービス内容は対象外。
 
 > ⚠️ 本節は下の「AK の商品・価格の事業境界（2026-09-28）」の「低価格・Stripe 月額へ全面転換しない」「価格変更は確定事項ではない」を**改訂**する。

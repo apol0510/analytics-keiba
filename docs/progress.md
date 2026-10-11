@@ -1,3 +1,14 @@
+# 🏷 決済関連名称の禁止語を決済会社共通で固定（2026-10-11 MK 確定 / **Phase 3・PR 中**）
+
+| 項目 | 状態 |
+|---|---|
+| 内容 | 禁止語 KEIBA（大小・全角）/ 競馬 / 馬券。単一源 `paymentDisplayNames.js`。Stripe の判定を統合、Paddle / PayPal は商品作成前に `assertPaymentDisplayName` を通す |
+| test | `paymentDisplayNames.guard.test.mjs`（大小・全角・fail closed・Stripe 名称・申込の商品名）|
+| 未完了 | Stripe 本番の明細表記・ポータル見出しの変更（`--names-only --apply`）は harness が拒否 → MK の 1 操作待ち。既存契約・顧客データは変えない |
+| MK 判断事項 | ①AK が送る決済メールの差出人名・サイト名「KEIBA Analytics」と署名の「南関競馬」を変えるか（サイト名は対象外のため未変更） ②商品名の「中央」「南関」を禁止語に含めるか |
+
+---
+
 # 🚨 AK の Stripe アカウントに閉鎖通知（2026-10-11 / **新規申込の停止を恒久化・未確認事項あり**）
 
 | 項目 | 状態 |

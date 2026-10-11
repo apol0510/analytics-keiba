@@ -35,14 +35,13 @@
 export const STRIPE_STATEMENT_DESCRIPTOR = 'ANALYTICS PREMIUM';
 export const STRIPE_PORTAL_HEADLINE = 'Analytics Premium お支払い管理';
 
-/** Stripe の顧客向け表示に使ってはいけない語（大文字小文字を問わない） */
-export const STRIPE_BANNED_DISPLAY_WORDS = Object.freeze(['KEIBA']);
+import { PAYMENT_BANNED_WORDS, hasBannedPaymentWord } from './paymentDisplayNames.js';
 
-/** 顧客向け表示の文字列が禁止語を含むか（純粋） */
-export function hasBannedStripeDisplayWord(text) {
-  const t = String(text || '').toUpperCase();
-  return STRIPE_BANNED_DISPLAY_WORDS.some((w) => t.includes(w));
-}
+/** Stripe の顧客向け表示に使ってはいけない語（決済会社共通の単一源 paymentDisplayNames.js を使う） */
+export const STRIPE_BANNED_DISPLAY_WORDS = PAYMENT_BANNED_WORDS;
+
+/** 顧客向け表示の文字列が禁止語を含むか（純粋・決済会社共通の判定） */
+export const hasBannedStripeDisplayWord = hasBannedPaymentWord;
 
 export const STRIPE_PLANS = Object.freeze([
   Object.freeze({
