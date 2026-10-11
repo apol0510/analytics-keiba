@@ -164,6 +164,21 @@
       },
       "record": "GitHub Issue「[自動測定] stripe-live-activation-2026」に有効化を記録 → PR #677 の merge・本番スモークへ",
       "onFailure": "審査中は待機中 Issue を更新して翌日再確認。鍵未設定・認証失敗は job 赤＋最小作業。12-31 まで無効なら期限切れを追記"
+    },
+    {
+      "id": "stripe-live-reactivation-2026",
+      "title": "AK 用 Stripe アカウントの本番決済が再び有効になったか（2026-10-11 閉鎖通知後）",
+      "kind": "stripe-live-activation",
+      "runFrom": "2026-10-12",
+      "runUntil": "2027-03-31",
+      "trigger": "毎日 10:00 JST（scheduled-checks.yml）。2026-10-11 に閉鎖通知・charges_enabled=false / card_payments inactive",
+      "compare": {
+        "since": "2026-10-11",
+        "baseline": "charges_enabled=false / card_payments=inactive / payouts_enabled=true"
+      },
+      "record": "GitHub Issue「[自動測定] stripe-live-reactivation-2026」に再有効化を記録。新規カード申込は stripe-create-checkout の販売ゲートで自動的に再開する（コード変更不要）",
+      "next": "新規カード申込はコード変更なしで自動再開する（stripe-create-checkout の販売ゲート）。本番 /pricing/ で live Checkout 作成→expire のスモーク、既存 Stripe 会員の更新請求・Webhook 反映を確認し、docs/progress.md「Stripe 閉鎖通知」を更新する。",
+      "onFailure": "無効の間は待機中 Issue を更新して翌日再確認。鍵未設定・認証失敗（アカウント閉鎖で鍵が無効化された場合を含む）は job 赤＋最小作業。03-31 まで無効なら期限切れを追記"
     }
   ]
 }
