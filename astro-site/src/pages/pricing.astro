@@ -670,7 +670,7 @@ const planTierByToken = buildPlanTierByToken();
           return;
         }
         if (err === 'stripe_sales_paused') {
-          showMessage('ただいまカード決済（月額）のお申し込みを一時停止しています。ご迷惑をおかけし申し訳ございません。<br>銀行振込（年払い・買い切り）は通常どおりお申し込みいただけます。<br><br><a href="#otherPayments" onclick="var d=document.getElementById(\'otherPayments\');if(d){d.open=true;}document.getElementById(\'checkoutPanel\').hidden=true;">銀行振込のお申し込みを見る</a>');
+          showMessage('ただいまカード決済（月額）のお申し込みを一時停止しています。ご迷惑をおかけし申し訳ございません。<br>銀行振込（年払い・買い切り）は通常どおりお申し込みいただけます。<br><br><a href="#otherPayments" class="plan-button plan-button-annual" style="display:inline-block;text-decoration:none" onclick="var d=document.getElementById(\'otherPayments\');if(d){d.open=true;}document.getElementById(\'checkoutPanel\').hidden=true;">銀行振込のお申し込みを見る</a>');
           return;
         }
         if (err === 'billing_not_configured' || err === 'plan_not_configured') {
