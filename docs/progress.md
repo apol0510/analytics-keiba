@@ -14,6 +14,9 @@
 | 正本 | `astro-site/docs/STRIPE_BILLING.md` §6（受付不可の間の挙動）・§5（「STRIPE_PRICE_* の unset で止まる」は誤りだったので訂正） |
 | test | `stripeSalesPause.guard.test.mjs`（ゲートが顧客レコード・Stripe 操作より前・fail closed・pricing の案内・再有効化検知の登録）。`test:billing` 63 件・ops 44 件 pass |
 | 残り（MK）| ①閉鎖理由・未決済残高・入金予定・既存購読の次回請求日を Stripe ダッシュボードで確認（Claude は読めない） ②再審査の申立ての要否 ③銀行振込月払い会員の更新案内先 ④既存 Stripe 会員への個別連絡の要否（現状は何も送らない） |
+| PR / CI | #784（branch `fix/stripe-closure-impact`・worktree `analytics-keiba-stripeclose`）CI 全 green。Deploy Preview（Stripe テストモード＝受付可）で `stripe-create-checkout` が従来どおり Checkout URL を返すことを確認。本番（修正前）は `checkout_failed`（汎用エラー）を実測 |
+| merge | **MK 待ち**。KAO の AK `mediumHandoff` は `agent_policy` のみ許可で本 PR（billing / pricing）は対象外のため、Claude は merge しない |
+| 本番確認（merge 後）| `POST /.netlify/functions/stripe-create-checkout {"plan":"premium-jra","email":"<使い捨て>"}` → `503 stripe_sales_paused`、`/pricing/` のボタン押下で一時停止の案内と銀行振込の入口が出ること。確認後 worktree / branch を削除 |
 | rollback | 本 PR を revert（販売ゲートが外れ、Stripe の拒否による汎用エラー表示に戻るだけ。権限・データの変更なし） |
 
 ---
