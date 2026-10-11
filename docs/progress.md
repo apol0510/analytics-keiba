@@ -1,3 +1,15 @@
+# 🛑 新規の月払いを全面停止・販売は銀行振込の年払い・買い切りだけ（2026-10-11 MK 確定 / **Phase 1 実装中**）
+
+| 項目 | 状態 |
+|---|---|
+| 方針 | 新規の月払い（Stripe 月額）を全面停止。Stripe 復旧でも自動再開しない。販売は銀行振込の Premium 年払い・買い切りだけ（金額・権利・条件は不変）。正本 `spec.md`「Stripe 定期購読」冒頭・`decisions.md` 2026-10-11 |
+| 実装 | `MONTHLY_SALES_OPEN=false`（stripePlans.js）／`stripe-create-checkout` 410 が最初／`/pricing/` 主カードを年払い・買い切りへ・Checkout JS とパネル削除／dashboard 購入モーダル・会場版の変更ボタン・premium-upgrade・spring-campaign・取得 Preview の「月額」削除／銀行振込の拒否文言を年払い・買い切りへ／更新リマインド 2 本を dry-run 固定 |
+| 既存契約 | Stripe 月額会員の支払い済み権利・Webhook・退会・カード変更は不変（guard で固定） |
+| test | `monthlySalesStop.guard.test.mjs` 7 件・関連テストを新仕様へ更新（pricing / acquisition / promotions / premiumRenewal）|
+| MK 判断事項 | ①既存の有料 Light 会員の銀行振込更新（¥4,980/30日）を残すか（現状: 残す＝新規ではない） ②更新リマインド本文を年払いへ書き換えて再開するか（現状: dry-run 固定） ③お支払い管理のプラン変更（会場版⇄Premium）を Stripe ポータルで無効にするか（live への書込みは harness が拒否するため MK 操作） |
+
+---
+
 # 🚨 AK の Stripe アカウントに閉鎖通知（2026-10-11 / **新規申込の停止を恒久化・未確認事項あり**）
 
 | 項目 | 状態 |

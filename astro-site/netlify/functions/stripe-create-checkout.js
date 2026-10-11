@@ -7,6 +7,7 @@
  *   → 409 already_subscribed / already_premium （二重課金を作らない）
  *   → 503 billing_not_configured / plan_not_configured（推測で続けない）
  *   → 503 stripe_sales_paused（Stripe アカウントが決済を受け付けていない。2026-10-11 閉鎖通知の対応）
+ *   → 410 monthly_sales_ended（2026-10-11 MK 確定: 新規の月払いは全面停止。何にも触れずに止める）
  *
  * - ログイン中（ak_session）はそのレコードに紐付ける（メールは Airtable の値。入力値を使わない）
  * - 未ログインは入力メールで受け付ける。決済後のログインはマジックリンク（本人のメールに届く）なので、
@@ -17,7 +18,7 @@
 import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
 // Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
 installAirtableCallMeter({ source: 'stripe-create-checkout' });
-import { planById, priceIdFor } from '../../src/lib/billing/stripePlans.js';
+import { planById, priceIdFor, MONTHLY_SALES_OPEN } from '../../src/lib/billing/stripePlans.js';
 import { decideSubscriptionSync } from '../../src/lib/billing/stripeSubscriptionSync.js';
 import {
   getStripe, resolveSiteOrigin, corsHeaders, readSessionRecordId,
@@ -44,6 +45,8 @@ exports.handler = async (event) => {
   const headers = corsHeaders(event.headers);
   if (event.httpMethod === 'OPTIONS') return { statusCode: 204, headers, body: '' };
   if (event.httpMethod !== 'POST') return json(405, headers, { error: 'method_not_allowed' });
+  // 新規の月払いは全面停止（2026-10-11 MK 確定）。Stripe・顧客レコードに一切触れずに止める（直 POST でも迂回できない）
+  if (!MONTHLY_SALES_OPEN) return json(410, headers, { error: 'monthly_sales_ended' });
 
   let body = {};
   try { body = JSON.parse(event.body || '{}'); } catch { return json(400, headers, { error: 'invalid_json' }); }

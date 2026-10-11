@@ -34,21 +34,22 @@ test('/pricing/ の Light 更新は有料 Light 会員（tier 1）だけの補�
   assert.match(pricing, /:root\[data-plan-tier="1"\]\) \.other-plan\[data-only-for="light"\]/);
 });
 
-test('有料 Light 会員には同額の Premium ¥4,980（中央＋南関）への変更を主に案内する（Light 継続を勧めない）', () => {
+test('有料 Light 会員には Premium 年払い（乗り換え特典 ¥44,820）への変更を主に案内する（Light 継続を勧めない・月払いは出さない）', () => {
   const note = pricing.slice(pricing.indexOf('<p class="pricing-upgrade-note">'), pricing.indexOf('</p>', pricing.indexOf('<p class="pricing-upgrade-note">')));
-  assert.match(note, /同じ ¥4,980\/月/);
+  assert.match(note, /¥44,820\/年/);
   assert.match(note, /中央＋南関の全レース/);
+  assert.equal(/¥4,980\/月/.test(note), false, '月払いを案内している');
   assert.equal(/Light の更新・再開/.test(note), false, '主メッセージで Light 更新を案内している');
-  assert.match(pricing, /data-only-for="light">\s*<span>⬆️ Light と同額で全レース<\/span>/);
+  assert.match(pricing, /data-only-for="light">\s*<span>⬆️ Light会員さま乗り換え特典<\/span>/);
   assert.equal(/Lightを続ける|Light を続ける/.test(pricing), false);
 });
 
-test('新規・無料向けの有料 CTA は中央版・南関版・Premium（Stripe）', () => {
-  for (const id of ['premium', 'premium-jra', 'premium-nankan']) {
-    assert.match(pricing, new RegExp(`data-checkout="${id}"`), id);
-  }
-  assert.match(pricing, /fetch\('\/\.netlify\/functions\/stripe-create-checkout'/);
-  assert.match(pricing, /両方なら Premium がお得/);
+test('新規・無料向けの有料 CTA は銀行振込の年払い・買い切りだけ（新規の月払いは全面停止・2026-10-11 MK 確定）', () => {
+  assert.equal(/data-checkout=/.test(pricing), false, 'Stripe 月額の申込ボタンが残っている');
+  assert.equal(/stripe-create-checkout'/.test(pricing.replace(/\/\/.*$/gm, '')), false, 'ブラウザから Checkout を呼んでいる');
+  assert.equal(/¥2,980|¥4,980<\/span>\s*<span class="price-period">\/月/.test(pricing), false, '月額の価格カードが残っている');
+  assert.match(pricing, /openBankModal\('Premium Annual', 49800, 'annual'\)/);
+  assert.match(pricing, /openBankModal\('Premium Lifetime', 78000, 'lifetime'\)/);
 });
 
 test('Premium（両会場）をご契約中の方には同じプランの購入 CTA を出さず、三連複へ（期限切れは除く）', () => {

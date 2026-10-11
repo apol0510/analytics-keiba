@@ -439,10 +439,10 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
                             <a href="/premium-prediction/nankan/" class="view-btn" data-premium-venue="nankan">南関 馬単を見る</a>
                             <a href="/premium-prediction/jra/" class="view-btn" data-premium-venue="jra">中央 馬単を見る</a>
                         </div>
-                        <!-- 会場限定（中央版・南関版）のときだけ表示。もう一方の会場は Premium への変更で開く -->
+                        <!-- 会場限定（中央版・南関版）のときだけ表示（どの会場が対象かの説明だけ）-->
                         <p class="premium-venue-upsell" id="premium-venue-upsell" style="display: none;">
                             <span id="premium-venue-upsell-text"></span>
-                            <button type="button" class="view-btn" onclick="akOpenStripePortal()">Premium（中央＋南関 ¥4,980/月）へ変更</button>
+                            <!-- 2026-10-11 MK 確定: 新規の月払いは全面停止。月額 Premium への変更ボタンは出さない -->
                         </p>
                     </div>
 
@@ -1960,8 +1960,8 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
                 const upsell = document.getElementById('premium-venue-upsell');
                 if (upsell) {
                     document.getElementById('premium-venue-upsell-text').textContent = _venue === 'jra'
-                        ? '南関の予想もご覧になるなら、Premium への変更がお得です。'
-                        : '中央の予想もご覧になるなら、Premium への変更がお得です。';
+                        ? 'ご契約は中央版です（南関の予想は対象外です）。'
+                        : 'ご契約は南関版です（中央の予想は対象外です）。';
                     upsell.style.display = 'block';
                 }
             }
@@ -5392,23 +5392,6 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
                     <button class="btn-plan premium" onclick="openBankModal('Premium 年払い', 49800, 'annual')">
                         🏦 銀行振込で申し込む
                     </button>
-                </div>
-
-                <!-- Premium 月額（2026-10-02〜 Stripe 定期購読。申込は /pricing/ の単一導線へ） -->
-                <div class="plan-option">
-                    <div class="plan-badge-normal">月額</div>
-                    <h3 class="plan-option-name">Premium 月額</h3>
-                    <div class="plan-option-subtitle">クレジットカードで毎月自動更新</div>
-                    <div class="plan-option-price">¥4,980</div>
-                    <div class="plan-option-discount">/月（中央版・南関版は各 ¥2,980）</div>
-                    <ul class="plan-option-features">
-                        <li>✅ <strong>全12レース</strong>の馬単予想</li>
-                        <li>✅ 高精度AI予想</li>
-                        <li>✅ 詳細な投資戦略</li>
-                    </ul>
-                    <a class="btn-plan premium" href="/pricing/">
-                        💳 料金ページで申し込む
-                    </a>
                 </div>
             </div>
 

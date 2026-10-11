@@ -90,7 +90,8 @@ test('通常価格が pricing.astro の実装と一致する（ズレたら落�
   assert.equal(find('Light').amount, REGULAR_PRICE.light_monthly, 'Light の通常価格がズレている');
   // Premium 月額は Stripe（2026-10-02〜）。銀行振込の月払いは /pricing/ に無いこと
   assert.equal(find('Premium Monthly'), undefined, '販売終了した銀行振込の月払いが /pricing/ に残っている');
-  assert.match(page, /data-checkout="premium"/);
+  // 2026-10-11: 新規の月払い（Stripe）も全面停止。/pricing/ に月額の申込ボタンは無い（定価表は無料特典の換算用に残す）
+  assert.doesNotMatch(page, /data-checkout=/);
   assert.equal(REGULAR_PRICE.premium_monthly, planById('premium').amountYen, 'Premium 月額（Stripe）の通常価格がズレている');
   assert.equal(find('Premium Annual').amount, REGULAR_PRICE.premium_annual, 'Premium 年額の通常価格がズレている');
   assert.equal(find('Premium Lifetime').amount, REGULAR_PRICE.premium_lifetime, 'Premium 買い切りの通常価格がズレている');

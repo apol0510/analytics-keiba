@@ -11,6 +11,7 @@
  * ⚠️ 既存の自動化（cron-marketing-automation / cron-expiry-check）のゲートには一切触れない。
  */
 import { checkStripeLiveSales, gateModeOnStripeSales } from '../../src/lib/billing/stripeSalesGate.js';
+import { MONTHLY_SALES_OPEN } from '../../src/lib/billing/stripePlans.js';
 import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
 // Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
 installAirtableCallMeter({ source: 'cron-light-renewal-reminder' });
@@ -19,7 +20,8 @@ import { makeRedisCmd } from '../../src/lib/marketing/deliveryKeyStore.js';
 
 export default async function handler() {
   // 2026-10-02: 本文は Stripe 月額（Premium ¥4,980 等）を案内する。live 決済が無効な間は送らない（dry-run に落とす）
-  const sales = await checkStripeLiveSales(process.env);
+  // 2026-10-11 MK 確定: 新規の月払いは全面停止。本文の主導線が Stripe 月額のため、月払いが閉じている間は送らない（Stripe が復旧しても）
+  const sales = MONTHLY_SALES_OPEN ? await checkStripeLiveSales(process.env) : { open: false, reason: 'monthly_sales_ended' };
   const mode = gateModeOnStripeSales(resolveMode(process.env), sales);
   if (mode !== resolveMode(process.env)) console.log('[light-renewal] Stripe live 決済が無効のため送信しない（dry-run）:', sales.reason);
   let redisCmd = null;
