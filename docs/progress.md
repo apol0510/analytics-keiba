@@ -10,6 +10,29 @@
 
 ---
 
+# ⛔ Paddle / PayPal 導入の前提確認（2026-10-11 / **候補として維持・実装は事業者の書面確認待ち**）
+
+| 項目 | 状態 |
+|---|---|
+| 指示 | Phase 4: Paddle（新規 TIROL DATA LABO 名義）を本命に Sandbox E2E。Phase 5: PayPal を予備に Sandbox E2E |
+| 調査結果 | **Paddle**: AUP（https://paddle.com/support/aup・2026-04-13 更新）は Gambling を **Prohibited**（申請で通る Restricted ではない）。「Betting-related products」「Sports forecasting/odds making…」を明記。競馬予想の有料提供は該当する可能性が高い。**PayPal（日本）**: 利用規定ポリシー（https://www.paypal.com/jp/legalhub/paypal/acceptableuse-full）で「競馬…ギャンブルを助長するその他の事業」は**事前承認が必要**。承認なしの取引は禁止行為 |
+| 判断 | 候補からは外さない（2026-10-11 MK 確定）。ただし実害（アカウント停止・売上保留）を避けるため、**書面確認が得られるまで本番向けの実装・申込は開始しない**。審査で事業内容を「データ分析」と言い換えて通すことはしない（虚偽申告）。決済名称の禁止語ルール（Phase 3）は表示名の統一であり、事業内容の申告を偽るものではない |
+| 再開条件 | Paddle: 本商品（競馬データ・予想の有料提供）が利用可能である旨の**書面回答**。PayPal: 日本の営業チームからの**事前承認**。いずれかが得られたら、決済会社共通の権利層（1 会員 1 継続契約・会員単位ロック・event_id 冪等・支払い済み期間で期限）から実装する |
+| 当面の販売 | 銀行振込の年払い・買い切り（#786）を維持 |
+
+---
+
+# 🏷 決済関連名称の禁止語を決済会社共通で固定（2026-10-11 MK 確定 / **Phase 3・PR 中**）
+
+| 項目 | 状態 |
+|---|---|
+| 内容 | 禁止語 KEIBA（大小・全角）/ 競馬 / 馬券。単一源 `paymentDisplayNames.js`。Stripe の判定を統合、Paddle / PayPal は商品作成前に `assertPaymentDisplayName` を通す |
+| test | `paymentDisplayNames.guard.test.mjs`（大小・全角・fail closed・Stripe 名称・申込の商品名）|
+| 未完了 | Stripe 本番の明細表記・ポータル見出しの変更（`--names-only --apply`）は harness が拒否 → MK の 1 操作待ち。既存契約・顧客データは変えない |
+| MK 判断事項 | ①AK が送る決済メールの差出人名・サイト名「KEIBA Analytics」と署名の「南関競馬」を変えるか（サイト名は対象外のため未変更） ②商品名の「中央」「南関」を禁止語に含めるか |
+
+---
+
 # 🚨 AK の Stripe アカウントに閉鎖通知（2026-10-11 / **新規申込の停止を恒久化・未確認事項あり**）
 
 | 項目 | 状態 |
