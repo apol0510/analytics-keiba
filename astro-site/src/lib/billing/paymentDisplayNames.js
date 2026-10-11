@@ -5,13 +5,13 @@
  *
  * 対象（決済会社が顧客に表示する・決済の識別に使う名称）:
  *   決済アカウントの表示名 / Product・Price の表示名 / カード明細名 / Checkout / 請求書・領収書 /
- *   カスタマーポータルの見出し / 決済会社（Stripe・Paddle・PayPal）が送る顧客向け決済メールの商品名・事業者表示 /
+ *   カスタマーポータルの見出し / 決済会社（Stripe・fincode・Paddle・PayPal）が送る顧客向け決済メールの商品名・事業者表示 /
  *   AK の申込・入金メールに載せる商品名（申込の商品名）
  *
  * 対象外（変えない）: AK のサイト名・ドメイン（analytics.keiba.link）・提供サービスの説明・法定表示・必要な事業説明。
  *   名称の制約と、商品内容の説明は区別する（説明文で中央・南関の対象を書くのは可）。
  *
- * 新しい決済会社（Paddle / PayPal）の商品名・表示名も必ずここを通す（assertPaymentDisplayName）。
+ * 新しい決済会社（fincode / Paddle / PayPal）の商品名・表示名も必ずここを通す（assertPaymentDisplayName）。
  */
 
 /** 基本名称 */

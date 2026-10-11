@@ -56,6 +56,8 @@
 
 # Stripe 定期購読（2026-10-02 MK 確定 / 根拠 `decisions.md` 2026-10-02）
 
+> **代替決済（2026-10-11 MK 確定）**: 候補は fincode byGMO（優先）・Paddle・PayPal。営業商談型は候補にしない。直近の販売は銀行振込のみ・新規月払いは停止のまま（決済会社の準備で自動再開しない）。根拠 `decisions.md` 2026-10-11（追記 2）。
+>
 > **決済関連名称（決済会社をまたいで共通）に競馬関連の語（KEIBA / 競馬 / 馬券）を使わない。基本名称は「Analytics Premium」**（2026-10-11 MK 確定・単一源 `paymentDisplayNames.js`・`decisions.md` 2026-10-11 追記）。サイト名・ドメイン・サービス説明・法定表示は対象外。
 >
 > **Stripe の顧客向け表示（Product 名・カード明細・Checkout・請求書・領収書・ポータル）に「KEIBA」を使わない。名称は「Analytics Premium」**（2026-10-11 MK 確定 / `decisions.md` 2026-10-11）。単一源 `stripePlans.js`。AK のサイト名・ドメイン・サービス内容は対象外。
