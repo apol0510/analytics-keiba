@@ -52,7 +52,7 @@
 | 項目 | 内容 |
 |---|---|
 | API | Sandbox `https://sandbox-api.paddle.com`／本番 `https://api.paddle.com`。鍵 `pdl_sdbx_apikey_…` / `pdl_live_apikey_…`（接頭辞で判定。旧形式の鍵は受け付けない）|
-| 申込 | `paddle-create-checkout` → `POST /transactions`（非カタログ価格・JPY `"49800"`・`tax_mode: internal`＝税込・`custom_data {ak_record, ak_product}`・`checkout.url = {origin}/checkout/paddle/`）→ `/checkout/paddle/?_ptxn=txn_…` で Paddle.js が決済画面を開く → 完了後 `/checkout/card-complete/?provider=paddle&order=txn_…` |
+| 申込 | `paddle-create-checkout` → `POST /transactions`（非カタログ価格・JPY `"49800"`・`tax_mode: internal`＝税込・`custom_data {ak_record, ak_product}`・**`checkout.url` は送らない**＝アカウントの Default payment link（承認済みドメイン）に任せ、返ってきた URL が自サイトの `/checkout/paddle/` でなければ `checkout_url_mismatch` で使わない（2026-10-12・明示 URL は未承認ドメインだと 400）→ `/checkout/paddle/?_ptxn=txn_…` で Paddle.js が決済画面を開く → 完了後 `/checkout/card-complete/?provider=paddle&order=txn_…` |
 | 付与 | `paddle-webhook`（`Paddle-Signature` = HMAC-SHA256 `ts:rawBody`・時刻のずれ 300 秒まで）→ `GET /transactions/{id}` で origin=api・JPY・総額・custom_data・status paid/completed を照合 → 共通層 |
 | 返金 | `adjustment.created/updated` → `GET /adjustments?id=` で approved の refund / chargeback だけ。type=full は戻す・partial は管理者へ |
 | 注意 | JPY は支払い通貨としては使えるが入金通貨ではない（USD 等へ換算して入金）。本番は Website approval（ドメイン審査）・既定の支払いリンク設定が要る |
