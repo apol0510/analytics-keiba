@@ -32,6 +32,8 @@ Paddle・PayPal は**お客様に選ばせる併設決済ではない**。決済
 | 共通 | 会員権限・料金・購入資格・完了画面 | `cardOneTime.js`・`entitlementLedger.js`（30 分以内の別決済は付与せず管理者へ）・`/checkout/card-complete/?provider=` |
 | 本番受付 | 各社承認＋既存の販売開始条件 | `CARD_SALES_OPEN`（全社 false のまま）|
 
+Sandbox 実測（2026-10-13・PR #794 の Deploy Preview 経由 `sandbox.checkout.tirol.link`）: 共通入口 `card-create-checkout` → 200 `provider: paddle`・Paddle 取引作成・Redis に申込印（24h）。印を別社（paypal）に書き換えると 409 `checkout_in_progress`（申込を作らない）。後片付け済み（使い捨てレコード削除・印削除・preview の鍵 unset）。
+
 切替手順（運営）: ① 切替先の Sandbox E2E 済み・本番承認済み・`CARD_SALES_OPEN` が開いていることを確認 ② `ACTIVE_CARD_PROVIDER` を変える PR → merge → deploy ③ 本番で `card-create-checkout` の応答の `provider` を確認。切替前の会社の Webhook 設定は残す（既存取引の確定・返金のため）。
 
 ## 1. 共通層（決済会社に依存しない会員権限）
@@ -143,7 +145,7 @@ DNS（Cloudflare・MK 設定）: `sandbox.checkout` CNAME `tirol-checkout-sandbo
 
 | 日付 | 決済会社 | Deploy Preview | 状態 |
 |---|---|---|---|
-| 2026-10-12 | Paddle | `https://sandbox.checkout.tirol.link`（→ PR #792 の Deploy Preview）| **PASS**（下表）。後片付け済み |
+| 2026-10-12 | Paddle | `https://sandbox.checkout.tirol.link`（→ Sandbox 用 Deploy Preview。2026-10-13 から PR #794）| **PASS**（下表）。後片付け済み |
 
 #### Paddle Sandbox E2E 結果（2026-10-12・PASS）
 
