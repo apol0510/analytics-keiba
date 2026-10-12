@@ -123,7 +123,7 @@ DNS（Cloudflare・MK 設定）: `sandbox.checkout` CNAME `tirol-checkout-sandbo
 
 | 日付 | 決済会社 | Deploy Preview | 状態 |
 |---|---|---|---|
-| 2026-10-12 | Paddle | `https://sandbox.checkout.tirol.link`（→ PR #792 の Deploy Preview）| 実施中。env は deploy-preview context のみ（production の PADDLE_*／CARD_* は 0 件のまま）|
+| 2026-10-12 | Paddle | `https://sandbox.checkout.tirol.link`（→ PR #792 の Deploy Preview）| 実施中。env は deploy-preview context のみ（production の PADDLE_*／CARD_* は 0 件のまま）。DNS・HTTPS・通知先（4 イベント）登録済み |
 
 ## 5. 本番化の条件（すべて満たすまで開かない）
 
