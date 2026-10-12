@@ -114,6 +114,7 @@ DNS（Cloudflare・MK 設定）: `sandbox.checkout` CNAME `tirol-checkout-sandbo
 
 分離の仕組み:
 - 転送先は Deploy Preview（deploy-preview context の env だけ＝Sandbox 鍵だけ）。production の deploy・env・cron には一切つながらない。
+- 決済台帳の Redis も Sandbox 専用（Upstash `tirol-sandbox`）。deploy-preview context の `UPSTASH_REDIS_REST_URL/TOKEN` に設定（それまで deploy-preview は値なし＝Webhook は `redis_missing` で 500・付与しない fail closed だった）。本番 Redis は Preview に入れない。
 - `stripeRuntime.isAllowedOrigin(origin, host)` は、このオリジンを **Deploy Preview が受けたときだけ**信用する。本番 analytics.keiba.link が受けたら本番オリジン扱いに倒れ、CORS・戻り先・カード受付は広がらない（`sandboxOrigin.test.mjs`）。
 - 本番オリジン以外なので `resolveCardMode` はテスト鍵しか通さない（本番鍵は `live_key_outside_production`）。
 - Paddle の取引には顧客メールを送らない（`custom_data` は recordId と商品 ID だけ）。決済画面で入力するメールは中立の検証用アドレスにする。
