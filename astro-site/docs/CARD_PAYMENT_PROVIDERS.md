@@ -124,7 +124,31 @@ DNS（Cloudflare・MK 設定）: `sandbox.checkout` CNAME `tirol-checkout-sandbo
 
 | 日付 | 決済会社 | Deploy Preview | 状態 |
 |---|---|---|---|
-| 2026-10-12 | Paddle | `https://sandbox.checkout.tirol.link`（→ PR #792 の Deploy Preview）| 実施中。env は deploy-preview context のみ（production の PADDLE_*／CARD_* は 0 件のまま）。DNS・HTTPS・通知先（4 イベント）登録済み |
+| 2026-10-12 | Paddle | `https://sandbox.checkout.tirol.link`（→ PR #792 の Deploy Preview）| **PASS**（下表）。後片付け済み |
+
+#### Paddle Sandbox E2E 結果（2026-10-12・PASS）
+
+| 項目 | 結果 |
+|---|---|
+| 決済失敗 | 3DS 失敗カードで `authentication_failed`。会員は不変 |
+| 新規購入 | ¥49,800 JPY captured（origin=api・custom_data 一致）|
+| 権限反映 | Premium / Annual / active / 有効期限 2027-10-12 / PaymentMethod=paddle |
+| 重複通知 | `transaction.paid` と `.completed` を同時＋再度 → 反映 1 回だけ・レコード不変 |
+| 署名 | 署名なし・別 secret・10 分前の ts・署名後の本文改ざん → すべて 401 |
+| 取り違え | 署名正・未払い取引／本文が別会員を主張 → 変更なし（反映は API 照会の値だけ）|
+| 返金 | `POST /adjustments`（full）→ 約 10 分で approved → `adjustment.updated` で自動反映 |
+| 返金後 | 購入前と完全一致。返金・旧 paid 通知を再送しても再付与なし |
+| 再購入 | Paddle の通知だけで付与（有効期限 2027-10-12）|
+| 本番への副作用 | production env に PADDLE_*／CARD_* なし・販売は閉じたまま・本番 Redis 不使用 |
+
+途中で見つけて直したこと:
+- Deploy Preview に Redis の値が無く Webhook が `redis_missing`（500・付与なし＝fail closed）→ Sandbox 専用 Upstash を deploy-preview に設定。
+- 明示 `checkout.url` は未承認ドメインで 400 → Default payment link に任せ自サイト照合（§2）。
+- API 鍵に notification の replay 権限が無い（`forbidden`）→ 重複テストは Paddle が保存した payload をそのまま正しい署名で再配送して代替。Paddle 自身の replay を試すときは鍵に権限を追加する。
+
+観察（仕様どおり・変更なし）: 有効中の Premium 会員も年払い・Light 会員価格・買い切りの取引を作れる（`decideCardPurchase` は銀行振込と同じ会員価格判定 `checkMemberOnlyPricing` を使う。年払いは残期間の翌日から 1 年で縮めない。30 分以内の別決済は付与せず管理者へ）。
+
+後片付け: 使い捨てレコード削除（e2e レコード 0 件）・Sandbox Redis の検証キー削除（DBSIZE 0）・deploy-preview の PADDLE_*／CARD_E2E_SECRET を unset。**残すもの**（Sandbox 基盤として継続利用）: Netlify site `tirol-checkout-sandbox` と DNS、Paddle Sandbox の Default payment link・通知先、deploy-preview の Sandbox Redis、`~/.analytics-keiba-ops/card-sandbox.env`。再実施は鍵 4 つを deploy-preview に戻して再デプロイするだけ。
 
 ## 5. 本番化の条件（すべて満たすまで開かない）
 
