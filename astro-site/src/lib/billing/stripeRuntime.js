@@ -18,19 +18,32 @@ const ALLOWED_ORIGIN_PATTERNS = [
   /^http:\/\/localhost:(4321|8888)$/,
 ];
 
-export function isAllowedOrigin(origin) {
+/**
+ * 決済会社 Sandbox 専用の中立ホスト（静的プロキシ `ops/checkout-sandbox/` → Sandbox 用 Deploy Preview）。
+ * **リクエストを受けたのが Deploy Preview / Branch deploy のときだけ**許可する（本番 analytics.keiba.link は
+ * このオリジンを信用しない＝本番の CORS・戻り先を広げない）。本番オリジンではないので resolveCardMode はテスト鍵しか通さない。
+ */
+const SANDBOX_PROXY_ORIGINS = [/^https:\/\/sandbox\.checkout\.tirol\.link$/];
+// Netlify はリクエストの Host で配信先サイトを決めるため、本番 analytics.keiba.link が受けたリクエストの Host がこれらになることはない。
+// プロキシ経由（Host が元のホストのまま届く）と Deploy Preview 直アクセスの両方を受ける。
+const PREVIEW_HOST = /^([a-z0-9-]+--analytics-keiba\.netlify\.app|sandbox\.checkout\.tirol\.link|tirol-checkout-sandbox\.netlify\.app)$/;
+
+export function isAllowedOrigin(origin, host = '') {
   const o = String(origin || '').trim();
-  return ALLOWED_ORIGIN_PATTERNS.some((re) => re.test(o));
+  if (ALLOWED_ORIGIN_PATTERNS.some((re) => re.test(o))) return true;
+  return PREVIEW_HOST.test(String(host || '').trim().toLowerCase()) && SANDBOX_PROXY_ORIGINS.some((re) => re.test(o));
 }
+
+const hostOf = (h) => (h || {}).host || (h || {}).Host || '';
 
 /** リクエストの Origin（無ければ Referer のオリジン）が許可リストにあればそれ、無ければ本番 */
 export function resolveSiteOrigin(headers = {}) {
   const h = headers || {};
   const origin = h.origin || h.Origin || '';
-  if (isAllowedOrigin(origin)) return origin;
+  if (isAllowedOrigin(origin, hostOf(h))) return origin;
   try {
     const ref = new URL(h.referer || h.Referer || '').origin;
-    if (isAllowedOrigin(ref)) return ref;
+    if (isAllowedOrigin(ref, hostOf(h))) return ref;
   } catch { /* 無視 */ }
   return PRODUCTION_ORIGIN;
 }
@@ -39,7 +52,7 @@ export function resolveSiteOrigin(headers = {}) {
 export function corsHeaders(headers = {}) {
   const origin = (headers || {}).origin || (headers || {}).Origin || '';
   return {
-    'Access-Control-Allow-Origin': isAllowedOrigin(origin) ? origin : PRODUCTION_ORIGIN,
+    'Access-Control-Allow-Origin': isAllowedOrigin(origin, hostOf(headers)) ? origin : PRODUCTION_ORIGIN,
     'Access-Control-Allow-Headers': 'Content-Type',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Credentials': 'true',
