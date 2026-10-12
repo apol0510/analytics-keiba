@@ -11,6 +11,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { airtable } from '../stripeServer.js';
+import { checkoutProviderGate } from '../cardSales.js';
 import { decideCardPurchase } from '../cardOneTime.js';
 import { applyCardGrant, applyCardRefund, readCardOrderStatus } from '../entitlementLedger.js';
 import {
@@ -61,9 +62,11 @@ const apiFor = (env, mode, fetchImpl) => paypalApi({ apiBase: mode.apiBase, clie
  * 注文を作る（ログイン中の会員だけ）。
  * @returns {{ ok: true, url, orderId } | { ok: false, status, code }}
  */
-export async function createPaypalOrder({ env, origin, recordId, productId, now = new Date(), rand, fetchImpl }) {
+export async function createPaypalOrder({ env, origin, recordId, productId, entry = 'direct', now = new Date(), rand, fetchImpl }) {
   const mode = resolvePaypalMode({ env, origin });
   if (!mode.ok) return { ok: false, status: 503, code: mode.reason };
+  const gate = checkoutProviderGate({ provider: PROVIDER, mode: mode.mode, entry });
+  if (!gate.ok) return { ok: false, status: 409, code: gate.reason };
   if (!recordId) return { ok: false, status: 401, code: 'login_required' };
   const at = airtable(env, fetchImpl);
   let rec;

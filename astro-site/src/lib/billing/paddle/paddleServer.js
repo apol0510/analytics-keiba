@@ -6,6 +6,7 @@
  */
 
 import { airtable } from '../stripeServer.js';
+import { checkoutProviderGate } from '../cardSales.js';
 import { decideCardPurchase } from '../cardOneTime.js';
 import { applyCardGrant, applyCardRefund, readCardOrderStatus } from '../entitlementLedger.js';
 import {
@@ -41,9 +42,11 @@ export function paddleApi({ apiBase, key, fetchImpl }) {
  * 決済画面（取引）を作る（ログイン中の会員だけ）。
  * @returns {{ ok: true, url, transactionId } | { ok: false, status, code }}
  */
-export async function createPaddleCheckout({ env, origin, recordId, productId, now = new Date(), fetchImpl }) {
+export async function createPaddleCheckout({ env, origin, recordId, productId, entry = 'direct', now = new Date(), fetchImpl }) {
   const mode = resolvePaddleMode({ key: env.PADDLE_API_KEY, origin });
   if (!mode.ok) return { ok: false, status: 503, code: mode.reason };
+  const gate = checkoutProviderGate({ provider: PROVIDER, mode: mode.mode, entry });
+  if (!gate.ok) return { ok: false, status: 409, code: gate.reason };
   if (!recordId) return { ok: false, status: 401, code: 'login_required' };
   const at = airtable(env, fetchImpl);
   let rec;

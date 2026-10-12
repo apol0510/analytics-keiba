@@ -8,6 +8,7 @@
  */
 
 import { airtable } from '../stripeServer.js';
+import { checkoutProviderGate } from '../cardSales.js';
 import { decideCardPurchase, cardProductById } from '../cardOneTime.js';
 import { applyCardGrant, applyCardRefund, readCardOrderStatus as readLedgerStatus } from '../entitlementLedger.js';
 import {
@@ -42,9 +43,11 @@ export function fincodeApi({ apiBase, key, fetchImpl }) {
  * 決済画面を作る（ログイン中の会員だけ）。
  * @returns {{ ok: true, url, orderId } | { ok: false, status, code }}
  */
-export async function createCardSession({ env, origin, recordId, productId, now = new Date(), rand, fetchImpl }) {
+export async function createCardSession({ env, origin, recordId, productId, entry = 'direct', now = new Date(), rand, fetchImpl }) {
   const mode = resolveFincodeMode({ key: env.FINCODE_SECRET_KEY, origin });
   if (!mode.ok) return { ok: false, status: 503, code: mode.reason };
+  const gate = checkoutProviderGate({ provider: PROVIDER, mode: mode.mode, entry });
+  if (!gate.ok) return { ok: false, status: 409, code: gate.reason };
   if (!recordId) return { ok: false, status: 401, code: 'login_required' };
   const at = airtable(env, fetchImpl);
   let rec;
