@@ -58,7 +58,10 @@ export function resolvePaddleMode({ key, origin, salesOpen = CARD_SALES_OPEN } =
 
 /**
  * 取引（POST /transactions）の本文。一回払い・非カタログ価格・税込。
- * checkout.url は決済画面を開くページ（Paddle.js が _ptxn で自動的に開く）。Sandbox では Deploy Preview を指せる。
+ * checkout.url は送らない（2026-10-12）。決済画面を開くページは Paddle アカウントの Default payment link
+ * （承認済みドメイン）に任せる。明示した checkout.url はドメイン承認が無いと 400
+ * transaction_checkout_url_domain_is_not_approved になるため。返ってきた URL が自サイトかは
+ * checkoutUrlMatchesOrigin で確かめ、違えば使わない（fail closed）。
  */
 export function buildTransactionBody({ productId, recordId, origin }) {
   const product = cardProductById(productId);
@@ -78,8 +81,15 @@ export function buildTransactionBody({ productId, recordId, origin }) {
     currency_code: 'JPY',
     collection_mode: 'automatic',
     custom_data: { ak_record: String(recordId), ak_product: product.id },
-    checkout: { url: `${origin}/checkout/paddle/` },
   };
+}
+
+/** Paddle が返した決済画面 URL が、このサイトの /checkout/paddle/ か（別ドメインへ顧客を送らない） */
+export function checkoutUrlMatchesOrigin(url, origin) {
+  try {
+    const u = new URL(String(url || ''));
+    return u.origin === String(origin || '') && u.pathname === '/checkout/paddle/' && /^txn_[a-z0-9]+$/.test(u.searchParams.get('_ptxn') || '');
+  } catch { return false; }
 }
 
 /**

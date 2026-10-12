@@ -9,7 +9,7 @@ import { airtable } from '../stripeServer.js';
 import { decideCardPurchase } from '../cardOneTime.js';
 import { applyCardGrant, applyCardRefund, readCardOrderStatus } from '../entitlementLedger.js';
 import {
-  resolvePaddleMode, buildTransactionBody, matchTransaction, decideAdjustment, isTransactionId,
+  resolvePaddleMode, buildTransactionBody, matchTransaction, decideAdjustment, isTransactionId, checkoutUrlMatchesOrigin,
   GRANT_EVENTS, ADJUSTMENT_EVENTS, PROVIDER,
 } from './paddleCore.js';
 
@@ -53,6 +53,8 @@ export async function createPaddleCheckout({ env, origin, recordId, productId, n
   const api = paddleApi({ apiBase: mode.apiBase, key: env.PADDLE_API_KEY, fetchImpl });
   const txn = await api.createTransaction(buildTransactionBody({ productId, recordId, origin }));
   if (!isTransactionId(txn?.id) || !txn?.checkout?.url) return { ok: false, status: 502, code: 'checkout_failed' };
+  // Default payment link が別サイトを指していたら使わない（未払いの取引は課金されない）
+  if (!checkoutUrlMatchesOrigin(txn.checkout.url, origin)) return { ok: false, status: 502, code: 'checkout_url_mismatch' };
   return { ok: true, url: txn.checkout.url, transactionId: txn.id };
 }
 

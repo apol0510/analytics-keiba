@@ -52,7 +52,7 @@
 | 項目 | 内容 |
 |---|---|
 | API | Sandbox `https://sandbox-api.paddle.com`／本番 `https://api.paddle.com`。鍵 `pdl_sdbx_apikey_…` / `pdl_live_apikey_…`（接頭辞で判定。旧形式の鍵は受け付けない）|
-| 申込 | `paddle-create-checkout` → `POST /transactions`（非カタログ価格・JPY `"49800"`・`tax_mode: internal`＝税込・`custom_data {ak_record, ak_product}`・`checkout.url = {origin}/checkout/paddle/`）→ `/checkout/paddle/?_ptxn=txn_…` で Paddle.js が決済画面を開く → 完了後 `/checkout/card-complete/?provider=paddle&order=txn_…` |
+| 申込 | `paddle-create-checkout` → `POST /transactions`（非カタログ価格・JPY `"49800"`・`tax_mode: internal`＝税込・`custom_data {ak_record, ak_product}`・**`checkout.url` は送らない**＝アカウントの Default payment link（承認済みドメイン）に任せ、返ってきた URL が自サイトの `/checkout/paddle/` でなければ `checkout_url_mismatch` で使わない（2026-10-12・明示 URL は未承認ドメインだと 400）→ `/checkout/paddle/?_ptxn=txn_…` で Paddle.js が決済画面を開く → 完了後 `/checkout/card-complete/?provider=paddle&order=txn_…` |
 | 付与 | `paddle-webhook`（`Paddle-Signature` = HMAC-SHA256 `ts:rawBody`・時刻のずれ 300 秒まで）→ `GET /transactions/{id}` で origin=api・JPY・総額・custom_data・status paid/completed を照合 → 共通層 |
 | 返金 | `adjustment.created/updated` → `GET /adjustments?id=` で approved の refund / chargeback だけ。type=full は戻す・partial は管理者へ |
 | 注意 | JPY は支払い通貨としては使えるが入金通貨ではない（USD 等へ換算して入金）。本番は Website approval（ドメイン審査）・既定の支払いリンク設定が要る |
@@ -96,6 +96,59 @@ PayPal:
 2. 使い捨てレコード（`…+card-e2e@…`）を作り、`x-ak-e2e-secret` 付きで申込 → Sandbox のテストカード / テスト買い手で支払い。
 3. 確認: 付与（Customers・`card-order-status`）→ Webhook 再送（Paddle: `POST /notifications/{id}/replay`／PayPal: `POST /v1/notifications/webhooks-events/{id}/resend`）で 1 回だけ → 全額返金（Paddle: `POST /adjustments`・Sandbox は自動承認まで最大 10 分／PayPal: `POST /v2/payments/captures/{id}/refund`）で付与前へ → 再購入 → 買い切り会員の拒否。
 4. 後片付け: 使い捨てレコード削除・deploy-preview の env を外す・通知先 / Webhook を消す（MK）。
+
+### 決済会社に登録する URL（2026-10-12 MK 確定・中立ホスト）
+
+決済会社の管理画面には **Netlify のサブドメイン（`*--analytics-keiba.netlify.app`）を登録しない**。Sandbox は専用の中立ホストを使い、本番とは完全に分ける。
+
+| 用途 | ホスト | 中身 |
+|---|---|---|
+| **Sandbox 専用** | `https://sandbox.checkout.tirol.link` | Netlify site `tirol-checkout-sandbox`（静的・Functions/cron なし）。`ops/checkout-sandbox/_redirects` の 1 行で Sandbox 用 Deploy Preview へ転送（200 プロキシ）|
+| 本番用（将来）| `https://checkout.tirol.link` | §7。本番化（§5）まで決済会社の本番設定には使わない |
+
+Sandbox に登録する値（Paddle）:
+- Default payment link: `https://sandbox.checkout.tirol.link/checkout/paddle/`
+- Notification destination: `https://sandbox.checkout.tirol.link/.netlify/functions/paddle-webhook`（イベント `transaction.paid`・`transaction.completed`・`adjustment.created`・`adjustment.updated`）
+
+DNS（Cloudflare・MK 設定）: `sandbox.checkout` CNAME `tirol-checkout-sandbox.netlify.app`、Proxy status は **DNS only**（Cloudflare プロキシを挟むと 520/525 と証明書発行失敗の原因になる）。
+
+分離の仕組み:
+- 転送先は Deploy Preview（deploy-preview context の env だけ＝Sandbox 鍵だけ）。production の deploy・env・cron には一切つながらない。
+- 決済台帳の Redis も Sandbox 専用（Upstash `tirol-sandbox`）。deploy-preview context の `UPSTASH_REDIS_REST_URL/TOKEN` に設定（それまで deploy-preview は値なし＝Webhook は `redis_missing` で 500・付与しない fail closed だった）。本番 Redis は Preview に入れない。
+- `stripeRuntime.isAllowedOrigin(origin, host)` は、このオリジンを **Deploy Preview が受けたときだけ**信用する。本番 analytics.keiba.link が受けたら本番オリジン扱いに倒れ、CORS・戻り先・カード受付は広がらない（`sandboxOrigin.test.mjs`）。
+- 本番オリジン以外なので `resolveCardMode` はテスト鍵しか通さない（本番鍵は `live_key_outside_production`）。
+- Paddle の取引には顧客メールを送らない（`custom_data` は recordId と商品 ID だけ）。決済画面で入力するメールは中立の検証用アドレスにする。
+- 転送先を変えるとき（Sandbox 用 PR が変わったとき）は `_redirects` の 1 行を直して `netlify deploy --prod --dir <ops/checkout-sandbox の複製> --no-build --site tirol-checkout-sandbox`（repo 直下の netlify.toml を読ませないため、repo 外の複製から deploy する）。
+
+### 実施記録
+
+| 日付 | 決済会社 | Deploy Preview | 状態 |
+|---|---|---|---|
+| 2026-10-12 | Paddle | `https://sandbox.checkout.tirol.link`（→ PR #792 の Deploy Preview）| **PASS**（下表）。後片付け済み |
+
+#### Paddle Sandbox E2E 結果（2026-10-12・PASS）
+
+| 項目 | 結果 |
+|---|---|
+| 決済失敗 | 3DS 失敗カードで `authentication_failed`。会員は不変 |
+| 新規購入 | ¥49,800 JPY captured（origin=api・custom_data 一致）|
+| 権限反映 | Premium / Annual / active / 有効期限 2027-10-12 / PaymentMethod=paddle |
+| 重複通知 | `transaction.paid` と `.completed` を同時＋再度 → 反映 1 回だけ・レコード不変 |
+| 署名 | 署名なし・別 secret・10 分前の ts・署名後の本文改ざん → すべて 401 |
+| 取り違え | 署名正・未払い取引／本文が別会員を主張 → 変更なし（反映は API 照会の値だけ）|
+| 返金 | `POST /adjustments`（full）→ 約 10 分で approved → `adjustment.updated` で自動反映 |
+| 返金後 | 購入前と完全一致。返金・旧 paid 通知を再送しても再付与なし |
+| 再購入 | Paddle の通知だけで付与（有効期限 2027-10-12）|
+| 本番への副作用 | production env に PADDLE_*／CARD_* なし・販売は閉じたまま・本番 Redis 不使用 |
+
+途中で見つけて直したこと:
+- Deploy Preview に Redis の値が無く Webhook が `redis_missing`（500・付与なし＝fail closed）→ Sandbox 専用 Upstash を deploy-preview に設定。
+- 明示 `checkout.url` は未承認ドメインで 400 → Default payment link に任せ自サイト照合（§2）。
+- API 鍵に notification の replay 権限が無い（`forbidden`）→ 重複テストは Paddle が保存した payload をそのまま正しい署名で再配送して代替。Paddle 自身の replay を試すときは鍵に権限を追加する。
+
+観察（仕様どおり・変更なし）: 有効中の Premium 会員も年払い・Light 会員価格・買い切りの取引を作れる（`decideCardPurchase` は銀行振込と同じ会員価格判定 `checkMemberOnlyPricing` を使う。年払いは残期間の翌日から 1 年で縮めない。30 分以内の別決済は付与せず管理者へ）。
+
+後片付け: 使い捨てレコード削除（e2e レコード 0 件）・Sandbox Redis の検証キー削除（DBSIZE 0）・deploy-preview の PADDLE_*／CARD_E2E_SECRET を unset。**残すもの**（Sandbox 基盤として継続利用）: Netlify site `tirol-checkout-sandbox` と DNS、Paddle Sandbox の Default payment link・通知先、deploy-preview の Sandbox Redis、`~/.analytics-keiba-ops/card-sandbox.env`。再実施は鍵 4 つを deploy-preview に戻して再デプロイするだけ。
 
 ## 5. 本番化の条件（すべて満たすまで開かない）
 
