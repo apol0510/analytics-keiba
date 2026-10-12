@@ -38,7 +38,7 @@ function world({ fields = { 'プラン': 'Free', Email: 'a+card-e2e@example.com'
       st.created.push(b);
       st.txns[id] = {
         id, origin: 'api', status: 'ready', currency_code: 'JPY', custom_data: b.custom_data,
-        details: { totals: { grand_total: b.items[0].price.unit_price.amount } }, checkout: { url: `${b.checkout.url}?_ptxn=${id}` },
+        details: { totals: { grand_total: b.items[0].price.unit_price.amount } }, checkout: { url: `${st.defaultLink}?_ptxn=${id}` },
       };
       return res(201, { data: st.txns[id] });
     }
@@ -54,6 +54,7 @@ function world({ fields = { 'プラン': 'Free', Email: 'a+card-e2e@example.com'
     throw new Error(`unexpected ${cmd}`);
   };
   st.notify = async (kind, d) => { st.notes.push([kind, d.reason || '']); };
+  st.defaultLink = `${PREVIEW}/checkout/paddle/`; // アカウントの Default payment link
   st.pay = (id) => { Object.assign(st.txns[id], { status: 'completed', billed_at: '2026-10-11T03:00:00Z' }); };
   return st;
 }
@@ -86,7 +87,7 @@ test('取引: 金額はサーバー・JPY 税込（internal）・メールを載
   assert.equal(b.items[0].price.tax_mode, 'internal');
   assert.equal(b.items[0].price.billing_cycle, undefined, '一回払い（定期課金にしない）');
   assert.deepEqual(b.custom_data, { ak_record: REC, ak_product: 'premium-lifetime' });
-  assert.equal(b.checkout.url, `${PREVIEW}/checkout/paddle/`);
+  assert.equal(b.checkout, undefined, 'checkout.url は送らない（Default payment link に任せる）');
   assert.equal(JSON.stringify(b).includes('@'), false);
   const p = b.items[0].price;
   assert.equal([p.description, p.name, p.product.name].some(hasBannedPaymentWord), false, '決済会社に出る名前に禁止語なし');
@@ -113,6 +114,9 @@ test('E2E: Checkout → 支払い確認（API 照会）→ 付与 → Webhook �
   assert.equal((await createPaddleCheckout({ env: ENV, origin: PREVIEW, recordId: null, productId: 'premium-annual', fetchImpl: w.fetch })).code, 'login_required');
   assert.equal((await createPaddleCheckout({ env: ENV, origin: PRODUCTION_ORIGIN, recordId: REC, productId: 'premium-annual', fetchImpl: w.fetch })).code, 'test_key_on_production');
   assert.equal(w.calls.length, 0, '止めるときは何も呼ばない');
+  w.defaultLink = 'https://elsewhere.example/checkout/paddle/';
+  assert.equal((await createPaddleCheckout({ env: ENV, origin: PREVIEW, recordId: REC, productId: 'premium-annual', fetchImpl: w.fetch })).code, 'checkout_url_mismatch', '別サイトの決済画面へは送らない');
+  w.defaultLink = `${PREVIEW}/checkout/paddle/`;
   const t = await checkout(w);
   assert.equal(w.txns[t].checkout.url, `${PREVIEW}/checkout/paddle/?_ptxn=${t}`);
   assert.equal((await readPaddleOrderStatus({ redis: w.redisCmd, transactionId: t, recordId: REC })).status, 'pending');
