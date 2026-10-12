@@ -24,7 +24,9 @@ const ALLOWED_ORIGIN_PATTERNS = [
  * このオリジンを信用しない＝本番の CORS・戻り先を広げない）。本番オリジンではないので resolveCardMode はテスト鍵しか通さない。
  */
 const SANDBOX_PROXY_ORIGINS = [/^https:\/\/sandbox\.checkout\.tirol\.link$/];
-const PREVIEW_HOST = /^[a-z0-9-]+--analytics-keiba\.netlify\.app$/;
+// Netlify はリクエストの Host で配信先サイトを決めるため、本番 analytics.keiba.link が受けたリクエストの Host がこれらになることはない。
+// プロキシ経由（Host が元のホストのまま届く）と Deploy Preview 直アクセスの両方を受ける。
+const PREVIEW_HOST = /^([a-z0-9-]+--analytics-keiba\.netlify\.app|sandbox\.checkout\.tirol\.link|tirol-checkout-sandbox\.netlify\.app)$/;
 
 export function isAllowedOrigin(origin, host = '') {
   const o = String(origin || '').trim();

@@ -10,6 +10,8 @@ const PREVIEW = 'deploy-preview-792--analytics-keiba.netlify.app';
 
 test('Deploy Preview が受けたときだけ Sandbox ホストを許可する', () => {
   assert.equal(isAllowedOrigin(SBX, PREVIEW), true);
+  assert.equal(isAllowedOrigin(SBX, 'sandbox.checkout.tirol.link'), true); // プロキシ経由（Host が元のまま）
+  assert.equal(isAllowedOrigin(SBX, 'checkout.tirol.link'), false);
   assert.equal(isAllowedOrigin(SBX, 'analytics.keiba.link'), false);
   assert.equal(isAllowedOrigin(SBX, ''), false);
   assert.equal(isAllowedOrigin(SBX), false);
