@@ -97,6 +97,12 @@ PayPal:
 3. 確認: 付与（Customers・`card-order-status`）→ Webhook 再送（Paddle: `POST /notifications/{id}/replay`／PayPal: `POST /v1/notifications/webhooks-events/{id}/resend`）で 1 回だけ → 全額返金（Paddle: `POST /adjustments`・Sandbox は自動承認まで最大 10 分／PayPal: `POST /v2/payments/captures/{id}/refund`）で付与前へ → 再購入 → 買い切り会員の拒否。
 4. 後片付け: 使い捨てレコード削除・deploy-preview の env を外す・通知先 / Webhook を消す（MK）。
 
+### 実施記録
+
+| 日付 | 決済会社 | Deploy Preview | 状態 |
+|---|---|---|---|
+| 2026-10-12 | Paddle | PR #792（`deploy-preview-792--analytics-keiba.netlify.app`）| 実施中。env は deploy-preview context のみ（production の PADDLE_*／CARD_* は 0 件のまま）|
+
 ## 5. 本番化の条件（すべて満たすまで開かない）
 
 1. その決済会社が AK の取扱商品（競馬データ・予想の有料提供）を承認した記録（Paddle: 書面回答＋本番アカウント審査／PayPal: 事前承認）。審査では事業内容を正確に申告し、言い換えで通さない。
