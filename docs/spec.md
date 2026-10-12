@@ -65,6 +65,8 @@
 
 > **代替決済（2026-10-11 MK 確定・追記 3 で優先順位を改定）**: **Paddle（第一優先・TIROL DATA LABO 名義で新規開設）・PayPal（第二優先・新規）を並行推進、fincode byGMO は本番審査結果待ちで維持**。実装の正本 `astro-site/docs/CARD_PAYMENT_PROVIDERS.md`（fincode 固有は `FINCODE_BILLING.md`）。会員権限の反映は決済会社共通の `entitlementLedger.js` だけ。本番受付は `cardSales.js` の `CARD_SALES_OPEN`（全社 false・env では開かない）を、各社の取扱商品承認後に MK の決定で変える PR だけで開く。売るのは一回払い（年払い・買い切り）だけ。営業商談型は候補にしない。直近の販売は銀行振込のみ・新規月払いは停止のまま（決済会社の準備で自動再開しない）。根拠 `decisions.md` 2026-10-11（追記 2・追記 3）。
 >
+> **冗長化（2026-10-13 MK 確定）**: Paddle・PayPal は**お客様に選ばせる併設ではなく、事業継続のための冗長化**。購入導線は「カードで支払う」1 本（共通入口 `card-create-checkout`）・決済会社の選択 UI は作らない。第一 Paddle・予備 PayPal、受ける 1 社は運営が `cardSales.ACTIVE_CARD_PROVIDER`（PR）で切替。未確定の取引を別社へ自動で作り直さない・切替前の申込が残る会員は切替後の会社で申込不可（24 時間）。会員権限・料金・購入資格・完了画面は共通。根拠 `decisions.md` 2026-10-13。
+>
 > **決済関連名称（決済会社をまたいで共通）に競馬関連の語（KEIBA / 競馬 / 馬券）を使わない。基本名称は「Analytics Premium」**（2026-10-11 MK 確定・単一源 `paymentDisplayNames.js`・`decisions.md` 2026-10-11 追記）。サイト名・ドメイン・サービス説明・法定表示は対象外。
 >
 > **Stripe の顧客向け表示（Product 名・カード明細・Checkout・請求書・領収書・ポータル）に「KEIBA」を使わない。名称は「Analytics Premium」**（2026-10-11 MK 確定 / `decisions.md` 2026-10-11）。単一源 `stripePlans.js`。AK のサイト名・ドメイン・サービス内容は対象外。

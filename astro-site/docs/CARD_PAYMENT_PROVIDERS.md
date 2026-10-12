@@ -15,6 +15,25 @@
 - 売るのは銀行振込と同じ一回払い（Premium 年払い ¥49,800／Light 会員 ¥44,820・買い切り ¥78,000）だけ。**月払い・定期課金は作らない**（Paddle の定期価格・PayPal Subscriptions は使わない。guard で固定）。
 - 本番受付は、その決済会社が AK の取扱商品を承認したあと、MK の明示決定で `src/lib/billing/cardSales.js` の値を変える PR だけで開く。env では開かない。
 
+## 0.5 冗長化の方針（2026-10-13 MK 確定・`decisions.md` 2026-10-13）
+
+Paddle・PayPal は**お客様に選ばせる併設決済ではない**。決済会社の利用停止・障害・契約終了に備える事業継続のための冗長化。
+
+| 項目 | 仕様 | 実装 |
+|---|---|---|
+| お客様の導線 | 「カードで支払う」1 本。決済会社の選択 UI は作らない | 共通入口 `card-create-checkout`（`cardCheckout.startCardCheckout`）。お客様のページから決済会社別の入口を呼ばない（guard テスト）|
+| 受ける決済会社 | 第一 Paddle・予備 PayPal（fincode は候補のまま）| `cardSales.ACTIVE_CARD_PROVIDER = 'paddle'`・`CARD_PROVIDER_ROLES` |
+| 切替 | 運営側の設定 | `ACTIVE_CARD_PROVIDER` を変える PR（env では切り替えない）|
+| 本番の申込制限 | 共通入口から、選ばれた 1 社だけ | `checkoutProviderGate`: live は `entry='card'` かつ active だけ（別入口 `use_card_checkout`・非 active `provider_not_active`）。各社の申込作成（`createPaddleCheckout`・`createPaypalOrder`・`createCardSession`）は必ずこれを通る |
+| Sandbox | 各社を個別に検証できる | test モードは gate を通す（決済会社別の入口で E2E）|
+| 自動フォールバック | **しない**。作成失敗・例外でも予備へ作り直さない | `startCardCheckout` は active の 1 社だけ呼ぶ（テスト固定）|
+| 処理中の誤切替 | 切替前の会社の申込が残る会員は、切替後の会社で申込を作れない | Redis `ak:billing:open-checkout:{recordId}`（申込先・注文 ID・24 時間）。別社なら 409 `checkout_in_progress`。Redis が無い/読めないときは申込を作らない |
+| 切替後の既存取引 | 確定・返金の反映は元の決済会社で続ける | Webhook・capture は `resolveCardMode` だけで判定（gate を使わない）|
+| 共通 | 会員権限・料金・購入資格・完了画面 | `cardOneTime.js`・`entitlementLedger.js`（30 分以内の別決済は付与せず管理者へ）・`/checkout/card-complete/?provider=` |
+| 本番受付 | 各社承認＋既存の販売開始条件 | `CARD_SALES_OPEN`（全社 false のまま）|
+
+切替手順（運営）: ① 切替先の Sandbox E2E 済み・本番承認済み・`CARD_SALES_OPEN` が開いていることを確認 ② `ACTIVE_CARD_PROVIDER` を変える PR → merge → deploy ③ 本番で `card-create-checkout` の応答の `provider` を確認。切替前の会社の Webhook 設定は残す（既存取引の確定・返金のため）。
+
 ## 1. 共通層（決済会社に依存しない会員権限）
 
 ```
