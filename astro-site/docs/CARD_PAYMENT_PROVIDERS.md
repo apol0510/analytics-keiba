@@ -161,3 +161,17 @@ DNS（Cloudflare・MK 設定）: `sandbox.checkout` CNAME `tirol-checkout-sandbo
 
 - コード: revert PR（販売は閉じているので顧客影響なし）。
 - 反映済みの会員: 決済ごとの状態に付与前の値を保存してある。全額返金で自動で戻る。
+
+## 7. 決済専用サイト `checkout.tirol.link`（2026-10-12 MK 確定・構築は商品説明の判断待ち）
+
+| 項目 | 確定内容 |
+|---|---|
+| URL | `https://checkout.tirol.link/`（DNS は Cloudflare・MK 設定。2026-10-12 時点でレコードなし＝未使用を確認）|
+| 事業者 | TIROL DATA LABO（日本の個人事業主）|
+| 表示言語 | 全面英語 |
+| **公開住所** | **契約済みの新宿バーチャルオフィス**。英語表記は `src/pages/legal.astro` の Address 行と同一にそろえる（事業者情報・Terms・Refund・フッター）|
+| 非公開 | **自宅住所は公開しない**。Paddle 等の本人確認住所は決済会社の画面にだけ入力し、repo・サイトに載せない |
+| 公開の前提 | MK が新宿住所の契約上の利用条件（ウェブ・特商法表記での利用可否、郵便受取、電話の扱い）を確認済みであること |
+| 流用禁止 | 旧 `payment.tirol.link` の事業者表示・住所 |
+| 決済連携 | #789 の実装（共通会員権限層・Paddle・PayPal）を再利用。本番キー未設定の拒否状態は維持 |
+
