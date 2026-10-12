@@ -97,11 +97,33 @@ PayPal:
 3. 確認: 付与（Customers・`card-order-status`）→ Webhook 再送（Paddle: `POST /notifications/{id}/replay`／PayPal: `POST /v1/notifications/webhooks-events/{id}/resend`）で 1 回だけ → 全額返金（Paddle: `POST /adjustments`・Sandbox は自動承認まで最大 10 分／PayPal: `POST /v2/payments/captures/{id}/refund`）で付与前へ → 再購入 → 買い切り会員の拒否。
 4. 後片付け: 使い捨てレコード削除・deploy-preview の env を外す・通知先 / Webhook を消す（MK）。
 
+### 決済会社に登録する URL（2026-10-12 MK 確定・中立ホスト）
+
+決済会社の管理画面には **Netlify のサブドメイン（`*--analytics-keiba.netlify.app`）を登録しない**。Sandbox は専用の中立ホストを使い、本番とは完全に分ける。
+
+| 用途 | ホスト | 中身 |
+|---|---|---|
+| **Sandbox 専用** | `https://sandbox.checkout.tirol.link` | Netlify site `tirol-checkout-sandbox`（静的・Functions/cron なし）。`ops/checkout-sandbox/_redirects` の 1 行で Sandbox 用 Deploy Preview へ転送（200 プロキシ）|
+| 本番用（将来）| `https://checkout.tirol.link` | §7。本番化（§5）まで決済会社の本番設定には使わない |
+
+Sandbox に登録する値（Paddle）:
+- Default payment link: `https://sandbox.checkout.tirol.link/checkout/paddle/`
+- Notification destination: `https://sandbox.checkout.tirol.link/.netlify/functions/paddle-webhook`（イベント `transaction.paid`・`transaction.completed`・`adjustment.created`・`adjustment.updated`）
+
+DNS（Cloudflare・MK 設定）: `sandbox.checkout` CNAME `tirol-checkout-sandbox.netlify.app`、Proxy status は **DNS only**（Cloudflare プロキシを挟むと 520/525 と証明書発行失敗の原因になる）。
+
+分離の仕組み:
+- 転送先は Deploy Preview（deploy-preview context の env だけ＝Sandbox 鍵だけ）。production の deploy・env・cron には一切つながらない。
+- `stripeRuntime.isAllowedOrigin(origin, host)` は、このオリジンを **Deploy Preview が受けたときだけ**信用する。本番 analytics.keiba.link が受けたら本番オリジン扱いに倒れ、CORS・戻り先・カード受付は広がらない（`sandboxOrigin.test.mjs`）。
+- 本番オリジン以外なので `resolveCardMode` はテスト鍵しか通さない（本番鍵は `live_key_outside_production`）。
+- Paddle の取引には顧客メールを送らない（`custom_data` は recordId と商品 ID だけ）。決済画面で入力するメールは中立の検証用アドレスにする。
+- 転送先を変えるとき（Sandbox 用 PR が変わったとき）は `_redirects` の 1 行を直して `netlify deploy --prod --dir <ops/checkout-sandbox の複製> --no-build --site tirol-checkout-sandbox`（repo 直下の netlify.toml を読ませないため、repo 外の複製から deploy する）。
+
 ### 実施記録
 
 | 日付 | 決済会社 | Deploy Preview | 状態 |
 |---|---|---|---|
-| 2026-10-12 | Paddle | PR #792（`deploy-preview-792--analytics-keiba.netlify.app`）| 実施中。env は deploy-preview context のみ（production の PADDLE_*／CARD_* は 0 件のまま）|
+| 2026-10-12 | Paddle | `https://sandbox.checkout.tirol.link`（→ PR #792 の Deploy Preview）| 実施中。env は deploy-preview context のみ（production の PADDLE_*／CARD_* は 0 件のまま）|
 
 ## 5. 本番化の条件（すべて満たすまで開かない）
 

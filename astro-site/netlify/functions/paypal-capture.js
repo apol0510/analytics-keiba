@@ -21,7 +21,7 @@ exports.handler = async (event) => {
   if (event.httpMethod === 'OPTIONS') return { statusCode: 204, headers, body: '' };
   if (event.httpMethod !== 'POST') return json(405, headers, { error: 'method_not_allowed' });
   const reqOrigin = event.headers?.origin || event.headers?.Origin || '';
-  if (reqOrigin && !isAllowedOrigin(reqOrigin)) return json(403, headers, { error: 'forbidden_origin' });
+  if (reqOrigin && !isAllowedOrigin(reqOrigin, event.headers?.host || event.headers?.Host || '')) return json(403, headers, { error: 'forbidden_origin' });
   let body = {};
   try { body = JSON.parse(event.body || '{}'); } catch { return json(400, headers, { error: 'invalid_json' }); }
   const orderId = String(body.order || '');
