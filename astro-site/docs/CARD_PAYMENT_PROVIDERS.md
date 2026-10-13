@@ -108,6 +108,7 @@ PayPal:
 1. https://developer.paypal.com に新規のビジネスアカウントでログイン → Apps & Credentials（Sandbox）→ Create App。Client ID・Secret を控える。
 2. 同じアプリの Webhooks に `https://deploy-preview-<PR>--analytics-keiba.netlify.app/.netlify/functions/paypal-order-webhook` を追加し、イベント `CHECKOUT.ORDER.APPROVED`・`PAYMENT.CAPTURE.COMPLETED`・`PAYMENT.CAPTURE.REFUNDED`・`PAYMENT.CAPTURE.REVERSED` を選ぶ。Webhook ID を控える。
 3. Testing Tools → Sandbox Accounts の personal（買い手）アカウントで支払う。
+   - 2026-10-13 実施: MK は手順 1（Client ID/Secret）だけ。手順 2 の Webhook は Claude が API（`POST /v1/notifications/webhooks`）で中立ホストの URL に登録し、Webhook ID と `PAYPAL_ENV=sandbox` を keys file に追記（値は出力しない）。スクリプトは冪等（同じ URL が既にあれば再利用）。
 
 鍵の受け渡しは 1 つのファイルにまとめる（値は会話に貼らない）:
 `~/.analytics-keiba-ops/card-sandbox.env`（`chmod 600`。中身は §2・§3 の env 名=値。`CARD_E2E_SECRET` は Claude が作る）
