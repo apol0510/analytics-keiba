@@ -203,7 +203,9 @@ DNS（Cloudflare・MK 設定）: `sandbox.checkout` CNAME `tirol-checkout-sandbo
 |---|---|
 | 生成元（単一源） | `ops/checkout-site/site.mjs`。`node ops/checkout-site/build.mjs <repo外の出力先>` で静的 HTML を生成（生成物は repo に置かない）|
 | ページ | `/` `/features/` `/pricing/` `/billing/` `/terms/` `/privacy/` `/refund/` `/contact/` |
-| 表示方針 | ブランドは中立名（TIROL DATA LABO・Analytics Premium）。**事業内容は事実どおり**: 日本の競馬（JRA・南関 4 場）のデータ分析レポートの会員制オンライン情報サービス／賭けの受付・購入代行・資金の預かりはしない／結果を保証しない／20 歳以上 |
+| 公開表記 | 全面英語・中立ブランド（TIROL DATA LABO・Analytics Premium）。**本文・メタ・リンク表示・フッターに競馬・ギャンブル関連語を出さない**。説明は実機能どおり＝会員制のデータ分析情報サービス（AK 既存英文「statistical analysis results and reference indicators based on sports data」）・成果保証なし・投資助言でない・18 歳以上（AK 既存 privacy と同じ）|
+| 会員導線 | 会員サイトへは `https://analytics.keiba.link/login/` へのリンク（表示は「member site」）。ドメイン文字列は画面に出さない |
+| **決済会社への申告** | **事実どおり**（公開表記とは別）。申告文（英）: “Online members-only information service (digital content) publishing data analysis reports on Japanese horse racing (JRA and Minami-Kanto local races): per-race evaluations, indices and top-rated selections, plus a results archive. Information only: we do not accept, place or broker bets, do not sell betting tickets and do not hold funds for betting; no outcome is guaranteed. Sold as one-time payments (annual access / lifetime access), no auto-renewal. Customers are adults in Japan.” 商品分類は各社の選択肢から最も実態に近いものを選び、自由記述欄には上記を書く（分類名を通すために言い換えない）。運営側の業種名が各社の制限業種に当たるかは各社の審査判断に委ねる |
 | 価格 | `CARD_PRODUCTS` と一致（年払い ¥49,800・買い切り ¥78,000・Light 会員価格 ¥44,820）。自動更新なし |
 | カード受付 | `CARD_PAYMENTS_AVAILABLE` は `CARD_SALES_OPEN` と一致（閉の間は「準備中・銀行振込のみ」）。開ける PR で両方を変える |
 | 決済会社 | 選択 UI なし。Billing に Paddle（Merchant of Record）を第一として記載・切替時も二重請求なしと明記 |
@@ -211,4 +213,5 @@ DNS（Cloudflare・MK 設定）: `sandbox.checkout` CNAME `tirol-checkout-sandbo
 | ホスティング | Netlify site `tirol-checkout`（id af09193e-1710-4a8c-bd5c-cfa7068586e9・`https://tirol-checkout.netlify.app`）。deploy は出力先ディレクトリから `netlify deploy --prod --dir <out> --no-build --site <id>` |
 | index 化 | `INDEXABLE=false`（X-Robots-Tag noindex・robots Disallow）。新宿住所の契約条件確認後に true にする PR |
 | 独自ドメイン | 未接続。手順: MK が Cloudflare に CNAME `checkout` → `tirol-checkout.netlify.app`（DNS only）→ Netlify site に custom domain 追加 → HTTPS 確認 |
-| テスト | `astro-site/src/lib/billing/checkoutSite.guard.test.mjs`（test:billing に含む）|
+| テスト | `astro-site/src/lib/billing/checkoutSite.guard.test.mjs`（test:billing に含む）: 必須ページ・禁止語（href 以外）・ドメイン非表示・説明の一致・住所・価格・カード準備中・選択 UI なし・noindex |
+| 訂正 | 初版（`a1e68625`・未 merge）は公開文言に業種を入れ decisions に「MK 確定」と誤記録 → 同 PR で撤回（decisions 2026-10-13）|

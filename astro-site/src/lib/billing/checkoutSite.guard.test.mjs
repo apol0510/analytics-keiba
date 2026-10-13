@@ -16,20 +16,31 @@ test('必須ページがそろう（Home/Features/Pricing/Terms/Privacy/Refund/C
   for (const k of ['index.html', 'billing/index.html', 'contact/index.html', 'features/index.html', 'pricing/index.html', 'privacy/index.html', 'refund/index.html', 'terms/index.html', 'style.css']) assert.ok(files[k], k);
 });
 
-test('全面英語・ブランドに競馬/ギャンブル/keiba の語を使わない（サービスURLの記載だけは除く）', () => {
-  assert.doesNotMatch(html, /[぀-ヿ一-鿿]/, '日本語が混入している');
-  assert.doesNotMatch(text.replace(/analytics\.keiba\.link/g, ''), /keiba/i);
-  assert.doesNotMatch(text, /gambl|casino/i);
+// 公開文言に追加しない語（競馬・ギャンブル関連）。会員サイトへのリンク先 URL（href）だけは対象外（画面には出さない）
+const BANNED = /keiba|horse|racing|racecourse|jockey|furlong|betting|\bbets?\b|wager|gambl|casino|odds|bookmak|lottery|\bJRA\b|Minami|Ohi|Kawasaki|Funabashi|Urawa/i;
+const visible = (h) => h.replace(/href="[^"]*"/g, '').replace(/<link [^>]*>/g, '');
+
+test('全面英語・中立ブランド・競馬/ギャンブル関連語を本文・メタ・フッター・リンク表示に出さない', () => {
+  assert.doesNotMatch(html, /[\u3040-\u30ff\u4e00-\u9fff]/, '日本語が混入している');
+  for (const p of PAGE_PATHS) assert.doesNotMatch(visible(renderPage(p)), BANNED, p);
+  for (const k of ['style.css', '_headers', 'robots.txt']) assert.doesNotMatch(files[k], BANNED, k);
   assert.equal(BUSINESS.name, 'TIROL DATA LABO');
 });
 
-test('事業内容は事実どおり（日本の競馬データ分析・情報提供のみ・賭けの受付なし）', () => {
+test('会員導線: 会員サイトへはリンクで案内し、ドメイン文字列は表示しない', () => {
+  assert.equal(BUSINESS.memberSignInUrl, 'https://analytics.keiba.link/login/');
+  for (const p of ['/', '/billing/']) assert.ok(renderPage(p).includes(`href="${BUSINESS.memberSignInUrl}"`), p);
+  assert.doesNotMatch(text, /analytics\.keiba\.link/);
+});
+
+test('説明は実際の機能どおり（会員制のデータ分析情報サービス・成果保証なし）。AK 既存英文と同じ表現', () => {
+  const legal = readFileSync(fileURLToPath(new URL('../../pages/legal.astro', import.meta.url)), 'utf8');
+  assert.match(legal, /statistical analysis results and reference indicators based on sports data/);
   for (const p of ['/', '/features/', '/terms/']) {
     const t = renderPage(p);
-    assert.match(t, /Japanese horse racing/, p);
-    assert.match(t, /do not accept, place, broker or settle wagers/, p);
+    assert.match(t, /statistical analysis\s+results and reference indicators based on sports data/, p);
+    assert.match(t, /does not guarantee any outcome/, p);
   }
-  assert.match(renderPage('/contact/'), /Japanese horse racing/);
 });
 
 test('公開住所は legal.astro と同一の新宿住所・自宅住所の欄は持たない', () => {
