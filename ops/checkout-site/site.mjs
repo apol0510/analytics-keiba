@@ -285,7 +285,7 @@ export function renderPage(path) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(title)}</title>
 <meta name="description" content="${esc(page.description)}">
-<link rel="canonical" href="https://checkout.tirol.link${path}">
+<link rel="canonical" href="${SITE_ORIGIN}${path}">
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -303,13 +303,16 @@ export function renderPage(path) {
 
 export const PAGE_PATHS = Object.freeze(Object.keys(PAGES));
 
-/** 公開前は検索エンジンに載せない（MK が新宿住所の契約条件を確認し本番公開を決めたら INDEXABLE を true にする PR を出す） */
-export const INDEXABLE = false;
+/** 検索エンジンへの掲載。2026-10-13 checkout.tirol.link の DNS 接続（新宿住所の契約条件確認後に MK が追加する手順）を受けて true。
+ *  掲載を止めるときは false に戻して再 deploy（noindex＋robots Disallow に戻る）。 */
+export const INDEXABLE = true;
+export const SITE_ORIGIN = 'https://checkout.tirol.link';
 
 export function buildFiles() {
   const files = { 'style.css': CSS.trimStart() };
   for (const p of PAGE_PATHS) files[p === '/' ? 'index.html' : `${p.slice(1)}index.html`] = renderPage(p);
   files['_headers'] = `/*\n  X-Content-Type-Options: nosniff\n  Referrer-Policy: strict-origin-when-cross-origin\n${INDEXABLE ? '' : '  X-Robots-Tag: noindex, nofollow\n'}`;
-  files['robots.txt'] = INDEXABLE ? 'User-agent: *\nAllow: /\n' : 'User-agent: *\nDisallow: /\n';
+  files['robots.txt'] = INDEXABLE ? `User-agent: *\nAllow: /\nSitemap: ${SITE_ORIGIN}/sitemap.xml\n` : 'User-agent: *\nDisallow: /\n';
+  if (INDEXABLE) files['sitemap.xml'] = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${PAGE_PATHS.map((p) => `  <url><loc>${SITE_ORIGIN}${p}</loc></url>`).join('\n')}\n</urlset>\n`;
   return files;
 }

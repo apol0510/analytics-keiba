@@ -23,7 +23,7 @@ const visible = (h) => h.replace(/href="[^"]*"/g, '').replace(/<link [^>]*>/g, '
 test('全面英語・中立ブランド・競馬/ギャンブル関連語を本文・メタ・フッター・リンク表示に出さない', () => {
   assert.doesNotMatch(html, /[\u3040-\u30ff\u4e00-\u9fff]/, '日本語が混入している');
   for (const p of PAGE_PATHS) assert.doesNotMatch(visible(renderPage(p)), BANNED, p);
-  for (const k of ['style.css', '_headers', 'robots.txt']) assert.doesNotMatch(files[k], BANNED, k);
+  for (const k of ['style.css', '_headers', 'robots.txt', 'sitemap.xml']) assert.doesNotMatch(files[k], BANNED, k);
   assert.equal(BUSINESS.name, 'TIROL DATA LABO');
 });
 
@@ -66,8 +66,14 @@ test('決済会社をお客様に選ばせる表示をしない（冗長化方�
   assert.match(renderPage('/billing/'), /You will not be asked to choose a payment company/);
 });
 
-test('公開判断まで検索エンジンに載せない', () => {
-  assert.equal(INDEXABLE, false);
-  assert.match(files._headers, /X-Robots-Tag: noindex/);
-  assert.match(files['robots.txt'], /Disallow: \//);
+test('検索エンジン設定: checkout.tirol.link 接続後は掲載（canonical・sitemap は独自ドメイン）', () => {
+  assert.equal(INDEXABLE, true);
+  assert.doesNotMatch(files._headers, /noindex/);
+  assert.match(files['robots.txt'], /Allow: \/\nSitemap: https:\/\/checkout\.tirol\.link\/sitemap\.xml/);
+  for (const p of PAGE_PATHS) {
+    assert.ok(files['sitemap.xml'].includes(`<loc>https://checkout.tirol.link${p}</loc>`), p);
+    assert.ok(renderPage(p).includes(`<link rel="canonical" href="https://checkout.tirol.link${p}">`), p);
+    assert.doesNotMatch(renderPage(p), /noindex/, p);
+  }
+  assert.doesNotMatch(files['sitemap.xml'], BANNED);
 });
