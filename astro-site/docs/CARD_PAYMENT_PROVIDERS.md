@@ -183,7 +183,7 @@ DNS（Cloudflare・MK 設定）: `sandbox.checkout` CNAME `tirol-checkout-sandbo
 - コード: revert PR（販売は閉じているので顧客影響なし）。
 - 反映済みの会員: 決済ごとの状態に付与前の値を保存してある。全額返金で自動で戻る。
 
-## 7. 決済専用サイト `checkout.tirol.link`（2026-10-12 MK 確定・構築は商品説明の判断待ち）
+## 7. 決済専用サイト `checkout.tirol.link`（2026-10-12 MK 確定・2026-10-13 構築済み・独自ドメイン未接続）
 
 | 項目 | 確定内容 |
 |---|---|
@@ -196,3 +196,19 @@ DNS（Cloudflare・MK 設定）: `sandbox.checkout` CNAME `tirol-checkout-sandbo
 | 流用禁止 | 旧 `payment.tirol.link` の事業者表示・住所 |
 | 決済連携 | #789 の実装（共通会員権限層・Paddle・PayPal）を再利用。本番キー未設定の拒否状態は維持 |
 
+
+### 7.1 実装（2026-10-13）
+
+| 項目 | 内容 |
+|---|---|
+| 生成元（単一源） | `ops/checkout-site/site.mjs`。`node ops/checkout-site/build.mjs <repo外の出力先>` で静的 HTML を生成（生成物は repo に置かない）|
+| ページ | `/` `/features/` `/pricing/` `/billing/` `/terms/` `/privacy/` `/refund/` `/contact/` |
+| 表示方針 | ブランドは中立名（TIROL DATA LABO・Analytics Premium）。**事業内容は事実どおり**: 日本の競馬（JRA・南関 4 場）のデータ分析レポートの会員制オンライン情報サービス／賭けの受付・購入代行・資金の預かりはしない／結果を保証しない／20 歳以上 |
+| 価格 | `CARD_PRODUCTS` と一致（年払い ¥49,800・買い切り ¥78,000・Light 会員価格 ¥44,820）。自動更新なし |
+| カード受付 | `CARD_PAYMENTS_AVAILABLE` は `CARD_SALES_OPEN` と一致（閉の間は「準備中・銀行振込のみ」）。開ける PR で両方を変える |
+| 決済会社 | 選択 UI なし。Billing に Paddle（Merchant of Record）を第一として記載・切替時も二重請求なしと明記 |
+| 返金 | AK の既存方針どおり（完了後は不可・二重/誤請求・未提供・法令上必要な場合は返金）。⚠️ Paddle の Buyer Terms は購入者に独自の返金を認める場合がある→本番受付前に Paddle 審査で指摘があれば MK が判断 |
+| ホスティング | Netlify site `tirol-checkout`（id af09193e-1710-4a8c-bd5c-cfa7068586e9・`https://tirol-checkout.netlify.app`）。deploy は出力先ディレクトリから `netlify deploy --prod --dir <out> --no-build --site <id>` |
+| index 化 | `INDEXABLE=false`（X-Robots-Tag noindex・robots Disallow）。新宿住所の契約条件確認後に true にする PR |
+| 独自ドメイン | 未接続。手順: MK が Cloudflare に CNAME `checkout` → `tirol-checkout.netlify.app`（DNS only）→ Netlify site に custom domain 追加 → HTTPS 確認 |
+| テスト | `astro-site/src/lib/billing/checkoutSite.guard.test.mjs`（test:billing に含む）|
