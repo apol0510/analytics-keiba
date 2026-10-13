@@ -76,4 +76,5 @@ test('検索エンジン設定: checkout.tirol.link 接続後は掲載（canonic
     assert.doesNotMatch(renderPage(p), /noindex/, p);
   }
   assert.doesNotMatch(files['sitemap.xml'], BANNED);
+  assert.equal(files._redirects, 'https://tirol-checkout.netlify.app/* https://checkout.tirol.link/:splat 301!\n');
 });

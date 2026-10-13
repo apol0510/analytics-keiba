@@ -313,6 +313,8 @@ export function buildFiles() {
   for (const p of PAGE_PATHS) files[p === '/' ? 'index.html' : `${p.slice(1)}index.html`] = renderPage(p);
   files['_headers'] = `/*\n  X-Content-Type-Options: nosniff\n  Referrer-Policy: strict-origin-when-cross-origin\n${INDEXABLE ? '' : '  X-Robots-Tag: noindex, nofollow\n'}`;
   files['robots.txt'] = INDEXABLE ? `User-agent: *\nAllow: /\nSitemap: ${SITE_ORIGIN}/sitemap.xml\n` : 'User-agent: *\nDisallow: /\n';
+  // Netlify の既定サブドメインは独自ドメインへ寄せる（重複掲載を防ぐ）
+  files['_redirects'] = `https://tirol-checkout.netlify.app/* ${SITE_ORIGIN}/:splat 301!\n`;
   if (INDEXABLE) files['sitemap.xml'] = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${PAGE_PATHS.map((p) => `  <url><loc>${SITE_ORIGIN}${p}</loc></url>`).join('\n')}\n</urlset>\n`;
   return files;
 }

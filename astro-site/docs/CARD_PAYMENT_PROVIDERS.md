@@ -202,7 +202,7 @@ DNS（Cloudflare・MK 設定）: `sandbox.checkout` CNAME `tirol-checkout-sandbo
 - コード: revert PR（販売は閉じているので顧客影響なし）。
 - 反映済みの会員: 決済ごとの状態に付与前の値を保存してある。全額返金で自動で戻る。
 
-## 7. 決済専用サイト `checkout.tirol.link`（2026-10-12 MK 確定・2026-10-13 構築済み・独自ドメイン未接続）
+## 7. 決済専用サイト `checkout.tirol.link`（2026-10-12 MK 確定・2026-10-13 構築・独自ドメイン接続・掲載開始）
 
 | 項目 | 確定内容 |
 |---|---|
@@ -230,7 +230,8 @@ DNS（Cloudflare・MK 設定）: `sandbox.checkout` CNAME `tirol-checkout-sandbo
 | 決済会社 | 選択 UI なし。Billing に Paddle（Merchant of Record）を第一として記載・切替時も二重請求なしと明記 |
 | 返金 | AK の既存方針どおり（完了後は不可・二重/誤請求・未提供・法令上必要な場合は返金）。⚠️ Paddle の Buyer Terms は購入者に独自の返金を認める場合がある→本番受付前に Paddle 審査で指摘があれば MK が判断 |
 | ホスティング | Netlify site `tirol-checkout`（id af09193e-1710-4a8c-bd5c-cfa7068586e9・`https://tirol-checkout.netlify.app`）。deploy は出力先ディレクトリから `netlify deploy --prod --dir <out> --no-build --site <id>` |
-| index 化 | `INDEXABLE=false`（X-Robots-Tag noindex・robots Disallow）。新宿住所の契約条件確認後に true にする PR |
-| 独自ドメイン | 未接続。手順: MK が Cloudflare に CNAME `checkout` → `tirol-checkout.netlify.app`（DNS only）→ Netlify site に custom domain 追加 → HTTPS 確認 |
+| index 化 | `INDEXABLE=true`（2026-10-13 DNS 接続後）。robots Allow＋`sitemap.xml`・canonical は `https://checkout.tirol.link`。止めるときは false に戻して再 deploy |
+| 独自ドメイン | **接続済み（2026-10-13）**: Cloudflare tirol.link ゾーンの CNAME `checkout` → `tirol-checkout.netlify.app`（DNS only）・Netlify custom domain・Let's Encrypt（自動更新）・`tirol-checkout.netlify.app/*` は `_redirects` で独自ドメインへ 301 |
+| Paddle Website approval | 申請ドメイン `checkout.tirol.link`。Paddle の審査項目（商品説明・価格・機能・Terms/Refund/Privacy のナビ到達・HTTPS）は充足。**Terms には会社名または個人事業主の法的氏名が要る**（現状は屋号のみ）→ 氏名掲載は MK 判断。参照: Paddle Help「Domain Review」|
 | テスト | `astro-site/src/lib/billing/checkoutSite.guard.test.mjs`（test:billing に含む）: 必須ページ・禁止語（href 以外）・ドメイン非表示・説明の一致・住所・価格・カード準備中・選択 UI なし・noindex |
 | 訂正 | 初版（`a1e68625`・未 merge）は公開文言に業種を入れ decisions に「MK 確定」と誤記録 → 同 PR で撤回（decisions 2026-10-13）|
