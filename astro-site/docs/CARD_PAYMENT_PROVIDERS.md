@@ -192,9 +192,10 @@ DNS（Cloudflare・MK 設定）: `sandbox.checkout` CNAME `tirol-checkout-sandbo
 ## 5. 本番化の条件（すべて満たすまで開かない）
 
 1. その決済会社が AK の取扱商品（競馬データ・予想の有料提供）を承認した記録（Paddle: 書面回答＋本番アカウント審査／PayPal: 事前承認）。審査では事業内容を正確に申告し、言い換えで通さない。
-2. Sandbox E2E 完了。
+2. Sandbox E2E 完了。→ **済み**（Paddle 2026-10-12 / PayPal 2026-10-13・§4。同じテストは繰り返さない）
 3. MK の販売開始の明示決定 → `cardSales.js` の該当値を true にする PR（このとき pricing のカード導線も追加）。
 4. production env（4KB 枠の確認）・本番の Webhook 登録・本番での実購入 1 件の確認と返金。
+5. Paddle 本番の Default payment link のドメインを決め、Paddle の承認ドメインと一致させる（`checkoutUrlMatchesOrigin` は自サイト以外の URL を 502 で拒否する）。
 
 ## 6. ロールバック
 
