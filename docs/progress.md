@@ -1,4 +1,4 @@
-# 💳 代替決済 Paddle（第一）・PayPal（第二）並行推進＋共通会員権限層（2026-10-11 MK 確定 / **#789 merge 済み `bb7f1c68`・本番で全社受付拒否を実測・**Paddle・PayPal とも Sandbox E2E 完了（#792・#796）**・本番は各社審査待ち・販売は全社閉**）
+# 💳 代替決済 Paddle（第一）・PayPal（第二）並行推進＋共通会員権限層（2026-10-11 MK 確定 / **#789 merge 済み `bb7f1c68`・Paddle・PayPal とも Sandbox E2E 完了（#792・#796）・本番は審査／DNS／販売開始待ち・販売は全社閉**）
 
 | 項目 | 状態 |
 |---|---|
@@ -18,8 +18,8 @@
 | ③ 販売開始 | ①の承認後、**MK の明示決定**で: `cardSales.js` の該当社 `CARD_SALES_OPEN` と `checkout-site` の `CARD_PAYMENTS_AVAILABLE` を true にする PR（pricing のカード導線も追加）→ production env に本番鍵（4KB 枠確認）→ 本番の通知先 / Webhook 登録 → 本番で実購入 1 件と返金を確認。未決の設計点: Paddle 本番の Default payment link を置くドメイン（承認ドメインとの一致が必要・Sandbox は中立ホスト）。**再開条件**: MK の販売開始決定 |
 | PR / CI | **#789**（`feat/card-providers`・#787→#788 の上に積み）CI green。Deploy Preview 実測: 鍵なしで paddle-create-checkout / paypal-create-order / paypal-capture = 503 `*_key_missing`、paddle-webhook 署名なし 401、card-order-status 未ログイン 401、旧 paypal-webhook 410、/checkout/paddle/ は「受け付けていません」表示 |
 | 本番実測（2026-10-11・`bb7f1c68`）| main Safety Check success。paddle-create-checkout / paypal-create-order / paypal-capture / fincode-create-session = 503 `*_key_missing`、paddle-webhook 署名なし 401、paypal-order-webhook は鍵なしで無視、card-order-status 未ログイン 401、旧 paypal-webhook 410、stripe-create-checkout 410 `monthly_sales_ended`、`/checkout/paddle/` は「受け付けていません」表示。cleanup: #784〜#789 の worktree・branch 削除済み |
-| 次作業 | ①鍵受領後の Sandbox E2E ③各社の審査・承認後に MK が販売開始を判断（自動では開かない）|
-| 再開条件 | `~/.analytics-keiba-ops/card-sandbox.env` の作成（Sandbox）／各社の取扱承認＋MK の販売開始決定（本番）|
+| 次作業 | Sandbox は Paddle・PayPal とも完了（繰り返さない）。残りは上の「本番化の残り」①本番審査（MK）②checkout.tirol.link の DNS 接続（MK→Claude）③販売開始（MK 決定→Claude）。Claude が今すぐ進められる作業はなし（自動では開かない）。#797 `6cde5e9b` merge 済み（docs のみ・本番状態不変）|
+| 再開条件 | ①各社の承認記録を MK が受領 ②Cloudflare に CNAME `checkout` 追加 ③MK の販売開始決定（各行の詳細は「本番化の残り」）|
 
 ---
 
