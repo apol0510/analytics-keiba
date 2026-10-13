@@ -108,6 +108,24 @@ PayPal:
 1. https://developer.paypal.com に新規のビジネスアカウントでログイン → Apps & Credentials（Sandbox）→ Create App。Client ID・Secret を控える。
 2. 同じアプリの Webhooks に `https://deploy-preview-<PR>--analytics-keiba.netlify.app/.netlify/functions/paypal-order-webhook` を追加し、イベント `CHECKOUT.ORDER.APPROVED`・`PAYMENT.CAPTURE.COMPLETED`・`PAYMENT.CAPTURE.REFUNDED`・`PAYMENT.CAPTURE.REVERSED` を選ぶ。Webhook ID を控える。
 3. Testing Tools → Sandbox Accounts の personal（買い手）アカウントで支払う。
+   - 2026-10-13 実施: MK は手順 1（Client ID/Secret）だけ。手順 2 の Webhook は Claude が API（`POST /v1/notifications/webhooks`）で中立ホストの URL に登録し、Webhook ID と `PAYPAL_ENV=sandbox` を keys file に追記（値は出力しない）。スクリプトは冪等（同じ URL が既にあれば再利用）。
+
+**PayPal Sandbox E2E 結果（2026-10-13・PASS）** — レコードは使い捨て `+card-e2e`、MK が Sandbox 買い手で 2 回承認
+
+| 確認 | 結果 |
+|---|---|
+| 承認前に capture | `mismatch_status_payer_action_required`・付与なし |
+| 購入 ¥49,800（年払い） | Premium/Annual/active・期限 2027-10-13・PaymentMethod=paypal。台帳 1 件 |
+| Webhook（APPROVED・CAPTURE.COMPLETED）再送＋capture 2 回 | `already_applied`・capture 1 件のまま・レコード不変 |
+| 署名なし／偽の署名ヘッダ | 401 `invalid_signature` |
+| 全額返金（`/v2/payments/captures/{id}/refund`）| REFUNDED Webhook で購入前と完全一致（差分 0）・台帳 `reverted:true` |
+| 返金後に 3 イベント再送＋capture | `already_reverted`・再付与なし |
+| 買い切り会員が年払い・買い切りを申込 | 409 `already_lifetime` |
+| 再購入（買い切り ¥78,000）→ 返金 | Premium/Lifetime/active（2099-12-31）→ 返金で購入前と一致 |
+| 共通入口 `card-create-checkout`（ACTIVE=paddle・Paddle 鍵なし）| 503 `paddle_key_missing`。PayPal へ自動フォールバックしない |
+| 本番 paypal-capture | 503 `paypal_key_missing` |
+
+後片付け: e2e レコード削除・Sandbox Redis の検証キー削除・deploy-preview の `PAYPAL_*`／`CARD_E2E_SECRET` を unset。残すもの: PayPal Webhook 登録（Sandbox アプリ）・中立ホストのプロキシ。再実施は keys file の値を deploy-preview に入れ直し、新しい PR の preview へ `_redirects` を向ける。
 
 鍵の受け渡しは 1 つのファイルにまとめる（値は会話に貼らない）:
 `~/.analytics-keiba-ops/card-sandbox.env`（`chmod 600`。中身は §2・§3 の env 名=値。`CARD_E2E_SECRET` は Claude が作る）
