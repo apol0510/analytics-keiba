@@ -1,11 +1,10 @@
 ---
-// カード決済の戻り先（決済会社共通）。fincode は POST でリダイレクトしてくるため SSR で受ける。
-// ?provider=fincode|paddle|paypal&order=…（provider 省略時は fincode）
+// カード決済の戻り先（決済会社共通）。?provider=paddle|paypal&order=…（provider 不明・省略は確認不能として扱う）
 // ⚠️ ここへの遷移は支払いの証明ではない。反映は各 Webhook（と PayPal の capture）が API 照会のうえ行い、この画面は状態を表示するだけ。
 export const prerender = false;
 import BaseLayout from '../../layouts/BaseLayout.astro';
-const ORDER_RE = { fincode: /^ak-[a-z-]+-[a-z0-9]+$/i, paddle: /^txn_[a-z0-9]{10,40}$/, paypal: /^[A-Z0-9]{10,24}$/ };
-const provider = Astro.url.searchParams.get('provider') || 'fincode';
+const ORDER_RE = { paddle: /^txn_[a-z0-9]{10,40}$/, paypal: /^[A-Z0-9]{10,24}$/ };
+const provider = Astro.url.searchParams.get('provider') || '';
 const order = Astro.url.searchParams.get('order') || '';
 const safeProvider = ORDER_RE[provider] ? provider : '';
 const safeOrder = safeProvider && ORDER_RE[safeProvider].test(order) ? order : '';

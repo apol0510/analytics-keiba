@@ -2,7 +2,7 @@
  * cardSales.js — カード決済（決済会社共通）の「どの環境で受け付けるか」の単一源（純粋・I/O なし）
  *
  * 2026-10-11 MK 確定: 直近の販売は銀行振込のみ。新規の月払いは停止したまま（MONTHLY_SALES_OPEN）。
- * 代替決済の候補は Paddle（第一）・PayPal（第二）・fincode（審査結果待ち）。Sandbox の準備は進めるが、
+ * 代替決済の候補は Paddle（第一）・PayPal（第二）。fincode は 2026-10-15 MK 決定で不使用・コードごと削除。Sandbox の準備は進めるが、
  * **本番での受付は、その決済会社が AK の取扱商品を承認したあと、MK の明示決定でこの表を変える PR だけ**で開く。
  * env では開かない（env を誤って入れても本番サイトでは受け付けない）。決済会社の準備が整っても自動では開かない。
  */
@@ -10,7 +10,6 @@
 export const CARD_SALES_OPEN = Object.freeze({
   paddle: false,
   paypal: false,
-  fincode: false,
 });
 
 export const PRODUCTION_ORIGIN = 'https://analytics.keiba.link';
@@ -40,11 +39,11 @@ export function resolveCardMode({ provider, keyMode, origin, salesOpen } = {}) {
  * - お客様に見せるのは「カードで支払う」1 本だけ（`card-create-checkout`）。決済会社の選択 UI は作らない。
  * - 本番で新しい申込を受ける決済会社は ACTIVE_CARD_PROVIDER の 1 社だけ。切替は運営側がこの値を変える PR で行う
  *   （env では切り替えない＝誤設定で 2 社同時受付・意図しない切替をしない）。
- * - 第一優先 Paddle、予備 PayPal。fincode は審査結果待ちの候補のまま（役割・販売停止状態は変えない）。
+ * - 第一優先 Paddle、予備 PayPal。
  * - 切替えても、既に作られた取引の確定・返金の反映（Webhook・capture）は元の決済会社で続ける。未確定の取引を別の決済会社へ自動で作り直さない。
  */
 export const ACTIVE_CARD_PROVIDER = 'paddle';
-export const CARD_PROVIDER_ROLES = Object.freeze({ paddle: 'primary', paypal: 'standby', fincode: 'candidate' });
+export const CARD_PROVIDER_ROLES = Object.freeze({ paddle: 'primary', paypal: 'standby' });
 
 /**
  * 新しい申込（取引の作成）を始めてよいか。確定・返金の反映には使わない（そちらは resolveCardMode だけ）。

@@ -19,14 +19,14 @@ function world(open = null) {
     throw new Error(`unexpected ${cmd}`);
   };
   const ok = (p) => async (a) => { calls.push([p, a.entry]); return { ok: true, url: `https://x/${p}`, orderId: `${p}_1` }; };
-  return { store, sets, calls, redis, creators: { paddle: ok('paddle'), paypal: ok('paypal'), fincode: ok('fincode') } };
+  return { store, sets, calls, redis, creators: { paddle: ok('paddle'), paypal: ok('paypal') } };
 }
 const run = (w, extra = {}) => startCardCheckout({ env: {}, origin: 'https://o', recordId: REC, productId: 'premium-annual', redis: w.redis, creators: w.creators, now: NOW, ...extra });
 
-test('役割: 第一 Paddle・予備 PayPal・fincode は候補のまま。販売停止状態は全社 false のまま', () => {
+test('役割: 第一 Paddle・予備 PayPal。販売停止状態は全社 false のまま', () => {
   assert.equal(ACTIVE_CARD_PROVIDER, 'paddle');
-  assert.deepEqual({ ...CARD_PROVIDER_ROLES }, { paddle: 'primary', paypal: 'standby', fincode: 'candidate' });
-  assert.deepEqual({ ...CARD_SALES_OPEN }, { paddle: false, paypal: false, fincode: false });
+  assert.deepEqual({ ...CARD_PROVIDER_ROLES }, { paddle: 'primary', paypal: 'standby' });
+  assert.deepEqual({ ...CARD_SALES_OPEN }, { paddle: false, paypal: false });
 });
 
 test('本番の新規申込は共通入口から、運営が選んだ 1 社だけ。Sandbox は各社とも検証できる', () => {
@@ -34,7 +34,7 @@ test('本番の新規申込は共通入口から、運営が選んだ 1 社だ�
   assert.equal(checkoutProviderGate({ provider: 'paypal', mode: 'live', entry: 'card' }).reason, 'provider_not_active');
   assert.equal(checkoutProviderGate({ provider: 'paddle', mode: 'live' }).reason, 'use_card_checkout', '決済会社別の入口は本番で使わせない');
   assert.equal(checkoutProviderGate({ provider: 'paypal', mode: 'live', entry: 'card', active: 'paypal' }).ok, true, '運営が切り替えれば予備が受ける');
-  for (const p of ['paddle', 'paypal', 'fincode']) assert.equal(checkoutProviderGate({ provider: p, mode: 'test' }).ok, true);
+  for (const p of ['paddle', 'paypal']) assert.equal(checkoutProviderGate({ provider: p, mode: 'test' }).ok, true);
   assert.equal(checkoutProviderGate({ provider: 'paddle' }).ok, false, 'モード不明は受け付けない');
 });
 
@@ -89,7 +89,7 @@ test('Redis が無い・読めないときは申込を作らない（印で守�
 });
 
 test('guard: 各社の申込作成は必ず checkoutProviderGate を通り、お客様のページは決済会社別の入口を呼ばない', () => {
-  for (const f of ['paddle/paddleServer.js', 'paypal/paypalServer.js', 'fincode/fincodeServer.js']) {
+  for (const f of ['paddle/paddleServer.js', 'paypal/paypalServer.js']) {
     const src = readFileSync(new URL(`./${f}`, import.meta.url), 'utf8');
     assert.match(src, /checkoutProviderGate\(\{ provider: PROVIDER, mode: mode\.mode, entry \}\)/, f);
   }
@@ -97,6 +97,6 @@ test('guard: 各社の申込作成は必ず checkoutProviderGate を通り、お
   const files = [];
   const walk = (d) => { for (const n of readdirSync(d)) { const p = join(d, n); statSync(p).isDirectory() ? walk(p) : /\.(astro|js|ts|mjs)$/.test(n) && files.push(p); } };
   for (const d of ['pages', 'components', 'layouts']) walk(join(root, d));
-  const direct = files.filter((p) => /(paddle-create-checkout|paypal-create-order|fincode-create-session)/.test(readFileSync(p, 'utf8')));
+  const direct = files.filter((p) => /(paddle-create-checkout|paypal-create-order)/.test(readFileSync(p, 'utf8')));
   assert.deepEqual(direct, [], '選択 UI・決済会社別の申込ボタンを作らない（共通入口 card-create-checkout だけ）');
 });

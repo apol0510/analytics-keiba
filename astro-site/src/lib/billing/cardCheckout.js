@@ -11,10 +11,8 @@
 import { ACTIVE_CARD_PROVIDER } from './cardSales.js';
 import { createPaddleCheckout } from './paddle/paddleServer.js';
 import { createPaypalOrder } from './paypal/paypalServer.js';
-import { createCardSession } from './fincode/fincodeServer.js';
 import { resolvePaddleMode } from './paddle/paddleCore.js';
 import { resolvePaypalMode } from './paypal/paypalCore.js';
-import { resolveFincodeMode } from './fincode/fincodeCore.js';
 
 export const OPEN_CHECKOUT_TTL_SEC = 24 * 60 * 60;
 export const openCheckoutKey = (recordId) => `ak:billing:open-checkout:${recordId}`;
@@ -22,14 +20,12 @@ export const openCheckoutKey = (recordId) => `ak:billing:open-checkout:${recordI
 const CREATORS = Object.freeze({
   paddle: async (a) => { const r = await createPaddleCheckout(a); return r.ok ? { ...r, orderId: r.transactionId } : r; },
   paypal: (a) => createPaypalOrder(a),
-  fincode: (a) => createCardSession(a),
 });
 
 /** 申込先（ACTIVE_CARD_PROVIDER）がこのサイト・この鍵で受け付けられるか（各社の resolve*Mode と同じ判定） */
 export function resolveActiveCardMode({ env = {}, origin, active = ACTIVE_CARD_PROVIDER } = {}) {
   if (active === 'paddle') return resolvePaddleMode({ key: env.PADDLE_API_KEY, origin });
   if (active === 'paypal') return resolvePaypalMode({ env, origin });
-  if (active === 'fincode') return resolveFincodeMode({ key: env.FINCODE_SECRET_KEY, origin });
   return { ok: false, reason: 'card_provider_unset' };
 }
 

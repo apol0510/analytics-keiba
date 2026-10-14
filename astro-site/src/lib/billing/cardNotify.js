@@ -7,7 +7,7 @@ import sgMail from '@sendgrid/mail';
 
 const ADMIN_EMAIL = 'support@keiba.link';
 const FROM_EMAIL = 'noreply@keiba.link';
-const LABEL = { fincode: 'fincode', paddle: 'Paddle', paypal: 'PayPal' };
+const LABEL = { paddle: 'Paddle', paypal: 'PayPal' };
 const TEXT = {
   granted: 'カード決済で Premium を反映しました（作業は不要）。',
   refunded: '全額返金・取消・チャージバックを受け、付与前の状態へ戻しました（作業は不要）。',

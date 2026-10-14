@@ -1,3 +1,10 @@
+# 2026-10-15 — fincode は使わない・コードごと削除（MK 決定）／PayPal 審査通過・Paddle 審査中（MK 報告）
+
+- MK 指示「fincodeは使用しません（完全削除して）」。fincode の Functions（`fincode-create-session`・`fincode-webhook`・`fincode-order-status`）・`src/lib/billing/fincode/`・手順書 `FINCODE_BILLING.md` を削除し、共通層（`CARD_SALES_OPEN`・`CARD_PROVIDER_ROLES`・`entitlementLedger.PROVIDERS`・申込入口・完了画面・E2E 判定）から fincode を外した。guard テストで再混入を検知する。
+- fincode は本番で一度も販売していない（`CARD_SALES_OPEN.fincode=false` のまま・Netlify env に `FINCODE_*` なし）ため、会員データ・台帳への影響はない。fincode 側のアカウント・審査申請の取り下げは repo 外（MK の管理画面）。
+- 2026-10-13 エントリの「fincode 等の既存の準備・販売停止状態は変えない（役割は候補のまま）」は本エントリで置き換える。
+- MK 報告: **PayPal の審査は通過、Paddle は審査中**。役割は不変（第一 Paddle・予備 PayPal・`ACTIVE_CARD_PROVIDER='paddle'`）。販売開始は従来どおり MK の明示決定で `CARD_SALES_OPEN` を変える PR だけ（審査通過だけでは開けない）。
+
 # 2026-10-13 — checkout.tirol.link の公開表記は中立、決済会社への申告は事実どおり（MK 確定・訂正あり）
 
 - checkout.tirol.link は全面英語・TIROL DATA LABO の中立的な決済専用サイト。**公開文言（本文・メタ・リンク表示・フッター）に競馬・ギャンブル関連語を追加しない**（2026-10-12 指示どおり）。
@@ -14,7 +21,7 @@
 - 二重決済・処理中の誤切替を防ぐ。**未確定の取引を別の決済会社へ自動で作り直さない**（作成失敗時も予備へ流さない）。切替前の決済会社の申込が残る会員は、切替後の決済会社で申込を作れない（24 時間）。切替後も、既存の取引の確定・返金の反映は元の決済会社の Webhook で続ける。
 - 会員権限・料金・購入資格・完了画面は決済会社によらず共通（`cardOneTime.js`・`entitlementLedger.js`・`/checkout/card-complete/`）。
 - Paddle・PayPal の Sandbox 検証はそれぞれ完成させる（Sandbox では各社の入口を個別に検証できる）。
-- 本番受付は各社の承認と既存の販売開始条件（`CARD_SALES_OPEN`・2026-10-11 追記 3）に従う。fincode 等の既存の準備・販売停止状態は変えない（役割は「候補」のまま）。
+- 本番受付は各社の承認と既存の販売開始条件（`CARD_SALES_OPEN`・2026-10-11 追記 3）に従う。fincode 等の既存の準備・販売停止状態は変えない（役割は「候補」のまま）。（→ 2026-10-15 に fincode は不使用・削除へ変更）
 - 実装の正本 `astro-site/docs/CARD_PAYMENT_PROVIDERS.md` §1。
 
 # 2026-10-12 — 決済専用サイト checkout.tirol.link の公開事業者住所は新宿バーチャルオフィス（MK 確定）
