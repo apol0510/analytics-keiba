@@ -1,0 +1,64 @@
+---
+// PayPal 月額（定期課金）の戻り先。PayPal は ?subscription_id=I-…&ba_token=…&token=… を付けて戻す。
+// ⚠️ ここへの遷移は支払いの証明ではない。反映は paypal-subscription-confirm（と Webhook）が PayPal API の照会結果だけで行い、この画面は状態を表示するだけ。
+export const prerender = false;
+import BaseLayout from '../../layouts/BaseLayout.astro';
+const raw = Astro.url.searchParams.get('subscription_id') || '';
+const subscription = /^I-[A-Z0-9]{10,24}$/.test(raw) ? raw : '';
+---
+
+<BaseLayout title="お申し込みありがとうございます" noindex={true}>
+  <main class="co-page">
+    <div class="co-card">
+      <div class="co-icon" id="ccIcon">⏳</div>
+      <h1 class="co-title" id="ccTitle">お支払いを確認しています…</h1>
+      <p class="co-text" id="ccText">そのまま数秒お待ちください（ページを閉じても、確認でき次第ご利用いただけます）。</p>
+      <div class="co-actions" id="ccActions" hidden></div>
+    </div>
+  </main>
+</BaseLayout>
+
+<script is:inline define:vars={{ subscription }}>
+  (function () {
+    var $ = function (id) { return document.getElementById(id); };
+    function show(icon, title, text, links) {
+      $('ccIcon').textContent = icon; $('ccTitle').textContent = title; $('ccText').textContent = text;
+      var a = $('ccActions'); a.innerHTML = '';
+      (links || []).forEach(function (l) { var e = document.createElement('a'); e.href = l[1]; e.textContent = l[0]; e.className = 'co-btn'; a.appendChild(e); });
+      a.hidden = !(links && links.length);
+    }
+    var DONE = {
+      'premium': ['Premium（中央＋南関）をご利用いただけます。', [['中央の Premium 予想へ', '/premium-prediction/jra/'], ['南関の Premium 予想へ', '/premium-prediction/nankan/']]],
+      'premium-jra': ['Premium 中央版をご利用いただけます。', [['中央の Premium 予想へ', '/premium-prediction/jra/']]],
+      'premium-nankan': ['Premium 南関版をご利用いただけます。', [['南関の Premium 予想へ', '/premium-prediction/nankan/']]],
+    };
+    if (!subscription) { show('⚠️', 'お申し込み情報を確認できませんでした', 'マイページでご利用状況をご確認ください。', [['マイページへ', '/dashboard/']]); return; }
+    var tries = 0;
+    function poll() {
+      tries += 1;
+      fetch('/.netlify/functions/paypal-subscription-confirm?subscription=' + encodeURIComponent(subscription), { credentials: 'include' })
+        .then(function (r) { return r.json().catch(function () { return {}; }).then(function (d) { return { s: r.status, d: d }; }); })
+        .then(function (x) {
+          var st = x.d && x.d.status;
+          if (st === 'active') { var t = DONE[x.d.plan] || DONE.premium; return show('✅', 'お申し込みが完了しました', t[0] + '（毎月自動で更新されます）', t[1]); }
+          if (st === 'needs_support') return show('📩', 'お支払いを確認しました', 'ご契約内容の確認が必要なため、担当よりご連絡いたします。', [['お問い合わせ', '/contact/']]);
+          if (x.s === 401) return show('🔑', 'ログインしてご確認ください', 'お支払いの反映はログイン後のマイページでご確認いただけます。', [['ログイン', '/login/?next=/dashboard/']]);
+          if (x.s === 404) return show('⚠️', 'お申し込み情報を確認できませんでした', 'お申し込みのときと同じアカウントでログインしているかご確認ください。', [['マイページへ', '/dashboard/']]);
+          if (tries < 20) return setTimeout(poll, 3000);
+          show('⏳', '確認に時間がかかっています', '反映まで数分かかることがあります。しばらくしてからマイページをご確認ください。', [['マイページへ', '/dashboard/']]);
+        })
+        .catch(function () { if (tries < 20) setTimeout(poll, 3000); });
+    }
+    poll();
+  })();
+</script>
+
+<style>
+  .co-page { max-width: 560px; margin: 3rem auto; padding: 0 16px; }
+  .co-card { text-align: center; padding: 2rem 1.25rem; border-radius: 16px; background: linear-gradient(155deg, rgba(59,130,246,0.12), rgba(37,99,235,0.05)); border: 1px solid rgba(96,165,250,0.4); }
+  .co-icon { font-size: 2.2rem; }
+  .co-title { font-size: 1.3rem; color: #e2e8f0; margin: 0.5rem 0; }
+  .co-text { color: #cbd5e1; line-height: 1.7; }
+  .co-actions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-top: 1rem; }
+  .co-btn { display: inline-block; padding: 0.7rem 1.1rem; border-radius: 10px; background: #2563eb; color: #fff; text-decoration: none; font-weight: 700; }
+</style>

@@ -53,6 +53,8 @@ export function paypalApi({ apiBase, clientId, secret, fetchImpl }) {
     captureOrder: (id) => call('POST', `/v2/checkout/orders/${encodeURIComponent(id)}/capture`, {}, `ak-cap-${id}`),
     getCapture: (id) => call('GET', `/v2/payments/captures/${encodeURIComponent(id)}`),
     verifyWebhook: (body) => call('POST', '/v1/notifications/verify-webhook-signature', body),
+    // 月額の定期課金の API は paypalSubscriptionServer.js が call で組み立てる（一回払いの層に定期課金を持ち込まない）
+    call,
   };
 }
 
@@ -119,8 +121,10 @@ export async function settlePaypalOrder({ env, origin, orderId, redis, notify = 
  * Webhook 1 件。PayPal の検証 API で SUCCESS のものだけ処理する。
  * @returns {{ status: number, result: string }}  status=500 は PayPal に再送させる
  */
-export async function handlePaypalWebhook({ env, origin, headers, rawBody, redis, notify, fetchImpl, now }) {
-  const mode = resolvePaypalMode({ env, origin });
+export async function handlePaypalWebhook({ env, origin, headers, rawBody, redis, notify, fetchImpl, now, onSubscriptionEvent = null }) {
+  // 検証は「鍵とサイトの組合せ」だけで判断する（販売を閉じていても、既存の月額契約の更新・終了は反映し続けるため）。
+  // 一回払いの反映は settlePaypalOrder 側で CARD_SALES_OPEN を見る（閉じていれば ignored）。
+  const mode = resolvePaypalMode({ env, origin, salesOpen: true });
   if (!mode.ok) return { status: 200, result: `ignored_${mode.reason}` };
   let event;
   try { event = JSON.parse(rawBody); } catch { return { status: 400, result: 'invalid_json' }; }
@@ -131,6 +135,11 @@ export async function handlePaypalWebhook({ env, origin, headers, rawBody, redis
   try { v = await api.verifyWebhook(vb); } catch { return { status: 500, result: 'verify_failed' }; }
   if (v?.verification_status !== 'SUCCESS') return { status: 401, result: 'invalid_signature' };
 
+  // 月額の定期課金（BILLING.SUBSCRIPTION.* / PAYMENT.SALE.*）は paypalSubscriptionServer へ
+  if (onSubscriptionEvent) {
+    const sr = await onSubscriptionEvent(event);
+    if (sr) return sr;
+  }
   const p = parsePaypalWebhook(event);
   if (!p || p.ignored) return { status: 200, result: 'ignored_event' };
   let orderId = p.orderId;

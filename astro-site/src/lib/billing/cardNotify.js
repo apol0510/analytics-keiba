@@ -16,6 +16,11 @@ const TEXT = {
   refund_of_conflict: '権限を変更しなかった決済（要返金判断）の返金を受けました。権限の変更はありません（作業は不要）。',
   partial_refund: '一部返金を受けました。権限は変更していません。必要なら手動で調整してください。',
   mismatch: '決済会社の照会結果が申込と一致しません。権限は変更していません。',
+  subscription_attached: '月額の定期課金の新規契約がありました。Premium を反映済みです（毎月の決済で自動延長・作業は不要）。',
+  subscription_conflict: '月額の定期課金が成立しましたが、権限は変更していません（二重契約・買い切り会員・期間の長い契約など）。解約・返金をご判断ください。',
+  subscription_refunded: '月額の定期課金で返金・取消を受けました。月額は自動で権限を戻しません。必要なら会員の有効期限を確認してください。',
+  subscription_withdrawn: '月額会員がマイページから退会しました。購読は即時解約・有料権限は停止済みです（作業は不要）。',
+  subscription_withdraw_write_failed: '退会で PayPal の購読は解約しましたが、Customers への書込みに失敗しました。解約の通知で退会状態へ収束するはずです。WithdrawalRequested / 有効期限 を確認してください。',
 };
 
 export function makeCardNotifier(env, { mode = 'test', provider, send } = {}) {

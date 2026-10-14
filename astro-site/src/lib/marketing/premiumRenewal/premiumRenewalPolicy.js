@@ -59,8 +59,8 @@ export function isPaidPremiumMonthly(fields = {}) {
   const f = fields || {};
   if (normalizePlan(f['プラン']) !== 'premium') return { ok: false, reason: SKIP.NOT_PREMIUM };
   if (String(f.PlanType || '').trim().toLowerCase() !== 'monthly') return { ok: false, reason: SKIP.NOT_MONTHLY };
-  // ⚠️ Stripe 会員の `有効期限` は毎月の請求で自動的に延びる。ここで拾うと**毎月**「期限が近い」が届く。
-  if (String(f.PaymentMethod || '').trim().toLowerCase() === 'stripe') return { ok: false, reason: SKIP.STRIPE_AUTO_RENEW };
+  // ⚠️ Stripe・PayPal（月額の定期課金）会員の `有効期限` は毎月の請求で自動的に延びる。ここで拾うと**毎月**「期限が近い」が届く。
+  if (['stripe', 'paypal'].includes(String(f.PaymentMethod || '').trim().toLowerCase())) return { ok: false, reason: SKIP.STRIPE_AUTO_RENEW };
   if (isBlank(f.PaidAt)) return { ok: false, reason: SKIP.NOT_PAID };
   if (EXCLUDED_STATUSES.includes(String(f.Status || '').trim().toLowerCase())) return { ok: false, reason: SKIP.EXCLUDED_STATUS };
   if (isTrue(f.ForceLogout)) return { ok: false, reason: SKIP.FORCE_LOGOUT };

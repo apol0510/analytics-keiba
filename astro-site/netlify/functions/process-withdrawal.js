@@ -8,6 +8,7 @@ import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js
 installAirtableCallMeter({ source: 'process-withdrawal' });
 import { SUPPORT_EMAIL, ADMIN_EMAIL } from './config/email-config.js';
 import { isStripeSubscriber } from '../../src/lib/billing/stripeSubscriptionSync.js';
+import { isPaypalSubscriber } from '../../src/lib/billing/paypal/paypalSubscriptionCore.js';
 import { formatJst } from '../../src/lib/datetime/jstTimestamp.js';
 import { buildUnsubscribeUrl } from '../../src/lib/unsubscribe/listUnsubscribeHeaders.js';
 
@@ -73,14 +74,15 @@ export const handler = async (event, context) => {
         // 1-b. Stripe の月額会員はここでは退会させない（本人確認がメールアドレスだけのため購読を操作しない）。
         //      退会はログイン後のマイページ「アカウント管理」の「退会する」（stripe-withdraw・即時退会）で行う。
         //      ここは案内だけ送る（2026-10-07 MK 確定: 期間末解約は廃止・退会は即時）。
-        if (isStripeSubscriber(customerRecord.fields)) {
+        // PayPal の月額（定期課金・2026-10-15〜）も同じ（購読を止めずに退会フラグだけ立てると課金が続く）
+        if (isStripeSubscriber(customerRecord.fields) || isPaypalSubscriber(customerRecord.fields)) {
             await sendEmailViaSendGrid({
                 to: email,
                 subject: '【退会のご案内】KEIBA Analytics',
                 html: `
             <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
                 <p>KEIBA Analytics をご利用いただきありがとうございます。</p>
-                <p>月額プラン（クレジットカード）の退会は、ログイン後のマイページにある<strong>「アカウント管理」の「退会する」</strong>から行えます。</p>
+                <p>月額プラン（クレジットカード・PayPal）の退会は、ログイン後のマイページにある<strong>「アカウント管理」の「退会する」</strong>から行えます。</p>
                 <p>退会すると、現在の利用期限を待たずに<strong>すぐにご利用いただけなくなります</strong>。残りの期間のご利用を希望される場合は、退会せずにそのままご利用ください。</p>
                 <p><a href="https://analytics.keiba.link/login/">ログインはこちら</a></p>
                 <p>ご不明な点はこのメールにご返信ください。</p>
@@ -95,7 +97,7 @@ export const handler = async (event, context) => {
                 body: JSON.stringify({
                     success: true,
                     stripe: true,
-                    message: '月額プラン（クレジットカード）の退会は、マイページの「アカウント管理」から行えます。ご案内をメールでお送りしました。'
+                    message: '月額プラン（クレジットカード・PayPal）の退会は、マイページの「アカウント管理」から行えます。ご案内をメールでお送りしました。'
                 })
             };
         }

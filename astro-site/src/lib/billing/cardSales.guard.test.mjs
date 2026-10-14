@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { CARD_SALES_OPEN, resolveCardMode, PRODUCTION_ORIGIN } from './cardSales.js';
+import { CARD_SALES_OPEN, resolveCardMode, PRODUCTION_ORIGIN, SUBSCRIPTION_SALES_OPEN, ACTIVE_SUBSCRIPTION_PROVIDER } from './cardSales.js';
 import { CARD_PRODUCTS } from './cardOneTime.js';
 import { MONTHLY_SALES_OPEN } from './stripePlans.js';
 
@@ -25,12 +25,15 @@ test('全決済会社の本番受付は閉じている（コード定数・env �
   }
 });
 
-test('新規の月払いは作らない: 商品は一回払いだけ・定期課金 API を呼ばない', () => {
-  assert.equal(MONTHLY_SALES_OPEN, false);
+test('一回払いの層は定期課金を持たない。月額は PayPal の定期課金だけ（2026-10-15 MK 決定）・Stripe の新規月払いは閉じたまま', () => {
+  assert.equal(MONTHLY_SALES_OPEN, false, 'Stripe の新規月払いは閉じたまま');
   assert.deepEqual(CARD_PRODUCTS.map((p) => p.planType).sort(), ['Annual', 'Annual', 'Lifetime']);
   const libs = ['paddle/paddleCore.js', 'paddle/paddleServer.js', 'paypal/paypalCore.js', 'paypal/paypalServer.js']
     .map((f) => read(`src/lib/billing/${f}`)).join('\n');
-  assert.equal(/billing_cycle|\/v1\/billing\/|\/subscriptions/.test(libs), false, 'Paddle 定期価格・PayPal Subscriptions を使わない');
+  assert.equal(/billing_cycle|\/v1\/billing\/|\/subscriptions/.test(libs), false, '一回払いの層・Paddle は定期課金 API を使わない');
+  assert.match(read('src/lib/billing/paypal/paypalSubscriptionServer.js'), /\/v1\/billing\/subscriptions/);
+  assert.deepEqual({ ...SUBSCRIPTION_SALES_OPEN }, { paypal: false }, '月額の本番受付は PR でだけ開く');
+  assert.equal(ACTIVE_SUBSCRIPTION_PROVIDER, 'paypal');
 });
 
 test('会員権限の書き換えは共通層（entitlementLedger）だけ: アダプタは Airtable を直接 PATCH しない', () => {

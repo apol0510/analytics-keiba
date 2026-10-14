@@ -34,12 +34,17 @@ test('stripe-create-checkout: 何にも触れる前に 410 monthly_sales_ended�
   }
 });
 
-test('/pricing/: 月額の申込ボタン・Checkout 呼び出しが無く、年払い・買い切り（銀行振込）が主導線', () => {
+test('/pricing/: Stripe 月額の申込は無い。月額は PayPal の定期課金だけ（共通入口・SUBSCRIPTION_SALES_OPEN で表示）', () => {
   const page = read('../../pages/pricing.astro');
   const code = page.replace(/<!--[\s\S]*?-->/g, '').replace(/^\s*\/\/.*$/gm, '');
   assert.equal(/data-checkout=/.test(code), false);
   assert.equal(/stripe-create-checkout/.test(code), false);
-  assert.equal(/<span class="price-period">\/月<\/span>/.test(code), false, '月額の価格カードが残っている');
+  // 月額のカードは showMonthly の中だけ（本番は SUBSCRIPTION_SALES_OPEN・Preview は Sandbox 検証用）
+  assert.match(code, /const showMonthly = SUBSCRIPTION_SALES_OPEN\[ACTIVE_SUBSCRIPTION_PROVIDER\] === true \|\| process\.env\.CONTEXT === 'deploy-preview';/);
+  const outside = code.replace(/\{showMonthly && \([\s\S]*?\n {8}\)\}/, '');
+  assert.equal(/<span class="price-period">\/月<\/span>/.test(outside), false, '月額の価格カードが showMonthly の外にある');
+  assert.equal(/monthly-create-checkout/.test(code), true);
+  assert.equal(/paypal-create-subscription|paddle-create-checkout|paypal-create-order/.test(code), false, '決済会社別の入口を呼ばない');
   const cards = code.slice(code.indexOf('<div class="plans-container'), code.indexOf('<!-- 無料プラン -->') > 0 ? code.indexOf('<!-- 無料プラン -->') : undefined);
   assert.match(code, /data-bank-plan="annual"[\s\S]*openBankModal\('Premium Annual', 49800, 'annual'\)/);
   assert.match(code, /openBankModal\('Premium Annual - Campaign', 44820, 'annual'\)/);

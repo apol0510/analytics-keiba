@@ -63,6 +63,8 @@
 > 月額を案内する更新リマインド（Light / Premium 月払い）は月払いが閉じている間は実送信しない。既存の有料 Light 会員の銀行振込更新は維持（新規ではないため）。
 > 根拠 `decisions.md` 2026-10-11。
 
+> **月額は PayPal の定期課金（2026-10-15 MK 決定）**: 月額（Premium ¥4,980・中央版 ¥2,980・南関版 ¥2,980）は **PayPal の定期課金**で受け付ける（Stripe の新規月払いは停止のまま）。年払い・買い切りは銀行振込を維持・銀行振込の 1 ヶ月プランは停止のまま。権利・期限・即時退会は本節の月額の仕様をそのまま適用（PaymentMethod=PayPal）。受ける決済会社は `cardSales.ACTIVE_SUBSCRIPTION_PROVIDER`、本番の受付は `SUBSCRIPTION_SALES_OPEN`（PR だけで開く）。実装の正本 `astro-site/docs/CARD_PAYMENT_PROVIDERS.md` §3.5。根拠 `decisions.md` 2026-10-15（追記）。
+>
 > **代替決済（2026-10-11 MK 確定・追記 3 で優先順位を改定）**: **Paddle（第一優先・TIROL DATA LABO 名義で新規開設）・PayPal（第二優先・新規）を並行推進、fincode byGMO は 2026-10-15 MK 決定で不使用・コードごと削除**。実装の正本 `astro-site/docs/CARD_PAYMENT_PROVIDERS.md`。会員権限の反映は決済会社共通の `entitlementLedger.js` だけ。本番受付は `cardSales.js` の `CARD_SALES_OPEN`（全社 false・env では開かない）を、各社の取扱商品承認後に MK の決定で変える PR だけで開く。売るのは一回払い（年払い・買い切り）だけ。営業商談型は候補にしない。直近の販売は銀行振込のみ・新規月払いは停止のまま（決済会社の準備で自動再開しない）。根拠 `decisions.md` 2026-10-11（追記 2・追記 3）・2026-10-15。
 >
 > **冗長化（2026-10-13 MK 確定）**: Paddle・PayPal は**お客様に選ばせる併設ではなく、事業継続のための冗長化**。購入導線は「カードで支払う」1 本（共通入口 `card-create-checkout`）・決済会社の選択 UI は作らない。第一 Paddle・予備 PayPal、受ける 1 社は運営が `cardSales.ACTIVE_CARD_PROVIDER`（PR）で切替。未確定の取引を別社へ自動で作り直さない・切替前の申込が残る会員は切替後の会社で申込不可（24 時間）。会員権限・料金・購入資格・完了画面は共通。根拠 `decisions.md` 2026-10-13。

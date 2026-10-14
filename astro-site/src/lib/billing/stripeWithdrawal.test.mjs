@@ -186,7 +186,9 @@ test('マイページ: 「退会する」は確認画面を開くだけ。確定
   const open = dash.slice(dash.indexOf('window.akOpenWithdraw'), dash.indexOf('window.akCloseWithdraw'));
   assert.equal(/stripe-withdraw/.test(open), false, '確認画面を開くだけで退会しない');
   const confirm = dash.slice(dash.indexOf('window.akConfirmWithdraw'));
-  assert.match(confirm, /\/\.netlify\/functions\/stripe-withdraw/);
+  // Stripe 月額は stripe-withdraw、PayPal 月額（2026-10-15〜）は paypal-withdraw
+  assert.match(confirm, /paypalBilling === true \? 'paypal-withdraw' : 'stripe-withdraw'/);
+  assert.match(confirm, /\/\.netlify\/functions\/' \+ endpoint/);
   assert.match(confirm, /confirm: true/);
   assert.match(confirm, /if \(akWithdrawInFlight\) return;/, '画面側の二重送信防止');
   // 確認画面の必須の説明

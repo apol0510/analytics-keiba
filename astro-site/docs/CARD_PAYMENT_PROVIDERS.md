@@ -10,7 +10,7 @@
 | Sandbox E2E | **PASS**（2026-10-12・§4）| **PASS**（2026-10-13・§4）|
 | 本番審査 | **審査中**（MK 報告 2026-10-15。Website approval は `checkout.tirol.link`・§7）| **審査通過**（MK 報告 2026-10-15。承認の書面・メールは MK が保管）|
 | 本番の鍵・Webhook | 未設定 | 未設定（Live アプリの鍵が要る・§5）|
-| 本番受付 | **閉じている**（`CARD_SALES_OPEN.paddle=false`）| **閉じている**（`.paypal=false`）|
+| 本番受付 | **閉じている**（`CARD_SALES_OPEN.paddle=false`）| 一回払いは**閉じている**（`.paypal=false`）。**月額の定期課金は PayPal で受ける方針**（2026-10-15 MK 決定・§3.5）。本番は `SUBSCRIPTION_SALES_OPEN.paypal` を開く PR まで閉じている |
 | 取扱可否（一次情報）| ⚠️ 禁止リストに「Betting-related products」「Sports forecasting/odds making where monetary or material prizes are involved」。**書面確認が要る** | 利用規定で「競馬またはドッグレース」は**事前承認**区分 → 審査通過 |
 
 - 売るのは銀行振込と同じ一回払い（Premium 年払い ¥49,800／Light 会員 ¥44,820・買い切り ¥78,000）だけ。**月払い・定期課金は作らない**（Paddle の定期価格・PayPal Subscriptions は使わない。guard で固定）。
@@ -94,6 +94,24 @@ env（Deploy Preview の Sandbox 用だけ。production には入れない）: `
 env（Deploy Preview の Sandbox 用だけ）: `PAYPAL_CLIENT_ID`・`PAYPAL_CLIENT_SECRET`・`PAYPAL_ENV=sandbox`・`PAYPAL_WEBHOOK_ID`・`CARD_E2E_SECRET`
 
 ⚠️ production の関数 env は Lambda 4KB 上限に近い（`STRIPE_BILLING.md` §3）。本番化のときは先に枠を確認する。鍵の値は画面・ログ・commit に出さない。
+
+## 3.5 PayPal 月額（Subscriptions API・定期課金・2026-10-15 MK 決定）
+
+| 項目 | 仕様 | 実装 |
+|---|---|---|
+| 商品 | 既存の月額 3 プラン（Premium ¥4,980・中央版 ¥2,980・南関版 ¥2,980）。金額・会場・名称の正本は `stripePlans.STRIPE_PLANS` | PayPal の Product `Analytics Premium`＋Plan 3 本（毎月・無期限・JPY）。Plan ID は `paypalSubscriptionCore.PAYPAL_PLAN_IDS`（秘密ではない・env に置かない）。作成・照合は `scripts/paypal-subscription-setup.mjs <keys-file> [--apply]`（冪等・既存 Plan の金額は変えない）|
+| 申込 | ログイン必須。共通入口 `monthly-create-checkout`（決済会社を選ばせない）→ PayPal の承認画面 → `/checkout/paypal-subscription-return/` | `createPaypalSubscription`（`custom_id = recordId:planId`）。live は `SUBSCRIPTION_SALES_OPEN.paypal` かつ entry='monthly' だけ（`subscriptionProviderGate`）|
+| 反映 | 戻り先（`paypal-subscription-confirm`）と Webhook（`paypal-order-webhook` に同居）が同じ処理。購読を API で照会し絶対値を書く | `applyPaypalSubscription`（購読ごとのロック）→ `decidePaypalSubscriptionSync`。期限＝最後に支払われた日（JST）+1 ヶ月 +2 日。`next_billing_time` は見ない（決済失敗でも進むため）|
+| 会員と購読の対応 | 購読の custom_id で会員を決める。会員のいまの購読は Redis `ak:paypal:sub:member:{recordId}` | Customers に PayPal 購読 ID の列は無い（Functions の鍵に列追加の権限が無い・2026-10-15）|
+| 書かないケース | 二重契約（別の PayPal 購読・Stripe 月額が生きている）・買い切り・期間の長い銀行振込 Premium・登録外の Plan・金額不一致 | 申込前に 409（`already_subscribed` / `already_premium`）。成立してしまったら権限は書かず管理者へ（`subscription_conflict`）|
+| 退会 | 即時（2026-10-07 の月額退会と同じ）。マイページ「アカウント管理」→ 確認 → 確定 | `paypal-withdraw` → `withdrawPaypalSubscriber`: 購読を `reason=ak_member_withdrawal` で cancel → 退会状態（期限を昨日・退会フラグ）。書込みが失敗しても CANCELLED 通知が印（status_change_note）で同じ状態へ収束 |
+| 退会以外の終了 | 決済失敗の上限（SUSPENDED は書かない＝期限で止まる）・管理者の解約 | CANCELLED / EXPIRED で、支払い済み最終日の翌日まで（縮めるだけ）|
+| 返金 | 月額は返金しない方針（例外は管理者が手で）| `PAYMENT.SALE.REFUNDED / REVERSED` は権限を自動で戻さず管理者へ通知 |
+| 更新リマインド | 自動更新なので送らない | `premiumRenewalPolicy`（PaymentMethod=PayPal を除外）|
+| メールだけの退会 | 購読を操作せずマイページへ案内 | `process-withdrawal`（`isPaypalSubscriber`）|
+| Webhook イベント | `BILLING.SUBSCRIPTION.*`（CREATED・ACTIVATED・UPDATED・RE-ACTIVATED・CANCELLED・SUSPENDED・EXPIRED・PAYMENT.FAILED）・`PAYMENT.SALE.COMPLETED / REFUNDED / REVERSED` | Sandbox Webhook に追加済み（2026-10-15・setup スクリプト）|
+
+Sandbox の Product `PROD-1DB142038K1860725`／Plan: premium `P-67290333XA2635522NLIAFTY`・premium-jra `P-7NF43083F7102171SNLIAFUI`・premium-nankan `P-55C52460MJ2631844NLIAFUY`（2026-10-15 作成）。
 
 ## 4. Sandbox E2E 手順（Deploy Preview）
 

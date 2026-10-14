@@ -1,3 +1,17 @@
+# 💳 月額を PayPal の定期課金で受け付ける（2026-10-15 MK 決定 / **実装・Sandbox 準備済み・Sandbox E2E 中・本番は Live 鍵と受付開始 PR 待ち**）
+
+| 項目 | 状態 |
+|---|---|
+| 方針 | 月額（Premium ¥4,980・中央版 ¥2,980・南関版 ¥2,980）は PayPal の定期課金。年払い・買い切りは銀行振込のまま。銀行振込の 1 ヶ月プランは停止のまま。Paddle はメイン（審査中）。正本 decisions 2026-10-15（追記）・spec「Stripe 定期購読」冒頭・CARD_PAYMENT_PROVIDERS.md §3.5 |
+| 実装 | `paypal/paypalSubscriptionCore.js`（判定）・`paypalSubscriptionServer.js`（I/O）／Functions `monthly-create-checkout`（共通入口）・`paypal-subscription-confirm`・`paypal-withdraw`・`paypal-order-webhook`（月額のイベントも受ける）／`/checkout/paypal-subscription-return/`／`/pricing/` の月額カード（`SUBSCRIPTION_SALES_OPEN` か Deploy Preview のときだけ表示）／マイページの PayPal 月額のアカウント管理・退会／`withdrawalMail.js`（退会完了メールを Stripe と共通化）／`scripts/paypal-subscription-setup.mjs` |
+| Sandbox 準備 | Product・Plan 3 本を作成し `PAYPAL_PLAN_IDS.test` に登録。Sandbox Webhook に月額のイベントを追加（2026-10-15）|
+| test | `test:billing` 139 pass（月額 11: 商品・本番の受付拒否・申込→承認→付与・再送／同時・毎月の更新と決済失敗・即時退会・退会の書込み失敗からの収束・管理者の解約・二重契約の事前拒否と事後の管理者通知・照会不一致・返金は通知だけ）・check:safety pass・build pass |
+| Claude 案（MK 未確認）| 申込はログイン必須／プラン変更は当面なし（退会 → 新規）／月額カードは年払い・買い切りの下 |
+| 次作業 | ①Sandbox E2E（Deploy Preview・中立ホスト経由。承認は MK の Sandbox 買い手）②PayPal Live 鍵（MK が `~/.analytics-keiba-ops/card-live.env` に置く）→ Claude が Live の Product・Plan・Webhook・production env ③受付開始 PR（`SUBSCRIPTION_SALES_OPEN.paypal=true`・`PAYPAL_PLAN_IDS.live`・legal / terms / refund / FAQ に PayPal 月額を記載）④本番で実購入 1 件 → 退会で確認 |
+| 再開条件 | ②は MK の Live 鍵の配置 |
+
+---
+
 # 💳 代替決済 Paddle（第一）・PayPal（第二）並行推進＋共通会員権限層（2026-10-11 MK 確定 / **#789 merge 済み `bb7f1c68`・Paddle・PayPal とも Sandbox E2E 完了（#792・#796）・**PayPal 審査通過・Paddle 審査中（2026-10-15 MK 報告）・fincode は不使用で削除**・販売開始待ち・販売は全社閉**）
 
 | 項目 | 状態 |

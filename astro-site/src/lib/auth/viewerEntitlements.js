@@ -111,9 +111,11 @@ export function viewerProfile(fields) {
     points: points === null || !Number.isFinite(Number(points)) ? null : Number(points),
     // Stripe の月額で契約中か（マイページの「アカウント管理」用）。ID そのものは渡さない。
     // 退会済み（即時退会・2026-10-07）は契約が終わっているので出さない（退会ボタンも出さない）。
-    billing: String(read(['PaymentMethod']) || '').trim().toLowerCase() === 'stripe'
-      && /^cus_/.test(String(read(['StripeCustomerId']) || ''))
-      && !/^(true|1|yes)$/i.test(String(read(['WithdrawalRequested']) ?? '').trim()) ? 'stripe' : null,
+    // PayPal の月額（2026-10-15〜）は 'paypal'（退会ボタンだけ。カード変更は PayPal 側・プラン変更は未提供）。
+    billing: /^(true|1|yes)$/i.test(String(read(['WithdrawalRequested']) ?? '').trim()) ? null
+      : String(read(['PaymentMethod']) || '').trim().toLowerCase() === 'stripe' && /^cus_/.test(String(read(['StripeCustomerId']) || '')) ? 'stripe'
+        : String(read(['PaymentMethod']) || '').trim().toLowerCase() === 'paypal' && String(read(['PlanType']) || '').trim().toLowerCase() === 'monthly' ? 'paypal'
+          : null,
     // 会員ランク（docs/MEMBER_RANK.md）の起点。本人に既に表示している登録日だけを渡す
     registeredAt: read(['登録日', 'RegisteredAt', 'RegistrationDate']),
   };

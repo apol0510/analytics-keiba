@@ -58,3 +58,26 @@ export function checkoutProviderGate({ provider, mode, entry = 'direct', active 
   if (provider !== active) return { ok: false, reason: 'provider_not_active' };
   return { ok: true };
 }
+
+/**
+ * 月額の定期課金（2026-10-15 MK 決定）: 「PayPal で先に進める。PayPal は月額の定期課金で決済を受け付ける。
+ * 年払い・買い切りは銀行振込を維持。銀行振込の 1 ヶ月プランは停止のまま。Paddle がメイン」。
+ * - 商品・価格・権利・退会は既存の月額の確定仕様（spec「Stripe 定期購読」2026-10-02・即時退会 2026-10-07）と同じ
+ *   （Premium ¥4,980・中央版 ¥2,980・南関版 ¥2,980／月）。Stripe の新規月払い（MONTHLY_SALES_OPEN）は閉じたまま。
+ * - お客様に決済会社を選ばせない（冗長化 2026-10-13 と同じ）。共通入口 `monthly-create-checkout` から
+ *   ACTIVE_SUBSCRIPTION_PROVIDER の 1 社だけ。自動フォールバックしない。
+ * - 本番の受付はこの表を true にする PR だけで開く（env では開かない）。一回払い（CARD_SALES_OPEN）とは別の表。
+ */
+export const SUBSCRIPTION_SALES_OPEN = Object.freeze({
+  paypal: false,
+});
+export const ACTIVE_SUBSCRIPTION_PROVIDER = 'paypal';
+
+/** 月額の申込を始めてよいか（live は共通入口 entry='monthly' から ACTIVE_SUBSCRIPTION_PROVIDER だけ）*/
+export function subscriptionProviderGate({ provider, mode, entry = 'direct', active = ACTIVE_SUBSCRIPTION_PROVIDER } = {}) {
+  if (mode === 'test') return { ok: true };
+  if (mode !== 'live') return { ok: false, reason: 'mode_unknown' };
+  if (entry !== 'monthly') return { ok: false, reason: 'use_monthly_checkout' };
+  if (provider !== active) return { ok: false, reason: 'provider_not_active' };
+  return { ok: true };
+}

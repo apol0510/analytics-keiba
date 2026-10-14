@@ -63,6 +63,8 @@ const serverAuth = {
     profile: viewer.isMember ? (viewer.profile || null) : null,
     // Stripe の月額で契約中（「お支払い管理」を出す）
     stripeBilling: viewer.isMember && viewer.profile?.billing === 'stripe',
+    // PayPal の月額（定期課金・2026-10-15〜）で契約中（退会ボタンを出す）
+    paypalBilling: viewer.isMember && viewer.profile?.billing === 'paypal',
 };
 // 会員ごとに中身が変わる。共有キャッシュに載せない（別人へ配られるのを防ぐ）。
 Astro.response.headers.set('Cache-Control', 'private, no-store');
@@ -463,6 +465,21 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
                             <button type="button" class="view-btn ak-withdraw-open" id="ak-withdraw-open" onclick="akOpenWithdraw()">退会する</button>
                         </div>
                         <p class="stripe-billing-error" id="stripe-billing-error" style="display: none;">お支払い管理を開けませんでした。時間をおいて再度お試しいただくか、お問い合わせください。</p>
+                    </div>
+
+                    <!-- PayPal 月額の会員: アカウント管理（2026-10-15〜）。退会は Stripe と同じ確認画面 → 確定（即時退会・paypal-withdraw）。
+                         お支払い方法の変更は PayPal のアカウント側。プラン変更は未提供（退会 → 新規申込） -->
+                    <div id="paypal-billing-card" class="prediction-card premium" style="display: none;">
+                        <div class="card-header">
+                            <h3>⚙️ アカウント管理</h3>
+                        </div>
+                        <div class="race-info">
+                            <div class="race-title race-title-sm">月額プラン（PayPal）</div>
+                            <div class="confidence">毎月自動で更新されます。お支払い方法の変更は PayPal のアカウントで行えます。</div>
+                        </div>
+                        <div class="sanrenpuku-view-buttons">
+                            <button type="button" class="view-btn ak-withdraw-open" onclick="akOpenWithdraw()">退会する</button>
+                        </div>
                     </div>
 
                     <!-- 退会の確認画面（「退会する」だけでは確定しない。ここで「退会を確定する」を押して初めて確定） -->
@@ -1968,6 +1985,10 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
             // Stripe 月額の会員 → お支払い管理
             if (_serverAuth && _serverAuth.stripeBilling === true) {
                 document.getElementById('stripe-billing-card').style.display = 'block';
+            }
+            // PayPal 月額の会員 → 退会（アカウント管理）
+            if (_serverAuth && _serverAuth.paypalBilling === true) {
+                document.getElementById('paypal-billing-card').style.display = 'block';
             }
             // Premium 期限切れ → 契約期間終了カード（予想リンクは出さない・再契約導線のみ）。馬単ページは canViewPremium で別途拒否。
             if (_view.showPremiumExpiredCard) {
@@ -5559,7 +5580,7 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
             // Stripe の月額会員はアカウント管理の退会（確認画面 → 確定・即時退会・stripe-withdraw）へ（2026-10-07）。
             // メールアドレスだけの process-withdrawal では購読を操作しない。
             const _sa = (typeof getServerAuth === 'function') ? getServerAuth() : null;
-            if (_sa && _sa.stripeBilling === true && typeof window.akOpenWithdraw === 'function') {
+            if (_sa && (_sa.stripeBilling === true || _sa.paypalBilling === true) && typeof window.akOpenWithdraw === 'function') {
                 window.akOpenWithdraw();
                 confirmBtn.disabled = false;
                 confirmBtn.textContent = '退会する';
@@ -5901,11 +5922,14 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
           already_withdrawn: '既に退会の手続きが完了しています。',
           login_required: 'ログインの有効期限が切れました。ログインし直してから、もう一度お試しください。',
           not_stripe_subscriber: 'クレジットカードの月額プランのご契約が見つかりませんでした。お問い合わせください。',
+          not_paypal_subscriber: 'PayPal の月額プランのご契約が見つかりませんでした。お問い合わせください。',
           subscription_mismatch: 'ご契約の確認ができませんでした。お問い合わせください。',
           busy: '処理が混み合っています。少し時間をおいてから、もう一度お試しください。',
         };
         try {
-          const res = await fetch('/.netlify/functions/stripe-withdraw', {
+          const _saW = (typeof getServerAuth === 'function') ? getServerAuth() : null;
+          const endpoint = _saW && _saW.paypalBilling === true ? 'paypal-withdraw' : 'stripe-withdraw';
+          const res = await fetch('/.netlify/functions/' + endpoint, {
             method: 'POST',
             credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
