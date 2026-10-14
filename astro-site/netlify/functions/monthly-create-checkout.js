@@ -15,7 +15,7 @@ installAirtableCallMeter({ source: 'monthly-create-checkout' });
 import { corsHeaders, resolveSiteOrigin, readSessionRecordId, isAllowedOrigin } from '../../src/lib/billing/stripeRuntime.js';
 import { ACTIVE_SUBSCRIPTION_PROVIDER } from '../../src/lib/billing/cardSales.js';
 import { createPaypalSubscription, resolvePaypalSubscriptionMode } from '../../src/lib/billing/paypal/paypalSubscriptionServer.js';
-import { e2eRecordIdFor } from '../../src/lib/billing/cardE2E.js';
+import { e2eCheck } from '../../src/lib/billing/cardE2E.js';
 import { makeRedisCmd } from '../../src/lib/premiumPlus/premiumPlusFunnelServer.js';
 
 const CREATORS = Object.freeze({ paypal: { mode: resolvePaypalSubscriptionMode, create: createPaypalSubscription } });
@@ -37,8 +37,14 @@ exports.handler = async (event) => {
   const mode = provider.mode({ env, origin });
   if (!mode.ok) return json(503, headers, { error: mode.reason });
   try {
-    const recordId = await readSessionRecordId(event.headers?.cookie || event.headers?.Cookie || '', env)
-      || await e2eRecordIdFor({ event, env, body, testMode: mode.mode === 'test' });
+    let recordId = await readSessionRecordId(event.headers?.cookie || event.headers?.Cookie || '', env);
+    let e2e = null;
+    if (!recordId && event.headers?.['x-ak-e2e-secret']) {
+      e2e = await e2eCheck({ event, env, body, testMode: mode.mode === 'test' });
+      recordId = e2e.id;
+    }
+    // Sandbox E2E の切り分け用に、テストモードのときだけ通らなかった段階を返す（本番では返さない）
+    if (!recordId && e2e && mode.mode === 'test') return json(401, headers, { error: 'login_required', e2e: e2e.reason });
     const r = await provider.create({ env, origin, recordId, planId: String(body.plan || ''), entry: 'monthly', redis: makeRedisCmd(env) });
     if (!r.ok) return json(r.status, headers, { error: r.code });
     console.log(JSON.stringify({ event: 'monthly_checkout_created', provider: r.provider, plan: String(body.plan || '') }));
