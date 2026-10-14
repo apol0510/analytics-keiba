@@ -111,6 +111,8 @@ env（Deploy Preview の Sandbox 用だけ）: `PAYPAL_CLIENT_ID`・`PAYPAL_CLIE
 | メールだけの退会 | 購読を操作せずマイページへ案内 | `process-withdrawal`（`isPaypalSubscriber`）|
 | Webhook イベント | `BILLING.SUBSCRIPTION.*`（CREATED・ACTIVATED・UPDATED・RE-ACTIVATED・CANCELLED・SUSPENDED・EXPIRED・PAYMENT.FAILED）・`PAYMENT.SALE.COMPLETED / REFUNDED / REVERSED` | Sandbox Webhook に追加済み（2026-10-15・setup スクリプト）|
 
+**月額の Sandbox E2E 手順**: deploy-preview に `PAYPAL_*`・`CARD_E2E_SECRET` を入れる → 中立ホストの転送先をその PR の preview へ → 使い捨て `+card-e2e` レコードで `monthly-create-checkout`（`x-ak-e2e-secret`・`e2eRecordId`）→ MK が Sandbox 買い手で承認 → `paypal-subscription-confirm` で付与 → Webhook 再送で 1 回だけ → 申込の重複拒否 → `paypal-withdraw` で即時退会 → 再契約 → API で管理者の解約（終了の縮め）→ 後片付け（レコード・Redis・env）。
+
 Sandbox の Product `PROD-1DB142038K1860725`／Plan: premium `P-67290333XA2635522NLIAFTY`・premium-jra `P-7NF43083F7102171SNLIAFUI`・premium-nankan `P-55C52460MJ2631844NLIAFUY`（2026-10-15 作成）。
 
 ## 4. Sandbox E2E 手順（Deploy Preview）
