@@ -20,6 +20,7 @@ import { runPremiumRenewalOutcomesCheck, renderPremiumRenewalOutcomesMarkdown } 
 import {
   runPlusFirstOrderCheck, renderPlusFirstOrderMarkdown, runPlusOfferOutcomeCheck, renderPlusOfferOutcomeMarkdown,
 } from '../src/lib/ops/plusOrderCheck.js';
+import { runPaypalFirstPurchaseCheck, renderPaypalFirstPurchaseMarkdown } from '../src/lib/ops/paypalFirstPurchaseCheck.js';
 import { runLightRenewalOutcomesCheck, renderLightRenewalOutcomesMarkdown } from '../src/lib/ops/lightRenewalOutcomesCheck.js';
 
 const REGISTRY = fileURLToPath(new URL('../../ops/scheduled-checks.json', import.meta.url));
@@ -62,6 +63,14 @@ function humanActionFor(code, check) {
       return 'GitHub の repository secret `STRIPE_ACCOUNT_READ_KEY`（AK 本番 Stripe の鍵）を登録・更新する（Claude が設定できる）。';
     case 'no_conversion_yet':
       return 'なし（まだ Light→Premium の入金確認が無い）。翌日の定期実行で自動的に再確認する。';
+    case 'no_paypal_monthly_purchase_yet':
+      return 'なし（本番の PayPal 月額の購入がまだ無い）。販売者本人の自己決済テストはしない（2026-10-15 MK）。翌日の定期実行で自動的に再確認する。';
+    case 'paypal_webhook_not_seen_yet':
+      return 'なし（購入はあるが Webhook の処理記録がまだ無い・48 時間は待つ）。翌日の定期実行で自動的に再確認する。';
+    case 'paypal_webhook_not_seen':
+      return '購入から 48 時間を過ぎても PayPal 月額の Webhook の処理記録が 0 件。PayPal の Live Webhook（本番 URL・購読と PAYMENT.SALE のイベント）と PAYPAL_WEBHOOK_ID を確認する（Claude が調査できる）。権限は戻り先の確認で付いているが、更新・終了が反映されない恐れがある。';
+    case 'paypal_grant_mismatch':
+      return 'PayPal 月額の会員の権限が月額の形（Premium / Monthly / active / 有効期限 = 支払い日 + 1 ヶ月 + 2 日）と合わない。Claude が調査する（Customers を読むだけで原因を確かめ、直す必要があれば PR）。';
     case 'no_plus_order_yet':
       return 'なし（本物の Premium Plus 注文がまだ無い）。確認のために販売状態・案内は変えない。翌日の定期実行で自動的に再確認する。';
     case 'no_plus_confirmation_yet':
@@ -107,6 +116,9 @@ if (cmd === 'run') {
     } else if (check.kind === 'payment-funnel-first-record') {
       result = await runPaymentFunnelCheck({ check, token: process.env.AIRTABLE_READONLY_TOKEN, secret: process.env.PAYMENT_FUNNEL_READ_SECRET });
       md = renderPaymentFunnelMarkdown({ check, result });
+    } else if (check.kind === 'paypal-monthly-first-purchase') {
+      result = await runPaypalFirstPurchaseCheck({ check, token: process.env.AIRTABLE_READONLY_TOKEN, secret: process.env.PAYMENT_FUNNEL_READ_SECRET });
+      md = renderPaypalFirstPurchaseMarkdown({ check, result });
     } else if (check.kind === 'premium-plus-first-order') {
       result = await runPlusFirstOrderCheck({ check, secret: process.env.PAYMENT_FUNNEL_READ_SECRET });
       md = renderPlusFirstOrderMarkdown({ check, result });

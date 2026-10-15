@@ -14,6 +14,7 @@ import { resolvePaypalMode } from '../../src/lib/billing/paypal/paypalCore.js';
 import { handlePaypalSubscriptionEvent } from '../../src/lib/billing/paypal/paypalSubscriptionServer.js';
 import { makeCardNotifier } from '../../src/lib/billing/cardNotify.js';
 import { makeRedisCmd } from '../../src/lib/premiumPlus/premiumPlusFunnelServer.js';
+import { recordPaypalSubscriptionWebhook } from '../../src/lib/billing/paypal/paypalWebhookLedger.js';
 
 const H = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' };
 
@@ -27,7 +28,12 @@ exports.handler = async (event) => {
   try {
     const r = await handlePaypalWebhook({
       env, origin, headers: event.headers || {}, rawBody: rawBody(event), redis, notify,
-      onSubscriptionEvent: (evt) => handlePaypalSubscriptionEvent({ env, origin, event: evt, redis, notify }),
+      onSubscriptionEvent: async (evt) => {
+        const sr = await handlePaypalSubscriptionEvent({ env, origin, event: evt, redis, notify });
+        // 署名検証済みの月額イベントを件数だけ残す（初回実購入の read-only 確認用・識別子なし・best effort）
+        if (sr) await recordPaypalSubscriptionWebhook(redis, { eventType: evt?.event_type, result: sr.result });
+        return sr;
+      },
     });
     console.log(JSON.stringify({ event: 'paypal_webhook', result: r.result }));
     return { statusCode: r.status, headers: H, body: JSON.stringify({ result: r.result }) };

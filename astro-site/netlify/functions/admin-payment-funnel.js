@@ -3,6 +3,7 @@
  *
  *   POST {action:'plusOfferOutcome'}                 … Plus 案内メールの成果（送信→開封→到達→注文→購入・件数のみ）
  *   POST {action:'plusOrdersSummary'}                … Premium Plus 注文と新系列の購入の突き合わせ（件数のみ）
+ *   POST {action:'paypalSubscriptionWebhooks'}       … PayPal 月額の Webhook を受けて処理した件数（イベント種別・結果別・最終受信時刻。識別子なし）
  *   POST {action:'airtableUsage', days?:number}      … Airtable API の呼び出し回数（Function 別・日別）と月の見込み
  *   POST {action:'revenueMonth', month:'YYYY-MM'}   … 月（JST）の入金確認の件数と金額の合計（KAO D-158・識別子なし）
  *   POST {action:'summary', days?:number}  … 期間内の申込受理・入金確認の件数（商品別・日別）、
@@ -47,6 +48,16 @@ export const handler = async (event) => {
   try { req = JSON.parse(event.body || '{}'); } catch { return json(400, { error: 'Invalid JSON' }); }
   // 月間売上（KAO D-158）: 入金確認の件数と金額の合計（識別子なし・読み取りのみ）
   // Airtable API の呼び出し回数（Function 別・日別・回数のみ。docs/AIRTABLE_CAPACITY.md）
+  if (req.action === 'paypalSubscriptionWebhooks') {
+    try {
+      const { readPaypalWebhookLedger } = await import('../../src/lib/billing/paypal/paypalWebhookLedger.js');
+      const r = await readPaypalWebhookLedger(makeRedisCmd(process.env));
+      if (!r) return json(503, { error: 'measurement_unavailable', sideEffects: 'none' });
+      return json(200, { ...r, sideEffects: 'none' });
+    } catch {
+      return json(500, { error: 'read_failed', sideEffects: 'none' });
+    }
+  }
   if (req.action === 'airtableUsage') {
     try {
       const { readAirtableCallDays, projectMonthly } = await import('../../src/lib/ops/airtableCallMeter.js');
@@ -118,7 +129,7 @@ export const handler = async (event) => {
       return json(500, { error: 'read_failed', sideEffects: 'none' });
     }
   }
-  if (req.action !== 'summary') return json(400, { error: 'action は summary / plusOrdersSummary / plusOfferOutcome' });
+  if (req.action !== 'summary') return json(400, { error: 'action は summary / plusOrdersSummary / plusOfferOutcome / paypalSubscriptionWebhooks' });
   const days = Number.isInteger(req.days) && req.days >= 1 && req.days <= 365 ? req.days : 30;
   try {
     const summary = await readPaymentFunnelSummary({ env: process.env, days, nowMs: Date.now() });
