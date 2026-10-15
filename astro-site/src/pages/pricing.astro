@@ -252,7 +252,7 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
             <section class="monthly-section" aria-label="月額プラン">
                 <!-- 月額（PayPal の定期課金・2026-10-15 MK 決定）。金額の正本は stripePlans.STRIPE_PLANS（請求は PayPal の Plan）。
                      ボタンは data-monthly="<planId>" → 下の startMonthly() → monthly-create-checkout（決済会社は選ばせない）。 -->
-                <p class="plans-lead">月額で始める<br><span>PayPal（クレジットカードも可）・毎月自動更新</span></p>
+                <p class="plans-lead">月額で始める<br><span>PayPal でお支払い（PayPal に登録したクレジットカードも使えます）・毎月自動更新</span></p>
                 <div class="plans-container plans-container--stripe">
                     {monthlyPlans.map((p) => (
                         <div class={`plan-card${p.copy.recommended ? ' plan-card-recommended' : ''}`} data-plan-tier="2" data-monthly-plan={p.id}>
@@ -278,7 +278,7 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
                             <button type="button" class={`plan-button ${p.copy.recommended ? 'plan-button-annual' : 'plan-button-monthly'}`} data-monthly={p.id}>
                                 PayPal で申し込む
                             </button>
-                            <p class="plan-billing-note">月額・毎月自動更新（PayPal・クレジットカード可）</p>
+                            <p class="plan-billing-note">月額・毎月自動更新（PayPal でお支払い）</p>
                         </div>
                     ))}
                 </div>
