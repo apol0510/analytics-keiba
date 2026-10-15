@@ -1,4 +1,4 @@
-# 🚪 退会仕様（月額だけ・マイページだけ・銀行振込には退会が無い・2026-10-15 MK 確定 / **実装・テスト済み・PR #804・本番未反映**）
+# 🚪 退会仕様（月額だけ・マイページだけ・銀行振込には退会が無い・2026-10-15 MK 確定 / **#804 merge `240433e6`・本番反映・本番 smoke 済み（2026-10-15）**）
 
 | 項目 | 状態 |
 |---|---|
@@ -8,7 +8,8 @@
 | test | `memberWithdrawal.test.mjs`（入口・確認・二重退会・他会員・即時停止と古いセッション・ログイン可・無料可・月額＋三連複の買い切りは三連複が残る・銀行振込は 409 で書かない・月額は各社へ・旧入口 410）＋既存テストを新仕様へ更新 |
 | 実ブラウザ（ローカル・Airtable/Redis/PayPal を差し替え・使い捨て鍵）| **PayPal 月額＋三連複買い切り**の合成会員: マイページ → 退会する（`?withdraw=1` でも開く）→ 確認画面（期限 2026-11-17・三連複が残る旨・退会後もログイン可）→ 確定で PayPal の cancel を 1 回・`member-withdraw` 200 → 完了ページ・Cookie 削除。退会後の同じセッションで Premium・Light は 302 `/login/?r=not_entitled`、三連複・無料・マイページは 200、2 回目は 409 `already_withdrawn`。**銀行振込の年払い**の合成会員: 退会ボタン 0・「銀行振込には退会の手続きはありません」の案内だけ・直接 POST は 409 `bank_transfer_no_withdrawal`・レコード不変・Premium 200 のまま |
 | 本番データ | 退会済み 29 件・うち買い切りあり 0 件（権限変更で戻る既存会員なし）|
-| 次作業 | PR の CI → MK merge → 本番 smoke（`process-withdrawal` 410・`member-withdraw` 未ログイン 401・他サイト 403・料金/規約ページの文言・マイページ表示）|
+| 本番 smoke（2026-10-15）| `process-withdrawal` 410 `moved_to_mypage`／`member-withdraw` 未ログイン 401・他サイト 403・確認なし 400／`stripe-withdraw`・`paypal-withdraw` 未ログイン 401／pricing・refund・terms・legal・service-description・dashboard に「銀行振込には退会の手続きはありません」・旧 `process-withdrawal` 呼び出し 0／withdrawal-upsell はマイページへ移るだけ。**本番での会員ログイン状態の退会は未実施**（本番セッションを作れない設計・実会員を退会させない）→ 実会員の初回退会時に Customers の退会状態・PayPal 側の解約・完了メールを確認する |
+| 残り | 実会員の初回退会の実測（上記）。Claude 案（MK 未確認）: 無料会員に退会操作を出さない／退会者を Premium Plus・三連複の販売対象にしない |
 
 ---
 
