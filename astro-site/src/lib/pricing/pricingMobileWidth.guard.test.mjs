@@ -30,7 +30,7 @@ test('<a> で作ったプランボタンがある限り、上の指定が要る'
   const anchors = [...page.matchAll(/<a\b[^>]*class="[^"]*\bplan-button\b[^"]*"/g)];
   assert.ok(anchors.length >= 1, '<a> のプランボタンが無くなった（前提が変わったらこのテストを見直す）');
   // どのプランボタンも box-sizing を content-box に戻していない
-  for (const sel of ['.plan-button-free', '.plan-button-standard', '.plan-button-annual', '.plan-button-monthly', '.plan-button-lifetime', '.plan-button-premium']) {
+  for (const sel of ['.plan-button-free', '.plan-button-standard', '.plan-button-annual', '.plan-button-monthly', '.plan-button-credit', '.plan-button-lifetime', '.plan-button-premium']) {
     assert.equal(/box-sizing:\s*content-box/.test(rules(sel).join(';')), false, `${sel} が content-box に戻している`);
   }
 });
