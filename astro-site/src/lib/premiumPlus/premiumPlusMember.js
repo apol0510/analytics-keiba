@@ -73,7 +73,8 @@ export function resolvePlusMemberFromFields(fields, opts = {}) {
 
   return {
     // 三連複を保有しているか（買い切り永久権 or 移行期の旧 tier）
-    hasSanrenpuku: ent.canViewSanrenpuku === true,
+    // ⚠️ 退会者は三連複の買い切りを見られる（2026-10-15）が、Premium Plus の販売対象にはしない（従来どおり）
+    hasSanrenpuku: ent.canViewSanrenpuku === true && !ent.reasons.includes('WITHDRAWAL_REQUESTED'),
     // 通常 Premium 契約が現在有効か（ROUTE B の前提）。
     // ⚠️ `canViewPremium` ではなく **paidPremiumActive**（有料契約のみ）を使う。
     //    カムバック特典（Premium 30日無料）は閲覧権であって課金実績ではないため、

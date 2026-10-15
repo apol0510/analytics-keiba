@@ -34,6 +34,7 @@ import { resolveEntitlements, fromAirtableFields } from '../entitlements/resolve
 // ⚠️ このファイルは標準出力への書き出しを持たない（staticGuards が禁止。payload/secret 漏洩防止）。
 //    出力してよい形は observability 側が単独で決める。
 import { logPaidGateDeny } from '../observability/paidGateLog.js';
+import { revokedForRecord } from './sessionRevocation.js';
 
 /**
  * 入口（door）で通す canonical plan。**ここで権利を判定しない。**
@@ -278,6 +279,7 @@ export async function gatePaidPage({
   now = Date.now(),
   notFound = false,
   lookup = lookupCustomerFieldsResult,
+  revoked = revokedForRecord,
 } = {}) {
   // any-of。単一語のときも配列 1 要素として扱う（分岐を増やさない）。
   const flags = resolveEntitlementFlags(requiredPlan);
@@ -318,9 +320,13 @@ export async function gatePaidPage({
   //    どちらも通さない（fail closed）が、理由コードを分けないと障害が観測できない。
   //    2026-08-08 の障害では、Airtable の一時障害が customer_not_found に潰れており、
   //    さらに失敗が 10 分キャッシュされて有効会員が締め出されていた。
+  // 退会直後の会員は、キャッシュ（最長 10 分）を使わず読み直す（2026-10-15「退会確定後は即時停止」・sessionRevocation.js）。
+  // 印が読めないときは通常どおり（Redis 障害で有料会員全員を締め出さない）。
+  let fresh = false;
+  try { fresh = (await revoked({ recordId: sub, env })) === true; } catch { fresh = false; }
   let looked = null;
   try {
-    looked = await lookup({ recordId: sub, env, now });
+    looked = await lookup(fresh ? { recordId: sub, env, now, maxAgeMs: 0 } : { recordId: sub, env, now });
   } catch {
     return deny('lookup_failed');
   }

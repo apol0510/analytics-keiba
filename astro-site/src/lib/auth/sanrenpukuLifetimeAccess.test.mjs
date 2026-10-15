@@ -141,14 +141,20 @@ test('三連複を買っていない期限切れ会員は、三連複も馬単�
   assert.equal(e.canViewPremium, false);
 });
 
-test('退会・強制ログアウトは買い切りより優先される（安全側）', async () => {
-  for (const stop of [{ WithdrawalRequested: true }, { ForceLogout: true }]) {
-    const fields = { ...EXPIRED_WITH_LIFETIME, ...stop };
-    const { membership } = await loginAs(fields);
-    assert.notEqual(membership.memberType, MEMBER_TYPE.PAID, `${JSON.stringify(stop)} で有料セッションが出ている`);
-    const e = resolveEntitlements(fromAirtableFields(fields), NOW);
-    assert.equal(e.canViewSanrenpuku, false);
-  }
+test('強制ログアウトは買い切りより優先される（安全側）', async () => {
+  const fields = { ...EXPIRED_WITH_LIFETIME, ForceLogout: true };
+  const { membership } = await loginAs(fields);
+  assert.notEqual(membership.memberType, MEMBER_TYPE.PAID, '強制ログアウトで有料セッションが出ている');
+  assert.equal(resolveEntitlements(fromAirtableFields(fields), NOW).canViewSanrenpuku, false);
+});
+
+test('退会しても三連複の買い切りは消えない（2026-10-15 MK 確定「買い切り等の独立した既存権利を意図せず消さない」）', async () => {
+  const fields = { ...EXPIRED_WITH_LIFETIME, WithdrawalRequested: true };
+  const { membership } = await loginAs(fields);
+  assert.equal(membership.memberType, MEMBER_TYPE.PAID, '退会で三連複の買い切りが使えなくなっている');
+  const e = resolveEntitlements(fromAirtableFields(fields), NOW);
+  assert.equal(e.canViewSanrenpuku, true);
+  assert.equal(e.canViewPremium, false, '退会者に Premium（契約由来）が開いている');
 });
 
 // ── 4. 購入 → 恒久化 のつながり ────────────────────────────────────

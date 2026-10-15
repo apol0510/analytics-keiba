@@ -121,7 +121,7 @@ test('期間が終われば自動的に無料会員へ戻る（会員資格の�
   assert.equal(resolveEntitlements(fromAirtableFields(after), later).canViewLight, false);
 });
 
-test('退会者に戻すのは Light だけ（Premium・三連複・購入資格は戻さない）', () => {
+test('退会者に戻すのは Light だけ（Premium・購入資格は戻さない。三連複の買い切りは退会でも消えない）', () => {
   const after = {
     ...withdrawnMember({ LifetimeSanrenpuku: true, 'プラン': 'Premium Sanrenpuku' }),
     LightGrantUntil: new Date(NOW + 30 * DAY).toISOString(),
@@ -136,12 +136,14 @@ test('退会者に戻すのは Light だけ（Premium・三連複・購入資格
   assert.equal(e.canViewLight, true, 'Light が開いていない');
   assert.equal(e.canViewPremium, false, 'Premium が復活している');
   assert.equal(e.promo.premiumActive, false, 'Premium 無料特典が有効になっている');
-  assert.equal(e.canViewSanrenpuku, false, '三連複買い切りが復活している');
+  // 2026-10-15 MK 確定: 三連複の買い切りは退会で消さない（特典で「戻した」のではなく、最初から消えていない）
+  assert.equal(e.canViewSanrenpuku, true, '退会で三連複の買い切りが消えている');
   assert.equal(e.canPurchaseSanrenpuku, false, '購入資格が復活している');
   assert.equal(e.paidPremiumActive, false, '課金契約が復活している');
 
   const m = resolveMembership({ fields: after, recordId: 'rec1', now: NOW });
-  assert.equal(m.normalizedPlan, 'light', 'Premium で復帰している');
+  // 三連複の買い切りを持つ退会者は三連複のセッション（Premium の閲覧は entitlements が止める）
+  assert.equal(m.normalizedPlan, 'premium-sanrenpuku', '三連複の買い切りが使えない');
 });
 
 // ── 3. 通常の無料付与は従来どおり ──────────────────────────────
