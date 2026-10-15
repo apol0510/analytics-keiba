@@ -113,6 +113,8 @@ env（Deploy Preview の Sandbox 用だけ）: `PAYPAL_CLIENT_ID`・`PAYPAL_CLIE
 
 **月額の Sandbox E2E 手順**: deploy-preview に `PAYPAL_*`・`CARD_E2E_SECRET` を入れる → 中立ホストの転送先をその PR の preview へ → 使い捨て `+card-e2e` レコードで `monthly-create-checkout`（`x-ak-e2e-secret`・`e2eRecordId`）→ MK が Sandbox 買い手で承認 → `paypal-subscription-confirm` で付与 → Webhook 再送で 1 回だけ → 申込の重複拒否 → `paypal-withdraw` で即時退会 → 再契約 → API で管理者の解約（終了の縮め）→ 後片付け（レコード・Redis・env）。
 
+**月額の Sandbox E2E 結果（2026-10-15・deploy-preview-800）**: 付与（期限＝支払日 JST + 1 ヶ月 + 2 日）・confirm と Webhook 再送で不変・重複申込 409・即時退会と CANCELLED 通知の収束まで PASS。退会済みの CancelledAt を終了通知が書き換えていた点を是正。再契約と管理者の解約は 2 回目の承認後（progress.md の月額ブロック）。
+
 Sandbox の Product `PROD-1DB142038K1860725`／Plan: premium `P-67290333XA2635522NLIAFTY`・premium-jra `P-7NF43083F7102171SNLIAFUI`・premium-nankan `P-55C52460MJ2631844NLIAFUY`（2026-10-15 作成）。
 
 ## 4. Sandbox E2E 手順（Deploy Preview）
