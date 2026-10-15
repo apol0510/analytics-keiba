@@ -63,3 +63,13 @@ test('fincode は使わない（2026-10-15 MK 決定）: コード・Function・
     assert.equal(/fincode/i.test(read(f)), false, f);
   }
 });
+
+test('料金ページの月額ボタン: 未ログインはログインへ直行・押した直後に反応を出す（2026-10-15「押せない」報告）', () => {
+  const s = read('src/pages/pricing.astro');
+  const i = s.indexOf('function show(html, btn)'); const j = s.indexOf('})();', i);
+  const js = s.slice(i, j);
+  assert.match(js, /err === 'login_required'\) \{[^}]*location\.href = '\/login\/\?next=\/pricing\/'/, '未ログインがメッセージ止まり（画面の端に出て押せないように見える）');
+  assert.match(js, /btn\.textContent = 'PayPal へ移動しています…'/, '押した直後の表示が無い（PayPal へ移るまで数秒無反応に見える）');
+  assert.match(js, /card\.appendChild\(msg\)/, 'メッセージが押したカードの近くに出ない');
+  assert.match(js, /addEventListener\('pageshow'/, '戻るで帰ったときにボタンが押せないまま残る');
+});

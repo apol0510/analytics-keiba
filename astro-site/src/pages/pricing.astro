@@ -552,30 +552,49 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
     var msg = document.getElementById('monthlyMessage');
     if (!msg) return;
     var busy = false;
-    function show(html) { msg.innerHTML = html; msg.hidden = false; msg.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
+    // 押したボタンのすぐ下に出す（3 枚の下にまとめて出すと、画面の端に隠れて「押しても何も起きない」に見えた）
+    function show(html, btn) {
+      msg.innerHTML = html; msg.hidden = false;
+      var card = btn && btn.closest('.plan-card');
+      if (card) card.appendChild(msg);
+      msg.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
     async function startMonthly(planId, btn) {
       if (busy) return;
       busy = true; btn.disabled = true;
+      var label = btn.textContent;
+      btn.textContent = 'PayPal へ移動しています…';
+      msg.hidden = true;
+      var leaving = false;
       try {
         var res = await fetch('/.netlify/functions/monthly-create-checkout', {
           method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plan: planId }),
         });
         var data = await res.json().catch(function () { return {}; });
-        if (res.ok && data.url) { location.href = data.url; return; }
+        if (res.ok && data.url) { leaving = true; location.href = data.url; return; }
         var err = data.error || '';
-        if (err === 'login_required') return show('お申し込みにはログインが必要です。<a href="/login/?next=/pricing/">ログイン</a>（はじめての方は<a href="/free-signup/">無料会員登録</a>）のあと、もう一度お申し込みください。');
-        if (err === 'already_subscribed') return show('すでに月額プランをご契約中です。プランの変更・退会はマイページの「アカウント管理」から行えます。<a href="/dashboard/">マイページへ</a>');
-        if (err === 'already_premium') return show('すでに Premium（中央＋南関）をご利用中のため、お申し込みは不要です。ご不明な点は<a href="/contact/">お問い合わせ</a>ください。');
-        if (err === 'card_sales_not_open' || /_key_missing$/.test(err) || err === 'plan_not_configured') return show('ただいま月額プランのお申し込みを準備中です。銀行振込（年払い・買い切り）は通常どおりお申し込みいただけます。');
-        show('お申し込みを開始できませんでした。時間をおいて再度お試しください。');
+        // 未ログインはそのままログインへ（ログイン後はこのページへ戻る）
+        if (err === 'login_required') { leaving = true; btn.textContent = 'ログイン画面へ移動しています…'; location.href = '/login/?next=/pricing/'; return; }
+        if (err === 'already_subscribed') return show('すでに月額プランをご契約中です。プランの変更・退会はマイページの「アカウント管理」から行えます。<a href="/dashboard/">マイページへ</a>', btn);
+        if (err === 'already_premium') return show('すでに Premium（中央＋南関）をご利用中のため、お申し込みは不要です。ご不明な点は<a href="/contact/">お問い合わせ</a>ください。', btn);
+        if (err === 'card_sales_not_open' || /_key_missing$/.test(err) || err === 'plan_not_configured') return show('ただいま月額プランのお申し込みを準備中です。銀行振込（年払い・買い切り）は通常どおりお申し込みいただけます。', btn);
+        show('お申し込みを開始できませんでした。時間をおいて再度お試しください。', btn);
       } catch (_) {
-        show('通信に失敗しました。時間をおいて再度お試しください。');
+        show('通信に失敗しました。時間をおいて再度お試しください。', btn);
       } finally {
-        busy = false; btn.disabled = false;
+        if (!leaving) { busy = false; btn.disabled = false; btn.textContent = label; }
       }
     }
-    document.querySelectorAll('[data-monthly]').forEach(function (btn) {
+    var buttons = document.querySelectorAll('[data-monthly]');
+    buttons.forEach(function (btn) {
+      btn.dataset.label = btn.textContent;
       btn.addEventListener('click', function () { startMonthly(btn.getAttribute('data-monthly'), btn); });
+    });
+    // PayPal・ログインから「戻る」で帰ってきたとき（bfcache）に「移動しています…」のまま押せなくならないように
+    window.addEventListener('pageshow', function (e) {
+      if (!e.persisted) return;
+      busy = false;
+      buttons.forEach(function (btn) { btn.disabled = false; btn.textContent = btn.dataset.label; });
     });
   })();
 
