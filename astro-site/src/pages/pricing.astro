@@ -250,12 +250,12 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
 
         {showMonthly && (
             <section class="monthly-section" aria-label="クレジット決済">
-                <!-- 月額（PayPal の定期課金・2026-10-15 MK 決定）。金額の正本は stripePlans.STRIPE_PLANS（請求は PayPal の Plan）。
+                {/* 月額（PayPal の定期課金・2026-10-15 MK 決定）。金額の正本は stripePlans.STRIPE_PLANS（請求は PayPal の Plan）。
                      2026-10-15 MK 指示: 主役は年払い・買い切り（銀行振込）。ここは「銀行振込が難しい方」向けの控えめな選択肢。
                      「月額で始める」「毎月自動更新」「PayPal」を前面に出さない（見出し・ボタンは「クレジット決済」）。
                      自動で継続する支払いであること・決済代行は、ボタン下の注記と FAQ に事実として残す（隠さない）。
-                     ボタンは data-monthly="<planId>" → 下の startMonthly() → monthly-create-checkout（決済会社は選ばせない）。 -->
-                <p class="plans-lead plans-lead--sub">クレジット決済<br><span>銀行振込が難しい方はこちら</span></p>
+                     ボタンは data-monthly="<planId>" → 下の startMonthly() → monthly-create-checkout（決済会社は選ばせない）。 */}
+                <p class="plans-lead plans-lead--sub">クレジット決済<br><span>クレジットカード決済はこちら</span></p>
                 <div class="plans-container plans-container--stripe">
                     {monthlyPlans.map((p) => (
                         <div class="plan-card" data-plan-tier="2" data-monthly-plan={p.id}>
@@ -1319,16 +1319,18 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
         box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
     }
 
-    /* クレジット決済のボタン（控えめ・主役は銀行振込の年払い・買い切り／2026-10-15 MK 指示）*/
+        /* 2026-10-15 MK: 明るい AI らしいボタン（シアン→ブルー→バイオレット）*/
     .plan-button-credit {
-        background: transparent;
-        color: #e2e8f0;
-        border: 1px solid #64748b;
-        box-shadow: none;
+        background: linear-gradient(135deg, #22d3ee 0%, #3b82f6 50%, #8b5cf6 100%);
+        color: #ffffff;
+        border: 1px solid rgba(165, 243, 252, 0.6);
+        box-shadow: 0 4px 18px rgba(59, 130, 246, 0.45), 0 0 12px rgba(34, 211, 238, 0.35);
+        text-shadow: 0 1px 2px rgba(15, 23, 42, 0.35);
     }
 
     .plan-button-credit:hover {
-        background: rgba(100, 116, 139, 0.25);
+        background: linear-gradient(135deg, #06b6d4 0%, #2563eb 50%, #7c3aed 100%);
+        box-shadow: 0 6px 22px rgba(59, 130, 246, 0.55), 0 0 16px rgba(34, 211, 238, 0.45);
     }
 
     .plan-button-free {
