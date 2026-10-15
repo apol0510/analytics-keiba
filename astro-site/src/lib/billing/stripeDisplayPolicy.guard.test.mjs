@@ -32,6 +32,10 @@ test('/pricing/ は FAQ 以外で解約条件を販売コピーにしない', ()
   const faq = page.slice(page.indexOf('class="faq-section"'));
   assert.match(faq, /最低利用期間はなく、日割りでの返金は行っておりません/);
   assert.match(faq, /現在の利用期限を待たずにすぐにご利用いただけなくなり/);
+  // 退会の入口はマイページだけ・退会後もログインできる・銀行振込には退会が無い（2026-10-15 MK 確定）
+  assert.match(faq, /マイページの「アカウント管理」の「退会する」からだけ/);
+  assert.match(faq, /退会後もログインして無料予想をご利用いただけます/);
+  assert.match(faq, /銀行振込のプラン（年払い・買い切り）は自動更新・継続課金がないため、退会のお手続きはありません/);
   assert.match(faq, /残りの期間のご利用を希望される場合は、退会せずにそのままご利用ください/);
   assert.equal(/お支払い済みの期間の終わり/.test(page), false, '期間末解約の文言が残っている');
 });
@@ -63,14 +67,14 @@ test('Stripe 会員の判定', () => {
   assert.equal(isStripeSubscriber(null), false);
 });
 
-test('メールアドレスだけの退会処理（process-withdrawal）は Stripe 会員に退会フラグを立てず購読も操作しない', () => {
+test('メールアドレスだけの退会処理（process-withdrawal）は廃止: 何も読まず書かず送らず 410（2026-10-15 MK 確定）', () => {
   const code = stripComments(read('netlify/functions/process-withdrawal.js'));
-  const guard = code.indexOf('isStripeSubscriber(customerRecord.fields)');
-  const write = code.indexOf('await updateCustomerWithdrawalStatus(');
-  assert.ok(guard > 0 && write > 0 && guard < write);
-  const dash = read('src/pages/dashboard.astro');
-  assert.ok(dash.indexOf('_sa.stripeBilling === true') < dash.indexOf("fetch('/.netlify/functions/process-withdrawal'"));
-  assert.equal(/subscriptions\.(cancel|del|update)/.test(code), false, 'process-withdrawal から購読を操作しない');
+  assert.match(code, /statusCode: 410/);
+  assert.equal(/fetch\(|sendgrid|sgMail|WithdrawalRequested|subscriptions\.|api\.airtable/i.test(code), false, 'process-withdrawal が何かを読み書きしている');
+  // どの画面からも呼ばない
+  for (const p of ['src/pages/dashboard.astro', 'src/pages/withdrawal-upsell.astro']) {
+    assert.equal(/functions\/process-withdrawal/.test(stripComments(read(p))), false, p);
+  }
 });
 
 test('14 日返金保証は廃止（2026-10-02 MK 確定）。refund / terms / legal / pricing に残さない', () => {

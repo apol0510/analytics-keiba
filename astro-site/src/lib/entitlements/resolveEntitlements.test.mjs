@@ -136,10 +136,33 @@ test('case12: 旧 Premium Combo（互換 ON で三連複可 / OFF で不可）',
 });
 
 // 退会
-test('withdrawal → ログイン不可', () => {
+// 2026-10-15 MK 確定: 退会後も同じアカウントでログインでき、無料は使える。期限が残っていても契約由来の権限は即時停止。
+test('withdrawal → ログインと無料は可・契約由来の有料権限は期限が残っていても停止', () => {
   const e = R({ tier: 'Premium', accountStatus: 'active', expiresAt: FUTURE, withdrawalRequested: true });
-  assert.equal(e.canLogin, false);
+  assert.equal(e.canLogin, true);
+  assert.equal(e.canViewFree, true);
+  assert.equal(e.canViewPremium, false);
+  assert.equal(e.canViewPremiumJra, false);
+  assert.equal(e.canViewPremiumNankan, false);
+  assert.equal(e.canViewLight, false);
   assert.equal(e.canViewSanrenpuku, false);
+  assert.equal(e.paidPremiumActive, false);
+  const light = R({ tier: 'Light', accountStatus: 'active', expiresAt: FUTURE, withdrawalRequested: true });
+  assert.equal(light.canViewLight, false);
+  const venue = R({ tier: 'Premium', venueAccess: 'jra', accountStatus: 'active', expiresAt: FUTURE, withdrawalRequested: true });
+  assert.equal(venue.canViewPremiumJra, false);
+});
+
+test('withdrawal → 買い切りの権利は消えない（三連複の買い切り・Premium 買い切り）', () => {
+  const srp = R({ tier: 'Premium', accountStatus: 'active', expiresAt: FUTURE, withdrawalRequested: true, lifetimeSanrenpuku: true });
+  assert.equal(srp.canViewSanrenpuku, true);
+  assert.equal(srp.canViewPremium, false, '年払い・月額の Premium は退会で止まる');
+  const life = R({ tier: 'Premium', planType: 'Lifetime', accountStatus: 'active', expiresAt: '2099-12-31', withdrawalRequested: true });
+  assert.equal(life.canViewPremium, true, 'Premium 買い切りが退会で消えている');
+  assert.ok(life.reasons.includes('WITHDRAWN_LIFETIME_KEPT'));
+  // 強制ログアウト・停止は従来どおり全部止める
+  assert.equal(R({ tier: 'Premium', planType: 'Lifetime', accountStatus: 'active', expiresAt: '2099-12-31', forceLogout: true }).canViewPremium, false);
+  assert.equal(R({ tier: 'Premium', accountStatus: 'suspended', expiresAt: FUTURE, lifetimeSanrenpuku: true }).canViewSanrenpuku, false);
 });
 
 // lifetime billing（PlanType=Lifetime）は期限切れにしない

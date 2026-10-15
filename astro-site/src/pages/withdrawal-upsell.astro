@@ -848,81 +848,18 @@ import BankApplicationEmailLock from '../components/BankApplicationEmailLock.ast
           return;
         }
 
+        // 退会はマイページの「アカウント管理」の「退会する」→ 確認 → 確定だけ（2026-10-15 MK 確定）。
+        // このページからは退会しない（メールアドレスだけの旧経路 process-withdrawal は廃止）。マイページの確認画面へ移る。
         proceedBtn.addEventListener('click', function() {
-          console.log('[withdrawal-upsell] 退会手続きボタンがクリックされました');
-          // ページトップにスクロール
-          window.scrollTo(0, 0);
-          modal.style.display = 'block';
+          window.location.href = '/dashboard/?withdraw=1';
         });
 
         cancelBtn.addEventListener('click', function() {
           modal.style.display = 'none';
         });
 
-        confirmBtn.addEventListener('click', async function() {
-        const reason = reasonTextarea.value || '理由未記入';
-        const email = localStorage.getItem('userEmail') || '';
-
-        if (!email) {
-          alert('メールアドレスが取得できませんでした。ダッシュボードから再度お試しください。');
-          return;
-        }
-
-        // ボタンを無効化
-        confirmBtn.disabled = true;
-        confirmBtn.textContent = '処理中...';
-
-        try {
-          // 退会処理APIを呼び出し
-          const response = await fetch('/.netlify/functions/process-withdrawal', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              email: email,
-              reason: reason
-            })
-          });
-
-          const result = await response.json();
-
-          // Stripe の月額会員はここでは退会しない（案内メールだけ）。マイページの「アカウント管理」の「退会する」へ（2026-10-07）
-          if (response.ok && result.stripe === true) {
-            alert(result.message || '月額プラン（クレジットカード）の退会は、マイページの「アカウント管理」から行えます。');
-            window.location.href = '/dashboard/';
-            return;
-          }
-
-          if (response.ok) {
-            // 退会モーダル内のコンテンツを送信完了画面に置き換える
-            const modalContent = modal.querySelector('div');
-            if (window.SubmissionResult) {
-              window.SubmissionResult.recordSubmission({
-                type: 'withdrawal',
-                label: '退会申請',
-                status: 'completed',
-                details: { email: email, reason: reason }
-              });
-              if (modalContent) {
-                modalContent.innerHTML = window.SubmissionResult.buildSuccessHtml({
-                  title: '退会申請を受け付けました',
-                  message: '退会申請を受け付けました。',
-                  subMessage: '確認メールをお送りしましたのでご確認ください。マイページから送信履歴を確認できます。'
-                });
-              }
-            } else {
-              alert('退会申請を受け付けました。確認メールをお送りしましたのでご確認ください。');
-              window.location.href = '/';
-            }
-          } else {
-            throw new Error(result.error || '退会申請の送信に失敗しました');
-          }
-        } catch (error) {
-          alert(`エラーが発生しました: ${error.message}\n\nお手数ですが、お問い合わせフォームからご連絡ください。`);
-          confirmBtn.disabled = false;
-          confirmBtn.textContent = '退会する';
-        }
+        confirmBtn.addEventListener('click', function() {
+          window.location.href = '/dashboard/?withdraw=1';
         });
 
         // モーダル外クリックで閉じる

@@ -102,6 +102,8 @@ export const MEMBER_REASON = Object.freeze({
   FORCE_LOGOUT: 'force_logout',
   /** 退会申請済み → `free`（課金停止であって利用禁止ではない） */
   WITHDRAWAL_REQUESTED: 'withdrawal_requested',
+  /** 退会済みだが買い切り（PlanType=Lifetime）の権利は残る（2026-10-15 MK 確定） */
+  WITHDRAWN_LIFETIME_KEPT: 'withdrawn_lifetime_kept',
   STATUS_SUSPENDED: 'status_suspended',
   INVALID_SESSION_VERSION: 'invalid_session_version',
   MISSING_PLAN: 'missing_plan',
@@ -317,7 +319,7 @@ export function resolveMembership(input = {}) {
 
   // 退会申請 = 課金の停止であって利用禁止ではない（退会確認メールも
   // 「契約期間終了後は自動的に Free プランに切り替わります」と案内している）。
-  // 契約由来の権限は返さない: plan は 'free' 固定・lifetime も見ない＝有料階層へ戻さない。
+  // 契約由来の権限は返さない: plan は 'free' 固定＝有料階層へ戻さない（買い切りは下の例外）。
   // 判定不能（未知プラン）より後・その他すべてより先に評価する。
   //
   // ── 例外: カムバック施策として**宣言された**無料特典だけは認める ──────────
@@ -331,7 +333,26 @@ export function resolveMembership(input = {}) {
   //   取消・不整合でない／`ForceLogout` でない
   // 与えるのは宣言されたティアの閲覧権だけで、`WithdrawalRequested` は書き換えない。
   // 期間が切れれば自動的に下の free へ戻る（会員資格の自動復帰ではない）。
+  //
+  // ── 買い切りの権利は退会で消さない（2026-10-15 MK 確定「買い切り等の独立した既存権利を意図せず消さない」）──
+  // 退会で止めるのは月額・年払いなど期間のある契約だけ。`PlanType=Lifetime` の有料プラン（Premium 買い切り）と
+  // 三連複の買い切り（LifetimeSanrenpuku）は退会後もそのまま使える。
+  // ※ ティアの判定には `PlanType` を使わない（上の注意）。ここは「買い切りかどうか」の判定にだけ使う。
   if (withdrawn) {
+    const lifetimeContract = isPaidPlan(plan)
+      && String(readRaw(fields, ['PlanType']) ?? '').trim().toLowerCase() === 'lifetime'
+      && !PENDING_STATUS.has(status)
+      && !isExpiredDate(readRaw(fields, ['有効期限', 'ValidUntil', 'ExpiryDate', 'ExpirationDate']), now);
+    if (lifetimeContract) {
+      const v = resolveVenues(fields);
+      if (!v.ok) return deny(MEMBER_REASON.UNKNOWN_VENUE, recordId, sessionVersion, lifetime);
+      return paidResult(plan, v.venues, recordId, sessionVersion, lifetime, MEMBER_REASON.WITHDRAWN_LIFETIME_KEPT);
+    }
+    if (lifetime) {
+      const v = resolveVenues(fields);
+      if (!v.ok) return deny(MEMBER_REASON.UNKNOWN_VENUE, recordId, sessionVersion, lifetime);
+      return paidResult('premium-sanrenpuku', v.venues, recordId, sessionVersion, true, MEMBER_REASON.LIFETIME_SANRENPUKU);
+    }
     const honored = honorsGrantDespiteWithdrawal({ fields, nowMs: now });
     if (honored.ok) {
       const promo = promoResult(honored.tier);

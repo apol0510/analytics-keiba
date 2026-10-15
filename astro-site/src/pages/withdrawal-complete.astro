@@ -1,7 +1,7 @@
 ---
 /**
- * 退会完了（Stripe 月額会員の即時退会・2026-10-07 MK 確定）。
- * マイページの「退会する」→ 確認画面 → 確定（stripe-withdraw）の後に来る。会員情報は読まない静的ページ。
+ * 退会完了（月額会員の即時退会・2026-10-07 / 2026-10-15 MK 確定。銀行振込には退会が無い）。
+ * マイページの「退会する」→ 確認画面 → 確定（member-withdraw）の後に来る。会員情報は読まない静的ページ。
  */
 import BaseLayout from '../layouts/BaseLayout.astro';
 ---
@@ -11,13 +11,16 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     <p>KEIBA Analytics をご利用いただき、ありがとうございました。</p>
     <ul>
       <li>月額プランのご契約は終了し、今後の請求はありません。</li>
-      <li>有料会員としてのご利用は終了しました（残りの期間はご利用いただけません）。</li>
+      <li>月額プランのご利用は終了しました（残りの期間はご利用いただけません）。</li>
+      <li>三連複の買い切りなど、別にお持ちの買い切りは退会後も引き続きご利用いただけます。</li>
+      <li>退会はアカウントの削除ではありません。同じメールアドレスでログインでき、マイページと無料予想はご利用いただけます。</li>
       <li>確認のメールをお送りしました。</li>
     </ul>
-    <p>再びご利用いただく場合は、料金ページから新しくお申し込みください。</p>
+    <p>再び有料プランをご利用いただく場合は、料金ページから新しくお申し込みください。</p>
     <p class="actions">
-      <a class="btn" href="/pricing/">料金ページを見る</a>
-      <a class="btn secondary" href="/">トップへ戻る</a>
+      <a class="btn" href="/login/">ログインする</a>
+      <a class="btn secondary" href="/free-prediction/jra/">無料予想を見る</a>
+      <a class="btn secondary" href="/pricing/">料金ページを見る</a>
     </p>
   </section>
 </BaseLayout>

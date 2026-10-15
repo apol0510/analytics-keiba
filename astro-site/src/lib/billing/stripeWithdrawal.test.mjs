@@ -179,25 +179,25 @@ test('予約停止・期間末解約・解約取消を作るコードが無い�
 });
 
 // ── 確認画面 → 確定 の 2 段階 / 必須の説明 ─────────────────────────
-test('マイページ: 「退会する」は確認画面を開くだけ。確定ボタンだけが stripe-withdraw を呼ぶ（confirm: true）', () => {
+test('マイページ: 「退会する」は確認画面を開くだけ。確定ボタンだけが member-withdraw を呼ぶ（confirm: true）', () => {
   const dash = read('src/pages/dashboard.astro');
   assert.match(dash, /id="ak-withdraw-open"[^>]*onclick="akOpenWithdraw\(\)"/);
   assert.match(dash, /id="ak-withdraw-confirm"[^>]*onclick="akConfirmWithdraw\(\)"/);
   const open = dash.slice(dash.indexOf('window.akOpenWithdraw'), dash.indexOf('window.akCloseWithdraw'));
-  assert.equal(/stripe-withdraw/.test(open), false, '確認画面を開くだけで退会しない');
+  assert.equal(/-withdraw'/.test(open), false, '確認画面を開くだけで退会しない');
   const confirm = dash.slice(dash.indexOf('window.akConfirmWithdraw'));
-  // Stripe 月額は stripe-withdraw、PayPal 月額（2026-10-15〜）は paypal-withdraw
-  assert.match(confirm, /paypalBilling === true \? 'paypal-withdraw' : 'stripe-withdraw'/);
-  assert.match(confirm, /\/\.netlify\/functions\/' \+ endpoint/);
+  // 退会の入口は member-withdraw だけ（2026-10-15 MK 確定。月額・年払い・買い切りの判定はサーバー）
+  assert.match(confirm, /fetch\('\/\.netlify\/functions\/member-withdraw'/);
+  assert.equal(/stripe-withdraw|paypal-withdraw|process-withdrawal/.test(confirm.slice(0, confirm.indexOf('function openBankModal'))), false);
   assert.match(confirm, /confirm: true/);
   assert.match(confirm, /if \(akWithdrawInFlight\) return;/, '画面側の二重送信防止');
   // 確認画面の必須の説明
   assert.match(dash, /退会すると、現在の利用期限<span id="ak-withdraw-valid-until"><\/span>を待たずに、すぐにご利用いただけなくなります。/);
   assert.match(dash, /残りの期間のご利用を希望される場合は、退会せずにそのままご利用ください。/);
   // サーバーは confirm が無い送信を受けない・許可オリジンだけ・セッション必須
-  const fn = stripComments(read('netlify/functions/stripe-withdraw.js'));
+  const fn = stripComments(read('src/lib/billing/memberWithdrawServer.js'));
   assert.match(fn, /body\.confirm !== true\) return reply\(400/);
-  assert.match(fn, /isAllowedOrigin\(origin\)\) return reply\(403/);
+  assert.match(fn, /isAllowedOrigin\(reqOrigin, [^)]*\)\) return reply\(403/);
   assert.match(fn, /readSessionRecordId\(/);
   assert.equal(/body\.email|JSON\.parse\([^)]*\)\.email/.test(fn), false, 'メールアドレスで本人を決めない');
 });
@@ -333,7 +333,7 @@ test('直 URL で回避不可: 退会前に発行された有料セッション�
   assert.equal(viewerProfile(withdrawn).billing, null);
   assert.equal(viewerProfile(activeMember()).billing, 'stripe');
   // 退会の応答でセッション Cookie を消す
-  assert.match(stripComments(read('netlify/functions/stripe-withdraw.js')), /'Set-Cookie': buildLogoutCookie\(\)/);
+  assert.match(stripComments(read('src/lib/billing/memberWithdrawServer.js')), /'Set-Cookie': buildLogoutCookie\(\)/);
 });
 
 // ── 再契約可能 ────────────────────────────────────────────

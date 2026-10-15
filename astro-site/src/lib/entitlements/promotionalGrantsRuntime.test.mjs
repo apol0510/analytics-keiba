@@ -194,7 +194,6 @@ test('停止・退会・強制ログアウトは特典があっても有料権�
   for (const bad of [
     { Status: 'suspended' },
     { Status: 'banned' },
-    { WithdrawalRequested: true },
     { ForceLogout: true },
   ]) {
     const fields = { ...EXPIRED_PREMIUM, ...grants, ...bad };
@@ -213,6 +212,12 @@ test('停止・退会・強制ログアウトは特典があっても有料権�
   const withdrawn = { ...EXPIRED_PREMIUM, ...grants, WithdrawalRequested: true };
   assert.equal(M(suspended).memberType, MEMBER_TYPE.DENIED);
   assert.equal(M(withdrawn).memberType, MEMBER_TYPE.FREE);
+  // 退会者: ログインはできる（2026-10-15 MK 確定）が、施策で宣言されていない特典では有料権限を得ない
+  const ew = E(withdrawn);
+  assert.equal(ew.canLogin, true, '退会者がログインできない');
+  assert.equal(ew.canViewFree, true);
+  assert.equal(ew.canViewPremium, false, '退会者に Premium が見える');
+  assert.equal(ew.canViewLight, false, '退会者に Light が見える');
 });
 
 test('テストアカウントは閲覧権限を得ず、そもそも付与対象にならない', () => {

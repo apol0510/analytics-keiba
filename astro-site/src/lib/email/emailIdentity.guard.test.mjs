@@ -106,7 +106,6 @@ test('email-config.js の契約値が固定されている', async () => {
 test('メール送信する現役 Function は email-config.js を参照している', () => {
   const REQUIRED = [
     'contact-form.js',
-    'process-withdrawal.js',
     'premium-plus-contact.js',
     'point-exchange.js',
     'expiry-notification.js',

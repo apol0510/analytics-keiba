@@ -35,6 +35,8 @@
  *    有料本文そのものの保護は従来どおり `gatePaidPage` が行う。
  */
 
+import { revokedForRecord } from './sessionRevocation.js';
+import { classifyMemberWithdrawal } from '../billing/memberWithdrawal.js';
 import { verifyPlanAccess, PAGE_ACCESS_REJECT, ALL_MEMBER_PLANS } from './pageAccess.js';
 import { normalizeLookupResult } from './paidPageGate.js';
 import { lookupCustomerFieldsResult } from '../premiumPlus/purchaseAnchorLookup.js';
@@ -90,8 +92,9 @@ function result(state, reason, entitlements = null, recordId = null, profile = n
  *
  * 列名は `fromAirtableFields` と同じく**表記ゆれを吸収**する（日本語列 / 英語列）。
  */
-export function viewerProfile(fields) {
+export function viewerProfile(fields, now = Date.now()) {
   const f = fields || {};
+  const wd = classifyMemberWithdrawal(f, now);
   const read = (keys) => {
     for (const k of keys) {
       const v = f[k];
@@ -116,6 +119,13 @@ export function viewerProfile(fields) {
       : String(read(['PaymentMethod']) || '').trim().toLowerCase() === 'stripe' && /^cus_/.test(String(read(['StripeCustomerId']) || '')) ? 'stripe'
         : String(read(['PaymentMethod']) || '').trim().toLowerCase() === 'paypal' && String(read(['PlanType']) || '').trim().toLowerCase() === 'monthly' ? 'paypal'
           : null,
+    // 退会（マイページ「退会する」→ 確認 → 確定・2026-10-15 MK 確定）の種類と、退会後も残る買い切り。
+    // kind: stripe | paypal（退会できるのは月額だけ）| bank_transfer（銀行振込には退会が無い）| none（無料など）| already_withdrawn
+    withdraw: {
+      kind: wd.kind,
+      keepsPremiumLifetime: wd.keeps.premiumLifetime === true,
+      keepsSanrenpukuLifetime: wd.keeps.sanrenpukuLifetime === true,
+    },
     // 会員ランク（docs/MEMBER_RANK.md）の起点。本人に既に表示している登録日だけを渡す
     registeredAt: read(['登録日', 'RegisteredAt', 'RegistrationDate']),
   };
@@ -132,7 +142,7 @@ export function viewerProfile(fields) {
  * }} input
  * @returns {Promise<{state:string, reason:string, recordId:string|null, entitlements:object, isMember:boolean}>}
  */
-export async function resolveViewer({ request, env, now = Date.now(), lookup = lookupCustomerFieldsResult } = {}) {
+export async function resolveViewer({ request, env, now = Date.now(), lookup = lookupCustomerFieldsResult, revoked = revokedForRecord } = {}) {
   // env 未注入は「判定できなかった」。既定値で process.env を掴まない。
   if (!env || typeof env !== 'object') return result(VIEWER_STATE.UNKNOWN, 'env_missing');
 
@@ -168,9 +178,12 @@ export async function resolveViewer({ request, env, now = Date.now(), lookup = l
   if (!sub) return result(VIEWER_STATE.ANONYMOUS, 'no_subject');
 
   // ── 2. 権利判定（Airtable が正本。買い切り・無料特典もここで効く）──
+  // 退会直後の会員はキャッシュを使わず読み直す（paidPageGate と同じ・sessionRevocation.js）
+  let fresh = false;
+  try { fresh = (await revoked({ recordId: sub, env })) === true; } catch { fresh = false; }
   let looked = null;
   try {
-    looked = await lookup({ recordId: sub, env, now });
+    looked = await lookup(fresh ? { recordId: sub, env, now, maxAgeMs: 0 } : { recordId: sub, env, now });
   } catch {
     return result(VIEWER_STATE.UNKNOWN, 'lookup_failed');
   }
@@ -188,7 +201,7 @@ export async function resolveViewer({ request, env, now = Date.now(), lookup = l
   } catch {
     return result(VIEWER_STATE.UNKNOWN, 'entitlements_failed');
   }
-  return result(VIEWER_STATE.MEMBER, 'ok', ent, sub, viewerProfile(r.fields));
+  return result(VIEWER_STATE.MEMBER, 'ok', ent, sub, viewerProfile(r.fields, now));
 }
 
 /** `unknown` 扱いにすべき理由か（画面側で「ログアウト」と書かないための判定）。 */
