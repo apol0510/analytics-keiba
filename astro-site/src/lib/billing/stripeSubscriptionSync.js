@@ -95,14 +95,14 @@ const isTruthy = (v) => v === true || v === 1 || /^(true|1|yes)$/i.test(String(v
  * - `WithdrawalRequested=true` … resolveMembership / resolveEntitlements がその場で無料扱いにする
  * - `有効期限` … **昨日（JST）へ縮める**（延ばさない）。'YYYY-MM-DD' は当日 00:00 UTC（09:00 JST）に切れるため、
  *   今日の日付ではその朝 9 時まで見られてしまう。残り期間は使えない（2026-10-07 MK 確定）
- * - 既に退会済みなら理由・日付は書き換えない（二重処理でも同じ結果）
+ * - 既に退会済みなら理由・日付・CancelledAt は書き換えない（二重処理でも同じ結果）
  */
 export function withdrawalFields({ fields = {}, now = new Date(), reason = null } = {}) {
   const yesterday = jstDateString(new Date(now.getTime() - 24 * 60 * 60 * 1000));
   const current = String(fields['有効期限'] || '').trim();
   const out = {
     '有効期限': current && current < yesterday ? current : yesterday,
-    CancelledAt: now.toISOString(),
+    CancelledAt: isTruthy(fields.WithdrawalRequested) && fields.CancelledAt ? fields.CancelledAt : now.toISOString(),
   };
   if (!isTruthy(fields.WithdrawalRequested)) {
     out.WithdrawalRequested = true;

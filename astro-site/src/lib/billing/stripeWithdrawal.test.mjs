@@ -306,6 +306,15 @@ test('withdrawalFields は期限を縮めるだけ（既に過去ならそのま
   assert.equal(withdrawalFields({ fields: {}, now: new Date('2026-10-06T15:30:00Z') })['有効期限'], '2026-10-06');
 });
 
+test('withdrawalFields は退会済みの CancelledAt を書き換えない（退会 API の後に終了 webhook が届いても退会時刻のまま）', () => {
+  const first = withdrawalFields({ fields: {}, now: NOW });
+  const later = new Date(NOW.getTime() + 16_000);
+  const again = withdrawalFields({ fields: { ...first }, now: later });
+  assert.equal(again.CancelledAt, first.CancelledAt);
+  // 退会フラグはあるが CancelledAt が空（旧データ）なら埋める
+  assert.equal(withdrawalFields({ fields: { WithdrawalRequested: true }, now: later }).CancelledAt, later.toISOString());
+});
+
 // ── 直 URL で回避不可 ───────────────────────────────────────
 test('直 URL で回避不可: 退会前に発行された有料セッションで有料ページを開いても、退会後のレコードでは拒否', async () => {
   const SECRET = 'test-only-fixed-hmac-secret-DO-NOT-USE-IN-PROD-0123456789';
