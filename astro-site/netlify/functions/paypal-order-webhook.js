@@ -1,5 +1,5 @@
 /**
- * paypal-order-webhook — PayPal の通知（承認・capture 完了・返金・リバーサル）を受けて会員へ反映する
+ * paypal-order-webhook — PayPal の通知を受けて会員へ反映する（一回払い: 承認・capture・返金／月額: BILLING.SUBSCRIPTION.*・PAYMENT.SALE.*）
  *
  * - PayPal の検証 API（verify-webhook-signature・PAYPAL_WEBHOOK_ID）で SUCCESS のものだけ。それ以外は 401。
  * - 通知の中身は信じない。注文を PayPal API で照会して確かめてから反映（paypalServer → entitlementLedger）。
@@ -11,6 +11,7 @@ installAirtableCallMeter({ source: 'paypal-order-webhook' });
 import { rawBody } from '../../src/lib/billing/stripeRuntime.js';
 import { handlePaypalWebhook } from '../../src/lib/billing/paypal/paypalServer.js';
 import { resolvePaypalMode } from '../../src/lib/billing/paypal/paypalCore.js';
+import { handlePaypalSubscriptionEvent } from '../../src/lib/billing/paypal/paypalSubscriptionServer.js';
 import { makeCardNotifier } from '../../src/lib/billing/cardNotify.js';
 import { makeRedisCmd } from '../../src/lib/premiumPlus/premiumPlusFunnelServer.js';
 
@@ -20,11 +21,13 @@ exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') return { statusCode: 405, headers: H, body: '{"error":"method_not_allowed"}' };
   const env = process.env;
   const origin = `https://${String(event.headers?.host || event.headers?.Host || '')}`;
-  const mode = resolvePaypalMode({ env, origin });
+  const mode = resolvePaypalMode({ env, origin, salesOpen: true });
+  const redis = makeRedisCmd(env);
+  const notify = makeCardNotifier(env, { mode: mode.ok ? mode.mode : 'test', provider: 'paypal' });
   try {
     const r = await handlePaypalWebhook({
-      env, origin, headers: event.headers || {}, rawBody: rawBody(event), redis: makeRedisCmd(env),
-      notify: makeCardNotifier(env, { mode: mode.ok ? mode.mode : 'test', provider: 'paypal' }),
+      env, origin, headers: event.headers || {}, rawBody: rawBody(event), redis, notify,
+      onSubscriptionEvent: (evt) => handlePaypalSubscriptionEvent({ env, origin, event: evt, redis, notify }),
     });
     console.log(JSON.stringify({ event: 'paypal_webhook', result: r.result }));
     return { statusCode: r.status, headers: H, body: JSON.stringify({ result: r.result }) };

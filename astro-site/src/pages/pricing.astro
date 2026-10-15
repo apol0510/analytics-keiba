@@ -4,9 +4,21 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 import CampaignBanner from '../components/CampaignBanner.astro';
 import { buildPlanTierByToken } from '../lib/pricing/planTiers.js';
 import { LIGHT_SWITCH_GRACE_DAYS } from '../lib/pricing/pricingEligibility.js';
+import { SUBSCRIPTION_SALES_OPEN, ACTIVE_SUBSCRIPTION_PROVIDER } from '../lib/billing/cardSales.js';
+import { STRIPE_PLANS } from '../lib/billing/stripePlans.js';
 
 // 正規化済みプラン名 → tier。インライン script へ焼き込む（別名表の単一源は planNormalization.js）
 const planTierByToken = buildPlanTierByToken();
+
+// 月額（PayPal の定期課金・2026-10-15 MK 決定）。本番は SUBSCRIPTION_SALES_OPEN を true にする PR だけで表示する。
+// Deploy Preview（Sandbox 検証）では表示する（申込はサーバー側で Sandbox 鍵のときだけ通る）。
+const showMonthly = SUBSCRIPTION_SALES_OPEN[ACTIVE_SUBSCRIPTION_PROVIDER] === true || process.env.CONTEXT === 'deploy-preview';
+const MONTHLY_COPY = {
+  'premium': { name: 'Premium 中央＋南関', desc: '中央版＋南関版のセットなら<strong>¥980 お得</strong>', scope: '中央・南関', pills: ['jra', 'nankan'], note: '両方', recommended: true },
+  'premium-jra': { name: 'Premium 中央版', desc: '週末の中央競馬だけで勝負したい方に', scope: '中央', pills: ['jra'], note: '中央のみ' },
+  'premium-nankan': { name: 'Premium 南関版', desc: '平日の南関競馬だけで勝負したい方に', scope: '南関', pills: ['nankan'], note: '南関のみ' },
+};
+const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }));
 ---
 
 <BaseLayout title="料金プラン">
@@ -235,6 +247,44 @@ const planTierByToken = buildPlanTierByToken();
             </div>
         </div>
 
+
+        {showMonthly && (
+            <section class="monthly-section" aria-label="月額プラン">
+                <!-- 月額（PayPal の定期課金・2026-10-15 MK 決定）。金額の正本は stripePlans.STRIPE_PLANS（請求は PayPal の Plan）。
+                     ボタンは data-monthly="<planId>" → 下の startMonthly() → monthly-create-checkout（決済会社は選ばせない）。 -->
+                <p class="plans-lead">月額で始める<br><span>PayPal でお支払い（PayPal に登録したクレジットカードも使えます）・毎月自動更新</span></p>
+                <div class="plans-container plans-container--stripe">
+                    {monthlyPlans.map((p) => (
+                        <div class={`plan-card${p.copy.recommended ? ' plan-card-recommended' : ''}`} data-plan-tier="2" data-monthly-plan={p.id}>
+                            {p.copy.recommended && <div class="recommended-badge"><span>✨ 両方ならお得</span></div>}
+                            <div class="plan-header">
+                                <h3 class="plan-name">{p.copy.name}</h3>
+                                <div class="plan-price">
+                                    <span class="price-amount">¥{p.amountYen.toLocaleString('ja-JP')}</span>
+                                    <span class="price-period">/月</span>
+                                </div>
+                                <p class="plan-description" set:html={p.copy.desc} />
+                            </div>
+                            <div class="plan-venues" aria-label="対応会場">
+                                {p.copy.pills.includes('jra') && <span class="plan-venue-pill plan-venue-pill--jra">🏇 中央<small>JRA</small></span>}
+                                {p.copy.pills.includes('nankan') && <span class="plan-venue-pill plan-venue-pill--nankan">🏁 南関</span>}
+                                <span class="plan-venue-note">{p.copy.note}</span>
+                            </div>
+                            <ul class="plan-features">
+                                <li class="feature-item"><span class="check-icon">✓</span><span><strong>{p.copy.scope}の全レース、予想を取得し放題</strong></span></li>
+                                <li class="feature-item"><span class="check-icon">✓</span><span>高精度AI予想・詳細な投資戦略</span></li>
+                                <li class="feature-item"><span class="check-icon">✓</span><span>優先サポート</span></li>
+                            </ul>
+                            <button type="button" class={`plan-button ${p.copy.recommended ? 'plan-button-annual' : 'plan-button-monthly'}`} data-monthly={p.id}>
+                                PayPal で申し込む
+                            </button>
+                            <p class="plan-billing-note">月額・毎月自動更新（PayPal でお支払い）</p>
+                        </div>
+                    ))}
+                </div>
+                <p class="checkout-message" id="monthlyMessage" role="status" hidden></p>
+            </section>
+        )}
 
         <!-- 使い方（2026-10-05 MK: 取得し放題の趣旨を申込前に伝える） -->
         <section class="howto" aria-label="ご利用の流れ">
@@ -493,6 +543,39 @@ const planTierByToken = buildPlanTierByToken();
 </BaseLayout>
 
 <script is:inline>
+  // ── 月額（PayPal の定期課金・2026-10-15 MK 決定）の申込 ─────────────
+  // 金額はサーバー（PayPal の Plan）が決める。送るのはプラン ID だけ。ログイン必須（未ログインはログインへ）。
+  (function () {
+    var msg = document.getElementById('monthlyMessage');
+    if (!msg) return;
+    var busy = false;
+    function show(html) { msg.innerHTML = html; msg.hidden = false; msg.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
+    async function startMonthly(planId, btn) {
+      if (busy) return;
+      busy = true; btn.disabled = true;
+      try {
+        var res = await fetch('/.netlify/functions/monthly-create-checkout', {
+          method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plan: planId }),
+        });
+        var data = await res.json().catch(function () { return {}; });
+        if (res.ok && data.url) { location.href = data.url; return; }
+        var err = data.error || '';
+        if (err === 'login_required') return show('お申し込みにはログインが必要です。<a href="/login/?next=/pricing/">ログイン</a>（はじめての方は<a href="/free-signup/">無料会員登録</a>）のあと、もう一度お申し込みください。');
+        if (err === 'already_subscribed') return show('すでに月額プランをご契約中です。プランの変更・退会はマイページの「アカウント管理」から行えます。<a href="/dashboard/">マイページへ</a>');
+        if (err === 'already_premium') return show('すでに Premium（中央＋南関）をご利用中のため、お申し込みは不要です。ご不明な点は<a href="/contact/">お問い合わせ</a>ください。');
+        if (err === 'card_sales_not_open' || /_key_missing$/.test(err) || err === 'plan_not_configured') return show('ただいま月額プランのお申し込みを準備中です。銀行振込（年払い・買い切り）は通常どおりお申し込みいただけます。');
+        show('お申し込みを開始できませんでした。時間をおいて再度お試しください。');
+      } catch (_) {
+        show('通信に失敗しました。時間をおいて再度お試しください。');
+      } finally {
+        busy = false; btn.disabled = false;
+      }
+    }
+    document.querySelectorAll('[data-monthly]').forEach(function (btn) {
+      btn.addEventListener('click', function () { startMonthly(btn.getAttribute('data-monthly'), btn); });
+    });
+  })();
+
   // 2026-10-11 MK 確定: 新規の月払い（Stripe 月額）は全面停止。ここから Stripe Checkout を呼ぶ処理は置かない
   // （サーバー側も stripe-create-checkout が 410 monthly_sales_ended で拒否する）。
 
@@ -830,9 +913,13 @@ const planTierByToken = buildPlanTierByToken();
 
     :global(:root[data-premium-active="1"]) .plans-lead,
     :global(:root[data-premium-active="1"]) .plan-card[data-plan-tier="0"],
-    :global(:root[data-premium-active="1"]) .plan-card[data-stripe-plan] {
+    :global(:root[data-premium-active="1"]) .plan-card[data-stripe-plan],
+    :global(:root[data-premium-active="1"]) .monthly-section {
         display: none !important;
     }
+
+    .monthly-section { margin-top: 2.5rem; }
+    .monthly-section .checkout-message { text-align: center; color: #e2e8f0; margin: 1rem auto 0; max-width: 640px; line-height: 1.7; }
 
     /* ===== Stripe 月額（主導線） ===== */
     .plans-lead {

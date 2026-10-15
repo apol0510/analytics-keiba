@@ -186,7 +186,9 @@ test('マイページ: 「退会する」は確認画面を開くだけ。確定
   const open = dash.slice(dash.indexOf('window.akOpenWithdraw'), dash.indexOf('window.akCloseWithdraw'));
   assert.equal(/stripe-withdraw/.test(open), false, '確認画面を開くだけで退会しない');
   const confirm = dash.slice(dash.indexOf('window.akConfirmWithdraw'));
-  assert.match(confirm, /\/\.netlify\/functions\/stripe-withdraw/);
+  // Stripe 月額は stripe-withdraw、PayPal 月額（2026-10-15〜）は paypal-withdraw
+  assert.match(confirm, /paypalBilling === true \? 'paypal-withdraw' : 'stripe-withdraw'/);
+  assert.match(confirm, /\/\.netlify\/functions\/' \+ endpoint/);
   assert.match(confirm, /confirm: true/);
   assert.match(confirm, /if \(akWithdrawInFlight\) return;/, '画面側の二重送信防止');
   // 確認画面の必須の説明
@@ -302,6 +304,15 @@ test('withdrawalFields は期限を縮めるだけ（既に過去ならそのま
   assert.equal(withdrawalFields({ fields: { '有効期限': '2026-09-01' }, now: NOW })['有効期限'], '2026-09-01');
   // JST 0 時台（UTC 前日）でも「昨日（JST）」になる
   assert.equal(withdrawalFields({ fields: {}, now: new Date('2026-10-06T15:30:00Z') })['有効期限'], '2026-10-06');
+});
+
+test('withdrawalFields は退会済みの CancelledAt を書き換えない（退会 API の後に終了 webhook が届いても退会時刻のまま）', () => {
+  const first = withdrawalFields({ fields: {}, now: NOW });
+  const later = new Date(NOW.getTime() + 16_000);
+  const again = withdrawalFields({ fields: { ...first }, now: later });
+  assert.equal(again.CancelledAt, first.CancelledAt);
+  // 退会フラグはあるが CancelledAt が空（旧データ）なら埋める
+  assert.equal(withdrawalFields({ fields: { WithdrawalRequested: true }, now: later }).CancelledAt, later.toISOString());
 });
 
 // ── 直 URL で回避不可 ───────────────────────────────────────

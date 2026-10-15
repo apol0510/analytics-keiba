@@ -19,15 +19,24 @@ function same(a, b) {
   return y.length > 0 && x.length === y.length && timingSafeEqual(x, y);
 }
 
-export async function e2eRecordIdFor({ event, env, body, testMode, fetchImpl }) {
-  if (testMode !== true) return null;
+export async function e2eRecordIdFor(input) {
+  return (await e2eCheck(input)).id;
+}
+
+/**
+ * e2eRecordIdFor と同じ判定で、通らなかった段階も返す（テストモードで秘密ヘッダが付いた要求の切り分け用）。
+ * reason は段階名だけ（秘密・レコード内容は返さない）。
+ */
+export async function e2eCheck({ event, env, body, testMode, fetchImpl }) {
+  if (testMode !== true) return { id: null, reason: 'not_test_mode' };
   const secret = env.CARD_E2E_SECRET || '';
   const got = event?.headers?.['x-ak-e2e-secret'] || '';
-  if (secret.length < 24 || !same(got, secret)) return null;
+  if (secret.length < 24) return { id: null, reason: 'secret_unset' };
+  if (!same(got, secret)) return { id: null, reason: 'secret_mismatch' };
   const id = String(body?.e2eRecordId || '');
-  if (!/^rec[A-Za-z0-9]{14}$/.test(id)) return null;
+  if (!/^rec[A-Za-z0-9]{14}$/.test(id)) return { id: null, reason: 'invalid_record_id' };
   try {
     const rec = await airtable(env, fetchImpl).get(id);
-    return E2E_EMAIL_RE.test(String(rec?.fields?.Email || '')) ? id : null;
-  } catch { return null; }
+    return E2E_EMAIL_RE.test(String(rec?.fields?.Email || '')) ? { id, reason: 'ok' } : { id: null, reason: 'not_e2e_record' };
+  } catch (e) { return { id: null, reason: `lookup_failed_${String(e?.message || '').slice(0, 40)}` }; }
 }

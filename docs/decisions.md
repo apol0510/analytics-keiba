@@ -1,3 +1,13 @@
+# 2026-10-15（追記）— 月額は PayPal の定期課金で先に受け付ける・年払い／買い切りは銀行振込のまま（MK 決定）
+
+- MK 指示（原文）「paddleがメインだがpaypalで先に進めて、paypalは月額の定期課金で決済を受け付けます、年払いや買い切りは銀行振り込みを維持します。銀行振り込みの１ヶ月プランは停止のままです。」
+- **月額は PayPal の定期課金（Subscriptions API）で受け付ける**。年払い・買い切りは銀行振込を維持（カードの一回払い `CARD_SALES_OPEN` は全社 false のまま）。銀行振込の 1 ヶ月プラン（Light ¥4,980/30 日の新規・Premium 月払い ¥18,000）は停止のまま。
+- Paddle はメインのまま（審査中）。月額をどの決済会社で受けるかは `cardSales.ACTIVE_SUBSCRIPTION_PROVIDER`（現在 `paypal`）。お客様に決済会社を選ばせない・自動フォールバックしない（冗長化 2026-10-13 と同じ）。
+- 2026-10-11 の「売るのは一回払いだけ・定期課金を作らない」は本エントリで置き換える（Stripe の新規月払い `MONTHLY_SALES_OPEN=false` は維持）。
+- 以下は MK の文言に無く、**既存の月額の確定仕様をそのまま適用**したもの（Claude 判断・変更するなら MK が決める）: 商品と価格（Premium ¥4,980・中央版 ¥2,980・南関版 ¥2,980／月＝spec「Stripe 定期購読」2026-10-02）、退会は即時・残り期間なし・返金なし（2026-10-07）、期限は支払い済み期間 + 猶予 2 日。
+- 以下は **Claude 案（MK 未確認）**: 申込はログイン必須（未登録は無料会員登録のあと）／プラン変更（中央版・南関版 ⇄ Premium）は当面提供しない（退会 → 新規申込）／料金ページでは年払い・買い切りのカードの下に月額のカードを置く。
+- 本番の受付は `cardSales.SUBSCRIPTION_SALES_OPEN.paypal` を true にする PR で開く（env では開かない）。その前に Sandbox E2E・PayPal の Live 鍵・Live の Plan と Webhook・法定表示（legal / terms / refund）の更新を済ませる。
+
 # 2026-10-15 — fincode は使わない・コードごと削除（MK 決定）／PayPal 審査通過・Paddle 審査中（MK 報告）
 
 - MK 指示「fincodeは使用しません（完全削除して）」。fincode の Functions（`fincode-create-session`・`fincode-webhook`・`fincode-order-status`）・`src/lib/billing/fincode/`・手順書 `FINCODE_BILLING.md` を削除し、共通層（`CARD_SALES_OPEN`・`CARD_PROVIDER_ROLES`・`entitlementLedger.PROVIDERS`・申込入口・完了画面・E2E 判定）から fincode を外した。guard テストで再混入を検知する。
