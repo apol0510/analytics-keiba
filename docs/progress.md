@@ -1,12 +1,12 @@
-# 🚪 退会仕様（全会員共通・マイページだけ・2026-10-15 MK 確定 / **実装・テスト済み・PR 作成・本番未反映**）
+# 🚪 退会仕様（月額だけ・マイページだけ・銀行振込には退会が無い・2026-10-15 MK 確定 / **実装・テスト済み・PR #804・本番未反映**）
 
 | 項目 | 状態 |
 |---|---|
-| 正本 | spec「退会（全会員共通）」・decisions 2026-10-15（追記 3） |
-| 実装 | 入口 `member-withdraw`（`memberWithdrawServer.js`）・判定 `memberWithdrawal.js`・即時停止 `auth/sessionRevocation.js`（paidPageGate / resolveViewer）・権限（退会後もログイン可・買い切りは残る）・マイページ（銀行振込・買い切りのアカウント管理／確認画面の種類別の説明／無料会員への案内）・`process-withdrawal` 410・`/withdrawal-upsell/` はマイページへ・完了メール／完了ページ／refund・terms・legal・service-description・FAQ |
+| 正本 | spec「退会」・decisions 2026-10-15（追記 3・追記 4「銀行振込に退会の概念は無い」） |
+| 実装 | 入口 `member-withdraw`（`memberWithdrawServer.js`）・判定 `memberWithdrawal.js`（退会は stripe / paypal だけ・銀行振込は `bank_transfer`＝409 で何も書かない）・即時停止 `auth/sessionRevocation.js`（paidPageGate / resolveViewer）・権限（退会後もログイン可・別に持つ三連複の買い切りは残る）・マイページ（銀行振込の会員には退会ボタンを出さず案内だけ）・`process-withdrawal` 410・`/withdrawal-upsell/` はマイページへ・完了メール／完了ページ／refund・terms・legal・service-description・FAQ |
 | 既存の不具合（同時に是正）| ①`process-withdrawal` はメールアドレスだけで他人を退会させられた ②マイページの確認画面が module の `getServerAuth` を inline から呼んでいて常に null（利用期限が出ていなかった）③退会後に端末のログイン情報が消えていなかった ④期限切れ警告の JS が無効化済みボタンを参照して止まっていた |
-| test | `memberWithdrawal.test.mjs` 15 件（入口・確認・二重退会・他会員・即時停止と古いセッション・ログイン可・無料可・買い切りが残る・月額は各社へ・旧入口 410）＋既存テストを新仕様へ更新。lib 全体 9,320 pass・check:safety pass・build pass |
-| 実ブラウザ（ローカル・Airtable/Redis を差し替え・使い捨て鍵）| 年払い＋三連複買い切りの合成会員でマイページ → アカウント管理 → 確認画面（期限・三連複が残る旨・退会後もログイン可）→ 確定で `member-withdraw` に `{confirm:true}` → 完了ページ。退会後の同じセッションで Premium・Light ページは 302 `/login/?r=not_entitled`、三連複は 200、無料・マイページは 200 |
+| test | `memberWithdrawal.test.mjs`（入口・確認・二重退会・他会員・即時停止と古いセッション・ログイン可・無料可・月額＋三連複の買い切りは三連複が残る・銀行振込は 409 で書かない・月額は各社へ・旧入口 410）＋既存テストを新仕様へ更新 |
+| 実ブラウザ（ローカル・Airtable/Redis/PayPal を差し替え・使い捨て鍵）| **PayPal 月額＋三連複買い切り**の合成会員: マイページ → 退会する（`?withdraw=1` でも開く）→ 確認画面（期限 2026-11-17・三連複が残る旨・退会後もログイン可）→ 確定で PayPal の cancel を 1 回・`member-withdraw` 200 → 完了ページ・Cookie 削除。退会後の同じセッションで Premium・Light は 302 `/login/?r=not_entitled`、三連複・無料・マイページは 200、2 回目は 409 `already_withdrawn`。**銀行振込の年払い**の合成会員: 退会ボタン 0・「銀行振込には退会の手続きはありません」の案内だけ・直接 POST は 409 `bank_transfer_no_withdrawal`・レコード不変・Premium 200 のまま |
 | 本番データ | 退会済み 29 件・うち買い切りあり 0 件（権限変更で戻る既存会員なし）|
 | 次作業 | PR の CI → MK merge → 本番 smoke（`process-withdrawal` 410・`member-withdraw` 未ログイン 401・他サイト 403・料金/規約ページの文言・マイページ表示）|
 

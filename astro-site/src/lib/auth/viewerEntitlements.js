@@ -120,7 +120,7 @@ export function viewerProfile(fields, now = Date.now()) {
         : String(read(['PaymentMethod']) || '').trim().toLowerCase() === 'paypal' && String(read(['PlanType']) || '').trim().toLowerCase() === 'monthly' ? 'paypal'
           : null,
     // 退会（マイページ「退会する」→ 確認 → 確定・2026-10-15 MK 確定）の種類と、退会後も残る買い切り。
-    // kind: stripe | paypal | contract | lifetime_only | none（無料など退会不要）| already_withdrawn
+    // kind: stripe | paypal（退会できるのは月額だけ）| bank_transfer（銀行振込には退会が無い）| none（無料など）| already_withdrawn
     withdraw: {
       kind: wd.kind,
       keepsPremiumLifetime: wd.keeps.premiumLifetime === true,

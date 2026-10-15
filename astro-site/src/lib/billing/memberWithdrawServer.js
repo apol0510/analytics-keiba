@@ -2,16 +2,17 @@
  * memberWithdrawServer.js — マイページ「退会する」→ 確認 → 確定 の受け口（単一源・2026-10-15 MK 確定）
  *
  * POST（ログイン必須 / ak_session・許可オリジンのみ）{ confirm: true, reason?: string }
- *   → 200 { ok: true, kind }               退会した（契約由来の権限は即時停止・セッション Cookie を消す）
+ *   → 200 { ok: true, kind }               退会した（月額の自動課金と月額由来の権限を即時停止・セッション Cookie を消す）
  *   → 400 confirm_required                 確認画面を経ていない
  *   → 401 login_required                   セッションが無い（**メールアドレスでは本人を決めない**）
  *   → 403 forbidden_origin
  *   → 404 record_not_found / not_stripe_subscriber / not_paypal_subscriber
- *   → 409 already_withdrawn（二重退会）/ no_contract（無料会員など止める契約が無い）/ subscription_mismatch
+ *   → 409 already_withdrawn（二重退会）/ bank_transfer_no_withdrawal（銀行振込には退会が無い）/ no_contract（無料会員など）/ subscription_mismatch
  *   → 502 cancel_failed / stripe_cancel_failed（何も変えていない）/ record_write_failed / withdraw_failed
  *   → 503 busy / not_configured / billing_not_configured
  *
- * 種類の判定は memberWithdrawal.classifyMemberWithdrawal。月額は各社の退会処理（購読を即時解約）へ渡す。
+ * 種類の判定は memberWithdrawal.classifyMemberWithdrawal。退会は月額だけで、各社の退会処理（購読を即時解約）へ渡す。
+ * 銀行振込（年払い・買い切り）には退会の概念が無い（2026-10-15 MK 確定）ので何も書かない。
  * 本人のレコード 1 件だけを操作する（セッションの recordId だけ。リクエストの値は使わない）。
  */
 
@@ -20,7 +21,7 @@ import { airtable } from './stripeServer.js';
 import { withdrawStripeSubscriber } from './stripeWithdrawal.js';
 import { withdrawPaypalSubscriber, resolvePaypalSubscriptionSettleMode } from './paypal/paypalSubscriptionServer.js';
 import {
-  classifyMemberWithdrawal, withdrawPlainMember, markSessionRevoked, MEMBER_WITHDRAWAL_KIND as KIND,
+  classifyMemberWithdrawal, markSessionRevoked, MEMBER_WITHDRAWAL_KIND as KIND,
 } from './memberWithdrawal.js';
 import { makeRedisCmd } from '../premiumPlus/premiumPlusFunnelServer.js';
 import { sendWithdrawalCompleteEmail, sendWithdrawalAdminNotice } from './withdrawalMail.js';
@@ -29,6 +30,7 @@ const STATUS = Object.freeze({
   withdrawn: 200,
   already_withdrawn: 409,
   no_contract: 409,
+  bank_transfer_no_withdrawal: 409,
   subscription_mismatch: 409,
   record_not_found: 404,
   not_stripe_subscriber: 404,
@@ -89,7 +91,8 @@ export async function handleWithdrawRequest(event, env, { only = null, deps = {}
     return reply(404, { error: only === 'stripe' ? 'not_stripe_subscriber' : 'not_paypal_subscriber' });
   }
   if (kind === KIND.ALREADY_WITHDRAWN) return reply(409, { error: 'already_withdrawn' });
-  if (kind === KIND.NONE) return reply(409, { error: 'no_contract' });
+  if (kind === KIND.BANK_TRANSFER) return reply(409, { error: 'bank_transfer_no_withdrawal' });
+  if (kind !== KIND.STRIPE && kind !== KIND.PAYPAL) return reply(409, { error: 'no_contract' });
 
   let r;
   try {
@@ -97,12 +100,10 @@ export async function handleWithdrawRequest(event, env, { only = null, deps = {}
       const stripe = deps.stripe || getStripe(env);
       if (!stripe) return reply(503, { error: 'billing_not_configured' });
       r = await (deps.withdrawStripe || withdrawStripeSubscriber)({ stripe, env, recordId, reason, redis, now, fetchImpl: deps.fetchImpl });
-    } else if (kind === KIND.PAYPAL) {
+    } else {
       const mode = resolvePaypalSubscriptionSettleMode({ env, origin });
       if (!deps.withdrawPaypal && !mode.ok) return reply(503, { error: 'not_configured' });
       r = await (deps.withdrawPaypal || withdrawPaypalSubscriber)({ env, origin, recordId, reason, redis, now, fetchImpl: deps.fetchImpl });
-    } else {
-      r = await (deps.withdrawPlain || withdrawPlainMember)({ env, recordId, reason, redis, now, fetchImpl: deps.fetchImpl });
     }
   } catch (e) {
     console.error(JSON.stringify({ event: 'member_withdraw_failed', kind, message: String(e?.message || e).slice(0, 160) }));
@@ -112,7 +113,7 @@ export async function handleWithdrawRequest(event, env, { only = null, deps = {}
 
   const adminNotice = deps.adminNotice || ((d) => sendWithdrawalAdminNotice(env, d));
   if (r?.result === 'record_write_failed') {
-    // 月額は購読を止めた後なので、終了の通知が退会状態へ収束させる。管理者へも知らせる
+    // 購読を止めた後なので、終了の通知が退会状態へ収束させる。管理者へも知らせる
     await adminNotice({ recordId, kind, failed: true, mode: kind === KIND.STRIPE ? stripeMode(env) : null });
   }
   if (!r || !r.ok) return reply(STATUS[r?.result] || 502, { error: r?.result || 'withdraw_failed' });

@@ -15,9 +15,6 @@ export function withdrawalCompleteLines({ kind = 'stripe', keeps = {} } = {}) {
   if (kind === 'stripe' || kind === 'paypal') {
     lines.push('月額プランのご契約は終了し、今後の請求はありません。');
     lines.push('退会と同時に有料会員としてのご利用は終了しています（残りの期間はご利用いただけません）。');
-  } else if (kind === 'contract') {
-    lines.push('有料プランのご契約は終了しました。');
-    lines.push('退会と同時に有料会員としてのご利用は終了しています（残りの期間はご利用いただけません。お支払い済みの料金の返金はありません）。');
   }
   if (keeps.premiumLifetime) lines.push('Premium 買い切りは、退会後も引き続きご利用いただけます。');
   if (keeps.sanrenpukuLifetime) lines.push('三連複の買い切りは、退会後も引き続きご利用いただけます。');
