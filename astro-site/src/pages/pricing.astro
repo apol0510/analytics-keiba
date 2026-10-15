@@ -370,8 +370,8 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
                 <div class="faq-item">
                     <h3 class="faq-question">Q: 支払い方法は何が利用できますか？</h3>
                     <p class="faq-answer">
-                        銀行振込でお申し込みいただけます（Premium の年払い・買い切り）。<br>
-                        新規の月額プラン（クレジットカード）のお申し込みは受け付けておりません。
+                        月額プラン（Premium・中央版・南関版）は PayPal でお申し込みいただけます（PayPal に登録したクレジットカードも使えます）。毎月自動で更新されます。<br>
+                        Premium の年払い・買い切りは銀行振込でお申し込みいただけます。
                     </p>
                 </div>
 
@@ -396,6 +396,7 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
                 <div class="faq-item">
                     <h3 class="faq-question">Q: 利用開始までの流れは？</h3>
                     <p class="faq-answer">
+                        <strong>【月額（PayPal）】</strong>①ログイン（無料会員登録） → ②月額プランの「PayPal で申し込む」 → ③PayPal でお支払いを承認 → ④すぐにご利用開始です。<br>
                         <strong>【銀行振込】</strong>①お振込み → ②振込完了後、報告フォームをご送信 → ③入金確認後、ご利用開始です。フォームは<strong>お振込みが済んでから</strong>ご送信ください。
                     </p>
                 </div>
@@ -403,6 +404,7 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
                 <div class="faq-item">
                     <h3 class="faq-question">Q: 更新や有効期限はどうなりますか？</h3>
                     <p class="faq-answer">
+                        月額（PayPal）は毎月同じ日に自動で更新され、お支払いが確認できるたびに利用期限が延びます。お支払いが止まった場合は、支払い済みの期間が終わるとご利用いただけなくなります。<br>
                         銀行振込の年払いは、有効期限が近づきましたらメールでお知らせいたします。継続をご希望の場合は、再度お振込みいただくことで延長できます。
                     </p>
                 </div>

@@ -95,7 +95,9 @@ test('商品: 既存の月額 3 プランと同じ金額・名前は禁止語な
 });
 
 test('本番: 月額の販売を開くまで受け付けない（Sandbox 鍵も拒否）・既存契約の反映は鍵とサイトが合えば続ける', () => {
-  assert.equal(resolvePaypalSubscriptionMode({ env: { ...ENV, PAYPAL_ENV: 'live' }, origin: PRODUCTION_ORIGIN }).reason, 'card_sales_not_open');
+  assert.equal(resolvePaypalSubscriptionMode({ env: { ...ENV, PAYPAL_ENV: 'live' }, origin: PRODUCTION_ORIGIN, salesOpen: false }).reason, 'card_sales_not_open');
+  // 2026-10-15 受付開始: 本番サイト＋Live 鍵なら受け付ける
+  assert.equal(resolvePaypalSubscriptionMode({ env: { ...ENV, PAYPAL_ENV: 'live' }, origin: PRODUCTION_ORIGIN }).mode, 'live');
   assert.equal(resolvePaypalSubscriptionMode({ env: ENV, origin: PRODUCTION_ORIGIN }).reason, 'test_key_on_production');
   assert.equal(resolvePaypalSubscriptionMode({ env: {}, origin: PRODUCTION_ORIGIN }).reason, 'paypal_key_missing');
   assert.equal(resolvePaypalSubscriptionSettleMode({ env: { ...ENV, PAYPAL_ENV: 'live' }, origin: PRODUCTION_ORIGIN }).mode, 'live');

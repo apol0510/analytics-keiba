@@ -9,8 +9,8 @@
 | アカウント | TIROL DATA LABO 名義で新規開設済み | 新規ビジネスアカウント開設済み |
 | Sandbox E2E | **PASS**（2026-10-12・§4）| **PASS**（2026-10-13・§4）|
 | 本番審査 | **審査中**（MK 報告 2026-10-15。Website approval は `checkout.tirol.link`・§7）| **審査通過**（MK 報告 2026-10-15。承認の書面・メールは MK が保管）|
-| 本番の鍵・Webhook | 未設定 | 未設定（Live アプリの鍵が要る・§5）|
-| 本番受付 | **閉じている**（`CARD_SALES_OPEN.paddle=false`）| 一回払いは**閉じている**（`.paypal=false`）。**月額の定期課金は PayPal で受ける方針**（2026-10-15 MK 決定・§3.5）。本番は `SUBSCRIPTION_SALES_OPEN.paypal` を開く PR まで閉じている |
+| 本番の鍵・Webhook | 未設定 | **設定済み（2026-10-15）**: Live Product `PROD-3CX00591EL992881E`・Plan 3 本（`PAYPAL_PLAN_IDS.live`）・Webhook `78F83880DR5445808`（本番 URL・15 イベント）・production env 4 件（scope functions）。⚠️ 関数 env は 4KB 上限ぎりぎり（決済メール v2 カナリア env を外して空けた）|
+| 本番受付 | **閉じている**（`CARD_SALES_OPEN.paddle=false`）| 一回払いは**閉じている**（`.paypal=false`）。**月額の定期課金は PayPal で受ける方針**（2026-10-15 MK 決定・§3.5）。**2026-10-15 受付開始**（`SUBSCRIPTION_SALES_OPEN.paypal=true`）|
 | 取扱可否（一次情報）| ⚠️ 禁止リストに「Betting-related products」「Sports forecasting/odds making where monetary or material prizes are involved」。**書面確認が要る** | 利用規定で「競馬またはドッグレース」は**事前承認**区分 → 審査通過 |
 
 - 売るのは銀行振込と同じ一回払い（Premium 年払い ¥49,800／Light 会員 ¥44,820・買い切り ¥78,000）だけ。**月払い・定期課金は作らない**（Paddle の定期価格・PayPal Subscriptions は使わない。guard で固定）。

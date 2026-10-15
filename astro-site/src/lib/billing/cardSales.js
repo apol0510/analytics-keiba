@@ -69,7 +69,7 @@ export function checkoutProviderGate({ provider, mode, entry = 'direct', active 
  * - 本番の受付はこの表を true にする PR だけで開く（env では開かない）。一回払い（CARD_SALES_OPEN）とは別の表。
  */
 export const SUBSCRIPTION_SALES_OPEN = Object.freeze({
-  paypal: false,
+  paypal: true, // 2026-10-15 MK 決定で受付開始（Live の Plan・Webhook・production env 設定済み）
 });
 export const ACTIVE_SUBSCRIPTION_PROVIDER = 'paypal';
 

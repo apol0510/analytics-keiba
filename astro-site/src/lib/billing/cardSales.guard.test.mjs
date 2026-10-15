@@ -32,7 +32,7 @@ test('一回払いの層は定期課金を持たない。月額は PayPal の定
     .map((f) => read(`src/lib/billing/${f}`)).join('\n');
   assert.equal(/billing_cycle|\/v1\/billing\/|\/subscriptions/.test(libs), false, '一回払いの層・Paddle は定期課金 API を使わない');
   assert.match(read('src/lib/billing/paypal/paypalSubscriptionServer.js'), /\/v1\/billing\/subscriptions/);
-  assert.deepEqual({ ...SUBSCRIPTION_SALES_OPEN }, { paypal: false }, '月額の本番受付は PR でだけ開く');
+  assert.deepEqual({ ...SUBSCRIPTION_SALES_OPEN }, { paypal: true }, '月額の本番受付は PR でだけ開く（2026-10-15 PayPal 受付開始）');
   assert.equal(ACTIVE_SUBSCRIPTION_PROVIDER, 'paypal');
 });
 
