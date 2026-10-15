@@ -85,7 +85,13 @@ test('商品: 既存の月額 3 プランと同じ金額・名前は禁止語な
   assert.equal(body.custom_id, `${REC}:premium-jra`);
   assert.equal(body.plan_id, PID['premium-jra']);
   assert.equal(body.application_context.return_url, `${PREVIEW}/checkout/paypal-subscription-return/`);
-  assert.throws(() => buildSubscriptionBody({ planId: 'premium', recordId: REC, origin: PREVIEW, mode: 'live' }), /plan_not_configured/, 'live の Plan 未作成なら作らない');
+  assert.throws(() => buildSubscriptionBody({ planId: 'premium', recordId: REC, origin: PREVIEW, mode: 'live', ids: { ...PAYPAL_PLAN_IDS, live: {} } }), /plan_not_configured/, 'live の Plan 未作成なら作らない');
+  // Live の Plan（2026-10-15 作成）: 3 プランとも登録済み・Sandbox と混ざらない
+  for (const p of STRIPE_PLANS) {
+    assert.match(PAYPAL_PLAN_IDS.live[p.id] || '', /^P-[A-Z0-9]+$/, `${p.id} の Live Plan ID`);
+    assert.notEqual(PAYPAL_PLAN_IDS.live[p.id], PID[p.id]);
+  }
+  assert.equal(buildSubscriptionBody({ planId: 'premium', recordId: REC, origin: PRODUCTION_ORIGIN, mode: 'live' }).plan_id, PAYPAL_PLAN_IDS.live.premium);
 });
 
 test('本番: 月額の販売を開くまで受け付けない（Sandbox 鍵も拒否）・既存契約の反映は鍵とサイトが合えば続ける', () => {

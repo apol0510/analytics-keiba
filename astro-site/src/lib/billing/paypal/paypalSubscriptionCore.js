@@ -44,7 +44,11 @@ export const PAYPAL_PLAN_IDS = Object.freeze({
     'premium-jra': 'P-7NF43083F7102171SNLIAFUI',
     'premium-nankan': 'P-55C52460MJ2631844NLIAFUY',
   }),
-  live: Object.freeze({}),
+  live: Object.freeze({ // Live（PROD-3CX00591EL992881E・2026-10-15 作成）
+    'premium': 'P-0JC899281X7628327NLIDMPA',
+    'premium-jra': 'P-2SA230418U121823UNLIDMPI',
+    'premium-nankan': 'P-34226589BA0629739NLIDMPQ',
+  }),
 });
 
 export const SUBSCRIPTION_EVENTS = Object.freeze([
