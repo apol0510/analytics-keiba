@@ -16,11 +16,22 @@
  *   - Webhook 0 件 → 最初の PaidAt から 48 時間は待機中 `paypal_webhook_not_seen_yet`、過ぎたら失敗 `paypal_webhook_not_seen`
  *   - それ以外 → 成功（件数・権限の内訳・Webhook の内訳を Issue に記録）
  * 顧客の退会操作は行わない（退会の本番確認は、顧客自身が退会したときに観測する）。
+ *
+ * ## 初回の実更新（kind: paypal-monthly-first-renewal・2026-10-15 MK「初回の実更新も適切に確認」）
+ * 同じ 2 つを読む（同じ取得関数・同じ登録簿の仕組み。別の監視は作らない）。PayPal は暦の 1 か月ごとの自動課金。
+ *   - 会員ごとに「初回だけの期限」= PaidAt（JST）+ 1 か月 + 2 日。
+ *     期限がそれより 20 日以上先 → 更新された（2 回目の支払いを PayPal から照会して延ばした）
+ *     退会・解約（WithdrawalRequested / CancelledAt）→ 更新の対象外。それ以外 → 更新待ち（請求日 = PaidAt + 1 か月）
+ *   - 更新された会員が 1 人でもいれば成功（件数・Webhook の内訳を Issue に記録）
+ *   - 更新待ちの最も早い請求日 + 3 日までは待機中 `paypal_renewal_not_due_yet`
+ *   - それを過ぎても延びていない: 支払い失敗・停止・解約の Webhook があれば待機中 `paypal_renewal_payment_failed`
+ *     （お客様側の決済の失敗。期限は延ばさない仕様どおり）、無ければ失敗 `paypal_renewal_not_seen`
+ *   - 全員が更新前に退会・解約 → 待機中 `paypal_no_renewal_candidate`
  */
 
 const BASE = 'apptmQUPAlgZMmBC9';
 const TABLE = 'Customers';
-const FIELDS = ['プラン', 'PlanType', 'Status', '有効期限', 'VenueAccess', 'PaymentMethod', 'PaidAt', 'WithdrawalRequested'];
+const FIELDS = ['プラン', 'PlanType', 'Status', '有効期限', 'VenueAccess', 'PaymentMethod', 'PaidAt', 'WithdrawalRequested', 'CancelledAt'];
 const WEBHOOK_GRACE_MS = 48 * 3600 * 1000;
 
 export class PaypalFirstPurchaseCheckError extends Error {
@@ -74,6 +85,54 @@ export function judgePaypalFirstPurchase({ rows, webhooks, nowMs }) {
   };
 }
 
+const RENEWAL_GRACE_DAYS = 3;
+const RENEWED_MIN_EXTRA_DAYS = 20;
+const plusDaysYmd = (ymdStr, n) => { const d = new Date(`${ymdStr}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+/** JST の暦日で n か月後（月末は丸める）。bankPaymentFlow.addMonthsJst と同じ規則（ops は Node 単体で動かすため依存しない） */
+export function addMonthsJstYmd(iso, months) {
+  const j = new Date(Date.parse(iso) + 9 * 3600 * 1000);
+  const y = j.getUTCFullYear(); const m = j.getUTCMonth(); const d = j.getUTCDate();
+  const ty = y + Math.floor((m + months) / 12); const tm = ((m + months) % 12 + 12) % 12;
+  const dim = new Date(Date.UTC(ty, tm + 1, 0)).getUTCDate();
+  return `${ty}-${String(tm + 1).padStart(2, '0')}-${String(Math.min(d, dim)).padStart(2, '0')}`;
+}
+
+/** 会員 1 件の更新の状態（純粋）*/
+export function renewalState(f) {
+  if (truthy(f.WithdrawalRequested) || String(f.CancelledAt || '').trim()) return { state: 'ended' };
+  const paid = String(f.PaidAt || '');
+  const exp = ymd(f['有効期限']);
+  if (!Number.isFinite(Date.parse(paid)) || !/^\d{4}-\d{2}-\d{2}$/.test(exp)) return { state: 'unknown' };
+  const due = addMonthsJstYmd(paid, 1);
+  const firstExp = plusDaysYmd(due, 2);
+  if (daysBetween(firstExp, exp) >= RENEWED_MIN_EXTRA_DAYS) return { state: 'renewed', due, firstExp, exp };
+  return { state: 'waiting', due, firstExp, exp };
+}
+
+const countResults = (byEvent, types) => types.reduce((n, t) => n + (Number(byEvent?.[t]?.count) || 0), 0);
+
+/** 初回の実更新の判定（純粋）*/
+export function judgePaypalFirstRenewal({ rows, webhooks, nowMs }) {
+  const list = (rows || []).map((r) => r.fields || {});
+  if (list.length === 0) throw new PaypalFirstPurchaseCheckError('no_paypal_monthly_purchase_yet', '本番の PayPal 月額の購入（PaidAt あり）がまだ 0 件');
+  const states = list.map(renewalState);
+  const n = (k) => states.filter((x) => x.state === k).length;
+  const byEvent = webhooks?.byEvent || {};
+  const summary = { purchases: list.length, renewed: n('renewed'), waiting: n('waiting'), ended: n('ended'), unknown: n('unknown'), webhooks: { total: Number(webhooks?.total) || 0, byEvent } };
+  if (summary.renewed > 0) {
+    const first = states.filter((x) => x.state === 'renewed').sort((a, b) => a.due.localeCompare(b.due))[0];
+    return { ...summary, firstRenewalDue: first.due, firstRenewedExpiration: first.exp };
+  }
+  const waiting = states.filter((x) => x.state === 'waiting').sort((a, b) => a.due.localeCompare(b.due));
+  if (waiting.length === 0) throw new PaypalFirstPurchaseCheckError('paypal_no_renewal_candidate', `購入 ${list.length} 件・全員が更新前に退会または解約（更新を待つ会員 0）`);
+  const due = waiting[0].due;
+  const deadline = Date.parse(`${plusDaysYmd(due, RENEWAL_GRACE_DAYS)}T23:59:59+09:00`);
+  if (nowMs <= deadline) throw new PaypalFirstPurchaseCheckError('paypal_renewal_not_due_yet', `更新を待つ会員 ${waiting.length} 件・最も早い請求日 ${due}（JST・+${RENEWAL_GRACE_DAYS} 日まで待つ）`);
+  const failures = countResults(byEvent, ['BILLING.SUBSCRIPTION.PAYMENT.FAILED', 'BILLING.SUBSCRIPTION.SUSPENDED', 'BILLING.SUBSCRIPTION.CANCELLED']);
+  if (failures > 0) throw new PaypalFirstPurchaseCheckError('paypal_renewal_payment_failed', `請求日 ${due} + ${RENEWAL_GRACE_DAYS} 日を過ぎても延びていない会員 ${waiting.length} 件・支払い失敗/停止/解約の Webhook ${failures} 件（お客様側の決済失敗は期限を延ばさない仕様どおり）`);
+  throw new PaypalFirstPurchaseCheckError('paypal_renewal_not_seen', `請求日 ${due} + ${RENEWAL_GRACE_DAYS} 日を過ぎても期限が延びた会員 0 件・支払い失敗の Webhook も 0 件`);
+}
+
 async function fetchRows({ token, fetchImpl }) {
   if (!token || !String(token).trim()) throw new PaypalFirstPurchaseCheckError('airtable_token_missing');
   const rows = [];
@@ -115,6 +174,37 @@ export async function runPaypalFirstPurchaseCheck({ check, token, secret, fetchI
   if (rows.length === 0) return judgePaypalFirstPurchase({ rows, webhooks: null, nowMs: now.getTime() });
   const webhooks = await fetchWebhooks({ siteUrl: check.compare.siteUrl, secret, fetchImpl });
   return { ranAt: now.toISOString(), ...judgePaypalFirstPurchase({ rows, webhooks, nowMs: now.getTime() }) };
+}
+
+export async function runPaypalFirstRenewalCheck({ check, token, secret, fetchImpl = fetch, now = new Date() }) {
+  const rows = await fetchRows({ token, fetchImpl });
+  if (rows.length === 0) return judgePaypalFirstRenewal({ rows, webhooks: null, nowMs: now.getTime() });
+  const webhooks = await fetchWebhooks({ siteUrl: check.compare.siteUrl, secret, fetchImpl });
+  return { ranAt: now.toISOString(), ...judgePaypalFirstRenewal({ rows, webhooks, nowMs: now.getTime() }) };
+}
+
+export function renderPaypalFirstRenewalMarkdown({ check, result }) {
+  const ev = Object.entries(result.webhooks.byEvent)
+    .map(([t, e]) => `| ${t} | ${e.count} | ${Object.entries(e.results || {}).map(([r, n]) => `${r}: ${n}`).join(', ')} | ${e.last || '-'} |`);
+  return [
+    `## ${check.title}`,
+    '',
+    `- 実行: ${result.ranAt}（GitHub Actions scheduled-checks・読み取りのみ）`,
+    '- 確認: Customers の PayPal 月額（権限の項目だけ取得）の期限が初回分（PaidAt + 1 か月 + 2 日）より先へ延びたか、と署名検証済み Webhook の処理件数',
+    '',
+    '| 指標 | 値 |',
+    '|---|---|',
+    `| 更新された会員（2 回目の支払いで期限が延びた） | **${result.renewed}** |`,
+    `| 更新待ち / 更新前に退会・解約 / 判定不能 | ${result.waiting} / ${result.ended} / ${result.unknown} |`,
+    `| 最初の更新の請求日（JST） | ${result.firstRenewalDue} → 期限 ${result.firstRenewedExpiration} |`,
+    `| 処理した Webhook | **${result.webhooks.total}** |`,
+    '',
+    '| Webhook の種別 | 件数 | 処理結果 | 最終受信 |',
+    '|---|---|---|---|',
+    ...ev,
+    '',
+    '→ 本番の初回実更新（暦の 1 か月ごとの自動課金 → PAYMENT.SALE.COMPLETED → 期限延長）を read-only で確認した。docs/progress.md の未検証事項を更新する。',
+  ].join('\n');
 }
 
 export function renderPaypalFirstPurchaseMarkdown({ check, result }) {

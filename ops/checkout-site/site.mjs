@@ -11,7 +11,11 @@
  * - 決済会社は冗長化（Paddle 第一・PayPal 予備）。お客様に決済会社を選ばせる表示はしない。
  *
  * 生成: node ops/checkout-site/build.mjs <outDir>
+ *
+ * 2026-10-15 MK 確定: 決済会社へ渡す戻り先・Webhook の URL に競馬関連語を入れない → このサイトが中継する
+ * （`_redirects` の行は astro-site/src/lib/billing/neutralCheckoutHost.js の NEUTRAL_ROUTES が正本。画面には何も足さない）。
  */
+import { NEUTRAL_ROUTES } from '../../astro-site/src/lib/billing/neutralCheckoutHost.js';
 
 export const BUSINESS = Object.freeze({
   name: 'TIROL DATA LABO',
@@ -314,7 +318,9 @@ export function buildFiles() {
   files['_headers'] = `/*\n  X-Content-Type-Options: nosniff\n  Referrer-Policy: strict-origin-when-cross-origin\n${INDEXABLE ? '' : '  X-Robots-Tag: noindex, nofollow\n'}`;
   files['robots.txt'] = INDEXABLE ? `User-agent: *\nAllow: /\nSitemap: ${SITE_ORIGIN}/sitemap.xml\n` : 'User-agent: *\nDisallow: /\n';
   // Netlify の既定サブドメインは独自ドメインへ寄せる（重複掲載を防ぐ）
-  files['_redirects'] = `https://tirol-checkout.netlify.app/* ${SITE_ORIGIN}/:splat 301!\n`;
+  // 決済会社の戻り先 → 会員サイト（302）、Webhook → 会員サイトの Function（200 プロキシ）
+  files['_redirects'] = `https://tirol-checkout.netlify.app/* ${SITE_ORIGIN}/:splat 301!\n`
+    + NEUTRAL_ROUTES.map((r) => `${r.from}  ${r.to}  ${r.status}\n`).join('');
   if (INDEXABLE) files['sitemap.xml'] = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${PAGE_PATHS.map((p) => `  <url><loc>${SITE_ORIGIN}${p}</loc></url>`).join('\n')}\n</urlset>\n`;
   return files;
 }

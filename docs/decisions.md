@@ -1,3 +1,20 @@
+# 2026-10-15（追記 7）— 決済会社へ渡す名称を中立に統一・Stripe 不使用・PayPal の暦月課金（MK 確定）
+
+- MK 確定（要旨・原文は依頼文）:
+  - PayPal の正式名称 3 件を固定: 全会場 `Analytics Premium` ¥4,980/月・中央版 `Analytics Premium J` ¥2,980/月・南関版 `Analytics Premium N` ¥2,980/月（大文字小文字・スペースまで完全一致）。Catalog Product は `Analytics Premium` のまま可。説明も中立へ。名前に「中央＋南関」「中央版」「南関版」「月額」等を足さない。サイト内の区分・内部 ID・VenueAccess・料金・契約期間・退会・権限は変えない。
+  - 決済事業者へ渡す名称・説明・表示情報に競馬を示す名称を使わない（KEIBA 表記揺れ・競馬・馬券・中央・南関・JRA・NANKAN・中央競馬・地方競馬・南関東・その他関連表現）。`paymentDisplayNames.js` を単一源に、許可リストで PayPal の 3 名をテスト固定。custom_id 等のメタデータ・戻り先 / キャンセル / Webhook URL も確認し、必要なら `checkout.tirol.link` を使う。AK 本体のサイト名・ドメイン・会場区分は変えない。事業内容の申告は事実どおり。
+  - Stripe は停止されており今後使わない（新規決済を再開しない・`MONTHLY_SALES_OPEN=false` 維持・Stripe の画面/商品名/価格/設定を更新しない・不要な API 変更をしない・PayPal 名を Stripe の productName に依存させない・互換コードは壊さない・完全削除や会員の一括変更はしない）。Paddle は同じルールで準備を維持。
+  - PayPal は 30 日間隔ではなく暦の 1 か月ごとの自動課金。翌月の 2 回目の自動引き落としと決済失敗は、実際の課金を伴う E2E では未検証（PROGRESS に固定）。追加の自動テスト（更新成功・期限延長・重複受信・失敗時に延ばさない・二重課金/二重昇格・退会後に課金しない・買い切りを消さない・JST の境界と月末）。「更新 E2E PASS」と書かない。初回の実更新も確認できるようにする（既存の監視と重複させない）。
+  - 料金ページの方針（銀行振込が主役・「クレジット決済」）は変えない。
+- 実施: Live・Sandbox とも既存 Plan ID のまま `PATCH /v1/billing/plans/{id}` で名前・説明だけ更新（金額・請求周期・支払い設定・購読は不変を前後比較で確認・PayPal 月額の会員 0 件を確認してから）。setup スクリプトは登録済み Plan ID で読み、許可リストへ寄せる（再実行で旧名称に戻らない）。
+- 以下は **Claude 案（MK 未確認）**:
+  - Plan の説明（description）は名前と同じ文字列（何も足さない）。Product の説明 `Analytics Premium monthly membership` は変えない。
+  - 「その他の関連表現」の具体化: HORSE・RACING・JOCKEY・BETTING・GAMBL・騎手・競走馬・馬単・馬連・三連単・三連複・大井・船橋・川崎・浦和（checkout.tirol.link の公開文言の禁止語と同じ方向）。
+  - custom_id の商品コードを A / J / N にした（旧形式 `premium-jra` 等も読み続ける）。
+  - 中立ホストの経路: 戻り先・キャンセルは `checkout.tirol.link/r/paypal/…` から会員サイトへ 302、Live Webhook は `checkout.tirol.link/hooks/paypal` から会員サイトの Function へ 200 プロキシ（Host が checkout.tirol.link のときだけ本番として判定）。Sandbox は従来どおり `sandbox.checkout.tirol.link`。
+  - Stripe の既存 Product 名（「中央＋南関」等を含む）は Stripe 側に残る（MK「Stripe を更新しない」に従う。新しく送らない）。
+  - 初回の実更新の確認は、既存の scheduled-checks に登録 1 件（`paypal-monthly-first-renewal-2026`）を足す形（同じ取得関数・新しい仕組みは作らない）。
+
 # 2026-10-15（追記 6）— PayPal 月額は販売者本人の自己決済テストをしない（MK 決定）
 
 - MK 指示（原文）: 「販売者本人によるPayPal自己決済テストは行いません。Sandbox E2Eは完了済みです。本番の初回実購入が発生した際に、決済・Webhook・権限付与をread-onlyで確認してください。顧客の退会操作は行わず、未検証事項はPROGRESSに残してください。」

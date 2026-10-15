@@ -194,6 +194,21 @@
       },
       "record": "GitHub Issue「[自動測定] paypal-monthly-first-purchase-2026」（label: scheduled-check）に購入件数・権限の内訳・Webhook の種別と処理結果。完了後に docs/progress.md の未検証事項を更新する",
       "onFailure": "購入なし・Webhook 待ち（48 時間）は待機中 Issue を更新して翌日再確認。権限の不一致・48 時間を過ぎても Webhook 0 件は job 赤＋失敗 Issue に最小作業。顧客の退会操作は行わない。2027-04-30 まで購入が無ければ期限切れを追記"
+    },
+    {
+      "id": "paypal-monthly-first-renewal-2026",
+      "title": "PayPal 月額の本番の初回実更新（暦の 1 か月後の 2 回目の自動課金）で期限が延びたか（read-only）",
+      "kind": "paypal-monthly-first-renewal",
+      "runFrom": "2026-11-15",
+      "runUntil": "2027-05-31",
+      "trigger": "毎日 10:00 JST（scheduled-checks.yml）。2026-10-15 MK: 実際の再課金を伴う E2E は未検証（販売者本人の自己決済・実顧客への不要な課金はしない）。最短の更新は 10/15 の購入の 11/15 請求。購入・更新が来るまで待機中のまま毎日確認する",
+      "compare": {
+        "since": "2026-10-15",
+        "siteUrl": "https://analytics.keiba.link/",
+        "baseline": "2026-10-15 時点で PayPal 月額の購入 0・更新 0。期限 = 最後の支払い日（JST）+ 1 か月 + 2 日（paypalSubscriptionCore）"
+      },
+      "record": "GitHub Issue「[自動測定] paypal-monthly-first-renewal-2026」に更新された会員数・最初の請求日と延びた期限・Webhook の種別と処理結果。完了後に docs/progress.md の未検証事項（本番での更新）を閉じる",
+      "onFailure": "購入なし・請求日 + 3 日前・全員が更新前に退会・お客様側の支払い失敗は待機中 Issue を更新して翌日再確認。請求日 + 3 日を過ぎても延びず支払い失敗の Webhook も無いときは job 赤＋失敗 Issue（Claude が Webhook の受信を調査）。顧客の退会・返金操作は行わない"
     }
   ]
 }

@@ -9,6 +9,7 @@
 import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
 installAirtableCallMeter({ source: 'paypal-order-webhook' });
 import { rawBody } from '../../src/lib/billing/stripeRuntime.js';
+import { webhookSiteOrigin } from '../../src/lib/billing/neutralCheckoutHost.js';
 import { handlePaypalWebhook } from '../../src/lib/billing/paypal/paypalServer.js';
 import { resolvePaypalMode } from '../../src/lib/billing/paypal/paypalCore.js';
 import { handlePaypalSubscriptionEvent } from '../../src/lib/billing/paypal/paypalSubscriptionServer.js';
@@ -21,7 +22,8 @@ const H = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' };
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') return { statusCode: 405, headers: H, body: '{"error":"method_not_allowed"}' };
   const env = process.env;
-  const origin = `https://${String(event.headers?.host || event.headers?.Host || '')}`;
+  // 本番の Webhook は中立ホスト checkout.tirol.link 経由（Host がそのまま届く）→ 本番として判定する
+  const origin = webhookSiteOrigin(event.headers?.host || event.headers?.Host || '');
   const mode = resolvePaypalMode({ env, origin, salesOpen: true });
   const redis = makeRedisCmd(env);
   const notify = makeCardNotifier(env, { mode: mode.ok ? mode.mode : 'test', provider: 'paypal' });

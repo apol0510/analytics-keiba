@@ -76,5 +76,20 @@ test('検索エンジン設定: checkout.tirol.link 接続後は掲載（canonic
     assert.doesNotMatch(renderPage(p), /noindex/, p);
   }
   assert.doesNotMatch(files['sitemap.xml'], BANNED);
-  assert.equal(files._redirects, 'https://tirol-checkout.netlify.app/* https://checkout.tirol.link/:splat 301!\n');
+  assert.equal(files._redirects.split('\n')[0], 'https://tirol-checkout.netlify.app/* https://checkout.tirol.link/:splat 301!');
+});
+
+test('決済会社の戻り先・Webhook の中継（2026-10-15 MK 確定）: 会員サイトへ 302・Webhook は 200 プロキシ・画面には出さない', () => {
+  assert.equal(files._redirects, [
+    'https://tirol-checkout.netlify.app/* https://checkout.tirol.link/:splat 301!',
+    '/r/paypal/order-return  https://analytics.keiba.link/checkout/paypal-return/  302!',
+    '/r/paypal/subscription-return  https://analytics.keiba.link/checkout/paypal-subscription-return/  302!',
+    '/r/paypal/cancel  https://analytics.keiba.link/pricing/?checkout=cancelled  302!',
+    '/hooks/paypal  https://analytics.keiba.link/.netlify/functions/paypal-order-webhook  200!',
+    '',
+  ].join('\n'));
+  // 中継先は会員サイトの本番だけ（他のホストへ転送しない）
+  for (const l of files._redirects.trim().split('\n').slice(1)) assert.match(l.split(/\s+/)[1], /^https:\/\/analytics\.keiba\.link\//);
+  // 決済会社に渡すパス自体に禁止語が無い
+  for (const l of files._redirects.trim().split('\n').slice(1)) assert.doesNotMatch(l.split(/\s+/)[0], BANNED);
 });

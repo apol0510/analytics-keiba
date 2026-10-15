@@ -18,6 +18,7 @@
 import { cardProductById } from '../cardOneTime.js';
 import { CARD_SALES_OPEN as SALES, resolveCardMode } from '../cardSales.js';
 import { PAYMENT_BASE_NAME } from '../paymentDisplayNames.js';
+import { paypalReturnUrls } from '../neutralCheckoutHost.js';
 
 export const PROVIDER = 'paypal';
 export const CARD_SALES_OPEN = SALES[PROVIDER];
@@ -69,8 +70,7 @@ export function buildOrderBody({ productId, recordId, origin, invoiceId }) {
           locale: 'ja-JP',
           shipping_preference: 'NO_SHIPPING',
           user_action: 'PAY_NOW',
-          return_url: `${origin}/checkout/paypal-return/`,
-          cancel_url: `${origin}/pricing/?checkout=cancelled`,
+          ...paypalReturnUrls(origin, 'order'),
         },
       },
     },

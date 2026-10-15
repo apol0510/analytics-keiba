@@ -20,7 +20,7 @@ import { runPremiumRenewalOutcomesCheck, renderPremiumRenewalOutcomesMarkdown } 
 import {
   runPlusFirstOrderCheck, renderPlusFirstOrderMarkdown, runPlusOfferOutcomeCheck, renderPlusOfferOutcomeMarkdown,
 } from '../src/lib/ops/plusOrderCheck.js';
-import { runPaypalFirstPurchaseCheck, renderPaypalFirstPurchaseMarkdown } from '../src/lib/ops/paypalFirstPurchaseCheck.js';
+import { runPaypalFirstPurchaseCheck, renderPaypalFirstPurchaseMarkdown, runPaypalFirstRenewalCheck, renderPaypalFirstRenewalMarkdown } from '../src/lib/ops/paypalFirstPurchaseCheck.js';
 import { runLightRenewalOutcomesCheck, renderLightRenewalOutcomesMarkdown } from '../src/lib/ops/lightRenewalOutcomesCheck.js';
 
 const REGISTRY = fileURLToPath(new URL('../../ops/scheduled-checks.json', import.meta.url));
@@ -69,6 +69,14 @@ function humanActionFor(code, check) {
       return 'なし（購入はあるが Webhook の処理記録がまだ無い・48 時間は待つ）。翌日の定期実行で自動的に再確認する。';
     case 'paypal_webhook_not_seen':
       return '購入から 48 時間を過ぎても PayPal 月額の Webhook の処理記録が 0 件。PayPal の Live Webhook（本番 URL・購読と PAYMENT.SALE のイベント）と PAYPAL_WEBHOOK_ID を確認する（Claude が調査できる）。権限は戻り先の確認で付いているが、更新・終了が反映されない恐れがある。';
+    case 'paypal_renewal_not_due_yet':
+      return 'なし（PayPal 月額の最初の請求日 + 3 日がまだ来ていない）。PayPal は暦の 1 か月ごとに自動で請求する。翌日の定期実行で自動的に再確認する。';
+    case 'paypal_no_renewal_candidate':
+      return 'なし（PayPal 月額の購入者が全員、更新前に退会または解約した）。新しい購入があれば翌日の定期実行で自動的に追う。';
+    case 'paypal_renewal_payment_failed':
+      return 'なし（お客様側の 2 回目の支払いが失敗・停止・解約になった。期限を延ばさないのは仕様どおり。PayPal が再請求する）。翌日の定期実行で自動的に再確認する。';
+    case 'paypal_renewal_not_seen':
+      return 'PayPal 月額の請求日 + 3 日を過ぎても期限が延びた会員が 0 件で、支払い失敗の Webhook も 0 件。Live Webhook の URL（checkout.tirol.link 経由）と PAYMENT.SALE.COMPLETED の受信を Claude が調査する（顧客の退会・返金操作はしない）。';
     case 'paypal_grant_mismatch':
       return 'PayPal 月額の会員の権限が月額の形（Premium / Monthly / active / 有効期限 = 支払い日 + 1 ヶ月 + 2 日）と合わない。Claude が調査する（Customers を読むだけで原因を確かめ、直す必要があれば PR）。';
     case 'no_plus_order_yet':
@@ -119,6 +127,9 @@ if (cmd === 'run') {
     } else if (check.kind === 'paypal-monthly-first-purchase') {
       result = await runPaypalFirstPurchaseCheck({ check, token: process.env.AIRTABLE_READONLY_TOKEN, secret: process.env.PAYMENT_FUNNEL_READ_SECRET });
       md = renderPaypalFirstPurchaseMarkdown({ check, result });
+    } else if (check.kind === 'paypal-monthly-first-renewal') {
+      result = await runPaypalFirstRenewalCheck({ check, token: process.env.AIRTABLE_READONLY_TOKEN, secret: process.env.PAYMENT_FUNNEL_READ_SECRET });
+      md = renderPaypalFirstRenewalMarkdown({ check, result });
     } else if (check.kind === 'premium-plus-first-order') {
       result = await runPlusFirstOrderCheck({ check, secret: process.env.PAYMENT_FUNNEL_READ_SECRET });
       md = renderPlusFirstOrderMarkdown({ check, result });

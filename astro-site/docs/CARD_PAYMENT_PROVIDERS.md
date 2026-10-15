@@ -99,8 +99,8 @@ env（Deploy Preview の Sandbox 用だけ）: `PAYPAL_CLIENT_ID`・`PAYPAL_CLIE
 
 | 項目 | 仕様 | 実装 |
 |---|---|---|
-| 商品 | 既存の月額 3 プラン（Premium ¥4,980・中央版 ¥2,980・南関版 ¥2,980）。金額・会場・名称の正本は `stripePlans.STRIPE_PLANS` | PayPal の Product `Analytics Premium`＋Plan 3 本（毎月・無期限・JPY）。Plan ID は `paypalSubscriptionCore.PAYPAL_PLAN_IDS`（秘密ではない・env に置かない）。作成・照合は `scripts/paypal-subscription-setup.mjs <keys-file> [--apply]`（冪等・既存 Plan の金額は変えない）|
-| 申込 | ログイン必須。共通入口 `monthly-create-checkout`（決済会社を選ばせない）→ PayPal の承認画面 → `/checkout/paypal-subscription-return/` | `createPaypalSubscription`（`custom_id = recordId:planId`）。live は `SUBSCRIPTION_SALES_OPEN.paypal` かつ entry='monthly' だけ（`subscriptionProviderGate`）|
+| 商品 | 既存の月額 3 プラン（全会場 ¥4,980・中央版 ¥2,980・南関版 ¥2,980）。金額・会場の正本は `stripePlans.STRIPE_PLANS`。**PayPal に出す名前は `paymentDisplayNames.PAYPAL_PLAN_NAMES` の許可リストだけ**（2026-10-15 MK 確定: `Analytics Premium`・`Analytics Premium J`・`Analytics Premium N`・完全一致・説明も同じ文字列。Stripe の productName には依存しない） | PayPal の Product `Analytics Premium`＋Plan 3 本（**暦の 1 か月ごと**＝MONTH×1・無期限 total_cycles 0・JPY・初期費用なし）。Plan ID は `paypalSubscriptionCore.PAYPAL_PLAN_IDS`（秘密ではない・env に置かない）。作成・照合は `scripts/paypal-subscription-setup.mjs <keys-file> [--apply]`（冪等・登録済み Plan ID で読み、名前・説明だけを許可リストへ PATCH・金額や請求設定は変えない・請求設定が想定外なら ⚠️ を出す）|
+| 申込 | ログイン必須。共通入口 `monthly-create-checkout`（決済会社を選ばせない）→ PayPal の承認画面 → 戻り先 | `createPaypalSubscription`（`custom_id = recordId:商品コード`＝A/J/N・会場名を渡さない・旧形式も読む）。戻り先・キャンセルは本番だけ `https://checkout.tirol.link/r/paypal/subscription-return`・`/r/paypal/cancel`（中立ホストが会員サイトの `/checkout/paypal-subscription-return/`・`/pricing/?checkout=cancelled` へ 302・`neutralCheckoutHost.js`）。live は `SUBSCRIPTION_SALES_OPEN.paypal` かつ entry='monthly' だけ（`subscriptionProviderGate`）|
 | 反映 | 戻り先（`paypal-subscription-confirm`）と Webhook（`paypal-order-webhook` に同居）が同じ処理。購読を API で照会し絶対値を書く | `applyPaypalSubscription`（購読ごとのロック）→ `decidePaypalSubscriptionSync`。期限＝最後に支払われた日（JST）+1 ヶ月 +2 日。`next_billing_time` は見ない（決済失敗でも進むため）|
 | 会員と購読の対応 | 購読の custom_id で会員を決める。会員のいまの購読は Redis `ak:paypal:sub:member:{recordId}` | Customers に PayPal 購読 ID の列は無い（Functions の鍵に列追加の権限が無い・2026-10-15）|
 | 書かないケース | 二重契約（別の PayPal 購読・Stripe 月額が生きている）・買い切り・期間の長い銀行振込 Premium・登録外の Plan・金額不一致 | 申込前に 409（`already_subscribed` / `already_premium`）。成立してしまったら権限は書かず管理者へ（`subscription_conflict`）|
@@ -110,10 +110,12 @@ env（Deploy Preview の Sandbox 用だけ）: `PAYPAL_CLIENT_ID`・`PAYPAL_CLIE
 | 更新リマインド | 自動更新なので送らない | `premiumRenewalPolicy`（PaymentMethod=PayPal を除外）|
 | メールだけの退会 | 購読を操作せずマイページへ案内 | `process-withdrawal`（`isPaypalSubscriber`）|
 | Webhook イベント | `BILLING.SUBSCRIPTION.*`（CREATED・ACTIVATED・UPDATED・RE-ACTIVATED・CANCELLED・SUSPENDED・EXPIRED・PAYMENT.FAILED）・`PAYMENT.SALE.COMPLETED / REFUNDED / REVERSED` | Sandbox Webhook に追加済み（2026-10-15・setup スクリプト）|
+| Webhook の URL | Live: **`https://checkout.tirol.link/hooks/paypal`**（中立ホストが会員サイトの `paypal-order-webhook` へ 200 プロキシ。Function は Host=checkout.tirol.link を本番として判定＝`webhookSiteOrigin`）。Sandbox: `sandbox.checkout.tirol.link` のまま | 切替は `paypal-subscription-setup.mjs <live-keys> --apply --set-webhook-url`（Webhook ID 不変＝`PAYPAL_WEBHOOK_ID` は変えない）。順序: ①checkout.tirol.link に `_redirects` を deploy ②本 PR の deploy ③中立ホスト経由の未署名 POST が 401（`invalid_signature`＝本番として検証まで届く・200 `ignored_*` ではない）④URL を PATCH。rollback は同じ PATCH で `https://analytics.keiba.link/.netlify/functions/paypal-order-webhook` へ |
+| 請求の周期と更新 | **暦の 1 か月ごとの自動課金**（30 日間隔ではない）。期限 = 最後に支払われた日（JST）+ 1 か月（月末は丸める）+ 2 日。支払い失敗では延ばさない | 2 回目の自動引き落とし・決済失敗は **実際の課金を伴う E2E では未検証**（偽の PayPal の自動テストのみ）。本番の初回実更新は scheduled-checks `paypal-monthly-first-renewal-2026` が read-only で確認 |
 
 **月額の Sandbox E2E 手順**: deploy-preview に `PAYPAL_*`・`CARD_E2E_SECRET` を入れる → 中立ホストの転送先をその PR の preview へ → 使い捨て `+card-e2e` レコードで `monthly-create-checkout`（`x-ak-e2e-secret`・`e2eRecordId`）→ MK が Sandbox 買い手で承認 → `paypal-subscription-confirm` で付与 → Webhook 再送で 1 回だけ → 申込の重複拒否 → `paypal-withdraw` で即時退会 → 再契約 → API で管理者の解約（終了の縮め）→ 後片付け（レコード・Redis・env）。
 
-**月額の Sandbox E2E 結果（2026-10-15・deploy-preview-800）**: 付与（期限＝支払日 JST + 1 ヶ月 + 2 日）・confirm と Webhook 再送で不変・重複申込 409・即時退会と CANCELLED 通知の収束まで PASS。退会済みの CancelledAt を終了通知が書き換えていた点を是正。退会後の再契約・管理者の解約（期限を支払い済みの翌日へ縮める・退会フラグなし）も PASS。後片付け済み（e2e レコード・Sandbox Redis・deploy-preview の鍵）。
+**月額の Sandbox E2E 結果（2026-10-15・deploy-preview-800）**（**翌月の 2 回目の自動引き落としと決済失敗は含まない＝未検証**）: 付与（期限＝支払日 JST + 1 ヶ月 + 2 日）・confirm と Webhook 再送で不変・重複申込 409・即時退会と CANCELLED 通知の収束まで PASS。退会済みの CancelledAt を終了通知が書き換えていた点を是正。退会後の再契約・管理者の解約（期限を支払い済みの翌日へ縮める・退会フラグなし）も PASS。後片付け済み（e2e レコード・Sandbox Redis・deploy-preview の鍵）。
 
 Sandbox の Product `PROD-1DB142038K1860725`／Plan: premium `P-67290333XA2635522NLIAFTY`・premium-jra `P-7NF43083F7102171SNLIAFUI`・premium-nankan `P-55C52460MJ2631844NLIAFUY`（2026-10-15 作成）。
 

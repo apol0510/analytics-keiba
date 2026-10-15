@@ -6,10 +6,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { STRIPE_PLANS } from '../stripePlans.js';
 import { PRODUCTION_ORIGIN } from '../cardSales.js';
-import { hasBannedPaymentWord } from '../paymentDisplayNames.js';
+import { hasBannedPaymentWord, PAYPAL_PLAN_NAMES } from '../paymentDisplayNames.js';
 import {
   PAYPAL_PLAN_IDS, buildPlanBody, buildSubscriptionBody, decidePaypalSubscriptionSync, decidePaypalSubscriptionPurchase,
   snapshotPaypalSubscription, parseSubscriptionWebhook, memberKey, MEMBER_WITHDRAWAL_NOTE, isPaypalSubscriber,
+  PAYPAL_PLAN_CODES, planIdFromCustomCode, paypalPlanDisplay,
 } from './paypalSubscriptionCore.js';
 import {
   createPaypalSubscription, applyPaypalSubscription, confirmPaypalSubscription, withdrawPaypalSubscriber,
@@ -71,20 +72,49 @@ function world({ fields = { 'プラン': 'Free', Email: 'a+card-e2e@example.com'
 }
 const common = (w) => ({ env: ENV, origin: PREVIEW, redis: w.redisCmd, notify: w.notify, fetchImpl: w.fetch, now: NOW });
 
-test('商品: 既存の月額 3 プランと同じ金額・名前は禁止語なし・毎月無期限・JPY 小数なし', () => {
+test('商品: 既存の月額 3 プランと同じ金額・名前は MK 確定の 3 つ・暦の 1 か月ごと無期限・JPY 小数なし・初期費用なし', () => {
   assert.deepEqual(STRIPE_PLANS.map((p) => [p.id, p.amountYen]), [['premium', 4980], ['premium-jra', 2980], ['premium-nankan', 2980]]);
+  const names = {};
   for (const p of STRIPE_PLANS) {
     const b = buildPlanBody({ productId: 'PROD-1', plan: p });
+    names[p.id] = b.name;
+    assert.equal(b.description, b.name, '説明も中立（名前と同じ・何も足さない）');
     assert.equal(hasBannedPaymentWord(b.name), false);
+    assert.deepEqual(paypalPlanDisplay(p.id), { name: b.name, description: b.description });
+    assert.equal(b.billing_cycles.length, 1);
     assert.deepEqual(b.billing_cycles[0].frequency, { interval_unit: 'MONTH', interval_count: 1 });
+    assert.equal(b.billing_cycles[0].tenure_type, 'REGULAR');
     assert.equal(b.billing_cycles[0].total_cycles, 0);
     assert.deepEqual(b.billing_cycles[0].pricing_scheme.fixed_price, { value: String(p.amountYen), currency_code: 'JPY' });
+    assert.equal(b.payment_preferences.auto_bill_outstanding, true);
+    assert.equal(b.payment_preferences.setup_fee, undefined, '初期費用を付けない');
     assert.ok(PID[p.id], `${p.id} の Sandbox Plan ID`);
   }
+  assert.deepEqual(names, { 'premium': 'Analytics Premium', 'premium-jra': 'Analytics Premium J', 'premium-nankan': 'Analytics Premium N' });
+  assert.deepEqual(names, { ...PAYPAL_PLAN_NAMES });
   const body = buildSubscriptionBody({ planId: 'premium-jra', recordId: REC, origin: PREVIEW, mode: 'test' });
-  assert.equal(body.custom_id, `${REC}:premium-jra`);
+  // custom_id は会員 ID と商品コードだけ（会場名・商品 ID を決済会社へ渡さない）
+  assert.equal(body.custom_id, `${REC}:J`);
+  assert.deepEqual(STRIPE_PLANS.map((p) => buildSubscriptionBody({ planId: p.id, recordId: REC, origin: PREVIEW, mode: 'test' }).custom_id), [`${REC}:A`, `${REC}:J`, `${REC}:N`]);
   assert.equal(body.plan_id, PID['premium-jra']);
   assert.equal(body.application_context.return_url, `${PREVIEW}/checkout/paypal-subscription-return/`);
+  assert.equal(body.application_context.brand_name, 'Analytics Premium');
+  // 本番は中立ホスト経由（checkout.tirol.link が会員サイトへ 302）
+  const live = buildSubscriptionBody({ planId: 'premium-nankan', recordId: REC, origin: PRODUCTION_ORIGIN, mode: 'live' });
+  assert.equal(live.application_context.return_url, 'https://checkout.tirol.link/r/paypal/subscription-return');
+  assert.equal(live.application_context.cancel_url, 'https://checkout.tirol.link/r/paypal/cancel');
+  // 決済会社へ渡す本文全体に禁止語・会員サイトのドメインが無い
+  for (const p of STRIPE_PLANS) {
+    const t = JSON.stringify(buildSubscriptionBody({ planId: p.id, recordId: REC, origin: PRODUCTION_ORIGIN, mode: 'live' }));
+    assert.equal(hasBannedPaymentWord(t), false, t);
+    assert.equal(hasBannedPaymentWord(JSON.stringify(buildPlanBody({ productId: 'PROD-1', plan: p }))), false);
+  }
+  // 商品コードの読み戻し（旧形式の購読も読む・知らないコードは null）
+  for (const [id, code] of Object.entries(PAYPAL_PLAN_CODES)) assert.equal(planIdFromCustomCode(code), id);
+  assert.equal(planIdFromCustomCode('premium-jra'), 'premium-jra');
+  assert.equal(planIdFromCustomCode('X'), null);
+  assert.equal(snapshotPaypalSubscription({ id: 'I-X', custom_id: `${REC}:N` }).planId, 'premium-nankan');
+  assert.equal(snapshotPaypalSubscription({ id: 'I-X', custom_id: `${REC}:premium-nankan` }).planId, 'premium-nankan');
   assert.throws(() => buildSubscriptionBody({ planId: 'premium', recordId: REC, origin: PREVIEW, mode: 'live', ids: { ...PAYPAL_PLAN_IDS, live: {} } }), /plan_not_configured/, 'live の Plan 未作成なら作らない');
   // Live の Plan（2026-10-15 作成）: 3 プランとも登録済み・Sandbox と混ざらない
   for (const p of STRIPE_PLANS) {
@@ -257,3 +287,107 @@ test('Webhook: 購読・売上のイベントだけを拾う。返金は自動�
   assert.deepEqual(w.fields, before);
   assert.ok(w.notes.some((n) => n[0] === 'subscription_refunded'));
 });
+
+// ── 毎月の自動課金（2026-10-15 MK: 実際の再課金を伴う E2E は未検証。ここは偽の PayPal での自動テスト）──
+const renew = (w, id, at, extra = {}) => { w.pay(id, new Date(at)); Object.assign(w.subs[id], extra); };
+const saleEvent = (id, sale = 'SALE2') => ({ event_type: 'PAYMENT.SALE.COMPLETED', resource: { id: sale, billing_agreement_id: id } });
+
+test('更新: 2 回目の支払い成功で期限が延びる・同じ通知の重複・同時着信でも 1 回分だけ・PaidAt と付与通知は初回のまま', async () => {
+  const w = world();
+  const c = await createPaypalSubscription({ ...common(w), recordId: REC, planId: 'premium-jra' });
+  w.pay(c.subscriptionId);
+  await applyPaypalSubscription({ ...common(w), subscriptionId: c.subscriptionId });
+  const paidAt = w.fields.PaidAt;
+  assert.equal(w.fields['有効期限'], '2026-11-17');
+  renew(w, c.subscriptionId, '2026-11-15T03:00:00Z');
+  const rs = await Promise.all([1, 2, 3].map(() => handlePaypalSubscriptionEvent({ ...common(w), event: saleEvent(c.subscriptionId) })));
+  assert.deepEqual([...new Set(rs.map((r) => r.result))], ['write_renewed']);
+  assert.equal(w.fields['有効期限'], '2026-12-17');
+  assert.equal(w.fields.PaidAt, paidAt, 'PaidAt は初回の付与時刻のまま');
+  assert.equal(w.patches.filter((p) => 'PaidAt' in p).length, 1, '二重の昇格（新規付与）をしない');
+  assert.equal(w.notes.filter((n) => n[0] === 'subscription_attached').length, 1);
+  assert.equal(w.fields.VenueAccess, 'jra', '会場の権限は変わらない');
+  // 3 回目
+  renew(w, c.subscriptionId, '2026-12-15T03:00:00Z');
+  await handlePaypalSubscriptionEvent({ ...common(w), event: saleEvent(c.subscriptionId, 'SALE3') });
+  assert.equal(w.fields['有効期限'], '2027-01-17', '年をまたいでも暦の 1 か月');
+  // 古い通知が後から届いても（照会は PayPal の最新を読む）期限は戻らない
+  await handlePaypalSubscriptionEvent({ ...common(w), event: saleEvent(c.subscriptionId, 'SALE2') });
+  assert.equal(w.fields['有効期限'], '2027-01-17');
+});
+
+test('更新の失敗: 支払い失敗・再試行中・停止では期限を延ばさない（支払い済みの期間が終われば自然に止まる）', async () => {
+  const w = world();
+  const c = await createPaypalSubscription({ ...common(w), recordId: REC, planId: 'premium' });
+  w.pay(c.subscriptionId);
+  await applyPaypalSubscription({ ...common(w), subscriptionId: c.subscriptionId });
+  const sub = w.subs[c.subscriptionId];
+  // 請求日に失敗: last_payment は前回のまま・next_billing_time だけ進む・failed_payments_count が増える
+  Object.assign(sub.billing_info, { next_billing_time: '2026-11-20T10:00:00Z', failed_payments_count: 1, outstanding_balance: { currency_code: 'JPY', value: '4980' } });
+  for (const t of ['BILLING.SUBSCRIPTION.PAYMENT.FAILED', 'BILLING.SUBSCRIPTION.UPDATED']) {
+    await handlePaypalSubscriptionEvent({ ...common(w), event: { event_type: t, resource: { id: c.subscriptionId } } });
+    assert.equal(w.fields['有効期限'], '2026-11-17', t);
+  }
+  // 失敗の上限で SUSPENDED → 書かない
+  sub.status = 'SUSPENDED';
+  const r = await handlePaypalSubscriptionEvent({ ...common(w), event: { event_type: 'BILLING.SUBSCRIPTION.SUSPENDED', resource: { id: c.subscriptionId } } });
+  assert.match(r.result, /status_suspended/);
+  assert.equal(w.fields['有効期限'], '2026-11-17');
+  // 未払い分が後で払われて再開したら、その支払い日から延びる
+  renew(w, c.subscriptionId, '2026-11-22T01:00:00Z');
+  await handlePaypalSubscriptionEvent({ ...common(w), event: { event_type: 'BILLING.SUBSCRIPTION.RE-ACTIVATED', resource: { id: c.subscriptionId } } });
+  assert.equal(w.fields['有効期限'], '2026-12-24');
+  // 金額が違う支払い（部分払い等）では延ばさず管理者へ
+  renew(w, c.subscriptionId, '2026-12-22T01:00:00Z');
+  w.subs[c.subscriptionId].billing_info.last_payment.amount.value = '100';
+  const m = await handlePaypalSubscriptionEvent({ ...common(w), event: saleEvent(c.subscriptionId, 'SALE9') });
+  assert.match(m.result, /amount_mismatch/);
+  assert.equal(w.fields['有効期限'], '2026-12-24');
+});
+
+test('退会後は自動課金されない（購読を cancel 済み）・その後に届く売上通知でも権限は戻らない', async () => {
+  const w = world();
+  const c = await createPaypalSubscription({ ...common(w), recordId: REC, planId: 'premium' });
+  w.pay(c.subscriptionId);
+  await applyPaypalSubscription({ ...common(w), subscriptionId: c.subscriptionId });
+  await withdrawPaypalSubscriber({ ...common(w), recordId: REC });
+  assert.deepEqual(w.cancels, [c.subscriptionId], 'PayPal の購読を 1 回だけ cancel＝次回の請求は作られない');
+  assert.equal(w.subs[c.subscriptionId].status, 'CANCELLED');
+  const after = { ...w.fields };
+  await handlePaypalSubscriptionEvent({ ...common(w), event: saleEvent(c.subscriptionId) });
+  await handlePaypalSubscriptionEvent({ ...common(w), event: { event_type: 'BILLING.SUBSCRIPTION.CANCELLED', resource: { id: c.subscriptionId } } });
+  assert.equal(w.fields['有効期限'], after['有効期限']);
+  assert.equal(w.fields.WithdrawalRequested, true);
+  assert.equal(w.fields['プラン'], after['プラン']);
+});
+
+test('既存の買い切り権利を消さない: 三連複の買い切り会員が月額を契約・更新・退会しても LifetimeSanrenpuku に触らない／Premium 買い切りには月額を作らない', async () => {
+  const w = world({ fields: { 'プラン': 'Free', Email: 'a+card-e2e@example.com', LifetimeSanrenpuku: true } });
+  const c = await createPaypalSubscription({ ...common(w), recordId: REC, planId: 'premium' });
+  w.pay(c.subscriptionId);
+  await applyPaypalSubscription({ ...common(w), subscriptionId: c.subscriptionId });
+  renew(w, c.subscriptionId, '2026-11-15T03:00:00Z');
+  await handlePaypalSubscriptionEvent({ ...common(w), event: saleEvent(c.subscriptionId) });
+  await withdrawPaypalSubscriber({ ...common(w), recordId: REC });
+  assert.equal(w.patches.some((p) => 'LifetimeSanrenpuku' in p), false);
+  assert.equal(w.fields.LifetimeSanrenpuku, true);
+  // Premium 買い切り会員: 申込前に止める＝二重課金なし
+  const life = world({ fields: { 'プラン': 'Premium', PlanType: 'Lifetime', Status: 'active', '有効期限': '2099-12-31' } });
+  assert.equal((await createPaypalSubscription({ ...common(life), recordId: REC, planId: 'premium' })).code, 'already_premium');
+  assert.equal(life.creates, 0);
+});
+
+test('期限の計算は JST の暦日: 日付の境界・月末・閏年・年またぎ', () => {
+  const at = (iso) => decidePaypalSubscriptionSync({
+    sub: { id: 'I-TESTSUB000001', status: 'ACTIVE', paypalPlanId: PID.premium, recordId: REC, planId: 'premium', lastPayment: { currency: 'JPY', amount: 4980, time: new Date(iso) } },
+    mode: 'test', now: new Date(iso),
+  }).expiration;
+  // JST 10/31 23:59（UTC 14:59）と JST 11/01 00:30（UTC 15:30）で 1 日ずれる（UTC の日付では計算しない）
+  assert.equal(at('2026-10-31T14:59:00Z'), '2026-12-02'); // 10/31 → 11/30（月末に丸め）+2
+  assert.equal(at('2026-10-31T15:30:00Z'), '2026-12-03'); // 11/01 → 12/01 +2
+  assert.equal(at('2027-01-31T03:00:00Z'), '2027-03-02'); // 1/31 → 2/28 +2
+  assert.equal(at('2028-01-31T03:00:00Z'), '2028-03-02'); // 1/31 → 2/29（閏年）+2
+  assert.equal(at('2026-12-15T03:00:00Z'), '2027-01-17'); // 年またぎ
+  assert.equal(at('2027-03-31T03:00:00Z'), '2027-05-02'); // 3/31 → 4/30 +2
+});
+

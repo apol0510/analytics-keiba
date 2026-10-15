@@ -1,3 +1,19 @@
+# 決済会社へ渡す名称・URL と PayPal 月額の請求（2026-10-15 MK 確定 / 根拠 `decisions.md` 2026-10-15（追記 7））
+
+**この節が、決済会社（PayPal・Paddle 等）へ渡す名称と、PayPal 月額の請求の正本**。下の「Stripe 定期購読」の商品名（`productName`）は Stripe 専用の旧名称で、PayPal には使わない。
+
+| 項目 | 仕様 |
+|---|---|
+| PayPal のプラン名（**完全一致**・大文字小文字・スペースも） | 全会場 = **`Analytics Premium`**（¥4,980/月）／中央版 = **`Analytics Premium J`**（¥2,980/月）／南関版 = **`Analytics Premium N`**（¥2,980/月）。Plan の説明も同じ文字列（Claude 案）。Catalog Product は共通の `Analytics Premium`。名前に「中央＋南関」「中央版」「南関版」「月額」等を足さない |
+| サイト内の表示 | 商品区分「全会場・中央版・南関版」・内部 ID（`premium` / `premium-jra` / `premium-nankan`）・`VenueAccess`（'' / jra / nankan）・閲覧権限・料金・契約期間・退会は**変えない** |
+| 禁止語（決済会社へ渡すもの） | KEIBA（表記揺れ・全角を含む）・競馬・馬券・**中央・南関・JRA・NANKAN・中央競馬・地方競馬・南関東**・その他競馬や馬券を直接示す表現（Claude 案の具体化: HORSE・RACING・JOCKEY・BETTING・GAMBL・騎手・競走馬・馬単・馬連・三連単・三連複・大井・船橋・川崎・浦和）。判定は NFKC 正規化＋大文字化（`paymentDisplayNames.js` が単一源） |
+| 適用範囲 | 決済会社に渡す商品名・プラン名・説明・Checkout・明細・領収書・請求通知・ブランド名・決済メタデータ（`custom_id` 等）・戻り先 / キャンセル / Webhook の URL。**対象外**: AK 自身の画面（サイト名・ドメイン・会場区分・サービス内容）。決済会社の審査で求められる事業内容の申告は事実どおり |
+| PayPal へ渡す値 | `custom_id` = `会員ID:商品コード`（A=全会場・J=中央版・N=南関版。旧形式 `会員ID:premium-jra` も読む）。`brand_name` = `Analytics Premium`。本番の戻り先・キャンセルは **`https://checkout.tirol.link/r/paypal/…`**（中立ホストが会員サイトへ 302）、Live Webhook は **`https://checkout.tirol.link/hooks/paypal`**（会員サイトの Function へ 200 プロキシ）。正本 `neutralCheckoutHost.js` |
+| PayPal 月額の請求 | **暦の 1 か月ごとの自動課金**（30 日間隔ではない）。`interval_unit=MONTH`・`interval_count=1`・`total_cycles=0`（無期限）・JPY・初期費用なし・`auto_bill_outstanding=true`・失敗 2 回で停止。期限 = 最後に支払われた日（JST）+ 1 か月（月末は丸める）+ 猶予 2 日。支払いが失敗した月は延ばさない |
+| Stripe | **停止・不使用**（MK 確定）。新規決済は再開しない（`MONTHLY_SALES_OPEN=false`）。Stripe の決済画面・商品名・価格・アカウント設定・API は変更しない。既存契約・権限・履歴・退会の互換コードは残す |
+| Paddle | 第一優先の将来の利用先として準備を維持（審査・販売可否は変えない）。同じ禁止語ルールを適用（商品名は `cardOneTime.displayName`）|
+| 本番の確認 | 販売者本人の自己決済・実顧客への不要な課金はしない。初回実購入は `paypal-monthly-first-purchase-2026`、初回実更新は `paypal-monthly-first-renewal-2026`（scheduled-checks・read-only）で確認する |
+
 # 固定マーケティング表示の代表値は 回収率 126% / 的中率 62%（2026-10-06 MK 確定）
 
 > 経緯は `decisions.md` 2026-10-06。テスト `astro-site/src/lib/marketing/fixedMarketingStats.test.mjs`（`npm run test:marketing-stats`・`check:safety` 組込）。
