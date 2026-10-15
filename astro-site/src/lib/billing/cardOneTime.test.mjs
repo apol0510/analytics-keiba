@@ -51,38 +51,38 @@ test('申込前: 不明商品・買い切り会員・生きている Stripe 月�
 });
 
 test('反映: 年払いは支払日（JST）+1 年・Premium 両会場・退会フラグを戻す', () => {
-  const r = decideCardGrant({ productId: 'premium-annual', fields: { 'プラン': 'Free' }, paidAt: NOW, provider: 'fincode' });
+  const r = decideCardGrant({ productId: 'premium-annual', fields: { 'プラン': 'Free' }, paidAt: NOW, provider: 'paddle' });
   assert.equal(r.action, 'grant');
   assert.equal(r.expiration, '2027-10-11');
   assert.deepEqual(
     { ...r.fields, PaidAt: undefined },
-    { 'プラン': 'Premium', PlanType: 'Annual', Status: 'active', '有効期限': '2027-10-11', PaidAt: undefined, PaymentMethod: 'fincode', VenueAccess: '', WithdrawalRequested: false, WithdrawalDate: null, WithdrawalReason: null },
+    { 'プラン': 'Premium', PlanType: 'Annual', Status: 'active', '有効期限': '2027-10-11', PaidAt: undefined, PaymentMethod: 'paddle', VenueAccess: '', WithdrawalRequested: false, WithdrawalDate: null, WithdrawalReason: null },
   );
   // JST 00:30（UTC では前日）でも JST の暦日で数える
-  assert.equal(decideCardGrant({ productId: 'premium-annual', fields: {}, paidAt: new Date('2026-10-10T15:30:00Z'), provider: 'fincode' }).expiration, '2027-10-11');
+  assert.equal(decideCardGrant({ productId: 'premium-annual', fields: {}, paidAt: new Date('2026-10-10T15:30:00Z'), provider: 'paddle' }).expiration, '2027-10-11');
 });
 
 test('反映: Premium の残りがある人の年払いは残りの期限から 1 年（縮めない・残り日数を失わせない）', () => {
   const f = { 'プラン': 'Premium', PlanType: 'Annual', Status: 'active', '有効期限': '2027-03-01' };
-  assert.equal(decideCardGrant({ productId: 'premium-annual', fields: f, paidAt: NOW, provider: 'fincode' }).expiration, '2028-03-01');
+  assert.equal(decideCardGrant({ productId: 'premium-annual', fields: f, paidAt: NOW, provider: 'paddle' }).expiration, '2028-03-01');
   // Light の残りは Premium に持ち越さない（支払日から 1 年）
-  assert.equal(decideCardGrant({ productId: 'premium-annual-light', fields: LIGHT_ACTIVE, paidAt: NOW, provider: 'fincode' }).expiration, '2027-10-11');
+  assert.equal(decideCardGrant({ productId: 'premium-annual-light', fields: LIGHT_ACTIVE, paidAt: NOW, provider: 'paddle' }).expiration, '2027-10-11');
   // 期限切れの Premium は支払日から
-  assert.equal(decideCardGrant({ productId: 'premium-annual', fields: { ...f, '有効期限': '2026-09-01' }, paidAt: NOW, provider: 'fincode' }).expiration, '2027-10-11');
+  assert.equal(decideCardGrant({ productId: 'premium-annual', fields: { ...f, '有効期限': '2026-09-01' }, paidAt: NOW, provider: 'paddle' }).expiration, '2027-10-11');
 });
 
 test('反映: 買い切りは期限なし（2099-12-31）。買い切り会員への再反映は書かない（conflict）', () => {
-  assert.equal(decideCardGrant({ productId: 'premium-lifetime', fields: LIGHT_ACTIVE, paidAt: NOW, provider: 'fincode' }).expiration, '2099-12-31');
-  const c = decideCardGrant({ productId: 'premium-annual', fields: { 'プラン': 'Premium', PlanType: 'Lifetime' }, paidAt: NOW, provider: 'fincode' });
+  assert.equal(decideCardGrant({ productId: 'premium-lifetime', fields: LIGHT_ACTIVE, paidAt: NOW, provider: 'paddle' }).expiration, '2099-12-31');
+  const c = decideCardGrant({ productId: 'premium-annual', fields: { 'プラン': 'Premium', PlanType: 'Lifetime' }, paidAt: NOW, provider: 'paddle' });
   assert.deepEqual(c, { action: 'conflict', reason: 'existing_lifetime' });
 });
 
 test('反映: 入力が壊れていれば書かない（fail closed）・同じ入力には同じ出力', () => {
-  assert.equal(decideCardGrant({ productId: 'nope', paidAt: NOW, provider: 'fincode' }).action, 'invalid');
-  assert.equal(decideCardGrant({ productId: 'premium-annual', paidAt: new Date('x'), provider: 'fincode' }).action, 'invalid');
+  assert.equal(decideCardGrant({ productId: 'nope', paidAt: NOW, provider: 'paddle' }).action, 'invalid');
+  assert.equal(decideCardGrant({ productId: 'premium-annual', paidAt: new Date('x'), provider: 'paddle' }).action, 'invalid');
   assert.equal(decideCardGrant({ productId: 'premium-annual', paidAt: NOW, provider: '' }).action, 'invalid');
-  const a = decideCardGrant({ productId: 'premium-annual', fields: {}, paidAt: NOW, provider: 'fincode' });
-  const b = decideCardGrant({ productId: 'premium-annual', fields: {}, paidAt: NOW, provider: 'fincode' });
+  const a = decideCardGrant({ productId: 'premium-annual', fields: {}, paidAt: NOW, provider: 'paddle' });
+  const b = decideCardGrant({ productId: 'premium-annual', fields: {}, paidAt: NOW, provider: 'paddle' });
   assert.deepEqual(a, b);
   assert.equal(cardProductById('premium-annual').amountYen, 49800);
 });

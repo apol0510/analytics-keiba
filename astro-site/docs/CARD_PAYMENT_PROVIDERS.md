@@ -1,16 +1,17 @@
-# カード決済（Paddle・PayPal・fincode）— 共通層と各社の実装・運用の正本
+# カード決済（Paddle・PayPal）— 共通層と各社の実装・運用の正本
 
-方針の根拠は `docs/decisions.md` 2026-10-11（追記 3）。fincode 固有の手順は `FINCODE_BILLING.md`。
+方針の根拠は `docs/decisions.md` 2026-10-11（追記 3）・2026-10-13・2026-10-15。fincode は 2026-10-15 MK 決定で不使用・コードと手順書（旧 `FINCODE_BILLING.md`）を削除した（必要なら git 履歴の #788 `c94f6e47` を参照）。
 
-## 0. いまの状態（2026-10-11）
+## 0. いまの状態（2026-10-15）
 
-| 項目 | Paddle（第一優先） | PayPal（第二優先） | fincode（審査結果待ち） |
-|---|---|---|---|
-| アカウント | **未開設**。TIROL DATA LABO 本人名義で新規開設（旧 Paddle アカウントは使わない）| **未開設**。新規のビジネスアカウント | MK 登録済み・本番審査結果待ち |
-| Sandbox 実装 | 済み（一回払い・Webhook・返金）| 済み（Orders v2・capture・Webhook・返金）| 済み |
-| Sandbox E2E | 鍵待ち（§4）| 鍵待ち（§4）| 鍵待ち（`FINCODE_BILLING.md` §4）|
-| 本番受付 | **閉じている**（`CARD_SALES_OPEN.paddle=false`）| **閉じている**（`.paypal=false`）| **閉じている**（`.fincode=false`）|
-| 取扱可否（一次情報）| ⚠️ 禁止リストに「Betting-related products」「Sports forecasting/odds making where monetary or material prizes are involved」。**書面確認が要る** | ⚠️ 利用規定で「競馬またはドッグレース」「ギャンブルを助長するその他の事業」が**事前承認が必要**な区分。承認前の受付は規約違反 | ⚠️ 第三者記事に否認理由「禁止商材（賭博、ギャンブルなど）」|
+| 項目 | Paddle（第一優先） | PayPal（予備） |
+|---|---|---|
+| アカウント | TIROL DATA LABO 名義で新規開設済み | 新規ビジネスアカウント開設済み |
+| Sandbox E2E | **PASS**（2026-10-12・§4）| **PASS**（2026-10-13・§4）|
+| 本番審査 | **審査中**（MK 報告 2026-10-15。Website approval は `checkout.tirol.link`・§7）| **審査通過**（MK 報告 2026-10-15。承認の書面・メールは MK が保管）|
+| 本番の鍵・Webhook | 未設定 | 未設定（Live アプリの鍵が要る・§5）|
+| 本番受付 | **閉じている**（`CARD_SALES_OPEN.paddle=false`）| **閉じている**（`.paypal=false`）|
+| 取扱可否（一次情報）| ⚠️ 禁止リストに「Betting-related products」「Sports forecasting/odds making where monetary or material prizes are involved」。**書面確認が要る** | 利用規定で「競馬またはドッグレース」は**事前承認**区分 → 審査通過 |
 
 - 売るのは銀行振込と同じ一回払い（Premium 年払い ¥49,800／Light 会員 ¥44,820・買い切り ¥78,000）だけ。**月払い・定期課金は作らない**（Paddle の定期価格・PayPal Subscriptions は使わない。guard で固定）。
 - 本番受付は、その決済会社が AK の取扱商品を承認したあと、MK の明示決定で `src/lib/billing/cardSales.js` の値を変える PR だけで開く。env では開かない。
@@ -22,9 +23,9 @@ Paddle・PayPal は**お客様に選ばせる併設決済ではない**。決済
 | 項目 | 仕様 | 実装 |
 |---|---|---|
 | お客様の導線 | 「カードで支払う」1 本。決済会社の選択 UI は作らない | 共通入口 `card-create-checkout`（`cardCheckout.startCardCheckout`）。お客様のページから決済会社別の入口を呼ばない（guard テスト）|
-| 受ける決済会社 | 第一 Paddle・予備 PayPal（fincode は候補のまま）| `cardSales.ACTIVE_CARD_PROVIDER = 'paddle'`・`CARD_PROVIDER_ROLES` |
+| 受ける決済会社 | 第一 Paddle・予備 PayPal| `cardSales.ACTIVE_CARD_PROVIDER = 'paddle'`・`CARD_PROVIDER_ROLES` |
 | 切替 | 運営側の設定 | `ACTIVE_CARD_PROVIDER` を変える PR（env では切り替えない）|
-| 本番の申込制限 | 共通入口から、選ばれた 1 社だけ | `checkoutProviderGate`: live は `entry='card'` かつ active だけ（別入口 `use_card_checkout`・非 active `provider_not_active`）。各社の申込作成（`createPaddleCheckout`・`createPaypalOrder`・`createCardSession`）は必ずこれを通る |
+| 本番の申込制限 | 共通入口から、選ばれた 1 社だけ | `checkoutProviderGate`: live は `entry='card'` かつ active だけ（別入口 `use_card_checkout`・非 active `provider_not_active`）。各社の申込作成（`createPaddleCheckout`・`createPaypalOrder`）は必ずこれを通る |
 | Sandbox | 各社を個別に検証できる | test モードは gate を通す（決済会社別の入口で E2E）|
 | 自動フォールバック | **しない**。作成失敗・例外でも予備へ作り直さない | `startCardCheckout` は active の 1 社だけ呼ぶ（テスト固定）|
 | 処理中の誤切替 | 切替前の会社の申込が残る会員は、切替後の会社で申込を作れない | Redis `ak:billing:open-checkout:{recordId}`（申込先・注文 ID・24 時間）。別社なら 409 `checkout_in_progress`。Redis が無い/読めないときは申込を作らない |
@@ -41,8 +42,8 @@ Sandbox 実測（2026-10-13・PR #794 の Deploy Preview 経由 `sandbox.checkou
 ```
 各社アダプタ（API で照会して確かめた事実だけを渡す）
   paddle/paddleServer.js ─┐
-  paypal/paypalServer.js ─┼─▶ entitlementLedger.js ─▶ cardOneTime.decideCardGrant（何を書くか・純粋）
-  fincode/fincodeServer.js┘      │                    cardRefund.decideRefundRevert（何に戻すか・純粋）
+  paypal/paypalServer.js ─┴─▶ entitlementLedger.js ─▶ cardOneTime.decideCardGrant（何を書くか・純粋）
+                                 │                    cardRefund.decideRefundRevert（何に戻すか・純粋）
                                  └─ Airtable Customers（PATCH はここだけ）
 ```
 
@@ -191,10 +192,10 @@ DNS（Cloudflare・MK 設定）: `sandbox.checkout` CNAME `tirol-checkout-sandbo
 
 ## 5. 本番化の条件（すべて満たすまで開かない）
 
-1. その決済会社が AK の取扱商品（競馬データ・予想の有料提供）を承認した記録（Paddle: 書面回答＋本番アカウント審査／PayPal: 事前承認）。審査では事業内容を正確に申告し、言い換えで通さない。
+1. その決済会社が AK の取扱商品（競馬データ・予想の有料提供）を承認した記録（Paddle: 書面回答＋本番アカウント審査 → **審査中**／PayPal: 事前承認 → **2026-10-15 通過（MK 報告）**）。審査では事業内容を正確に申告し、言い換えで通さない。
 2. Sandbox E2E 完了。→ **済み**（Paddle 2026-10-12 / PayPal 2026-10-13・§4。同じテストは繰り返さない）
 3. MK の販売開始の明示決定 → `cardSales.js` の該当値を true にする PR（このとき pricing のカード導線も追加）。
-4. production env（4KB 枠の確認）・本番の Webhook 登録・本番での実購入 1 件の確認と返金。
+4. production env（4KB 枠の確認）・本番の Webhook 登録・本番での実購入 1 件の確認と返金。PayPal は MK が developer.paypal.com の **Live** アプリの Client ID / Secret を `~/.analytics-keiba-ops/card-live.env`（`chmod 600`・値は会話に貼らない）に置けば、Claude が production env へ `PAYPAL_CLIENT_ID`・`PAYPAL_CLIENT_SECRET`・`PAYPAL_ENV=live` を設定し、Live の Webhook（`https://analytics.keiba.link/.netlify/functions/paypal-order-webhook`・§3 の 4 イベント）を API で登録して `PAYPAL_WEBHOOK_ID` を入れる。鍵を入れても `CARD_SALES_OPEN.paypal=false`・`ACTIVE_CARD_PROVIDER='paddle'` のため受付は閉じたまま（本番の申込は 503 `card_sales_not_open`）。
 5. Paddle 本番の Default payment link のドメインを決め、Paddle の承認ドメインと一致させる（`checkoutUrlMatchesOrigin` は自サイト以外の URL を 502 で拒否する）。
 
 ## 6. ロールバック
@@ -202,7 +203,7 @@ DNS（Cloudflare・MK 設定）: `sandbox.checkout` CNAME `tirol-checkout-sandbo
 - コード: revert PR（販売は閉じているので顧客影響なし）。
 - 反映済みの会員: 決済ごとの状態に付与前の値を保存してある。全額返金で自動で戻る。
 
-## 7. 決済専用サイト `checkout.tirol.link`（2026-10-12 MK 確定・2026-10-13 構築済み・独自ドメイン未接続）
+## 7. 決済専用サイト `checkout.tirol.link`（2026-10-12 MK 確定・2026-10-13 構築・独自ドメイン接続・掲載開始）
 
 | 項目 | 確定内容 |
 |---|---|
@@ -230,7 +231,8 @@ DNS（Cloudflare・MK 設定）: `sandbox.checkout` CNAME `tirol-checkout-sandbo
 | 決済会社 | 選択 UI なし。Billing に Paddle（Merchant of Record）を第一として記載・切替時も二重請求なしと明記 |
 | 返金 | AK の既存方針どおり（完了後は不可・二重/誤請求・未提供・法令上必要な場合は返金）。⚠️ Paddle の Buyer Terms は購入者に独自の返金を認める場合がある→本番受付前に Paddle 審査で指摘があれば MK が判断 |
 | ホスティング | Netlify site `tirol-checkout`（id af09193e-1710-4a8c-bd5c-cfa7068586e9・`https://tirol-checkout.netlify.app`）。deploy は出力先ディレクトリから `netlify deploy --prod --dir <out> --no-build --site <id>` |
-| index 化 | `INDEXABLE=false`（X-Robots-Tag noindex・robots Disallow）。新宿住所の契約条件確認後に true にする PR |
-| 独自ドメイン | 未接続。手順: MK が Cloudflare に CNAME `checkout` → `tirol-checkout.netlify.app`（DNS only）→ Netlify site に custom domain 追加 → HTTPS 確認 |
+| index 化 | `INDEXABLE=true`（2026-10-13 DNS 接続後）。robots Allow＋`sitemap.xml`・canonical は `https://checkout.tirol.link`。止めるときは false に戻して再 deploy |
+| 独自ドメイン | **接続済み（2026-10-13）**: Cloudflare tirol.link ゾーンの CNAME `checkout` → `tirol-checkout.netlify.app`（DNS only）・Netlify custom domain・Let's Encrypt（自動更新）・`tirol-checkout.netlify.app/*` は `_redirects` で独自ドメインへ 301 |
+| Paddle Website approval | 申請ドメイン `checkout.tirol.link`。Paddle の審査項目（商品説明・価格・機能・Terms/Refund/Privacy のナビ到達・HTTPS）は充足。**Terms には会社名または個人事業主の法的氏名が要る**（現状は屋号のみ）→ 氏名掲載は MK 判断。参照: Paddle Help「Domain Review」|
 | テスト | `astro-site/src/lib/billing/checkoutSite.guard.test.mjs`（test:billing に含む）: 必須ページ・禁止語（href 以外）・ドメイン非表示・説明の一致・住所・価格・カード準備中・選択 UI なし・noindex |
 | 訂正 | 初版（`a1e68625`・未 merge）は公開文言に業種を入れ decisions に「MK 確定」と誤記録 → 同 PR で撤回（decisions 2026-10-13）|

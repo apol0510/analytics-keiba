@@ -1,7 +1,7 @@
 /**
  * entitlementLedger.js — カード決済（決済会社共通）の**会員権限への反映**の単一源（Redis・Airtable の I/O）
  *
- * 各決済会社のアダプタ（fincode / paddle / paypal）は「決済会社の API で照会して確かめた事実」
+ * 各決済会社のアダプタ（paddle / paypal）は「決済会社の API で照会して確かめた事実」
  * （どの会員が・どの商品を・いつ支払った／全額返金された）だけを渡す。権限の書き換えはここだけが行う。
  * 判定（何を書くか）は cardOneTime.decideCardGrant、返金の戻しは decideRefundRevert（純粋）。
  *
@@ -22,7 +22,7 @@ import { snapshotFields, decideRefundRevert } from './cardRefund.js';
 
 const APPLIED_TTL_SEC = 400 * 24 * 3600; // 返金・チャージバック期限より長く持つ
 export const DUPLICATE_WINDOW_MS = 30 * 60 * 1000;
-export const PROVIDERS = Object.freeze(['fincode', 'paddle', 'paypal']);
+export const PROVIDERS = Object.freeze(['paddle', 'paypal']);
 
 export const appliedKey = (provider, paymentId) => `ak:card:${provider}:applied:${paymentId}`;
 const memberLockKey = (recordId) => `ak:billing:member-lock:${recordId}`;
