@@ -123,8 +123,12 @@ export function resolveEntitlements(customer, now = Date.now(), opts = {}) {
   // テスト用アカウント（Status=test または プラン=Test）は通常顧客権限を与えない。
   const isTestAccount = status === 'test' || rawPlanLower === 'test';
 
-  // アカウントが使えるか（登録済みでログイン可能）。停止・退会・強制ログアウト・テストは不可。
-  const accountUsable = !forceLogout && !withdrawal && !suspended && !isTestAccount;
+  // アカウントにログインできるか。停止・強制ログアウト・テストは不可。
+  // **退会はログインを止めない**（2026-10-15 MK 確定: 退会後も同じアカウントでログインでき、マイページ・無料予想は使える。
+  // 退会とアカウント削除は別）。
+  const accountOpen = !forceLogout && !suspended && !isTestAccount;
+  // 契約（有料プラン）由来の権限が使えるか。退会は契約由来の権限を即時に止める。
+  const accountUsable = accountOpen && !withdrawal;
   if (forceLogout) reasons.push('FORCE_LOGOUT');
   if (withdrawal) reasons.push('WITHDRAWAL_REQUESTED');
   if (suspended) reasons.push('STATUS_SUSPENDED');
@@ -147,16 +151,20 @@ export function resolveEntitlements(customer, now = Date.now(), opts = {}) {
   const honoredEntitlements = new Set(withdrawnPromoHonored ? withdrawnHonor.allowedEntitlements : []);
   if (withdrawnPromoHonored) reasons.push('WITHDRAWN_PROMO_GRANT_HONORED');
 
-  const canLogin = accountUsable || withdrawnPromoHonored;
+  const canLogin = accountOpen;
   /** その権利を「いま見てよいか」。退会者は施策の宣言に含まれるものだけ通す。 */
   const mayOpen = (entitlement) => (accountUsable ? true : honoredEntitlements.has(entitlement));
 
-  // pending は登録済みだが有料権限未確定＝Free 扱い（有料判定に入れない）。
-  const paidEffective = accountUsable && !pending;
-  if (pending) reasons.push('PENDING');
-
   const planTypeLower = String(c.planType ?? '').trim().toLowerCase();
   const lifetimeBilling = planTypeLower === 'lifetime';
+
+  // pending は登録済みだが有料権限未確定＝Free 扱い（有料判定に入れない）。
+  // **買い切り（PlanType=Lifetime）は退会で消さない**（2026-10-15 MK 確定「買い切り等の独立した既存権利を意図せず消さない」）。
+  // 退会で止まるのは月額・年払いなど期間のある契約だけ。
+  const withdrawnLifetimeKept = withdrawal && accountOpen && lifetimeBilling;
+  if (withdrawnLifetimeKept) reasons.push('WITHDRAWN_LIFETIME_KEPT');
+  const paidEffective = (accountUsable || withdrawnLifetimeKept) && !pending;
+  if (pending) reasons.push('PENDING');
   const forceExpired = isTruthyFlag(c.forceExpired);
   // Status='expired'/'unpaidrefunded' も契約切れ扱い（アカウントは拒否しない）。日付期限切れと同義。
   const expired = !lifetimeBilling && (forceExpired || statusContractExpired || isExpiredAt(c.expiresAt ?? c.validUntil, nowMs));
@@ -182,7 +190,7 @@ export function resolveEntitlements(customer, now = Date.now(), opts = {}) {
 
   // ── カムバック特典（無料。課金状態には一切影響しない）──────────────
   // pending（入金待ち）でも特典は有効。特典は支払いと無関係に成立する権利であり、
-  // 逆に停止・退会・テストアカウントでは canLogin=false なので自動的に無効になる。
+  // 停止・テストアカウントでは無効。退会者は下の mayOpen（施策が宣言した権利だけ）。
   const grants = resolvePromotionalGrants(c.promoFields, nowMs);
   // 退会者は施策が宣言した権利だけ（`mayOpen`）。退会していなければ従来どおり。
   const promoPremiumActive = mayOpen('premium') && grants.premium.active;
@@ -202,9 +210,9 @@ export function resolveEntitlements(customer, now = Date.now(), opts = {}) {
   // 三連複閲覧: 原則 active AND LifetimeSanrenpuku=true（tier/Premium期限を見ない）。
   // 移行期のみ旧 tier(premium-sanrenpuku/combo) を Premium 有効中に限り許可。
   const legacyView = legacySanrenpukuTierGrantsView && LEGACY_SANRENPUKU_TIERS.has(tier) && premiumActive;
-  // ⚠️ 三連複買い切りは**購入した権利**なので、施策の宣言では開けない。
-  //    無料特典を認めた退会者にも戻さない（契約由来の権利は復帰させない）。
-  const canViewSanrenpuku = mayOpen('sanrenpuku') && (lifetime || legacyView);
+  // ⚠️ 三連複買い切りは**購入した権利**なので、施策の宣言では開け閉めしない。
+  //    退会（月額・年払いの契約を止める操作）でも消さない（2026-10-15 MK 確定）。ログインできる限り見られる。
+  const canViewSanrenpuku = accountOpen && (lifetime || legacyView);
 
   // ── 購入資格 ──────────────────────────────────────────
   // 有効な **有料** Premium 会員 かつ 未所有 のときだけ三連複購入を提示。

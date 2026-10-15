@@ -158,7 +158,10 @@ export function resolveUpsellDisplay({ target, entitlements, plusRelease, sanren
   });
 
   // ── ログインできない / アカウント無効は何も売らない（fail closed）──
-  if (ent.canLogin !== true) return out(UPSELL_CHANNEL.NONE, UPSELL_REASON.NOT_LOGGED_IN);
+  // 退会者はログインできる（2026-10-15）が、販売導線は従来どおり出さない
+  if (ent.canLogin !== true || (ent.reasons || []).includes('WITHDRAWAL_REQUESTED')) {
+    return out(UPSELL_CHANNEL.NONE, UPSELL_REASON.NOT_LOGGED_IN);
+  }
 
   // ── 各商品固有の権限条件（UpsellTarget では上書きしない）────────
   // 三連複: 有料 Premium 有効 かつ 未保有（保有済みは再購入 CTA を出さない）

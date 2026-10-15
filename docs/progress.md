@@ -1,3 +1,17 @@
+# 🚪 退会仕様（全会員共通・マイページだけ・2026-10-15 MK 確定 / **実装・テスト済み・PR 作成・本番未反映**）
+
+| 項目 | 状態 |
+|---|---|
+| 正本 | spec「退会（全会員共通）」・decisions 2026-10-15（追記 3） |
+| 実装 | 入口 `member-withdraw`（`memberWithdrawServer.js`）・判定 `memberWithdrawal.js`・即時停止 `auth/sessionRevocation.js`（paidPageGate / resolveViewer）・権限（退会後もログイン可・買い切りは残る）・マイページ（銀行振込・買い切りのアカウント管理／確認画面の種類別の説明／無料会員への案内）・`process-withdrawal` 410・`/withdrawal-upsell/` はマイページへ・完了メール／完了ページ／refund・terms・legal・service-description・FAQ |
+| 既存の不具合（同時に是正）| ①`process-withdrawal` はメールアドレスだけで他人を退会させられた ②マイページの確認画面が module の `getServerAuth` を inline から呼んでいて常に null（利用期限が出ていなかった）③退会後に端末のログイン情報が消えていなかった ④期限切れ警告の JS が無効化済みボタンを参照して止まっていた |
+| test | `memberWithdrawal.test.mjs` 15 件（入口・確認・二重退会・他会員・即時停止と古いセッション・ログイン可・無料可・買い切りが残る・月額は各社へ・旧入口 410）＋既存テストを新仕様へ更新。lib 全体 9,320 pass・check:safety pass・build pass |
+| 実ブラウザ（ローカル・Airtable/Redis を差し替え・使い捨て鍵）| 年払い＋三連複買い切りの合成会員でマイページ → アカウント管理 → 確認画面（期限・三連複が残る旨・退会後もログイン可）→ 確定で `member-withdraw` に `{confirm:true}` → 完了ページ。退会後の同じセッションで Premium・Light ページは 302 `/login/?r=not_entitled`、三連複は 200、無料・マイページは 200 |
+| 本番データ | 退会済み 29 件・うち買い切りあり 0 件（権限変更で戻る既存会員なし）|
+| 次作業 | PR の CI → MK merge → 本番 smoke（`process-withdrawal` 410・`member-withdraw` 未ログイン 401・他サイト 403・料金/規約ページの文言・マイページ表示）|
+
+---
+
 # 💳 月額を PayPal の定期課金で受け付ける（2026-10-15 MK 決定 / **#800 merge `f4b16caa`・本番反映済み（受付は閉）・Sandbox E2E 完了（2026-10-15）・Live 鍵と受付開始 PR 待ち**）
 
 | 項目 | 状態 |

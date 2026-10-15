@@ -181,13 +181,6 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
                                 <p>クレジットカード登録で自動更新（おすすめ）</p>
                                 <a href="/pricing/" class="expiry-btn renew">今すぐプランを更新</a>
                             </div>
-                            <!-- 🚨 銀行振込のみのため退会ボタン非表示
-                            <div class="expiry-action-card secondary">
-                                <h4>🚪 退会をご希望の場合</h4>
-                                <p>退会処理後も有効期限内はご利用可能</p>
-                                <button id="withdrawal-btn-expired" class="expiry-btn withdraw">退会処理へ進む</button>
-                            </div>
-                            -->
                         </div>
                     </div>
                 </div>
@@ -482,12 +475,30 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
                         </div>
                     </div>
 
+                    <!-- 銀行振込の有料プラン・買い切りの会員: アカウント管理（2026-10-15 MK 確定）。退会は月額と同じ確認画面 → 確定（member-withdraw）。
+                         期間のある契約は即時に利用終了（残り期間は使えない）・買い切りの権利は退会後も残る -->
+                    <div id="member-account-card" class="prediction-card premium" style="display: none;">
+                        <div class="card-header">
+                            <h3>⚙️ アカウント管理</h3>
+                        </div>
+                        <div class="race-info">
+                            <div class="race-title race-title-sm" id="member-account-title">有料プラン</div>
+                            <div class="confidence" id="member-account-note"></div>
+                        </div>
+                        <div class="sanrenpuku-view-buttons">
+                            <button type="button" class="view-btn ak-withdraw-open" onclick="akOpenWithdraw()">退会する</button>
+                        </div>
+                    </div>
+
                     <!-- 退会の確認画面（「退会する」だけでは確定しない。ここで「退会を確定する」を押して初めて確定） -->
                     <div id="ak-withdraw-modal" role="dialog" aria-modal="true" aria-labelledby="ak-withdraw-title" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 10000; align-items: center; justify-content: center; padding: 16px;">
                         <div style="background: #1e293b; border-radius: 12px; padding: 1.5rem; max-width: 520px; width: 100%; color: #e2e8f0; line-height: 1.7;">
                             <h3 id="ak-withdraw-title" style="color: #f87171; margin: 0 0 1rem;">退会の確認</h3>
                             <p data-ak-withdraw-copy="immediate" style="margin: 0 0 0.75rem;"><strong>退会すると、現在の利用期限<span id="ak-withdraw-valid-until"></span>を待たずに、すぐにご利用いただけなくなります。</strong></p>
                             <p data-ak-withdraw-copy="keep" style="margin: 0 0 0.75rem;">残りの期間のご利用を希望される場合は、退会せずにそのままご利用ください。</p>
+                            <p data-ak-withdraw-copy="lifetime" style="display: none; margin: 0 0 0.75rem;"><strong>買い切りの権利は、退会後も引き続きご利用いただけます。</strong></p>
+                            <ul id="ak-withdraw-keeps" style="display: none; margin: 0 0 0.75rem; padding-left: 1.2rem;"></ul>
+                            <p style="margin: 0 0 0.75rem; font-size: 0.9rem;">退会後も同じメールアドレスでログインでき、マイページと無料予想はご利用いただけます。</p>
                             <p style="margin: 0 0 0.75rem; color: #94a3b8; font-size: 0.9rem;">退会後の取り消しはできません。今後の請求はなくなり、残りの期間分の返金はありません。再びご利用いただく場合は新しくお申し込みください。</p>
                             <label for="ak-withdraw-reason" style="display: block; font-size: 0.9rem; color: #94a3b8; margin-bottom: 0.25rem;">退会の理由（任意）</label>
                             <textarea id="ak-withdraw-reason" maxlength="500" style="width: 100%; min-height: 80px; padding: 0.75rem; border-radius: 8px; background: #0f172a; color: #e2e8f0; border: 1px solid #334155; box-sizing: border-box;"></textarea>
@@ -745,6 +756,8 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
         function clearAuthLocalStorage() {
             AUTH_LOCALSTORAGE_KEYS.forEach((k) => localStorage.removeItem(k));
         }
+        // is:inline の退会処理から呼べるようにする（module の関数は inline から見えない）
+        window.akClearAuthLocalStorage = clearAuthLocalStorage;
 
         // 簡略化されたセッション管理
         // ⚠️ **サーバー（ak_session）を最優先**にする。2026-09-02 まではここが
@@ -1192,21 +1205,6 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
             document.getElementById('expired-plan-name').textContent = planNames[originalPlan] || originalPlan;
             document.getElementById('expiry-date-display').textContent = expiryDate;
             document.getElementById('expiry-warning-section').style.display = 'block';
-
-            // 退会ボタンイベント設定（プラン判定付き）
-            document.getElementById('withdrawal-btn-expired').addEventListener('click', function() {
-                const modal = document.getElementById('withdrawalModal');
-                const userPlan = localStorage.getItem('userPlan') || '';
-
-                // 無料会員はモーダル表示、有料会員はwithdrawal-upsellへ遷移
-                if (userPlan.toLowerCase() === 'free') {
-                    if (modal) {
-                        modal.style.display = 'flex';
-                    }
-                } else {
-                    window.location.href = '/withdrawal-upsell/';
-                }
-            });
         }
 
         // ログイン情報表示
@@ -1989,6 +1987,15 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
             // PayPal 月額の会員 → 退会（アカウント管理）
             if (_serverAuth && _serverAuth.paypalBilling === true) {
                 document.getElementById('paypal-billing-card').style.display = 'block';
+            }
+            // 銀行振込の有料プラン・買い切りの会員 → アカウント管理（退会）
+            const _wdKind = _serverAuth && _serverAuth.profile && _serverAuth.profile.withdraw ? _serverAuth.profile.withdraw.kind : null;
+            if (_wdKind === 'contract' || _wdKind === 'lifetime_only') {
+                document.getElementById('member-account-title').textContent = _wdKind === 'lifetime_only' ? '買い切りプラン' : '有料プラン（銀行振込）';
+                document.getElementById('member-account-note').textContent = _wdKind === 'lifetime_only'
+                    ? '退会しても買い切りの権利はそのままご利用いただけます。'
+                    : '退会すると、利用期限が残っていてもすぐにご利用いただけなくなります。';
+                document.getElementById('member-account-card').style.display = 'block';
             }
             // Premium 期限切れ → 契約期間終了カード（予想リンクは出さない・再契約導線のみ）。馬単ページは canViewPremium で別途拒否。
             if (_view.showPremiumExpiredCard) {
@@ -5276,39 +5283,15 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
         </div>
     </div>
 
-    <!-- 🚨 銀行振込のみのため退会セクション非表示
-    <div id="withdrawal-section" style="display: none; margin-top: 3rem; padding: 2rem; background: rgba(239, 68, 68, 0.05); border: 1px solid rgba(239, 68, 68, 0.2); border-radius: 12px;">
-        <h3 style="color: #f87171; margin-bottom: 1rem;">退会について</h3>
-        <p style="color: #94a3b8; margin-bottom: 1.5rem;">
-            退会をご希望の場合は、下記ボタンからお手続きください。
+    <!-- 退会について（2026-10-15 MK 確定: 退会はマイページ「アカウント管理」の「退会する」→ 確認 → 確定だけ）。
+         無料会員は止める契約が無いので退会の手続きは不要。メールの配信停止・アカウント削除は退会とは別。 -->
+    <div id="withdrawal-free-note" style="display: none; margin-top: 3rem; padding: 1.5rem; background: rgba(100, 116, 139, 0.08); border: 1px solid rgba(100, 116, 139, 0.25); border-radius: 12px;">
+        <h3 style="color: #cbd5e1; margin: 0 0 0.75rem; font-size: 1.05rem;">退会について</h3>
+        <p style="color: #94a3b8; margin: 0; line-height: 1.8; font-size: 0.95rem;">
+            無料会員の方は料金がかからないため、退会のお手続きは不要です。<br>
+            メールの配信停止は、各メールの末尾にある「配信停止」から行えます。アカウントの削除をご希望の場合は<a href="/contact/" style="color: #93c5fd;">お問い合わせ</a>ください。
         </p>
-        <button id="withdrawal-btn" style="display: inline-block; padding: 0.75rem 1.5rem; background: #64748b; color: #fff; border: none; border-radius: 8px; transition: all 0.3s; cursor: pointer; font-family: inherit; font-size: 1rem;">
-            退会申請
-        </button>
     </div>
-    -->
-
-    <!-- 🚨 銀行振込のみのため退会モーダル非表示
-    <div id="withdrawalModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 9999; align-items: center; justify-content: center;">
-      <div style="background: #1e293b; padding: 3rem; border-radius: 16px; max-width: 500px; margin: 2rem;">
-        <h3 style="color: #f87171; font-size: 1.5rem; margin-bottom: 1rem;">本当に退会しますか？</h3>
-        <p style="color: #cbd5e1; line-height: 1.8; margin-bottom: 2rem;">
-          退会理由を教えてください。
-        </p>
-
-        <textarea id="withdrawalReason" placeholder="退会理由" style="width: 100%; padding: 1rem; border-radius: 8px; background: #0f172a; color: #e2e8f0; border: 1px solid #334155; margin-bottom: 1.5rem; min-height: 100px; font-family: inherit;"></textarea>
-
-        <div style="display: flex; gap: 1rem;">
-          <button id="confirmWithdrawal" style="flex: 1; padding: 1rem; background: #ef4444; color: #fff; border: none; border-radius: 8px; font-weight: bold; cursor: pointer;">
-            退会する
-          </button>
-          <button id="cancelWithdrawal" style="flex: 1; padding: 1rem; background: #334155; color: #e2e8f0; border: none; border-radius: 8px; cursor: pointer;">
-            キャンセル
-          </button>
-        </div>
-      </div>
-    </div>
-    -->
 
     <!-- プラン変更モーダル（Premium会員用 - 三連複2択） -->
     <div id="premiumPlanModal" class="modal-overlay" style="display: none;">
@@ -5506,122 +5489,40 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
     </script>
 
     <script is:inline>
-        // 退会セクション表示（ダッシュボード表示時に自動表示）
-        const observer = new MutationObserver(function() {
-            const dashboardSection = document.getElementById('dashboard-section');
-            const withdrawalSection = document.getElementById('withdrawal-section');
-
-            if (dashboardSection && withdrawalSection) {
-                const dashboardVisible = dashboardSection.style.display !== 'none';
-                if (dashboardVisible) {
-                    withdrawalSection.style.display = 'block';
-                }
+        // 退会について（無料会員向けの案内）: マイページを表示していて、止める契約が無い会員（無料・期限切れ）にだけ出す。
+        // 有料・買い切り・月額の会員は「アカウント管理」の「退会する」（確認 → 確定・member-withdraw）。
+        (function () {
+            function update() {
+                const dash = document.getElementById('dashboard-section');
+                const note = document.getElementById('withdrawal-free-note');
+                if (!dash || !note) return;
+                const sa = (window.__AK_SERVER_AUTH__ && typeof window.__AK_SERVER_AUTH__ === 'object') ? window.__AK_SERVER_AUTH__ : null; // is:inline からは module の getServerAuth が見えない
+                const kind = sa && sa.profile && sa.profile.withdraw ? sa.profile.withdraw.kind : null;
+                const hasContract = kind === 'stripe' || kind === 'paypal' || kind === 'contract' || kind === 'lifetime_only';
+                note.style.display = (dash.style.display !== 'none' && !hasContract && kind !== 'already_withdrawn') ? 'block' : 'none';
             }
-        });
-
-        observer.observe(document.body, {
-            childList: true,
-            subtree: true,
-            attributes: true,
-            attributeFilter: ['style']
-        });
-
-        // 初回チェック
-        setTimeout(function() {
-            const dashboardSection = document.getElementById('dashboard-section');
-            const withdrawalSection = document.getElementById('withdrawal-section');
-            if (dashboardSection && withdrawalSection && dashboardSection.style.display !== 'none') {
-                withdrawalSection.style.display = 'block';
-            }
-        }, 500);
-    </script>
-
-    <script is:inline>
-        // 退会モーダル制御
-        const modal = document.getElementById('withdrawalModal');
-        const withdrawalBtn = document.getElementById('withdrawal-btn');
-        const confirmBtn = document.getElementById('confirmWithdrawal');
-        const cancelBtn = document.getElementById('cancelWithdrawal');
-        const reasonTextarea = document.getElementById('withdrawalReason');
-
-        // 退会ボタンクリック（プラン判定付き）
-        if (withdrawalBtn) {
-            withdrawalBtn.addEventListener('click', function() {
-                const userPlan = localStorage.getItem('userPlan') || '';
-
-                // 無料会員はモーダル表示、有料会員はwithdrawal-upsellへ遷移
-                if (userPlan.toLowerCase() === 'free') {
-                    modal.style.display = 'flex';
-                } else {
-                    window.location.href = '/withdrawal-upsell/';
-                }
-            });
-        }
-
-        // キャンセルボタンでモーダルを閉じる
-        cancelBtn.addEventListener('click', function() {
-            modal.style.display = 'none';
-        });
-
-        // 退会確定処理
-        confirmBtn.addEventListener('click', async function() {
-            const reason = reasonTextarea.value || '理由未記入';
-            const email = localStorage.getItem('userEmail') || '';
-
-            if (!email) {
-                alert('メールアドレスが取得できませんでした。再度ログインしてください。');
-                return;
-            }
-
-            // ボタンを無効化
-            confirmBtn.disabled = true;
-            confirmBtn.textContent = '処理中...';
-
-            // Stripe の月額会員はアカウント管理の退会（確認画面 → 確定・即時退会・stripe-withdraw）へ（2026-10-07）。
-            // メールアドレスだけの process-withdrawal では購読を操作しない。
-            const _sa = (typeof getServerAuth === 'function') ? getServerAuth() : null;
-            if (_sa && (_sa.stripeBilling === true || _sa.paypalBilling === true) && typeof window.akOpenWithdraw === 'function') {
-                window.akOpenWithdraw();
-                confirmBtn.disabled = false;
-                confirmBtn.textContent = '退会する';
-                return;
-            }
-
+            new MutationObserver(update).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style'] });
+            setTimeout(update, 500);
+            // ?withdraw=1（料金・案内ページの「退会」から）: 契約があれば確認画面を開く。無ければ案内へ移る
             try {
-                // 退会処理APIを呼び出し
-                const response = await fetch('/.netlify/functions/process-withdrawal', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        email: email,
-                        reason: reason
-                    })
-                });
-
-                const result = await response.json();
-
-                if (response.ok) {
-                    // 成功時: 完了メッセージ表示後トップページへ
-                    alert('退会申請を受け付けました。確認メールをお送りしましたのでご確認ください。');
-                    window.location.href = '/';
-                } else {
-                    throw new Error(result.error || '退会申請の送信に失敗しました');
+                const url = new URL(location.href);
+                if (url.searchParams.get('withdraw') === '1') {
+                    url.searchParams.delete('withdraw');
+                    history.replaceState(null, '', url.pathname + (url.search ? url.search : '') + url.hash);
+                    setTimeout(function () {
+                        const sa = (window.__AK_SERVER_AUTH__ && typeof window.__AK_SERVER_AUTH__ === 'object') ? window.__AK_SERVER_AUTH__ : null; // is:inline からは module の getServerAuth が見えない
+                        const kind = sa && sa.profile && sa.profile.withdraw ? sa.profile.withdraw.kind : null;
+                        if ((kind === 'stripe' || kind === 'paypal' || kind === 'contract' || kind === 'lifetime_only') && typeof window.akOpenWithdraw === 'function') {
+                            window.akOpenWithdraw();
+                        } else {
+                            update();
+                            const note = document.getElementById('withdrawal-free-note');
+                            if (note && note.style.display !== 'none') note.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        }
+                    }, 900);
                 }
-            } catch (error) {
-                alert(`エラーが発生しました: ${error.message}\n\nお手数ですが、お問い合わせフォームからご連絡ください。`);
-                confirmBtn.disabled = false;
-                confirmBtn.textContent = '退会する';
-            }
-        });
-
-        // モーダル外クリックで閉じる
-        modal.addEventListener('click', function(e) {
-            if (e.target === modal) {
-                modal.style.display = 'none';
-            }
-        });
+            } catch (_) { /* 何もしない */ }
+        })();
     </script>
 
     <script is:inline>
@@ -5896,10 +5797,25 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
         if (!m) return;
         // 親要素の transform / backdrop-filter / display に左右されないよう body 直下へ移す（画面全体を覆う）
         if (m.parentElement !== document.body) document.body.appendChild(m);
-        const sa = (typeof getServerAuth === 'function') ? getServerAuth() : null;
+        const sa = ((window.__AK_SERVER_AUTH__ && typeof window.__AK_SERVER_AUTH__ === 'object') ? window.__AK_SERVER_AUTH__ : null) /* is:inline から module の getServerAuth は見えない */;
         const vu = sa && sa.profile && sa.profile.validUntil ? String(sa.profile.validUntil) : '';
         const span = document.getElementById('ak-withdraw-valid-until');
         if (span) span.textContent = /^\d{4}-\d{2}-\d{2}/.test(vu) ? `（${vu.slice(0, 10)} まで）` : '';
+        // 種類ごとの説明（期間のある契約は即時に利用終了・買い切りは残る）
+        const wd = sa && sa.profile && sa.profile.withdraw ? sa.profile.withdraw : {};
+        const lifetimeOnly = wd.kind === 'lifetime_only';
+        m.querySelectorAll('[data-ak-withdraw-copy="immediate"],[data-ak-withdraw-copy="keep"]').forEach((el) => { el.style.display = lifetimeOnly ? 'none' : ''; });
+        const lifeEl = m.querySelector('[data-ak-withdraw-copy="lifetime"]');
+        if (lifeEl) lifeEl.style.display = lifetimeOnly ? '' : 'none';
+        const keeps = document.getElementById('ak-withdraw-keeps');
+        if (keeps) {
+          const items = [];
+          if (wd.keepsPremiumLifetime) items.push('Premium 買い切りは退会後もご利用いただけます。');
+          if (wd.keepsSanrenpukuLifetime) items.push('三連複の買い切りは退会後もご利用いただけます。');
+          keeps.innerHTML = '';
+          items.forEach((t) => { const li = document.createElement('li'); li.textContent = t; keeps.appendChild(li); });
+          keeps.style.display = items.length && !lifetimeOnly ? '' : 'none';
+        }
         const err = document.getElementById('ak-withdraw-error');
         if (err) err.style.display = 'none';
         m.style.display = 'flex';
@@ -5923,13 +5839,13 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
           login_required: 'ログインの有効期限が切れました。ログインし直してから、もう一度お試しください。',
           not_stripe_subscriber: 'クレジットカードの月額プランのご契約が見つかりませんでした。お問い合わせください。',
           not_paypal_subscriber: 'PayPal の月額プランのご契約が見つかりませんでした。お問い合わせください。',
+          no_contract: '退会の対象となる有料プランのご契約がありません（無料会員の方は退会のお手続きは不要です）。',
           subscription_mismatch: 'ご契約の確認ができませんでした。お問い合わせください。',
           busy: '処理が混み合っています。少し時間をおいてから、もう一度お試しください。',
         };
         try {
-          const _saW = (typeof getServerAuth === 'function') ? getServerAuth() : null;
-          const endpoint = _saW && _saW.paypalBilling === true ? 'paypal-withdraw' : 'stripe-withdraw';
-          const res = await fetch('/.netlify/functions/' + endpoint, {
+          // 退会の入口は member-withdraw だけ（月額・年払い・買い切りの判定はサーバーがレコードで決める）
+          const res = await fetch('/.netlify/functions/member-withdraw', {
             method: 'POST',
             credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
@@ -5937,11 +5853,16 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
           });
           const data = await res.json().catch(() => ({}));
           if (res.ok && data.ok) {
-            if (typeof clearAuthLocalStorage === 'function') clearAuthLocalStorage();
+            // 退会直後は端末に残ったログイン情報（有料プラン名など）も消す。退会後は無料会員としてログインし直す
+            if (typeof window.akClearAuthLocalStorage === 'function') window.akClearAuthLocalStorage();
             location.href = '/withdrawal-complete/';
             return;
           }
-          if (data.error === 'already_withdrawn') { location.href = '/withdrawal-complete/'; return; }
+          if (data.error === 'already_withdrawn') {
+            if (typeof window.akClearAuthLocalStorage === 'function') window.akClearAuthLocalStorage();
+            location.href = '/withdrawal-complete/';
+            return;
+          }
           throw new Error(MESSAGES[data.error] || '退会の手続きができませんでした。時間をおいて再度お試しいただくか、お問い合わせください。');
         } catch (e) {
           if (err) { err.textContent = e.message; err.style.display = 'block'; }
