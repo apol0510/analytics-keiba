@@ -1,3 +1,11 @@
+# 2026-10-15（追記 2）— PayPal 月額の本番受付を開く・関数 env の空きは決済メール v2 カナリア用 env を外して作る（MK 決定）
+
+- MK 回答（Claude の質問への選択）: 鍵の置き場所＝「カナリア用 env を外す」／受付開始＝「開ける」。
+- 本番の関数 env は Lambda 4KB 上限で空きがなく、PayPal Live 鍵を入れると production deploy が全部失敗した（復旧済み・progress.md）。
+  決済メール v2 のカナリア検証用 env 5 件（`PAYMENT_EMAIL_CANARY_AIRTABLE_API_KEY`・`_BASE_ID`・`_TABLE_ID`・`_RECORD_IDS`・`PAYMENT_CANARY_SECRET`）を production から外し、  値は `~/.analytics-keiba-ops/payment-email-canary-env.backup`（600）に保存。外している間、カナリア関数は 503（fail closed）で使えない。  戻すときは関数 env の空きを先に作る（そのまま戻すと再び 4KB を超える）。
+- PayPal の production env は `PAYPAL_CLIENT_ID`・`PAYPAL_CLIENT_SECRET`（secret）・`PAYPAL_ENV=live`・`PAYPAL_WEBHOOK_ID`（scope functions）。
+- 月額の受付開始は `SUBSCRIPTION_SALES_OPEN.paypal=true`（PR）。料金ページ FAQ・特商法・返金ページに PayPal 月額を記載。
+
 # 2026-10-15（追記）— 月額は PayPal の定期課金で先に受け付ける・年払い／買い切りは銀行振込のまま（MK 決定）
 
 - MK 指示（原文）「paddleがメインだがpaypalで先に進めて、paypalは月額の定期課金で決済を受け付けます、年払いや買い切りは銀行振り込みを維持します。銀行振り込みの１ヶ月プランは停止のままです。」

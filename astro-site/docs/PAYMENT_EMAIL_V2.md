@@ -130,6 +130,7 @@ Activity 照合は **HTTP 200 かつ `messages: []` のときだけ「0 件」**
 
 | env | 責務 |
 |---|---|
+| ⚠️ 2026-10-15 | **カナリア用 env 5 件は production から外してある**（関数 env の 4KB 上限の空きを PayPal Live 鍵に使うため・MK 決定・decisions 2026-10-15 追記 2）。値は `~/.analytics-keiba-ops/payment-email-canary-env.backup`。外している間カナリアは 503。戻す前に関数 env の空きを作ること |
 | `PAYMENT_EMAIL_CANARY_AIRTABLE_API_KEY` | **カナリア専用 Airtable PAT**（テスト Base だけに read/write 権限）。本番 `AIRTABLE_API_KEY` は使わない |
 | `PAYMENT_EMAIL_CANARY_AIRTABLE_BASE_ID` | カナリア専用 Base ID（テスト用のみ） |
 | `PAYMENT_EMAIL_CANARY_AIRTABLE_TABLE_ID` | カナリア専用 Table ID（テスト用のみ） |

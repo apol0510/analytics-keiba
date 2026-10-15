@@ -370,15 +370,15 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
                 <div class="faq-item">
                     <h3 class="faq-question">Q: 支払い方法は何が利用できますか？</h3>
                     <p class="faq-answer">
-                        銀行振込でお申し込みいただけます（Premium の年払い・買い切り）。<br>
-                        新規の月額プラン（クレジットカード）のお申し込みは受け付けておりません。
+                        月額プラン（Premium・中央版・南関版）は PayPal でお申し込みいただけます（PayPal に登録したクレジットカードも使えます）。毎月自動で更新されます。<br>
+                        Premium の年払い・買い切りは銀行振込でお申し込みいただけます。
                     </p>
                 </div>
 
                 <div class="faq-item">
                     <h3 class="faq-question">Q: 月額プランの解約（退会）はできますか？</h3>
                     <p class="faq-answer">
-                        すでに月額プラン（クレジットカード）をご契約中の方は、いつでもできます。ログイン後、マイページの「アカウント管理」の「退会する」から手続きいただけます（確認画面のあとに確定します）。<br>
+                        いつでもできます（PayPal・クレジットカードどちらの月額プランも同じです）。ログイン後、マイページの「アカウント管理」の「退会する」から手続きいただけます（確認画面のあとに確定します）。<br>
                         退会すると、現在の利用期限を待たずにすぐにご利用いただけなくなり、以降の請求はありません。残りの期間のご利用を希望される場合は、退会せずにそのままご利用ください。最低利用期間はなく、日割りでの返金は行っておりません。再びご利用の場合は新しくお申し込みいただけます。
                     </p>
                 </div>
@@ -395,6 +395,7 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
                 <div class="faq-item">
                     <h3 class="faq-question">Q: 利用開始までの流れは？</h3>
                     <p class="faq-answer">
+                        <strong>【月額（PayPal）】</strong>①ログイン（無料会員登録） → ②月額プランの「PayPal で申し込む」 → ③PayPal でお支払いを承認 → ④すぐにご利用開始です。<br>
                         <strong>【銀行振込】</strong>①お振込み → ②振込完了後、報告フォームをご送信 → ③入金確認後、ご利用開始です。フォームは<strong>お振込みが済んでから</strong>ご送信ください。
                     </p>
                 </div>
@@ -402,6 +403,7 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
                 <div class="faq-item">
                     <h3 class="faq-question">Q: 更新や有効期限はどうなりますか？</h3>
                     <p class="faq-answer">
+                        月額（PayPal）は毎月同じ日に自動で更新され、お支払いが確認できるたびに利用期限が延びます。お支払いが止まった場合は、支払い済みの期間が終わるとご利用いただけなくなります。<br>
                         銀行振込の年払いは、有効期限が近づきましたらメールでお知らせいたします。継続をご希望の場合は、再度お振込みいただくことで延長できます。
                     </p>
                 </div>
