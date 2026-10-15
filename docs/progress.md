@@ -1,4 +1,4 @@
-# 💳 月額を PayPal の定期課金で受け付ける（2026-10-15 MK 決定 / **実装済み・Sandbox E2E 完了（2026-10-15）・本番は Live 鍵と受付開始 PR 待ち**）
+# 💳 月額を PayPal の定期課金で受け付ける（2026-10-15 MK 決定 / **#800 merge `f4b16caa`・本番反映済み（受付は閉）・Sandbox E2E 完了（2026-10-15）・Live 鍵と受付開始 PR 待ち**）
 
 | 項目 | 状態 |
 |---|---|
@@ -8,6 +8,7 @@
 | test | `test:billing` 140 pass（退会済みの CancelledAt 保持 1 を追加。月額 11: 商品・本番の受付拒否・申込→承認→付与・再送／同時・毎月の更新と決済失敗・即時退会・退会の書込み失敗からの収束・管理者の解約・二重契約の事前拒否と事後の管理者通知・照会不一致・返金は通知だけ）・check:safety pass・build pass |
 | Sandbox E2E（2026-10-15・中立ホスト → deploy-preview-800）| **PASS・同じテストを繰り返さない**: 共通入口で購読作成 I-LCWF8RGJRXER → MK 承認 → ACTIVATED / SALE.COMPLETED Webhook で付与（Premium・Monthly・active・PaymentMethod PayPal・期限 2026-11-17＝支払日 JST 10-15 + 1 ヶ月 + 2 日・Redis に会員と購読の対応）→ confirm 再実行で不変 → Webhook 2 件再送で不変（PaidAt・期限とも同じ）→ 申込の重複は premium / premium-jra とも 409 `already_subscribed` → `paypal-withdraw` で即時退会（購読 CANCELLED・note `ak_member_withdrawal`・期限を昨日 10-14・退会フラグ）→ CANCELLED Webhook で同じ状態に収束。是正 1 件: 終了 Webhook が退会済みの CancelledAt を 16 秒後へ書き換えていた → 退会済みなら保持（`withdrawalFields`・Stripe と共通・test 追加 `ed1a914b`）。退会後の再申込は作成できる（I-TC0WR36ESKR0・南関版）。料金ページの月額カード 3 枚を実ブラウザで確認。承認画面でカードは PayPal に登録したものとして使われると確認 → 文言を事実どおりに（`78db4a36`）。戻りページは未ログインでログイン案内だけ（購読情報を出さない）。ログイン状態の戻りページは Preview では見られない（マジックリンクが本番 URL 固定）→ 同じ confirm API を E2E 経路で確認して代替 |
 | Sandbox E2E 後半 | **PASS**: 退会後の再契約 I-TC0WR36ESKR0（南関版 ¥2,980）→ MK 承認 → 付与（Premium・Monthly・VenueAccess nankan・期限 2026-11-17・Redis の対応を新購読へ）→ API で管理者の解約 → CANCELLED Webhook で期限を 2026-11-16（支払い済み 11-15 の翌日）へ縮め・退会フラグは立てない・CancelledAt を記録。後片付け済み: e2e レコード削除・Sandbox Redis の `ak:paypal:*` 削除・deploy-preview の PAYPAL_* / CARD_E2E_SECRET を unset（production も未設定を確認）。残す: Sandbox の Product・Plan 3 本・Webhook・中立ホストのプロキシ（転送先 deploy-preview-800）。I-LDKH53RFE0N1 は未承認のまま（PayPal 側で自然失効）|
+| 本番実測（2026-10-15・`f4b16caa`）| monthly-create-checkout 503 `paypal_key_missing`・paypal-subscription-confirm 未ログイン 401・paypal-withdraw 503 `not_configured`（鍵なし）・paypal-order-webhook は鍵なしで無視・card-create-checkout 503・stripe-create-checkout 410・本番 /pricing/ に月額カードなし・主要ページ 200。production に PAYPAL_* / CARD_E2E_SECRET なし。worktree・branch（#799・#800）削除済み |
 | Claude 案（MK 未確認）| 申込はログイン必須／プラン変更は当面なし（退会 → 新規）／月額カードは年払い・買い切りの下 |
 | 次作業 | ①Sandbox E2E → **完了** ②PayPal Live 鍵（MK が `~/.analytics-keiba-ops/card-live.env` に置く）→ Claude が Live の Product・Plan・Webhook・production env ③受付開始 PR（`SUBSCRIPTION_SALES_OPEN.paypal=true`・`PAYPAL_PLAN_IDS.live`・legal / terms / refund / FAQ に PayPal 月額を記載）④本番で実購入 1 件 → 退会で確認 |
 | 再開条件 | ②は MK の Live 鍵の配置 |
