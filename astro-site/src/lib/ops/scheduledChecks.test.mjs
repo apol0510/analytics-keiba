@@ -244,10 +244,13 @@ test('workflow: Airtable の読み取りトークンも失敗経路の検証で�
 
 test('待機中（まだ起きていない・未確定）は失敗と分ける: exit 3・赤にしない・待機中 Issue を 1 つだけ更新', async () => {
   const { exitCodeFor, EXIT, PENDING_CODES } = await import('./scheduledChecks.js');
-  assert.deepEqual([...PENDING_CODES].sort(), ['data_not_ready', 'no_application_yet', 'no_confirmation_yet', 'no_conversion_yet', 'no_plus_confirmation_yet', 'no_plus_order_yet', 'no_reminder_sent_yet', 'stripe_charges_not_enabled']);
+  assert.deepEqual([...PENDING_CODES].sort(), ['data_not_ready', 'no_application_yet', 'no_confirmation_yet', 'no_conversion_yet', 'no_paypal_monthly_purchase_yet', 'no_plus_confirmation_yet', 'no_plus_order_yet', 'no_reminder_sent_yet', 'paypal_webhook_not_seen_yet', 'stripe_charges_not_enabled']);
   assert.equal(exitCodeFor('no_conversion_yet'), EXIT.PENDING);
   assert.equal(exitCodeFor('data_not_ready'), EXIT.PENDING);
   assert.equal(exitCodeFor('credentials_missing'), EXIT.FAILED);
+  // PayPal 月額の初回実購入（2026-10-15 MK）: 購入なし・Webhook 48 時間待ちは待機、48 時間を過ぎた未着・権限の不一致は失敗
+  assert.equal(exitCodeFor('paypal_webhook_not_seen'), EXIT.FAILED);
+  assert.equal(exitCodeFor('paypal_grant_mismatch'), EXIT.FAILED);
   assert.equal(exitCodeFor('airtable_auth_failed'), EXIT.FAILED);
   const wf = read('.github/workflows/scheduled-checks.yml');
   assert.match(wf, /elif \[ "\$rc" = 3 \]; then/);

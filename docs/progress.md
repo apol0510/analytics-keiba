@@ -13,7 +13,7 @@
 
 ---
 
-# 💳 月額を PayPal の定期課金で受け付ける（2026-10-15 MK 決定 / **#800 merge `f4b16caa`・本番反映済み（受付は閉）・Sandbox E2E 完了（2026-10-15）・Live 鍵と受付開始 PR 待ち**）
+# 💳 月額を PayPal の定期課金で受け付ける（2026-10-15 MK 決定 / **#803 merge `face063c`・本番で受付開始（2026-10-15）・料金ページの表記 #806 `1879b87b`・#807・初回実購入は未発生＝自動確認で待機中**）
 
 | 項目 | 状態 |
 |---|---|
@@ -29,7 +29,11 @@
 | 🚨 本番 deploy 失敗と復旧（2026-10-15 11:38〜11:58 JST）| production env に PayPal 4 件（約 250B）を入れたところ、#802 の production deploy が **Lambda の関数 env 4KB 上限超過**で失敗（Building は成功・Deploying で `Your environment variables exceed the 4KB limit`）。公開中のサイトは直前の f4b16caa のまま（障害なし）。4 件を unset → Build Hook で `ff76a8c4` ready・本番 smoke OK。その間の自動取込コミットなし。続けて `PAYPAL_CLIENT_ID`＋`PAYPAL_CLIENT_SECRET` の 2 件だけ（約 200B）で試験ビルド → **これも超過** → unset・再ビルド `ff76a8c4` ready。**現在 production に PAYPAL_* なし**（本番の月額入口は 503 `paypal_key_missing`）。既知の制約（STRIPE_BILLING.md §3・AI_LAB.md「env に秘密値を足さない」）の確認漏れ。関数 scope の env は 72 件・値と名前で約 3,056B（＋Netlify 自動注入）で、空きは 200B 未満 |
 | PayPal 鍵の置き場所 | **MK 決定（2026-10-15）＝カナリア用 env を外す**: 決済メール v2 のカナリア env 5 件を production から外し（値は `~/.analytics-keiba-ops/payment-email-canary-env.backup`）、PayPal 4 件を scope functions で設定 → Build Hook で `ff76a8c4` ready（4KB 内）。本番実測: 月額入口 503 `card_sales_not_open`（鍵あり・受付は閉）・一回払い 503 `card_sales_not_open`・未署名 Webhook 401 `invalid_signature`・カナリア 503（fail closed）・主要ページ 200 |
 | 受付開始 | **MK 決定（2026-10-15）＝開ける**。この PR で `SUBSCRIPTION_SALES_OPEN.paypal=true`＋料金ページ FAQ（支払い方法・利用開始の流れ・自動更新・退会）・特商法（legal: PayPal 月額／Stripe は既存契約のみ）・返金ページを PayPal 月額に合わせる。merge → deploy で本番の料金ページに月額カードが出る。次＝本番で実購入 1 件 → 反映 → 退会の確認（購入は MK）|
-| 次作業 | ①Sandbox E2E → **完了** ②Live 準備 → **完了** ③受付開始 PR（`SUBSCRIPTION_SALES_OPEN.paypal=true`・`PAYPAL_PLAN_IDS.live`・legal / terms / refund / FAQ に PayPal 月額を記載）④本番で実購入 1 件 → 退会で確認 |
+| 受付開始の本番反映（2026-10-15）| #803 `face063c` production ready（08:16Z）。本番実測: /pricing/ に月額カード 3 枚・`monthly-create-checkout` 未ログイン 401 `login_required`（503 ではなくなった）・`paypal-order-webhook` 未署名 401・`member-withdraw` 未ログイン 401・料金/特商法/返金/規約/マイページ/無料予想 200 |
+| 料金ページの表記（2026-10-15 MK 指示）| 主役は銀行振込の年払い・買い切り。月額・PayPal を前面に出さず「クレジット決済／クレジットカード決済はこちら」「クレジットカードで申し込む」（#806 `1879b87b`・#807）。未ログインで押すとログインへ直行（以前はメッセージが画面の端に出て押せないように見えた）。正本 decisions 2026-10-15（追記 5） |
+| 本番の購入確認の方針 | **MK 決定（2026-10-15）**: 「販売者本人による PayPal 自己決済テストは行いません。Sandbox E2E は完了済みです。本番の初回実購入が発生した際に、決済・Webhook・権限付与を read-only で確認してください。顧客の退会操作は行わず、未検証事項は PROGRESS に残してください。」→ 自動確認 `paypal-monthly-first-purchase-2026`（scheduled-checks・毎日 10:00 JST・2027-04-30 まで）。Customers の PayPal 月額（PaidAt あり・権限 8 項目だけ読む）と、署名検証済み Webhook の処理件数（Redis `ak:paypal:webhook:v1:sub`・件数だけ・識別子なし・admin-payment-funnel `paypalSubscriptionWebhooks`）を読む。購入 0 は待機中 Issue、成立で Issue「[自動測定] paypal-monthly-first-purchase-2026」。2026-10-15 時点の実測: 購入 0（Customers の PaymentMethod=PayPal かつ Monthly 0 件） |
+| **本番で未検証（PROGRESS に残す）** | ①本番の初回実購入での 決済 → Webhook → 権限付与（自動確認で待機中）②本番での更新（2 回目の PAYMENT.SALE.COMPLETED で期限が延びる）③顧客自身のマイページ退会（PayPal の即時解約・権限停止・完了メール）④決済失敗・PayPal 側での直接解約（支払い済みの月の終わりまで）⑤conflict 通知（二重契約・買い切り会員）の本番発生。②〜⑤は Sandbox E2E で PASS 済み・本番では顧客の操作を待って観測する（Claude は顧客を退会させない・販売者本人の購入はしない）。Webhook の処理件数の記録は本 PR の反映から（それ以前の Webhook は数えていない＝購入 0 件なので欠落なし） |
+| 次作業 | ①Sandbox E2E → **完了** ②Live 準備 → **完了** ③受付開始 → **完了（#803）** ④本番の初回実購入 → **自動確認で待機中**（成立したら Issue を見て上の未検証①を閉じ、②〜⑤は発生時に追記） |
 | 再開条件 | ②は MK の Live 鍵の配置 |
 
 ---
