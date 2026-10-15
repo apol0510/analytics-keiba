@@ -1,4 +1,4 @@
-# 💳 月額を PayPal の定期課金で受け付ける（2026-10-15 MK 決定 / **実装済み・Sandbox E2E 前半 PASS（再契約と管理者の解約が残り）・本番は Live 鍵と受付開始 PR 待ち**）
+# 💳 月額を PayPal の定期課金で受け付ける（2026-10-15 MK 決定 / **実装済み・Sandbox E2E 完了（2026-10-15）・本番は Live 鍵と受付開始 PR 待ち**）
 
 | 項目 | 状態 |
 |---|---|
@@ -6,15 +6,15 @@
 | 実装 | `paypal/paypalSubscriptionCore.js`（判定）・`paypalSubscriptionServer.js`（I/O）／Functions `monthly-create-checkout`（共通入口）・`paypal-subscription-confirm`・`paypal-withdraw`・`paypal-order-webhook`（月額のイベントも受ける）／`/checkout/paypal-subscription-return/`／`/pricing/` の月額カード（`SUBSCRIPTION_SALES_OPEN` か Deploy Preview のときだけ表示）／マイページの PayPal 月額のアカウント管理・退会／`withdrawalMail.js`（退会完了メールを Stripe と共通化）／`scripts/paypal-subscription-setup.mjs` |
 | Sandbox 準備 | Product・Plan 3 本を作成し `PAYPAL_PLAN_IDS.test` に登録。Sandbox Webhook に月額のイベントを追加（2026-10-15）|
 | test | `test:billing` 140 pass（退会済みの CancelledAt 保持 1 を追加。月額 11: 商品・本番の受付拒否・申込→承認→付与・再送／同時・毎月の更新と決済失敗・即時退会・退会の書込み失敗からの収束・管理者の解約・二重契約の事前拒否と事後の管理者通知・照会不一致・返金は通知だけ）・check:safety pass・build pass |
-| Sandbox E2E（2026-10-15・中立ホスト → deploy-preview-800）| **前半 PASS**: 共通入口で購読作成 I-LCWF8RGJRXER → MK 承認 → ACTIVATED / SALE.COMPLETED Webhook で付与（Premium・Monthly・active・PaymentMethod PayPal・期限 2026-11-17＝支払日 JST 10-15 + 1 ヶ月 + 2 日・Redis に会員と購読の対応）→ confirm 再実行で不変 → Webhook 2 件再送で不変（PaidAt・期限とも同じ）→ 申込の重複は premium / premium-jra とも 409 `already_subscribed` → `paypal-withdraw` で即時退会（購読 CANCELLED・note `ak_member_withdrawal`・期限を昨日 10-14・退会フラグ）→ CANCELLED Webhook で同じ状態に収束。是正 1 件: 終了 Webhook が退会済みの CancelledAt を 16 秒後へ書き換えていた → 退会済みなら保持（`withdrawalFields`・Stripe と共通・test 追加 `ed1a914b`）。退会後の再申込は作成できる（I-TC0WR36ESKR0・南関版）。料金ページの月額カード 3 枚を実ブラウザで確認。承認画面でカードは PayPal に登録したものとして使われると確認 → 文言を事実どおりに（`78db4a36`）。戻りページは未ログインでログイン案内だけ（購読情報を出さない）。ログイン状態の戻りページは Preview では見られない（マジックリンクが本番 URL 固定）→ 同じ confirm API を E2E 経路で確認して代替 |
-| Sandbox E2E 残り | 再契約 I-TC0WR36ESKR0 の承認（MK の Sandbox 買い手）→ 自動で付与確認 → API で管理者の解約 → 期限を支払い済み+1 日へ縮める確認 → 後片付け（e2e レコード・Sandbox Redis の `ak:paypal:*`・deploy-preview の PAYPAL_* / CARD_E2E_SECRET）。未承認の I-LDKH53RFE0N1（ローカル検証で作成）は承認しない・PayPal 側で自然失効 |
+| Sandbox E2E（2026-10-15・中立ホスト → deploy-preview-800）| **PASS・同じテストを繰り返さない**: 共通入口で購読作成 I-LCWF8RGJRXER → MK 承認 → ACTIVATED / SALE.COMPLETED Webhook で付与（Premium・Monthly・active・PaymentMethod PayPal・期限 2026-11-17＝支払日 JST 10-15 + 1 ヶ月 + 2 日・Redis に会員と購読の対応）→ confirm 再実行で不変 → Webhook 2 件再送で不変（PaidAt・期限とも同じ）→ 申込の重複は premium / premium-jra とも 409 `already_subscribed` → `paypal-withdraw` で即時退会（購読 CANCELLED・note `ak_member_withdrawal`・期限を昨日 10-14・退会フラグ）→ CANCELLED Webhook で同じ状態に収束。是正 1 件: 終了 Webhook が退会済みの CancelledAt を 16 秒後へ書き換えていた → 退会済みなら保持（`withdrawalFields`・Stripe と共通・test 追加 `ed1a914b`）。退会後の再申込は作成できる（I-TC0WR36ESKR0・南関版）。料金ページの月額カード 3 枚を実ブラウザで確認。承認画面でカードは PayPal に登録したものとして使われると確認 → 文言を事実どおりに（`78db4a36`）。戻りページは未ログインでログイン案内だけ（購読情報を出さない）。ログイン状態の戻りページは Preview では見られない（マジックリンクが本番 URL 固定）→ 同じ confirm API を E2E 経路で確認して代替 |
+| Sandbox E2E 後半 | **PASS**: 退会後の再契約 I-TC0WR36ESKR0（南関版 ¥2,980）→ MK 承認 → 付与（Premium・Monthly・VenueAccess nankan・期限 2026-11-17・Redis の対応を新購読へ）→ API で管理者の解約 → CANCELLED Webhook で期限を 2026-11-16（支払い済み 11-15 の翌日）へ縮め・退会フラグは立てない・CancelledAt を記録。後片付け済み: e2e レコード削除・Sandbox Redis の `ak:paypal:*` 削除・deploy-preview の PAYPAL_* / CARD_E2E_SECRET を unset（production も未設定を確認）。残す: Sandbox の Product・Plan 3 本・Webhook・中立ホストのプロキシ（転送先 deploy-preview-800）。I-LDKH53RFE0N1 は未承認のまま（PayPal 側で自然失効）|
 | Claude 案（MK 未確認）| 申込はログイン必須／プラン変更は当面なし（退会 → 新規）／月額カードは年払い・買い切りの下 |
-| 次作業 | ①Sandbox E2E（Deploy Preview・中立ホスト経由。承認は MK の Sandbox 買い手）②PayPal Live 鍵（MK が `~/.analytics-keiba-ops/card-live.env` に置く）→ Claude が Live の Product・Plan・Webhook・production env ③受付開始 PR（`SUBSCRIPTION_SALES_OPEN.paypal=true`・`PAYPAL_PLAN_IDS.live`・legal / terms / refund / FAQ に PayPal 月額を記載）④本番で実購入 1 件 → 退会で確認 |
+| 次作業 | ①Sandbox E2E → **完了** ②PayPal Live 鍵（MK が `~/.analytics-keiba-ops/card-live.env` に置く）→ Claude が Live の Product・Plan・Webhook・production env ③受付開始 PR（`SUBSCRIPTION_SALES_OPEN.paypal=true`・`PAYPAL_PLAN_IDS.live`・legal / terms / refund / FAQ に PayPal 月額を記載）④本番で実購入 1 件 → 退会で確認 |
 | 再開条件 | ②は MK の Live 鍵の配置 |
 
 ---
 
-# 💳 代替決済 Paddle（第一）・PayPal（第二）並行推進＋共通会員権限層（2026-10-11 MK 確定 / **#789 merge 済み `bb7f1c68`・Paddle・PayPal とも Sandbox E2E 完了（#792・#796）・**PayPal 審査通過・Paddle 審査中（2026-10-15 MK 報告）・fincode は不使用で削除**・販売開始待ち・販売は全社閉**）
+# 💳 代替決済 Paddle（第一）・PayPal（第二）並行推進＋共通会員権限層（2026-10-11 MK 確定 / **#789 merge 済み `bb7f1c68`・#799（checkout.tirol.link 掲載・fincode 削除）merge `4a84c642`・本番反映済み（2026-10-15: fincode Functions 404・card-create-checkout 503・本番 pricing の月額カード 0・checkout.tirol.link 200）・Paddle・PayPal とも Sandbox E2E 完了（#792・#796）・**PayPal 審査通過・Paddle 審査中（2026-10-15 MK 報告）・fincode は不使用で削除**・販売開始待ち・販売は全社閉**）
 
 | 項目 | 状態 |
 |---|---|
