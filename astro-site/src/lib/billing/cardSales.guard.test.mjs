@@ -77,7 +77,7 @@ test('料金ページの月額ボタン: 未ログインはログインへ直行
 test('料金ページ: 月額・自動更新・PayPal を前面に出さない（主役は年払い・買い切り／2026-10-15 MK 指示）', () => {
   const s = read('src/pages/pricing.astro');
   const i = s.indexOf('<section class="monthly-section"'); const j = s.indexOf('</section>', i);
-  const visible = s.slice(i, j).replace(/<!--[\s\S]*?-->/g, '');
+  const visible = s.slice(i, j).replace(/<!--[\s\S]*?-->/g, '').replace(/\{\/\*[\s\S]*?\*\/\}/g, '');
   for (const w of ['月額で始める', '毎月自動更新', 'PayPal で申し込む', '月額・', 'recommended-badge']) {
     assert.ok(!visible.includes(w), `クレジット決済の枠に「${w}」が前面に出ている`);
   }

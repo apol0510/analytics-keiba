@@ -250,11 +250,11 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
 
         {showMonthly && (
             <section class="monthly-section" aria-label="クレジット決済">
-                <!-- 月額（PayPal の定期課金・2026-10-15 MK 決定）。金額の正本は stripePlans.STRIPE_PLANS（請求は PayPal の Plan）。
+                {/* 月額（PayPal の定期課金・2026-10-15 MK 決定）。金額の正本は stripePlans.STRIPE_PLANS（請求は PayPal の Plan）。
                      2026-10-15 MK 指示: 主役は年払い・買い切り（銀行振込）。ここは「銀行振込が難しい方」向けの控えめな選択肢。
                      「月額で始める」「毎月自動更新」「PayPal」を前面に出さない（見出し・ボタンは「クレジット決済」）。
                      自動で継続する支払いであること・決済代行は、ボタン下の注記と FAQ に事実として残す（隠さない）。
-                     ボタンは data-monthly="<planId>" → 下の startMonthly() → monthly-create-checkout（決済会社は選ばせない）。 -->
+                     ボタンは data-monthly="<planId>" → 下の startMonthly() → monthly-create-checkout（決済会社は選ばせない）。 */}
                 <p class="plans-lead plans-lead--sub">クレジット決済<br><span>クレジットカード決済はこちら</span></p>
                 <div class="plans-container plans-container--stripe">
                     {monthlyPlans.map((p) => (
