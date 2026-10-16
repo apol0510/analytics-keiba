@@ -20,8 +20,10 @@ test('禁止語の判定は大文字小文字を問わない', () => {
 });
 
 test('顧客向けの名前は「Analytics Premium」に統一され、KEIBA を含まない', () => {
+  // Stripe は 2026-10-15 MK 確定で停止・不使用。既存の Product 名は Stripe 側を変えないため、2026-10-11 の語（KEIBA・競馬・馬券）で固定する
+  // （中央・南関を含む既存名は Stripe にだけ残る。決済会社へ新しく送る名前は paymentDisplayNames の拡大した禁止語で検査する）
   for (const p of STRIPE_PLANS) {
-    assert.equal(hasBannedStripeDisplayWord(p.productName), false, p.productName);
+    assert.equal(/KEIBA|競馬|馬券/i.test(p.productName.normalize('NFKC')), false, p.productName);
     assert.match(p.productName, /^Analytics Premium/);
   }
   assert.equal(STRIPE_STATEMENT_DESCRIPTOR, 'ANALYTICS PREMIUM');

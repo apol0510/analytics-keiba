@@ -13,7 +13,8 @@
  * 支払いが止まれば何も書かなくても期限で自然に止まる（fail closed）。
  *
  * ## 会員と購読の対応
- * - 購読の `custom_id` = `recordId:planId`（作成時にサーバーが付ける。ログイン必須）。どの会員かはこれだけで決める。
+ * - 購読の `custom_id` = `recordId:商品コード`（A=全会場・J=中央版・N=南関版。作成時にサーバーが付ける。ログイン必須）。
+ *   どの会員かはこれだけで決める。2026-10-15 から会場名を決済会社へ渡さないためコードにした（旧形式 `recordId:premium-jra` も読む）。
  * - その会員の「いまの購読」は Redis `ak:paypal:sub:member:{recordId}`（反映時に書く）。退会・二重契約の判定に使う。
  *   Customers に PayPal 購読 ID の列は無い（Functions の鍵に列追加の権限が無いため・2026-10-15）。
  *
@@ -23,7 +24,8 @@
  */
 
 import { STRIPE_PLANS, planById, venueAccessValue } from '../stripePlans.js';
-import { PAYMENT_BASE_NAME } from '../paymentDisplayNames.js';
+import { PAYMENT_BASE_NAME, PAYPAL_PLAN_NAMES, assertPaypalPlanName } from '../paymentDisplayNames.js';
+import { paypalReturnUrls } from '../neutralCheckoutHost.js';
 import { addMonthsJst, jstDateString } from '../../payments/bankPaymentFlow.js';
 import { normalizePlan } from '../../auth/planNormalization.js';
 import { withdrawalFields } from '../stripeSubscriptionSync.js';
@@ -72,12 +74,22 @@ export const CANCELLABLE_STATUSES = Object.freeze(['APPROVED', 'ACTIVE', 'SUSPEN
 
 export const memberKey = (recordId) => `ak:paypal:sub:member:${recordId}`;
 
-/** 月額プラン（stripePlans と同じ商品）→ PayPal の Plan 作成本文。JPY は小数なし。毎月・無期限・初期費用なし */
+/**
+ * PayPal に出す Plan の名前・説明（2026-10-15 MK 確定の許可リストだけ。Stripe の productName には依存しない）。
+ * 説明も名前と同じ文字列（中立・何も足さない）。
+ */
+export function paypalPlanDisplay(planId) {
+  const name = assertPaypalPlanName(planId, PAYPAL_PLAN_NAMES[planId]);
+  return { name, description: name };
+}
+
+/** 月額プラン（金額・会場は stripePlans と同じ商品）→ PayPal の Plan 作成本文。JPY は小数なし。暦の 1 か月ごと・無期限・初期費用なし */
 export function buildPlanBody({ productId, plan }) {
+  const { name, description } = paypalPlanDisplay(plan.id);
   return {
     product_id: productId,
-    name: plan.productName,
-    description: `${plan.productName}（月額）`,
+    name,
+    description,
     status: 'ACTIVE',
     billing_cycles: [{
       frequency: { interval_unit: 'MONTH', interval_count: 1 },
@@ -101,7 +113,20 @@ export function planFromPaypalPlanId(paypalPlanId, mode, ids = PAYPAL_PLAN_IDS) 
   return STRIPE_PLANS.find((p) => ids[mode]?.[p.id] === id) || null;
 }
 
-export const customIdOf = (recordId, planId) => `${recordId}:${planId}`;
+/** custom_id の商品コード（決済会社へ会場名・商品 ID を渡さない）*/
+export const PAYPAL_PLAN_CODES = Object.freeze({ 'premium': 'A', 'premium-jra': 'J', 'premium-nankan': 'N' });
+const PLAN_BY_CODE = Object.freeze(Object.fromEntries(Object.entries(PAYPAL_PLAN_CODES).map(([id, c]) => [c, id])));
+/** custom_id の後ろ半分 → 内部の商品 ID。旧形式（商品 ID そのまま・2026-10-15 以前の購読）も読む。それ以外は null */
+export function planIdFromCustomCode(code) {
+  const c = String(code || '');
+  if (PLAN_BY_CODE[c]) return PLAN_BY_CODE[c];
+  return planById(c) ? c : null;
+}
+export const customIdOf = (recordId, planId) => {
+  const code = PAYPAL_PLAN_CODES[planId];
+  if (!code) throw Object.assign(new Error('invalid_plan'), { code: 'invalid_plan' });
+  return `${recordId}:${code}`;
+};
 
 /** 購読の作成本文（POST /v1/billing/subscriptions） */
 export function buildSubscriptionBody({ planId, recordId, origin, mode, ids = PAYPAL_PLAN_IDS }) {
@@ -118,8 +143,7 @@ export function buildSubscriptionBody({ planId, recordId, origin, mode, ids = PA
       locale: 'ja-JP',
       shipping_preference: 'NO_SHIPPING',
       user_action: 'SUBSCRIBE_NOW',
-      return_url: `${origin}/checkout/paypal-subscription-return/`,
-      cancel_url: `${origin}/pricing/?checkout=cancelled`,
+      ...paypalReturnUrls(origin, 'subscription'),
     },
   };
 }
@@ -132,7 +156,8 @@ export function approveUrlOf(sub) {
 /** GET /v1/billing/subscriptions/{id} → 判定に要る値だけ */
 export function snapshotPaypalSubscription(s) {
   const o = s || {};
-  const [recordId, planId] = String(o.custom_id || '').split(':');
+  const [recordId, planCode] = String(o.custom_id || '').split(':');
+  const planId = planIdFromCustomCode(planCode);
   const lp = o.billing_info?.last_payment || null;
   const at = lp?.time ? new Date(lp.time) : null;
   return {

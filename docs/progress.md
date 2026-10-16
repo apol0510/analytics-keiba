@@ -13,7 +13,7 @@
 
 ---
 
-# 💳 月額を PayPal の定期課金で受け付ける（2026-10-15 MK 決定 / **#803 merge `face063c`・本番で受付開始（2026-10-15）・料金ページの表記 #806 `1879b87b`・#807・初回実購入は未発生＝自動確認で待機中**）
+# 💳 月額を PayPal の定期課金で受け付ける（2026-10-15 MK 決定 / **#803 merge `face063c`・本番で受付開始（2026-10-15）・料金ページの表記 #806 `1879b87b`・#807・初回実購入は未発生＝自動確認で待機中・PayPal のプラン名を中立名へ更新済み（本 PR で URL・custom_id も中立化）**）
 
 | 項目 | 状態 |
 |---|---|
@@ -32,8 +32,11 @@
 | 受付開始の本番反映（2026-10-15）| #803 `face063c` production ready（08:16Z）。本番実測: /pricing/ に月額カード 3 枚・`monthly-create-checkout` 未ログイン 401 `login_required`（503 ではなくなった）・`paypal-order-webhook` 未署名 401・`member-withdraw` 未ログイン 401・料金/特商法/返金/規約/マイページ/無料予想 200 |
 | 料金ページの表記（2026-10-15 MK 指示）| 主役は銀行振込の年払い・買い切り。月額・PayPal を前面に出さず「クレジット決済／クレジットカード決済はこちら」「クレジットカードで申し込む」（#806 `1879b87b`・#807）。未ログインで押すとログインへ直行（以前はメッセージが画面の端に出て押せないように見えた）。正本 decisions 2026-10-15（追記 5） |
 | 本番の購入確認の方針 | **MK 決定（2026-10-15）**: 「販売者本人による PayPal 自己決済テストは行いません。Sandbox E2E は完了済みです。本番の初回実購入が発生した際に、決済・Webhook・権限付与を read-only で確認してください。顧客の退会操作は行わず、未検証事項は PROGRESS に残してください。」→ 自動確認 `paypal-monthly-first-purchase-2026`（scheduled-checks・毎日 10:00 JST・2027-04-30 まで）。Customers の PayPal 月額（PaidAt あり・権限 8 項目だけ読む）と、署名検証済み Webhook の処理件数（Redis `ak:paypal:webhook:v1:sub`・件数だけ・識別子なし・admin-payment-funnel `paypalSubscriptionWebhooks`）を読む。購入 0 は待機中 Issue、成立で Issue「[自動測定] paypal-monthly-first-purchase-2026」。2026-10-15 時点の実測: 購入 0（Customers の PaymentMethod=PayPal かつ Monthly 0 件） |
-| **本番で未検証（PROGRESS に残す）** | ①本番の初回実購入での 決済 → Webhook → 権限付与（自動確認で待機中）②本番での更新（2 回目の PAYMENT.SALE.COMPLETED で期限が延びる）③顧客自身のマイページ退会（PayPal の即時解約・権限停止・完了メール）④決済失敗・PayPal 側での直接解約（支払い済みの月の終わりまで）⑤conflict 通知（二重契約・買い切り会員）の本番発生。②〜⑤は Sandbox E2E で PASS 済み・本番では顧客の操作を待って観測する（Claude は顧客を退会させない・販売者本人の購入はしない）。Webhook の処理件数の記録は本 PR の反映から（それ以前の Webhook は数えていない＝購入 0 件なので欠落なし） |
-| 次作業 | ①Sandbox E2E → **完了** ②Live 準備 → **完了** ③受付開始 → **完了（#803）** ④本番の初回実購入 → **自動確認で待機中**（成立したら Issue を見て上の未検証①を閉じ、②〜⑤は発生時に追記） |
+| **本番で未検証（PROGRESS に残す）** | ①本番の初回実購入での 決済 → Webhook → 権限付与（自動確認 `paypal-monthly-first-purchase-2026` で待機中）②本番での更新（暦の 1 か月後の 2 回目の自動課金 → PAYMENT.SALE.COMPLETED で期限が延びる・自動確認 `paypal-monthly-first-renewal-2026` で待機中・最短 2026-11-15）③顧客自身のマイページ退会（PayPal の即時解約・権限停止・完了メール）④決済失敗・PayPal 側での直接解約（支払い済みの月の終わりまで）⑤conflict 通知（二重契約・買い切り会員）の本番発生。本番では顧客の操作を待って観測する（Claude は顧客を退会させない・販売者本人の購入はしない）。Webhook の処理件数の記録は #808 の反映から（それ以前は購入 0 件なので欠落なし） |
+| **Sandbox E2E の実施範囲（2026-10-15 訂正）** | **実施済み（Sandbox で実際に承認・支払い）**: 初回の承認と付与・Webhook 再送と同時着信で不変・二重申込の 409・マイページ相当の即時退会（購読 cancel）と CANCELLED 通知の収束・退会後の再契約・管理者の解約（期限を支払い済みの翌日へ縮める）。**未検証（実際の課金を伴う E2E は無い）**: **翌月の 2 回目の自動引き落とし（更新）と、その決済失敗**（Sandbox で 1 か月先を待てない・自己決済はしない）。これらは偽の PayPal を使った自動テストだけで確認している（下の「更新の自動テスト」）。旧記載「②〜⑤は Sandbox E2E で PASS 済み」は誤りだったので訂正（②更新・④決済失敗は Sandbox でも未実施、⑤は申込前の 409 だけ実施） |
+| 名称の中立化（2026-10-15 MK 確定・decisions 追記 7）| **PayPal 側は反映済み**: Live・Sandbox とも既存 Plan ID のまま名前・説明だけ更新（全会場 `Analytics Premium`・中央版 `Analytics Premium J`・南関版 `Analytics Premium N`）。前後比較で変わったのは name・description・update_time だけ（金額 4980/2980/2980 JPY・MONTH×1・total_cycles 0・REGULAR・auto_bill_outstanding true・初期費用 0・失敗 2 回で停止は不変）。更新前に PayPal 月額の会員 0 件（Customers の PaymentMethod=PayPal 0 件）を確認。setup スクリプトの再実行で変化なし（旧名称へ戻らない）。rollback = 同じ PATCH で旧名へ（旧名: `Analytics Premium（中央＋南関）`・`Analytics Premium 中央`・`Analytics Premium 南関`、説明は各名＋「（月額）」。ただし旧名は MK 確定の禁止語を含むので戻さない前提）。**コード**: 禁止語の拡大・PayPal 名の許可リスト・custom_id の商品コード化（A/J/N）・戻り先と Webhook を `checkout.tirol.link` 経由に（本 PR）。Sandbox で新形式の購読作成を API で実測（3 プランとも 201 APPROVAL_PENDING・custom_id `…:A/J/N`・読み戻しで商品 ID 一致・本文に禁止語なし・未承認のため課金なし・PayPal 側で自然失効）|
+| 更新の自動テスト（2026-10-15）| `paypalSubscription.test.mjs`: 2 回目・3 回目の支払いで期限延長（年またぎ）・同じ通知の重複/同時着信で 1 回分・PaidAt と付与通知は初回のまま・古い通知で戻らない／支払い失敗・UPDATED・SUSPENDED で延ばさない・再開後はその支払い日から・金額違いは延ばさない／退会で cancel 1 回・その後の売上通知で権限が戻らない／三連複の買い切りに触らない・Premium 買い切りには申込を作らない／JST の日付境界（10/31 23:59 と 11/01 00:30）・月末（1/31→2/28・閏年 2/29・3/31→4/30）・年またぎ。**いずれも偽の PayPal での自動テスト（実際の再課金ではない）** |
+| 次作業 | ①Sandbox E2E → **完了** ②Live 準備 → **完了** ③受付開始 → **完了（#803）** ④本番の初回実購入 → **自動確認で待機中**（成立したら Issue を見て上の未検証①を閉じ、②〜⑤は発生時に追記）⑤本番の初回実更新 → **自動確認で待機中**（`paypal-monthly-first-renewal-2026`・2026-11-15 から） |
 | 再開条件 | ②は MK の Live 鍵の配置 |
 
 ---
