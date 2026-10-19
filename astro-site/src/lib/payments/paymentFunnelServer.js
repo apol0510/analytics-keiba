@@ -35,7 +35,10 @@ async function run(method, { env, redisCmd, timeoutMs, ...input } = {}) {
 /** 振込完了の報告を受理した（bank-transfer-application の受理直後） */
 export const recordPaymentApplication = (input) => run('recordApplication', input);
 
-/** 入金確認で昇格した（confirm-bank-payment の PATCH 成功後だけ） */
+/**
+ * 入金確認で昇格した（confirm-bank-payment の PATCH 成功後 / Premium Plus 注文の入金確認後）。
+ * Plus は `onceKey`（注文 ID）付きで呼び、日をまたいだ再実行でも 1 回だけ数える。
+ */
 export const recordPaymentConfirmation = (input) => run('recordConfirmation', input);
 
 /** 集計を読む（読み取りのみ）。Redis 未設定なら null */

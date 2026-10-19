@@ -11,6 +11,8 @@ import {
 import { buildOrderId, purchaseOrderKey, ORDER_STATUS, COUPON_STATE, METRIC_STATE } from './premiumPlusOrders.js';
 import { recordPlusPurchase, revokePlusPurchase } from './premiumPlusFunnelServer.js';
 import { FUNNEL_KEY } from './premiumPlusFunnelStore.js';
+import { recordPaymentConfirmation } from '../payments/paymentFunnelServer.js';
+import { PAYMENT_FUNNEL_KEY, summarizeMonth } from '../payments/paymentFunnel.js';
 
 const REC = 'recORDERTEST00001';
 const OTHER = 'recORDERTEST00002';
@@ -40,12 +42,13 @@ function memRedis() {
 }
 
 function fakeDeps(over = {}) {
-  const log = { record: [], revoke: [], redeem: 0, release: 0 };
+  const log = { record: [], revoke: [], redeem: 0, release: 0, revenue: [] };
   return {
     log,
     deps: {
       recordPurchase: async (i) => { log.record.push(i); return over.record ? over.record(i) : { counted: true }; },
       revokePurchase: async (i) => { log.revoke.push(i); return { removed: true }; },
+      recordPaymentConfirmation: async (i) => { log.revenue.push(i); return over.revenue ? over.revenue(i) : { counted: true }; },
       redeemCoupon: async () => { log.redeem += 1; return over.redeem ? over.redeem() : 'redeemed'; },
       releaseCoupon: async () => { log.release += 1; return 'released'; },
     },
@@ -194,6 +197,7 @@ test('【重要】実際の計測ストアと通し: 新系列へ 1 件だけ・
   const deps = {
     recordPurchase: (i) => recordPlusPurchase({ ...i, redisCmd: r.cmd }),
     revokePurchase: (i) => revokePlusPurchase({ ...i, redisCmd: r.cmd }),
+    recordPaymentConfirmation: (i) => recordPaymentConfirmation({ ...i, redisCmd: r.cmd }),
     redeemCoupon: async () => 'redeemed',
     releaseCoupon: async () => 'released',
   };
@@ -273,6 +277,76 @@ test('管理画面の計測待ちは顧客ページ用の 700ms ではなく長�
   const { RECORD_TIMEOUT_MS } = await import('./premiumPlusFunnelServer.js');
   assert.ok(ORDER_METRIC_TIMEOUT_MS >= 5000 && ORDER_METRIC_TIMEOUT_MS > RECORD_TIMEOUT_MS);
   const src = read('./premiumPlusOrderDeps.js');
-  assert.equal((src.match(/timeoutMs: ORDER_METRIC_TIMEOUT_MS/g) || []).length, 2);
+  assert.equal((src.match(/timeoutMs: ORDER_METRIC_TIMEOUT_MS/g) || []).length, 3);
   assert.equal(typeof makeOrderDeps({}).recordPurchase, 'function');
+  assert.equal(typeof makeOrderDeps({}).recordPaymentConfirmation, 'function');
+});
+
+// ── 月間売上（全プラン共通の決済ファネル・KAO D-158）────────────────────
+const monthOf = (r, month) => summarizeMonth({ daily: [...(r.h.get(PAYMENT_FUNNEL_KEY.DAILY) || new Map()).entries()].flat(), month });
+
+function realDeps(r, over = {}) {
+  return {
+    recordPurchase: (i) => recordPlusPurchase({ ...i, redisCmd: r.cmd }),
+    revokePurchase: (i) => revokePlusPurchase({ ...i, redisCmd: r.cmd }),
+    recordPaymentConfirmation: over.revenue || ((i) => recordPaymentConfirmation({ ...i, redisCmd: r.cmd })),
+    redeemCoupon: async () => 'redeemed',
+    releaseCoupon: async () => 'released',
+  };
+}
+
+test('【重要】Plus の入金確認 1 件は月間売上に注文の金額で 1 回だけ入る（再確認・修復・翌日の再実行でも増えない）', async () => {
+  const r = memRedis();
+  const store = await seed(r, { amount: 58000 });
+  const deps = realDeps(r);
+  const a = await confirmOrder({ store, deps, orderId: OID, recordId: REC, actor: 'MK', nowMs: T0 });
+  assert.equal(a.code, 'confirmed');
+  assert.equal((await store.get(OID)).revenueState, 'counted');
+  // 再確認（冪等）・修復（何もしない）・翌日に同じ注文で記録を再実行しても増えない
+  await confirmOrder({ store, deps, orderId: OID, recordId: REC, actor: 'MK', nowMs: T0 + 1 });
+  await repairOrder({ store, deps, orderId: OID, nowMs: T0 + 2 });
+  const again = await recordPaymentConfirmation({
+    recordId: REC, planName: 'Premium Plus', amountYen: 58000, onceKey: `premium-plus:${OID}`, nowMs: T0 + 86400000, redisCmd: r.cmd,
+  });
+  assert.equal(again.reason, 'already_counted');
+  const m = monthOf(r, '2026-09');
+  assert.equal(m.confirmedCount, 1);
+  assert.equal(m.pricedCount, 1);
+  assert.equal(m.confirmedYen, 58000, 'クーポン適用後の申込金額（台帳の amount）で数える');
+  assert.deepEqual(m.yenByPlan, { 'premium-plus/other': 58000 });
+  assert.equal(monthOf(r, '2026-10').confirmedCount, 0);
+});
+
+test('売上の記録に失敗したら要修復にし、修復で 1 回だけ記録する（確定は戻さない）', async () => {
+  const r = memRedis();
+  const store = await seed(r);
+  let fail = true;
+  const deps = realDeps(r, {
+    revenue: (i) => (fail ? Promise.resolve({ counted: false, reason: 'timeout' }) : recordPaymentConfirmation({ ...i, redisCmd: r.cmd })),
+  });
+  const a = await confirmOrder({ store, deps, orderId: OID, recordId: REC, actor: 'MK', nowMs: T0 });
+  assert.equal(a.code, 'confirmed_needs_repair');
+  assert.equal(a.order.status, ORDER_STATUS.CONFIRMED);
+  assert.equal(a.order.needsRepair, true);
+  assert.equal(monthOf(r, '2026-09').confirmedCount, 0);
+  fail = false;
+  const b = await repairOrder({ store, deps, orderId: OID, nowMs: T0 + 1 });
+  assert.equal(b.code, 'repaired');
+  assert.equal((await repairOrder({ store, deps, orderId: OID, nowMs: T0 + 2 })).code, 'nothing_to_repair');
+  assert.equal(monthOf(r, '2026-09').confirmedYen, 68000);
+  assert.equal(monthOf(r, '2026-09').confirmedCount, 1);
+});
+
+test('テスト注文（canary）と、この仕組みより前に確認済みの注文は売上に数えない（遡って計上しない）', async () => {
+  const r = memRedis(); const store = createOrderStore({ redisCmd: r.cmd });
+  const c = await createCanaryOrder({ store, env: { PP_ORDER_CANARY_ENABLED: '1' }, recordId: REC, nowMs: T0 });
+  const deps = realDeps(r);
+  await confirmOrder({ store, deps, orderId: c.order.orderId, recordId: REC, actor: 'MK', nowMs: T0 });
+  assert.equal((await store.get(c.order.orderId)).revenueState, 'skipped_canary');
+  assert.equal(r.h.get(PAYMENT_FUNNEL_KEY.DAILY), undefined);
+  // 旧注文（revenueState なし・計測済み）は修復対象にならない
+  const legacy = { ...(await seed(r).then((s) => s.get(OID))), status: ORDER_STATUS.CONFIRMED, metricState: METRIC_STATE.COUNTED };
+  await store.save(legacy);
+  assert.equal((await repairOrder({ store, deps, orderId: OID, nowMs: T0 })).code, 'nothing_to_repair');
+  assert.equal(r.h.get(PAYMENT_FUNNEL_KEY.DAILY), undefined);
 });

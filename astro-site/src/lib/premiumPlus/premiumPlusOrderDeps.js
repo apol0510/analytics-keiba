@@ -5,6 +5,7 @@
  * どの関数も**例外を投げず** outcome 文字列／結果オブジェクトを返す。
  */
 import { recordPlusPurchase, revokePlusPurchase } from './premiumPlusFunnelServer.js';
+import { recordPaymentConfirmation } from '../payments/paymentFunnelServer.js';
 import {
   findActiveReservation, findRedeemedReservation, buildReservationRedeemFields, buildReservationRevokeFields,
 } from './premiumPlusCouponReservation.js';
@@ -68,6 +69,10 @@ export function makeOrderDeps(env) {
     }),
     revokePurchase: ({ recordId, orderKey }) => revokePlusPurchase({
       recordId, orderKey, env, timeoutMs: ORDER_METRIC_TIMEOUT_MS,
+    }),
+    // 月間売上（KAO D-158）: 全プラン共通の決済ファネルへ入金確認を 1 回だけ記録（onceKey = 注文 ID）
+    recordPaymentConfirmation: ({ recordId, planName, amountYen, onceKey, nowMs }) => recordPaymentConfirmation({
+      recordId, planName, amountYen, onceKey, nowMs, env, timeoutMs: ORDER_METRIC_TIMEOUT_MS,
     }),
     redeemCoupon: ({ recordId, nowMs }) => redeemPlusCoupon({ env, recordId, nowMs }),
     releaseCoupon: ({ recordId, nowMs, reason }) => releasePlusCoupon({ env, recordId, nowMs, reason }),

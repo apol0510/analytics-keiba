@@ -10,13 +10,14 @@
  *
  * ⚠️ 入金確認の順番（**巻き戻さない**）:
  *   ① ロック取得 → ② 注文を読み直して判定 → ③ 状態を confirmed で保存（ここで確定）
- *   → ④ 新系列の購入を記録（orderKey で冪等）→ ⑤ クーポンを使用済み（あれば）→ ⑥ 結果を保存
- *   ④⑤ が失敗しても ③ は戻さない。注文に `needs_repair` を残し、修復操作で再実行する（どちらも冪等）。
+ *   → ④ 新系列の購入を記録（orderKey で冪等）→ ④' 月間売上（決済ファネル）へ注文の金額を記録（注文 ID で冪等）
+ *   → ⑤ クーポンを使用済み（あれば）→ ⑥ 結果を保存
+ *   ④④'⑤ が失敗しても ③ は戻さない。注文に `needs_repair` を残し、修復操作で再実行する（どちらも冪等）。
  */
 import {
   buildNewOrder, applyReReport, planConfirm, applyConfirmed, applyMetricResult, applyCouponRedeemResult,
   planRepair, planCancel, applyCancelled, planRevoke, applyRevoked, purchaseOrderKey, describeOrder,
-  COUPON_STATE, METRIC_STATE, CANARY_SALE_DATE, isOrderCanaryEnabled, ORDER_STATUS,
+  applyRevenueResult, revenueOnceKey, REVENUE_STATE, COUPON_STATE, METRIC_STATE, CANARY_SALE_DATE, isOrderCanaryEnabled, ORDER_STATUS,
 } from './premiumPlusOrders.js';
 
 export const PP_ORDERS_KEY = 'ak:pp:orders:v1';
@@ -103,6 +104,7 @@ const reject = (plan) => ({
  * @typedef {object} OrderDeps
  * @property {(i:{recordId:string, orderKey:string, productPlan:string, nowMs:number}) => Promise<{counted:boolean, reason?:string|null}>} recordPurchase
  * @property {(i:{recordId:string, orderKey:string}) => Promise<{removed:boolean, reason?:string|null}>} revokePurchase
+ * @property {(i:{recordId:string, planName:string, amountYen:number|null, onceKey:string, nowMs:number}) => Promise<{counted:boolean, reason?:string|null}>} recordPaymentConfirmation
  * @property {(i:{recordId:string, nowMs:number}) => Promise<string>} redeemCoupon  outcome
  * @property {(i:{recordId:string, nowMs:number, reason:string}) => Promise<string>} releaseCoupon outcome
  */
@@ -117,6 +119,24 @@ async function runMetric(order, deps, nowMs) {
     metric = { counted: false, reason: 'record_failed' };
   }
   return applyMetricResult(order, metric, { nowMs });
+}
+
+/**
+ * 月間売上（KAO D-158）: 全プラン共通の決済ファネルへ、この注文の金額（申込時のサーバー確定値）を 1 回だけ記録する。
+ * テスト注文（canary）は数えない。金額はクライアントから受け取らない（台帳の `amount` だけ）。
+ */
+async function runRevenue(order, deps, nowMs) {
+  if (order.canary === true) return applyRevenueResult(order, null, { nowMs });
+  let result;
+  try {
+    result = await deps.recordPaymentConfirmation({
+      recordId: order.recordId, planName: 'Premium Plus', amountYen: order.amount,
+      onceKey: revenueOnceKey(order), nowMs,
+    });
+  } catch {
+    result = { counted: false, reason: 'record_failed' };
+  }
+  return applyRevenueResult(order, result, { nowMs });
 }
 
 async function runCoupon(order, deps, nowMs) {
@@ -135,9 +155,13 @@ export async function confirmOrder({ store, deps, orderId, recordId, actor, nowM
     let order = applyConfirmed(cur, { nowMs, actor });
     await store.save(order);
     order = await runMetric(order, deps, nowMs);
+    order = await runRevenue(order, deps, nowMs);
     if (order.couponState === COUPON_STATE.PENDING) order = await runCoupon(order, deps, nowMs);
     await store.save(order);
-    return { ok: true, status: 200, code: order.metricState === METRIC_STATE.COUNTED && order.couponState !== COUPON_STATE.NEEDS_REPAIR ? 'confirmed' : 'confirmed_needs_repair', order: describeOrder(order) };
+    const clean = order.metricState === METRIC_STATE.COUNTED
+      && order.couponState !== COUPON_STATE.NEEDS_REPAIR
+      && order.revenueState !== REVENUE_STATE.NEEDS_REPAIR;
+    return { ok: true, status: 200, code: clean ? 'confirmed' : 'confirmed_needs_repair', order: describeOrder(order) };
   });
 }
 
@@ -149,6 +173,7 @@ export async function repairOrder({ store, deps, orderId, nowMs }) {
     if (!plan.ok) return { ...reject(plan), order: describeOrder(cur) };
     let order = cur;
     if (plan.metric) order = await runMetric(order, deps, nowMs);
+    if (plan.revenue) order = await runRevenue(order, deps, nowMs);
     if (plan.coupon) order = await runCoupon(order, deps, nowMs);
     await store.save(order);
     const described = describeOrder(order);
