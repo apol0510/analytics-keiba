@@ -35,7 +35,7 @@ export const PLANS = Object.freeze([
 export const MEMBER_PLAN = Object.freeze({ id: 'premium-annual-light', name: 'Analytics Premium — Annual (Light member price)', priceYen: 44820 });
 
 /** カードでの受付状況。CARD_SALES_OPEN を開ける PR でこの値も true にする（テストで両者の一致を固定）。 */
-export const CARD_PAYMENTS_AVAILABLE = false;
+export const CARD_PAYMENTS_AVAILABLE = true;
 
 export const LAST_UPDATED = 'October 13, 2026';
 

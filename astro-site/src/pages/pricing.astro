@@ -4,7 +4,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 import CampaignBanner from '../components/CampaignBanner.astro';
 import { buildPlanTierByToken } from '../lib/pricing/planTiers.js';
 import { LIGHT_SWITCH_GRACE_DAYS } from '../lib/pricing/pricingEligibility.js';
-import { SUBSCRIPTION_SALES_OPEN, ACTIVE_SUBSCRIPTION_PROVIDER } from '../lib/billing/cardSales.js';
+import { SUBSCRIPTION_SALES_OPEN, ACTIVE_SUBSCRIPTION_PROVIDER, CARD_SALES_OPEN, ACTIVE_CARD_PROVIDER } from '../lib/billing/cardSales.js';
 import { STRIPE_PLANS } from '../lib/billing/stripePlans.js';
 
 // 正規化済みプラン名 → tier。インライン script へ焼き込む（別名表の単一源は planNormalization.js）
@@ -18,6 +18,10 @@ const MONTHLY_COPY = {
   'premium-jra': { name: 'Premium 中央版', desc: '週末の中央競馬だけで勝負したい方に', scope: '中央', pills: ['jra'], note: '中央のみ' },
   'premium-nankan': { name: 'Premium 南関版', desc: '平日の南関競馬だけで勝負したい方に', scope: '南関', pills: ['nankan'], note: '南関のみ' },
 };
+// 年払い・買い切りのカード一回払い（共通入口 card-create-checkout・決済会社は選ばせない）。
+// 本番は CARD_SALES_OPEN[ACTIVE_CARD_PROVIDER] を true にする PR だけで表示する。Deploy Preview（Sandbox 検証）では表示する。
+// 金額は出さない（同じカードの銀行振込と同額。請求額はサーバーの cardOneTime.CARD_PRODUCTS だけが決める）。
+const showCard = CARD_SALES_OPEN[ACTIVE_CARD_PROVIDER] === true || process.env.CONTEXT === 'deploy-preview';
 const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }));
 ---
 
@@ -170,6 +174,17 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
                     🏦 乗り換え特典価格で申し込む
                 </button>
                 <p class="plan-billing-note">銀行振込・1 年ごとのお支払い</p>
+                {showCard && (
+                    <>
+                        <button type="button" class="plan-button plan-button-credit" data-hide-for="light" data-card-product="premium-annual">
+                            💳 クレジットカードで申し込む
+                        </button>
+                        <button type="button" class="plan-button plan-button-credit" data-only-for="light" data-card-product="premium-annual-light">
+                            💳 乗り換え特典価格をカードで申し込む
+                        </button>
+                        <p class="plan-billing-note">※カードは一度きりのお支払い・自動更新なし（決済代行：PayPal）</p>
+                    </>
+                )}
             </div>
 
             <!-- Premium 買い切り（銀行振込）-->
@@ -212,6 +227,14 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
                     🏦 銀行振込で申し込む
                 </button>
                 <p class="plan-billing-note">銀行振込・一度きりのお支払い</p>
+                {showCard && (
+                    <>
+                        <button type="button" class="plan-button plan-button-credit" data-card-product="premium-lifetime">
+                            💳 クレジットカードで申し込む
+                        </button>
+                        <p class="plan-billing-note">※カードは一度きりのお支払い・自動更新なし（決済代行：PayPal）</p>
+                    </>
+                )}
             </div>
 
             <!-- 無料プラン -->
@@ -246,6 +269,7 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
                 </a>
             </div>
         </div>
+        {showCard && <p class="checkout-message" id="cardMessage" role="status" hidden></p>}
 
 
         {showMonthly && (
@@ -593,6 +617,57 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
       btn.addEventListener('click', function () { startMonthly(btn.getAttribute('data-monthly'), btn); });
     });
     // PayPal・ログインから「戻る」で帰ってきたとき（bfcache）に「移動しています…」のまま押せなくならないように
+    window.addEventListener('pageshow', function (e) {
+      if (!e.persisted) return;
+      busy = false;
+      buttons.forEach(function (btn) { btn.disabled = false; btn.textContent = btn.dataset.label; });
+    });
+  })();
+
+  // ── 年払い・買い切りのカード一回払い（共通入口 card-create-checkout・決済会社は選ばせない）──────
+  // 送るのは商品 ID だけ（金額・会員価格の資格はサーバーが決める）。ログイン必須（未ログインはログインへ）。
+  (function () {
+    var msg = document.getElementById('cardMessage');
+    if (!msg) return;
+    var busy = false;
+    function show(html, btn) {
+      msg.innerHTML = html; msg.hidden = false;
+      var card = btn && btn.closest('.plan-card');
+      if (card) card.appendChild(msg);
+      msg.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+    async function startCard(product, btn) {
+      if (busy) return;
+      busy = true; btn.disabled = true;
+      var label = btn.textContent;
+      btn.textContent = '決済画面へ移動しています…';
+      msg.hidden = true;
+      var leaving = false;
+      try {
+        var res = await fetch('/.netlify/functions/card-create-checkout', {
+          method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ product: product }),
+        });
+        var data = await res.json().catch(function () { return {}; });
+        if (res.ok && data.url) { leaving = true; location.href = data.url; return; }
+        var err = data.error || '';
+        if (err === 'login_required') { leaving = true; btn.textContent = 'ログイン画面へ移動しています…'; location.href = '/login/?next=/pricing/'; return; }
+        if (err === 'already_lifetime') return show('すでに Premium 買い切りをご利用中のため、お申し込みは不要です。<a href="/dashboard/">マイページへ</a>', btn);
+        if (err === 'stripe_subscription_active' || err === 'paypal_subscription_active') return show('クレジット決済の月額をご契約中です。二重のお支払いを防ぐため、年払い・買い切りへの変更は<a href="/contact/">お問い合わせ</a>ください。', btn);
+        if (err === 'not_eligible') return show('乗り換え特典価格は Light 会員さま限定です。通常価格でお申し込みいただけます。', btn);
+        if (err === 'checkout_in_progress') return show('お手続き中のお申し込みがあります。しばらくしてから再度お試しください。', btn);
+        if (err === 'card_sales_not_open' || /_key_missing$/.test(err)) return show('ただいまカードでのお申し込みを準備中です。銀行振込は通常どおりお申し込みいただけます。', btn);
+        show('お申し込みを開始できませんでした。時間をおいて再度お試しいただくか、銀行振込をご利用ください。', btn);
+      } catch (_) {
+        show('通信に失敗しました。時間をおいて再度お試しください。', btn);
+      } finally {
+        if (!leaving) { busy = false; btn.disabled = false; btn.textContent = label; }
+      }
+    }
+    var buttons = document.querySelectorAll('[data-card-product]');
+    buttons.forEach(function (btn) {
+      btn.dataset.label = btn.textContent;
+      btn.addEventListener('click', function () { startCard(btn.getAttribute('data-card-product'), btn); });
+    });
     window.addEventListener('pageshow', function (e) {
       if (!e.persisted) return;
       busy = false;

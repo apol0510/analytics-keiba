@@ -83,6 +83,17 @@ function hasLiveStripeMonthly(f = {}, now) {
 }
 
 /**
+ * 生きている PayPal 月額（定期課金）があるか。年払い・買い切りを重ねると、月額の自動課金が続いて二重課金になる。
+ * 退会申請済み（即時退会で期限は昨日）・期限切れは対象外。
+ */
+function hasLivePaypalMonthly(f = {}, now) {
+  return String(f.PaymentMethod || '').trim().toLowerCase() === 'paypal'
+    && String(f.PlanType || '').trim().toLowerCase() === 'monthly'
+    && !/^(true|1|yes|checked)$/i.test(String(f.WithdrawalRequested ?? '').trim())
+    && expiryOnOrAfterToday(f['有効期限'], now);
+}
+
+/**
  * 申込（決済の作成）前の判定。ここで止めれば決済会社に何も作らない。
  * @returns {{ ok: true, product } | { ok: false, code: string }}
  */
@@ -92,6 +103,7 @@ export function decideCardPurchase({ productId, fields = null, now = new Date() 
   if (product.planType === 'Monthly' && !MONTHLY_SALES_OPEN) return { ok: false, code: 'monthly_sales_ended' };
   if (fields && isLifetimePremium(fields)) return { ok: false, code: 'already_lifetime' };
   if (fields && hasLiveStripeMonthly(fields, now)) return { ok: false, code: 'stripe_subscription_active' };
+  if (fields && hasLivePaypalMonthly(fields, now)) return { ok: false, code: 'paypal_subscription_active' };
   if (product.memberOnly) {
     const c = checkMemberOnlyPricing({ productName: product.bankProductName, fields, nowMs: now.getTime() });
     if (!c.eligible) return { ok: false, code: 'not_eligible' };

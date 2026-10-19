@@ -8,8 +8,8 @@
  */
 
 export const CARD_SALES_OPEN = Object.freeze({
-  paddle: false,
-  paypal: false,
+  paddle: false, // 審査中（2026-10-15 MK 報告）。承認と MK の決定まで閉じたまま
+  paypal: true, // 年払い・買い切りのカード一回払い（MK の決定＝この PR の merge）。PayPal 審査通過 2026-10-15・Sandbox E2E #796
 });
 
 export const PRODUCTION_ORIGIN = 'https://analytics.keiba.link';
@@ -42,7 +42,9 @@ export function resolveCardMode({ provider, keyMode, origin, salesOpen } = {}) {
  * - 第一優先 Paddle、予備 PayPal。
  * - 切替えても、既に作られた取引の確定・返金の反映（Webhook・capture）は元の決済会社で続ける。未確定の取引を別の決済会社へ自動で作り直さない。
  */
-export const ACTIVE_CARD_PROVIDER = 'paddle';
+// 一回払いの受付を開けた PayPal を申込先にする（Paddle は審査中で受付できないため）。
+// 役割（CARD_PROVIDER_ROLES: 第一 Paddle・予備 PayPal）は変えない。Paddle の承認後に戻すのは、この値を変える PR。
+export const ACTIVE_CARD_PROVIDER = 'paypal';
 export const CARD_PROVIDER_ROLES = Object.freeze({ paddle: 'primary', paypal: 'standby' });
 
 /**

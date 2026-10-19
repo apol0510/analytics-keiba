@@ -14,15 +14,38 @@ import { MONTHLY_SALES_OPEN } from './stripePlans.js';
 const root = (p) => fileURLToPath(new URL(`../../../${p}`, import.meta.url));
 const read = (p) => readFileSync(root(p), 'utf8');
 
-test('全決済会社の本番受付は閉じている（コード定数・env では開かない）', () => {
-  assert.deepEqual({ ...CARD_SALES_OPEN }, { paddle: false, paypal: false });
+test('本番受付: PayPal の一回払いだけ開く（MK の決定＝PR merge）・Paddle は審査中で閉じたまま（コード定数・env では開かない）', () => {
+  assert.deepEqual({ ...CARD_SALES_OPEN }, { paddle: false, paypal: true });
   assert.ok(Object.isFrozen(CARD_SALES_OPEN));
   const src = read('src/lib/billing/cardSales.js');
   assert.equal(/process\.env|import\.meta\.env/.test(src), false, '販売可否を env から読まない');
+  assert.equal(resolveCardMode({ provider: 'paddle', keyMode: 'live', origin: PRODUCTION_ORIGIN }).reason, 'card_sales_not_open');
+  assert.deepEqual(resolveCardMode({ provider: 'paypal', keyMode: 'live', origin: PRODUCTION_ORIGIN }), { ok: true, mode: 'live' });
   for (const p of ['paddle', 'paypal']) {
-    assert.equal(resolveCardMode({ provider: p, keyMode: 'live', origin: PRODUCTION_ORIGIN }).reason, 'card_sales_not_open', p);
     assert.equal(resolveCardMode({ provider: p, keyMode: 'test', origin: PRODUCTION_ORIGIN }).reason, 'test_key_on_production', p);
   }
+});
+
+test('カードの一回払いで売る商品・金額は銀行振込と同じ（この PR で価格・商品を変えない）', () => {
+  assert.deepEqual(CARD_PRODUCTS.map((p) => [p.id, p.planName, p.planType, p.amountYen]), [
+    ['premium-annual', 'Premium', 'Annual', 49800],
+    ['premium-annual-light', 'Premium', 'Annual', 44820],
+    ['premium-lifetime', 'Premium', 'Lifetime', 78000],
+  ]);
+  // 料金ページのカードの申込ボタンは、同じカードの銀行振込ボタンと同じ商品だけを指す（金額は送らない）
+  const s = read('src/pages/pricing.astro');
+  const at = (m) => s.indexOf(m);
+  const card = (plan) => (plan === 'annual'
+    ? s.slice(at('data-bank-plan="annual"'), at('data-bank-plan="lifetime"'))
+    : s.slice(at('data-bank-plan="lifetime"'), at('<!-- 無料プラン -->')));
+  assert.match(card('annual'), /openBankModal\('Premium Annual', 49800, 'annual'\)[\s\S]*data-card-product="premium-annual"/);
+  assert.match(card('annual'), /openBankModal\('Premium Annual - Campaign', 44820, 'annual'\)[\s\S]*data-only-for="light" data-card-product="premium-annual-light"/);
+  assert.match(card('lifetime'), /openBankModal\('Premium Lifetime', 78000, 'lifetime'\)[\s\S]*data-card-product="premium-lifetime"/);
+  const js = s.slice(s.indexOf("getElementById('cardMessage')"), s.indexOf("getElementById('cardMessage')") + 4000);
+  assert.match(js, /fetch\('\/\.netlify\/functions\/card-create-checkout'/, '共通入口だけを呼ぶ');
+  assert.match(js, /JSON\.stringify\(\{ product: product \}\)/, '送るのは商品 ID だけ（金額を送らない）');
+  assert.match(js, /err === 'login_required'\) \{[^}]*location\.href = '\/login\/\?next=\/pricing\/'/);
+  assert.match(s, /const showCard = CARD_SALES_OPEN\[ACTIVE_CARD_PROVIDER\] === true/);
 });
 
 test('一回払いの層は定期課金を持たない。月額は PayPal の定期課金だけ（2026-10-15 MK 決定）・Stripe の新規月払いは閉じたまま', () => {

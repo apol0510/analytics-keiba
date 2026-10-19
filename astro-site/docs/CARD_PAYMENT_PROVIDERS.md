@@ -10,7 +10,7 @@
 | Sandbox E2E | **PASS**（2026-10-12・§4）| **PASS**（2026-10-13・§4）|
 | 本番審査 | **審査中**（MK 報告 2026-10-15。Website approval は `checkout.tirol.link`・§7）| **審査通過**（MK 報告 2026-10-15。承認の書面・メールは MK が保管）|
 | 本番の鍵・Webhook | 未設定 | **設定済み（2026-10-15）**: Live Product `PROD-3CX00591EL992881E`・Plan 3 本（`PAYPAL_PLAN_IDS.live`）・Webhook `78F83880DR5445808`（本番 URL・15 イベント）・production env 4 件（scope functions）。⚠️ 関数 env は 4KB 上限ぎりぎり（決済メール v2 カナリア env を外して空けた）|
-| 本番受付 | **閉じている**（`CARD_SALES_OPEN.paddle=false`）| 一回払いは**閉じている**（`.paypal=false`）。**月額の定期課金は PayPal で受ける方針**（2026-10-15 MK 決定・§3.5）。**2026-10-15 受付開始**（`SUBSCRIPTION_SALES_OPEN.paypal=true`）|
+| 本番受付 | **閉じている**（`CARD_SALES_OPEN.paddle=false`）| 一回払い（年払い・買い切り）は **2026-10-20 の PR で開く**（`.paypal=true`・`ACTIVE_CARD_PROVIDER='paypal'`・料金ページにカードの申込ボタン。MK の決定＝その PR の merge）。**月額の定期課金は PayPal で受ける方針**（2026-10-15 MK 決定・§3.5）。**2026-10-15 受付開始**（`SUBSCRIPTION_SALES_OPEN.paypal=true`）|
 | 取扱可否（一次情報）| ⚠️ 禁止リストに「Betting-related products」「Sports forecasting/odds making where monetary or material prizes are involved」。**書面確認が要る** | 利用規定で「競馬またはドッグレース」は**事前承認**区分 → 審査通過 |
 
 - 売るのは銀行振込と同じ一回払い（Premium 年払い ¥49,800／Light 会員 ¥44,820・買い切り ¥78,000）だけ。**月払い・定期課金は作らない**（Paddle の定期価格・PayPal Subscriptions は使わない。guard で固定）。
@@ -23,7 +23,7 @@ Paddle・PayPal は**お客様に選ばせる併設決済ではない**。決済
 | 項目 | 仕様 | 実装 |
 |---|---|---|
 | お客様の導線 | 「カードで支払う」1 本。決済会社の選択 UI は作らない | 共通入口 `card-create-checkout`（`cardCheckout.startCardCheckout`）。お客様のページから決済会社別の入口を呼ばない（guard テスト）|
-| 受ける決済会社 | 第一 Paddle・予備 PayPal| `cardSales.ACTIVE_CARD_PROVIDER = 'paddle'`・`CARD_PROVIDER_ROLES` |
+| 受ける決済会社 | 第一 Paddle・予備 PayPal| `cardSales.ACTIVE_CARD_PROVIDER = 'paypal'`（2026-10-20〜・Paddle 審査中のため予備が受ける。役割 `CARD_PROVIDER_ROLES` は不変）|
 | 切替 | 運営側の設定 | `ACTIVE_CARD_PROVIDER` を変える PR（env では切り替えない）|
 | 本番の申込制限 | 共通入口から、選ばれた 1 社だけ | `checkoutProviderGate`: live は `entry='card'` かつ active だけ（別入口 `use_card_checkout`・非 active `provider_not_active`）。各社の申込作成（`createPaddleCheckout`・`createPaypalOrder`）は必ずこれを通る |
 | Sandbox | 各社を個別に検証できる | test モードは gate を通す（決済会社別の入口で E2E）|
@@ -31,7 +31,7 @@ Paddle・PayPal は**お客様に選ばせる併設決済ではない**。決済
 | 処理中の誤切替 | 切替前の会社の申込が残る会員は、切替後の会社で申込を作れない | Redis `ak:billing:open-checkout:{recordId}`（申込先・注文 ID・24 時間）。別社なら 409 `checkout_in_progress`。Redis が無い/読めないときは申込を作らない |
 | 切替後の既存取引 | 確定・返金の反映は元の決済会社で続ける | Webhook・capture は `resolveCardMode` だけで判定（gate を使わない）|
 | 共通 | 会員権限・料金・購入資格・完了画面 | `cardOneTime.js`・`entitlementLedger.js`（30 分以内の別決済は付与せず管理者へ）・`/checkout/card-complete/?provider=` |
-| 本番受付 | 各社承認＋既存の販売開始条件 | `CARD_SALES_OPEN`（全社 false のまま）|
+| 本番受付 | 各社承認＋既存の販売開始条件 | `CARD_SALES_OPEN`（paddle=false・paypal=true〜2026-10-20）|
 
 Sandbox 実測（2026-10-13・PR #794 の Deploy Preview 経由 `sandbox.checkout.tirol.link`）: 共通入口 `card-create-checkout` → 200 `provider: paddle`・Paddle 取引作成・Redis に申込印（24h）。印を別社（paypal）に書き換えると 409 `checkout_in_progress`（申込を作らない）。後片付け済み（使い捨てレコード削除・印削除・preview の鍵 unset）。
 
@@ -251,7 +251,7 @@ DNS（Cloudflare・MK 設定）: `sandbox.checkout` CNAME `tirol-checkout-sandbo
 | 会員導線 | 会員サイトへは `https://analytics.keiba.link/login/` へのリンク（表示は「member site」）。ドメイン文字列は画面に出さない |
 | **決済会社への申告** | **事実どおり**（公開表記とは別）。申告文（英）: “Online members-only information service (digital content) publishing data analysis reports on Japanese horse racing (JRA and Minami-Kanto local races): per-race evaluations, indices and top-rated selections, plus a results archive. Information only: we do not accept, place or broker bets, do not sell betting tickets and do not hold funds for betting; no outcome is guaranteed. Sold as one-time payments (annual access / lifetime access), no auto-renewal. Customers are adults in Japan.” 商品分類は各社の選択肢から最も実態に近いものを選び、自由記述欄には上記を書く（分類名を通すために言い換えない）。運営側の業種名が各社の制限業種に当たるかは各社の審査判断に委ねる |
 | 価格 | `CARD_PRODUCTS` と一致（年払い ¥49,800・買い切り ¥78,000・Light 会員価格 ¥44,820）。自動更新なし |
-| カード受付 | `CARD_PAYMENTS_AVAILABLE` は `CARD_SALES_OPEN` と一致（閉の間は「準備中・銀行振込のみ」）。開ける PR で両方を変える |
+| カード受付 | `CARD_PAYMENTS_AVAILABLE` は `CARD_SALES_OPEN` と一致（閉の間は「準備中・銀行振込のみ」）。開ける PR で両方を変える（2026-10-20 PR で true。checkout.tirol.link への反映は §7.1 の手動 deploy）|
 | 決済会社 | 選択 UI なし。Billing に Paddle（Merchant of Record）を第一として記載・切替時も二重請求なしと明記 |
 | 返金 | AK の既存方針どおり（完了後は不可・二重/誤請求・未提供・法令上必要な場合は返金）。⚠️ Paddle の Buyer Terms は購入者に独自の返金を認める場合がある→本番受付前に Paddle 審査で指摘があれば MK が判断 |
 | ホスティング | Netlify site `tirol-checkout`（id af09193e-1710-4a8c-bd5c-cfa7068586e9・`https://tirol-checkout.netlify.app`）。deploy は出力先ディレクトリから `netlify deploy --prod --dir <out> --no-build --site <id>` |

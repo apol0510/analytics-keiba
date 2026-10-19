@@ -23,49 +23,53 @@ function world(open = null) {
 }
 const run = (w, extra = {}) => startCardCheckout({ env: {}, origin: 'https://o', recordId: REC, productId: 'premium-annual', redis: w.redis, creators: w.creators, now: NOW, ...extra });
 
-test('役割: 第一 Paddle・予備 PayPal。販売停止状態は全社 false のまま', () => {
-  assert.equal(ACTIVE_CARD_PROVIDER, 'paddle');
+test('役割: 第一 Paddle・予備 PayPal（不変）。Paddle 審査中のため、受付を開けた PayPal が申込先（MK の決定＝PR merge）', () => {
+  assert.equal(ACTIVE_CARD_PROVIDER, 'paypal');
   assert.deepEqual({ ...CARD_PROVIDER_ROLES }, { paddle: 'primary', paypal: 'standby' });
-  assert.deepEqual({ ...CARD_SALES_OPEN }, { paddle: false, paypal: false });
+  assert.deepEqual({ ...CARD_SALES_OPEN }, { paddle: false, paypal: true });
+  assert.equal(CARD_SALES_OPEN[ACTIVE_CARD_PROVIDER], true, '申込先は受付を開けた決済会社でなければならない（閉じた会社を申込先にしない）');
 });
 
 test('本番の新規申込は共通入口から、運営が選んだ 1 社だけ。Sandbox は各社とも検証できる', () => {
-  assert.deepEqual(checkoutProviderGate({ provider: 'paddle', mode: 'live', entry: 'card' }), { ok: true });
-  assert.equal(checkoutProviderGate({ provider: 'paypal', mode: 'live', entry: 'card' }).reason, 'provider_not_active');
-  assert.equal(checkoutProviderGate({ provider: 'paddle', mode: 'live' }).reason, 'use_card_checkout', '決済会社別の入口は本番で使わせない');
-  assert.equal(checkoutProviderGate({ provider: 'paypal', mode: 'live', entry: 'card', active: 'paypal' }).ok, true, '運営が切り替えれば予備が受ける');
+  assert.deepEqual(checkoutProviderGate({ provider: 'paypal', mode: 'live', entry: 'card' }), { ok: true });
+  assert.equal(checkoutProviderGate({ provider: 'paddle', mode: 'live', entry: 'card' }).reason, 'provider_not_active');
+  assert.equal(checkoutProviderGate({ provider: 'paypal', mode: 'live' }).reason, 'use_card_checkout', '決済会社別の入口は本番で使わせない');
+  assert.equal(checkoutProviderGate({ provider: 'paddle', mode: 'live', entry: 'card', active: 'paddle' }).ok, true, '運営が切り替えれば第一が受ける');
   for (const p of ['paddle', 'paypal']) assert.equal(checkoutProviderGate({ provider: p, mode: 'test' }).ok, true);
   assert.equal(checkoutProviderGate({ provider: 'paddle' }).ok, false, 'モード不明は受け付けない');
 });
 
 test('申込先の判定は各社の受付条件と同じ（本番は鍵なし・販売前で止まる）', () => {
-  assert.equal(resolveActiveCardMode({ env: {}, origin: 'https://analytics.keiba.link' }).reason, 'paddle_key_missing');
-  assert.equal(resolveActiveCardMode({ env: { PADDLE_API_KEY: 'pdl_live_apikey_x' }, origin: 'https://analytics.keiba.link' }).reason, 'card_sales_not_open');
+  assert.equal(resolveActiveCardMode({ env: {}, origin: 'https://analytics.keiba.link' }).reason, 'paypal_key_missing');
+  const PP = { PAYPAL_CLIENT_ID: 'id', PAYPAL_CLIENT_SECRET: 'secret' };
+  assert.deepEqual(resolveActiveCardMode({ env: { ...PP, PAYPAL_ENV: 'live' }, origin: 'https://analytics.keiba.link' }), { ok: true, mode: 'live', apiBase: 'https://api-m.paypal.com' });
+  assert.equal(resolveActiveCardMode({ env: { ...PP, PAYPAL_ENV: 'sandbox' }, origin: 'https://analytics.keiba.link' }).reason, 'test_key_on_production');
+  assert.equal(resolveActiveCardMode({ env: { PADDLE_API_KEY: 'pdl_live_apikey_x' }, origin: 'https://analytics.keiba.link', active: 'paddle' }).reason, 'card_sales_not_open', 'Paddle は閉じたまま');
   assert.equal(resolveActiveCardMode({ env: {}, origin: 'https://o', active: 'none' }).reason, 'card_provider_unset');
 });
 
 test('申込は運営が選んだ 1 社だけに作り、共通入口の印（entry=card）を付ける', async () => {
   const w = world();
   const r = await run(w);
-  assert.deepEqual(r, { ok: true, provider: 'paddle', url: 'https://x/paddle', orderId: 'paddle_1' });
-  assert.deepEqual(w.calls, [['paddle', 'card']]);
+  assert.deepEqual(r, { ok: true, provider: 'paypal', url: 'https://x/paypal', orderId: 'paypal_1' });
+  assert.deepEqual(w.calls, [['paypal', 'card']]);
   const [key, val, rest] = w.sets[0];
   assert.equal(key, openCheckoutKey(REC));
-  assert.deepEqual(val, { provider: 'paddle', orderId: 'paddle_1', at: NOW.toISOString() });
+  assert.deepEqual(val, { provider: 'paypal', orderId: 'paypal_1', at: NOW.toISOString() });
   assert.deepEqual(rest, ['EX', String(OPEN_CHECKOUT_TTL_SEC)]);
 });
 
 test('作成に失敗しても別の決済会社へ自動で作り直さない（失敗も例外も）', async () => {
   const w = world();
-  w.creators.paddle = async () => { w.calls.push(['paddle']); return { ok: false, status: 502, code: 'checkout_failed' }; };
+  w.creators.paypal = async () => { w.calls.push(['paypal']); return { ok: false, status: 502, code: 'checkout_failed' }; };
   assert.equal((await run(w)).code, 'checkout_failed');
-  assert.deepEqual(w.calls, [['paddle']]);
+  assert.deepEqual(w.calls, [['paypal']]);
   assert.equal(w.sets.length, 0, '失敗した申込の印は残さない');
 
   const w2 = world();
-  w2.creators.paddle = async () => { w2.calls.push(['paddle']); throw new Error('paddle_500'); };
+  w2.creators.paypal = async () => { w2.calls.push(['paypal']); throw new Error('paypal_500'); };
   await assert.rejects(run(w2));
-  assert.deepEqual(w2.calls, [['paddle']], '予備（PayPal）へ流さない');
+  assert.deepEqual(w2.calls, [['paypal']], '別の決済会社（Paddle）へ流さない');
   assert.equal(w2.sets.length, 0);
 });
 
@@ -77,7 +81,7 @@ test('切替前の決済会社の申込が残る会員は、切替後の決済�
   assert.equal(w.calls.length, 0);
   // 同じ決済会社なら作り直してよい（決済画面を閉じた人の再申込）
   const w2 = world({ provider: 'paddle', orderId: 'txn_old', at: NOW.toISOString() });
-  assert.equal((await run(w2)).ok, true);
+  assert.equal((await run(w2, { active: 'paddle' })).ok, true);
 });
 
 test('Redis が無い・読めないときは申込を作らない（印で守れないため）', async () => {

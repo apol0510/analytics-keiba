@@ -86,10 +86,11 @@ const hook = (w, event_type, resource, headers = HDR) => handlePaypalWebhook({
 });
 const capRes = (orderId) => ({ id: `CAP${orderId}`, status: 'COMPLETED', supplementary_data: { related_ids: { order_id: orderId } } });
 
-test('販売は閉じている。本番サイトは sandbox・販売前の live とも受け付けない。Preview は live を受け付けない', () => {
-  assert.equal(CARD_SALES_OPEN, false);
+test('一回払いの受付は開いている（MK の決定＝PR merge）。本番サイトは sandbox を受け付けず、閉じれば live も受け付けない。Preview は live を受け付けない', () => {
+  assert.equal(CARD_SALES_OPEN, true);
   assert.equal(resolvePaypalMode({ env: ENV, origin: PRODUCTION_ORIGIN }).reason, 'test_key_on_production');
-  assert.equal(resolvePaypalMode({ env: { ...ENV, PAYPAL_ENV: 'live' }, origin: PRODUCTION_ORIGIN }).reason, 'card_sales_not_open');
+  assert.deepEqual(resolvePaypalMode({ env: { ...ENV, PAYPAL_ENV: 'live' }, origin: PRODUCTION_ORIGIN }), { ok: true, mode: 'live', apiBase: 'https://api-m.paypal.com' });
+  assert.equal(resolvePaypalMode({ env: { ...ENV, PAYPAL_ENV: 'live' }, origin: PRODUCTION_ORIGIN, salesOpen: false }).reason, 'card_sales_not_open');
   assert.equal(resolvePaypalMode({ env: { ...ENV, PAYPAL_ENV: 'live' }, origin: PREVIEW }).reason, 'live_key_outside_production');
   assert.equal(resolvePaypalMode({ env: { ...ENV, PAYPAL_ENV: '' }, origin: PREVIEW }).reason, 'paypal_key_missing', '環境の明示がなければ使わない');
   assert.equal(resolvePaypalMode({ env: { ...ENV, PAYPAL_CLIENT_SECRET: '' }, origin: PREVIEW }).reason, 'paypal_key_missing');

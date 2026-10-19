@@ -43,6 +43,14 @@ test('申込前: 不明商品・買い切り会員・生きている Stripe 月�
   assert.equal(decideCardPurchase({ productId: 'premium-annual-light', fields: LIGHT_ACTIVE, now: NOW }).ok, true);
   assert.equal(decideCardPurchase({ productId: 'premium-annual', fields: null, now: NOW }).ok, true);
   assert.equal(decideCardPurchase({ productId: 'premium-lifetime', fields: LIGHT_ACTIVE, now: NOW }).ok, true);
+  // 生きている PayPal 月額に年払い・買い切りを重ねない（月額の自動課金が続いて二重課金になる）
+  const PAYPAL_MONTHLY = { 'プラン': 'Premium', PlanType: 'Monthly', Status: 'active', PaymentMethod: 'PayPal', '有効期限': '2026-10-20' };
+  for (const productId of ['premium-annual', 'premium-lifetime']) {
+    assert.equal(decideCardPurchase({ productId, fields: PAYPAL_MONTHLY, now: NOW }).code, 'paypal_subscription_active', productId);
+  }
+  // 退会済み（即時退会）・期限切れの PayPal 月額は申込できる
+  assert.equal(decideCardPurchase({ productId: 'premium-annual', fields: { ...PAYPAL_MONTHLY, WithdrawalRequested: true }, now: NOW }).ok, true);
+  assert.equal(decideCardPurchase({ productId: 'premium-annual', fields: { ...PAYPAL_MONTHLY, '有効期限': '2026-10-01' }, now: NOW }).ok, true);
   // Stripe 月額でも期限切れ（終了済み）なら申込できる
   assert.equal(decideCardPurchase({
     productId: 'premium-annual', now: NOW,
