@@ -157,13 +157,13 @@ test('全手段を読み、決済会社へは読み取り（GET・token 取得�
 test('任意の手段の失敗は未計上として記録し、鍵を出力に含めない', async () => {
   const { fetchImpl } = fakeApis({ stripeStatus: 401, paypalStatus: 403 });
   const d = await buildRevenueMonth({ month: '2026-10', fetchImpl, nowMs: Date.parse('2026-10-19T03:00:00Z'),
-    env: { PAYMENT_FUNNEL_READ_SECRET: 'funnel-secret-x', STRIPE_READ_KEY: 'rk_live_secret_x', PAYPAL_READ_CLIENT_ID: 'id-x', PAYPAL_READ_CLIENT_SECRET: 'sec-x' } });
+    env: { PAYMENT_FUNNEL_READ_SECRET: 'funnel-secret-x', STRIPE_READ_KEY: 'stripe-read-key-x', PAYPAL_READ_CLIENT_ID: 'id-x', PAYPAL_READ_CLIENT_SECRET: 'sec-x' } });
   assert.equal(d.net_jpy, 68_000);
   assert.equal(d.partial, true);
   assert.ok(d.data_quality.includes('Stripe: 未計上（取得失敗: stripe charges: HTTP 401）'));
   assert.ok(d.data_quality.includes('PayPal: 未計上（取得失敗: paypal token: HTTP 403）'));
   const text = JSON.stringify(d) + JSON.stringify(summaryLine(d));
-  for (const secret of ['funnel-secret-x', 'rk_live_secret_x', 'id-x', 'sec-x', 'ch_1']) assert.ok(!text.includes(secret), secret);
+  for (const secret of ['funnel-secret-x', 'stripe-read-key-x', 'id-x', 'sec-x', 'ch_1']) assert.ok(!text.includes(secret), secret);
 });
 
 test('出力は集計値だけ（識別子・明細の key を持たない）', async () => {
