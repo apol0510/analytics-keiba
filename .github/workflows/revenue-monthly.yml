@@ -6,7 +6,7 @@
 #   Stripe = charges / refunds の一覧（GET）・PayPal = Transaction Search（GET）。いずれも読み取り専用の鍵だけを使う。
 #   Stripe / PayPal の鍵が無い・取得に失敗したときは 0 円とせず「未計上」と data_quality に書く（銀行振込の失敗は何も書かない）。
 # - 🔴 決済会社へ書き込まない（課金・返金・購読変更をしない）。出力は集計値だけ。
-# - dry_run: 集計値の 1 行だけを log に出し、commit しない（当月を指定すると月途中の速報値）。
+# - dry_run: measurement（集計値だけ）を 1 行の JSON で log に出し、commit しない（当月を指定すると月途中の速報値）。
 name: Revenue monthly measurement
 
 on:
@@ -50,7 +50,8 @@ jobs:
         run: |
           MONTH="${MONTH_INPUT:-$(TZ=Asia/Tokyo date -d "$(TZ=Asia/Tokyo date +%Y-%m-01) -1 day" +%Y-%m)}"
           if [ "$DRY_RUN" = "true" ]; then
-            node scripts/revenueMonthly.mjs --month "$MONTH" --summary
+            node scripts/revenueMonthly.mjs --month "$MONTH" > "$RUNNER_TEMP/revenue.json"
+            node -e 'process.stdout.write(JSON.stringify(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))) + "\n")' "$RUNNER_TEMP/revenue.json"
           else
             node scripts/revenueMonthly.mjs --month "$MONTH" --out "../docs/measurements/revenue-${MONTH}-01.json"
           fi
