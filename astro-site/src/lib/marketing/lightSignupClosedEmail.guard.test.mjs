@@ -139,7 +139,11 @@ test('Stripe live 決済が無効な間は live 送信を dry-run に落とす�
   for (const f of ['netlify/functions/cron-premium-renewal-reminder.js', 'netlify/functions/cron-light-renewal-reminder.js']) {
     const s = read(f);
     assert.match(s, /gateModeOnStripeSales\(resolveMode\(process\.env\), sales\)/, f);
-    assert.match(s, /await checkStripeLiveSales\(process\.env\)/, f);
+    // 2026-10-20: 経路判定（PayPal 定期課金 / Stripe）は monthlySalesChannel に集約。Stripe の判定はその中で checkStripeLiveSales を使う
+    assert.match(s, /await resolveMonthlySalesChannel\(process\.env\)/, f);
+  }
+  assert.match(read('src/lib/billing/monthlySalesChannel.js'), /await checkStripeLiveSales\(env, \{ fetchImpl \}\)/);
+  {
   }
 });
 

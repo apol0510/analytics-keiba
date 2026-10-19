@@ -95,7 +95,7 @@
 > 販売導線は**銀行振込の Premium 年払い（¥49,800／Light 会員 ¥44,820）・買い切り（¥78,000）だけ**（金額・権利・販売条件は従来どおり）。
 > 再開は MK の次回明示決定でのみ（コードの `MONTHLY_SALES_OPEN`。env では開かない）。サーバー側 `stripe-create-checkout` は 410 `monthly_sales_ended`。
 > **既存の月額契約者**の支払い済み権利・Webhook 反映・退会・カード変更は従来どおり（下表は既存契約の仕様として残す）。
-> 月額を案内する更新リマインド（Light / Premium 月払い）は月払いが閉じている間は実送信しない。既存の有料 Light 会員の銀行振込更新は維持（新規ではないため）。
+> 月額を案内する更新リマインド（Light / Premium 月払い）は月払いが閉じている間は実送信しない。（2026-10-20 PR: 「月払いが閉じている」は Stripe ではなく**実際に開いている月額の経路**で判定する＝2026-10-15〜 PayPal の定期課金。本文の支払い方法は「クレジットカード・毎月自動更新・決済代行：PayPal」。MK の確認＝その PR の merge）既存の有料 Light 会員の銀行振込更新は維持（新規ではないため）。
 > 根拠 `decisions.md` 2026-10-11。
 
 > **月額は PayPal の定期課金（2026-10-15 MK 決定）**: 月額（Premium ¥4,980・中央版 ¥2,980・南関版 ¥2,980）は **PayPal の定期課金**で受け付ける（Stripe の新規月払いは停止のまま）。年払い・買い切りは銀行振込を維持・銀行振込の 1 ヶ月プランは停止のまま。権利・期限・即時退会は本節の月額の仕様をそのまま適用（PaymentMethod=PayPal）。受ける決済会社は `cardSales.ACTIVE_SUBSCRIPTION_PROVIDER`、本番の受付は `SUBSCRIPTION_SALES_OPEN`（PR だけで開く）。実装の正本 `astro-site/docs/CARD_PAYMENT_PROVIDERS.md` §3.5。根拠 `decisions.md` 2026-10-15（追記）。

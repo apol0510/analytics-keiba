@@ -298,3 +298,11 @@ test('既存の自動化のゲートを開けない（cron-marketing-automation 
   }
   assert.match(readFileSync(`${ROOT}netlify/functions/cron-light-renewal-reminder.js`, 'utf8'), /schedule: '0 1 \* \* \*'/);
 });
+
+test('案内文の支払い方法は実際の月額の経路（クレジットカード・毎月自動更新・決済代行：PayPal）。Stripe を書かない（2026-10-20）', () => {
+  for (const [stage, cycle] of [[STAGE.PRE, '2026-10-05'], [STAGE.POST, '2026-09-25']]) {
+    const m = renderLightRenewalEmail({ stage, cycle, name: 'テスト' });
+    assert.match(m.text, /お支払いはクレジットカード（毎月自動更新・決済代行：PayPal）で、決済後すぐにご利用いただけます。/);
+    assert.equal(/Stripe/.test(m.text + m.html + m.subject), false);
+  }
+});
