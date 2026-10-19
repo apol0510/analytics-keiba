@@ -1,0 +1,39 @@
+{
+  "schema": "kao.revenue-month/v1",
+  "repo": "analytics-keiba",
+  "month": "2026-10",
+  "currency": "JPY",
+  "generatedAt": "2026-10-19T04:09:23.300Z",
+  "target_jpy": 1000000,
+  "gross_jpy": 100900,
+  "refunds_jpy": 0,
+  "net_jpy": 100900,
+  "by_channel": {
+    "bank_transfer": {
+      "gross_jpy": 87960,
+      "refunds_jpy": 0,
+      "net_jpy": 87960,
+      "payments": 3
+    },
+    "stripe": {
+      "gross_jpy": 12940,
+      "refunds_jpy": 0,
+      "net_jpy": 12940,
+      "payments": 3
+    },
+    "paypal": {
+      "measured": false
+    }
+  },
+  "achieved": false,
+  "sustained_months": 0,
+  "data_quality": [
+    "月途中の速報値（2026-10-19 まで）— 月末の確定値ではない",
+    "銀行振込: 金額の記録はこの月の途中（または未開始）から — 月初からの全額ではない",
+    "銀行振込: 返金は記録が無く差し引いていない",
+    "PayPal: 未計上（読取り鍵が未設定）"
+  ],
+  "next_tasks": [],
+  "partial": true,
+  "period_end": "2026-10-19"
+}

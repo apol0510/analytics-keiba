@@ -2,7 +2,11 @@
 #
 # - 毎月 1 日 09:30 JST に前月分を集計し、docs/measurements/revenue-YYYY-MM-01.json を main へ commit する。
 # - KAO はこの file を canon（origin/main）から読み、MK report の「事業成果」節に出す。
-# - 読むのは admin-payment-funnel `revenueMonth`（入金確認の件数と金額の合計・識別子なし）。読み取り専用の鍵だけを使う。
+# - 読むのは 銀行振込 = admin-payment-funnel `revenueMonth`（入金確認の件数と金額の合計・識別子なし）・
+#   Stripe = charges / refunds の一覧（GET）・PayPal = Transaction Search（GET）。いずれも読み取り専用の鍵だけを使う。
+#   Stripe / PayPal の鍵が無い・取得に失敗したときは 0 円とせず「未計上」と data_quality に書く（銀行振込の失敗は何も書かない）。
+# - 🔴 決済会社へ書き込まない（課金・返金・購読変更をしない）。出力は集計値だけ。
+# - dry_run: measurement（集計値だけ）を 1 行の JSON で log に出し、commit しない（当月を指定すると月途中の速報値）。
 name: Revenue monthly measurement
 
 on:
@@ -11,8 +15,13 @@ on:
   workflow_dispatch:
     inputs:
       month:
-        description: '対象月 YYYY-MM（省略時は JST の前月）'
+        description: '対象月 YYYY-MM（省略時は JST の前月・当月は速報値）'
         required: false
+      dry_run:
+        description: '集計値を log に出すだけで commit しない'
+        type: boolean
+        required: false
+        default: false
 
 concurrency:
   group: revenue-monthly
@@ -33,13 +42,23 @@ jobs:
         working-directory: astro-site
         env:
           PAYMENT_FUNNEL_READ_SECRET: ${{ secrets.PAYMENT_FUNNEL_READ_SECRET }}
+          STRIPE_READ_KEY: ${{ secrets.STRIPE_ACCOUNT_READ_KEY }}
+          PAYPAL_READ_CLIENT_ID: ${{ secrets.PAYPAL_READ_CLIENT_ID }}
+          PAYPAL_READ_CLIENT_SECRET: ${{ secrets.PAYPAL_READ_CLIENT_SECRET }}
           MONTH_INPUT: ${{ github.event.inputs.month }}
+          DRY_RUN: ${{ github.event.inputs.dry_run == 'true' && 'true' || 'false' }}
         run: |
           MONTH="${MONTH_INPUT:-$(TZ=Asia/Tokyo date -d "$(TZ=Asia/Tokyo date +%Y-%m-01) -1 day" +%Y-%m)}"
-          node scripts/revenueMonthly.mjs --month "$MONTH" --out "../docs/measurements/revenue-${MONTH}-01.json"
+          if [ "$DRY_RUN" = "true" ]; then
+            node scripts/revenueMonthly.mjs --month "$MONTH" > "$RUNNER_TEMP/revenue.json"
+            node -e 'process.stdout.write(JSON.stringify(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))) + "\n")' "$RUNNER_TEMP/revenue.json"
+          else
+            node scripts/revenueMonthly.mjs --month "$MONTH" --out "../docs/measurements/revenue-${MONTH}-01.json"
+          fi
           echo "MONTH=$MONTH" >> "$GITHUB_ENV"
 
       - name: Commit measurement
+        if: github.event.inputs.dry_run != 'true'
         run: |
           git add "docs/measurements/revenue-${MONTH}-01.json"
           if git diff --staged --quiet; then
