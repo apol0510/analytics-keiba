@@ -10,8 +10,8 @@
  *   - live         … 送信直前の再判定を通った相手へ送る（1 回 20 通まで）
  * ⚠️ Light のリマインド（10:00）と時刻をずらす。同じ人への横断 24 時間上限は共通の送信前判定が持つ。
  */
-import { checkStripeLiveSales, gateModeOnStripeSales } from '../../src/lib/billing/stripeSalesGate.js';
-import { MONTHLY_SALES_OPEN } from '../../src/lib/billing/stripePlans.js';
+import { gateModeOnStripeSales } from '../../src/lib/billing/stripeSalesGate.js';
+import { resolveMonthlySalesChannel } from '../../src/lib/billing/monthlySalesChannel.js';
 import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
 // Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
 installAirtableCallMeter({ source: 'cron-premium-renewal-reminder' });
@@ -19,11 +19,11 @@ import { runPremiumRenewal, resolveMode } from '../../src/lib/marketing/premiumR
 import { makeRedisCmd } from '../../src/lib/marketing/deliveryKeyStore.js';
 
 export default async function handler() {
-  // 2026-10-02: 本文は Stripe 月額（Premium ¥4,980 等）を案内する。live 決済が無効な間は送らない（dry-run に落とす）
-  // 2026-10-11 MK 確定: 新規の月払いは全面停止。本文の主導線が Stripe 月額のため、月払いが閉じている間は送らない（Stripe が復旧しても）
-  const sales = MONTHLY_SALES_OPEN ? await checkStripeLiveSales(process.env) : { open: false, reason: 'monthly_sales_ended' };
+  // 2026-10-02: 本文は /pricing/ の月額（クレジットカードで毎月自動更新）を案内する。申し込める経路が無い間は送らない（dry-run に落とす）
+  // 2026-10-20: 判定は「実際に開いている月額の経路」（PayPal の定期課金 2026-10-15〜 / Stripe）。Stripe だけを見て常に止めていたのを是正
+  const sales = await resolveMonthlySalesChannel(process.env);
   const mode = gateModeOnStripeSales(resolveMode(process.env), sales);
-  if (mode !== resolveMode(process.env)) console.log('[premium-renewal] Stripe live 決済が無効のため送信しない（dry-run）:', sales.reason);
+  if (mode !== resolveMode(process.env)) console.log('[premium-renewal] 月額の申込経路が開いていないため送信しない（dry-run）:', sales.reason);
   let redisCmd = null;
   try { redisCmd = makeRedisCmd(process.env); } catch { redisCmd = null; }
   try {

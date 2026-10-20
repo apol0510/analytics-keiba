@@ -60,12 +60,14 @@ test('月額を案内する他ページの CTA も無い（dashboard の購入�
   assert.equal(/月額のまま|月額料金だけで/.test(read('../../components/acquisition/PremiumRaceBoard.astro')), false);
 });
 
-test('月額を案内する更新リマインドは、月払いが閉じている間は実送信しない（Stripe が復旧しても）', () => {
+test('月額を案内する更新リマインドは、月額の申込経路が開いていない間は実送信しない（Stripe の月払いは閉じたまま・判定は monthlySalesChannel）', () => {
   for (const f of ['cron-premium-renewal-reminder.js', 'cron-light-renewal-reminder.js']) {
     const code = stripComments(read(`../../../netlify/functions/${f}`));
-    assert.match(code, /const sales = MONTHLY_SALES_OPEN \? await checkStripeLiveSales\(process\.env\) : \{ open: false, reason: 'monthly_sales_ended' \};/, f);
+    assert.match(code, /const sales = await resolveMonthlySalesChannel\(process\.env\);/, f);
     assert.match(code, /gateModeOnStripeSales\(resolveMode\(process\.env\), sales\)/, f);
   }
+  // Stripe の月払いは経路判定の中でも MONTHLY_SALES_OPEN が false の間は見ない（復旧しても再開しない）
+  assert.match(read('./monthlySalesChannel.js'), /if \(stripeMonthlyOpen === true\) \{/);
 });
 
 test('銀行振込の月払いは拒否し、案内は年払い・買い切りへ（カード決済へ誘導しない）', () => {

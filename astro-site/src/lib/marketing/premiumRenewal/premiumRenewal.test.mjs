@@ -83,7 +83,7 @@ test('本文: 価格は /pricing/ の Premium 月額（Stripe）と同じ・割�
   if (!MONTHLY_SALES_OPEN) {
     assert.doesNotMatch(pricing, /data-checkout=/);
     const cron = readFileSync(`${ROOT}netlify/functions/cron-premium-renewal-reminder.js`, 'utf8');
-    assert.match(cron, /const sales = MONTHLY_SALES_OPEN \? await checkStripeLiveSales\(process\.env\) : \{ open: false, reason: 'monthly_sales_ended' \};/);
+    assert.match(cron, /const sales = await resolveMonthlySalesChannel\(process\.env\);/);
     assert.match(cron, /const mode = gateModeOnStripeSales\(resolveMode\(process\.env\), sales\);/);
   } else {
     assert.match(pricing, /data-checkout="premium"/, '/pricing/ に Premium 月額（Stripe）の申込ボタンが無い');
@@ -91,7 +91,8 @@ test('本文: 価格は /pricing/ の Premium 月額（Stripe）と同じ・割�
   assert.equal(/openBankModal\('Premium Monthly'/.test(pricing), false, '販売終了した銀行振込の月払いが /pricing/ に残っている');
   for (const stage of [STAGE.PRE, STAGE.POST]) {
     const m = renderPremiumRenewalEmail({ stage, cycle: '2026-10-05', name: '山田' });
-    assert.match(m.text, /¥4,980／月・中央＋南関・クレジットカードで毎月自動更新/);
+    assert.match(m.text, /¥4,980／月・中央＋南関・クレジットカードで毎月自動更新・決済代行：PayPal/);
+    assert.equal(/Stripe/.test(m.text + m.html + m.subject), false, '案内文に Stripe を出さない（月額は PayPal で受付中）');
     assert.match(m.text, /中央版・南関版（各 ¥2,980／月）/);
     assert.equal(/Light/.test(m.text), false, 'Premium 会員向けに Light を案内している');
     assert.equal(/18,000|銀行振込で/.test(m.text), false, '販売終了した月払いの案内が残っている');

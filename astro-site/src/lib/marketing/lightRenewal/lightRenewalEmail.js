@@ -6,7 +6,7 @@
  *   - 年払い（Light 会員の乗り換え特典 ¥44,820・期限あり）は補助の案内
  *   - Light の更新・再開は**権利として残すが勧めない**（本文に 1 行だけ・ボタンは付けない）
  * ボタンは `/login/?next=/pricing/`（ログイン後に会員向け表示の料金ページへ）。
- * ⚠️ Stripe live 決済が無効な間は送らない（cron が `stripeSalesGate` で dry-run に落とす）。
+ * ⚠️ 月額の申込経路（PayPal の定期課金 / Stripe）が開いていない間は送らない（cron が `monthlySalesChannel` で dry-run に落とす）。
  *
  * 本文に書くのは spec にある事実だけ（価格・期限・手続き方法）。煽らない。
  * 配信停止リンクは本文に書かない（共通シェルのフッターが付ける）。
@@ -16,8 +16,13 @@ import {
   STAGE, SWITCH_PRICE_YEN, REGULAR_PREMIUM_ANNUAL_YEN, LIGHT_MONTHLY_YEN, switchDeadlineFor, addDays,
 } from './lightRenewalPolicy.js';
 import { planById } from '../../billing/stripePlans.js';
+import { ACTIVE_SUBSCRIPTION_PROVIDER } from '../../billing/cardSales.js';
+import { MONTHLY_PROVIDER_LABEL } from '../../billing/monthlySalesChannel.js';
 
-/** Premium 月額（Stripe）。金額の正本は stripePlans.js */
+/** 月額の決済代行（/pricing/ の注記「決済代行：PayPal」と同じ。月額を受け付けている決済会社） */
+const PROVIDER_LABEL = MONTHLY_PROVIDER_LABEL[ACTIVE_SUBSCRIPTION_PROVIDER];
+
+/** Premium 月額。金額の正本は stripePlans.js（PayPal の Plan も同額）*/
 const PREMIUM_MONTHLY_YEN = planById('premium').amountYen;
 
 export const LIGHT_RENEWAL_CTA_URL = 'https://analytics.keiba.link/login/?next=/pricing/';
@@ -42,7 +47,7 @@ export function contentFor({ stage, cycle, name }) {
   const premium = {
     title: `Premium へ変更する（${yen(PREMIUM_MONTHLY_YEN)}／月・中央＋南関の全レース）`,
     cta: 'Premium へ変更する手続きへ',
-    detail: `Light と同じ ${yen(PREMIUM_MONTHLY_YEN)} で、メインレースだけでなく中央・南関の全レース（1R〜12R）の買い目をご覧いただけます。お支払いはクレジットカード（毎月自動更新）で、決済後すぐにご利用いただけます。`,
+    detail: `Light と同じ ${yen(PREMIUM_MONTHLY_YEN)} で、メインレースだけでなく中央・南関の全レース（1R〜12R）の買い目をご覧いただけます。お支払いはクレジットカード（毎月自動更新・決済代行：${PROVIDER_LABEL}）で、決済後すぐにご利用いただけます。`,
   };
   const annual = stage === STAGE.PRE
     ? `年払いをご希望の場合は、Light 会員の乗り換え特典として Premium 年額を ${yen(SWITCH_PRICE_YEN)}（通常 ${yen(REGULAR_PREMIUM_ANNUAL_YEN)}・銀行振込）でお申し込みいただけます。`
