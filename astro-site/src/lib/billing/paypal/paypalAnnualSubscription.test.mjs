@@ -110,11 +110,15 @@ test('Plan の対応: 1 年ごと・無期限・JPY 小数なし・初期費用�
   assert.deepEqual([PAYPAL_PLAN_CODES['premium-annual'], PAYPAL_PLAN_CODES['premium-annual-light']], ['Y', 'L']);
   // 月額の Plan は 1 か月ごとのまま
   assert.deepEqual(buildPlanBody({ productId: 'PROD-1', plan: SUBSCRIPTION_PLANS[0] }).billing_cycles[0].frequency, { interval_unit: 'MONTH', interval_count: 1 });
-  // Live の年額 Plan が未登録の間は申込を作らない（fail closed）
+  // Live の年額 Plan（2026-10-20 作成）: 両方登録済み・Sandbox と混ざらない・申込は Live の ID を使う
   for (const p of ANNUAL_SUBSCRIPTION_PLANS) {
-    if (!PAYPAL_PLAN_IDS.live[p.id]) {
-      assert.throws(() => buildSubscriptionBody({ planId: p.id, recordId: REC, origin: PRODUCTION_ORIGIN, mode: 'live' }), /plan_not_configured/);
-    }
+    assert.match(PAYPAL_PLAN_IDS.live[p.id] || '', /^P-[A-Z0-9]+$/, `${p.id} の Live Plan ID`);
+    assert.notEqual(PAYPAL_PLAN_IDS.live[p.id], PID[p.id]);
+    assert.equal(buildSubscriptionBody({ planId: p.id, recordId: REC, origin: PRODUCTION_ORIGIN, mode: 'live' }).plan_id, PAYPAL_PLAN_IDS.live[p.id]);
+  }
+  // Live の Plan が無ければ申込を作らない（fail closed）
+  for (const p of ANNUAL_SUBSCRIPTION_PLANS) {
+    assert.throws(() => buildSubscriptionBody({ planId: p.id, recordId: REC, origin: PRODUCTION_ORIGIN, mode: 'live', ids: { ...PAYPAL_PLAN_IDS, live: {} } }), /plan_not_configured/);
   }
 });
 
