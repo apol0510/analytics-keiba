@@ -196,10 +196,12 @@ test('返金: 全額返金・リバーサルは付与前へ戻す／一部返金
   assert.equal((await hook(w, 'PAYMENT.CAPTURE.REFUNDED', refundRes)).result, 'already_reverted', '再送');
   assert.equal((await readPaypalOrderStatus({ redis: w.redisCmd, orderId: o, recordId: REC })).status, 'refunded');
   // 再購入（返金直後でも二重購入扱いにしない）→ リバーサル（チャージバック）で戻る
-  const o2 = await order(w, 'premium-lifetime');
+  // 買い切りはカードでは注文を作らない（2026-10-20 MK 決定）。再購入は年払いで確かめる
+  assert.equal((await createPaypalOrder({ env: ENV, origin: PREVIEW, recordId: REC, productId: 'premium-lifetime', fetchImpl: w.fetch })).code, 'lifetime_bank_transfer_only');
+  const o2 = await order(w, 'premium-annual');
   w.approve(o2);
   assert.equal((await capture(w, o2)).result, 'granted');
-  assert.equal(w.fields['有効期限'], '2099-12-31');
+  assert.equal(w.fields.PlanType, 'Annual');
   assert.equal((await hook(w, 'PAYMENT.CAPTURE.REVERSED', capRes(o2))).result, 'reverted');
   assert.equal(w.fields['プラン'], 'Free');
 });

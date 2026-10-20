@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * paypal-subscription-setup.mjs — PayPal の月額定期課金（Subscriptions）の商品・プランを作る／確かめる（冪等）
+ * paypal-subscription-setup.mjs — PayPal の定期課金（月額・年額 / Subscriptions）の商品・プランを作る／確かめる（冪等）
+ * 年額（premium-annual ¥49,800・premium-annual-light ¥44,820・1 年ごと）は 2026-10-20 MK 決定で追加。
  *
  *   node scripts/paypal-subscription-setup.mjs <keys-file> [--apply] [--set-webhook-url]
  *
@@ -17,9 +18,8 @@
  * Stripe の productName は使わない（2026-10-15 MK: Stripe は停止・不使用）。
  */
 import { readFileSync } from 'node:fs';
-import { STRIPE_PLANS } from '../src/lib/billing/stripePlans.js';
 import { assertPaymentDisplayName, PAYMENT_BASE_NAME } from '../src/lib/billing/paymentDisplayNames.js';
-import { PAYPAL_PLAN_IDS, SUBSCRIPTION_WEBHOOK_EVENTS, buildPlanBody, PAYPAL_PRODUCT_NAME, paypalPlanDisplay } from '../src/lib/billing/paypal/paypalSubscriptionCore.js';
+import { PAYPAL_PLAN_IDS, SUBSCRIPTION_WEBHOOK_EVENTS, buildPlanBody, PAYPAL_PRODUCT_NAME, paypalPlanDisplay, SUBSCRIPTION_PLANS } from '../src/lib/billing/paypal/paypalSubscriptionCore.js';
 import { PAYPAL_LIVE_WEBHOOK_URL } from '../src/lib/billing/neutralCheckoutHost.js';
 import { PAYPAL_API, GRANT_EVENTS, APPROVED_EVENTS, REFUND_EVENTS } from '../src/lib/billing/paypal/paypalCore.js';
 
@@ -49,7 +49,7 @@ async function call(method, path, body, requestId) {
 }
 
 assertPaymentDisplayName(PAYPAL_PRODUCT_NAME);
-for (const p of STRIPE_PLANS) paypalPlanDisplay(p.id); // 許可リストに無い商品があれば止める
+for (const p of SUBSCRIPTION_PLANS) paypalPlanDisplay(p.id); // 許可リストに無い商品があれば止める
 
 // 商品（catalog product）
 const products = (await call('GET', '/v1/catalogs/products?page_size=20')).products || [];
@@ -63,7 +63,7 @@ console.log(`[${mode}] product:`, product ? product.id : '(なし)');
 // プラン（登録済みの Plan ID を正とする。名前での突き合わせは未登録のときだけ）
 const plans = product ? ((await call('GET', `/v1/billing/plans?product_id=${product.id}&page_size=20`)).plans || []) : [];
 const found = {};
-for (const p of STRIPE_PLANS) {
+for (const p of SUBSCRIPTION_PLANS) {
   const want = paypalPlanDisplay(p.id);
   const registered = PAYPAL_PLAN_IDS[mode]?.[p.id];
   let planId = registered || plans.find((x) => x.name === want.name && x.status === 'ACTIVE')?.id || null;
@@ -85,7 +85,7 @@ for (const p of STRIPE_PLANS) {
   }
   const c = full.billing_cycles?.[0] || {};
   const price = c.pricing_scheme?.fixed_price;
-  const billingOk = full.billing_cycles?.length === 1 && c.frequency?.interval_unit === 'MONTH' && c.frequency?.interval_count === 1
+  const billingOk = full.billing_cycles?.length === 1 && c.frequency?.interval_unit === (p.interval === 'YEAR' ? 'YEAR' : 'MONTH') && c.frequency?.interval_count === 1
     && c.total_cycles === 0 && c.tenure_type === 'REGULAR' && price?.currency_code === 'JPY' && Number(price?.value) === p.amountYen
     && full.payment_preferences?.auto_bill_outstanding === true && !(Number(full.payment_preferences?.setup_fee?.value) > 0);
   found[p.id] = planId;

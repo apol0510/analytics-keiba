@@ -45,6 +45,9 @@ export const PAYPAL_PLAN_NAMES = Object.freeze({
   'premium': 'Analytics Premium',
   'premium-jra': 'Analytics Premium J',
   'premium-nankan': 'Analytics Premium N',
+  // 年額の定期課金（2026-10-20 MK 決定）。同じ禁止語ルール・完全一致。Light 会員特典は J/N と同じく 1 文字の接尾辞
+  'premium-annual': 'Analytics Premium Annual',
+  'premium-annual-light': 'Analytics Premium Annual L',
 });
 
 const norm = (t) => String(t ?? '').normalize('NFKC').toUpperCase();

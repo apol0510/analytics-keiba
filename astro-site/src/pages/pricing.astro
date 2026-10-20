@@ -6,6 +6,7 @@ import { buildPlanTierByToken } from '../lib/pricing/planTiers.js';
 import { LIGHT_SWITCH_GRACE_DAYS } from '../lib/pricing/pricingEligibility.js';
 import { SUBSCRIPTION_SALES_OPEN, ACTIVE_SUBSCRIPTION_PROVIDER } from '../lib/billing/cardSales.js';
 import { STRIPE_PLANS } from '../lib/billing/stripePlans.js';
+import { PAYPAL_PLAN_IDS, ANNUAL_SUBSCRIPTION_PLANS } from '../lib/billing/paypal/paypalSubscriptionCore.js';
 
 // 正規化済みプラン名 → tier。インライン script へ焼き込む（別名表の単一源は planNormalization.js）
 const planTierByToken = buildPlanTierByToken();
@@ -18,6 +19,10 @@ const MONTHLY_COPY = {
   'premium-jra': { name: 'Premium 中央版', desc: '週末の中央競馬だけで勝負したい方に', scope: '中央', pills: ['jra'], note: '中央のみ' },
   'premium-nankan': { name: 'Premium 南関版', desc: '平日の南関競馬だけで勝負したい方に', scope: '南関', pills: ['nankan'], note: '南関のみ' },
 };
+// 年払いの PayPal 年額定期課金（12 か月ごと自動更新・2026-10-20 MK 決定）。買い切りは銀行振込だけ（カード・PayPal の入口を置かない）。
+// 本番は月額と同じ受付（SUBSCRIPTION_SALES_OPEN）かつ Live の年額 Plan ID が登録済みのときだけ表示する（未登録の間は出さない＝押しても申し込めない状態を作らない）。
+const annualLivePlans = ANNUAL_SUBSCRIPTION_PLANS.every((p) => Boolean(PAYPAL_PLAN_IDS.live?.[p.id]));
+const showAnnualSub = (SUBSCRIPTION_SALES_OPEN[ACTIVE_SUBSCRIPTION_PROVIDER] === true && annualLivePlans) || process.env.CONTEXT === 'deploy-preview';
 const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }));
 ---
 
@@ -170,6 +175,25 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
                     🏦 乗り換え特典価格で申し込む
                 </button>
                 <p class="plan-billing-note">銀行振込・1 年ごとのお支払い</p>
+                {showAnnualSub && (
+                    <>
+                        {/* 年額の定期課金（PayPal）。送るのは商品 ID だけ（金額・Light 特典の資格はサーバーが決める）。 */}
+                        <button type="button" class="plan-button plan-button-credit" data-hide-for="light" data-subscription="premium-annual">
+                            💳 クレジットカードで申し込む（自動更新）
+                        </button>
+                        <button type="button" class="plan-button plan-button-credit" data-only-for="light" data-subscription="premium-annual-light">
+                            💳 乗り換え特典価格をカードで申し込む（自動更新）
+                        </button>
+                        <div class="annual-renewal-terms" data-annual-terms>
+                            <p><strong>カード（PayPal）の年払いは自動更新です。</strong></p>
+                            <ul>
+                                <li>12 か月ごとに、お申し込み時と同じ金額で自動的に更新・請求されます（決済代行：PayPal）。</li>
+                                <li>更新を止めるには、PayPal のアカウントで自動支払いを停止してください。次回から請求されず、支払い済みの 12 か月が終わるまでご利用いただけます。</li>
+                                <li>マイページ「アカウント管理」の「退会する」でも止められます。退会はその時点でご利用終了となり、残りの期間の返金はありません。</li>
+                            </ul>
+                        </div>
+                    </>
+                )}
             </div>
 
             <!-- Premium 買い切り（銀行振込）-->
@@ -578,6 +602,7 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
         // 未ログインはそのままログインへ（ログイン後はこのページへ戻る）
         if (err === 'login_required') { leaving = true; btn.textContent = 'ログイン画面へ移動しています…'; location.href = '/login/?next=/pricing/'; return; }
         if (err === 'already_subscribed') return show('すでにクレジット決済でご契約中です。ご契約内容はマイページの「アカウント管理」でご確認いただけます。<a href="/dashboard/">マイページへ</a>', btn);
+        if (err === 'not_eligible') return show('乗り換え特典価格は Light 会員さま限定です。通常価格でお申し込みいただけます。', btn);
         if (err === 'already_premium') return show('すでに Premium（中央＋南関）をご利用中のため、お申し込みは不要です。ご不明な点は<a href="/contact/">お問い合わせ</a>ください。', btn);
         if (err === 'card_sales_not_open' || /_key_missing$/.test(err) || err === 'plan_not_configured') return show('ただいまクレジット決済のお申し込みを準備中です。銀行振込（年払い・買い切り）は通常どおりお申し込みいただけます。', btn);
         show('お申し込みを開始できませんでした。時間をおいて再度お試しください。', btn);
@@ -587,10 +612,11 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
         if (!leaving) { busy = false; btn.disabled = false; btn.textContent = label; }
       }
     }
-    var buttons = document.querySelectorAll('[data-monthly]');
+    // 月額（data-monthly）と年額の定期課金（data-subscription・2026-10-20〜）は同じ共通入口・同じ判定
+    var buttons = document.querySelectorAll('[data-monthly], [data-subscription]');
     buttons.forEach(function (btn) {
       btn.dataset.label = btn.textContent;
-      btn.addEventListener('click', function () { startMonthly(btn.getAttribute('data-monthly'), btn); });
+      btn.addEventListener('click', function () { startMonthly(btn.getAttribute('data-monthly') || btn.getAttribute('data-subscription'), btn); });
     });
     // PayPal・ログインから「戻る」で帰ってきたとき（bfcache）に「移動しています…」のまま押せなくならないように
     window.addEventListener('pageshow', function (e) {
@@ -975,6 +1001,21 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
     .plan-card-recommended .recommended-badge {
         white-space: nowrap;
     }
+
+    .annual-renewal-terms {
+        margin: 0.75rem 0 0;
+        padding: 0.6rem 0.75rem;
+        border: 1px solid rgba(59, 130, 246, 0.35);
+        background: rgba(59, 130, 246, 0.08);
+        border-radius: 0.5rem;
+        color: #cbd5e1;
+        font-size: 0.78rem;
+        line-height: 1.6;
+        text-align: left;
+    }
+    .annual-renewal-terms p { margin: 0 0 0.3rem; color: #93c5fd; }
+    .annual-renewal-terms ul { margin: 0; padding-left: 1.1rem; }
+    .annual-renewal-terms li + li { margin-top: 0.2rem; }
 
     .plan-billing-note {
         margin: 0.6rem 0 0;

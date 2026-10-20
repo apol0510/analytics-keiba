@@ -39,7 +39,11 @@ test('禁止語（2026-10-15 MK 確定で拡大）: 中央・南関・JRA・NANK
 });
 
 test('PayPal のプラン名は許可リストの 3 つだけ（大文字小文字・スペースまで完全一致・2026-10-15 MK 確定）', () => {
-  assert.deepEqual({ ...PAYPAL_PLAN_NAMES }, { 'premium': 'Analytics Premium', 'premium-jra': 'Analytics Premium J', 'premium-nankan': 'Analytics Premium N' });
+  assert.deepEqual({ ...PAYPAL_PLAN_NAMES }, {
+    'premium': 'Analytics Premium', 'premium-jra': 'Analytics Premium J', 'premium-nankan': 'Analytics Premium N',
+    // 年額の定期課金（2026-10-20 MK 決定）
+    'premium-annual': 'Analytics Premium Annual', 'premium-annual-light': 'Analytics Premium Annual L',
+  });
   for (const [id, name] of Object.entries(PAYPAL_PLAN_NAMES)) assert.equal(assertPaypalPlanName(id, name), name);
   for (const [id, bad] of [['premium-jra', 'Analytics Premium j'], ['premium-jra', 'Analytics Premium  J'], ['premium-nankan', 'Analytics Premium N（月額）'],
     ['premium', 'Analytics Premium（中央＋南関）'], ['premium-jra', 'Analytics Premium 中央版'], ['premium-x', 'Analytics Premium']]) {

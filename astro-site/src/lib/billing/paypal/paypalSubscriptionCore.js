@@ -21,9 +21,18 @@
  * ## 書かない（conflict）ケース — 二重課金・権利の縮小を起こさない（Stripe 月額と同じ）
  *   duplicate_subscription（別の PayPal 購読／Stripe 月額が生きている）・existing_lifetime・existing_longer_contract・
  *   unknown_plan・plan_mismatch・amount_mismatch。conflict は管理者へ通知して手で返金・解約する（自動返金しない）。
+ *
+ * ## 年額の定期課金（2026-10-20 MK 決定・decisions「2026-10-20 — 年払いは PayPal 年額定期課金」）
+ * 「年払いは PayPal の年額定期課金（12 か月ごと自動更新）。買い切りは銀行振込だけ。月額・年払いの銀行振込は現状維持。価格・権利は不変」。
+ *   - 商品: Premium 年払い ¥49,800（premium-annual）／Light 会員の乗り換え特典 ¥44,820（premium-annual-light・資格はサーバーで判定）
+ *   - 権限: プラン=Premium / PlanType=Annual / Status=active / PaymentMethod=PayPal / VenueAccess=''（両会場）
+ *     有効期限 = 最後に支払われた日（JST）+ 12 か月 + 猶予 2 日（月額と同じ考え方。next_billing_time は見ない）
+ *   - 二重課金防止: 生きている月額・年額の購読（PayPal / Stripe）や、有効な Premium（銀行振込の年払い等）・買い切りがある会員には作らない／反映しない
+ *   - 買い切り（premium-lifetime）は定期課金の商品に無い＝申込も反映もできない（fail closed）
  */
 
-import { STRIPE_PLANS, planById, venueAccessValue } from '../stripePlans.js';
+import { STRIPE_PLANS, venueAccessValue } from '../stripePlans.js';
+import { checkMemberOnlyPricing } from '../../pricing/pricingEligibility.js';
 import { PAYMENT_BASE_NAME, PAYPAL_PLAN_NAMES, assertPaypalPlanName } from '../paymentDisplayNames.js';
 import { paypalReturnUrls } from '../neutralCheckoutHost.js';
 import { addMonthsJst, jstDateString } from '../../payments/bankPaymentFlow.js';
@@ -45,13 +54,43 @@ export const PAYPAL_PLAN_IDS = Object.freeze({
     'premium': 'P-67290333XA2635522NLIAFTY',
     'premium-jra': 'P-7NF43083F7102171SNLIAFUI',
     'premium-nankan': 'P-55C52460MJ2631844NLIAFUY',
+    'premium-annual': 'P-9WM673713N634224FNLLP72Q', // 年額（2026-10-20 作成・YEAR×1・¥49,800）
+    'premium-annual-light': 'P-42U66834DF9032109NLLP72Y', // 年額 Light 会員特典（2026-10-20 作成・YEAR×1・¥44,820）
   }),
   live: Object.freeze({ // Live（PROD-3CX00591EL992881E・2026-10-15 作成）
     'premium': 'P-0JC899281X7628327NLIDMPA',
     'premium-jra': 'P-2SA230418U121823UNLIDMPI',
     'premium-nankan': 'P-34226589BA0629739NLIDMPQ',
+    // 年額（premium-annual / premium-annual-light）は Live の Plan を作った後に ID を足す。無い間は申込が 503 plan_not_configured・料金ページにボタンを出さない
   }),
 });
+
+/**
+ * 年額の定期課金で売る商品（2026-10-20 MK 決定）。金額は銀行振込の年払いと同じ（cardOneTime.CARD_PRODUCTS・/pricing/）。
+ * 両会場（venues = jra + nankan）。memberOnly は Light 会員の乗り換え特典（checkMemberOnlyPricing と同じ根拠でサーバーが判定）。
+ */
+export const ANNUAL_SUBSCRIPTION_PLANS = Object.freeze([
+  Object.freeze({
+    id: 'premium-annual', label: 'Premium 年払い（自動更新）', amountYen: 49800, interval: 'YEAR', months: 12, planType: 'Annual',
+    venues: Object.freeze(['jra', 'nankan']), bankProductName: 'Premium Annual',
+  }),
+  Object.freeze({
+    id: 'premium-annual-light', label: 'Premium 年払い・Light 会員特典（自動更新）', amountYen: 44820, interval: 'YEAR', months: 12, planType: 'Annual',
+    venues: Object.freeze(['jra', 'nankan']), bankProductName: 'Premium Annual - Campaign', memberOnly: true,
+  }),
+]);
+
+/** 定期課金で売る全商品（月額 3 本は stripePlans が正本・年額 2 本）。買い切りは含めない（銀行振込だけ） */
+export const SUBSCRIPTION_PLANS = Object.freeze([
+  ...STRIPE_PLANS.map((p) => Object.freeze({ ...p, interval: 'MONTH', months: 1, planType: 'Monthly' })),
+  ...ANNUAL_SUBSCRIPTION_PLANS,
+]);
+export function subscriptionPlanById(id) {
+  return SUBSCRIPTION_PLANS.find((p) => p.id === String(id || '')) || null;
+}
+export const isAnnualPlan = (plan) => plan?.planType === 'Annual';
+/** 買い切りは銀行振込だけ（2026-10-20 MK 決定）。定期課金・カードの申込では必ずこの理由で断る */
+export const LIFETIME_BANK_ONLY = 'lifetime_bank_transfer_only';
 
 export const SUBSCRIPTION_EVENTS = Object.freeze([
   'BILLING.SUBSCRIPTION.CREATED', 'BILLING.SUBSCRIPTION.ACTIVATED', 'BILLING.SUBSCRIPTION.UPDATED',
@@ -83,8 +122,9 @@ export function paypalPlanDisplay(planId) {
   return { name, description: name };
 }
 
-/** 月額プラン（金額・会場は stripePlans と同じ商品）→ PayPal の Plan 作成本文。JPY は小数なし。暦の 1 か月ごと・無期限・初期費用なし */
+/** 定期課金の商品 → PayPal の Plan 作成本文。JPY は小数なし。月額は暦の 1 か月ごと・年額は 1 年ごと・無期限・初期費用なし */
 export function buildPlanBody({ productId, plan }) {
+  const p = subscriptionPlanById(plan?.id) || plan;
   const { name, description } = paypalPlanDisplay(plan.id);
   return {
     product_id: productId,
@@ -92,11 +132,11 @@ export function buildPlanBody({ productId, plan }) {
     description,
     status: 'ACTIVE',
     billing_cycles: [{
-      frequency: { interval_unit: 'MONTH', interval_count: 1 },
+      frequency: { interval_unit: p.interval === 'YEAR' ? 'YEAR' : 'MONTH', interval_count: 1 },
       tenure_type: 'REGULAR',
       sequence: 1,
       total_cycles: 0,
-      pricing_scheme: { fixed_price: { value: String(plan.amountYen), currency_code: 'JPY' } },
+      pricing_scheme: { fixed_price: { value: String(p.amountYen), currency_code: 'JPY' } },
     }],
     payment_preferences: { auto_bill_outstanding: true, setup_fee_failure_action: 'CANCEL', payment_failure_threshold: 2 },
   };
@@ -110,17 +150,17 @@ export function paypalPlanIdFor(planId, mode, ids = PAYPAL_PLAN_IDS) {
 export function planFromPaypalPlanId(paypalPlanId, mode, ids = PAYPAL_PLAN_IDS) {
   const id = String(paypalPlanId || '');
   if (!id) return null;
-  return STRIPE_PLANS.find((p) => ids[mode]?.[p.id] === id) || null;
+  return SUBSCRIPTION_PLANS.find((p) => ids[mode]?.[p.id] === id) || null;
 }
 
 /** custom_id の商品コード（決済会社へ会場名・商品 ID を渡さない）*/
-export const PAYPAL_PLAN_CODES = Object.freeze({ 'premium': 'A', 'premium-jra': 'J', 'premium-nankan': 'N' });
+export const PAYPAL_PLAN_CODES = Object.freeze({ 'premium': 'A', 'premium-jra': 'J', 'premium-nankan': 'N', 'premium-annual': 'Y', 'premium-annual-light': 'L' });
 const PLAN_BY_CODE = Object.freeze(Object.fromEntries(Object.entries(PAYPAL_PLAN_CODES).map(([id, c]) => [c, id])));
 /** custom_id の後ろ半分 → 内部の商品 ID。旧形式（商品 ID そのまま・2026-10-15 以前の購読）も読む。それ以外は null */
 export function planIdFromCustomCode(code) {
   const c = String(code || '');
   if (PLAN_BY_CODE[c]) return PLAN_BY_CODE[c];
-  return planById(c) ? c : null;
+  return STRIPE_PLANS.some((p) => p.id === c) ? c : null; // 旧形式は月額だけ
 }
 export const customIdOf = (recordId, planId) => {
   const code = PAYPAL_PLAN_CODES[planId];
@@ -130,7 +170,7 @@ export const customIdOf = (recordId, planId) => {
 
 /** 購読の作成本文（POST /v1/billing/subscriptions） */
 export function buildSubscriptionBody({ planId, recordId, origin, mode, ids = PAYPAL_PLAN_IDS }) {
-  const plan = planById(planId);
+  const plan = subscriptionPlanById(planId);
   if (!plan) throw Object.assign(new Error('invalid_plan'), { code: 'invalid_plan' });
   if (!RECORD_RE.test(String(recordId || ''))) throw Object.assign(new Error('invalid_record'), { code: 'invalid_record' });
   const paypalPlanId = paypalPlanIdFor(plan.id, mode, ids);
@@ -187,9 +227,9 @@ const endOfJstDayMs = (ymd) => {
   return Number.isFinite(ms) ? ms : null;
 };
 
-/** 最後の支払い → 支払い済みの最終日（JST・次回請求日）*/
-export function paidThroughYmd(lastPayment) {
-  return lastPayment?.time ? addMonthsJst(lastPayment.time, 1) : null;
+/** 最後の支払い → 支払い済みの最終日（JST・次回請求日）。月額は 1 か月・年額は 12 か月 */
+export function paidThroughYmd(lastPayment, months = 1) {
+  return lastPayment?.time ? addMonthsJst(lastPayment.time, months) : null;
 }
 
 /** Stripe の月額がまだ生きている会員か（PayPal で二重に契約させない）*/
@@ -202,11 +242,26 @@ export function hasLiveStripeMonthly(fields = {}, now = new Date()) {
   return end !== null && end >= now.getTime();
 }
 
-/** PayPal の月額で契約している会員か（マイページの退会の対象）*/
+/** PayPal の定期課金（月額・年額）で契約している会員か（マイページの退会＝自動課金を止める手続きの対象）*/
 export function isPaypalSubscriber(fields = {}) {
   const f = fields || {};
   return String(f.PaymentMethod || '').trim().toLowerCase() === 'paypal'
-    && String(f.PlanType || '').trim().toLowerCase() === 'monthly';
+    && ['monthly', 'annual'].includes(String(f.PlanType || '').trim().toLowerCase());
+}
+
+const PREMIUM_TIERS = ['premium', 'premium-predictions', 'premium-sanrenpuku', 'premium-combo'];
+/**
+ * 年額を作る・反映すると二重課金になる「有効な有料 Premium」があるか（銀行振込の年払い・月払いの残期間など）。
+ * 退会済み（即時退会）・期限切れは対象外。Light は対象外（乗り換え特典の対象）。
+ */
+export function hasValidPaidPremium(fields = {}, now = new Date()) {
+  const f = fields || {};
+  if (isTruthy(f.WithdrawalRequested)) return false;
+  if (!PREMIUM_TIERS.includes(normalizePlan(String(f['プラン'] || '')))) return false;
+  if (String(f.Status || '').trim().toLowerCase() !== 'active') return false;
+  if (String(f.PlanType || '').trim().toLowerCase() === 'lifetime') return true;
+  const end = endOfJstDayMs(f['有効期限']);
+  return end !== null && end >= now.getTime();
 }
 
 /**
@@ -225,8 +280,9 @@ export function decidePaypalSubscriptionSync({ fields = {}, sub, mode, ownedSubI
       const w = withdrawalFields({ fields: f, now });
       return { action: 'write', reason: 'withdrawn', expiration: w['有効期限'], fields: w };
     }
-    // 退会以外の終了（決済失敗・管理者の解約）: 支払い済みの最終日の翌日まで。1 円も払われていなければ今日で終わり
-    const paid = paidThroughYmd(sub.lastPayment);
+    // 退会以外の終了（決済失敗・管理者の解約・PayPal 側での停止）: 支払い済みの最終日の翌日まで。1 円も払われていなければ今日で終わり
+    const endedPlan = planFromPaypalPlanId(sub.paypalPlanId, mode, ids) || subscriptionPlanById(sub.planId);
+    const paid = paidThroughYmd(sub.lastPayment, endedPlan?.months || 1);
     const endYmd = paid ? plusDays(paid, 1) : jstDateString(now);
     const current = String(f['有効期限'] || '').trim();
     const expiration = current && current < endYmd ? current : endYmd; // 縮めるだけ
@@ -239,12 +295,21 @@ export function decidePaypalSubscriptionSync({ fields = {}, sub, mode, ownedSubI
   if (sub.planId !== plan.id) return { action: 'conflict', reason: 'plan_mismatch', plan };
   if (!sub.lastPayment) return { action: 'skip', reason: 'awaiting_payment' };
   if (sub.lastPayment.currency !== 'JPY' || sub.lastPayment.amount !== plan.amountYen) return { action: 'conflict', reason: 'amount_mismatch', plan };
-  const expiration = plusDays(paidThroughYmd(sub.lastPayment), 2);
+  const expiration = plusDays(paidThroughYmd(sub.lastPayment, plan.months || 1), 2);
 
   if (!owned) {
     if (otherSubscriptionLive || hasLiveStripeMonthly(f, now)) return { action: 'conflict', reason: 'duplicate_subscription', plan };
     const tier = normalizePlan(String(f['プラン'] || '')) || 'free';
-    const isPremiumTier = ['premium', 'premium-predictions', 'premium-sanrenpuku', 'premium-combo'].includes(tier);
+    const isPremiumTier = PREMIUM_TIERS.includes(tier);
+    if (isAnnualPlan(plan)) {
+      // 年額: 有効な Premium（銀行振込の年払い・買い切り等）に重ねない。Light 特典は資格を反映前にも確かめる
+      if (hasValidPaidPremium(f, now)) {
+        return { action: 'conflict', reason: String(f.PlanType || '').trim().toLowerCase() === 'lifetime' ? 'existing_lifetime' : 'existing_paid_membership', plan };
+      }
+      if (plan.memberOnly && !checkMemberOnlyPricing({ productName: plan.bankProductName, fields: f, nowMs: now.getTime() }).eligible) {
+        return { action: 'conflict', reason: 'not_eligible', plan };
+      }
+    }
     const planType = String(f.PlanType || '').trim().toLowerCase();
     const status = String(f.Status || '').trim().toLowerCase();
     if (isPremiumTier && planType === 'lifetime' && status === 'active') return { action: 'conflict', reason: 'existing_lifetime', plan };
@@ -257,7 +322,7 @@ export function decidePaypalSubscriptionSync({ fields = {}, sub, mode, ownedSubI
 
   const out = {
     'プラン': 'Premium',
-    PlanType: 'Monthly',
+    PlanType: plan.planType || 'Monthly',
     Status: 'active',
     '有効期限': expiration,
     VenueAccess: venueAccessValue(plan),
@@ -278,9 +343,16 @@ export function decidePaypalSubscriptionSync({ fields = {}, sub, mode, ownedSubI
  * @returns {{ ok: true, plan } | { ok: false, code }}
  */
 export function decidePaypalSubscriptionPurchase({ planId, fields = {}, ownedSubLive = false, now = new Date() }) {
-  const plan = planById(planId);
+  if (String(planId || '') === 'premium-lifetime') return { ok: false, code: LIFETIME_BANK_ONLY };
+  const plan = subscriptionPlanById(planId);
   if (!plan) return { ok: false, code: 'invalid_plan' };
   if (ownedSubLive || hasLiveStripeMonthly(fields, now)) return { ok: false, code: 'already_subscribed' };
+  if (isAnnualPlan(plan)) {
+    if (hasValidPaidPremium(fields, now)) return { ok: false, code: 'already_premium' };
+    if (plan.memberOnly && !checkMemberOnlyPricing({ productName: plan.bankProductName, fields, nowMs: now.getTime() }).eligible) {
+      return { ok: false, code: 'not_eligible' };
+    }
+  }
   const probe = decidePaypalSubscriptionSync({
     fields,
     sub: { id: 'I-PROBE00000000', status: 'ACTIVE', paypalPlanId: 'P-PROBE', recordId: null, planId: plan.id, lastPayment: { currency: 'JPY', amount: plan.amountYen, time: now } },

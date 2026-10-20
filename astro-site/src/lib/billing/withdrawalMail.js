@@ -13,7 +13,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export function withdrawalCompleteLines({ kind = 'stripe', keeps = {} } = {}) {
   const lines = [];
   if (kind === 'stripe' || kind === 'paypal') {
-    lines.push('月額プランのご契約は終了し、今後の請求はありません。');
+    lines.push(kind === 'paypal' ? '自動更新のご契約（月額・年額）は終了し、今後の請求はありません。' : '月額プランのご契約は終了し、今後の請求はありません。');
     lines.push('退会と同時に有料会員としてのご利用は終了しています（残りの期間はご利用いただけません）。');
   }
   if (keeps.premiumLifetime) lines.push('Premium 買い切りは、退会後も引き続きご利用いただけます。');
@@ -54,7 +54,7 @@ ${items}
 
 const KIND_LABEL = Object.freeze({
   stripe: '月額（クレジットカード・Stripe）',
-  paypal: '月額（PayPal）',
+  paypal: '月額・年額（PayPal の自動更新）',
   contract: '銀行振込の有料プラン（年払い等）',
   lifetime_only: '買い切りのみ（権利は残る）',
 });
