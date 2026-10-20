@@ -1,12 +1,12 @@
-# 💳 年払いの PayPal 年額定期課金・買い切りは銀行振込のみ（2026-10-20 MK 決定 / **PR #817 / merge は MK**）
+# 💳 年払いの PayPal 年額定期課金・買い切りは銀行振込のみ（2026-10-20 MK 決定 / **#817 merge 済み・Live Plan ID 追加 PR**）
 
 | 項目 | 状態 |
 |---|---|
 | 目的 | 年払い（¥44,820〜¥49,800）を銀行振込以外でも買えるようにする（月間売上 100 万円・KAO D-158）。買い切りは銀行振込だけ |
 | 実装 | 年額 Plan 2 本（`premium-annual` / `premium-annual-light`・YEAR×1）・料金ページの年払いカードに PayPal 年額ボタンと自動更新の条件・買い切りはサーバーでも拒否（`lifetime_bank_transfer_only`）・二重課金の防止・テスト（`paypalAnnualSubscription.test.mjs` 15 件）|
 | Sandbox | Plan 作成済み（`P-9WM673713N634224FNLLP72Q` / `P-42U66834DF9032109NLLP72Y`）。API で購読の作成（APPROVAL_PENDING・承認 URL・custom_id の読み戻し・YEAR×1・金額）を確認。**買い手の承認 → 初回支払い → 付与の Sandbox E2E は未実施**（Sandbox 買い手アカウントでの承認が人の操作）。未承認の購読は PayPal 側で期限切れになる |
-| Live | 年額 Plan は**未作成**（作成は harness が拒否）。Live Webhook（`checkout.tirol.link/hooks/paypal`）は必要なイベント（BILLING.SUBSCRIPTION.*・PAYMENT.SALE.*）を購読済み（read-only で確認・不足なし）。Plan ID を `PAYPAL_PLAN_IDS.live` に足すまで料金ページに年額ボタンは出ない |
-| 残り | ① Live の年額 Plan 作成（`node scripts/paypal-subscription-setup.mjs ~/.analytics-keiba-ops/card-live.env --apply`）→ 出力の 2 ID を `PAYPAL_PLAN_IDS.live` に足す PR ② Sandbox 承認 E2E（任意）③ merge 後の本番確認（実購入なし）: 料金ページの表示・未ログインでログインへ・買い切りにカード入口が無い・`monthly-create-checkout` に `premium-lifetime` → 409 |
+| Live | 年額 Plan 2 本は MK が 2026-10-20 に setup `--apply` で作成済み。read-only で照合: `premium-annual` `P-2H627640LB4938523NLLQSOY` ¥49,800・`premium-annual-light` `P-8SC81909AJ476194TNLLQSPA` ¥44,820、いずれも ACTIVE・YEAR×1・total_cycles=0・請求設定 OK。`PAYPAL_PLAN_IDS.live` に追加（本 PR）。Live Webhook は必要なイベントを購読済み（不足なし） |
+| 残り | ① 本 PR の merge → 本番確認（料金ページに年額ボタン・自動更新条件・Light 特典、未ログインは login へ、PayPal 承認画面まで到達・承認しない、買い切りにカード・PayPal 入口なし）② Sandbox 承認 E2E（任意） |
 | 未検証 | 翌年の自動更新・更新日の決済失敗は実課金の E2E では未検証（偽の PayPal の自動テストのみ） |
 | rollback | revert（年額ボタンは Live Plan ID が無ければ出ない・既存の購読の反映は Webhook で続く）|
 

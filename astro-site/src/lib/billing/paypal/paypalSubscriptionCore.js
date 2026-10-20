@@ -61,7 +61,8 @@ export const PAYPAL_PLAN_IDS = Object.freeze({
     'premium': 'P-0JC899281X7628327NLIDMPA',
     'premium-jra': 'P-2SA230418U121823UNLIDMPI',
     'premium-nankan': 'P-34226589BA0629739NLIDMPQ',
-    // 年額（premium-annual / premium-annual-light）は Live の Plan を作った後に ID を足す。無い間は申込が 503 plan_not_configured・料金ページにボタンを出さない
+    'premium-annual': 'P-2H627640LB4938523NLLQSOY', // 年額（2026-10-20 MK が setup --apply で作成・YEAR×1・¥49,800・ACTIVE を read-only で照合）
+    'premium-annual-light': 'P-8SC81909AJ476194TNLLQSPA', // 年額 Light 会員特典（同上・YEAR×1・¥44,820）
   }),
 });
 
