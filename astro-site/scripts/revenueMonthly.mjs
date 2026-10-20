@@ -176,7 +176,11 @@ export async function fetchPaypalMonth({ clientId, clientSecret, period, fetchIm
     const res = await fetchImpl(`${apiBase}/v1/reporting/transactions?${q}`, { method: 'GET', headers: { Authorization: `Bearer ${access}` } });
     if (!res.ok) throw new RevenueError(`paypal transactions: HTTP ${res.status}`);
     const body = await res.json();
-    if (!body || !Array.isArray(body.transaction_details)) throw new RevenueError('paypal transactions: unexpected response');
+    if (!body || !Array.isArray(body.transaction_details)) {
+      // 値は出さず、形の診断に必要なキー名と件数だけを残す
+      const keys = body && typeof body === 'object' ? Object.keys(body).sort().join(',') : typeof body;
+      throw new RevenueError(`paypal transactions: unexpected response (keys=${keys}; total_items=${body?.total_items ?? 'n/a'})`);
+    }
     details.push(...body.transaction_details);
     const totalPages = Number(body.total_pages) || 1;
     if (page >= totalPages) return summarizePaypal(details);
