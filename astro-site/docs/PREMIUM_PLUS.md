@@ -656,6 +656,7 @@ deploy `6a62eadd`（`99d7b15`）への **rollback（Netlify restore）で復旧*
 | **段階・並び順・転換率（純粋）** | `src/lib/premiumPlus/premiumPlusFunnelAnalytics.js` |
 | **決済開始・購入完了の記録** | `src/lib/premiumPlus/premiumPlusFunnelServer.js`（`recordPlusCheckoutStart` / `recordPlusPurchase`）|
 | 購入の確定点 | Plus 管理画面「🧾 Premium Plus 注文」→ `premium-plus-eligibility` action `plusOrderConfirm`（`src/lib/premiumPlus/premiumPlusOrderService.js`）|
+| **月間売上への記録（KAO D-158・2026-10-20〜）** | 入金確認（と修復）で全プラン共通の決済ファネル `ak:pay:funnel:v1` へ `recordPaymentConfirmation({ planName: 'Premium Plus', amountYen: 注文の amount, onceKey: 'premium-plus:<orderId>' })`。注文 ID で**日をまたいでも 1 回だけ**。失敗は注文の `revenueState=needs_repair`（要修復）で修復が再実行。テスト注文は数えない。**それ以前の確認済み注文は遡って計上しない** |
 | 決済開始の記録点 | `netlify/functions/bank-transfer-application.js` |
 | テスト | `src/lib/premiumPlus/premiumPlusFunnel*.test.mjs`（`npm run test:premium-plus-media` / `check:safety` に組込済み） |
 

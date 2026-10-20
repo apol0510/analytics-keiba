@@ -61,6 +61,21 @@ export const METRIC_STATE = Object.freeze({
   REMOVED: 'removed',
 });
 
+/**
+ * 月間売上（全プラン共通の決済ファネル `ak:pay:funnel:v1`・KAO D-158）への記録状態。
+ * ⚠️ 項目が無い（この仕組みより前に確認済みの）注文は**修復対象にしない**（遡って計上しない）。
+ */
+export const REVENUE_STATE = Object.freeze({
+  COUNTED: 'counted',
+  NEEDS_REPAIR: 'needs_repair',
+  SKIPPED_CANARY: 'skipped_canary',
+});
+
+/** 売上記録の一意キー（注文 ID 単位。同じ注文は日をまたいでも 1 回だけ） */
+export function revenueOnceKey(order) {
+  return `premium-plus:${order.orderId}`;
+}
+
 const RECORD_ID_RE = /^rec[A-Za-z0-9]{14}$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const HISTORY_MAX = 30;
@@ -168,6 +183,20 @@ export function applyMetricResult(order, metric, { nowMs }) {
   }, { at: nowMs, action: 'metric', result: ok ? 'counted' : `needs_repair:${metric?.reason || 'unknown'}` });
 }
 
+/** 月間売上の記録結果を反映（already_counted も記録済みとして扱う） */
+export function applyRevenueResult(order, result, { nowMs }) {
+  if (order.canary === true) {
+    return withHistory({ ...order, revenueState: REVENUE_STATE.SKIPPED_CANARY },
+      { at: nowMs, action: 'revenue', result: 'skipped_canary' });
+  }
+  const ok = result && (result.counted === true || result.reason === 'already_counted');
+  return withHistory({
+    ...order,
+    revenueState: ok ? REVENUE_STATE.COUNTED : REVENUE_STATE.NEEDS_REPAIR,
+    revenueReason: ok ? null : String(result?.reason || 'unknown'),
+  }, { at: nowMs, action: 'revenue', result: ok ? 'counted' : `needs_repair:${result?.reason || 'unknown'}` });
+}
+
 /** クーポン消化の結果を反映 */
 export function applyCouponRedeemResult(order, outcome, { nowMs }) {
   if (order.couponState === COUPON_STATE.NONE) return order;
@@ -185,8 +214,9 @@ export function planRepair(order) {
   if (order.status !== ORDER_STATUS.CONFIRMED) return { ok: false, code: `not_confirmed:${order.status}` };
   const metric = order.metricState !== METRIC_STATE.COUNTED;
   const coupon = order.couponState === COUPON_STATE.NEEDS_REPAIR;
-  if (!metric && !coupon) return { ok: false, code: 'nothing_to_repair', idempotent: true };
-  return { ok: true, metric, coupon };
+  const revenue = order.revenueState === REVENUE_STATE.NEEDS_REPAIR;
+  if (!metric && !coupon && !revenue) return { ok: false, code: 'nothing_to_repair', idempotent: true };
+  return { ok: true, metric, coupon, revenue };
 }
 
 /** 未確認の注文を取り消す（未入金・誤申込） */
@@ -242,6 +272,7 @@ export function describeOrder(order) {
   if (!order) return null;
   const needsRepair = order.couponState === COUPON_STATE.NEEDS_REPAIR
     || (order.status === ORDER_STATUS.CONFIRMED && order.metricState !== METRIC_STATE.COUNTED)
+    || (order.status === ORDER_STATUS.CONFIRMED && order.revenueState === REVENUE_STATE.NEEDS_REPAIR)
     || (order.status === ORDER_STATUS.REVOKED && order.metricState !== METRIC_STATE.REMOVED);
   const last = Array.isArray(order.history) && order.history.length ? order.history[order.history.length - 1] : null;
   return {

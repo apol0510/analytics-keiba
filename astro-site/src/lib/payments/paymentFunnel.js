@@ -18,6 +18,7 @@
  * | `ak:pay:funnel:v1:daily` | HASH | `YYYYMMDD|event|plan|planType` → 件数（JST の日付）|
  * | `ak:pay:funnel:v1:open` | HASH | recordId → `{plan, planType, atMs}`（報告済み・入金確認待ち）|
  * | `ak:pay:funnel:v1:seen` | HASH | `YYYYMMDD|event|recordId|plan` → 1（同じ日の同じ申込を二重に数えない）|
+ * | `ak:pay:funnel:v1:once` | HASH | `event|onceKey` → 1（注文 ID を持つ確定は日をまたいでも 1 回だけ。Premium Plus 注文の入金確認）|
  *
  * event: `application_received`（報告を受理）/ `payment_confirmed`（入金確認で昇格）/
  *        `confirm_lead`（報告→入金確認の日数。planType の位置に日数の区分）/
@@ -34,6 +35,7 @@ export const PAYMENT_FUNNEL_KEY = Object.freeze({
   DAILY: `${PAYMENT_FUNNEL_ROOT}:daily`,
   OPEN: `${PAYMENT_FUNNEL_ROOT}:open`,
   SEEN: `${PAYMENT_FUNNEL_ROOT}:seen`,
+  ONCE: `${PAYMENT_FUNNEL_ROOT}:once`,
 });
 export const PAYMENT_FUNNEL_EVENT = Object.freeze({
   RECEIVED: 'application_received',
@@ -56,6 +58,8 @@ export const FUNNEL_PLAN_TYPES = Object.freeze(['Monthly', 'Annual', 'Lifetime',
 export const LEAD_BUCKETS = Object.freeze(['d0', 'd1', 'd2-3', 'd4-7', 'd8plus']);
 
 const RECORD_ID_RE = /^rec[A-Za-z0-9]{14}$/;
+/** 注文 ID 等の確定の識別子（PII を入れない・自由文字列を入れない） */
+const ONCE_KEY_RE = /^[A-Za-z0-9:_-]{1,120}$/;
 const DAY_MS = 86400000;
 
 export function funnelPlan(raw) {
@@ -113,12 +117,20 @@ export function createPaymentFunnelStore({ redisCmd } = {}) {
       return { counted: true, plan, planType: type };
     },
 
-    /** 入金確認で昇格した（報告からの日数も記録し、確認待ちから外す） */
-    async recordConfirmation({ recordId, planName, planType, amountYen, nowMs = Date.now() }) {
+    /**
+     * 入金確認で昇格した（報告からの日数も記録し、確認待ちから外す）。
+     * `onceKey`（注文 ID 等）を渡すと、同じ確定は**日をまたいでも 1 回だけ**数える
+     * （Premium Plus 注文の入金確認・修復の再実行で売上を二重計上しない）。
+     */
+    async recordConfirmation({ recordId, planName, planType, amountYen, onceKey, nowMs = Date.now() }) {
       const plan = funnelPlan(planName);
       const type = funnelPlanType(planType);
       const day = jstDay(nowMs);
-      if (!(await firstTimeToday(day, PAYMENT_FUNNEL_EVENT.CONFIRMED, recordId, plan))) {
+      if (onceKey !== undefined && onceKey !== null) {
+        if (!ONCE_KEY_RE.test(String(onceKey))) return { counted: false, reason: 'invalid_once_key' };
+        const r = await cmd(['HSETNX', PAYMENT_FUNNEL_KEY.ONCE, `${PAYMENT_FUNNEL_EVENT.CONFIRMED}|${onceKey}`, '1']);
+        if (Number(r) !== 1) return { counted: false, reason: 'already_counted' };
+      } else if (!(await firstTimeToday(day, PAYMENT_FUNNEL_EVENT.CONFIRMED, recordId, plan))) {
         return { counted: false, reason: 'duplicate_today' };
       }
       await cmd(['HINCRBY', PAYMENT_FUNNEL_KEY.DAILY, dailyField(day, PAYMENT_FUNNEL_EVENT.CONFIRMED, plan, type), '1']);
