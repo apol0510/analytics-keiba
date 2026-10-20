@@ -5,7 +5,7 @@
   2. 買い切りは**銀行振込だけ**。PayPal・Paddle の申込入口を画面に置かず、サーバーもカード・PayPal での買い切り申込を拒否する（fail closed・テストで固定）。
   3. 月額の定期課金（PayPal）と年払いの銀行振込は現状のまま。
   4. 価格（年払い ¥49,800・Light 会員の年払い ¥44,820・買い切り ¥78,000）と会員の権利は変えない。
-- 実装（PR #—・`paypalSubscriptionCore.ANNUAL_SUBSCRIPTION_PLANS`）: Plan 2 本（`premium-annual` ¥49,800・`premium-annual-light` ¥44,820・YEAR×1・無期限・初期費用なし）。Plan ID は月額と同じくコード（`PAYPAL_PLAN_IDS`）に持つ。Light 特典の資格はサーバーで判定（`checkMemberOnlyPricing`）。権限は プラン=Premium / PlanType=Annual / PaymentMethod=PayPal、期限＝最後に支払われた日 + 12 か月 + 2 日。Webhook・戻り先・退会は月額と同じ経路。
+- 実装（PR #817・`paypalSubscriptionCore.ANNUAL_SUBSCRIPTION_PLANS`）: Plan 2 本（`premium-annual` ¥49,800・`premium-annual-light` ¥44,820・YEAR×1・無期限・初期費用なし）。Plan ID は月額と同じくコード（`PAYPAL_PLAN_IDS`）に持つ。Light 特典の資格はサーバーで判定（`checkMemberOnlyPricing`）。権限は プラン=Premium / PlanType=Annual / PaymentMethod=PayPal、期限＝最後に支払われた日 + 12 か月 + 2 日。Webhook・戻り先・退会は月額と同じ経路。
 - 二重課金の防止: 生きている月額・年額の購読（PayPal / Stripe）、有効な Premium（銀行振込の年払い等）、買い切りがある会員には年額を作らない・成立しても権限を書かず管理者へ。
 - 以下は **Claude 案（MK 未確認）**:
   - PayPal に出す Plan 名: `Analytics Premium Annual`・`Analytics Premium Annual L`（2026-10-15 の許可リストと同じ禁止語ルール・完全一致）。
