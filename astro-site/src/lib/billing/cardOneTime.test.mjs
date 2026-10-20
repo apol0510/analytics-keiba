@@ -42,7 +42,8 @@ test('申込前: 不明商品・買い切り会員・生きている Stripe 月�
   assert.equal(decideCardPurchase({ productId: 'premium-annual-light', fields: { 'プラン': 'Free' }, now: NOW }).code, 'not_eligible');
   assert.equal(decideCardPurchase({ productId: 'premium-annual-light', fields: LIGHT_ACTIVE, now: NOW }).ok, true);
   assert.equal(decideCardPurchase({ productId: 'premium-annual', fields: null, now: NOW }).ok, true);
-  assert.equal(decideCardPurchase({ productId: 'premium-lifetime', fields: LIGHT_ACTIVE, now: NOW }).ok, true);
+  // 2026-10-20 MK 決定: 買い切りは銀行振込だけ（カードでは申込を作らない）
+  assert.equal(decideCardPurchase({ productId: 'premium-lifetime', fields: LIGHT_ACTIVE, now: NOW }).code, 'lifetime_bank_transfer_only');
   // Stripe 月額でも期限切れ（終了済み）なら申込できる
   assert.equal(decideCardPurchase({
     productId: 'premium-annual', now: NOW,
@@ -71,8 +72,8 @@ test('反映: Premium の残りがある人の年払いは残りの期限から 
   assert.equal(decideCardGrant({ productId: 'premium-annual', fields: { ...f, '有効期限': '2026-09-01' }, paidAt: NOW, provider: 'paddle' }).expiration, '2027-10-11');
 });
 
-test('反映: 買い切りは期限なし（2099-12-31）。買い切り会員への再反映は書かない（conflict）', () => {
-  assert.equal(decideCardGrant({ productId: 'premium-lifetime', fields: LIGHT_ACTIVE, paidAt: NOW, provider: 'paddle' }).expiration, '2099-12-31');
+test('反映: 買い切りはカードで成立しても権限を書かない（銀行振込だけ・2026-10-20 MK 決定）。買い切り会員への再反映は書かない（conflict）', () => {
+  assert.deepEqual(decideCardGrant({ productId: 'premium-lifetime', fields: LIGHT_ACTIVE, paidAt: NOW, provider: 'paddle' }), { action: 'conflict', reason: 'lifetime_bank_transfer_only' });
   const c = decideCardGrant({ productId: 'premium-annual', fields: { 'プラン': 'Premium', PlanType: 'Lifetime' }, paidAt: NOW, provider: 'paddle' });
   assert.deepEqual(c, { action: 'conflict', reason: 'existing_lifetime' });
 });

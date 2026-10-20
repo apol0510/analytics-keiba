@@ -119,6 +119,18 @@ env（Deploy Preview の Sandbox 用だけ）: `PAYPAL_CLIENT_ID`・`PAYPAL_CLIE
 
 Sandbox の Product `PROD-1DB142038K1860725`／Plan: premium `P-67290333XA2635522NLIAFTY`・premium-jra `P-7NF43083F7102171SNLIAFUI`・premium-nankan `P-55C52460MJ2631844NLIAFUY`（2026-10-15 作成）。
 
+## 3.6 PayPal 年額（Subscriptions API・12 か月ごと自動更新・2026-10-20 MK 決定）
+
+| 項目 | 仕様 | 実装 |
+|---|---|---|
+| 商品 | 年払い ¥49,800（`premium-annual`）・Light 会員の年払い ¥44,820（`premium-annual-light`・資格はサーバー判定）。両会場。**買い切りは銀行振込だけ**（定期課金・カードでは申込も反映もしない＝`lifetime_bank_transfer_only`）| `paypalSubscriptionCore.ANNUAL_SUBSCRIPTION_PLANS`・Plan は YEAR×1・無期限・初期費用なし。名前 `Analytics Premium Annual` / `Analytics Premium Annual L` |
+| Plan ID | 月額と同じくコード（秘密ではない） | `PAYPAL_PLAN_IDS.test`（2026-10-20 作成）・`.live` は未作成（setup スクリプト `--apply` で作り ID を足す）。未登録の間は申込 503 `plan_not_configured`・料金ページにボタンを出さない |
+| 申込 | 月額と同じ共通入口 `monthly-create-checkout`（`plan: premium-annual`）| 二重課金の防止: 生きている月額・年額の購読（PayPal / Stripe）→ `already_subscribed`、有効な Premium（銀行振込の年払い等）・買い切り → `already_premium`、Light 資格なし → `not_eligible` |
+| 反映 | 戻り先・Webhook とも月額と同じ（購読を照会して絶対値・冪等）| プラン=Premium / PlanType=Annual / PaymentMethod=PayPal / VenueAccess=''。期限＝最後に支払われた日（JST）+ 12 か月 + 2 日。更新は翌年の支払いで 12 か月延びる。決済失敗・SUSPENDED では延ばさない |
+| 終了 | PayPal 側の停止・決済失敗の上限・管理者の解約 → 支払い済み 12 か月の翌日まで（縮めるだけ）。マイページの退会 → 現行仕様どおり即時 | 月額と同じ判定（`paidThroughYmd(lastPayment, 12)`）|
+| Webhook | 月額と同じイベント（Live は購読済み・2026-10-20 確認）| 追加設定なし |
+| メール | 年額向けの新しいリマインド・通知は作らない（MK）。月払いの更新リマインド・銀行振込の期限通知の対象外（PaymentMethod=PayPal）| — |
+
 ## 4. Sandbox E2E 手順（Deploy Preview）
 
 **MK の操作（アカウント開設は本人しかできない）**

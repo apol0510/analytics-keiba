@@ -89,6 +89,8 @@ function hasLiveStripeMonthly(f = {}, now) {
 export function decideCardPurchase({ productId, fields = null, now = new Date() } = {}) {
   const product = cardProductById(productId);
   if (!product) return { ok: false, code: 'invalid_product' };
+  // 2026-10-20 MK 決定: 買い切りは銀行振込だけ。カード（Paddle・PayPal）では申込を作らない（fail closed）
+  if (product.planType === 'Lifetime') return { ok: false, code: 'lifetime_bank_transfer_only' };
   if (product.planType === 'Monthly' && !MONTHLY_SALES_OPEN) return { ok: false, code: 'monthly_sales_ended' };
   if (fields && isLifetimePremium(fields)) return { ok: false, code: 'already_lifetime' };
   if (fields && hasLiveStripeMonthly(fields, now)) return { ok: false, code: 'stripe_subscription_active' };
@@ -113,6 +115,8 @@ export function decideCardGrant({ productId, fields = {}, paidAt, provider } = {
   if (!product) return { action: 'invalid', reason: 'invalid_product' };
   if (!(paidAt instanceof Date) || Number.isNaN(paidAt.getTime())) return { action: 'invalid', reason: 'invalid_paid_at' };
   if (!/^[a-z]+$/.test(String(provider || ''))) return { action: 'invalid', reason: 'invalid_provider' };
+  // 買い切りは銀行振込だけ（2026-10-20 MK 決定）。カードで成立してしまっても権限は書かず管理者へ（返金判断）
+  if (product.planType === 'Lifetime') return { action: 'conflict', reason: 'lifetime_bank_transfer_only' };
   // 買い切り会員は既に最上位。権限は変えず、返金判断を管理者へ（二重課金の後始末）
   if (isLifetimePremium(fields)) return { action: 'conflict', reason: 'existing_lifetime' };
 

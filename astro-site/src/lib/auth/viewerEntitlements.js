@@ -114,10 +114,10 @@ export function viewerProfile(fields, now = Date.now()) {
     points: points === null || !Number.isFinite(Number(points)) ? null : Number(points),
     // Stripe の月額で契約中か（マイページの「アカウント管理」用）。ID そのものは渡さない。
     // 退会済み（即時退会・2026-10-07）は契約が終わっているので出さない（退会ボタンも出さない）。
-    // PayPal の月額（2026-10-15〜）は 'paypal'（退会ボタンだけ。カード変更は PayPal 側・プラン変更は未提供）。
+    // PayPal の月額（2026-10-15〜）・年額（2026-10-20〜）は 'paypal'（退会ボタンだけ。カード変更は PayPal 側・プラン変更は未提供）。
     billing: /^(true|1|yes)$/i.test(String(read(['WithdrawalRequested']) ?? '').trim()) ? null
       : String(read(['PaymentMethod']) || '').trim().toLowerCase() === 'stripe' && /^cus_/.test(String(read(['StripeCustomerId']) || '')) ? 'stripe'
-        : String(read(['PaymentMethod']) || '').trim().toLowerCase() === 'paypal' && String(read(['PlanType']) || '').trim().toLowerCase() === 'monthly' ? 'paypal'
+        : String(read(['PaymentMethod']) || '').trim().toLowerCase() === 'paypal' && ['monthly', 'annual'].includes(String(read(['PlanType']) || '').trim().toLowerCase()) ? 'paypal'
           : null,
     // 退会（マイページ「退会する」→ 確認 → 確定・2026-10-15 MK 確定）の種類と、退会後も残る買い切り。
     // kind: stripe | paypal（退会できるのは月額だけ）| bank_transfer（銀行振込には退会が無い）| none（無料など）| already_withdrawn

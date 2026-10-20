@@ -91,7 +91,7 @@ test('商品: 既存の月額 3 プランと同じ金額・名前は MK 確定�
     assert.ok(PID[p.id], `${p.id} の Sandbox Plan ID`);
   }
   assert.deepEqual(names, { 'premium': 'Analytics Premium', 'premium-jra': 'Analytics Premium J', 'premium-nankan': 'Analytics Premium N' });
-  assert.deepEqual(names, { ...PAYPAL_PLAN_NAMES });
+  assert.deepEqual(names, Object.fromEntries(STRIPE_PLANS.map((p) => [p.id, PAYPAL_PLAN_NAMES[p.id]])), '月額 3 本の名前は MK 確定のまま（年額は paypalAnnualSubscription.test）');
   const body = buildSubscriptionBody({ planId: 'premium-jra', recordId: REC, origin: PREVIEW, mode: 'test' });
   // custom_id は会員 ID と商品コードだけ（会場名・商品 ID を決済会社へ渡さない）
   assert.equal(body.custom_id, `${REC}:J`);

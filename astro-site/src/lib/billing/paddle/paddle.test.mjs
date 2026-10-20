@@ -183,10 +183,12 @@ test('返金: 承認済みの全額返金だけ付与前へ戻す（申請中・
   assert.equal((await ev(w, 'adjustment.updated', { id: 'adj_04abcdefghijklmnop', transaction_id: t })).result, 'already_reverted');
   assert.equal((await readPaddleOrderStatus({ redis: w.redisCmd, transactionId: t, recordId: REC })).status, 'refunded');
   // 返金直後の再購入は二重購入扱いにしない
-  const t2 = await checkout(w, 'premium-lifetime');
+  // 買い切りはカードでは申込を作らない（2026-10-20 MK 決定）。再購入は年払いで確かめる
+  assert.equal((await createPaddleCheckout({ env: ENV, origin: PREVIEW, recordId: REC, productId: 'premium-lifetime', fetchImpl: w.fetch })).code, 'lifetime_bank_transfer_only');
+  const t2 = await checkout(w, 'premium-annual');
   w.pay(t2);
   assert.equal((await ev(w, 'transaction.completed', { id: t2 })).result, 'granted');
-  assert.equal(w.fields['有効期限'], '2099-12-31');
+  assert.equal(w.fields.PlanType, 'Annual');
   assert.equal(decideAdjustment({ transaction_id: 'other' }, t).action, 'ignore');
   assert.deepEqual(decideAdjustment({ transaction_id: t, action: 'chargeback', status: 'approved', type: 'partial' }, t), { action: 'revert', full: true });
 });
