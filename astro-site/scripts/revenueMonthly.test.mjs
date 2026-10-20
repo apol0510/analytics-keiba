@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readdirSync, writeFileSync, readFileSync } fro
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  buildDoc, buildRevenueMonth, fetchRevenueMonth, measurementPeriod, monthRangeJst, previousMonthJst, readPrevious,
+  buildDoc, buildRevenueMonth, fetchPaypalMonth, fetchRevenueMonth, measurementPeriod, monthRangeJst, previousMonthJst, readPrevious,
   summarizePaypal, summarizeStripe, summaryLine, sustainedMonths, RevenueError, TARGET_JPY,
 } from './revenueMonthly.mjs';
 
@@ -203,3 +203,20 @@ test('commit 済みの measurement は KAO の契約の形を満たす', () => {
   }
 });
 
+
+test('PayPal: 0 件の応答（transaction_details 省略・total_items=0）は 0 円で計上し、それ以外の形は fail-closed', async () => {
+  const period = { startMs: Date.parse('2026-09-30T15:00:00Z'), untilMs: Date.parse('2026-10-31T15:00:00Z') };
+  const fakePaypal = (body) => async (url) => (new URL(url).pathname === '/v1/oauth2/token'
+    ? { ok: true, json: async () => ({ access_token: 'tok' }) }
+    : { ok: true, json: async () => body });
+  const empty = { account_number: 'x', start_date: 's', end_date: 'e', last_refreshed_datetime: 'r', links: [], page: 1, total_items: 0, total_pages: 0 };
+  assert.deepEqual(await fetchPaypalMonth({ clientId: 'id', clientSecret: 'sec', period, fetchImpl: fakePaypal(empty) }), { gross: 0, refunds: 0, payments: 0 });
+  for (const bad of [{ ...empty, total_items: 3 }, { ...empty, total_items: undefined }, { ...empty, total_items: '0' }, null]) {
+    await assert.rejects(fetchPaypalMonth({ clientId: 'id', clientSecret: 'sec', period, fetchImpl: fakePaypal(bad) }), (e) => {
+      assert.ok(e instanceof RevenueError);
+      assert.match(e.message, /^paypal transactions: unexpected response/);
+      assert.ok(!e.message.includes('tok'));
+      return true;
+    });
+  }
+});

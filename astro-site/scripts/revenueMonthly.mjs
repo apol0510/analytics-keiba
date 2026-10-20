@@ -176,6 +176,8 @@ export async function fetchPaypalMonth({ clientId, clientSecret, period, fetchIm
     const res = await fetchImpl(`${apiBase}/v1/reporting/transactions?${q}`, { method: 'GET', headers: { Authorization: `Bearer ${access}` } });
     if (!res.ok) throw new RevenueError(`paypal transactions: HTTP ${res.status}`);
     const body = await res.json();
+    // 該当 0 件のとき PayPal は transaction_details を省く。total_items が 0 と明示された場合だけ 0 件として扱う
+    if (body && body.transaction_details === undefined && body.total_items === 0) return summarizePaypal(details);
     if (!body || !Array.isArray(body.transaction_details)) {
       // 値は出さず、形の診断に必要なキー名と件数だけを残す
       const keys = body && typeof body === 'object' ? Object.keys(body).sort().join(',') : typeof body;
