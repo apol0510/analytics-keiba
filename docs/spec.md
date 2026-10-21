@@ -214,6 +214,23 @@ Light 月払いのリマインド（下の節）と**同じ考え方・同じ送
 - 料金・権利・販売条件は変えない。Customers へは書かない（書くのは CampaignDeliveries と Redis の予約だけ）。
 - テスト: `premiumRenewal.test.mjs`（`test:premium-renewal` → `check:safety`）。
 
+## Premium 年払い（銀行振込）期限前リマインド（2026-10-21 MK 決定）
+
+銀行振込の年払い会員へ、有効期限の前に更新の方法を案内する（/pricing/ の FAQ「銀行振込の年払いは、有効期限が近づきましたらメールでお知らせいたします」の実装）。送信の流れは月払いと同じ `runRenewalReminder`。
+
+| 項目 | 内容 |
+|---|---|
+| 対象 | プラン Premium・PlanType Annual・**PaymentMethod = Bank Transfer**・PaidAt あり。PayPal の年額定期課金・Stripe（自動更新）・PaymentMethod が空 / 不明は送らない（fail closed）。Premium 年払い・買い切りの振込報告が入金確認待ち（RequestedPlan / RequestedPlanType あり・PaymentConfirmed なし）・test / pending / 停止・強制ログアウト・退会申請・配信停止・メール不正も除外 |
+| 時期 | **期限の 1〜7 日前（PRE）だけ**。月払いと同じ窓（年払い専用の日数は定めが無いため月払いに合わせた）。失効後は送らない。周期（有効期限）ごとに 1 回 |
+| 送らない | 更新（有効期限が変わった）・申込済み・PayPal 年額 / 他プランへの変更の後（送信直前に読み直して判定）／ provider suppression・EmailBlacklist・配信停止・横断 24 時間上限 |
+| 本文 | /pricing/ の **Premium 年払い ¥49,800／年・中央＋南関**、「銀行振込で申し込む」から再度お振込みで延長、銀行振込の手順（①お振込み → ②報告フォーム → ③入金確認後ご利用開始）だけ。割引・特典・月額・カード（PayPal）は書かない。ボタンは `/login/?next=/pricing/` |
+| 二重送信・冪等 | DeliveryKey（`premium-annual-renewal:v1`・会員×周期×段）＋ Redis 予約 `ak:premium-annual-renewal:v1:claim:*`（月払いと同じ。結果不明なら送らない・送信失敗は予約を外して翌日再試行）|
+| 実行 | `cron-premium-annual-renewal-reminder`（毎日 JST 10:10）。env `PREMIUM_ANNUAL_RENEWAL_REMINDER_MODE`（off / dry-run / live・**月払いの env とは別**・既定 off）。月額の申込経路のゲートは通さない（案内するのは常に受付中の銀行振込の年払い）|
+
+- 判定の正本: `src/lib/marketing/premiumAnnualRenewal/`（policy / email / runner）。料金・権利・販売条件は変えない。顧客レコードへは書かない。
+- テスト: `premiumAnnualRenewal.test.mjs`（`test:premium-annual-renewal` → `check:safety`）。
+- ⚠️ 銀行振込の承認は有効期限を**入金確認日 + 1 年**にする（`bankPaymentFlow.computeExpiration`・残り日数は足さない）。期限前に振り込むと残りの日数は引き継がれない（既存の仕様・本リマインドでは変えない）。
+
 ## Light 月払い 期限前・失効後リマインド（2026-09-29 MK 確定 / 1-B）
 
 | 項目 | 仕様 |

@@ -1,3 +1,13 @@
+# 📮 銀行振込の Premium 年払いへ期限前の更新案内（2026-10-21 MK 決定 / **PR 作成・人の merge 待ち**）
+
+| 項目 | 状態 |
+|---|---|
+| 実装 | `src/lib/marketing/premiumAnnualRenewal/`（policy / email / runner）＋ `cron-premium-annual-renewal-reminder`（毎日 JST 10:10）。送信の流れは月払いと共通の `runRenewalReminder`。対象は Premium・Annual・PaymentMethod=Bank Transfer・PaidAt あり（PayPal 年額・Stripe・支払い方法不明は送らない）。期限の 1〜7 日前だけ（月払いと同じ窓・年払いの日数の定めは無い）。DeliveryKey `premium-annual-renewal:v1` ＋ Redis 予約で周期ごとに 1 通。月払いの挙動・env は不変 |
+| test | `premiumAnnualRenewal.test.mjs` 17 件（`test:premium-annual-renewal` → `check:safety`）・check:safety pass |
+| 本番 dry-run（read-only・件数だけ・2026-10-21）| 今日の窓（期限 1〜7 日前）: **0 名**。Premium 年払い 12 件（全件 PaymentMethod=Bank Transfer）のうち対象 9・PaidAt なし 2・振込報告が入金確認待ち 1。対象 9 名の期限はすべて 91〜365 日先で、**最初の案内は 2027-07-07 ごろ** |
+| 残り | ① merge（人）② 本番 env `PREMIUM_ANNUAL_RENEWAL_REMINDER_MODE` を設定（未設定 = off。dry-run → live）。2027-07 まで送信対象は 0 のため急がない |
+| rollback | env を off（未設定）に戻す、または revert（顧客レコードには書かない）|
+
 # 🛠 無料会員・初めての方が PayPal 月額・年額を買えない P0 の修正（2026-10-21 / **PR 作成・merge 待ち**）
 
 | 項目 | 状態 |
