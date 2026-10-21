@@ -15,6 +15,7 @@ import {
   mapLegacyTargetToAudienceType,
 } from '../../src/lib/newsletter/audience-resolver.js';
 import { emailTraceId as emailTraceIdRaw } from '../../src/lib/newsletter/test-recipients.js';
+import { withUnverifiedCheckoutExcluded } from '../../src/lib/marketing/unverifiedCheckoutRecord.js';
 import { listUnsubscribeHeadersFor, buildUnsubscribeUrl } from '../../src/lib/unsubscribe/listUnsubscribeHeaders.js';
 
 // 旧 admin UI は brand を渡さない。AK 専用 function なので analytics-keiba を既定値とする。
@@ -130,6 +131,8 @@ export default async function handler(request, context) {
         quickFilterFormula = "AND({プラン} = 'Premium', {Email} != '')";
       }
 
+      // 申込途中（メール未確認）のレコードは宛先に数えない（本配信は resolveAudienceRecipients が除外）
+      quickFilterFormula = withUnverifiedCheckoutExcluded(quickFilterFormula);
       const quickCheckUrl = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/Customers?pageSize=1&filterByFormula=${encodeURIComponent(quickFilterFormula)}`;
       const quickResponse = await fetch(quickCheckUrl, {
         headers: {

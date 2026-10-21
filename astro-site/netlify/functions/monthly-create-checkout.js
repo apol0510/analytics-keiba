@@ -1,8 +1,12 @@
 /**
  * monthly-create-checkout — お客様向けの「月額で申し込む」共通入口（決済会社を選ばせない）
  *
- * POST { plan: 'premium'|'premium-jra'|'premium-nankan' }（ak_session 必須）→ 200 { url, subscription, provider }
- *   → 400 invalid_plan / 401 login_required
+ * POST { plan: 'premium'|'premium-jra'|'premium-nankan'|'premium-annual'|'premium-annual-light', email? }
+ *   → 200 { url, subscription, provider }
+ *   ログイン中（ak_session）はその会員。未ログイン（無料会員・初めての方）は入力メールの会員に固定する
+ *   （2026-10-21: 無料会員はセッションを持たないため、ログイン必須では申し込めなかった。旧 Stripe 月額と同じ受付に戻す）
+ *   → 400 invalid_plan / email_required / invalid_email / 401 login_required（ログイン中のレコードが読めない）
+ *   → 403 account_unavailable（ログインできない会員）/ 409 account_conflict（同じメールで複数）/ lifetime_bank_transfer_only
  *   → 409 already_subscribed（PayPal・Stripe の月額が生きている）/ already_premium（買い切り・期間の長い Premium）
  *   → 503 card_sales_not_open / paypal_key_missing / plan_not_configured / redis_missing（受け付けない）
  *   → 502 checkout_failed（**別の決済会社へは自動で作り直さない**）
@@ -45,7 +49,9 @@ exports.handler = async (event) => {
     }
     // Sandbox E2E の切り分け用に、テストモードのときだけ通らなかった段階を返す（本番では返さない）
     if (!recordId && e2e && mode.mode === 'test') return json(401, headers, { error: 'login_required', e2e: e2e.reason });
-    const r = await provider.create({ env, origin, recordId, planId: String(body.plan || ''), entry: 'monthly', redis: makeRedisCmd(env) });
+    // セッションがあればメールは使わない（入力値で会員を差し替えない）
+    const email = recordId ? '' : String(body.email || '').slice(0, 254);
+    const r = await provider.create({ env, origin, recordId, email, planId: String(body.plan || ''), entry: 'monthly', redis: makeRedisCmd(env) });
     if (!r.ok) return json(r.status, headers, { error: r.code });
     console.log(JSON.stringify({ event: 'monthly_checkout_created', provider: r.provider, plan: String(body.plan || '') }));
     return json(200, headers, { url: r.url, subscription: r.subscriptionId, provider: r.provider });

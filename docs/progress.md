@@ -1,3 +1,9 @@
+# 🛠 無料会員・初めての方が PayPal 月額・年額を買えない P0 の修正（2026-10-21 / **PR 作成・merge 待ち**）
+
+| 項目 | 状態 |
+|---|---|
+| 修正 | 原因: 申込（`monthly-create-checkout`）が `ak_session` 必須だが、無料会員はセッションを持たない（decisions「無料会員はセッションを持たず」）ため、ログインと料金ページの往復になり有料セッション保持者しか買えなかった（「申込はログイン必須」は MK 未確認の Claude 案）。修正: 未ログインは料金ページで入力したメールの会員に固定（旧 Stripe 月額と同じ）。一致 1 件はその会員（利用停止等は 403）・0 件は申込可能と判定後に無料会員レコードを 1 件作成（メール単位の排他）・複数は 409。Webhook は従来どおり custom_id の recordId だけを信用（変更なし）。買い切り拒否・二重契約防止・価格・権利は不変。test `paypalSubscriptionGuest.test.mjs` 10 件・check:safety・build pass（日付切れで落ちていた `premiumConversion.test.mjs` の固定日付も修正）。**配信除外**: 申込で作ったまだ無料のレコード（`Source=paypal-subscription-checkout`・メール未確認）は有料になるまで全配信から外す（単一源 `marketing/unverifiedCheckoutRecord.js` → メルマガ `resolveAudienceRecipients`・マーケティング `resolveSendability`・送信直前 `marketing-campaign-dispatch`・予約の簡易件数。Customers を読む全 Function / lib の分類を guard test で固定）。残り: merge → 本番で未ログインのメール入力 → PayPal 承認画面到達を確認（承認しない）|
+
 # 💳 年払いの PayPal 年額定期課金・買い切りは銀行振込のみ（2026-10-20 MK 決定 / **#817 merge 済み・Live Plan ID 追加 PR**）
 
 | 項目 | 状態 |

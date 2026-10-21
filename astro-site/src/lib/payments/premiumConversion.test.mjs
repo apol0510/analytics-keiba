@@ -62,6 +62,8 @@ let customers; let patches; let failConversionPatch; let realFetch; let realEnv;
 const MEMBER = {
   'Email': 'synthetic-conv@example.invalid', '氏名': 'テスト', 'Source': 'nankan-analytics',
   ...LIGHT,
+  // 実ハンドラは現在時刻で期限切れを判定する。固定日付だと日付が過ぎた日から落ちる（2026-10-21 に 2026-10-20 が過ぎて失敗）ため、常に 30 日先
+  '有効期限': new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10),
   'PaymentConfirmed': true, 'RequestedPlan': 'Premium', 'RequestedPlanType': 'Annual', 'RequestedAmount': 44820,
 };
 
