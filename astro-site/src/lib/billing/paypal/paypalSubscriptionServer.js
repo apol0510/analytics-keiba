@@ -14,6 +14,7 @@
 import { createHash } from 'node:crypto';
 import { airtable, withSubscriptionLock, findCustomerByEmail, normalizeEmail } from '../stripeServer.js';
 import { resolveMembership, MEMBER_TYPE } from '../../auth/memberResolution.js';
+import { UNVERIFIED_CHECKOUT_SOURCE } from '../../marketing/unverifiedCheckoutRecord.js';
 import { subscriptionProviderGate, SUBSCRIPTION_SALES_OPEN, resolveCardMode } from '../cardSales.js';
 import { buildPremiumConversionFields } from '../../payments/premiumConversion.js';
 import { withdrawalFields } from '../stripeSubscriptionSync.js';
@@ -61,8 +62,11 @@ async function isLive(api, subId) {
   try { return LIVE_STATUSES.includes(String((await api.getSubscription(subId))?.status || '')); } catch (e) { return e.status === 404 ? false : true; }
 }
 
-/** 未ログインの申込で新しく作る会員レコード（無料会員と同じ形。ポイント・メール登録・通知はしない）*/
-export const CHECKOUT_RECORD_SOURCE = 'paypal-subscription-checkout';
+/**
+ * 未ログインの申込で新しく作る会員レコード（無料会員と同じ形。ポイント・メール登録・通知はしない）。
+ * メールは本人確認前なので、支払いで有料になるまで全配信から外す（marketing/unverifiedCheckoutRecord.js）。
+ */
+export const CHECKOUT_RECORD_SOURCE = UNVERIFIED_CHECKOUT_SOURCE;
 
 /**
  * 未ログインの申込: 入力メールの会員レコードを決める（2026-10-21・無料会員／初めての方が申し込めない不具合の修正）。

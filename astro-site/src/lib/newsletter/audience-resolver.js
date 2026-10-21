@@ -12,6 +12,7 @@
 // 仕様: docs/NEWSLETTER_BRAND_BACKFILL_SPEC.md §6 / §7
 // 2026-05-19 新規作成（safety audit D1/D2/D5 対応）
 
+import { isUnverifiedCheckoutRecord } from '../marketing/unverifiedCheckoutRecord.js';
 import { normalizeAudienceType } from '../../../scripts/newsletter/lib/plan-normalizer.mjs';
 import { resolveStatus } from '../../../scripts/newsletter/lib/status-resolver.mjs';
 import {
@@ -151,9 +152,15 @@ export function resolveAudienceRecipients({
   let blacklistExcluded = 0;
   let audienceTypeMismatchSkipped = 0;
   let invalidEmailSkipped = 0;
+  let unverifiedCheckoutExcluded = 0;
 
   for (const record of records) {
     const f = record?.fields || {};
+    // 0. 未ログインの定期課金申込で作った、まだ無料のレコード（メールが本人確認前）は送らない
+    if (isUnverifiedCheckoutRecord(f)) {
+      unverifiedCheckoutExcluded += 1;
+      continue;
+    }
     const planRaw = resolvePlanRaw(f);
     const expiryDate = resolveExpiryDate(f, baseName);
     const withdrawalFlag = resolveWithdrawalFlag(f, baseName);
@@ -223,6 +230,7 @@ export function resolveAudienceRecipients({
       audienceTypeMismatchSkipped,
       invalidEmailSkipped,
       dedupedFromMatched,
+      unverifiedCheckoutExcluded,
     },
     audienceTypeBreakdown,
     matchedStatusBreakdown,

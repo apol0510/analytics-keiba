@@ -260,7 +260,8 @@ test('マーケティング判定は Premium Plus 販売判定を import しな�
   for (const i of imports) {
     assert.equal(i.includes('premiumPlus'), false, `Premium Plus 判定 ${i} を import している`);
   }
-  assert.deepEqual(imports, ['../entitlements/resolveEntitlements.js', '../auth/planNormalization.js']);
+  // 申込途中（メール未確認）のレコードの判定は単一源 unverifiedCheckoutRecord.js（純粋・2026-10-21）
+  assert.deepEqual(imports, ['../entitlements/resolveEntitlements.js', '../auth/planNormalization.js', './unverifiedCheckoutRecord.js']);
 });
 
 test('マーケティング判定は I/O を持たない（純粋関数）', () => {

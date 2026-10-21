@@ -53,6 +53,7 @@ import {
   MARKETING_EMAIL_SHELL_VERSION, readShellVersionFromNote,
 } from '../../src/lib/marketing/marketingEmailShell.js';
 import { evaluateExtraAudience } from '../../src/lib/marketing/campaignAudienceRules.js';
+import { isUnverifiedCheckoutRecord } from '../../src/lib/marketing/unverifiedCheckoutRecord.js';
 // 送信直前の「反応なし除外」再判定（2026-08-26 MK 確定）。判定は engagementGuard が単一源。
 import {
   createEngagementBlocklistStore, emptyBlocklist, BLOCKLIST_SKIP,
@@ -466,6 +467,8 @@ export async function runDispatch({
     if (f.UnsubscribedAnalyticsKeiba === true) unsubscribed.add(e);
     const status = String(f.Status || '').trim().toLowerCase();
     if (['suspended', 'inactive', 'banned', 'disabled'].includes(status)) suspended.add(e);
+    // 未ログインの定期課金申込で作った、まだ無料のレコード（メールが本人確認前）には送らない
+    if (isUnverifiedCheckoutRecord(f)) suspended.add(e);
   }
 
   /**

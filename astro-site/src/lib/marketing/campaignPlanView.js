@@ -39,6 +39,7 @@ export const EXCLUSION_LABEL = Object.freeze({
   blacklist: 'ブラックリスト（ハードバウンス・苦情）',
   suspended: '利用停止',
   test_account: 'テストアカウント',
+  unverified_checkout: '申込途中（メール未確認）',
   provider_suppressed: '配信基盤側で配信停止済み',
   soft_bounce: 'ソフトバウンス履歴あり',
   already_delivered: '送信済み（同一キャンペーン）',

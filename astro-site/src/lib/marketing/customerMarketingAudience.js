@@ -21,6 +21,7 @@
 
 import { resolveEntitlements, fromAirtableFields } from '../entitlements/resolveEntitlements.js';
 import { normalizePlan } from '../auth/planNormalization.js';
+import { isUnverifiedCheckoutRecord } from './unverifiedCheckoutRecord.js';
 
 /** 契約状態（有料契約についての状態。Free は契約が無いので `none`） */
 export const MK_CONTRACT = Object.freeze({
@@ -73,6 +74,8 @@ export const MK_SUPPRESSION = Object.freeze({
   SUSPENDED: 'suspended',
   /** テスト用アカウント（Status=test / プラン=Test） */
   TEST_ACCOUNT: 'test_account',
+  /** 未ログインの定期課金申込で作った、まだ無料のレコード（メールが本人確認前・2026-10-21） */
+  UNVERIFIED_CHECKOUT: 'unverified_checkout',
 });
 
 /** 除外理由の表示名（管理画面用・顧客には出さない） */
@@ -83,6 +86,7 @@ export const MK_SUPPRESSION_LABEL = Object.freeze({
   blacklist: 'バウンス/苦情リスト',
   suspended: 'アカウント停止',
   test_account: 'テストアカウント',
+  unverified_checkout: '申込途中（メール未確認）',
 });
 
 /** 「期限間近」とみなす残日数（JST 暦日）。ここだけで調整する。 */
@@ -232,6 +236,8 @@ export function resolveSendability({ fields, blacklistEmails }) {
 
   const planRaw = String(firstNonEmpty(f['プラン'], f.Plan) ?? '').trim().toLowerCase();
   if (status === 'test' || planRaw === 'test') reasons.push(MK_SUPPRESSION.TEST_ACCOUNT);
+  // 入力されたメール（本人確認前）で作ったレコードは、支払いで有料になるまで送らない
+  if (isUnverifiedCheckoutRecord(f)) reasons.push(MK_SUPPRESSION.UNVERIFIED_CHECKOUT);
 
   return {
     sendable: reasons.length === 0,
