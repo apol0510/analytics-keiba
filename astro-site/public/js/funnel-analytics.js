@@ -236,24 +236,32 @@
    */
   var STRIPE_PLAN_LABELS = { 'premium': 'Premium', 'premium-jra': 'Premium JRA', 'premium-nankan': 'Premium NANKAN' };
   var STRIPE_PLAN_YEN = { 'premium': 4980, 'premium-jra': 2980, 'premium-nankan': 2980 };
+  /** PayPal 定期課金（2026-10-15〜）: 月額 3 本は Stripe と同じ商品・年額 2 本（paypalSubscriptionCore.SUBSCRIPTION_PLANS）。 */
+  var ANNUAL_PLAN_LABELS = { 'premium-annual': 'Premium Annual', 'premium-annual-light': 'Premium Annual Light' };
+  var ANNUAL_PLAN_YEN = { 'premium-annual': 49800, 'premium-annual-light': 44820 };
+  var PAYMENT_METHODS = { stripe: 'stripe', paypal: 'paypal' };
 
-  function stripeParams(planId) {
+  function stripeParams(planId, method) {
+    var m = PAYMENT_METHODS[method] || 'stripe';
+    if (m === 'paypal' && ANNUAL_PLAN_LABELS[planId]) {
+      return { plan: ANNUAL_PLAN_LABELS[planId], plan_type: 'Annual', payment_method: m, currency: 'JPY', value: ANNUAL_PLAN_YEN[planId] };
+    }
     var label = STRIPE_PLAN_LABELS[planId] || 'other';
-    return { plan: label, plan_type: 'Monthly', payment_method: 'stripe', currency: 'JPY', value: STRIPE_PLAN_YEN[planId] || 0 };
+    return { plan: label, plan_type: 'Monthly', payment_method: m, currency: 'JPY', value: STRIPE_PLAN_YEN[planId] || 0 };
   }
 
-  function checkoutStart(planId) {
+  function checkoutStart(planId, method) {
     try {
-      if (typeof global.gtag === 'function') global.gtag('event', 'begin_checkout', stripeParams(planId));
+      if (typeof global.gtag === 'function') global.gtag('event', 'begin_checkout', stripeParams(planId, method));
     } catch (_) {}
   }
 
-  function purchaseCompleted(planId, sessionId) {
+  function purchaseCompleted(planId, sessionId, method) {
     try {
       var key = 'ak_purchase_sent:' + String(sessionId || '').slice(0, 80);
       try { if (global.sessionStorage && global.sessionStorage.getItem(key)) return; } catch (_) {}
-      var params = stripeParams(planId);
-      // transaction_id は Stripe の決済セッション ID（個人情報ではない・重複計上の防止）
+      var params = stripeParams(planId, method);
+      // transaction_id は Stripe の決済セッション ID / PayPal の購読 ID（個人情報ではない・重複計上の防止）
       params.transaction_id = String(sessionId || '').slice(0, 80);
       if (typeof global.gtag === 'function') global.gtag('event', 'purchase', params);
       try { if (global.sessionStorage) global.sessionStorage.setItem(key, '1'); } catch (_) {}
