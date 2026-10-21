@@ -263,3 +263,43 @@ test('配線: /free-signup/ はサーバーが新規登録を返したときだ�
   assert.ok(page.lastIndexOf('if (data.success) {', at) > 0);
   assert.ok(page.lastIndexOf('} else {', at) < page.lastIndexOf('if (data.success) {', at));
 });
+
+// ---- PayPal 定期課金の purchase（2026-10-21）: 閉じた語彙・年額は Annual・同じ購読で 2 回送らない
+function loadWithStorage() {
+  const x = load();
+  const store = {};
+  x.win.sessionStorage = { getItem: (k) => store[k] ?? null, setItem: (k, v) => { store[k] = v; } };
+  return x;
+}
+
+test('PayPal annual purchase is Annual with its price and payment_method paypal', () => {
+  const { AkFunnel, sent } = loadWithStorage();
+  AkFunnel.purchaseCompleted('premium-annual', 'I-ABCDEFGHIJ12', 'paypal');
+  const ev = sent.find((e) => e.name === 'purchase');
+  assert.deepEqual(ev.params, { plan: 'Premium Annual', plan_type: 'Annual', payment_method: 'paypal', currency: 'JPY', value: 49800, transaction_id: 'I-ABCDEFGHIJ12' });
+});
+
+test('PayPal monthly purchase keeps the monthly vocabulary', () => {
+  const { AkFunnel, sent } = loadWithStorage();
+  AkFunnel.purchaseCompleted('premium-jra', 'I-ABCDEFGHIJ13', 'paypal');
+  const ev = sent.find((e) => e.name === 'purchase');
+  assert.equal(ev.params.plan, 'Premium JRA');
+  assert.equal(ev.params.plan_type, 'Monthly');
+  assert.equal(ev.params.payment_method, 'paypal');
+  assert.equal(ev.params.value, 2980);
+});
+
+test('the same subscription is counted once', () => {
+  const { AkFunnel, sent } = loadWithStorage();
+  AkFunnel.purchaseCompleted('premium', 'I-ABCDEFGHIJ14', 'paypal');
+  AkFunnel.purchaseCompleted('premium', 'I-ABCDEFGHIJ14', 'paypal');
+  assert.equal(sent.filter((e) => e.name === 'purchase').length, 1);
+});
+
+test('an unknown payment method falls back to stripe, an unknown plan to other', () => {
+  const { AkFunnel, sent } = loadWithStorage();
+  AkFunnel.purchaseCompleted('premium-annual', 'cs_test_1', 'cash');
+  const ev = sent.find((e) => e.name === 'purchase');
+  assert.equal(ev.params.payment_method, 'stripe');
+  assert.equal(ev.params.plan, 'other');
+});

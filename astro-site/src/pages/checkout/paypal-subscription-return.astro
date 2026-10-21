@@ -3,6 +3,8 @@
 // ⚠️ ここへの遷移は支払いの証明ではない。反映は paypal-subscription-confirm（と Webhook）が PayPal API の照会結果だけで行い、この画面は状態を表示するだけ。
 export const prerender = false;
 import BaseLayout from '../../layouts/BaseLayout.astro';
+import { SUBSCRIPTION_RETURN_COPY } from '../../lib/billing/paypal/subscriptionReturnCopy.js';
+const copy = SUBSCRIPTION_RETURN_COPY;
 const raw = Astro.url.searchParams.get('subscription_id') || '';
 const subscription = /^I-[A-Z0-9]{10,24}$/.test(raw) ? raw : '';
 ---
@@ -18,7 +20,7 @@ const subscription = /^I-[A-Z0-9]{10,24}$/.test(raw) ? raw : '';
   </main>
 </BaseLayout>
 
-<script is:inline define:vars={{ subscription }}>
+<script is:inline define:vars={{ subscription, copy }}>
   (function () {
     var $ = function (id) { return document.getElementById(id); };
     function show(icon, title, text, links) {
@@ -27,11 +29,8 @@ const subscription = /^I-[A-Z0-9]{10,24}$/.test(raw) ? raw : '';
       (links || []).forEach(function (l) { var e = document.createElement('a'); e.href = l[1]; e.textContent = l[0]; e.className = 'co-btn'; a.appendChild(e); });
       a.hidden = !(links && links.length);
     }
-    var DONE = {
-      'premium': ['Premium（中央＋南関）をご利用いただけます。', [['中央の Premium 予想へ', '/premium-prediction/jra/'], ['南関の Premium 予想へ', '/premium-prediction/nankan/']]],
-      'premium-jra': ['Premium 中央版をご利用いただけます。', [['中央の Premium 予想へ', '/premium-prediction/jra/']]],
-      'premium-nankan': ['Premium 南関版をご利用いただけます。', [['南関の Premium 予想へ', '/premium-prediction/nankan/']]],
-    };
+    // 商品ごとの文言（更新の周期つき）は subscriptionReturnCopy.js が正本。知らない商品は周期を書かない
+    var FALLBACK = { text: 'Premium をご利用いただけます。', links: [['マイページへ', '/dashboard/']] };
     if (!subscription) { show('⚠️', 'お申し込み情報を確認できませんでした', 'マイページでご利用状況をご確認ください。', [['マイページへ', '/dashboard/']]); return; }
     var tries = 0;
     function poll() {
@@ -40,7 +39,11 @@ const subscription = /^I-[A-Z0-9]{10,24}$/.test(raw) ? raw : '';
         .then(function (r) { return r.json().catch(function () { return {}; }).then(function (d) { return { s: r.status, d: d }; }); })
         .then(function (x) {
           var st = x.d && x.d.status;
-          if (st === 'active') { var t = DONE[x.d.plan] || DONE.premium; return show('✅', 'お申し込みが完了しました', t[0] + '（毎月自動で更新されます）', t[1]); }
+          if (st === 'active') {
+            var t = copy[x.d.plan] || FALLBACK;
+            if (copy[x.d.plan] && window.AkFunnel && window.AkFunnel.purchaseCompleted) window.AkFunnel.purchaseCompleted(x.d.plan, subscription, 'paypal');
+            return show('✅', 'お申し込みが完了しました', t.text, t.links);
+          }
           if (st === 'needs_support') return show('📩', 'お支払いを確認しました', 'ご契約内容の確認が必要なため、担当よりご連絡いたします。', [['お問い合わせ', '/contact/']]);
           if (x.s === 401) return show('🔑', 'ログインしてご確認ください', 'お支払いの反映はログイン後のマイページでご確認いただけます。', [['ログイン', '/login/?next=/dashboard/']]);
           if (x.s === 404) return show('⚠️', 'お申し込み情報を確認できませんでした', 'お申し込みのときと同じアカウントでログインしているかご確認ください。', [['マイページへ', '/dashboard/']]);
