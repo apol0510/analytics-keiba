@@ -139,3 +139,13 @@ test('計測本体は GA4 の測定 ID を持たない（読み込みは BaseLay
   assert.equal((layout.match(/G-BTDCZE1B13/g) || []).length, 2,
     'BaseLayout の測定 ID は gtag/js の src と gtag(\'config\') の 2 か所');
 });
+
+// ---- カード決済（PayPal 定期課金）の begin_checkout（2026-10-21）: 決済画面の URL を受け取った後だけ・遷移の前
+test('pricing: begin_checkout fires after the checkout URL is returned, before leaving', () => {
+  const src = readFileSync(fileURLToPath(new URL('../../pages/pricing.astro', import.meta.url)), 'utf8');
+  const i = src.indexOf("if (res.ok && data.url) {");
+  assert.ok(i > 0, 'checkout success branch');
+  const branch = src.slice(i, src.indexOf('return;', i));
+  assert.match(branch, /AkFunnel\.checkoutStart\(planId, data\.provider === 'paypal' \? 'paypal' : 'stripe'\)/);
+  assert.ok(branch.indexOf('checkoutStart') < branch.indexOf('location.href = data.url'));
+});

@@ -622,7 +622,11 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
           method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(email ? { plan: planId, email: email } : { plan: planId }),
         });
         var data = await res.json().catch(function () { return {}; });
-        if (res.ok && data.url) { leaving = true; location.href = data.url; return; }
+        if (res.ok && data.url) {
+          // GA4 begin_checkout: サーバーが決済画面の URL を返した後だけ（閉じた語彙・個人情報なし）
+          try { if (window.AkFunnel && window.AkFunnel.checkoutStart) window.AkFunnel.checkoutStart(planId, data.provider === 'paypal' ? 'paypal' : 'stripe'); } catch (_) {}
+          leaving = true; location.href = data.url; return;
+        }
         var err = data.error || '';
         // 未ログインはそのままログインへ（ログイン後はこのページへ戻る）
         if (err === 'login_required') { leaving = true; btn.textContent = 'ログイン画面へ移動しています…'; location.href = '/login/?next=/pricing/'; return; }
