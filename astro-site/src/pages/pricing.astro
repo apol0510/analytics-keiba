@@ -308,7 +308,7 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
                         </div>
                     ))}
                 </div>
-                <p class="checkout-message" id="monthlyMessage" role="status" hidden></p>
+                <div class="checkout-message" id="monthlyMessage" role="status" hidden></div>
             </section>
         )}
 
@@ -573,7 +573,9 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
 
 <script is:inline>
   // ── 月額（PayPal の定期課金・2026-10-15 MK 決定）の申込 ─────────────
-  // 金額はサーバー（PayPal の Plan）が決める。送るのはプラン ID だけ。ログイン必須（未ログインはログインへ）。
+  // 金額はサーバー（PayPal の Plan）が決める。送るのはプラン ID（と未ログインのときだけメールアドレス）。
+  // 2026-10-21: 無料会員はセッションを持たないため、ログイン必須だと無料会員・初めての方が申し込めなかった。
+  // 未ログインはサーバーが email_required を返す → 押したカードの下でメールアドレスを入力して進む（旧 Stripe 月額と同じ）。
   (function () {
     var msg = document.getElementById('monthlyMessage');
     if (!msg) return;
@@ -585,7 +587,30 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
       if (card) card.appendChild(msg);
       msg.scrollIntoView({ block: 'center', behavior: 'smooth' });
     }
-    async function startMonthly(planId, btn) {
+    function esc(v) { return String(v).replace(/[&<>"']/g, function (c) { return '&#' + c.charCodeAt(0) + ';'; }); }
+    // 無料会員としてログイン中なら、そのメールアドレスを入れておく（確認して進める。自動では送らない）
+    function savedEmail() {
+      try { var e = localStorage.getItem('isLoggedIn') === 'true' ? (localStorage.getItem('userEmail') || '') : ''; return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) ? e : ''; } catch (_) { return ''; }
+    }
+    function askEmail(planId, btn, note, value) {
+      show((note ? '<span class="checkout-email-note">' + note + '</span>' : '')
+        + '<form class="checkout-email-form" novalidate>'
+        + '<label class="form-label" for="monthlyEmail">ご利用になるメールアドレス</label>'
+        + '<input type="email" id="monthlyEmail" class="form-input" required autocomplete="email" placeholder="example@email.com" value="' + esc(value || savedEmail()) + '">'
+        + '<small>お申し込み後のログインに使います（ログインリンクをこのアドレスへお送りします）。</small>'
+        + '<button type="submit">決済へ進む</button>'
+        + '</form>', btn);
+      var form = msg.querySelector('form');
+      form.addEventListener('submit', function (ev) {
+        ev.preventDefault();
+        var v = String(form.querySelector('input').value || '').trim();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return askEmail(planId, btn, 'メールアドレスをご確認ください。', v);
+        startMonthly(planId, btn, v);
+      });
+      var input = form.querySelector('input');
+      if (input && !input.value) input.focus();
+    }
+    async function startMonthly(planId, btn, email) {
       if (busy) return;
       busy = true; btn.disabled = true;
       var label = btn.textContent;
@@ -594,13 +619,18 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
       var leaving = false;
       try {
         var res = await fetch('/.netlify/functions/monthly-create-checkout', {
-          method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plan: planId }),
+          method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(email ? { plan: planId, email: email } : { plan: planId }),
         });
         var data = await res.json().catch(function () { return {}; });
         if (res.ok && data.url) { leaving = true; location.href = data.url; return; }
         var err = data.error || '';
         // 未ログインはそのままログインへ（ログイン後はこのページへ戻る）
         if (err === 'login_required') { leaving = true; btn.textContent = 'ログイン画面へ移動しています…'; location.href = '/login/?next=/pricing/'; return; }
+        // 未ログイン: メールアドレスで申し込む（無料会員・初めての方）
+        if (err === 'email_required') return askEmail(planId, btn);
+        if (err === 'invalid_email') return askEmail(planId, btn, 'メールアドレスをご確認ください。', email);
+        if (err === 'account_conflict' || err === 'account_unavailable') return show('このメールアドレスではお申し込みを受け付けられませんでした。お手数ですが<a href="/contact/">お問い合わせ</a>ください。', btn);
+        if (err === 'lifetime_bank_transfer_only') return show('買い切りは銀行振込でお申し込みいただけます。', btn);
         if (err === 'already_subscribed') return show('すでにクレジット決済でご契約中です。ご契約内容はマイページの「アカウント管理」でご確認いただけます。<a href="/dashboard/">マイページへ</a>', btn);
         if (err === 'not_eligible') return show('乗り換え特典価格は Light 会員さま限定です。通常価格でお申し込みいただけます。', btn);
         if (err === 'already_premium') return show('すでに Premium（中央＋南関）をご利用中のため、お申し込みは不要です。ご不明な点は<a href="/contact/">お問い合わせ</a>ください。', btn);
@@ -618,6 +648,14 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
       btn.dataset.label = btn.textContent;
       btn.addEventListener('click', function () { startMonthly(btn.getAttribute('data-monthly') || btn.getAttribute('data-subscription'), btn); });
     });
+    // ログイン等から ?plan=<商品> 付きで戻ったら、その商品の申込をそのまま始める（表示中のボタンがあるときだけ）
+    try {
+      var want = new URLSearchParams(location.search).get('plan') || '';
+      if (/^[a-z-]{3,40}$/.test(want)) {
+        var target = Array.prototype.find.call(buttons, function (b) { return (b.getAttribute('data-monthly') || b.getAttribute('data-subscription')) === want && b.offsetParent !== null; });
+        if (target) startMonthly(want, target);
+      }
+    } catch (_) { /* 自動で始めなくても、ボタンは押せる */ }
     // PayPal・ログインから「戻る」で帰ってきたとき（bfcache）に「移動しています…」のまま押せなくならないように
     window.addEventListener('pageshow', function (e) {
       if (!e.persisted) return;
@@ -970,6 +1008,12 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
 
     .monthly-section { margin-top: 2.5rem; }
     .monthly-section .checkout-message { text-align: center; color: #e2e8f0; margin: 1rem auto 0; max-width: 640px; line-height: 1.7; }
+    /* 未ログインのメールアドレス入力（startMonthly が innerHTML で差し込むので :global）*/
+    #monthlyMessage :global(.checkout-email-form) { display: flex; flex-direction: column; gap: 0.4rem; text-align: left; margin-top: 0.5rem; }
+    #monthlyMessage :global(.checkout-email-form .form-input) { box-sizing: border-box; width: 100%; padding: 0.7rem 0.8rem; border-radius: 8px; border: 1px solid rgba(148, 163, 184, 0.5); background: #0f172a; color: #f8fafc; font-size: 1rem; }
+    #monthlyMessage :global(.checkout-email-form small) { color: #94a3b8; font-size: 0.8rem; }
+    #monthlyMessage :global(.checkout-email-note) { display: block; color: #fbbf24; }
+    #monthlyMessage :global(.checkout-email-form button) { margin-top: 0.3rem; padding: 0.8rem 1rem; border: none; border-radius: 10px; background: #2563eb; color: #fff; font-weight: 700; font-size: 1rem; cursor: pointer; }
 
     /* ===== Stripe 月額（主導線） ===== */
     .plans-lead {

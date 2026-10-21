@@ -2,7 +2,7 @@
  * paypalSubscriptionServer.js — PayPal 月額定期課金の I/O（PayPal API・Airtable・Redis）
  * 判定は paypalSubscriptionCore.js（純粋）。仕様は同ファイル冒頭と CARD_PAYMENT_PROVIDERS.md §3.5。
  *
- * 流れ: 申込作成（サーバー・ログイン必須）→ 顧客が PayPal で承認 → 戻り先・Webhook がそれぞれ
+ * 流れ: 申込作成（サーバー。ログイン中はその会員・未ログインは入力メールの会員）→ 顧客が PayPal で承認 → 戻り先・Webhook がそれぞれ
  *   「購読を PayPal API で照会 → 同じ判定で絶対値を書く」（applyPaypalSubscription）。順不同・重複・再送でも同じ結果。
  * 退会: withdrawPaypalSubscriber（購読を即時 cancel → 退会状態）。cancel 後に書込みが失敗しても、
  *   CANCELLED の通知が status_change_note の印を見て同じ退会状態へ収束させる。
@@ -11,7 +11,9 @@
  * ⚠️ クライアント秘密・メールアドレス・レコード内容をログに出さない。
  */
 
-import { airtable, withSubscriptionLock } from '../stripeServer.js';
+import { createHash } from 'node:crypto';
+import { airtable, withSubscriptionLock, findCustomerByEmail, normalizeEmail } from '../stripeServer.js';
+import { resolveMembership, MEMBER_TYPE } from '../../auth/memberResolution.js';
 import { subscriptionProviderGate, SUBSCRIPTION_SALES_OPEN, resolveCardMode } from '../cardSales.js';
 import { buildPremiumConversionFields } from '../../payments/premiumConversion.js';
 import { withdrawalFields } from '../stripeSubscriptionSync.js';
@@ -20,7 +22,7 @@ import { keyMode, PAYPAL_API } from './paypalCore.js';
 import {
   PROVIDER, buildSubscriptionBody, approveUrlOf, snapshotPaypalSubscription, decidePaypalSubscriptionSync,
   decidePaypalSubscriptionPurchase, decidePaypalWithdrawal, parseSubscriptionWebhook, isSubscriptionId,
-  memberKey, LIVE_STATUSES, MEMBER_WITHDRAWAL_NOTE, PAYPAL_PLAN_IDS,
+  memberKey, LIVE_STATUSES, MEMBER_WITHDRAWAL_NOTE, PAYPAL_PLAN_IDS, LIFETIME_BANK_ONLY, subscriptionPlanById,
 } from './paypalSubscriptionCore.js';
 
 /** このサイト・この鍵で月額を受け付けるか（本番は SUBSCRIPTION_SALES_OPEN.paypal のときだけ）*/
@@ -59,24 +61,81 @@ async function isLive(api, subId) {
   try { return LIVE_STATUSES.includes(String((await api.getSubscription(subId))?.status || '')); } catch (e) { return e.status === 404 ? false : true; }
 }
 
+/** 未ログインの申込で新しく作る会員レコード（無料会員と同じ形。ポイント・メール登録・通知はしない）*/
+export const CHECKOUT_RECORD_SOURCE = 'paypal-subscription-checkout';
+
 /**
- * 申込を作る（ログイン中の会員だけ）。
+ * 未ログインの申込: 入力メールの会員レコードを決める（2026-10-21・無料会員／初めての方が申し込めない不具合の修正）。
+ *
+ * 無料会員はセッションを持たない（decisions「無料会員はセッションを持たず」）ため、ログイン必須では
+ * 無料会員・初めての方が月額・年額へ進めなかった（ログイン→料金ページ→ログインの往復）。
+ * 旧 Stripe 月額（未ログインは入力メールで受付）と同じく、メールで会員を決めて custom_id の recordId に固定する。
+ * Webhook・戻り先は custom_id の recordId だけを信用する（従来どおり・クライアントの値は使わない）。
+ *   - 一致 1 件: そのレコード。ただし利用停止・強制ログアウト・判定不能（ログインできない会員）は 403 で断る
+ *     （支払いで Status=active に戻せてしまうため）
+ *   - 一致 0 件: 申込を作れると判定できた後にだけ、無料会員のレコードを 1 件作る（メールごとの排他で二重作成しない）
+ *   - 複数一致: 特定できないので 409（マジックリンク・Stripe と同じ fail closed）
+ * 他人のメールで払っても、決済後のログインはそのメールに届くマジックリンクなので、払った人は閲覧できない（Stripe と同じ考え方）。
+ * @returns {Promise<{ ok: true, recordId: string, fields: object, created: boolean } | { ok: false, status: number, code: string }>}
+ */
+async function resolveCheckoutRecord({ at, email, planId, redis, now }) {
+  const existing = await findCustomerByEmail(at, email);
+  if (existing.kind === 'conflict') return { ok: false, status: 409, code: 'account_conflict' };
+  if (existing.kind === 'one') {
+    const m = resolveMembership({ fields: existing.record.fields || {}, recordId: existing.record.id, now: now.getTime() });
+    if (m.memberType === MEMBER_TYPE.DENIED) return { ok: false, status: 403, code: 'account_unavailable' };
+    return { ok: true, recordId: existing.record.id, fields: existing.record.fields || {}, created: false };
+  }
+  // 新しい方: レコードを作る前に、空の会員として申込めるかを先に確かめる（特典価格など作っても申込めないなら作らない）
+  const pre = decidePaypalSubscriptionPurchase({ planId, fields: {}, ownedSubLive: false, now });
+  if (!pre.ok) return { ok: false, status: pre.code === 'invalid_plan' ? 400 : 409, code: pre.code };
+  // メールアドレスそのものを Redis の鍵に残さない（ハッシュ）
+  const lockKey = `email-${createHash('sha256').update(email).digest('hex').slice(0, 32)}`;
+  const r = await withSubscriptionLock(redis, lockKey, async () => {
+    const again = await findCustomerByEmail(at, email);
+    if (again.kind === 'conflict') return { ok: false, status: 409, code: 'account_conflict' };
+    if (again.kind === 'one') return { ok: true, recordId: again.record.id, fields: again.record.fields || {}, created: false };
+    const rec = await at.create({ Email: email, 'プラン': 'Free', Source: CHECKOUT_RECORD_SOURCE });
+    if (!rec?.id) return { ok: false, status: 502, code: 'subscription_failed' };
+    return { ok: true, recordId: rec.id, fields: rec.fields || {}, created: true };
+  });
+  if (r?.action === 'busy') return { ok: false, status: 503, code: 'busy' };
+  return r;
+}
+
+/**
+ * 申込を作る。ログイン中（recordId）はその会員、未ログインは入力メール（email）の会員に固定する。
  * @returns {{ ok: true, url, subscriptionId, provider } | { ok: false, status, code }}
  */
-export async function createPaypalSubscription({ env, origin, recordId, planId, entry = 'direct', redis, fetchImpl, ids = PAYPAL_PLAN_IDS }) {
+export async function createPaypalSubscription({ env, origin, recordId, email = '', planId, entry = 'direct', redis, fetchImpl, ids = PAYPAL_PLAN_IDS, now = new Date() }) {
   const mode = resolvePaypalSubscriptionMode({ env, origin });
   if (!mode.ok) return { ok: false, status: 503, code: mode.reason };
   const gate = subscriptionProviderGate({ provider: PROVIDER, mode: mode.mode, entry });
   if (!gate.ok) return { ok: false, status: 409, code: gate.reason };
-  if (!recordId) return { ok: false, status: 401, code: 'login_required' };
+  // 会員に触れる前に商品を確かめる（買い切りは銀行振込だけ・知らない商品は断る）
+  if (String(planId || '') === 'premium-lifetime') return { ok: false, status: 409, code: LIFETIME_BANK_ONLY };
+  if (!subscriptionPlanById(planId)) return { ok: false, status: 400, code: 'invalid_plan' };
+  if (!recordId) {
+    if (!String(email ?? '').trim()) return { ok: false, status: 400, code: 'email_required' };
+    if (!normalizeEmail(email)) return { ok: false, status: 400, code: 'invalid_email' };
+  }
   if (!redis) return { ok: false, status: 503, code: 'redis_missing' };
   const at = airtable(env, fetchImpl);
-  let rec;
-  try { rec = await at.get(recordId); } catch { return { ok: false, status: 401, code: 'login_required' }; }
+  let fields;
+  if (recordId) {
+    let rec;
+    try { rec = await at.get(recordId); } catch { return { ok: false, status: 401, code: 'login_required' }; }
+    fields = rec?.fields || {};
+  } else {
+    const r = await resolveCheckoutRecord({ at, email: normalizeEmail(email), planId, redis, now });
+    if (!r.ok) return r;
+    recordId = r.recordId;
+    fields = r.fields;
+  }
   const api = apiFor(env, mode, fetchImpl);
   const owned = await readOwnedSubId(redis, recordId);
   const ownedSubLive = owned ? await isLive(api, owned) : false;
-  const d = decidePaypalSubscriptionPurchase({ planId, fields: rec?.fields || {}, ownedSubLive });
+  const d = decidePaypalSubscriptionPurchase({ planId, fields, ownedSubLive, now });
   if (!d.ok) return { ok: false, status: d.code === 'invalid_plan' ? 400 : 409, code: d.code };
   let body;
   try { body = buildSubscriptionBody({ planId: d.plan.id, recordId, origin, mode: mode.mode, ids }); } catch (e) { return { ok: false, status: 503, code: e.code || 'plan_not_configured' }; }
