@@ -1,4 +1,4 @@
-# 🧭 PayPal 決済完了 → Premium 利用画面への自動遷移（2026-10-22 MK 決定 / **PR 作成・人の merge 待ち（billing path）**）
+# 🧭 PayPal 決済完了 → Premium 利用画面への自動遷移（2026-10-22 MK 決定 / **#829 `10423dcf` merge・本番反映・本番 smoke 済み**）
 
 | 項目 | 状態 |
 |---|---|
@@ -8,7 +8,8 @@
 | E2E で見つけて直した不具合 | ①ログイン中の Light 会員が買った直後、マイページが SSR の 10 分キャッシュで **Light のまま**（有料ページの gate は拒否前に読み直すので通る）→ `?from=purchase` で読み直し ②ローカル E2E のブラウザが本番 GA4 タグを読み、テストの `purchase`（hostname=localhost・transaction_id `I-E2E0000000001`〜`07`・2026-10-22 15:00〜15:30 JST 頃・複数回）が本番 GA4 に入った可能性（GA4 の読取り手段が無く件数は未確定・hostname=localhost で除外可能）→ localhost は `ga-disable`・E2E ブラウザは localhost 以外を名前解決しない |
 | test | `postPurchaseLanding.test.mjs` 9 件・`subscriptionReturnToken.test.mjs` +6 件（月額 3・年額で申込→支払い→戻り先→印→ログイン→1 回で消える・権限なしは従来・Redis 障害でも止めない）・既存の期待値更新。test:billing 235・test:auth-session 838・test:analytics 43・check:safety・build pass |
 | 実ブラウザ E2E | `npm run e2e:paypal-post-purchase`（偽の外部＋実 Function＋astro dev＋ヘッドレス Chrome・本物の外部へは出ない）**58/58 PASS を 3 回連続**: 未ログイン（全会場スマホ・中央版 PC・南関版スマホ・年額 PC）→ 完了表示 → ログイン画面（案内つき）→ **別ブラウザコンテキスト（メールアプリ内ブラウザ相当）**でリンク → 利用画面（両会場は 2 ボタンが見えて押せる・中央を開ける／会場版はサーバー gate 通過）・印は 1 回で消える／ログイン済み Light 会員（全会場 PC・南関版スマホ）→ 戻り先から追加クリックなしで利用画面／未払いは遷移しない・権限も印も無し／URL だけ（別ブラウザ）は 401 の案内・再決済を促さない／購入なしの通常ログインは `/dashboard/` のまま／ダイアログ 0・知らない検索式 0・外部通信 0 |
-| 残り | ① merge（人・billing path）② 本番 smoke: `/checkout/paypal-subscription-return/?subscription_id=I-…`（URL だけ）が 401 の案内、`/login/?from=paypal` の案内表示、`paypal-subscription-confirm` 未ログイン 401、`/dashboard/?from=purchase` 200、localhost 以外で GA4 が送られる（`ga-disable` が立たない）③ 次の実購入で戻り先 → 利用画面への到達（scheduled-checks `paypal-monthly-first-purchase-2026` の監視に乗る・本番で会員セッションは作らない設計）|
+| 本番（2026-10-22 16:1x JST・`10423dcf` production deploy ready・main Safety Check success）| ヘッドレス Chrome で JS 実行後の DOM: URL だけの戻り先 → 「お申し込み状況はログイン後にご確認ください」＋ログイン（自動で移らない）／`/login/?from=paypal` → 「お申し込みありがとうございます」＋案内文／通常の `/login/` は案内なし（hidden）。API: `paypal-subscription-confirm` 未ログイン 401・`/dashboard/?from=purchase` 200・`/dashboard/` 200・`verify-magic-link` token なし 400・`/premium-prediction/jra/` 未ログイン 302。`ga-disable` は localhost 判定の中だけ（本番ホストでは立たない）。本番で会員セッションは作れない設計のため、購入者の戻り先 → 利用画面の到達は実ブラウザ E2E（58/58）で代替し、次の実購入で確認する |
+| 残り | ① 次の PayPal 実購入で戻り先 → 利用画面への到達（scheduled-checks `paypal-monthly-first-purchase-2026` の監視・本番セッションは作らない）② GA4 のテスト purchase（hostname=localhost）の件数確認と集計からの除外（KAO 未達 `580258cf`）|
 | rollback | revert（印は 24 時間で消える・権限には影響しない）|
 
 # 🔎 静的 SEO 記事 37 本のサイトマップ・旧 URL・canonical と feeder UTM の計測（2026-10-22 / **PR 作成・人の merge 待ち**）
