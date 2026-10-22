@@ -1,4 +1,5 @@
 ---
+import { publicJsSrc } from '../lib/assets/publicJsVersion.mjs';
 export const prerender = false;
 /**
  * Premium Plus — 1 日 1 鞍・三連単フォーメーションの単品商品
@@ -1610,7 +1611,7 @@ import BankApplicationEmailLock from '../components/BankApplicationEmailLock.ast
   </AccessControl>
 
   {/* 送信完了画面の共通処理（旧版はこの読み込みが無く、送信成功時に何も表示されなかった） */}
-  <script is:inline src="/js/submission-result.js"></script>
+  <script is:inline src={publicJsSrc('submission-result')}></script>
 
   {/* ak_session の idle TTL 延長。実装は SessionKeepAlive.astro が単一源 */}
   <SessionKeepAlive />

@@ -41,15 +41,19 @@
   [headers.values]
     Cache-Control = "no-cache"
 
+# Astro が出力する hash 付きファイルだけを長期キャッシュする（名前が中身で変わるので古い版が残らない）。
 [[headers]]
-  for = "/*.js"
+  for = "/_astro/*"
   [headers.values]
-    Cache-Control = "public, max-age=31536000"
+    Cache-Control = "public, max-age=31536000, immutable"
 
+# ⚠️ public/js/*.js はファイル名が固定。2026-10-22 まで "/*.js" に 1 年キャッシュが掛かり、
+#    一度来た人は計測・金額表示の修正が 1 年届かなかった。短く持ち、読み込み側も ?v=<hash> を付ける
+#    （src/lib/assets/publicJsVersion.mjs）。
 [[headers]]
-  for = "/*.css"  
+  for = "/js/*"
   [headers.values]
-    Cache-Control = "public, max-age=31536000"
+    Cache-Control = "public, max-age=300, must-revalidate"
 
 # 無料予想の URL 変更（2026-08-21）。旧 /race-viewpoints/ から /free/ へ。
 # 2026-08-20 に noindex を解除した直後の変更なので検索への影響は小さいが、
