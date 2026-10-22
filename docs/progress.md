@@ -1,3 +1,15 @@
+# 🧾 未ログインで PayPal 定期課金を買った方の戻り先が「ログインしてご確認ください」になり GA4 purchase も出ない不具合の修正（2026-10-22 / **PR 作成・人の merge 待ち（billing path）**）
+
+| 項目 | 状態 |
+|---|---|
+| 不具合 | #820 から未ログインはメール入力で申し込めるが、戻り先の確認 `paypal-subscription-confirm` が `ak_session` 必須で 401 →「ログインしてご確認ください」。完了画面も GA4 `purchase`（#821）も出なかった（権限は Webhook で付く）。新規のお客様が迷い、purchase が過少計上 |
+| 修正 | `subscriptionReturnToken.js`: 申込（`monthly-create-checkout`）で購読が作られた直後、**未ログインの申込のブラウザだけ**へ Cookie `ak_pp_return`（HttpOnly・Secure・SameSite=Lax・Path=確認の Function だけ・2 時間）。値は購読 ID・会員 ID・期限に `SESSION_SIGNING_SECRET` から用途別に導出した鍵で HMAC。確認は署名・期限・購読 ID 一致＋PayPal の custom_id と会員 ID の一致。ログイン中は従来どおりセッション（Cookie は見ない）。URL だけ・別の購読・期限切れ・改ざんは 401。返すのは状態・商品 ID・`viewer` だけ（メール・会員 ID は返さない）。反映（`applyPaypalSubscription`）・権限・価格・商品は不変 |
+| 画面 | 未ログインで完了: 従来の完了文言＋「ご利用にはログインが必要です。ログイン画面でお申し込みのメールアドレスを入力すると、ログインリンクをお送りします。」＋ログイン。確認できない（401）: 払えたかどうかを言わず「お支払いが完了していれば、数分以内に…」＋ログインの案内。GA4 `purchase` は active のときだけ（従来の `AkFunnel` の同一購読 1 回）|
+| test | `subscriptionReturnToken.test.mjs` 13 件（正しい鍵・別の購読・期限切れ・鍵なし／署名鍵なし・改ざん・Cookie 属性・ログイン中は従来どおり・Function を通した申込→承認→戻り先〔偽の Sandbox・Airtable・Redis〕・custom_id 不一致 404・purchase 配線）＋ `subscriptionReturnCopy.test.mjs` に 1 件。test:billing 220・test:analytics 30・check:safety・build pass |
+| 実ブラウザ（ローカル・偽の PayPal Sandbox／Airtable／Redis・実 Function）| URL だけ → 「お申し込み状況はログイン後にご確認ください」＋ログイン。同じブラウザで未ログイン申込（年払い）→ 支払い済みにして戻り先 → 「お申し込みが完了しました」＋ログイン案内・purchase 1 件（Annual・49800・paypal）・sessionStorage の重複防止キーあり。⚠️ ローカルでも BaseLayout が本番の GA4 タグを読むため、テストの purchase（transaction_id `I-LOCALE2E000001`・hostname localhost）が本番 GA4 に 1 件入った可能性がある（collect の通信は観測されず・未確定）|
+| 残り | ① merge（人・billing path）② 本番 deploy 後の smoke: URL だけの戻り先 → 401 の案内、未ログインで料金ページ → PayPal 承認画面到達（承認しない）で応答に `Set-Cookie: ak_pp_return` ③ measurement: GA4 `purchase`（payment_method=paypal）件数 vs PayPal の ACTIVE 購読の新規件数（週次） |
+| rollback | revert（Cookie は 2 時間で消える・権限の反映は Webhook のまま） |
+
 # 📮 銀行振込の Premium 年払いへ期限前の更新案内（2026-10-21 MK 決定 / **PR 作成・人の merge 待ち**）
 
 | 項目 | 状態 |

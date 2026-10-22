@@ -1,10 +1,12 @@
 ---
 // PayPal 月額（定期課金）の戻り先。PayPal は ?subscription_id=I-…&ba_token=…&token=… を付けて戻す。
 // ⚠️ ここへの遷移は支払いの証明ではない。反映は paypal-subscription-confirm（と Webhook）が PayPal API の照会結果だけで行い、この画面は状態を表示するだけ。
+// 未ログインで申し込んだ方は、申込のブラウザだけが持つ HttpOnly の鍵（ak_pp_return）で確認する（viewer: 'guest'）。URL だけでは何も見えない（401）。
 export const prerender = false;
 import BaseLayout from '../../layouts/BaseLayout.astro';
-import { SUBSCRIPTION_RETURN_COPY } from '../../lib/billing/paypal/subscriptionReturnCopy.js';
+import { SUBSCRIPTION_RETURN_COPY, SUBSCRIPTION_RETURN_GUEST } from '../../lib/billing/paypal/subscriptionReturnCopy.js';
 const copy = SUBSCRIPTION_RETURN_COPY;
+const guest = SUBSCRIPTION_RETURN_GUEST;
 const raw = Astro.url.searchParams.get('subscription_id') || '';
 const subscription = /^I-[A-Z0-9]{10,24}$/.test(raw) ? raw : '';
 ---
@@ -20,7 +22,7 @@ const subscription = /^I-[A-Z0-9]{10,24}$/.test(raw) ? raw : '';
   </main>
 </BaseLayout>
 
-<script is:inline define:vars={{ subscription, copy }}>
+<script is:inline define:vars={{ subscription, copy, guest }}>
   (function () {
     var $ = function (id) { return document.getElementById(id); };
     function show(icon, title, text, links) {
@@ -33,21 +35,26 @@ const subscription = /^I-[A-Z0-9]{10,24}$/.test(raw) ? raw : '';
     var FALLBACK = { text: 'Premium をご利用いただけます。', links: [['マイページへ', '/dashboard/']] };
     if (!subscription) { show('⚠️', 'お申し込み情報を確認できませんでした', 'マイページでご利用状況をご確認ください。', [['マイページへ', '/dashboard/']]); return; }
     var tries = 0;
+    var asGuest = false;
     function poll() {
       tries += 1;
       fetch('/.netlify/functions/paypal-subscription-confirm?subscription=' + encodeURIComponent(subscription), { credentials: 'include' })
         .then(function (r) { return r.json().catch(function () { return {}; }).then(function (d) { return { s: r.status, d: d }; }); })
         .then(function (x) {
           var st = x.d && x.d.status;
+          if (x.d && x.d.viewer === 'guest') asGuest = true;
           if (st === 'active') {
             var t = copy[x.d.plan] || FALLBACK;
+            // GA4 purchase: サーバーが反映済み（active）を返したときだけ。同じ購読は AkFunnel 側で 1 回だけ
             if (copy[x.d.plan] && window.AkFunnel && window.AkFunnel.purchaseCompleted) window.AkFunnel.purchaseCompleted(x.d.plan, subscription, 'paypal');
+            if (asGuest) return show('✅', 'お申し込みが完了しました', t.text + guest.activeNext, guest.activeLinks);
             return show('✅', 'お申し込みが完了しました', t.text, t.links);
           }
           if (st === 'needs_support') return show('📩', 'お支払いを確認しました', 'ご契約内容の確認が必要なため、担当よりご連絡いたします。', [['お問い合わせ', '/contact/']]);
-          if (x.s === 401) return show('🔑', 'ログインしてご確認ください', 'お支払いの反映はログイン後のマイページでご確認いただけます。', [['ログイン', '/login/?next=/dashboard/']]);
+          if (x.s === 401) return show('🔑', guest.loginRequired.title, guest.loginRequired.text, guest.loginRequired.links);
           if (x.s === 404) return show('⚠️', 'お申し込み情報を確認できませんでした', 'お申し込みのときと同じアカウントでログインしているかご確認ください。', [['マイページへ', '/dashboard/']]);
           if (tries < 20) return setTimeout(poll, 3000);
+          if (asGuest) return show('⏳', '確認に時間がかかっています', guest.timeoutText, guest.timeoutLinks);
           show('⏳', '確認に時間がかかっています', '反映まで数分かかることがあります。しばらくしてからマイページをご確認ください。', [['マイページへ', '/dashboard/']]);
         })
         .catch(function () { if (tries < 20) setTimeout(poll, 3000); });

@@ -35,3 +35,11 @@ test('the return page uses the copy module and no hard-coded renewal wording', (
   assert.doesNotMatch(page, /毎月自動で更新されます/);
   assert.match(page, /purchaseCompleted\(x\.d\.plan, subscription, 'paypal'\)/);
 });
+
+test('未ログインの方の案内: お申し込みのメールでログインする手順を出し、確認できないときは完了と言わない', async () => {
+  const { SUBSCRIPTION_RETURN_GUEST: g } = await import('./subscriptionReturnCopy.js');
+  for (const t of [g.activeNext, g.loginRequired.text, g.timeoutText]) assert.match(t, /お申し込みのメールアドレス/);
+  for (const links of [g.activeLinks, g.loginRequired.links, g.timeoutLinks]) assert.deepEqual(links.map((l) => l[1]), ['/login/?next=/dashboard/']);
+  assert.doesNotMatch(`${g.loginRequired.title}${g.loginRequired.text}`, /完了しました|ご利用いただけます。/);
+  assert.match(g.loginRequired.text, /お支払いが完了していれば/);
+});

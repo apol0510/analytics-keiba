@@ -34,3 +34,22 @@ export function buildSubscriptionReturnCopy(plans = SUBSCRIPTION_PLANS) {
 }
 
 export const SUBSCRIPTION_RETURN_COPY = Object.freeze(buildSubscriptionReturnCopy());
+
+/**
+ * 未ログインで申し込んだ方（2026-10-22）。戻り先の確認は申込のブラウザだけが持つ鍵（subscriptionReturnToken.js）で行い、
+ * 閲覧にはログインが要る。ログインは「お申し込みのメールアドレス」へのログインリンク（自動では送らない＝ログイン画面で入力する）。
+ * 鍵が無い・期限切れ（別の端末・時間がたった）は、払えたかどうかを言わずにログインでの確認を案内する。
+ */
+const LOGIN = Object.freeze(['ログインする', '/login/?next=/dashboard/']);
+const LOGIN_HOW = 'ログイン画面でお申し込みのメールアドレスを入力すると、ログインリンクをお送りします。';
+export const SUBSCRIPTION_RETURN_GUEST = Object.freeze({
+  activeNext: `ご利用にはログインが必要です。${LOGIN_HOW}`,
+  activeLinks: Object.freeze([LOGIN]),
+  loginRequired: Object.freeze({
+    title: 'お申し込み状況はログイン後にご確認ください',
+    text: `お支払いが完了していれば、数分以内にご利用いただけるようになります。${LOGIN_HOW}`,
+    links: Object.freeze([LOGIN]),
+  }),
+  timeoutText: `反映まで数分かかることがあります。しばらくしてから、お申し込みのメールアドレスでログインしてマイページをご確認ください。${LOGIN_HOW}`,
+  timeoutLinks: Object.freeze([LOGIN]),
+});
