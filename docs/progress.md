@@ -1,3 +1,15 @@
+# 📈 料金ページ → 申込開始の転換（2026-10-22 MK 指示 / **PR 作成・人の merge 待ち**）
+
+| 項目 | 状態 |
+|---|---|
+| 実験記録 | [`docs/measurements/PRICING_CONV_2026_10.md`](./measurements/PRICING_CONV_2026_10.md)（問題・データ・基準値・仮説・介入・評価期間・指標） |
+| 確認した事実 | 「5%（12/233）」は**分子＝全ページの銀行振込モーダル**（`/dashboard/` 等を含む）・**分母＝`/pricing/` だけ**。カード決済は `application_start` に入らない。`application_submitted` は振込後の報告フォーム |
+| 離脱点 | クレジット決済の枠が無料プランの下（スマホ 3 画面下）で見出しは「銀行振込」だけ／10/15〜10/21 は未ログインのカード申込がログインへ飛ばされていた（#820 で修正済み）／FAQ が古い（ログイン必須・年払いのカード無し）／カード経路の途中が無計測／未ログインのカード購入者は戻り画面に完了が出ず GA4 `purchase` も出ない（決済サーバー側・別 PR 候補） |
+| 実装 | `/pricing/` 見出し下にクレジット決済の枠へのリンク 1 本（主役の順序・価格・商品は不変）・FAQ を事実へ・GA4 `pricing_card_link_click` / `card_checkout_click` / `card_checkout_email_form` / `card_checkout_blocked` / `card_checkout_error`（`funnel-analytics.js`・閉じた語彙・PII なし）|
+| test | `test:analytics` 35 件・`check:safety`・build pass。ローカル build＋Playwright（390/1280）でリンク移動とイベント順（link → click → email_form → begin_checkout）を確認 |
+| 残り | ① merge（人）② 本番 smoke（リンク表示・移動、イベントが GA4 リアルタイムに出る）③ 14 日・28 日で評価（記録 §5）|
+| rollback | revert（ページと計測スクリプトだけ）|
+
 # 📮 銀行振込の Premium 年払いへ期限前の更新案内（2026-10-21 MK 決定 / **PR 作成・人の merge 待ち**）
 
 | 項目 | 状態 |
