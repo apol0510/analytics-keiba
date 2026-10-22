@@ -303,3 +303,42 @@ test('an unknown payment method falls back to stripe, an unknown plan to other',
   assert.equal(ev.params.payment_method, 'stripe');
   assert.equal(ev.params.plan, 'other');
 });
+
+// ---- 料金ページのカード決済の途中の段（2026-10-22・docs/measurements/PRICING_CONV_2026_10.md）
+test('card checkout steps: one event name per step, closed plan vocabulary only', () => {
+  const { AkFunnel, sent } = load();
+  AkFunnel.cardCheckoutStep('premium', 'click');
+  AkFunnel.cardCheckoutStep('premium-jra', 'email_form');
+  AkFunnel.cardCheckoutStep('premium-annual', 'blocked');
+  AkFunnel.cardCheckoutStep('premium-nankan', 'error');
+  assert.deepEqual(sent.map((e) => [e.name, e.params]), [
+    ['card_checkout_click', { plan: 'Premium', plan_type: 'Monthly' }],
+    ['card_checkout_email_form', { plan: 'Premium JRA', plan_type: 'Monthly' }],
+    ['card_checkout_blocked', { plan: 'Premium Annual', plan_type: 'Annual' }],
+    ['card_checkout_error', { plan: 'Premium NANKAN', plan_type: 'Monthly' }],
+  ]);
+});
+
+test('card checkout steps never send amount, email or unknown plan names', () => {
+  const { AkFunnel, sent } = load();
+  AkFunnel.cardCheckoutStep('someone@example.com', 'click');
+  AkFunnel.cardCheckoutStep('', 'section_link');
+  for (const e of sent) {
+    assert.deepEqual(Object.keys(e.params).filter((k) => !['plan', 'plan_type'].includes(k)), []);
+    assert.equal(JSON.stringify(e.params).includes('@'), false);
+  }
+  assert.deepEqual(sent[0].params, { plan: 'other', plan_type: 'Monthly' });
+  assert.equal(sent[1].name, 'pricing_card_link_click');
+  assert.deepEqual(sent[1].params, {});
+});
+
+test('card checkout steps: unknown step is dropped, accidental double fire is dropped, no gtag is safe', () => {
+  const { AkFunnel, sent } = load();
+  assert.equal(AkFunnel.cardCheckoutStep('premium', 'purchase'), null);
+  assert.equal(AkFunnel.cardCheckoutStep('premium', 'toString'), null);
+  AkFunnel.cardCheckoutStep('premium', 'click');
+  AkFunnel.cardCheckoutStep('premium', 'click');
+  assert.equal(sent.length, 1);
+  const bare = load({ withGtag: false });
+  assert.doesNotThrow(() => bare.AkFunnel.cardCheckoutStep('premium', 'click'));
+});

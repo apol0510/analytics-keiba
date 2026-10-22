@@ -18,6 +18,7 @@
  * | 申込開始 | `application_start`（申込モーダルが開いた）|
  * | 申込成功 | `application_submitted`（**サーバーが受理を返した後だけ**）|
  * | 無料会員登録の完了 | `sign_up`（GA4 推奨イベント。**サーバーが新規登録を返したときだけ**・2026-09-29 追加）|
+ * | カード決済の途中の段 | `card_checkout_click` / `card_checkout_email_form` / `card_checkout_blocked` / `card_checkout_error` / `pricing_card_link_click`（2026-10-22 追加・下の cardCheckoutStep）|
  *
  * ## なぜページごとに書かないのか
  *
@@ -268,7 +269,46 @@
     } catch (_) {}
   }
 
+  /**
+   * 料金ページのクレジットカード決済の途中の段（2026-10-22・PRICING_CONV_2026_10）。
+   *
+   * `begin_checkout` はサーバーが決済画面の URL を返した**後**にしか出ない。そのため
+   * 「カードのボタンを押した」「未ログインでメールアドレス入力を求められた」
+   * 「サーバーに断られた」「通信に失敗した」の各段で何人が止まったかが見えなかった。
+   *
+   * ⚠️ イベント名を段ごとに分ける（パラメータ `step` にすると GA4 管理画面で
+   *    カスタム ディメンションを登録するまで標準レポートで分けられない）。
+   * ⚠️ 送るのは `plan` / `plan_type`（登録済みのカスタム ディメンション）だけ。
+   *    メールアドレス・金額・エラー本文は受け取らない（送りようがない）。
+   * ⚠️ どれも**申込成功・購入ではない**（購入は `purchase` だけ）。
+   */
+  var CARD_STEP_EVENTS = {
+    click: 'card_checkout_click',
+    email_form: 'card_checkout_email_form',
+    blocked: 'card_checkout_blocked',
+    error: 'card_checkout_error',
+    section_link: 'pricing_card_link_click'
+  };
+
+  function cardCheckoutStep(planId, step) {
+    var name = Object.prototype.hasOwnProperty.call(CARD_STEP_EVENTS, step) ? CARD_STEP_EVENTS[step] : null;
+    if (!name) return null;
+    var params = {};
+    if (planId) {
+      var p = stripeParams(planId, 'paypal');
+      params.plan = p.plan;
+      params.plan_type = p.plan_type;
+    }
+    if (!shouldSend(name + '|' + (params.plan || ''), Date.now())) return null;
+    try {
+      if (typeof global.gtag === 'function') global.gtag('event', name, params);
+    } catch (_) {}
+    return { event: name, params: params };
+  }
+
   global.AkFunnel = {
+    cardCheckoutStep: cardCheckoutStep,
+    CARD_STEP_EVENTS: CARD_STEP_EVENTS,
     checkoutStart: checkoutStart,
     purchaseCompleted: purchaseCompleted,
     PLAN_LABELS: PLAN_LABELS,

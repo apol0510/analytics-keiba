@@ -2,7 +2,7 @@
  * monthly-create-checkout — お客様向けの「月額で申し込む」共通入口（決済会社を選ばせない）
  *
  * POST { plan: 'premium'|'premium-jra'|'premium-nankan'|'premium-annual'|'premium-annual-light', email? }
- *   → 200 { url, subscription, provider }
+ *   → 200 { url, subscription, provider }（未ログインの申込は戻り先の確認用 Cookie ak_pp_return も付ける・subscriptionReturnToken.js）
  *   ログイン中（ak_session）はその会員。未ログイン（無料会員・初めての方）は入力メールの会員に固定する
  *   （2026-10-21: 無料会員はセッションを持たないため、ログイン必須では申し込めなかった。旧 Stripe 月額と同じ受付に戻す）
  *   → 400 invalid_plan / email_required / invalid_email / 401 login_required（ログイン中のレコードが読めない）
@@ -21,6 +21,7 @@ import { ACTIVE_SUBSCRIPTION_PROVIDER } from '../../src/lib/billing/cardSales.js
 import { createPaypalSubscription, resolvePaypalSubscriptionMode } from '../../src/lib/billing/paypal/paypalSubscriptionServer.js';
 import { e2eCheck } from '../../src/lib/billing/cardE2E.js';
 import { makeRedisCmd } from '../../src/lib/premiumPlus/premiumPlusFunnelServer.js';
+import { returnCookieFor } from '../../src/lib/billing/paypal/subscriptionReturnToken.js';
 
 const CREATORS = Object.freeze({ paypal: { mode: resolvePaypalSubscriptionMode, create: createPaypalSubscription } });
 const json = (statusCode, headers, body) => ({ statusCode, headers, body: JSON.stringify(body) });
@@ -53,8 +54,11 @@ exports.handler = async (event) => {
     const email = recordId ? '' : String(body.email || '').slice(0, 254);
     const r = await provider.create({ env, origin, recordId, email, planId: String(body.plan || ''), entry: 'monthly', redis: makeRedisCmd(env) });
     if (!r.ok) return json(r.status, headers, { error: r.code });
-    console.log(JSON.stringify({ event: 'monthly_checkout_created', provider: r.provider, plan: String(body.plan || '') }));
-    return json(200, headers, { url: r.url, subscription: r.subscriptionId, provider: r.provider });
+    // 未ログインの申込: 戻り先でこのブラウザだけが状態を確認できる短命の鍵（購読 ID・会員 ID に署名・HttpOnly）。
+    // 鍵を出せなくても申込は止めない（戻り先はログインの案内になるだけ）。会員 ID はお客様へ返さない
+    const returnCookie = r.guest && !e2e ? returnCookieFor({ env, subscriptionId: r.subscriptionId, recordId: r.recordId }) : null;
+    console.log(JSON.stringify({ event: 'monthly_checkout_created', provider: r.provider, plan: String(body.plan || ''), guest: r.guest === true, returnKey: Boolean(returnCookie) }));
+    return json(200, returnCookie ? { ...headers, 'Set-Cookie': returnCookie } : headers, { url: r.url, subscription: r.subscriptionId, provider: r.provider });
   } catch (e) {
     console.error(JSON.stringify({ event: 'monthly_checkout_failed', provider: ACTIVE_SUBSCRIPTION_PROVIDER, message: String(e?.message || e).slice(0, 120) }));
     return json(502, headers, { error: 'checkout_failed' });

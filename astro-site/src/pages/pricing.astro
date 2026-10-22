@@ -103,6 +103,15 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
             <p class="pricing-subtitle">
                 Premium（中央＋南関）は、年払い・買い切りの銀行振込でお申し込みいただけます。
             </p>
+            {/* 2026-10-22 PRICING_CONV_2026_10: クレジット決済の枠は無料プランの下（スマホで 3 画面下）にあり、
+                 見出しが「銀行振込」だけなので、カードで払いたい方が枠に気付かず離脱していた。
+                 主役（年払い・買い切り）の順序・見出しは変えず、枠への控えめなリンクを 1 本だけ置く
+                 （「月額」「自動更新」「PayPal」は前面に出さない・2026-10-15 MK 指示）。 */}
+            {showMonthly && (
+                <p class="pricing-card-link-wrap">
+                    <a href="#credit-payment" class="pricing-card-link" data-card-link>クレジットカードでのお申し込みはこちら ↓</a>
+                </p>
+            )}
             <!-- Light 会員のときだけ CSS で表示（上位プランのみに絞っている旨の説明） -->
             <p class="pricing-upgrade-note">
                 <strong>Light 会員さまへ：</strong><strong>中央＋南関の全レース</strong>の買い目が見られる <strong>Premium 年払い</strong>を、Light会員さま限定の乗り換え特典価格（<strong>¥44,820/年</strong>）でお申し込みいただけます。
@@ -273,7 +282,7 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
 
 
         {showMonthly && (
-            <section class="monthly-section" aria-label="クレジット決済">
+            <section class="monthly-section" id="credit-payment" aria-label="クレジット決済">
                 {/* 月額（PayPal の定期課金・2026-10-15 MK 決定）。金額の正本は stripePlans.STRIPE_PLANS（請求は PayPal の Plan）。
                      2026-10-15 MK 指示: 主役は年払い・買い切り（銀行振込）。ここは「銀行振込が難しい方」向けの控えめな選択肢。
                      「月額で始める」「毎月自動更新」「PayPal」を前面に出さない（見出し・ボタンは「クレジット決済」）。
@@ -396,7 +405,7 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
                 <div class="faq-item">
                     <h3 class="faq-question">Q: 支払い方法は何が利用できますか？</h3>
                     <p class="faq-answer">
-                        Premium の年払い・買い切りは銀行振込でお申し込みいただけます。<br>
+                        Premium の年払い・買い切りは銀行振込でお申し込みいただけます。{showAnnualSub && <>年払いはクレジットカード（12 か月ごとの自動更新）でもお申し込みいただけます。</>}<br>
                         銀行振込が難しい方は、クレジット決済（Premium・中央版・南関版）もご利用いただけます。決済代行は PayPal で、お支払いは自動で継続されます。
                     </p>
                 </div>
@@ -423,7 +432,7 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
                     <h3 class="faq-question">Q: 利用開始までの流れは？</h3>
                     <p class="faq-answer">
                         <strong>【銀行振込】</strong>①お振込み → ②振込完了後、報告フォームをご送信 → ③入金確認後、ご利用開始です。フォームは<strong>お振込みが済んでから</strong>ご送信ください。<br>
-                        <strong>【クレジット決済】</strong>①ログイン（無料会員登録） → ②「クレジットカードで申し込む」 → ③決済画面（PayPal）でお支払いを承認 → ④すぐにご利用開始です。
+                        <strong>【クレジット決済】</strong>①「クレジットカードで申し込む」（ログインしていない方は、ご利用になるメールアドレスを入力） → ②決済画面（PayPal）でお支払いを承認 → ③お支払いが確認でき次第、ご利用開始です（ログインはメールでお送りするリンクから）。
                     </p>
                 </div>
 
@@ -610,6 +619,8 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
       var input = form.querySelector('input');
       if (input && !input.value) input.focus();
     }
+    // GA4 の段（funnel-analytics.js の cardCheckoutStep・閉じた語彙。メール・金額は渡さない）
+    function step(planId, name) { try { if (window.AkFunnel && window.AkFunnel.cardCheckoutStep) window.AkFunnel.cardCheckoutStep(planId, name); } catch (_) {} }
     async function startMonthly(planId, btn, email) {
       if (busy) return;
       busy = true; btn.disabled = true;
@@ -631,8 +642,11 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
         // 未ログインはそのままログインへ（ログイン後はこのページへ戻る）
         if (err === 'login_required') { leaving = true; btn.textContent = 'ログイン画面へ移動しています…'; location.href = '/login/?next=/pricing/'; return; }
         // 未ログイン: メールアドレスで申し込む（無料会員・初めての方）
+        if (err === 'email_required') step(planId, 'email_form');
         if (err === 'email_required') return askEmail(planId, btn);
         if (err === 'invalid_email') return askEmail(planId, btn, 'メールアドレスをご確認ください。', email);
+        // サーバーが理由つきで断った（既に契約中・対象外 等）＝ blocked、理由の分からない失敗＝ error
+        step(planId, /^(account_conflict|account_unavailable|lifetime_bank_transfer_only|already_subscribed|not_eligible|already_premium|card_sales_not_open|plan_not_configured|[a-z_]+_key_missing)$/.test(err) ? 'blocked' : 'error');
         if (err === 'account_conflict' || err === 'account_unavailable') return show('このメールアドレスではお申し込みを受け付けられませんでした。お手数ですが<a href="/contact/">お問い合わせ</a>ください。', btn);
         if (err === 'lifetime_bank_transfer_only') return show('買い切りは銀行振込でお申し込みいただけます。', btn);
         if (err === 'already_subscribed') return show('すでにクレジット決済でご契約中です。ご契約内容はマイページの「アカウント管理」でご確認いただけます。<a href="/dashboard/">マイページへ</a>', btn);
@@ -641,6 +655,7 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
         if (err === 'card_sales_not_open' || /_key_missing$/.test(err) || err === 'plan_not_configured') return show('ただいまクレジット決済のお申し込みを準備中です。銀行振込（年払い・買い切り）は通常どおりお申し込みいただけます。', btn);
         show('お申し込みを開始できませんでした。時間をおいて再度お試しください。', btn);
       } catch (_) {
+        step(planId, 'error');
         show('通信に失敗しました。時間をおいて再度お試しください。', btn);
       } finally {
         if (!leaving) { busy = false; btn.disabled = false; btn.textContent = label; }
@@ -650,8 +665,12 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
     var buttons = document.querySelectorAll('[data-monthly], [data-subscription]');
     buttons.forEach(function (btn) {
       btn.dataset.label = btn.textContent;
+      // GA4: 押した（サーバー呼出しの前・申込の処理より先に登録）
+      btn.addEventListener('click', function () { step(btn.getAttribute('data-monthly') || btn.getAttribute('data-subscription'), 'click'); });
       btn.addEventListener('click', function () { startMonthly(btn.getAttribute('data-monthly') || btn.getAttribute('data-subscription'), btn); });
     });
+    var cardLink = document.querySelector('[data-card-link]');
+    if (cardLink) cardLink.addEventListener('click', function () { step('', 'section_link'); });
     // ログイン等から ?plan=<商品> 付きで戻ったら、その商品の申込をそのまま始める（表示中のボタンがあるときだけ）
     try {
       var want = new URLSearchParams(location.search).get('plan') || '';
@@ -1006,9 +1025,15 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
     :global(:root[data-premium-active="1"]) .plans-lead,
     :global(:root[data-premium-active="1"]) .plan-card[data-plan-tier="0"],
     :global(:root[data-premium-active="1"]) .plan-card[data-stripe-plan],
-    :global(:root[data-premium-active="1"]) .monthly-section {
+    :global(:root[data-premium-active="1"]) .monthly-section,
+    :global(:root[data-premium-active="1"]) .pricing-card-link-wrap {
         display: none !important;
     }
+
+    .pricing-card-link-wrap { margin: 0.75rem 0 0; font-size: 0.95rem; }
+    .pricing-card-link { color: #93c5fd; text-decoration: underline; text-underline-offset: 3px; }
+    .pricing-card-link:hover { color: #bfdbfe; }
+    .monthly-section { scroll-margin-top: 80px; }
 
     .monthly-section { margin-top: 2.5rem; }
     .monthly-section .checkout-message { text-align: center; color: #e2e8f0; margin: 1rem auto 0; max-width: 640px; line-height: 1.7; }
