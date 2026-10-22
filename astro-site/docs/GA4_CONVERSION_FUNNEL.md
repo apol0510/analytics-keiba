@@ -76,6 +76,23 @@ URL で確実に判別できるからである。イベントを増やすと同�
 `/free/` → `/free-signup/` → **登録完了** を同じセッションで数えられるようにするための段（それまで「登録完了は未計測」）。
 登録数そのものの正本は Airtable（Customers の作成日時）。GA4 は流入元と同じセッションで結びつける用途。
 
+### カード決済（PayPal 定期課金）の途中の段（2026-10-22 追加・実験記録 `docs/measurements/PRICING_CONV_2026_10.md`）
+
+`begin_checkout`（サーバーが決済画面の URL を返した後）と `purchase`（反映済みを確認した後）の**手前**が見えなかったため追加。
+発火は `/pricing/` だけ・送信は `funnel-analytics.js` の `AkFunnel.cardCheckoutStep(planId, step)` だけ。
+
+| イベント | 意味 | パラメータ |
+|---|---|---|
+| `pricing_card_link_click` | 料金ページ上部の「クレジットカードでのお申し込みはこちら」を押した | なし |
+| `card_checkout_click` | クレジットカードの申込ボタンを押した（サーバー呼出しの前）| `plan`, `plan_type` |
+| `card_checkout_email_form` | 未ログインでメールアドレス入力を求められた（`email_required`）| `plan`, `plan_type` |
+| `card_checkout_blocked` | サーバーが理由つきで断った（既に契約中・対象外・受付準備中 等）| `plan`, `plan_type` |
+| `card_checkout_error` | 理由の分からない失敗・通信失敗 | `plan`, `plan_type` |
+
+`plan` はカード商品の閉じた語彙（`Premium` / `Premium JRA` / `Premium NANKAN` / `Premium Annual` / `Premium Annual Light` / `other`）。
+メール・金額・エラー本文は送らない。**どれも申込成功・購入ではない**（購入は `purchase` だけ）。
+段ごとにイベント名を分けているのは、カスタム ディメンションを足さずに標準レポートで数えられるようにするため。
+
 ### `plan`（閉じた語彙。これ以外は出ない）
 
 `Premium Plus` / `Premium Sanrenpuku` / `Premium` / `Light` / `other`

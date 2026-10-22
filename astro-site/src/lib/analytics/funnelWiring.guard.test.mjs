@@ -149,3 +149,29 @@ test('pricing: begin_checkout fires after the checkout URL is returned, before l
   assert.match(branch, /AkFunnel\.checkoutStart\(planId, data\.provider === 'paypal' \? 'paypal' : 'stripe'\)/);
   assert.ok(branch.indexOf('checkoutStart') < branch.indexOf('location.href = data.url'));
 });
+
+// ---- 料金ページのカード決済の途中の段（2026-10-22・docs/measurements/PRICING_CONV_2026_10.md）
+test('pricing: each card checkout step is wired (click / email_form / blocked|error / network error / section link)', () => {
+  const src = readFileSync(fileURLToPath(new URL('../../pages/pricing.astro', import.meta.url)), 'utf8');
+  assert.match(src, /window\.AkFunnel\.cardCheckoutStep\(planId, name\)/);
+  const clickStep = src.indexOf("btn.addEventListener('click', function () { step(");
+  const clickStart = src.indexOf("btn.addEventListener('click', function () { startMonthly(");
+  assert.ok(clickStep > 0 && clickStep < clickStart, 'button press is measured, registered before the server call');
+  assert.match(src, /err === 'email_required'\) step\(planId, 'email_form'\);\s*if \(err === 'email_required'\) return askEmail/);
+  assert.match(src, /\? 'blocked' : 'error'\);/);
+  assert.match(src, /catch \(_\) \{\s*step\(planId, 'error'\);/);
+  assert.match(src, /step\('', 'section_link'\)/);
+  // 計測へメールアドレスを渡さない
+  assert.equal(/cardCheckoutStep\([^)]*email/.test(src), false);
+  assert.equal(/step\([^)]*email\b/.test(src.replace(/'email_form'/g, '')), false);
+});
+
+test('pricing: the card-section link points at the card section and is shown only while card sales are open', () => {
+  const src = readFileSync(fileURLToPath(new URL('../../pages/pricing.astro', import.meta.url)), 'utf8');
+  assert.match(src, /<section class="monthly-section" id="credit-payment"/);
+  assert.match(src, /\{showMonthly && \(\s*<p class="pricing-card-link-wrap">\s*<a href="#credit-payment"[^>]*data-card-link>/);
+  // 主役（年払い・買い切り）の見出しより後ろにクレジット決済の枠がある順序は変えない
+  assert.ok(src.indexOf('年払い・買い切りで。') < src.indexOf('<section class="monthly-section"'));
+  // 現在 Premium をご契約中の方には出さない
+  assert.match(src, /data-premium-active="1"\]\) \.pricing-card-link-wrap/);
+});
