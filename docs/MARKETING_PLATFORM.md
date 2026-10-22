@@ -422,9 +422,11 @@ unschedule する。判定は `selectionWatch.js`、しきい値も同ファイ�
 
 **残りは画面に並べるだけ**（UI は次の工程）。新しい集計基盤は作らない。
 
-### 元々の会員への週次（2026-09-27 MK 確定 / **未有効**）
+### 元々の会員への週次（2026-09-27 MK 確定 / **Phase 2 実装・未有効**）
 
 A「元々の会員への定期配信」は**この週次配信（SendGrid）に元々の会員の list を足す形**で行う。
+仕組みの正本は `docs/spec.md` 先頭「Phase 2」（日付付き list・12 時間前から段階的に作成・人数一致で ready・
+2 時間前までに ready でなければ native を足さない・gate `SENDGRID_WEEKLY_NATIVE_ENABLED`）。
 現役 Premium / Light は当面対象外、DRM 新規登録育成の受信中は一時除外（`nativeWeeklyAudience.js`）。
 最初の実装は配信停止の橋渡し（`astro-site/docs/UNSUBSCRIBE.md` §8）。
 複数 list の重複が 1 通にまとまることは **canary で実測するまで安全仕様にしない**（`docs/spec.md` 先頭）。

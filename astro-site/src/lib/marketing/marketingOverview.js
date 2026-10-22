@@ -13,6 +13,7 @@
 
 import { listNameFor } from './sendgridAutomationPlan.js';
 import { CONTINUATION_LIST_NAME } from './sendgridContinuation.js';
+import { NATIVE_LIST_PREFIX, NATIVE_STATE_LATEST_KEY, isNativeGateOpen } from './nativeWeeklyConfig.js';
 
 export const ACTIVE_INDEX_KEY = 'ak:prospect:index:active';
 export const ENGAGED_INDEX_KEY = 'ak:prospect:index:engaged';
@@ -40,6 +41,8 @@ export function buildMarketingOverview({
   lists = [], singleSends = [], stats = [],
   akActive = null, akEngaged = null, akBlocked = null,
   watchState = null, weeklyEnabled = false,
+  /** 元々の会員の週次（gate と最新の状態。件数・id・digest だけ） */
+  nativeEnabled = false, nativeState = null,
   /** 取れなかった素材（**0 と区別する**。空欄や 0 で流さない） */
   unavailable = [],
 } = {}) {
@@ -109,6 +112,7 @@ export function buildMarketingOverview({
     } : null,
     週次: {
       有効: weeklyEnabled === true,
+      元々の会員: summarizeNativeWeekly({ enabled: nativeEnabled, state: nativeState, lists }),
       予約: weeklySends.filter((x) => x.status === 'scheduled').length,
       送信済み: weeklySends.filter((x) => x.status === 'triggered').length,
       次の配信: nextOf(weeklySends),
@@ -118,6 +122,33 @@ export function buildMarketingOverview({
         配信停止: sum(weeklySends, 'unsubscribes'),
       },
     },
+  };
+}
+
+/**
+ * 元々の会員の週次の見え方（**読むだけ**）。
+ * 「AK が判定した人数（expected）」と「SendGrid の list 人数」を並べ、一致しているかを出す。
+ * 読めなかったものは null（0 と混同しない）。
+ */
+export function summarizeNativeWeekly({ enabled = false, state = null, lists = [] } = {}) {
+  const st = state && typeof state === 'object' ? state : null;
+  const nativeLists = lists.filter((l) => String(l.name || '').startsWith(NATIVE_LIST_PREFIX))
+    .sort((a, b) => String(b.name).localeCompare(String(a.name)));
+  const latest = nativeLists[0] || null;
+  const expected = st && Number.isFinite(Number(st.expected)) ? Number(st.expected) : null;
+  const listCount = st && Number.isFinite(Number(st.listCount)) ? Number(st.listCount) : null;
+  return {
+    有効: enabled === true,
+    枠: st ? st.dateKey || null : null,
+    状態: st ? st.status || null : null,
+    理由: st ? st.reason || st.pendingReason || null : null,
+    AK判定人数: expected,
+    list人数: listCount,
+    一致: expected !== null && listCount !== null ? expected === listCount : null,
+    受理されなかった: st && Number.isFinite(Number(st.rejected)) ? Number(st.rejected) : null,
+    除外内訳: st && st.audience && st.audience.skip ? st.audience.skip : null,
+    最新list: latest ? { list: latest.name, 人数: latest.contactCount } : null,
+    list数: nativeLists.length,
   };
 }
 
@@ -152,6 +183,7 @@ export async function collectMarketingOverview({ apiKey, redisCmd, env = process
   let akEngaged = null;
   let akBlocked = null;
   let watchState = null;
+  let nativeState = null;
   if (typeof redisCmd === 'function') {
     try {
       akActive = num(await redisCmd(['SCARD', ACTIVE_INDEX_KEY]));
@@ -159,6 +191,8 @@ export async function collectMarketingOverview({ apiKey, redisCmd, env = process
       akBlocked = num(await redisCmd(['SCARD', BLOCKED_INDEX_KEY]));
       const raw = await redisCmd(['GET', WATCH_STATE_KEY]);
       if (raw) watchState = JSON.parse(raw);
+      const nraw = await redisCmd(['GET', NATIVE_STATE_LATEST_KEY]);
+      if (nraw) nativeState = JSON.parse(nraw);
     } catch { /* 読めなければ null のまま（**推測しない**） */ }
   }
 
@@ -173,6 +207,8 @@ export async function collectMarketingOverview({ apiKey, redisCmd, env = process
     akBlocked,
     watchState,
     weeklyEnabled: String((env && env.SENDGRID_WEEKLY_ENABLED) || '').trim() === 'true',
+    nativeEnabled: isNativeGateOpen(env),
+    nativeState,
     unavailable,
   });
 }
