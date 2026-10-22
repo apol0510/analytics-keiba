@@ -65,7 +65,23 @@ const fullTitle = buildFullTitle(title);
         window.dataLayer = window.dataLayer || [];
         function gtag(){dataLayer.push(arguments);}
         gtag('js', new Date());
-        gtag('config', 'G-BTDCZE1B13');
+        // 2026-10-22: マジックリンク（/auth/verify/?token=…）等のログイン用トークンを GA4 の
+        // page_location / page_referrer に送らない。外すのは `token` だけで、utm_* など他の
+        // パラメータは**そのまま残す**（流入元の計測が壊れる）。token が無いページは従来と同じ送り方。
+        var akGaConfig = {};
+        try {
+            var akStripToken = function (href) {
+                var u = new URL(href);
+                if (!u.searchParams.has('token')) return null;
+                u.searchParams.delete('token');
+                return u.href;
+            };
+            var akLoc = akStripToken(location.href);
+            if (akLoc) akGaConfig.page_location = akLoc;
+            var akRef = document.referrer ? akStripToken(document.referrer) : null;
+            if (akRef) akGaConfig.page_referrer = akRef;
+        } catch (e) { akGaConfig = {}; }
+        gtag('config', 'G-BTDCZE1B13', akGaConfig);
     </script>
     
     <!-- Open Graph / Facebook -->
