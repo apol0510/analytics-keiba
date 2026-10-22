@@ -305,6 +305,20 @@ export const prerender = true;
     box.removeAttribute('hidden');
   })();
 
+  // ── PayPal 定期課金の購入直後（戻り先 /checkout/paypal-subscription-return/ から自動で来る・2026-10-22 MK 確定）──
+  // ?from=paypal のときだけ固定文言を出す（URL の値は描画しない）。ログイン後の遷移先はサーバー（verify-magic-link）が
+  // 購入直後の印から決めるので、ここでは何も保存しない（メールアプリ内ブラウザで開いても Premium へ届く）。
+  (function showPurchaseNotice() {
+    const box = document.getElementById('reason-notice');
+    if (!box || new URLSearchParams(window.location.search).get('from') !== 'paypal') return;
+    if (!box.hasAttribute('hidden')) return; // ?r= の案内を優先（上書きしない）
+    const titleEl = box.querySelector('.rn-title');
+    const bodyEl = box.querySelector('.rn-body');
+    if (titleEl) titleEl.textContent = 'お申し込みありがとうございます';
+    if (bodyEl) bodyEl.textContent = 'お申し込みのときのメールアドレスを入力してください。届いたログインリンクを開くと、そのまま Premium 予想へご案内します。';
+    box.removeAttribute('hidden');
+  })();
+
   const form = document.getElementById('loginForm') as HTMLFormElement;
   const emailInput = document.getElementById('email') as HTMLInputElement;
   const submitBtn = document.getElementById('submitBtn') as HTMLButtonElement;

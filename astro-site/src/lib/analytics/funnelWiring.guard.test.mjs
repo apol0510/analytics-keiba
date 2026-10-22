@@ -137,8 +137,11 @@ test('計測本体は GA4 の測定 ID を持たない（読み込みは BaseLay
   assert.ok(!/G-[A-Z0-9]{8,}/.test(js),
     '測定 ID が 2 か所に増えている。ID は BaseLayout の gtag 設定だけが持つ');
   const layout = read(fileURLToPath(new URL('../../layouts/BaseLayout.astro', import.meta.url)));
-  assert.equal((layout.match(/G-BTDCZE1B13/g) || []).length, 2,
-    'BaseLayout の測定 ID は gtag/js の src と gtag(\'config\') の 2 か所');
+  // 2026-10-22: ローカルでの送信停止（window['ga-disable-<ID>']・本番へテストの purchase を送らない）で 3 か所
+  assert.equal((layout.match(/G-BTDCZE1B13/g) || []).length, 3,
+    'BaseLayout の測定 ID は gtag/js の src・ローカルでの送信停止・gtag(\'config\') の 3 か所');
+  assert.match(layout, /if \(\/\^\(localhost\|127\\\.0\\\.0\\\.1\|\\\[::1\\\]\)\$\/\.test\(location\.hostname\)\) window\['ga-disable-G-BTDCZE1B13'\] = true;/,
+    'ローカルだけ止める（本番・Deploy Preview は送る）');
 });
 
 // ---- カード決済（PayPal 定期課金）の begin_checkout（2026-10-21）: 決済画面の URL を受け取った後だけ・遷移の前

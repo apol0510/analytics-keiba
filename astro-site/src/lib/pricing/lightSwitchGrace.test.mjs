@@ -106,5 +106,5 @@ test('ログイン画面とマジックリンク確認画面は同じ許可リ�
   const verify = read('src/pages/auth/verify.astro');
   assert.match(verify, /NEXT_ALLOWED: LOGIN_NEXT_ALLOWED/);
   assert.match(verify, /NEXT_ALLOWED\.includes\(o\.path\)/);
-  assert.match(verify, /ok\(nextPath \|\| data\.redirectTo \|\| '\/dashboard\/'\)/);
+  assert.match(verify, /ok\(serverDest \|\| nextPath \|\| data\.redirectTo \|\| '\/dashboard\/'\)/);
 });

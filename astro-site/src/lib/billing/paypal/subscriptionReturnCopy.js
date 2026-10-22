@@ -18,6 +18,9 @@ const NAMES = Object.freeze({
   'premium-annual-light': 'Premium 年払い（中央＋南関）',
 });
 
+/** 確認できない・時間がかかるときの問い合わせ導線（再決済は促さない） */
+export const SUBSCRIPTION_RETURN_CONTACT = Object.freeze(['お問い合わせ', '/contact/']);
+
 const RENEWAL = Object.freeze({ MONTH: '毎月自動で更新されます', YEAR: '1 年ごとに自動で更新されます' });
 
 /** planId → { text, links }。全商品に必ず 1 つ（無い商品は build 時に例外）。 */
@@ -42,14 +45,17 @@ export const SUBSCRIPTION_RETURN_COPY = Object.freeze(buildSubscriptionReturnCop
  */
 const LOGIN = Object.freeze(['ログインする', '/login/?next=/dashboard/']);
 const LOGIN_HOW = 'ログイン画面でお申し込みのメールアドレスを入力すると、ログインリンクをお送りします。';
+// 購入完了（反映済み）の未ログイン購入者: ログイン画面へ自動で移る（2026-10-22 MK 確定）。ログイン後はサーバーの購入直後の印で Premium へ届く
+const LOGIN_AFTER_PURCHASE = Object.freeze(['ログインする', '/login/?from=paypal']);
 export const SUBSCRIPTION_RETURN_GUEST = Object.freeze({
-  activeNext: `ご利用にはログインが必要です。${LOGIN_HOW}`,
-  activeLinks: Object.freeze([LOGIN]),
+  activeNext: 'まもなくログイン画面へ移動します。お申し込みのメールアドレスを入力すると届くログインリンクを開くと、そのまま Premium 予想へご案内します。',
+  activeLinks: Object.freeze([LOGIN_AFTER_PURCHASE]),
+  activeRedirect: LOGIN_AFTER_PURCHASE[1],
   loginRequired: Object.freeze({
     title: 'お申し込み状況はログイン後にご確認ください',
     text: `お支払いが完了していれば、数分以内にご利用いただけるようになります。${LOGIN_HOW}`,
     links: Object.freeze([LOGIN]),
   }),
   timeoutText: `反映まで数分かかることがあります。しばらくしてから、お申し込みのメールアドレスでログインしてマイページをご確認ください。${LOGIN_HOW}`,
-  timeoutLinks: Object.freeze([LOGIN]),
+  timeoutLinks: Object.freeze([LOGIN, SUBSCRIPTION_RETURN_CONTACT]),
 });

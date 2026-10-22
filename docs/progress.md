@@ -1,3 +1,16 @@
+# 🧭 PayPal 決済完了 → Premium 利用画面への自動遷移（2026-10-22 MK 決定 / **PR 作成・人の merge 待ち（billing path）**）
+
+| 項目 | 状態 |
+|---|---|
+| きっかけ | 2026-10-22 13:33 JST の PayPal 初回実購入者（月額・中央＋南関）が「有料版のリンクが届かない」と問い合わせ。付与・ログインは正常だったが、どこで見るか分からずログインリンクを 10 回請求（返信は手動で 1 通・記録は ops 外部ディレクトリ・PII を repo に置かない）|
+| 決定 | 利用開始メールは足さず、決済完了 → 自動遷移を正式仕様に（decisions 2026-10-22・spec・CARD_PAYMENT_PROVIDERS §3.7）|
+| 実装 | `postPurchaseLanding.js`（遷移先の許可リスト 3 つ・購入直後の印 Redis `ak:paypal:post-purchase:v1:{rec}` 24h・1 回）／`applyPaypalSubscription` が新規結び付き時だけ印／`paypal-subscription-confirm` が active のときだけ `destination`／戻り先ページ: ログイン済み→2 秒で利用画面・未ログイン→4 秒で `/login/?from=paypal`・確認できないときは問い合わせ導線（再決済を促さない）／`verify-magic-link` が印＋いまの権限で `redirectTo`／`verify.astro` はサーバーの遷移先を最優先／マイページ `?from=purchase` で会員レコードを読み直し Premium 枠へスクロール・強調／ローカルでは GA4 へ送らない |
+| E2E で見つけて直した不具合 | ①ログイン中の Light 会員が買った直後、マイページが SSR の 10 分キャッシュで **Light のまま**（有料ページの gate は拒否前に読み直すので通る）→ `?from=purchase` で読み直し ②ローカル E2E のブラウザが本番 GA4 タグを読み、テストの `purchase`（hostname=localhost・transaction_id `I-E2E0000000001`〜`07`・2026-10-22 15:00〜15:30 JST 頃・複数回）が本番 GA4 に入った可能性（GA4 の読取り手段が無く件数は未確定・hostname=localhost で除外可能）→ localhost は `ga-disable`・E2E ブラウザは localhost 以外を名前解決しない |
+| test | `postPurchaseLanding.test.mjs` 9 件・`subscriptionReturnToken.test.mjs` +6 件（月額 3・年額で申込→支払い→戻り先→印→ログイン→1 回で消える・権限なしは従来・Redis 障害でも止めない）・既存の期待値更新。test:billing 235・test:auth-session 838・test:analytics 43・check:safety・build pass |
+| 実ブラウザ E2E | `npm run e2e:paypal-post-purchase`（偽の外部＋実 Function＋astro dev＋ヘッドレス Chrome・本物の外部へは出ない）**58/58 PASS を 3 回連続**: 未ログイン（全会場スマホ・中央版 PC・南関版スマホ・年額 PC）→ 完了表示 → ログイン画面（案内つき）→ **別ブラウザコンテキスト（メールアプリ内ブラウザ相当）**でリンク → 利用画面（両会場は 2 ボタンが見えて押せる・中央を開ける／会場版はサーバー gate 通過）・印は 1 回で消える／ログイン済み Light 会員（全会場 PC・南関版スマホ）→ 戻り先から追加クリックなしで利用画面／未払いは遷移しない・権限も印も無し／URL だけ（別ブラウザ）は 401 の案内・再決済を促さない／購入なしの通常ログインは `/dashboard/` のまま／ダイアログ 0・知らない検索式 0・外部通信 0 |
+| 残り | ① merge（人・billing path）② 本番 smoke: `/checkout/paypal-subscription-return/?subscription_id=I-…`（URL だけ）が 401 の案内、`/login/?from=paypal` の案内表示、`paypal-subscription-confirm` 未ログイン 401、`/dashboard/?from=purchase` 200、localhost 以外で GA4 が送られる（`ga-disable` が立たない）③ 次の実購入で戻り先 → 利用画面への到達（scheduled-checks `paypal-monthly-first-purchase-2026` の監視に乗る・本番で会員セッションは作らない設計）|
+| rollback | revert（印は 24 時間で消える・権限には影響しない）|
+
 # 🔎 静的 SEO 記事 37 本のサイトマップ・旧 URL・canonical と feeder UTM の計測（2026-10-22 / **PR 作成・人の merge 待ち**）
 
 | 項目 | 状態 |

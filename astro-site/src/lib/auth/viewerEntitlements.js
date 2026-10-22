@@ -142,7 +142,7 @@ export function viewerProfile(fields, now = Date.now()) {
  * }} input
  * @returns {Promise<{state:string, reason:string, recordId:string|null, entitlements:object, isMember:boolean}>}
  */
-export async function resolveViewer({ request, env, now = Date.now(), lookup = lookupCustomerFieldsResult, revoked = revokedForRecord } = {}) {
+export async function resolveViewer({ request, env, now = Date.now(), lookup = lookupCustomerFieldsResult, revoked = revokedForRecord, forceFresh = false } = {}) {
   // env 未注入は「判定できなかった」。既定値で process.env を掴まない。
   if (!env || typeof env !== 'object') return result(VIEWER_STATE.UNKNOWN, 'env_missing');
 
@@ -179,8 +179,10 @@ export async function resolveViewer({ request, env, now = Date.now(), lookup = l
 
   // ── 2. 権利判定（Airtable が正本。買い切り・無料特典もここで効く）──
   // 退会直後の会員はキャッシュを使わず読み直す（paidPageGate と同じ・sessionRevocation.js）
-  let fresh = false;
-  try { fresh = (await revoked({ recordId: sub, env })) === true; } catch { fresh = false; }
+  // 決済直後（forceFresh・PayPal 購入直後のマイページ）も読み直す。別 Function が Customers を更新した直後に、
+  // このプロセスの 10 分キャッシュの古い権限（例: 買う前の Light）でカードを出さないため。権限を広げる判定ではない
+  let fresh = forceFresh === true;
+  if (!fresh) { try { fresh = (await revoked({ recordId: sub, env })) === true; } catch { fresh = false; } }
   let looked = null;
   try {
     looked = await lookup(fresh ? { recordId: sub, env, now, maxAgeMs: 0 } : { recordId: sub, env, now });

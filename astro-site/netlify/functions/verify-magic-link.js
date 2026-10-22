@@ -89,6 +89,30 @@ async function markLastLogin({ table, recordId, fields }) {
 
 // Airtable SDK（node-fetch）経由の呼び出しは fetch の計測に乗らないため、回数だけを明示的に数える
 // （docs/AIRTABLE_CAPACITY.md「API 呼び出しの計測」）。失敗しても本処理は止めない。
+/**
+ * PayPal 定期課金の購入直後なら、その Premium の利用画面（postPurchaseLanding.js の許可リスト）。それ以外は null。
+ * best-effort: Redis 未設定・失敗・印なし・権限なしは null（ログインは止めない）。
+ */
+async function postPurchaseRedirect(recordId, fields) {
+  if (!recordId || !fields) return null;
+  try {
+    const [{ resolvePostLoginDestination }, { makeRedisCmd }, { resolveEntitlements, fromAirtableFields }] = await Promise.all([
+      import('../../src/lib/billing/paypal/postPurchaseLanding.js'),
+      import('../../src/lib/premiumPlus/premiumPlusFunnelServer.js'),
+      import('../../src/lib/entitlements/resolveEntitlements.js'),
+    ]);
+    const redis = makeRedisCmd(process.env);
+    if (!redis) return null;
+    const entitlements = resolveEntitlements(fromAirtableFields(fields));
+    const dest = await resolvePostLoginDestination({ redis, recordId, entitlements });
+    if (dest) console.log('🧭 [verify-magic-link] {"event":"post_purchase_redirect"}');
+    return dest;
+  } catch (e) {
+    console.warn('⚠️ [verify-magic-link] {"event":"post_purchase_redirect_failed"}');
+    return null;
+  }
+}
+
 function meterAirtable(n = 1) {
   return import('../../src/lib/ops/airtableCallMeter.js')
     .then((m) => m.countAirtableCalls('verify-magic-link', n)).catch(() => false);
@@ -205,7 +229,9 @@ exports.handler = async (event) => {
         await markLastLogin({ table: customersTable, recordId: m.recordId, fields: lastCustomerFields });
         // ログイン成功後はダッシュボード（マイページ）へ遷移する。
         // 予想ページへの導線はダッシュボード内から辿る。
-        const redirectTo = '/dashboard/';
+        // 例外: PayPal 定期課金の購入直後（24 時間・1 回だけ）は、買った Premium の利用画面へ直接送る（2026-10-22 MK 確定）。
+        // 印はサーバー側（会員単位）なので、メールアプリ内ブラウザ・別端末で開いても届く。いまの権限で見られないときは従来どおり。
+        const redirectTo = (await postPurchaseRedirect(m.recordId, lastCustomerFields)) || '/dashboard/';
         // localStorage UI 互換用（非権威。認可の真実源は HttpOnly Cookie ak_session。
         // PR-C/PR-D で AccessControl を Cookie ベースへ移行後に削除予定）。
         const userPlan = {

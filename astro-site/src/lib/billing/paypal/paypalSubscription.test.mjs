@@ -145,7 +145,7 @@ test('通しで: 申込 → 承認 → 戻り先で付与（支払い日 +1 ヶ�
   assert.equal(w.patches.length, 0);
   w.pay(c.subscriptionId);
   const r = await confirmPaypalSubscription({ ...common(w), subscriptionId: c.subscriptionId, recordId: REC });
-  assert.deepEqual(r.body, { status: 'active', plan: 'premium' });
+  assert.deepEqual(r.body, { status: 'active', plan: 'premium', destination: '/dashboard/?from=purchase#premium-predictions' });
   assert.equal(w.fields['プラン'], 'Premium');
   assert.equal(w.fields.PlanType, 'Monthly');
   assert.equal(w.fields.PaymentMethod, 'PayPal');

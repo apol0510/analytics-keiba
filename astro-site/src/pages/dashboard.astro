@@ -40,7 +40,8 @@ import { summarizeUsage } from '../lib/acquisition/usageStats.js';
 // 判定が落ちても画面は出す（従来の localStorage 経路へフォールバックする）。
 let viewer = { state: VIEWER_STATE.UNKNOWN, reason: 'not_resolved', entitlements: null, profile: null, isMember: false };
 try {
-    viewer = await resolveViewer({ request: Astro.request, env: process.env });
+    // PayPal 購入直後（/dashboard/?from=purchase・postPurchaseLanding.js）だけ会員レコードをキャッシュから読まず読み直す
+    viewer = await resolveViewer({ request: Astro.request, env: process.env, forceFresh: Astro.url.searchParams.get('from') === 'purchase' });
 } catch {
     // 例外の内容はページに出さない（fail closed）
 }
@@ -1972,6 +1973,15 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
             if (_serverAuth && _serverAuth.paypalBilling === true) {
                 document.getElementById('paypal-billing-card').style.display = 'block';
             }
+            // PayPal 購入直後の自動遷移（/dashboard/#premium-predictions・postPurchaseLanding.js）: 表示された Premium 枠まで送って強調する。
+            // 枠が出ていない（権限が無い）ときは何もしない＝通常のマイページ
+            if (window.location.hash === '#premium-predictions') {
+                const _pp = document.getElementById('premium-predictions');
+                if (_pp && _pp.style.display === 'block') {
+                    _pp.classList.add('post-purchase-focus');
+                    setTimeout(function () { _pp.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 50);
+                }
+            }
             // Premium 期限切れ → 契約期間終了カード（予想リンクは出さない・再契約導線のみ）。馬単ページは canViewPremium で別途拒否。
             if (_view.showPremiumExpiredCard) {
                 console.log('Premium予想（契約期間終了）を表示');
@@ -3506,6 +3516,12 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
 
         .prediction-card.premium {
             border-color: rgba(139, 92, 246, 0.5);
+        }
+
+        /* PayPal 購入直後に送られてきたときだけ（/dashboard/#premium-predictions） */
+        .prediction-card.premium.post-purchase-focus {
+            border-color: rgba(167, 139, 250, 0.95);
+            box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.35), 0 10px 30px rgba(139, 92, 246, 0.25);
         }
 
         .prediction-card.sanrenpuku {

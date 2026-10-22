@@ -19,6 +19,7 @@ import { subscriptionProviderGate, SUBSCRIPTION_SALES_OPEN, resolveCardMode } fr
 import { buildPremiumConversionFields } from '../../payments/premiumConversion.js';
 import { withdrawalFields } from '../stripeSubscriptionSync.js';
 import { paypalApi } from './paypalServer.js';
+import { markPostPurchase, destinationForPlan } from './postPurchaseLanding.js';
 import { keyMode, PAYPAL_API } from './paypalCore.js';
 import {
   PROVIDER, buildSubscriptionBody, approveUrlOf, snapshotPaypalSubscription, decidePaypalSubscriptionSync,
@@ -198,6 +199,8 @@ export async function applyPaypalSubscription({ env, origin, subscriptionId, red
         if (conv) await at.patch(sub.recordId, conv);
       } catch { /* 履歴は失敗しても権限付与を巻き戻さない */ }
       await notify('subscription_attached', { provider: PROVIDER, paymentId: sub.id, recordId: sub.recordId, productId: decision.plan?.id, expiration: decision.expiration });
+      // 購入直後の印（ログイン後に利用画面へ自動で届けるため・postPurchaseLanding.js）。失敗しても付与は巻き戻さない
+      await markPostPurchase(redis, { recordId: sub.recordId, planId: decision.plan?.id, subscriptionId: sub.id, now });
     }
     return { ok: true, action: 'write', reason: decision.reason, recordId: sub.recordId };
   });
@@ -237,7 +240,9 @@ export async function confirmPaypalSubscription({ env, origin, subscriptionId, r
   const status = r.action === 'write' || (r.action === 'skip' && r.reason === 'renewed') ? 'active'
     : r.action === 'conflict' ? 'needs_support'
       : ['APPROVAL_PENDING', 'APPROVED'].includes(sub.status) || r.reason === 'awaiting_payment' ? 'pending' : 'unknown';
-  return { status: 200, body: { status, plan: sub.planId } };
+  // 反映済み（active）のときだけ、買った商品の利用画面を返す（戻り先がそこへ自動で移る・遷移先は許可リストの 3 つだけ）
+  const destination = status === 'active' ? destinationForPlan(sub.planId) : null;
+  return { status: 200, body: { status, plan: sub.planId, ...(destination ? { destination } : {}) } };
 }
 
 export const WITHDRAWAL_STATUS = Object.freeze({

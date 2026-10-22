@@ -118,6 +118,7 @@ function world() {
       if (cmd === 'GET') return res(200, { result: st.redis.get(key) ?? null });
       if (cmd === 'SET') { if (rest.includes('NX') && st.redis.has(key)) return res(200, { result: null }); st.redis.set(key, val); return res(200, { result: 'OK' }); }
       if (cmd === 'DEL') { st.redis.delete(key); return res(200, { result: 1 }); }
+      if (cmd === 'GETDEL') { const v = st.redis.get(key) ?? null; st.redis.delete(key); return res(200, { result: v }); }
       return res(200, { result: null });
     }
     if (u.host === 'api.airtable.com') {
@@ -214,7 +215,7 @@ test('未ログインの購入者: 申込のブラウザだけが戻り先で完
   // 支払い後: 完了（active）。権限は従来どおりの反映（Webhook と同じ処理）
   w.pay(sid);
   const after = await confirm(sid, cookieOf(setCookie));
-  assert.deepEqual(after.body, { status: 'active', plan: 'premium', viewer: 'guest' });
+  assert.deepEqual(after.body, { status: 'active', plan: 'premium', destination: '/dashboard/?from=purchase#premium-predictions', viewer: 'guest' });
   assert.doesNotMatch(after.raw, /@|example\.invalid|rec[A-Za-z0-9]{14}/, 'メール・会員 ID を返さない');
   const [rid] = Object.keys(w.records);
   assert.equal(w.records[rid]['プラン'], 'Premium');
@@ -284,7 +285,74 @@ test('配線: purchase は active の分岐だけ・1 か所・401 / 404 / 処�
   const branchEnd = page.indexOf('}', page.indexOf("return show('✅', 'お申し込みが完了しました', t.text, t.links);"));
   assert.ok(call < branchEnd);
   for (const other of ["if (st === 'needs_support')", 'if (x.s === 401)', 'if (x.s === 404)']) assert.ok(page.indexOf(other) > branchEnd, other);
-  assert.match(page, /if \(asGuest\) return show\('✅', 'お申し込みが完了しました', t\.text \+ guest\.activeNext, guest\.activeLinks\)/);
+  assert.match(page, /show\('✅', 'お申し込みが完了しました', t\.text \+ guest\.activeNext, guest\.activeLinks\)/);
   assert.match(page, /if \(x\.s === 401\) return show\('🔑', guest\.loginRequired\.title, guest\.loginRequired\.text, guest\.loginRequired\.links\)/);
   assert.doesNotMatch(page, /'ログインしてご確認ください'/, '払ったかどうか分からない言い方を残さない');
+});
+
+// ---- 決済完了 → Premium への自動遷移（2026-10-22 MK 確定・postPurchaseLanding.js）--------------------
+
+const { postPurchaseKey, resolvePostLoginDestination, POST_PURCHASE_DESTINATIONS } = await import('./postPurchaseLanding.js');
+const { resolveEntitlements, fromAirtableFields } = await import('../../entitlements/resolveEntitlements.js');
+const redisOf = () => async (args) => {
+  const r = await w.fetch(REDIS_URL, { method: 'POST', body: JSON.stringify(args) });
+  return (await r.json()).result;
+};
+const entOf = (rid) => resolveEntitlements(fromAirtableFields(w.records[rid]));
+
+for (const [plan, dest] of [
+  ['premium', '/dashboard/?from=purchase#premium-predictions'],
+  ['premium-jra', '/premium-prediction/jra/'],
+  ['premium-nankan', '/premium-prediction/nankan/'],
+  ['premium-annual', '/dashboard/?from=purchase#premium-predictions'],
+]) {
+  test(`自動遷移 ${plan}: 反映済みで戻り先に ${dest}・ログイン後も同じ場所へ 1 回だけ（未ログイン購入）`, async () => {
+    const c = await checkout({ plan, email: `auto.${plan}@example.invalid` });
+    assert.equal(c.status, 200, c.raw);
+    const sid = c.body.subscription;
+    const ck = cookieOf(c.headers['Set-Cookie']);
+    const [rid] = Object.keys(w.records);
+
+    // 決済前: 遷移先を返さない・印も無い（Premium へ送らない）
+    const pending = await confirm(sid, ck);
+    assert.equal(pending.body.status, 'pending');
+    assert.equal(pending.body.destination, undefined);
+    assert.equal(w.redis.has(postPurchaseKey(rid)), false);
+
+    w.pay(sid);
+    const done = await confirm(sid, ck);
+    assert.deepEqual([done.body.status, done.body.destination, done.body.viewer], ['active', dest, 'guest']);
+    assert.ok(POST_PURCHASE_DESTINATIONS.includes(done.body.destination));
+    assert.equal(JSON.parse(w.redis.get(postPurchaseKey(rid))).planId, plan, '購入直後の印（会員単位・サーバー側）');
+
+    // ログイン（verify-magic-link）: いまの権限で買った会場が見られる → その画面へ。2 回目は通常のマイページ（印は 1 回で消える）
+    assert.equal(await resolvePostLoginDestination({ redis: redisOf(), recordId: rid, entitlements: entOf(rid) }), dest);
+    assert.equal(await resolvePostLoginDestination({ redis: redisOf(), recordId: rid, entitlements: entOf(rid) }), null);
+
+    // 再読込・Webhook の再送（反映済み）では印を作り直さない＝二重付与もしない
+    const exp = w.records[rid]['有効期限'];
+    await confirm(sid, ck);
+    assert.equal(w.redis.has(postPurchaseKey(rid)), false);
+    assert.equal(w.records[rid]['有効期限'], exp);
+    assert.equal(w.external, 0);
+  });
+}
+
+test('自動遷移: 印があっても、いまの権限で見られなければ従来どおり（期限切れ・別会員の印は使わない）', async () => {
+  const c = await checkout({ plan: 'premium', email: 'expired.after@example.invalid' });
+  w.pay(c.body.subscription);
+  await confirm(c.body.subscription, cookieOf(c.headers['Set-Cookie']));
+  const [rid] = Object.keys(w.records);
+  // 別の会員 ID では読めない
+  assert.equal(await resolvePostLoginDestination({ redis: redisOf(), recordId: 'recSOMEONEELSEAAA', entitlements: entOf(rid) }), null);
+  // 権限が外れた（期限切れ等）なら Premium へ送らない
+  const noPremium = { ...entOf(rid), canViewPremium: false, canViewPremiumJra: false, canViewPremiumNankan: false };
+  assert.equal(await resolvePostLoginDestination({ redis: redisOf(), recordId: rid, entitlements: noPremium }), null);
+});
+
+test('自動遷移: Redis が無い・壊れていても付与もログインも止めない（遷移は従来どおり）', async () => {
+  delete process.env.UPSTASH_REDIS_REST_URL;
+  assert.equal(await resolvePostLoginDestination({ redis: null, recordId: 'recGUESTAAAAAAAAA', entitlements: { canViewPremiumJra: true, canViewPremiumNankan: true } }), null);
+  const broken = async () => { throw new Error('redis_500'); };
+  assert.equal(await resolvePostLoginDestination({ redis: broken, recordId: 'recGUESTAAAAAAAAA', entitlements: { canViewPremiumJra: true, canViewPremiumNankan: true } }), null);
 });

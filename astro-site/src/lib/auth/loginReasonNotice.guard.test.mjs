@@ -90,7 +90,9 @@ test('ログインメールに別ブラウザの案内を戻していない', ()
 test('/auth/verify 成功画面は結果だけを伝える', () => {
   assert.match(verifyPage, /status\.textContent = 'ログインしました'/);
   // 2026-09-29: 戻り先が /pricing/（Light 月払いメール経由）のときだけ移動先の名前を変える。内容は結果だけのまま
-  assert.match(verifyPage, /msg\.textContent = redirectTo === '\/pricing\/' \? 'まもなく料金ページへ移動します。' : 'まもなくマイページへ移動します。'/);
+  // 2026-10-22: PayPal 購入直後に Premium の利用画面へ送るときも移動先の名前だけ変える（postPurchaseLanding.js）
+  assert.match(verifyPage, /msg\.textContent = redirectTo === '\/pricing\/' \? 'まもなく料金ページへ移動します。'/);
+  assert.match(verifyPage, /\? 'まもなく Premium 予想へ移動します。'\s*: 'まもなくマイページへ移動します。';/);
   assert.doesNotMatch(verifyPage, /このブラウザへのログインが完了しました/);
   assert.doesNotMatch(verifyPage, /次回から同じブラウザのブックマークからアクセスできます/);
 });

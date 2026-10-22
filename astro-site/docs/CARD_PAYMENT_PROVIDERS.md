@@ -132,6 +132,23 @@ Sandbox の Product `PROD-1DB142038K1860725`／Plan: premium `P-67290333XA263552
 | Webhook | 月額と同じイベント（Live は購読済み・2026-10-20 確認）| 追加設定なし |
 | メール | 年額向けの新しいリマインド・通知は作らない（MK）。月払いの更新リマインド・銀行振込の期限通知の対象外（PaymentMethod=PayPal）| — |
 
+## 3.7 決済完了 → Premium 利用画面への自動遷移（2026-10-22 MK 決定）
+
+利用開始メールは送らない（MK）。決済完了から Premium を使い始めるまで、案内メール・マイページ探し・問い合わせを要らなくする。
+
+| 場面 | 動き | 実装 |
+|---|---|---|
+| 遷移先 | 両会場（月額 `premium`・年額 2 本）= マイページの Premium 枠 `/dashboard/?from=purchase#premium-predictions`（中央／南関の 2 ボタン・枠を強調）。中央版 = `/premium-prediction/jra/`・南関版 = `/premium-prediction/nankan/`。**この 3 つ以外へは移さない** | `postPurchaseLanding.js`（`destinationForPlan` / `POST_PURCHASE_DESTINATIONS`）。`?from=purchase` はマイページの SSR に会員レコードを読み直させるだけ（10 分キャッシュの古い権限を出さない・`resolveViewer({ forceFresh })`）|
+| ログイン済みの購入者 | 戻り先が `active`（PayPal で照会して反映済み）を受け取ったら、完了表示の 2 秒後に遷移先へ | `paypal-subscription-confirm` が `destination` を返す（active のときだけ）。戻り先ページは許可リストと完全一致したときだけ `location.replace` |
+| 未ログインの購入者 | 完了表示 → 4 秒後にログイン画面 `/login/?from=paypal`（「お申し込みのときのメールアドレスを入力…そのまま Premium 予想へご案内します」）→ マジックリンク → 遷移先へ | 反映で購読が新たに会員へ結び付いたときだけ、Redis `ak:paypal:post-purchase:v1:{recordId}`（商品 ID・購読 ID・時刻・24 時間）を置く。`verify-magic-link` が成功（有料セッション発行）時に `GETDEL` で取り出し、いまの権限（`resolveEntitlements`）で買った会場がすべて見られるときだけ `redirectTo` にする。**サーバー側の印なので、メールアプリ内ブラウザ・別端末で開いても届く**。決済確認用 Cookie `ak_pp_return` はログインの代わりにしない |
+| 確認中 | 「お支払いを確認しています…」のまま（3 秒ごと最大 20 回）。Premium へ移さない | `pending` は `destination` を返さない |
+| 確認できない | URL だけ（別のブラウザ）＝401 はログインの案内・404 はマイページ＋お問い合わせ・時間切れは「もう一度お支払いいただく必要はありません」＋マイページ／ログイン＋お問い合わせ。再決済は促さない | `subscriptionReturnCopy.js`（`SUBSCRIPTION_RETURN_CONTACT`）|
+| 不変 | 決済・Webhook・権限の反映（`applyPaypalSubscription`）・料金・更新・退会・GA4 `purchase`（active のときだけ 1 回）| 印の失敗は付与・ログインを止めない（best-effort）|
+
+**検証**: `postPurchaseLanding.test.mjs`・`subscriptionReturnToken.test.mjs`（偽の PayPal / Airtable / Redis を通した申込 → 支払い → 戻り先 → 印 → ログイン）。実ブラウザ E2E `npm run e2e:paypal-post-purchase`（`scripts/e2e-paypal-post-purchase/`・偽の外部＋実 Function＋astro dev＋ヘッドレス Chrome・本物の外部へは出ない・ブラウザも localhost 以外を名前解決しない）: 未ログイン（月額 3・年額・スマホ／PC）→ ログイン画面 → **別のブラウザコンテキスト（メールアプリ内ブラウザ相当）**でリンク → 利用画面、ログイン済み Light 会員（全会場・南関版）→ 戻り先から利用画面、確認中は遷移しない、URL だけは 401 の案内、購入なしの通常ログインは `/dashboard/` のまま。
+
+**rollback**: revert（印は 24 時間で消える・権限には影響しない）。
+
 ## 4. Sandbox E2E 手順（Deploy Preview）
 
 **MK の操作（アカウント開設は本人しかできない）**
