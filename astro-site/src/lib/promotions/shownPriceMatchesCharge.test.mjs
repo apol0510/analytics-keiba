@@ -91,7 +91,8 @@ test('割引が乗る商品では、画面の金額をサーバーの額へ差�
 
 test('その差し替えが**全ページ**に効く（16 ページを個別に直さない）', () => {
   const layout = read('../../layouts/BaseLayout.astro');
-  assert.match(layout, /\/js\/campaign-price\.js/, '共通レイアウトで読み込んでいない');
+  // 2026-10-22: 1 年キャッシュ対策で ?v=<hash> 付き（publicJsSrc）で読み込む
+  assert.match(layout, /publicJsSrc\('campaign-price'\)/, '共通レイアウトで読み込んでいない');
   const script = read('../../../public/js/campaign-price.js');
   assert.match(script, /window\.openBankModal/, '既存のモーダルを包んでいない');
 });
