@@ -109,7 +109,7 @@ async function resolveCheckoutRecord({ at, email, planId, redis, now }) {
 
 /**
  * 申込を作る。ログイン中（recordId）はその会員、未ログインは入力メール（email）の会員に固定する。
- * @returns {{ ok: true, url, subscriptionId, provider } | { ok: false, status, code }}
+ * @returns {{ ok: true, url, subscriptionId, provider, recordId, guest } | { ok: false, status, code }}
  */
 export async function createPaypalSubscription({ env, origin, recordId, email = '', planId, entry = 'direct', redis, fetchImpl, ids = PAYPAL_PLAN_IDS, now = new Date() }) {
   const mode = resolvePaypalSubscriptionMode({ env, origin });
@@ -126,6 +126,7 @@ export async function createPaypalSubscription({ env, origin, recordId, email = 
   if (!redis) return { ok: false, status: 503, code: 'redis_missing' };
   const at = airtable(env, fetchImpl);
   let fields;
+  const guest = !recordId;
   if (recordId) {
     let rec;
     try { rec = await at.get(recordId); } catch { return { ok: false, status: 401, code: 'login_required' }; }
@@ -146,7 +147,8 @@ export async function createPaypalSubscription({ env, origin, recordId, email = 
   const sub = await api.createSubscription(body, `ak-sub-${recordId}-${d.plan.id}-${Date.now()}`);
   const url = approveUrlOf(sub);
   if (!isSubscriptionId(sub?.id) || !url) return { ok: false, status: 502, code: 'subscription_failed' };
-  return { ok: true, url, subscriptionId: sub.id, provider: PROVIDER };
+  // recordId は申込の Function が戻り先の鍵（subscriptionReturnToken.js）を作るためだけに使う。お客様へは返さない
+  return { ok: true, url, subscriptionId: sub.id, provider: PROVIDER, recordId, guest };
 }
 
 /**
