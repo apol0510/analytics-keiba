@@ -281,6 +281,7 @@ CI・deploy・外部 API・scheduled job・将来日付・長時間 run 等の**
 | 有料実績ショーケース | [`RESULTS_SHOWCASE.md`](./astro-site/docs/RESULTS_SHOWCASE.md) |
 | 販売導線の制御（UpsellTarget） | [`UPSELL_TARGET.md`](./astro-site/docs/UPSELL_TARGET.md) |
 | **クーポン基盤（Premium Plus 専用ではない）** | [`COUPON_PLATFORM.md`](./astro-site/docs/COUPON_PLATFORM.md) |
+| 料金ページ → 申込の転換実験（2026-10） | [`PRICING_CONV_2026_10.md`](./docs/measurements/PRICING_CONV_2026_10.md) |
 
 ### 顧客・決済・メール
 
