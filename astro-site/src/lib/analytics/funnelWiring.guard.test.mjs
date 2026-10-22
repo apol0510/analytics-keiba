@@ -59,7 +59,8 @@ test('検査対象が 0 件で素通りしない', () => {
 
 test('計測スクリプトが BaseLayout で全ページに読み込まれる', () => {
   const layout = read(fileURLToPath(new URL('../../layouts/BaseLayout.astro', import.meta.url)));
-  assert.ok(layout.includes('/js/funnel-analytics.js'),
+  // 2026-10-22: 1 年キャッシュ対策で ?v=<hash> 付き（publicJsSrc）で読み込む
+  assert.ok(layout.includes("publicJsSrc('funnel-analytics')"),
     'BaseLayout が /js/funnel-analytics.js を読み込んでいない＝どのページでも計測が出ない');
 });
 

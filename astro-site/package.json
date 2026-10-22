@@ -92,7 +92,7 @@
     "test:promotions": "node --test src/lib/promotions/*.test.mjs",
     "test:coupons": "node --test src/lib/coupons/*.test.mjs",
     "test:upsell": "node --test src/lib/upsell/*.test.mjs",
-    "test:analytics": "node --test src/lib/analytics/*.test.mjs",
+    "test:analytics": "node --test src/lib/analytics/*.test.mjs src/lib/assets/*.test.mjs",
     "test:contact-subject": "node --test src/lib/contact/*.test.mjs",
     "test:email-identity": "node --test src/lib/email/*.test.mjs",
     "test:webhooks": "node --test src/lib/webhooks/*.test.mjs",
