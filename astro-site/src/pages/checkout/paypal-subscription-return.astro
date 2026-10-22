@@ -4,9 +4,13 @@
 // 未ログインで申し込んだ方は、申込のブラウザだけが持つ HttpOnly の鍵（ak_pp_return）で確認する（viewer: 'guest'）。URL だけでは何も見えない（401）。
 export const prerender = false;
 import BaseLayout from '../../layouts/BaseLayout.astro';
-import { SUBSCRIPTION_RETURN_COPY, SUBSCRIPTION_RETURN_GUEST } from '../../lib/billing/paypal/subscriptionReturnCopy.js';
+import { SUBSCRIPTION_RETURN_COPY, SUBSCRIPTION_RETURN_GUEST, SUBSCRIPTION_RETURN_CONTACT } from '../../lib/billing/paypal/subscriptionReturnCopy.js';
+import { POST_PURCHASE_DESTINATIONS } from '../../lib/billing/paypal/postPurchaseLanding.js';
 const copy = SUBSCRIPTION_RETURN_COPY;
 const guest = SUBSCRIPTION_RETURN_GUEST;
+const contact = SUBSCRIPTION_RETURN_CONTACT;
+// 自動遷移の行き先は許可リストの完全一致だけ（サーバーの値でもそのまま信じない）
+const destinations = POST_PURCHASE_DESTINATIONS;
 const raw = Astro.url.searchParams.get('subscription_id') || '';
 const subscription = /^I-[A-Z0-9]{10,24}$/.test(raw) ? raw : '';
 ---
@@ -22,7 +26,7 @@ const subscription = /^I-[A-Z0-9]{10,24}$/.test(raw) ? raw : '';
   </main>
 </BaseLayout>
 
-<script is:inline define:vars={{ subscription, copy, guest }}>
+<script is:inline define:vars={{ subscription, copy, guest, contact, destinations }}>
   (function () {
     var $ = function (id) { return document.getElementById(id); };
     function show(icon, title, text, links) {
@@ -47,15 +51,25 @@ const subscription = /^I-[A-Z0-9]{10,24}$/.test(raw) ? raw : '';
             var t = copy[x.d.plan] || FALLBACK;
             // GA4 purchase: サーバーが反映済み（active）を返したときだけ。同じ購読は AkFunnel 側で 1 回だけ
             if (copy[x.d.plan] && window.AkFunnel && window.AkFunnel.purchaseCompleted) window.AkFunnel.purchaseCompleted(x.d.plan, subscription, 'paypal');
-            if (asGuest) return show('✅', 'お申し込みが完了しました', t.text + guest.activeNext, guest.activeLinks);
+            // 決済完了 → 自動遷移（2026-10-22 MK 確定・postPurchaseLanding.js）。active＝サーバーが PayPal で照会して反映済みのときだけ
+            if (asGuest) {
+              // 未ログイン: 完了を読める時間を置いてからログイン画面へ。ログイン後はサーバーが Premium の利用画面へ送る
+              show('✅', 'お申し込みが完了しました', t.text + guest.activeNext, guest.activeLinks);
+              return setTimeout(function () { window.location.replace(guest.activeRedirect); }, 4000);
+            }
+            var dest = x.d.destination && destinations.indexOf(x.d.destination) !== -1 ? x.d.destination : null;
+            if (dest) {
+              show('✅', 'お申し込みが完了しました', t.text + 'まもなく Premium 予想へ移動します。', t.links);
+              return setTimeout(function () { window.location.replace(dest); }, 2000);
+            }
             return show('✅', 'お申し込みが完了しました', t.text, t.links);
           }
           if (st === 'needs_support') return show('📩', 'お支払いを確認しました', 'ご契約内容の確認が必要なため、担当よりご連絡いたします。', [['お問い合わせ', '/contact/']]);
           if (x.s === 401) return show('🔑', guest.loginRequired.title, guest.loginRequired.text, guest.loginRequired.links);
-          if (x.s === 404) return show('⚠️', 'お申し込み情報を確認できませんでした', 'お申し込みのときと同じアカウントでログインしているかご確認ください。', [['マイページへ', '/dashboard/']]);
+          if (x.s === 404) return show('⚠️', 'お申し込み情報を確認できませんでした', 'お申し込みのときと同じアカウントでログインしているかご確認ください。', [['マイページへ', '/dashboard/'], contact]);
           if (tries < 20) return setTimeout(poll, 3000);
           if (asGuest) return show('⏳', '確認に時間がかかっています', guest.timeoutText, guest.timeoutLinks);
-          show('⏳', '確認に時間がかかっています', '反映まで数分かかることがあります。しばらくしてからマイページをご確認ください。', [['マイページへ', '/dashboard/']]);
+          show('⏳', '確認に時間がかかっています', '反映まで数分かかることがあります。もう一度お支払いいただく必要はありません。しばらくしてからマイページをご確認ください。', [['マイページへ', '/dashboard/'], contact]);
         })
         .catch(function () { if (tries < 20) setTimeout(poll, 3000); });
     }

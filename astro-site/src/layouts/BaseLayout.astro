@@ -82,6 +82,11 @@ const fullTitle = buildFullTitle(title);
             var akRef = document.referrer ? akStripToken(document.referrer) : null;
             if (akRef) akGaConfig.page_referrer = akRef;
         } catch (e) { akGaConfig = {}; }
+        // 2026-10-22: ローカル（astro dev・E2E）からは本番の GA4 へ送らない。ローカルの E2E で
+        // テストの purchase（hostname=localhost）が本番 GA4 に入っていた。本番・Deploy Preview は従来どおり送る
+        try {
+            if (/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)) window['ga-disable-G-BTDCZE1B13'] = true;
+        } catch (e) {}
         gtag('config', 'G-BTDCZE1B13', akGaConfig);
     </script>
     

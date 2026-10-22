@@ -117,7 +117,9 @@ export const prerender = false;
       spinner.hidden = true;
       btn.hidden = true;
       status.textContent = 'ログインしました';
-      msg.textContent = redirectTo === '/pricing/' ? 'まもなく料金ページへ移動します。' : 'まもなくマイページへ移動します。';
+      msg.textContent = redirectTo === '/pricing/' ? 'まもなく料金ページへ移動します。'
+        : /^\/premium-prediction\//.test(redirectTo) || redirectTo === '/dashboard/?from=purchase#premium-predictions' ? 'まもなく Premium 予想へ移動します。'
+        : 'まもなくマイページへ移動します。';
       setTimeout(() => { window.location.replace(redirectTo); }, REDIRECT_DELAY_MS);
     }
 
@@ -181,8 +183,10 @@ export const prerender = false;
           if (o && Number.isFinite(o.at) && Date.now() - o.at <= NEXT_TTL_MS && NEXT_ALLOWED.includes(o.path)) nextPath = o.path;
           localStorage.removeItem(NEXT_KEY);
         } catch (_) {}
-        // サーバーは常に /dashboard/ を返すため、許可リストの戻り先があればそちらを優先する
-        ok(nextPath || data.redirectTo || '/dashboard/');
+        // サーバーは通常 /dashboard/ を返すため、許可リストの戻り先があればそちらを優先する。
+        // 例外: PayPal 定期課金の購入直後はサーバーが買った Premium の利用画面を返す（postPurchaseLanding.js）→ それを最優先
+        const serverDest = data.redirectTo && data.redirectTo !== '/dashboard/' ? data.redirectTo : null;
+        ok(serverDest || nextPath || data.redirectTo || '/dashboard/');
       } catch (e) {
         console.error(e);
         // 通信エラーはトークンを消費していない可能性が高い。もう一度押せるようにする。

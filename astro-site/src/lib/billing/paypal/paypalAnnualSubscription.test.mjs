@@ -192,7 +192,7 @@ test('通しで: 申込 → 承認 → 初回支払いで付与（PlanType=Annua
   assert.equal(w.patches.length, 0, '承認前は何も書かない');
   w.pay(c.subscriptionId);
   const r = await confirmPaypalSubscription({ ...common(w), subscriptionId: c.subscriptionId, recordId: REC });
-  assert.deepEqual(r.body, { status: 'active', plan: 'premium-annual' });
+  assert.deepEqual(r.body, { status: 'active', plan: 'premium-annual', destination: '/dashboard/?from=purchase#premium-predictions' });
   assert.deepEqual(
     [w.fields['プラン'], w.fields.PlanType, w.fields.Status, w.fields.PaymentMethod, w.fields.VenueAccess, w.fields['有効期限']],
     ['Premium', 'Annual', 'active', 'PayPal', '', '2027-10-22'],
