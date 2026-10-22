@@ -1,3 +1,14 @@
+# 🔎 静的 SEO 記事 37 本のサイトマップ・旧 URL・canonical と feeder UTM の計測（2026-10-22 / **PR 作成・人の merge 待ち**）
+
+| 項目 | 状態 |
+|---|---|
+| 問題 | `public/seo/<slug>/`（37 本・本番 200）がサイトマップに 0 本。旧 `nankan-analytics.keiba.link/<slug>/` → `analytics.keiba.link/<slug>/` の 301 先が 404。記事に canonical なし |
+| 実装 | サイトマップ: `src/lib/seo/seoPages.mjs` の一覧を `astro.config.mjs` の customPages へ（300 → 337 件・`-demo` 除外に `/seo/` を巻き込まない）。旧 URL: `public/_redirects` に `/<slug>` と `/<slug>/` → `/seo/<slug>/`（301・37 本だけ・既存ルートと重ならないことを test で検査）。canonical: 各記事の head に自己 canonical を 1 行（本文は不変・generated-sites repo は触らない）|
+| 計測 | `BaseLayout` の `gtag('config')` が `token` だけを `page_location` / `page_referrer` から外す（マジックリンクのトークンを GA4 に送らない・`utm_*` は残す）。feeder 別の読み方と既知の欠け（マジックリンク・Stripe/PayPal 戻り）: `docs/measurements/FEEDER_UTM_2026_10.md` |
+| test | `seoPages.test.mjs` / `gaPageLocation.test.mjs`（`test:seo` / `test:analytics` → `check:safety`）・check:safety / build pass |
+| 残り | ① merge（人）→ 本番で `/seo/` のサイトマップ掲載・旧 URL の 301・canonical を確認 ② GA4 管理画面の「除外する参照」に Stripe / PayPal を登録（コード外）③ GSC にサイトマップ再送信（任意・自動クロールでも拾われる）|
+| rollback | revert（リダイレクト・サイトマップ・canonical・token 除去はいずれも状態を持たない）|
+
 # 🧾 未ログインで PayPal 定期課金を買った方の戻り先が「ログインしてご確認ください」になり GA4 purchase も出ない不具合の修正（2026-10-22 / **PR 作成・人の merge 待ち（billing path）**）
 
 | 項目 | 状態 |

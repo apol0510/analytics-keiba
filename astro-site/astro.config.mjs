@@ -3,6 +3,11 @@ import { defineConfig } from 'astro/config';
 import sitemap from '@astrojs/sitemap';
 import netlify from '@astrojs/netlify';
 import { isSitemapExcluded } from './src/lib/seo/sitemapPolicy.mjs';
+import { fileURLToPath } from 'node:url';
+import { listSeoSlugs, seoPageUrl } from './src/lib/seo/seoPages.mjs';
+
+// public/seo/<slug>/index.html の静的 SEO 記事（@astrojs/sitemap は public/ を拾わないため明示する・2026-10-22）
+const SEO_ARTICLE_URLS = listSeoSlugs(fileURLToPath(new URL('./public/seo/', import.meta.url))).map(seoPageUrl);
 
 // https://astro.build/config
 export default defineConfig({
@@ -37,6 +42,8 @@ export default defineConfig({
         'https://analytics.keiba.link/archive/',
         'https://analytics.keiba.link/archive/jra/',
         'https://analytics.keiba.link/archive/nankan/',
+        // 静的 SEO 記事（/seo/<slug>/・正本 src/lib/seo/seoPages.mjs）
+        ...SEO_ARTICLE_URLS,
       ],
       filter: (page) => {
         // 2026-09-28: 301/302・noindex・会員限定・個人向けページは単一源 sitemapPolicy で除外
@@ -46,7 +53,8 @@ export default defineConfig({
         // Premium Plus は Premium Sanrenpuku 会員限定の非公開商品。存在を知らせないため常に除外する
         if (page.includes('/premium-plus')) return false;
         if (page.includes('-prototype')) return false;
-        if (page.includes('-demo')) return false;
+        // ⚠️ /seo/ 配下は公開記事（例: keiba-ai-comparison-demo は検証記事でデモ画面ではない）なので除外しない
+        if (page.includes('-demo') && !page.includes('/seo/')) return false;
         // 旧URL（リダイレクト元）はサイトマップから除外
         if (page.includes('/archive-jra')) return false;
         // JRA会場フラグメント（タブ初回選択時に fetch する内部用HTML断片）はサイトマップ非掲載

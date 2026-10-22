@@ -603,6 +603,7 @@ npm run verify:safety          # build + check:safety（push 前推奨）
 既存 GA4（測定 ID は `src/layouts/BaseLayout.astro` が唯一持つ。**変更・新規作成禁止**）で
 `流入 → 無料予想 → /results-showcase/ → /pricing/ → 申込` を確認する。
 詳細仕様・GA4 管理画面側の作業は `astro-site/docs/GA4_CONVERSION_FUNNEL.md` を参照。
+feeder サイト（`utm_source=<site>&utm_medium=referral`）別の読み方・既知の欠けは [`FEEDER_UTM_2026_10.md`](./docs/measurements/FEEDER_UTM_2026_10.md)。
 
 | 段 | 見るもの |
 |---|---|
