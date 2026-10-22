@@ -119,9 +119,22 @@ test('【最重要】DRM 3 本は Customers 限定を宣言している（prospe
 });
 
 test('【重要】宣言していない campaign は従来どおり all（挙動不変）', () => {
-  for (const id of ['campaign-discount-free', 'campaign-discount-light', 'campaign-discount-premium',
+  /**
+   * ⚠️ ここで守りたいのは「**宣言が無ければ all に倒れる**」という既定の挙動。
+   *    例に使う campaign が宣言を持つと、この test の前提そのものが崩れる。
+   *
+   *    `campaign-discount-light` / `campaign-discount-premium` は 2026-09-17 に
+   *    `audienceSource: 'customer'` を宣言した（prospect に構造的に当たらないのに
+   *    毎 tick 索引を読んで 31 秒使い、送る相手が居る campaign を deferred させていたため）。
+   *    よって例から外し、**宣言を持たない campaign だけ**で確かめる。
+   */
+  for (const id of ['campaign-discount-free',
     'light-trial-to-premium-sequence', 'light-trial-post-expiry-sequence']) {
     assert.equal(resolveAudienceSource(campaignOf(id)), 'all', `${id} の宣言が変わっている`);
+  }
+  // 宣言した 2 本は customer（狭める方向。選ばれる相手は変わらない）
+  for (const id of ['campaign-discount-light', 'campaign-discount-premium']) {
+    assert.equal(resolveAudienceSource(campaignOf(id)), 'customer', `${id} の宣言が外れている`);
   }
 });
 

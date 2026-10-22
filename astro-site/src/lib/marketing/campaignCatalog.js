@@ -1141,7 +1141,27 @@ export const CAMPAIGNS = Object.freeze([
     body: DISCOUNT_LIGHT_STEPS[0].body,
     ctaLabel: DISCOUNT_CTA.label,
     ctaUrl: DISCOUNT_CTA.url,
-    sequence: { maxSends: DISCOUNT_LIGHT_STEPS.length, steps: DISCOUNT_LIGHT_STEPS },
+    sequence: {
+      maxSends: DISCOUNT_LIGHT_STEPS.length,
+      steps: DISCOUNT_LIGHT_STEPS,
+    /**
+     * ⚠️ **母集団は Customers だけ**（2026-09-17 本番実測を受けて宣言）。
+     *
+     * この campaign の `audienceRule` は「契約が有効 / 期限間近」かつ「プランが
+     * Light」で `enforce: true`。prospect は `プラン: 'Free'`・契約なしで組み立てられる
+     * （`prospectSequenceAdapter.prospectToImportFields`）ので、**構造的に 1 人も一致しない**。
+     *
+     * それでも宣言が無いと tick は毎回 prospect 索引（窓 2,000 件）を読みに行き、
+     * **送る相手が 0 人でも約 30 秒**かかっていた。1 tick の予算は 55 秒で、
+     * 1 本が 25 秒（`LATEST_START_MS`）を超えると次の campaign を始めないため、
+     * **0 人の campaign が 1 tick を占有し、送る相手が居る campaign が deferred される**
+     * （2026-09-17 16:00 の実測: `campaign-discount-light` が 31.1 秒 → 残り 5 本を deferred）。
+     *
+     * ⚠️ これは**狭める方向の宣言**で、選ばれる相手は 1 人も変わらない。
+     *    送信量・`DeliveryKey`・step の順序・env は一切変えない。
+     */
+    audienceSource: 'customer',
+    },
     recommendedSegments: ['plan:light', 'contract:active'],
     audienceRule: {
       contracts: [MK_CONTRACT.ACTIVE, MK_CONTRACT.EXPIRING_SOON],
@@ -1169,7 +1189,27 @@ export const CAMPAIGNS = Object.freeze([
     body: DISCOUNT_PREMIUM_STEPS[0].body,
     ctaLabel: DISCOUNT_CTA.label,
     ctaUrl: DISCOUNT_CTA.url,
-    sequence: { maxSends: DISCOUNT_PREMIUM_STEPS.length, steps: DISCOUNT_PREMIUM_STEPS },
+    sequence: {
+      maxSends: DISCOUNT_PREMIUM_STEPS.length,
+      steps: DISCOUNT_PREMIUM_STEPS,
+    /**
+     * ⚠️ **母集団は Customers だけ**（2026-09-17 本番実測を受けて宣言）。
+     *
+     * この campaign の `audienceRule` は「契約が有効 / 期限間近」かつ「プランが
+     * Premium」で `enforce: true`。prospect は `プラン: 'Free'`・契約なしで組み立てられる
+     * （`prospectSequenceAdapter.prospectToImportFields`）ので、**構造的に 1 人も一致しない**。
+     *
+     * それでも宣言が無いと tick は毎回 prospect 索引（窓 2,000 件）を読みに行き、
+     * **送る相手が 0 人でも約 30 秒**かかっていた。1 tick の予算は 55 秒で、
+     * 1 本が 25 秒（`LATEST_START_MS`）を超えると次の campaign を始めないため、
+     * **0 人の campaign が 1 tick を占有し、送る相手が居る campaign が deferred される**
+     * （2026-09-17 16:00 の実測: `campaign-discount-light` が 31.1 秒 → 残り 5 本を deferred）。
+     *
+     * ⚠️ これは**狭める方向の宣言**で、選ばれる相手は 1 人も変わらない。
+     *    送信量・`DeliveryKey`・step の順序・env は一切変えない。
+     */
+    audienceSource: 'customer',
+    },
     recommendedSegments: ['plan:premium', 'contract:active'],
     // 三連複の買い切りを持つ方は `MK_PLAN.PREMIUM_SANRENPUKU` に分類されるので当たらない。
     audienceRule: {
