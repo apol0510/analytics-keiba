@@ -87,11 +87,16 @@ test('決済会社の戻り先・Webhook の中継（2026-10-15 MK 確定）: �
     '/r/paypal/cancel  https://analytics.keiba.link/pricing/?checkout=cancelled  302!',
     '/hooks/paypal  https://analytics.keiba.link/.netlify/functions/paypal-order-webhook  200!',
     '/r/paddle/complete  https://analytics.keiba.link/checkout/card-complete/  302!',
-    '/hooks/paddle  https://analytics.keiba.link/.netlify/functions/paddle-webhook  200!',
+    '/hooks/paddle  /.netlify/functions/paddle-webhook  200!',
     '',
   ].join('\n'));
-  // 中継先は会員サイトの本番だけ（他のホストへ転送しない）
-  for (const l of files._redirects.trim().split('\n').slice(1)) assert.match(l.split(/\s+/)[1], /^https:\/\/analytics\.keiba\.link\//);
+  // 中継先は会員サイトの本番だけ（他のホストへ転送しない）。
+  // 例外: /hooks/paddle はこの中立サイト自身の local function が受ける（案B・4KB 回避）。
+  for (const l of files._redirects.trim().split('\n').slice(1)) {
+    const target = l.split(/\s+/)[1];
+    if (l.startsWith('/hooks/paddle ')) { assert.equal(target, '/.netlify/functions/paddle-webhook'); continue; }
+    assert.match(target, /^https:\/\/analytics\.keiba\.link\//);
+  }
   // 決済会社に渡すパス自体に禁止語が無い
   for (const l of files._redirects.trim().split('\n').slice(1)) assert.doesNotMatch(l.split(/\s+/)[0], BANNED);
 });

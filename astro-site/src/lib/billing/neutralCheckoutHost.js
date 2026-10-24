@@ -34,7 +34,9 @@ export const NEUTRAL_ROUTES = Object.freeze([
   Object.freeze({ from: NEUTRAL_PATHS.paypalCancel, to: `${PRODUCTION_ORIGIN}/pricing/?checkout=cancelled`, status: '302!' }),
   Object.freeze({ from: NEUTRAL_PATHS.paypalWebhook, to: `${PRODUCTION_ORIGIN}/.netlify/functions/paypal-order-webhook`, status: '200!' }),
   Object.freeze({ from: NEUTRAL_PATHS.paddleComplete, to: `${PRODUCTION_ORIGIN}/checkout/card-complete/`, status: '302!' }),
-  Object.freeze({ from: NEUTRAL_PATHS.paddleWebhook, to: `${PRODUCTION_ORIGIN}/.netlify/functions/paddle-webhook`, status: '200!' }),
+  // Paddle webhook はこの中立サイト自身の modern function が受ける（4KB 回避・案 B）。
+  // 検証は local（PADDLE_API_KEY を持つ）、会員付与だけ本番 internal-paddle-grant へ委譲する。
+  Object.freeze({ from: NEUTRAL_PATHS.paddleWebhook, to: '/.netlify/functions/paddle-webhook', status: '200!' }),
 ]);
 
 /** PayPal Live の Webhook に登録する URL */
