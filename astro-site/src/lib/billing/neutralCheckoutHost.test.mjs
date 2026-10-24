@@ -73,7 +73,8 @@ test('Paddle Live（2026-10-24）: 決済ページ・通知先は中立ホスト
   // 通知は中立ホスト経由で本番サイトとして判定・完了は会員サイトの完了画面へ 302
   assert.equal(webhookSiteOrigin('checkout.tirol.link'), PRODUCTION_ORIGIN);
   const byFrom = Object.fromEntries(NEUTRAL_ROUTES.map((r) => [r.from, r]));
-  assert.deepEqual({ ...byFrom['/hooks/paddle'] }, { from: '/hooks/paddle', to: `${PRODUCTION_ORIGIN}/.netlify/functions/paddle-webhook`, status: '200!' });
+  // 分離案 B: /hooks/paddle は中立サイト自身の local function が受ける（本番 proxy ではない）
+  assert.deepEqual({ ...byFrom['/hooks/paddle'] }, { from: '/hooks/paddle', to: '/.netlify/functions/paddle-webhook', status: '200!' });
   assert.deepEqual({ ...byFrom['/r/paddle/complete'] }, { from: '/r/paddle/complete', to: `${PRODUCTION_ORIGIN}/checkout/card-complete/`, status: '302!' });
 });
 
