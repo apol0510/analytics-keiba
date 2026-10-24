@@ -106,8 +106,9 @@ env（Deploy Preview の Sandbox 用だけ。production には入れない）: `
 
 - 本番サイトの入口（`card-create-checkout`・`paddle-create-checkout`・`cardCheckout.startCardCheckout`）は不変。`createPaddleCheckout` が「鍵がローカルに無い本番サイト」を検知し、資格確認のあと取引作成だけを委譲する（`delegate = !PADDLE_API_KEY && CARD_GRANT_INTERNAL_SECRET && origin===本番`）。Sandbox の Deploy Preview は従来どおり鍵がローカルにあるので委譲しない（直接作成）。
 - 中立サイトが持つ secret は `PADDLE_API_KEY`・`PADDLE_WEBHOOK_SECRET`・`CARD_GRANT_INTERNAL_SECRET` だけ。会員付与に要る Airtable/Redis/SendGrid の鍵は**本番サイトだけ**が持つ（分離サイトの秘密面を最小化）。
-- intent は server-to-server のみ（ブラウザに出さない）＋短窓＋HMAC。リプレイしても増えるのは「未払い」取引だけで、課金はカード入力時にしか起きず、付与は transactionId で冪等＝**二重課金・二重付与は起きない**。
-- 検証: `paddleCheckoutDelegation.test.mjs`（委譲＝直接と同一本文・改ざん不可・署名/期限/資格のガード・実関数の 405/401/503/400）/ `paddleDelegation.test.mjs`（Webhook 委譲の冪等・署名）。
+- intent は server-to-server のみ（ブラウザに出さない）＋短窓＋HMAC。課金はカード入力時にしか起きず、付与は transactionId で冪等＝**二重課金・二重付与は起きない**。
+- 取引作成を冪等化する（`checkoutIdempotency.mjs`・Netlify Blobs・env 追加なし）。中立サイトは Paddle を叩く前に 2 つの冪等キーを確認し、ヒットすれば**新しい取引を作らず**既存の `{url, transactionId}` を返す: ① `nonce`（同一 intent の再送・120s 窓のリプレイ）② `recordId+productId`（別 nonce の二重クリック・30 分窓）。これで「未払い取引の乱立」も防ぐ（監査 2026-10-24 の指摘＝nonce 単回使用が無い・transactionId 冪等は別取引の二重決済を防がない、への対応）。ストア障害は fail-open（dedup を諦めても取引作成は通す。重複は上流の冪等で吸収）。
+- 検証: `paddleCheckoutDelegation.test.mjs`（委譲＝直接と同一本文・改ざん不可・署名/期限/資格のガード・実関数の 405/401/503/400）/ `paddleCheckoutIdempotency.test.mjs`（nonce・二重クリックの冪等／別商品・TTL 経過・作成失敗は作り直す／fail-open／実 handler の署名→冪等→作成の配線）/ `paddleDelegation.test.mjs`（Webhook 委譲の冪等・署名）。
 
 ## 3. PayPal（Orders v2・一回払い）
 
