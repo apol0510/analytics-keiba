@@ -1,11 +1,8 @@
-import { withLambda } from '@netlify/aws-lambda-compat';
-import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
-installAirtableCallMeter({ source: 'test-expiry-warning' });
 // デバッグ用：1週間前通知テスト（詳細ログ付き）
 
 const Airtable = require('airtable');
 
-const __lambdaHandler = async (event, context) => {
+exports.handler = async (event, context) => {
   const headers = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Content-Type',
@@ -150,5 +147,3 @@ const __lambdaHandler = async (event, context) => {
     };
   }
 };
-
-export default withLambda(__lambdaHandler);

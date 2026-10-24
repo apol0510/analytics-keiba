@@ -1,13 +1,10 @@
-import { withLambda } from '@netlify/aws-lambda-compat';
-import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
-installAirtableCallMeter({ source: 'get-point-exchange-requests' });
 // ポイント交換申請データ取得（管理画面用）
 
 const Airtable = require('airtable');
 
 const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE_ID);
 
-const __lambdaHandler = async (event, context) => {
+exports.handler = async (event, context) => {
   // CORSヘッダー設定
   const headers = {
     'Access-Control-Allow-Origin': '*',
@@ -67,5 +64,3 @@ const __lambdaHandler = async (event, context) => {
     };
   }
 };
-
-export default withLambda(__lambdaHandler);
