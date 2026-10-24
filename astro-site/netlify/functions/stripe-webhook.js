@@ -1,3 +1,4 @@
+import { withLambda } from '@netlify/aws-lambda-compat';
 /**
  * stripe-webhook — Stripe のイベントを Customers へ反映する
  *
@@ -27,7 +28,7 @@ import { makeRedisCmd } from '../../src/lib/premiumPlus/premiumPlusFunnelServer.
 const HEADERS = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' };
 const reply = (statusCode, body) => ({ statusCode, headers: HEADERS, body: JSON.stringify(body) });
 
-exports.handler = async (event) => {
+const __lambdaHandler = async (event) => {
   if (event.httpMethod !== 'POST') return reply(405, { error: 'method_not_allowed' });
   const env = process.env;
   const stripe = getStripe(env);
@@ -68,3 +69,5 @@ exports.handler = async (event) => {
     return reply(500, { error: 'apply_failed' });
   }
 };
+
+export default withLambda(__lambdaHandler);

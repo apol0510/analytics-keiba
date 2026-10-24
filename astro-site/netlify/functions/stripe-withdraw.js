@@ -1,3 +1,4 @@
+import { withLambda } from '@netlify/aws-lambda-compat';
 /**
  * stripe-withdraw — 互換の入口（Stripe 月額会員の退会だけを受ける）。
  *
@@ -9,4 +10,6 @@ import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js
 installAirtableCallMeter({ source: 'stripe-withdraw' });
 import { handleWithdrawRequest } from '../../src/lib/billing/memberWithdrawServer.js';
 
-exports.handler = async (event) => handleWithdrawRequest(event, process.env, { only: 'stripe' });
+const __lambdaHandler = async (event) => handleWithdrawRequest(event, process.env, { only: 'stripe' });
+
+export default withLambda(__lambdaHandler);

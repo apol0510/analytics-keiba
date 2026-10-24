@@ -1,3 +1,4 @@
+import { withLambda } from '@netlify/aws-lambda-compat';
 // ポイント交換申請処理
 // Airtableに申請データ保存 + SendGridメール通知
 // 最終更新: 2026-08-31 管理者宛先・送信元を単一源 config/email-config.js へ統一
@@ -16,7 +17,7 @@ const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process
 // SendGrid設定
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
-exports.handler = async (event, context) => {
+const __lambdaHandler = async (event, context) => {
   // CORSヘッダー設定
   const headers = {
     'Access-Control-Allow-Origin': '*',
@@ -232,3 +233,5 @@ exports.handler = async (event, context) => {
     };
   }
 };
+
+export default withLambda(__lambdaHandler);

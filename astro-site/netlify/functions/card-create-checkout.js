@@ -1,3 +1,4 @@
+import { withLambda } from '@netlify/aws-lambda-compat';
 /**
  * card-create-checkout — お客様向けの「カードで支払う」共通入口（決済会社を選ばせない）
  *
@@ -19,7 +20,7 @@ import { makeRedisCmd } from '../../src/lib/premiumPlus/premiumPlusFunnelServer.
 
 const json = (statusCode, headers, body) => ({ statusCode, headers, body: JSON.stringify(body) });
 
-exports.handler = async (event) => {
+const __lambdaHandler = async (event) => {
   const env = process.env;
   const headers = corsHeaders(event.headers);
   if (event.httpMethod === 'OPTIONS') return { statusCode: 204, headers, body: '' };
@@ -44,3 +45,5 @@ exports.handler = async (event) => {
     return json(502, headers, { error: 'checkout_failed' });
   }
 };
+
+export default withLambda(__lambdaHandler);

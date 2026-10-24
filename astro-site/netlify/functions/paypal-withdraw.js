@@ -1,3 +1,4 @@
+import { withLambda } from '@netlify/aws-lambda-compat';
 /**
  * paypal-withdraw — 互換の入口（PayPal 月額会員の退会だけを受ける）。
  *
@@ -12,7 +13,7 @@ import { readSessionRecordId, resolveSiteOrigin } from '../../src/lib/billing/st
 import { resolvePaypalSubscriptionSettleMode } from '../../src/lib/billing/paypal/paypalSubscriptionServer.js';
 import { e2eRecordIdFor } from '../../src/lib/billing/cardE2E.js';
 
-exports.handler = async (event) => {
+const __lambdaHandler = async (event) => {
   const env = process.env;
   const readSession = async (ev, body) => {
     const fromSession = await readSessionRecordId(ev.headers?.cookie || ev.headers?.Cookie || '', env);
@@ -22,3 +23,5 @@ exports.handler = async (event) => {
   };
   return handleWithdrawRequest(event, env, { only: 'paypal', deps: { readSession } });
 };
+
+export default withLambda(__lambdaHandler);

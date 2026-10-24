@@ -1,3 +1,4 @@
+import { withLambda } from '@netlify/aws-lambda-compat';
 /**
  * Premium Plusお問い合わせフォーム処理
  * Premium Plus専用のお問い合わせを受け付け、確認メールを送信
@@ -34,7 +35,7 @@ async function lookupPlanByEmail(email) {
   }
 }
 
-exports.handler = async (event, context) => {
+const __lambdaHandler = async (event, context) => {
   // CORSヘッダー設定
   const headers = {
     'Access-Control-Allow-Origin': '*',
@@ -315,3 +316,5 @@ exports.handler = async (event, context) => {
     };
   }
 };
+
+export default withLambda(__lambdaHandler);

@@ -1,3 +1,4 @@
+import { withLambda } from '@netlify/aws-lambda-compat';
 /**
  * admin-promote-customer.js — 管理者による手動昇格（v2）。
  *
@@ -22,7 +23,7 @@ function json(statusCode, body) {
   return { statusCode, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
 }
 
-exports.handler = async (event) => {
+const __lambdaHandler = async (event) => {
   if (event.httpMethod !== 'POST') return json(405, { error: 'Method Not Allowed' });
 
   const secret = process.env.PAYMENT_ADMIN_SECRET;
@@ -60,3 +61,5 @@ exports.handler = async (event) => {
     return json(500, { error: String(e && e.message) });
   }
 };
+
+export default withLambda(__lambdaHandler);

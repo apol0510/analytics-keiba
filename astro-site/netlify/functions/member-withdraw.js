@@ -1,3 +1,4 @@
+import { withLambda } from '@netlify/aws-lambda-compat';
 /**
  * member-withdraw — 会員の退会（AK 内の退会操作の唯一の入口・2026-10-15 MK 確定）
  *
@@ -10,4 +11,6 @@ import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js
 installAirtableCallMeter({ source: 'member-withdraw' });
 import { handleWithdrawRequest } from '../../src/lib/billing/memberWithdrawServer.js';
 
-exports.handler = async (event) => handleWithdrawRequest(event, process.env);
+const __lambdaHandler = async (event) => handleWithdrawRequest(event, process.env);
+
+export default withLambda(__lambdaHandler);

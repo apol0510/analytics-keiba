@@ -1,3 +1,4 @@
+import { withLambda } from '@netlify/aws-lambda-compat';
 /**
  * paddle-create-checkout — カード決済（Paddle・一回払い）の取引を作り、決済画面の URL を返す
  *
@@ -19,7 +20,7 @@ import { e2eRecordIdFor } from '../../src/lib/billing/cardE2E.js';
 
 const json = (statusCode, headers, body) => ({ statusCode, headers, body: JSON.stringify(body) });
 
-exports.handler = async (event) => {
+const __lambdaHandler = async (event) => {
   const env = process.env;
   const headers = corsHeaders(event.headers);
   if (event.httpMethod === 'OPTIONS') return { statusCode: 204, headers, body: '' };
@@ -43,3 +44,5 @@ exports.handler = async (event) => {
     return json(502, headers, { error: 'checkout_failed' });
   }
 };
+
+export default withLambda(__lambdaHandler);

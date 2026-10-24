@@ -1,3 +1,4 @@
+import { withLambda } from '@netlify/aws-lambda-compat';
 // 期限切れ通知システム（お客様＋マコさんへの自動通知）
 // 実行タイミング: 毎日午前9時（cron-expiry-check.jsから呼び出し）
 
@@ -11,7 +12,7 @@ import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js
 installAirtableCallMeter({ source: 'expiry-notification' });
 import { SUPPORT_EMAIL, ADMIN_EMAIL, FROM_EMAIL } from './config/email-config.js';
 import { buildListUnsubscribeHeaders, buildUnsubscribeUrl } from '../../src/lib/unsubscribe/listUnsubscribeHeaders.js';
-exports.handler = async (event, context) => {
+const __lambdaHandler = async (event, context) => {
   // 🛡️ 止血ガード（2026-05-18 追加）
   // 期限通知は NEWSLETTER_AUTOMATION_ENABLED の対象外で別系統として
   // 毎日18時に SendGrid 送信されていた（safety audit D3）。
@@ -393,3 +394,5 @@ function getUpsellDescription(upsellPlan) {
   };
   return descriptions[upsellPlan] || '';
 }
+
+export default withLambda(__lambdaHandler);

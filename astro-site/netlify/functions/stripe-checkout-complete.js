@@ -1,3 +1,4 @@
+import { withLambda } from '@netlify/aws-lambda-compat';
 /**
  * stripe-checkout-complete — 決済完了画面から呼ぶ。Webhook を待たずにその場で反映する
  *
@@ -20,7 +21,7 @@ import { applySubscription } from '../../src/lib/billing/stripeServer.js';
 import { makeStripeNotifier } from '../../src/lib/billing/stripeNotify.js';
 import { makeRedisCmd } from '../../src/lib/premiumPlus/premiumPlusFunnelServer.js';
 
-exports.handler = async (event) => {
+const __lambdaHandler = async (event) => {
   const env = process.env;
   const headers = corsHeaders(event.headers);
   const reply = (statusCode, body) => ({ statusCode, headers, body: JSON.stringify(body) });
@@ -62,3 +63,5 @@ exports.handler = async (event) => {
     return reply(502, { error: 'complete_failed' });
   }
 };
+
+export default withLambda(__lambdaHandler);

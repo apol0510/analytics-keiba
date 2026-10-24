@@ -1,3 +1,4 @@
+import { withLambda } from '@netlify/aws-lambda-compat';
 /**
  * paypal-create-order — PayPal（一回払い）の注文を作り、承認画面の URL を返す
  *
@@ -15,7 +16,7 @@ import { e2eRecordIdFor } from '../../src/lib/billing/cardE2E.js';
 
 const json = (statusCode, headers, body) => ({ statusCode, headers, body: JSON.stringify(body) });
 
-exports.handler = async (event) => {
+const __lambdaHandler = async (event) => {
   const env = process.env;
   const headers = corsHeaders(event.headers);
   if (event.httpMethod === 'OPTIONS') return { statusCode: 204, headers, body: '' };
@@ -39,3 +40,5 @@ exports.handler = async (event) => {
     return json(502, headers, { error: 'order_failed' });
   }
 };
+
+export default withLambda(__lambdaHandler);
