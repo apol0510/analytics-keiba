@@ -1,3 +1,6 @@
+import { withLambda } from '@netlify/aws-lambda-compat';
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+installAirtableCallMeter({ source: 'fix-free-plantype' });
 /**
  * Airtable Customersテーブル: Free会員のPlanType削除
  * Free会員のPlanTypeを空にする（誤って設定されたMonthlyを削除）
@@ -6,7 +9,7 @@
  * https://analytics.keiba.link/.netlify/functions/fix-free-plantype
  */
 
-exports.handler = async (event, context) => {
+const __lambdaHandler = async (event, context) => {
   const headers = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Content-Type',
@@ -151,3 +154,5 @@ exports.handler = async (event, context) => {
     };
   }
 };
+
+export default withLambda(__lambdaHandler);
