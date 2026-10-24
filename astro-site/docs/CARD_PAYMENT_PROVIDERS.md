@@ -8,8 +8,8 @@
 |---|---|---|
 | アカウント | TIROL DATA LABO 名義で新規開設済み | 新規ビジネスアカウント開設済み |
 | Sandbox E2E | **PASS**（2026-10-12・§4）| **PASS**（2026-10-13・§4）|
-| 本番審査 | **審査中**（MK 報告 2026-10-15。Website approval は `checkout.tirol.link`・§7）| **審査通過**（MK 報告 2026-10-15。承認の書面・メールは MK が保管）|
-| 本番の鍵・Webhook | 未設定 | **設定済み（2026-10-15）**: Live Product `PROD-3CX00591EL992881E`・Plan 3 本（`PAYPAL_PLAN_IDS.live`）・Webhook `78F83880DR5445808`（本番 URL・15 イベント）・production env 4 件（scope functions）。⚠️ 関数 env は 4KB 上限ぎりぎり（決済メール v2 カナリア env を外して空けた）|
+| 本番審査 | **本番アカウント承認**（2026-10-24 MK 報告・Payoneer 審査通過・Payout settings 保存。dashboard の Verify your account = Complete と API `GET /verifications` の onboarding・domain = completed を Claude が観測）。Website approval `checkout.tirol.link` = approved（Apple Pay verified）| **審査通過**（MK 報告 2026-10-15。承認の書面・メールは MK が保管）|
+| 本番の鍵・Webhook | 設定中（2026-10-24〜・§2.1）。Live は**中立ホスト経由**（決済ページ `https://checkout.tirol.link/pay/`・通知先 `https://checkout.tirol.link/hooks/paddle`）| **設定済み（2026-10-15）**: Live Product `PROD-3CX00591EL992881E`・Plan 3 本（`PAYPAL_PLAN_IDS.live`）・Webhook `78F83880DR5445808`（本番 URL・15 イベント）・production env 4 件（scope functions）。⚠️ 関数 env は 4KB 上限ぎりぎり（決済メール v2 カナリア env を外して空けた）|
 | 本番受付 | **閉じている**（`CARD_SALES_OPEN.paddle=false`）| 一回払いは**閉じている**（`.paypal=false`）。**月額の定期課金は PayPal で受ける方針**（2026-10-15 MK 決定・§3.5）。**2026-10-15 受付開始**（`SUBSCRIPTION_SALES_OPEN.paypal=true`）|
 | 取扱可否（一次情報）| ⚠️ 禁止リストに「Betting-related products」「Sports forecasting/odds making where monetary or material prizes are involved」。**書面確認が要る** | 利用規定で「競馬またはドッグレース」は**事前承認**区分 → 審査通過 |
 
@@ -78,6 +78,20 @@ Sandbox 実測（2026-10-13・PR #794 の Deploy Preview 経由 `sandbox.checkou
 | 付与 | `paddle-webhook`（`Paddle-Signature` = HMAC-SHA256 `ts:rawBody`・時刻のずれ 300 秒まで）→ `GET /transactions/{id}` で origin=api・JPY・総額・custom_data・status paid/completed を照合 → 共通層 |
 | 返金 | `adjustment.created/updated` → `GET /adjustments?id=` で approved の refund / chargeback だけ。type=full は戻す・partial は管理者へ |
 | 注意 | JPY は支払い通貨としては使えるが入金通貨ではない（USD 等へ換算して入金）。本番は Website approval（ドメイン審査）・既定の支払いリンク設定が要る |
+
+### 2.1 Live（本番・2026-10-24）
+
+Paddle Live は**承認ドメインのページでしか決済画面を開かない**。承認ドメインは中立ホスト `checkout.tirol.link`（§7）なので、会員サイトの `/checkout/paddle/` は Live では使わない（Sandbox・Deploy Preview だけ）。
+
+| 項目 | 内容 | 単一源 |
+|---|---|---|
+| Default payment link（Live）| `https://checkout.tirol.link/pay/`。取引の `checkout.url` がこれ以外なら本番サイトは `checkout_url_mismatch`（fail closed）| `neutralCheckoutHost.PADDLE_LIVE_PAYMENT_LINK`・`paddleCheckoutPage`・`paddleCore.checkoutUrlMatchesOrigin` |
+| 決済ページ | 中立サイトの静的ページ `/pay/`（英語・noindex・ナビ/sitemap 外）。**カード受付中（`CARD_PAYMENTS_AVAILABLE`）かつ build 時に live の client token を渡したときだけ** Paddle.js を読む。それ以外は案内だけ | `ops/checkout-site/site.mjs` `renderPayPage`（build: `PADDLE_LIVE_CLIENT_TOKEN=… node ops/checkout-site/build.mjs <out>`）|
+| 完了後 | Paddle.js の successUrl = `/r/paddle/complete?provider=paddle&order=txn_…` → 会員サイト `/checkout/card-complete/` へ 302（クエリはそのまま）。付与は Webhook が正本 | `NEUTRAL_ROUTES` |
+| 通知先（Live）| `https://checkout.tirol.link/hooks/paddle` → 会員サイト `paddle-webhook` へ 200 プロキシ（本文・署名ヘッダはそのまま）。Function は Host を `webhookSiteOrigin` で判定（中立ホスト = 本番）。イベント `transaction.paid`・`transaction.completed`・`adjustment.created`・`adjustment.updated` | `NEUTRAL_ROUTES`・`paddle-webhook.js` |
+| 商品・価格 | **Live カタログは作らない**（非カタログ価格を取引ごとに API で渡す方式を維持・§2）| `paddleCore.buildTransactionBody` |
+| production env | `PADDLE_API_KEY`（`pdl_live_apikey_…`・取引の作成/照会・adjustment 照会）・`PADDLE_WEBHOOK_SECRET`（Live 通知先の secret key）。`PADDLE_CLIENT_TOKEN` は production に入れない（Live の決済ページは中立サイト側）。入れても `CARD_SALES_OPEN.paddle=false` の間は申込 503 `card_sales_not_open`・通知は `ignored_card_sales_not_open`（付与しない）| `cardSales.resolveCardMode` |
+| 受付開始 | §5 の条件どおり（MK の明示決定 → `CARD_SALES_OPEN.paddle` と `CARD_PAYMENTS_AVAILABLE` を true にする PR → 中立サイトを live token 付きで再 deploy → 本番の実購入 1 件と全額返金で付与・戻しを確認）| — |
 
 env（Deploy Preview の Sandbox 用だけ。production には入れない）: `PADDLE_API_KEY`（`pdl_sdbx_apikey_…`）・`PADDLE_WEBHOOK_SECRET`（通知先の secret key）・`PADDLE_CLIENT_TOKEN`（`test_…`・公開してよい）・`CARD_E2E_SECRET`（24 文字以上）
 
@@ -246,11 +260,11 @@ DNS（Cloudflare・MK 設定）: `sandbox.checkout` CNAME `tirol-checkout-sandbo
 
 ## 5. 本番化の条件（すべて満たすまで開かない）
 
-1. その決済会社が AK の取扱商品（競馬データ・予想の有料提供）を承認した記録（Paddle: 書面回答＋本番アカウント審査 → **審査中**／PayPal: 事前承認 → **2026-10-15 通過（MK 報告）**）。審査では事業内容を正確に申告し、言い換えで通さない。
+1. その決済会社が AK の取扱商品（競馬データ・予想の有料提供）を承認した記録（Paddle: 書面回答＋本番アカウント審査 → **本番アカウント承認（2026-10-24 MK 報告・onboarding completed を観測）**／PayPal: 事前承認 → **2026-10-15 通過（MK 報告）**）。審査では事業内容を正確に申告し、言い換えで通さない。
 2. Sandbox E2E 完了。→ **済み**（Paddle 2026-10-12 / PayPal 2026-10-13・§4。同じテストは繰り返さない）
 3. MK の販売開始の明示決定 → `cardSales.js` の該当値を true にする PR（このとき pricing のカード導線も追加）。
 4. production env（4KB 枠の確認）・本番の Webhook 登録・本番での実購入 1 件の確認と返金。PayPal は MK が developer.paypal.com の **Live** アプリの Client ID / Secret を `~/.analytics-keiba-ops/card-live.env`（`chmod 600`・値は会話に貼らない）に置けば、Claude が production env へ `PAYPAL_CLIENT_ID`・`PAYPAL_CLIENT_SECRET`・`PAYPAL_ENV=live` を設定し、Live の Webhook（`https://analytics.keiba.link/.netlify/functions/paypal-order-webhook`・§3 の 4 イベント）を API で登録して `PAYPAL_WEBHOOK_ID` を入れる。鍵を入れても `CARD_SALES_OPEN.paypal=false`・`ACTIVE_CARD_PROVIDER='paddle'` のため受付は閉じたまま（本番の申込は 503 `card_sales_not_open`）。
-5. Paddle 本番の Default payment link のドメインを決め、Paddle の承認ドメインと一致させる（`checkoutUrlMatchesOrigin` は自サイト以外の URL を 502 で拒否する）。
+5. Paddle 本番の Default payment link のドメインを決め、Paddle の承認ドメインと一致させる（`checkoutUrlMatchesOrigin` は自サイト以外の URL を 502 で拒否する）。→ **`https://checkout.tirol.link/pay/` に決定（2026-10-24・§2.1・中立ホスト方式＝2026-10-15 MK 確定の延長）**
 
 ## 6. ロールバック
 

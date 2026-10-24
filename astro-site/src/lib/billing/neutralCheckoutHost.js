@@ -20,6 +20,11 @@ export const NEUTRAL_PATHS = Object.freeze({
   paypalSubscriptionReturn: '/r/paypal/subscription-return',
   paypalCancel: '/r/paypal/cancel',
   paypalWebhook: '/hooks/paypal',
+  // Paddle（2026-10-24）: Live の Default payment link は Paddle が承認したドメイン（checkout.tirol.link）でなければ開けない
+  // → 決済画面を開くページはこのサイト（静的・ops/checkout-site）に置き、完了後は会員サイトの完了画面へ 302
+  paddleCheckout: '/pay/',
+  paddleComplete: '/r/paddle/complete',
+  paddleWebhook: '/hooks/paddle',
 });
 
 /** checkout.tirol.link の `_redirects` に書く行（from → 会員サイトの実 URL） */
@@ -28,10 +33,25 @@ export const NEUTRAL_ROUTES = Object.freeze([
   Object.freeze({ from: NEUTRAL_PATHS.paypalSubscriptionReturn, to: `${PRODUCTION_ORIGIN}/checkout/paypal-subscription-return/`, status: '302!' }),
   Object.freeze({ from: NEUTRAL_PATHS.paypalCancel, to: `${PRODUCTION_ORIGIN}/pricing/?checkout=cancelled`, status: '302!' }),
   Object.freeze({ from: NEUTRAL_PATHS.paypalWebhook, to: `${PRODUCTION_ORIGIN}/.netlify/functions/paypal-order-webhook`, status: '200!' }),
+  Object.freeze({ from: NEUTRAL_PATHS.paddleComplete, to: `${PRODUCTION_ORIGIN}/checkout/card-complete/`, status: '302!' }),
+  Object.freeze({ from: NEUTRAL_PATHS.paddleWebhook, to: `${PRODUCTION_ORIGIN}/.netlify/functions/paddle-webhook`, status: '200!' }),
 ]);
 
 /** PayPal Live の Webhook に登録する URL */
 export const PAYPAL_LIVE_WEBHOOK_URL = `${NEUTRAL_CHECKOUT_ORIGIN}${NEUTRAL_PATHS.paypalWebhook}`;
+
+/** Paddle Live に登録する値（Default payment link・通知先 URL） */
+export const PADDLE_LIVE_PAYMENT_LINK = `${NEUTRAL_CHECKOUT_ORIGIN}${NEUTRAL_PATHS.paddleCheckout}`;
+export const PADDLE_LIVE_WEBHOOK_URL = `${NEUTRAL_CHECKOUT_ORIGIN}${NEUTRAL_PATHS.paddleWebhook}`;
+
+/**
+ * Paddle の取引の checkout.url が指すべきページ（Default payment link）。本番サイトだけ中立ホストの決済ページ、
+ * それ以外（Sandbox の Deploy Preview 等）は受けたオリジンの /checkout/paddle/。
+ */
+export function paddleCheckoutPage(origin) {
+  const o = String(origin || '');
+  return o === PRODUCTION_ORIGIN ? PADDLE_LIVE_PAYMENT_LINK : `${o}/checkout/paddle/`;
+}
 
 /**
  * PayPal へ渡す戻り先・キャンセル URL。本番サイトのときだけ中立ホストを通す。

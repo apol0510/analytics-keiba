@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { BUSINESS, PLANS, MEMBER_PLAN, CARD_PAYMENTS_AVAILABLE, INDEXABLE, PAGE_PATHS, buildFiles, renderPage } from '../../../../ops/checkout-site/site.mjs';
+import { BUSINESS, PLANS, MEMBER_PLAN, CARD_PAYMENTS_AVAILABLE, INDEXABLE, PAGE_PATHS, buildFiles, renderPage, renderPayPage } from '../../../../ops/checkout-site/site.mjs';
 import { CARD_PRODUCTS } from './cardOneTime.js';
 import { CARD_SALES_OPEN } from './cardSales.js';
 
@@ -86,10 +86,37 @@ test('決済会社の戻り先・Webhook の中継（2026-10-15 MK 確定）: �
     '/r/paypal/subscription-return  https://analytics.keiba.link/checkout/paypal-subscription-return/  302!',
     '/r/paypal/cancel  https://analytics.keiba.link/pricing/?checkout=cancelled  302!',
     '/hooks/paypal  https://analytics.keiba.link/.netlify/functions/paypal-order-webhook  200!',
+    '/r/paddle/complete  https://analytics.keiba.link/checkout/card-complete/  302!',
+    '/hooks/paddle  https://analytics.keiba.link/.netlify/functions/paddle-webhook  200!',
     '',
   ].join('\n'));
   // 中継先は会員サイトの本番だけ（他のホストへ転送しない）
   for (const l of files._redirects.trim().split('\n').slice(1)) assert.match(l.split(/\s+/)[1], /^https:\/\/analytics\.keiba\.link\//);
   // 決済会社に渡すパス自体に禁止語が無い
   for (const l of files._redirects.trim().split('\n').slice(1)) assert.doesNotMatch(l.split(/\s+/)[0], BANNED);
+});
+
+test('Paddle の決済ページ /pay/（2026-10-24）: ナビ・sitemap に載せず noindex・受付中かつ live token のときだけ Paddle.js を読む', () => {
+  assert.ok(files['pay/index.html']);
+  assert.ok(!PAGE_PATHS.includes('/pay/'));
+  assert.doesNotMatch(files['sitemap.xml'], /\/pay\//);
+  const TOKEN = 'live_0123456789abcdef0123456789a';
+  for (const h of [renderPayPage(), renderPayPage({ paddleClientToken: TOKEN }), renderPayPage({ paddleClientToken: 'test_abc' })]) {
+    assert.match(h, /<meta name="robots" content="noindex, nofollow">/);
+    assert.doesNotMatch(h, /[\u3040-\u30ff\u4e00-\u9fff]/);
+    assert.doesNotMatch(visible(h), BANNED);
+  }
+  // test_ の token・未設定は決済画面を開かない（Sandbox は会員サイトの Deploy Preview 側で行う）
+  assert.doesNotMatch(renderPayPage({ paddleClientToken: 'test_abc' }), /paddle\.js/);
+  assert.doesNotMatch(renderPayPage(), /paddle\.js/);
+  const live = renderPayPage({ paddleClientToken: TOKEN });
+  if (CARD_PAYMENTS_AVAILABLE) {
+    assert.match(live, /cdn\.paddle\.com\/paddle\/v2\/paddle\.js/);
+    assert.match(live, /successUrl: location\.origin \+ '\/r\/paddle\/complete\?provider=paddle&order='/);
+    assert.doesNotMatch(live, /Environment\.set\('sandbox'\)/);
+  } else {
+    // 受付を閉じている間は token があっても開かない
+    assert.doesNotMatch(live, /paddle\.js/);
+    assert.match(live, /not available yet/);
+  }
 });

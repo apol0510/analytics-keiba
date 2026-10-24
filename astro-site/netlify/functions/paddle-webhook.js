@@ -12,6 +12,7 @@ import { handlePaddleEvent } from '../../src/lib/billing/paddle/paddleServer.js'
 import { verifyPaddleSignature, parsePaddleWebhook, resolvePaddleMode } from '../../src/lib/billing/paddle/paddleCore.js';
 import { makeCardNotifier } from '../../src/lib/billing/cardNotify.js';
 import { makeRedisCmd } from '../../src/lib/premiumPlus/premiumPlusFunnelServer.js';
+import { webhookSiteOrigin } from '../../src/lib/billing/neutralCheckoutHost.js';
 
 const H = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' };
 const OK = { statusCode: 200, headers: H, body: '{"received":true}' };
@@ -26,7 +27,8 @@ exports.handler = async (event) => {
   }
   const parsed = parsePaddleWebhook(raw);
   if (!parsed || parsed.ignored) return OK;
-  const origin = `https://${String(event.headers?.host || event.headers?.Host || '')}`;
+  // 本番の通知は中立ホスト（checkout.tirol.link/hooks/paddle）経由で届く → 本番サイトとして判定
+  const origin = webhookSiteOrigin(event.headers?.host || event.headers?.Host || '');
   const mode = resolvePaddleMode({ key: env.PADDLE_API_KEY, origin });
   try {
     const r = await handlePaddleEvent({

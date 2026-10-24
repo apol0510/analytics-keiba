@@ -15,7 +15,7 @@
  * 2026-10-15 MK 確定: 決済会社へ渡す戻り先・Webhook の URL に競馬関連語を入れない → このサイトが中継する
  * （`_redirects` の行は astro-site/src/lib/billing/neutralCheckoutHost.js の NEUTRAL_ROUTES が正本。画面には何も足さない）。
  */
-import { NEUTRAL_ROUTES } from '../../astro-site/src/lib/billing/neutralCheckoutHost.js';
+import { NEUTRAL_ROUTES, NEUTRAL_PATHS } from '../../astro-site/src/lib/billing/neutralCheckoutHost.js';
 
 export const BUSINESS = Object.freeze({
   name: 'TIROL DATA LABO',
@@ -312,8 +312,60 @@ export const PAGE_PATHS = Object.freeze(Object.keys(PAGES));
 export const INDEXABLE = true;
 export const SITE_ORIGIN = 'https://checkout.tirol.link';
 
-export function buildFiles() {
+const CLIENT_TOKEN_RE = /^live_[A-Za-z0-9]+$/;
+
+/**
+ * Paddle の決済画面を開くページ（Live の Default payment link = https://checkout.tirol.link/pay/?_ptxn=txn_…・2026-10-24）。
+ * Paddle Live は承認ドメインのページでしか決済画面を開かないため、会員サイトではなくこのサイトに置く。
+ * - 開くのはカード受付中（CARD_PAYMENTS_AVAILABLE）かつ live の client token（公開してよい値）を build 時に渡したときだけ。
+ *   それ以外は案内だけ（Paddle.js を読まない）。取引は会員サイトの申込 API（受付中だけ）でしか作られない。
+ * - 完了後は /r/paddle/complete（→ 会員サイトの完了画面へ 302）。付与は Webhook が正本（このページは何も書かない）。
+ * - ナビ・sitemap に載せない（noindex）。
+ */
+export function renderPayPage({ paddleClientToken = '' } = {}) {
+  const token = CLIENT_TOKEN_RE.test(String(paddleClientToken)) ? String(paddleClientToken) : '';
+  const open = CARD_PAYMENTS_AVAILABLE && Boolean(token);
+  const body = open
+    ? `<h1>Opening the secure payment form…</h1>
+<p>If the payment form does not open, please reload this page.</p>`
+    : `<h1>Card payments are not available yet</h1>
+<p>Plans can be purchased by bank transfer (Japanese bank accounts) from the <a href="${BUSINESS.memberSignInUrl}">member site</a>.</p>`;
+  const script = open ? `
+<script src="https://cdn.paddle.com/paddle/v2/paddle.js"></script>
+<script>
+(function () {
+  var txn = new URLSearchParams(location.search).get('_ptxn') || '';
+  if (!window.Paddle || !/^txn_[a-z0-9]{10,40}$/.test(txn)) return;
+  window.Paddle.Initialize({
+    token: ${JSON.stringify(token)},
+    checkout: { settings: { displayMode: 'overlay', locale: 'ja', successUrl: location.origin + '${NEUTRAL_PATHS.paddleComplete}?provider=paddle&order=' + encodeURIComponent(txn) } },
+  });
+})();
+</script>` : '';
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Payment — ${BUSINESS.name}</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header><a class="brand" href="/">${BUSINESS.name}</a></header>
+<main>${body}
+</main>
+<footer>
+<p>${BUSINESS.name} · ${BUSINESS.address} · <a href="mailto:${BUSINESS.email}">${BUSINESS.email}</a></p>
+</footer>${script}
+</body>
+</html>
+`;
+}
+
+export function buildFiles({ paddleClientToken = '' } = {}) {
   const files = { 'style.css': CSS.trimStart() };
+  files[`${NEUTRAL_PATHS.paddleCheckout.slice(1)}index.html`] = renderPayPage({ paddleClientToken });
   for (const p of PAGE_PATHS) files[p === '/' ? 'index.html' : `${p.slice(1)}index.html`] = renderPage(p);
   files['_headers'] = `/*\n  X-Content-Type-Options: nosniff\n  Referrer-Policy: strict-origin-when-cross-origin\n${INDEXABLE ? '' : '  X-Robots-Tag: noindex, nofollow\n'}`;
   files['robots.txt'] = INDEXABLE ? `User-agent: *\nAllow: /\nSitemap: ${SITE_ORIGIN}/sitemap.xml\n` : 'User-agent: *\nDisallow: /\n';
