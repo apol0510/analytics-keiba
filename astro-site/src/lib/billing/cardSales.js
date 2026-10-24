@@ -35,6 +35,19 @@ export function resolveCardMode({ provider, keyMode, origin, salesOpen } = {}) {
 }
 
 /**
+ * 鍵を別サイト（分離サイト・案 B）が持つときの、委譲元（本番サイト）での受付判定。
+ * 本番サイトは PADDLE_API_KEY を持たないため、鍵の種類（test/live）は鍵を持つ分離サイトが resolveCardMode で検査する。
+ * ここでは「本番オリジンか」「販売開始済みか」だけを見る（fail closed）。それ以外は委譲しない。
+ * @returns {{ ok: true, mode: 'live' } | { ok: false, reason: string }}
+ */
+export function resolveCardModeDelegated({ provider, origin, salesOpen } = {}) {
+  const open = salesOpen === undefined ? CARD_SALES_OPEN[provider] === true : salesOpen === true;
+  if (String(origin || '') !== PRODUCTION_ORIGIN) return { ok: false, reason: 'delegate_non_production' };
+  if (!open) return { ok: false, reason: 'card_sales_not_open' };
+  return { ok: true, mode: 'live' };
+}
+
+/**
  * 2026-10-13 MK 確定: 決済会社は**冗長化**（利用停止・障害・契約終了に備える事業継続）であって、お客様に選ばせる併設ではない。
  * - お客様に見せるのは「カードで支払う」1 本だけ（`card-create-checkout`）。決済会社の選択 UI は作らない。
  * - 本番で新しい申込を受ける決済会社は ACTIVE_CARD_PROVIDER の 1 社だけ。切替は運営側がこの値を変える PR で行う

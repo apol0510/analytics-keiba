@@ -5,13 +5,15 @@
  * ⚠️ API 鍵・カード情報・メールアドレス・レコード内容をログに出さない。
  */
 
+import { randomUUID } from 'node:crypto';
 import { airtable } from '../stripeServer.js';
-import { checkoutProviderGate } from '../cardSales.js';
-import { decideCardPurchase } from '../cardOneTime.js';
+import { checkoutProviderGate, resolveCardModeDelegated, PRODUCTION_ORIGIN } from '../cardSales.js';
+import { decideCardPurchase, cardProductById } from '../cardOneTime.js';
+import { PADDLE_CHECKOUT_CREATE_URL } from '../neutralCheckoutHost.js';
 import { applyCardGrant, applyCardRefund, readCardOrderStatus } from '../entitlementLedger.js';
 import {
   resolvePaddleMode, buildTransactionBody, matchTransaction, decideAdjustment, isTransactionId, checkoutUrlMatchesOrigin,
-  GRANT_EVENTS, ADJUSTMENT_EVENTS, PROVIDER,
+  signTsBody, GRANT_EVENTS, ADJUSTMENT_EVENTS, PROVIDER,
 } from './paddleCore.js';
 
 export function paddleApi({ apiBase, key, fetchImpl }) {
@@ -39,11 +41,70 @@ export function paddleApi({ apiBase, key, fetchImpl }) {
 }
 
 /**
- * 決済画面（取引）を作る（ログイン中の会員だけ）。
+ * Paddle API で取引だけを作る（会員資格の確認・Airtable 読みはしない・PADDLE_API_KEY が要る）。
+ * 分離サイト（鍵を持つ）が、委譲元で資格確認済みの intent を受けて使う。商品カタログの純粋検証だけ再実行する（防御）。
  * @returns {{ ok: true, url, transactionId } | { ok: false, status, code }}
  */
-export async function createPaddleCheckout({ env, origin, recordId, productId, entry = 'direct', now = new Date(), fetchImpl }) {
-  const mode = resolvePaddleMode({ key: env.PADDLE_API_KEY, origin });
+export async function createPaddleTransaction({ env, origin, recordId, productId, entry = 'direct', salesOpen, now = new Date(), fetchImpl }) {
+  const mode = resolvePaddleMode({ key: env.PADDLE_API_KEY, origin, ...(salesOpen === undefined ? {} : { salesOpen }) });
+  if (!mode.ok) return { ok: false, status: 503, code: mode.reason };
+  const gate = checkoutProviderGate({ provider: PROVIDER, mode: mode.mode, entry });
+  if (!gate.ok) return { ok: false, status: 409, code: gate.reason };
+  if (!recordId) return { ok: false, status: 401, code: 'login_required' };
+  // カタログ不変条件だけを再検査する（fail closed）。会員資格（memberOnly・既存契約・買い切り会員）は
+  // fields が要るので委譲元（Airtable を持つ本番サイト）が確認済み。ここで fields:null で再判定すると
+  // 会員限定価格（premium-annual-light）を誤って弾くため、商品の存在と「買い切りはカード不可」だけ見る。
+  const product = cardProductById(productId);
+  if (!product) return { ok: false, status: 400, code: 'invalid_product' };
+  if (product.planType === 'Lifetime') return { ok: false, status: 409, code: 'lifetime_bank_transfer_only' };
+  const api = paddleApi({ apiBase: mode.apiBase, key: env.PADDLE_API_KEY, fetchImpl });
+  const txn = await api.createTransaction(buildTransactionBody({ productId, recordId, origin }));
+  if (!isTransactionId(txn?.id) || !txn?.checkout?.url) return { ok: false, status: 502, code: 'checkout_failed' };
+  // Default payment link が別サイトを指していたら使わない（未払いの取引は課金されない）
+  if (!checkoutUrlMatchesOrigin(txn.checkout.url, origin)) return { ok: false, status: 502, code: 'checkout_url_mismatch' };
+  return { ok: true, url: txn.checkout.url, transactionId: txn.id };
+}
+
+/**
+ * 本番サイト → 分離サイトへ、短寿命・署名付き intent を渡して取引を作らせる（案 B・PADDLE_CHECKOUT_CREATE_URL）。
+ * intent は会員資格の確認後に本番で作り、CARD_GRANT_INTERNAL_SECRET で署名する。クライアントには出さない（server-to-server）。
+ * 署名は `signTsBody`（ts:rawBody）。分離サイトが短い tolerance で検証するため、リプレイは短窓のみ・かつ再送しても
+ * 新たな「未払い」取引が増えるだけ（Paddle はカード入力時にしか課金しない・付与は transactionId で冪等）。
+ * @returns {{ ok: true, url, transactionId } | { ok: false, status, code }}
+ */
+async function delegatePaddleCheckout({ env, origin, recordId, productId, entry, fetchImpl }) {
+  const f = fetchImpl || fetch;
+  const body = JSON.stringify({ v: 1, recordId, productId, origin, entry, nonce: randomUUID() });
+  const sig = signTsBody({ rawBody: body, secret: env.CARD_GRANT_INTERNAL_SECRET });
+  let res;
+  try {
+    res = await f(PADDLE_CHECKOUT_CREATE_URL, { method: 'POST', headers: { 'content-type': 'application/json', 'x-internal-signature': sig }, body });
+  } catch { return { ok: false, status: 502, code: 'checkout_failed' }; }
+  const text = await res.text().catch(() => '');
+  let data = null; try { data = text ? JSON.parse(text) : null; } catch { data = null; }
+  if (!res.ok) {
+    // 受付前・設定不足（分離サイトの 503: card_sales_not_open / *_key_missing 等）はそのまま伝える。
+    // 署名・配線・transient（401/400/5xx）は内部理由を出さず 502 checkout_failed に丸める（別社へ作り直さない）。
+    const code = res.status === 503 && typeof data?.error === 'string' ? data.error : 'checkout_failed';
+    return { ok: false, status: res.status === 503 ? 503 : 502, code };
+  }
+  if (!isTransactionId(data?.transactionId) || !checkoutUrlMatchesOrigin(data?.url, origin)) {
+    return { ok: false, status: 502, code: 'checkout_failed' };
+  }
+  return { ok: true, url: data.url, transactionId: data.transactionId };
+}
+
+/**
+ * 決済画面（取引）を作る（ログイン中の会員だけ）。会員資格は必ず本番サイト（Airtable を持つ）で確認する。
+ * - ローカルに PADDLE_API_KEY がある（分離サイト・Sandbox の Deploy Preview）: そのまま取引を作る。
+ * - 本番サイトで鍵が無い（4KB で本番には置かない）: 資格確認のあと、取引の作成だけ分離サイトへ委譲する。
+ * @returns {{ ok: true, url, transactionId } | { ok: false, status, code }}
+ */
+export async function createPaddleCheckout({ env, origin, recordId, productId, entry = 'direct', salesOpen, now = new Date(), fetchImpl }) {
+  const delegate = !env.PADDLE_API_KEY && Boolean(env.CARD_GRANT_INTERNAL_SECRET) && String(origin) === PRODUCTION_ORIGIN;
+  const mode = delegate
+    ? resolveCardModeDelegated({ provider: PROVIDER, origin, salesOpen })
+    : resolvePaddleMode({ key: env.PADDLE_API_KEY, origin, ...(salesOpen === undefined ? {} : { salesOpen }) });
   if (!mode.ok) return { ok: false, status: 503, code: mode.reason };
   const gate = checkoutProviderGate({ provider: PROVIDER, mode: mode.mode, entry });
   if (!gate.ok) return { ok: false, status: 409, code: gate.reason };
@@ -53,12 +114,8 @@ export async function createPaddleCheckout({ env, origin, recordId, productId, e
   try { rec = await at.get(recordId); } catch { return { ok: false, status: 401, code: 'login_required' }; }
   const d = decideCardPurchase({ productId, fields: rec?.fields || {}, now });
   if (!d.ok) return { ok: false, status: d.code === 'invalid_product' ? 400 : 409, code: d.code };
-  const api = paddleApi({ apiBase: mode.apiBase, key: env.PADDLE_API_KEY, fetchImpl });
-  const txn = await api.createTransaction(buildTransactionBody({ productId, recordId, origin }));
-  if (!isTransactionId(txn?.id) || !txn?.checkout?.url) return { ok: false, status: 502, code: 'checkout_failed' };
-  // Default payment link が別サイトを指していたら使わない（未払いの取引は課金されない）
-  if (!checkoutUrlMatchesOrigin(txn.checkout.url, origin)) return { ok: false, status: 502, code: 'checkout_url_mismatch' };
-  return { ok: true, url: txn.checkout.url, transactionId: txn.id };
+  if (delegate) return delegatePaddleCheckout({ env, origin, recordId, productId: d.product.id, entry, fetchImpl });
+  return createPaddleTransaction({ env, origin, recordId, productId: d.product.id, entry, salesOpen, now, fetchImpl });
 }
 
 /**
