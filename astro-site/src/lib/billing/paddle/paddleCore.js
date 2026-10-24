@@ -17,6 +17,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { cardProductById } from '../cardOneTime.js';
 import { CARD_SALES_OPEN as SALES, resolveCardMode } from '../cardSales.js';
+import { paddleCheckoutPage } from '../neutralCheckoutHost.js';
 
 export const PROVIDER = 'paddle';
 export const CARD_SALES_OPEN = SALES[PROVIDER];
@@ -84,11 +85,12 @@ export function buildTransactionBody({ productId, recordId, origin }) {
   };
 }
 
-/** Paddle が返した決済画面 URL が、このサイトの /checkout/paddle/ か（別ドメインへ顧客を送らない） */
+/** Paddle が返した決済画面 URL が、このサイトの決済ページ（paddleCheckoutPage）か（別ドメインへ顧客を送らない） */
 export function checkoutUrlMatchesOrigin(url, origin) {
   try {
     const u = new URL(String(url || ''));
-    return u.origin === String(origin || '') && u.pathname === '/checkout/paddle/' && /^txn_[a-z0-9]+$/.test(u.searchParams.get('_ptxn') || '');
+    // 本番サイトは中立ホストの決済ページ（Paddle の承認ドメイン）・それ以外は自サイトの /checkout/paddle/
+    return `${u.origin}${u.pathname}` === paddleCheckoutPage(origin) && /^txn_[a-z0-9]+$/.test(u.searchParams.get('_ptxn') || '');
   } catch { return false; }
 }
 

@@ -1,3 +1,15 @@
+# 💳 Paddle 本番（Live）接続 — 中立ホストの決済ページ・通知先（2026-10-24 / **PR 作成・人の merge 待ち（billing path）**）
+
+| 項目 | 状態 |
+|---|---|
+| 前提（観測）| 本番アカウント承認（MK 報告・Payoneer 通過・Payout settings 保存）。paddle-live MCP（OAuth）で `GET /verifications` onboarding・domain = completed・checkout domain `checkout.tirol.link` = approved を確認。Live の取引 0・顧客 0・通知先 0・client token 0・product 0 |
+| 問題 | Live は承認ドメインのページでしか決済画面を開かないが、本番サイトは自サイトの `/checkout/paddle/` しか受けない（`checkout_url_mismatch`）→ Live では購入できない構成だった（§5 条件 5 が未決）|
+| 実装 | 中立ホストに決済ページ `/pay/`（受付中かつ live token のときだけ Paddle.js）・完了 `/r/paddle/complete`（302）・通知 `/hooks/paddle`（200 プロキシ）。本番サイトは `checkout.tirol.link/pay/` だけを受ける。`paddle-webhook` は `webhookSiteOrigin` で Host を判定。非カタログ価格は維持（Live カタログは作らない）|
+| test | test:billing 238 pass（+3 件）・check:safety pass |
+| 受付 | **閉じたまま**（`CARD_SALES_OPEN.paddle=false`・`CARD_PAYMENTS_AVAILABLE=false`）。開けるのは MK の明示決定の PR だけ（CARD_PAYMENT_PROVIDERS §5）|
+| 残り | ① merge（人）→ 中立サイト再 deploy（`_redirects` に Paddle 2 行）② MCP に write 権限（MK・Connectors → MCPs）→ Default payment link・通知先・client token を Live に作成 ③ live API key（MCP では作れない・MK）→ production env `PADDLE_API_KEY`・`PADDLE_WEBHOOK_SECRET` ④ 本番 smoke（申込 503・未署名通知 401・署名済み通知が付与しない）⑤ 受付開始の判断材料を MK へ |
+| rollback | revert（受付閉のため顧客影響なし）・中立サイトは前の deploy を Netlify で restore |
+
 # 🧭 PayPal 決済完了 → Premium 利用画面への自動遷移（2026-10-22 MK 決定 / **#829 `10423dcf` merge・本番反映・本番 smoke 済み**）
 
 | 項目 | 状態 |

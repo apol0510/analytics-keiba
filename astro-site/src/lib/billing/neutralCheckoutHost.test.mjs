@@ -5,7 +5,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { PRODUCTION_ORIGIN } from './cardSales.js';
 import { hasBannedPaymentWord } from './paymentDisplayNames.js';
-import { NEUTRAL_ROUTES, PAYPAL_LIVE_WEBHOOK_URL, paypalReturnUrls, webhookSiteOrigin } from './neutralCheckoutHost.js';
+import { NEUTRAL_ROUTES, PAYPAL_LIVE_WEBHOOK_URL, PADDLE_LIVE_PAYMENT_LINK, PADDLE_LIVE_WEBHOOK_URL, paddleCheckoutPage, paypalReturnUrls, webhookSiteOrigin } from './neutralCheckoutHost.js';
+import { checkoutUrlMatchesOrigin } from './paddle/paddleCore.js';
 import { buildOrderBody } from './paypal/paypalCore.js';
 
 const REC = 'recAAAAAAAAAAAAAA';
@@ -51,4 +52,32 @@ test('Webhook: 中立ホスト経由（Host=checkout.tirol.link）は本番と�
   assert.equal(webhookSiteOrigin('deploy-preview-1--analytics-keiba.netlify.app'), PREVIEW);
   const fn = readFileSync(fileURLToPath(new URL('../../../netlify/functions/paypal-order-webhook.js', import.meta.url)), 'utf8');
   assert.match(fn, /const origin = webhookSiteOrigin\(/);
+});
+
+test('Paddle Live（2026-10-24）: 決済ページ・通知先は中立ホスト・本番サイトは中立ホストの決済ページだけを受ける', () => {
+  assert.equal(PADDLE_LIVE_PAYMENT_LINK, 'https://checkout.tirol.link/pay/');
+  assert.equal(PADDLE_LIVE_WEBHOOK_URL, 'https://checkout.tirol.link/hooks/paddle');
+  for (const v of [PADDLE_LIVE_PAYMENT_LINK, PADDLE_LIVE_WEBHOOK_URL]) assert.equal(hasBannedPaymentWord(v), false, v);
+  assert.equal(paddleCheckoutPage(PRODUCTION_ORIGIN), PADDLE_LIVE_PAYMENT_LINK);
+  assert.equal(paddleCheckoutPage(PREVIEW), `${PREVIEW}/checkout/paddle/`);
+  const T = 'txn_01abcdefghijklmnop';
+  assert.equal(checkoutUrlMatchesOrigin(`https://checkout.tirol.link/pay/?_ptxn=${T}`, PRODUCTION_ORIGIN), true);
+  // 本番サイトの自ページ・別ホスト・別パスは使わない（fail closed）
+  assert.equal(checkoutUrlMatchesOrigin(`${PRODUCTION_ORIGIN}/checkout/paddle/?_ptxn=${T}`, PRODUCTION_ORIGIN), false);
+  assert.equal(checkoutUrlMatchesOrigin(`https://checkout.tirol.link/checkout/paddle/?_ptxn=${T}`, PRODUCTION_ORIGIN), false);
+  assert.equal(checkoutUrlMatchesOrigin(`https://evil.example/pay/?_ptxn=${T}`, PRODUCTION_ORIGIN), false);
+  assert.equal(checkoutUrlMatchesOrigin('https://checkout.tirol.link/pay/?_ptxn=bad', PRODUCTION_ORIGIN), false);
+  // Sandbox（Deploy Preview）は従来どおり自サイトの /checkout/paddle/
+  assert.equal(checkoutUrlMatchesOrigin(`${PREVIEW}/checkout/paddle/?_ptxn=${T}`, PREVIEW), true);
+  assert.equal(checkoutUrlMatchesOrigin(`https://checkout.tirol.link/pay/?_ptxn=${T}`, PREVIEW), false);
+  // 通知は中立ホスト経由で本番サイトとして判定・完了は会員サイトの完了画面へ 302
+  assert.equal(webhookSiteOrigin('checkout.tirol.link'), PRODUCTION_ORIGIN);
+  const byFrom = Object.fromEntries(NEUTRAL_ROUTES.map((r) => [r.from, r]));
+  assert.deepEqual({ ...byFrom['/hooks/paddle'] }, { from: '/hooks/paddle', to: `${PRODUCTION_ORIGIN}/.netlify/functions/paddle-webhook`, status: '200!' });
+  assert.deepEqual({ ...byFrom['/r/paddle/complete'] }, { from: '/r/paddle/complete', to: `${PRODUCTION_ORIGIN}/checkout/card-complete/`, status: '302!' });
+});
+
+test('paddle-webhook は Host を webhookSiteOrigin で判定する（中立ホスト経由の本番通知を Sandbox 扱いにしない）', () => {
+  const src = readFileSync(fileURLToPath(new URL('../../../netlify/functions/paddle-webhook.js', import.meta.url)), 'utf8');
+  assert.match(src, /const origin = webhookSiteOrigin\(event\.headers\?\.host/);
 });
