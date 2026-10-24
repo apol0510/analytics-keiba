@@ -95,16 +95,34 @@ async function delegatePaddleCheckout({ env, origin, recordId, productId, entry,
 }
 
 /**
+ * このサイト・この鍵が無い本番で、取引作成を分離サイトへ委譲する条件。
+ * 本番サイト（PADDLE_API_KEY を 4KB 制約で置けない）だけが true。鍵を持つサイト（分離サイト・Sandbox preview）は false。
+ */
+export function shouldDelegatePaddle({ env = {}, origin } = {}) {
+  return !env.PADDLE_API_KEY && Boolean(env.CARD_GRANT_INTERNAL_SECRET) && String(origin || '') === PRODUCTION_ORIGIN;
+}
+
+/**
+ * 「このサイト・この鍵・この origin で Paddle を受け付けられるか」を委譲の有無に関わらず同じ基準で返す。
+ * ⚠️ 入口の Function（早期 503 判定）も createPaddleCheckout も必ずこれを使う。直接 resolvePaddleMode を呼ぶと、
+ *    委譲時（本番は鍵なし）に paddle_key_missing で止まり、createPaddleCheckout の委譲経路へ到達しない。
+ * @returns {{ ok: true, mode } | { ok: false, reason }}
+ */
+export function resolvePaddleModeForEnv({ env = {}, origin, salesOpen } = {}) {
+  return shouldDelegatePaddle({ env, origin })
+    ? resolveCardModeDelegated({ provider: PROVIDER, origin, salesOpen })
+    : resolvePaddleMode({ key: env.PADDLE_API_KEY, origin, ...(salesOpen === undefined ? {} : { salesOpen }) });
+}
+
+/**
  * 決済画面（取引）を作る（ログイン中の会員だけ）。会員資格は必ず本番サイト（Airtable を持つ）で確認する。
  * - ローカルに PADDLE_API_KEY がある（分離サイト・Sandbox の Deploy Preview）: そのまま取引を作る。
  * - 本番サイトで鍵が無い（4KB で本番には置かない）: 資格確認のあと、取引の作成だけ分離サイトへ委譲する。
  * @returns {{ ok: true, url, transactionId } | { ok: false, status, code }}
  */
 export async function createPaddleCheckout({ env, origin, recordId, productId, entry = 'direct', salesOpen, now = new Date(), fetchImpl }) {
-  const delegate = !env.PADDLE_API_KEY && Boolean(env.CARD_GRANT_INTERNAL_SECRET) && String(origin) === PRODUCTION_ORIGIN;
-  const mode = delegate
-    ? resolveCardModeDelegated({ provider: PROVIDER, origin, salesOpen })
-    : resolvePaddleMode({ key: env.PADDLE_API_KEY, origin, ...(salesOpen === undefined ? {} : { salesOpen }) });
+  const delegate = shouldDelegatePaddle({ env, origin });
+  const mode = resolvePaddleModeForEnv({ env, origin, salesOpen });
   if (!mode.ok) return { ok: false, status: 503, code: mode.reason };
   const gate = checkoutProviderGate({ provider: PROVIDER, mode: mode.mode, entry });
   if (!gate.ok) return { ok: false, status: 409, code: gate.reason };
