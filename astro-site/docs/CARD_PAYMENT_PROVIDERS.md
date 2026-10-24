@@ -88,12 +88,26 @@ Paddle Live は**承認ドメインのページでしか決済画面を開かな
 | Default payment link（Live）| `https://checkout.tirol.link/pay/`。取引の `checkout.url` がこれ以外なら本番サイトは `checkout_url_mismatch`（fail closed）| `neutralCheckoutHost.PADDLE_LIVE_PAYMENT_LINK`・`paddleCheckoutPage`・`paddleCore.checkoutUrlMatchesOrigin` |
 | 決済ページ | 中立サイトの静的ページ `/pay/`（英語・noindex・ナビ/sitemap 外）。**カード受付中（`CARD_PAYMENTS_AVAILABLE`）かつ build 時に live の client token を渡したときだけ** Paddle.js を読む。それ以外は案内だけ | `ops/checkout-site/site.mjs` `renderPayPage`（build: `PADDLE_LIVE_CLIENT_TOKEN=… node ops/checkout-site/build.mjs <out>`）|
 | 完了後 | Paddle.js の successUrl = `/r/paddle/complete?provider=paddle&order=txn_…` → 会員サイト `/checkout/card-complete/` へ 302（クエリはそのまま）。付与は Webhook が正本 | `NEUTRAL_ROUTES` |
-| 通知先（Live）| `https://checkout.tirol.link/hooks/paddle` → 会員サイト `paddle-webhook` へ 200 プロキシ（本文・署名ヘッダはそのまま）。Function は Host を `webhookSiteOrigin` で判定（中立ホスト = 本番）。イベント `transaction.paid`・`transaction.completed`・`adjustment.created`・`adjustment.updated` | `NEUTRAL_ROUTES`・`paddle-webhook.js` |
+| 通知先（Live）| `https://checkout.tirol.link/hooks/paddle` → **中立サイト自身の modern function が受ける**（案B・§2.2）。署名検証＋取引照会は中立サイト（鍵を持つ）、会員付与だけ本番 `internal-paddle-grant` へ署名付きで委譲。イベント `transaction.paid`・`transaction.completed`・`adjustment.created`・`adjustment.updated` | `NEUTRAL_ROUTES`・`ops/checkout-site/netlify/functions/paddle-webhook.mjs`・`internal-paddle-grant.js` |
 | 商品・価格 | **Live カタログは作らない**（非カタログ価格を取引ごとに API で渡す方式を維持・§2）| `paddleCore.buildTransactionBody` |
-| production env | `PADDLE_API_KEY`（`pdl_live_apikey_…`・取引の作成/照会・adjustment 照会）・`PADDLE_WEBHOOK_SECRET`（Live 通知先の secret key）。`PADDLE_CLIENT_TOKEN` は production に入れない（Live の決済ページは中立サイト側）。入れても `CARD_SALES_OPEN.paddle=false` の間は申込 503 `card_sales_not_open`・通知は `ignored_card_sales_not_open`（付与しない）| `cardSales.resolveCardMode` |
+| production env（会員サイト）| `PADDLE_API_KEY` と `PADDLE_WEBHOOK_SECRET` は**置かない**（4KB 上限・Live の鍵は中立サイト側）。会員サイトが持つのは `CARD_GRANT_INTERNAL_SECRET`（中立サイト→会員サイトの内部署名）だけ。鍵が無い本番サイトは取引作成を中立サイトへ委譲し、受付前は `card_sales_not_open`（`CARD_SALES_OPEN.paddle=false` の間は中立サイトも fail closed）| `cardSales.resolveCardModeDelegated`・`paddleServer.createPaddleCheckout` |
 | 受付開始 | §5 の条件どおり（MK の明示決定 → `CARD_SALES_OPEN.paddle` と `CARD_PAYMENTS_AVAILABLE` を true にする PR → 中立サイトを live token 付きで再 deploy → 本番の実購入 1 件と全額返金で付与・戻しを確認）| — |
 
 env（Deploy Preview の Sandbox 用だけ。production には入れない）: `PADDLE_API_KEY`（`pdl_sdbx_apikey_…`）・`PADDLE_WEBHOOK_SECRET`（通知先の secret key）・`PADDLE_CLIENT_TOKEN`（`test_…`・公開してよい）・`CARD_E2E_SECRET`（24 文字以上）
+
+### 2.2 分離サイト方式（案B・2026-10-24 MK 確定）
+
+会員サイト（`analytics.keiba.link`）の Functions env は **AWS Lambda 4KB 上限ぎりぎり**で、Live の `PADDLE_API_KEY`・`PADDLE_WEBHOOK_SECRET` を足すと全 Function の作成が失敗する。そこで Paddle Live の**鍵を使う処理だけ**を現代 runtime の独立サイト `checkout.tirol.link`（Netlify site `tirol-checkout`・modern functions＝4KB 制約なし）へ分離する。
+
+| 処理 | どこで | 鍵・secret | 委譲 |
+|---|---|---|---|
+| **Webhook**（署名検証・取引照会・付与指示）| 中立サイト `paddle-webhook.mjs` | `PADDLE_WEBHOOK_SECRET`・`PADDLE_API_KEY` | 会員付与（Airtable/Redis）だけ本番 `internal-paddle-grant` へ `signTsBody`（ts:rawBody・`CARD_GRANT_INTERNAL_SECRET`）で委譲。冪等性・二重付与防止は本番 `entitlementLedger`（同一 Redis キー）がそのまま担保 |
+| **取引作成**（`POST /transactions`）| 中立サイト `paddle-create-checkout.mjs` | `PADDLE_API_KEY` | 会員資格（ログイン・既存契約・買い切り・会員限定価格）は**本番サイトが Airtable で確認**し、確認後に短寿命・署名付き intent（`CARD_GRANT_INTERNAL_SECRET`・`signTsBody`・tolerance 120s）を `PADDLE_CHECKOUT_CREATE_URL` へ渡す。金額・通貨・商品名はクライアント由来を使わず中立サイトがカタログ（`buildTransactionBody`）から組む |
+
+- 本番サイトの入口（`card-create-checkout`・`paddle-create-checkout`・`cardCheckout.startCardCheckout`）は不変。`createPaddleCheckout` が「鍵がローカルに無い本番サイト」を検知し、資格確認のあと取引作成だけを委譲する（`delegate = !PADDLE_API_KEY && CARD_GRANT_INTERNAL_SECRET && origin===本番`）。Sandbox の Deploy Preview は従来どおり鍵がローカルにあるので委譲しない（直接作成）。
+- 中立サイトが持つ secret は `PADDLE_API_KEY`・`PADDLE_WEBHOOK_SECRET`・`CARD_GRANT_INTERNAL_SECRET` だけ。会員付与に要る Airtable/Redis/SendGrid の鍵は**本番サイトだけ**が持つ（分離サイトの秘密面を最小化）。
+- intent は server-to-server のみ（ブラウザに出さない）＋短窓＋HMAC。リプレイしても増えるのは「未払い」取引だけで、課金はカード入力時にしか起きず、付与は transactionId で冪等＝**二重課金・二重付与は起きない**。
+- 検証: `paddleCheckoutDelegation.test.mjs`（委譲＝直接と同一本文・改ざん不可・署名/期限/資格のガード・実関数の 405/401/503/400）/ `paddleDelegation.test.mjs`（Webhook 委譲の冪等・署名）。
 
 ## 3. PayPal（Orders v2・一回払い）
 
@@ -298,7 +312,8 @@ DNS（Cloudflare・MK 設定）: `sandbox.checkout` CNAME `tirol-checkout-sandbo
 | カード受付 | `CARD_PAYMENTS_AVAILABLE` は `CARD_SALES_OPEN` と一致（閉の間は「準備中・銀行振込のみ」）。開ける PR で両方を変える |
 | 決済会社 | 選択 UI なし。Billing に Paddle（Merchant of Record）を第一として記載・切替時も二重請求なしと明記 |
 | 返金 | AK の既存方針どおり（完了後は不可・二重/誤請求・未提供・法令上必要な場合は返金）。⚠️ Paddle の Buyer Terms は購入者に独自の返金を認める場合がある→本番受付前に Paddle 審査で指摘があれば MK が判断 |
-| ホスティング | Netlify site `tirol-checkout`（id af09193e-1710-4a8c-bd5c-cfa7068586e9・`https://tirol-checkout.netlify.app`）。deploy は出力先ディレクトリから `netlify deploy --prod --dir <out> --no-build --site <id>` |
+| ホスティング | Netlify site `tirol-checkout`（id af09193e-1710-4a8c-bd5c-cfa7068586e9・`https://tirol-checkout.netlify.app`）。deploy は出力先ディレクトリから `netlify deploy --prod --dir <out> --no-build --functions <repo>/ops/checkout-site/netlify/functions --site <id>` |
+| Functions（案B・modern runtime）| `paddle-webhook.mjs`（`/hooks/paddle`・署名検証/照会/付与委譲）・`paddle-create-checkout.mjs`（取引作成・本番から署名付き intent を受ける・§2.2）。env: `PADDLE_API_KEY`・`PADDLE_WEBHOOK_SECRET`・`CARD_GRANT_INTERNAL_SECRET` のみ（Airtable/Redis/SendGrid は持たない）|
 | index 化 | `INDEXABLE=true`（2026-10-13 DNS 接続後）。robots Allow＋`sitemap.xml`・canonical は `https://checkout.tirol.link`。止めるときは false に戻して再 deploy |
 | 独自ドメイン | **接続済み（2026-10-13）**: Cloudflare tirol.link ゾーンの CNAME `checkout` → `tirol-checkout.netlify.app`（DNS only）・Netlify custom domain・Let's Encrypt（自動更新）・`tirol-checkout.netlify.app/*` は `_redirects` で独自ドメインへ 301 |
 | Paddle Website approval | 申請ドメイン `checkout.tirol.link`。Paddle の審査項目（商品説明・価格・機能・Terms/Refund/Privacy のナビ到達・HTTPS）は充足。**Terms には会社名または個人事業主の法的氏名が要る**（現状は屋号のみ）→ 氏名掲載は MK 判断。参照: Paddle Help「Domain Review」|

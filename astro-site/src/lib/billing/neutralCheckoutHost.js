@@ -47,6 +47,14 @@ export const PADDLE_LIVE_PAYMENT_LINK = `${NEUTRAL_CHECKOUT_ORIGIN}${NEUTRAL_PAT
 export const PADDLE_LIVE_WEBHOOK_URL = `${NEUTRAL_CHECKOUT_ORIGIN}${NEUTRAL_PATHS.paddleWebhook}`;
 
 /**
+ * 分離サイト（checkout.tirol.link）上の取引作成 endpoint（案 B・2026-10-24）。
+ * 本番サイトは PADDLE_API_KEY を持たない（4KB）ので、会員資格の確認まで本番で行ったあと、
+ * 署名付き intent（CARD_GRANT_INTERNAL_SECRET・短寿命）をこの endpoint へ渡して取引だけを作らせる。
+ * webhook の内部委譲（internal-paddle-grant）と対称で、どちらも Netlify の function パスを直接呼ぶ（`_redirects` は増やさない）。
+ */
+export const PADDLE_CHECKOUT_CREATE_URL = `${NEUTRAL_CHECKOUT_ORIGIN}/.netlify/functions/paddle-create-checkout`;
+
+/**
  * Paddle の取引の checkout.url が指すべきページ（Default payment link）。本番サイトだけ中立ホストの決済ページ、
  * それ以外（Sandbox の Deploy Preview 等）は受けたオリジンの /checkout/paddle/。
  */
