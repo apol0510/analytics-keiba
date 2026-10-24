@@ -1,3 +1,6 @@
+import { withLambda } from '@netlify/aws-lambda-compat';
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+installAirtableCallMeter({ source: 'gemini-race-analysis' });
 /**
  * Netlify Function: Gemini AIレース分析
  *
@@ -62,7 +65,7 @@ const RESULT_PROMPT = `あなたは競馬AI予想の結果振り返りライタ�
 - 箇条書きや番号リストは使わない
 - 「KEIBA Intelligenceがお届けする」等の前置き・自己紹介は不要。いきなり本文から始める`;
 
-exports.handler = async (event, context) => {
+const __lambdaHandler = async (event, context) => {
   const headers = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Content-Type',
@@ -338,3 +341,5 @@ function formatResultData(data) {
 
   return `以下のレース結果データを元に、優しく丁寧な振り返り文を作成してください。データに含まれる事実のみを使い、情報の追加は禁止です。買い目（馬番の組み合わせ）は絶対に書かないでください。\n\n${facts.join('\n')}`;
 }
+
+export default withLambda(__lambdaHandler);

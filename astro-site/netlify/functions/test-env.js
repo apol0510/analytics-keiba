@@ -1,9 +1,12 @@
+import { withLambda } from '@netlify/aws-lambda-compat';
+import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
+installAirtableCallMeter({ source: 'test-env' });
 /**
  * 環境変数テスト用エンドポイント（デバッグ専用）
  * URL: /.netlify/functions/test-env
  */
 
-exports.handler = async (event, context) => {
+const __lambdaHandler = async (event, context) => {
   const headers = {
     'Access-Control-Allow-Origin': '*',
     'Content-Type': 'application/json'
@@ -39,3 +42,5 @@ exports.handler = async (event, context) => {
     }, null, 2)
   };
 };
+
+export default withLambda(__lambdaHandler);
