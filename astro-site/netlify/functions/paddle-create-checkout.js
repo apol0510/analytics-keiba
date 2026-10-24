@@ -13,8 +13,7 @@
 import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
 installAirtableCallMeter({ source: 'paddle-create-checkout' });
 import { corsHeaders, resolveSiteOrigin, readSessionRecordId, isAllowedOrigin } from '../../src/lib/billing/stripeRuntime.js';
-import { createPaddleCheckout } from '../../src/lib/billing/paddle/paddleServer.js';
-import { resolvePaddleMode } from '../../src/lib/billing/paddle/paddleCore.js';
+import { createPaddleCheckout, resolvePaddleModeForEnv } from '../../src/lib/billing/paddle/paddleServer.js';
 import { e2eRecordIdFor } from '../../src/lib/billing/cardE2E.js';
 
 const json = (statusCode, headers, body) => ({ statusCode, headers, body: JSON.stringify(body) });
@@ -29,7 +28,8 @@ exports.handler = async (event) => {
   let body = {};
   try { body = JSON.parse(event.body || '{}'); } catch { return json(400, headers, { error: 'invalid_json' }); }
   const origin = resolveSiteOrigin(event.headers);
-  const mode = resolvePaddleMode({ key: env.PADDLE_API_KEY, origin });
+  // 鍵の有無だけで弾かない。本番（鍵なし・委譲）は resolvePaddleModeForEnv が card_sales_not_open 等を返す
+  const mode = resolvePaddleModeForEnv({ env, origin });
   if (!mode.ok) return json(503, headers, { error: mode.reason });
   try {
     const recordId = await readSessionRecordId(event.headers?.cookie || event.headers?.Cookie || '', env)

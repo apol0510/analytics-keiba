@@ -9,9 +9,8 @@
  * - 会員権限・料金・購入資格・完了画面は決済会社によらず共通（cardOneTime / entitlementLedger / card-complete）。
  */
 import { ACTIVE_CARD_PROVIDER } from './cardSales.js';
-import { createPaddleCheckout } from './paddle/paddleServer.js';
+import { createPaddleCheckout, resolvePaddleModeForEnv } from './paddle/paddleServer.js';
 import { createPaypalOrder } from './paypal/paypalServer.js';
-import { resolvePaddleMode } from './paddle/paddleCore.js';
 import { resolvePaypalMode } from './paypal/paypalCore.js';
 
 export const OPEN_CHECKOUT_TTL_SEC = 24 * 60 * 60;
@@ -22,9 +21,10 @@ const CREATORS = Object.freeze({
   paypal: (a) => createPaypalOrder(a),
 });
 
-/** 申込先（ACTIVE_CARD_PROVIDER）がこのサイト・この鍵で受け付けられるか（各社の resolve*Mode と同じ判定） */
+/** 申込先（ACTIVE_CARD_PROVIDER）がこのサイト・この鍵で受け付けられるか（各社の resolve*Mode と同じ判定）。
+ *  paddle は委譲（本番は鍵なし）も含めて resolvePaddleModeForEnv で判定する（鍵の有無だけで早期に弾かない）。 */
 export function resolveActiveCardMode({ env = {}, origin, active = ACTIVE_CARD_PROVIDER } = {}) {
-  if (active === 'paddle') return resolvePaddleMode({ key: env.PADDLE_API_KEY, origin });
+  if (active === 'paddle') return resolvePaddleModeForEnv({ env, origin });
   if (active === 'paypal') return resolvePaypalMode({ env, origin });
   return { ok: false, reason: 'card_provider_unset' };
 }
