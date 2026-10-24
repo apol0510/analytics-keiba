@@ -65,16 +65,23 @@ export async function createPaddleCheckout({ env, origin, recordId, productId, e
  * Webhook 1 件（署名検証は呼び出し側）。
  * @returns {{ result: string, retry?: boolean }}  retry=true は Paddle に再送させる（500）
  */
-export async function handlePaddleEvent({ env, origin, parsed, redis, notify = async () => {}, fetchImpl, now }) {
+/** 前段チェック（mode / parsed / event-type）。grant/adjustment でなければ stop を返す。 */
+function paddlePrecheck({ env, origin, parsed }) {
   const mode = resolvePaddleMode({ key: env.PADDLE_API_KEY, origin });
-  if (!mode.ok) return { result: `ignored_${mode.reason}` };
-  if (!parsed || parsed.ignored) return { result: 'ignored_event' };
+  if (!mode.ok) return { stop: { result: `ignored_${mode.reason}` } };
+  if (!parsed || parsed.ignored) return { stop: { result: 'ignored_event' } };
   const isGrant = GRANT_EVENTS.includes(parsed.eventType);
-  const isAdj = ADJUSTMENT_EVENTS.includes(parsed.eventType);
-  if (!isGrant && !isAdj) return { result: 'ignored_event' };
-  if (!redis) return { result: 'redis_missing', retry: true };
+  if (!isGrant && !ADJUSTMENT_EVENTS.includes(parsed.eventType)) return { stop: { result: 'ignored_event' } };
+  return { mode, isGrant };
+}
 
-  const api = paddleApi({ apiBase: mode.apiBase, key: env.PADDLE_API_KEY, fetchImpl });
+/**
+ * Paddle API で取引を照会・照合し、付与/返金の「指示」だけを返す（DB 書き込み・notify はしない）。
+ * PADDLE_API_KEY だけ必要。分離サイト（独立 runtime）から会員付与を本番へ委譲するために使う。
+ * @returns {{ result: string, retry?: boolean, alert?: { reason: string },
+ *   apply?: { kind: 'grant'|'refund', provider: string, paymentId: string, recordId: string, productId?: string, paidAt?: *, full?: boolean } }}
+ */
+async function paddleGrantDecision({ api, parsed, isGrant }) {
   let txn;
   try { txn = await api.getTransaction(parsed.transactionId); } catch (e) {
     return { result: 'transaction_lookup_failed', retry: e.status !== 404 };
@@ -82,20 +89,57 @@ export async function handlePaddleEvent({ env, origin, parsed, redis, notify = a
   const m = matchTransaction(txn);
   if (!m.ok) {
     // 未払い（ready/billed）の通知は正常な途中経過。照合違いだけ管理者へ
-    if (!String(m.reason).startsWith('status_')) await notify('mismatch', { provider: PROVIDER, paymentId: parsed.transactionId, reason: m.reason });
-    return { result: `mismatch_${m.reason}` };
+    const alert = String(m.reason).startsWith('status_') ? undefined : { reason: m.reason };
+    return { result: `mismatch_${m.reason}`, ...(alert ? { alert } : {}) };
   }
-  const at = airtable(env, fetchImpl);
-  const common = { redis, at, provider: PROVIDER, paymentId: parsed.transactionId, recordId: m.recordId, notify, ...(now ? { now } : {}) };
-  if (isGrant) return applyCardGrant({ ...common, productId: m.productId, paidAt: m.paidAt });
-
+  if (isGrant) {
+    return { result: 'grant', apply: { kind: 'grant', provider: PROVIDER, paymentId: parsed.transactionId, recordId: m.recordId, productId: m.productId, paidAt: m.paidAt } };
+  }
   let adj;
   try { adj = await api.getAdjustment(parsed.adjustmentId); } catch (e) {
     return { result: 'adjustment_lookup_failed', retry: e.status !== 404 };
   }
   const d = decideAdjustment(adj, parsed.transactionId);
   if (d.action !== 'revert') return { result: `ignored_${d.reason}` };
-  return applyCardRefund({ ...common, full: d.full });
+  return { result: 'refund', apply: { kind: 'refund', provider: PROVIDER, paymentId: parsed.transactionId, recordId: m.recordId, full: d.full } };
+}
+
+/**
+ * 署名検証済み Webhook を照会・照合して付与/返金「指示」を返す（DB・notify なし）。
+ * 分離サイト（checkout.tirol.link の modern function）が使い、apply を本番 grant endpoint へ渡す。
+ */
+export async function decidePaddleGrant({ env, origin, parsed, fetchImpl }) {
+  const pc = paddlePrecheck({ env, origin, parsed });
+  if (pc.stop) return pc.stop;
+  const api = paddleApi({ apiBase: pc.mode.apiBase, key: env.PADDLE_API_KEY, fetchImpl });
+  return paddleGrantDecision({ api, parsed, isGrant: pc.isGrant });
+}
+
+/**
+ * 本番の付与「指示」（decidePaddleGrant の apply）を entitlementLedger へ反映する。
+ * Airtable / Redis だけ必要（PADDLE_API_KEY 不要）。本番 grant endpoint が使う。
+ */
+export async function applyPaddleGrant({ env, apply, redis, notify = async () => {}, fetchImpl, now }) {
+  if (!redis) return { result: 'redis_missing', retry: true };
+  if (!apply || (apply.kind !== 'grant' && apply.kind !== 'refund')) return { result: 'ignored_no_apply' };
+  const at = airtable(env, fetchImpl);
+  const common = { redis, at, provider: apply.provider || PROVIDER, paymentId: apply.paymentId, recordId: apply.recordId, notify, ...(now ? { now } : {}) };
+  if (apply.kind === 'grant') return applyCardGrant({ ...common, productId: apply.productId, paidAt: apply.paidAt });
+  return applyCardRefund({ ...common, full: apply.full });
+}
+
+export async function handlePaddleEvent({ env, origin, parsed, redis, notify = async () => {}, fetchImpl, now }) {
+  const pc = paddlePrecheck({ env, origin, parsed });
+  if (pc.stop) return pc.stop;
+  if (!redis) return { result: 'redis_missing', retry: true };
+  const api = paddleApi({ apiBase: pc.mode.apiBase, key: env.PADDLE_API_KEY, fetchImpl });
+  const dec = await paddleGrantDecision({ api, parsed, isGrant: pc.isGrant });
+  if (dec.alert) await notify('mismatch', { provider: PROVIDER, paymentId: parsed.transactionId, reason: dec.alert.reason });
+  if (!dec.apply) return dec.retry ? { result: dec.result, retry: dec.retry } : { result: dec.result };
+  const at = airtable(env, fetchImpl);
+  const common = { redis, at, provider: PROVIDER, paymentId: parsed.transactionId, recordId: dec.apply.recordId, notify, ...(now ? { now } : {}) };
+  if (dec.apply.kind === 'grant') return applyCardGrant({ ...common, productId: dec.apply.productId, paidAt: dec.apply.paidAt });
+  return applyCardRefund({ ...common, full: dec.apply.full });
 }
 
 /** 決済完了画面の確認用（本人の取引だけ） */

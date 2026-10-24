@@ -116,6 +116,15 @@ export function verifyPaddleSignature({ header, rawBody, secret, nowSec = Math.f
   });
 }
 
+/**
+ * `ts=<unix>;h1=<hex>` 形式の署名を作る（verifyPaddleSignature と対。署名対象は `${ts}:${rawBody}`）。
+ * 分離サイト → 本番 grant endpoint の内部リクエスト認証（CARD_GRANT_INTERNAL_SECRET）に使う。
+ */
+export function signTsBody({ rawBody, secret, nowSec = Math.floor(Date.now() / 1000) }) {
+  const h1 = createHmac('sha256', secret).update(`${nowSec}:${String(rawBody)}`).digest('hex');
+  return `ts=${nowSec};h1=${h1}`;
+}
+
 /** Webhook 本文から必要なものだけ（値は照会の手がかりにだけ使う） */
 export function parsePaddleWebhook(body) {
   let j = body;
