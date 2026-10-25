@@ -61,7 +61,8 @@ export async function handleCreateCheckout({ request, env, store, now = new Date
     console.error(JSON.stringify({ event: 'paddle_create_checkout_sep_fail', code: r.code }));
     return resp(r.status || 502, { error: r.code || 'checkout_failed' });
   }
-  console.log(JSON.stringify({ event: 'paddle_create_checkout_sep', product: productId, ...(r.reused ? { reused: r.reused } : {}) }));
+  // degraded: ストア不達で原子的予約を取れず fail-open で作成した稀路。無言にせず記録する。
+  console.log(JSON.stringify({ event: 'paddle_create_checkout_sep', product: productId, ...(r.reused ? { reused: r.reused } : {}), ...(r.degraded ? { degraded: true } : {}) }));
   return resp(200, { url: r.url, transactionId: r.transactionId });
 }
 

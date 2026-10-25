@@ -107,8 +107,10 @@ env（Deploy Preview の Sandbox 用だけ。production には入れない）: `
 - 本番サイトの入口（`card-create-checkout`・`paddle-create-checkout`・`cardCheckout.startCardCheckout`）は不変。`createPaddleCheckout` が「鍵がローカルに無い本番サイト」を検知し、資格確認のあと取引作成だけを委譲する（`delegate = !PADDLE_API_KEY && CARD_GRANT_INTERNAL_SECRET && origin===本番`）。Sandbox の Deploy Preview は従来どおり鍵がローカルにあるので委譲しない（直接作成）。
 - 中立サイトが持つ secret は `PADDLE_API_KEY`・`PADDLE_WEBHOOK_SECRET`・`CARD_GRANT_INTERNAL_SECRET` だけ。会員付与に要る Airtable/Redis/SendGrid の鍵は**本番サイトだけ**が持つ（分離サイトの秘密面を最小化）。
 - intent は server-to-server のみ（ブラウザに出さない）＋短窓＋HMAC。課金はカード入力時にしか起きず、付与は transactionId で冪等＝**二重課金・二重付与は起きない**。
-- 取引作成を冪等化する（`checkoutIdempotency.mjs`・Netlify Blobs・env 追加なし）。中立サイトは Paddle を叩く前に 2 つの冪等キーを確認し、ヒットすれば**新しい取引を作らず**既存の `{url, transactionId}` を返す: ① `nonce`（同一 intent の再送・120s 窓のリプレイ）② `recordId+productId`（別 nonce の二重クリック・30 分窓）。これで「未払い取引の乱立」も防ぐ（監査 2026-10-24 の指摘＝nonce 単回使用が無い・transactionId 冪等は別取引の二重決済を防がない、への対応）。ストア障害は fail-open（dedup を諦めても取引作成は通す。重複は上流の冪等で吸収）。
-- 検証: `paddleCheckoutDelegation.test.mjs`（委譲＝直接と同一本文・改ざん不可・署名/期限/資格のガード・実関数の 405/401/503/400）/ `paddleCheckoutIdempotency.test.mjs`（nonce・二重クリックの冪等／別商品・TTL 経過・作成失敗は作り直す／fail-open／実 handler の署名→冪等→作成の配線）/ `paddleDelegation.test.mjs`（Webhook 委譲の冪等・署名）。
+- 取引作成を冪等化する（`checkoutIdempotency.mjs`・Netlify Blobs・env 追加なし）。中立サイトは Paddle を叩く前に、まず確定済みの結果を 2 つのキーで確認し（① `nonce`＝同一 intent の再送・120s 窓のリプレイ／② `recordId+productId`＝別 nonce の二重クリック・30 分窓）、ヒットすれば**新しい取引を作らず**既存の `{url, transactionId}` を返す。
+  - 🛑 **原子的予約で race を閉じる（2026-10-25・独立検証 KAO codeSignals の指摘への対応）**: 初版は `get → create → set` が非原子的で、ほぼ同時の 2 リクエストが両方 get で miss し両方 create しえた。現在は create の前に冪等キーを **`setJSON(..., { onlyIfNew: true })`（CAS）で原子的に予約**し、`modified===true` を得た 1 件だけが create する。予約に負けた側は create せず、勝者の結果を短時間だけ待って**同じ取引**を返す（待っても未確定なら 409 `checkout_in_progress`＝retry 可能・二重作成しない）。create 失敗時は予約を解放する。
+  - ⚠️ **fail-open の範囲を限定・可視化**: 通常の防御は上の原子的予約。ストア自体が不達で予約が取れないときだけ fail-open で作成を通し、結果に `degraded:true` を立てて handler がログする（無言の fail-open を廃止）。作成は課金前の非 charge 操作で、fail-closed にすると Blobs 障害中は全 checkout が止まるため。障害中の残余リスクは「未払い取引の重複」だけで、課金はカード入力時のみ・付与は transactionId で冪等＝**二重課金・二重付与は起きない**（監査 2026-10-24 ＝nonce 単回使用が無い・transactionId 冪等は別取引の二重決済を防がない、への対応を含む）。
+- 検証: `paddleCheckoutDelegation.test.mjs`（委譲＝直接と同一本文・改ざん不可・署名/期限/資格のガード・実関数の 405/401/503/400）/ `paddleCheckoutIdempotency.test.mjs`（nonce・二重クリックの冪等／別商品・TTL 経過・作成失敗は作り直す／**reserve の CAS・同時 2 リクエストで create は 1 回・競合時 409・create 失敗で予約解放・ストア不達は degraded**／実 handler の署名→冪等→作成の配線）/ `paddleDelegation.test.mjs`（Webhook 委譲の冪等・署名）。
 
 ## 3. PayPal（Orders v2・一回払い）
 
