@@ -21,12 +21,18 @@ import { PRODUCTION_ORIGIN } from '../cardSales.js';
 const SECRET = 'internal-secret-0123456789abcdef0123456789abcdef';
 const REC = 'recAAAAAAAAAAAAAA';
 
-// Netlify Blobs 互換の偽ストア（Map 実装）。makeBlobStore の expiresAt 判定もまとめて検証する。
+// Netlify Blobs 互換の偽ストア（Map 実装）。
+// ⚠️ 条件付き書込 onlyIfNew（CAS）を忠実に模す: 既存キーには書かず { modified:false } を返す。
+//    これが無いと原子的予約 reserve の race 検証ができない（Blobs v10 の実挙動と同じにする）。
 function fakeGetStore() {
   const m = new Map();
   const store = {
     async get(key) { const v = m.get(key); return v === undefined ? null : v; },
-    async setJSON(key, val) { m.set(key, val); },
+    async setJSON(key, val, opts) {
+      if (opts && opts.onlyIfNew && m.has(key)) return { modified: false };
+      m.set(key, val);
+      return { modified: true };
+    },
     async delete(key) { m.delete(key); },
   };
   const fn = () => store;
@@ -158,4 +164,67 @@ test('handler: 作成失敗(card_sales_not_open) はキャッシュせず 503 �
   // もう一度（別 nonce）→ また作成を試みる（失敗はキャッシュされない）
   await handleCreateCheckout({ request: signedRequest(intent({ nonce: 'nonce-2' })), env: ENV, store, createTransaction });
   assert.equal(n, 2);
+});
+
+// --- 原子性・同時実行（#838 の非原子 get→create→set の race を閉じたことの検証） ---
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+test('reserve は原子的: 同じキーの 2 回目は taken（CAS・onlyIfNew）', async () => {
+  const store = makeBlobStore(fakeGetStore());
+  const k = `idem:${REC}:premium-annual`;
+  assert.equal(await store.reserve(k, IDEM_TTL_SEC), 'won');
+  assert.equal(await store.reserve(k, IDEM_TTL_SEC), 'taken');
+});
+
+test('🛑 同時 2 リクエスト（別 nonce・同一 rec+product）: 原子的予約で create は 1 回・両者同じ取引', async () => {
+  const store = makeBlobStore(fakeGetStore());
+  let creates = 0;
+  let releaseGate;
+  const gate = new Promise((r) => { releaseGate = r; });
+  // 最初に予約を取った側だけが create する。create は gate が開くまで未確定（＝勝者が作成中の状態）。
+  const create = async () => { creates += 1; await gate; return { ok: true, url: `${PRODUCTION_ORIGIN}/x?_ptxn=txn_A`, transactionId: 'txn_A' }; };
+  const pA = idempotentCreateCheckout({ store, nonce: 'n-A', recordId: REC, productId: 'premium-annual', create });
+  await sleep(5); // A が予約を取り、create（gate 待ち）へ入るのを待つ
+  const pB = idempotentCreateCheckout({ store, nonce: 'n-B', recordId: REC, productId: 'premium-annual', create, waitTries: 50, waitDelayMs: 5 });
+  await sleep(5);
+  releaseGate(); // A の create 完了 → 結果を idem に確定
+  const [a, b] = await Promise.all([pA, pB]);
+  assert.equal(a.transactionId, 'txn_A');
+  assert.equal(b.transactionId, 'txn_A'); // B は新規作成せず同じ取引を得る
+  assert.equal(b.reused, 'idem');
+  assert.equal(creates, 1);               // ⚠️ 初版はここが 2 になりえた（非原子的 get→create→set）
+});
+
+test('予約競合で勝者の結果が出ないと 409 checkout_in_progress（二重作成しない）', async () => {
+  const store = makeBlobStore(fakeGetStore());
+  // 勝者が予約だけ取って未確定、の状態を模す
+  await store.reserve(`idem:${REC}:premium-annual`, IDEM_TTL_SEC);
+  let creates = 0;
+  const create = async () => { creates += 1; return { ok: true, url: 'x', transactionId: 'txn_X' }; };
+  const r = await idempotentCreateCheckout({ store, nonce: 'n-Z', recordId: REC, productId: 'premium-annual', create, waitTries: 3, waitDelayMs: 1 });
+  assert.equal(r.ok, false);
+  assert.equal(r.status, 409);
+  assert.equal(r.code, 'checkout_in_progress');
+  assert.equal(creates, 0); // 勝者を待つだけで二重作成しない
+});
+
+test('create 失敗時は予約を解放する（次の試行が 409 で塞がれない）', async () => {
+  const store = makeBlobStore(fakeGetStore());
+  let n = 0;
+  const create = async () => { n += 1; return n === 1 ? { ok: false, status: 503, code: 'card_sales_not_open' } : { ok: true, url: 'x', transactionId: 'txn_9' }; };
+  const a = await idempotentCreateCheckout({ store, nonce: 'n-A', recordId: REC, productId: 'premium-annual', create });
+  assert.equal(a.ok, false);
+  const b = await idempotentCreateCheckout({ store, nonce: 'n-B', recordId: REC, productId: 'premium-annual', create, waitTries: 2, waitDelayMs: 1 });
+  assert.equal(b.ok, true); assert.equal(b.transactionId, 'txn_9'); // 予約が解放され、作り直せた
+  assert.equal(n, 2);
+});
+
+test('ストア不達は fail-open だが degraded を立てる（無言の fail-open にしない）', async () => {
+  const store = makeBlobStore(() => { throw new Error('blobs down'); });
+  const create = async () => ({ ok: true, url: `${PRODUCTION_ORIGIN}/x?_ptxn=txn_D`, transactionId: 'txn_D' });
+  const a = await idempotentCreateCheckout({ store, nonce: 'n', recordId: REC, productId: 'premium-annual', create });
+  assert.equal(a.ok, true);
+  assert.equal(a.transactionId, 'txn_D');
+  assert.equal(a.degraded, true); // 呼び出し側（handler）がログできる
 });
