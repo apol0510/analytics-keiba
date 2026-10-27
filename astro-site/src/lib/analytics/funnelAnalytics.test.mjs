@@ -264,6 +264,56 @@ test('配線: /free-signup/ はサーバーが新規登録を返したときだ�
   assert.ok(page.lastIndexOf('} else {', at) < page.lastIndexOf('if (data.success) {', at));
 });
 
+// ── 無料会員登録ページの途中の段（2026-10-27 追加）────────────────────
+test('free_signup の段は段ごとのイベント名で、パラメータを持たない（メールを送りようがない）', () => {
+  const { AkFunnel, sent } = load();
+  const steps = ['form_start', 'input_error', 'mismatch', 'submit', 'existing_free', 'paid_member', 'denied', 'error'];
+  for (const s of steps) AkFunnel.freeSignupStep(s);
+  assert.deepEqual(sent.map((x) => x.name), [
+    'free_signup_form_start', 'free_signup_input_error', 'free_signup_email_mismatch', 'free_signup_submit',
+    'free_signup_existing_free', 'free_signup_paid_member', 'free_signup_denied', 'free_signup_error',
+  ]);
+  for (const x of sent) assert.deepEqual(x.params, {});
+  // どの段も sign_up ではない
+  assert.equal(sent.some((x) => x.name === 'sign_up'), false);
+});
+
+test('free_signup: 語彙外の段（メールアドレス等）は送らない・二重送信は落とす・gtag 無しでも投げない', () => {
+  const { AkFunnel, sent } = load();
+  assert.equal(AkFunnel.freeSignupStep('someone@example.com'), null);
+  assert.equal(AkFunnel.freeSignupStep('toString'), null);
+  assert.equal(sent.length, 0);
+  AkFunnel.freeSignupStep('submit');
+  AkFunnel.freeSignupStep('submit');
+  assert.equal(sent.length, 1);
+  const noGtag = load({ withGtag: false });
+  assert.doesNotThrow(() => noGtag.AkFunnel.freeSignupStep('submit'));
+  const throwing = load();
+  throwing.win.gtag = () => { throw new Error('blocked'); };
+  assert.doesNotThrow(() => throwing.AkFunnel.freeSignupStep('error'));
+});
+
+test('配線: /free-signup/ の段は検査・送信・応答の正しい位置にあり、メールを渡さない', () => {
+  const page = readFileSync(fileURLToPath(new URL('../../pages/free-signup.astro', import.meta.url)), 'utf8');
+  // 呼び出しは段名の文字列リテラルか、応答から決めた閉じた三択だけ
+  assert.equal(/freeSignupStep\(\s*email/.test(page), false);
+  assert.equal(/trackSignupStep\(\s*email/.test(page), false);
+  const calls = [...page.matchAll(/trackSignupStep\('([a-z_]+)'/g)].map((m) => m[1]);
+  for (const c of calls) assert.ok(['form_start', 'input_error', 'mismatch', 'submit', 'existing_free', 'paid_member', 'denied', 'error'].includes(c), c);
+  // submit はサーバー呼び出しより前、existing_free は成功分岐の非新規側
+  assert.ok(page.indexOf("trackSignupStep('submit')") < page.indexOf("fetch('/.netlify/functions/auth-user'"));
+  const signUpAt = page.indexOf('window.AkFunnel.signUpCompleted()');
+  const existingAt = page.indexOf("trackSignupStep('existing_free')");
+  assert.ok(existingAt > signUpAt && existingAt - signUpAt < 200, 'existing_free は sign_up の else 側');
+  // 失敗分岐: 有料会員 / 拒否 / それ以外を分け、catch では未分類のときだけ error
+  assert.match(page, /data\.requiresMagicLink === true \? 'paid_member'/);
+  assert.match(page, /data\.denied === true \? 'denied' : 'error'/);
+  assert.match(page, /if \(!resultTracked\) trackSignupStep\('error'\)/);
+  // 確認欄の不一致は input_error と分けて数える
+  const mismatchAt = page.indexOf("trackSignupStep('mismatch')");
+  assert.ok(mismatchAt > 0 && page.indexOf('if (email !== emailConfirm) {') < mismatchAt);
+});
+
 // ---- PayPal 定期課金の purchase（2026-10-21）: 閉じた語彙・年額は Annual・同じ購読で 2 回送らない
 function loadWithStorage() {
   const x = load();

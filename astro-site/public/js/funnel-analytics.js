@@ -19,6 +19,7 @@
  * | 申込成功 | `application_submitted`（**サーバーが受理を返した後だけ**）|
  * | 無料会員登録の完了 | `sign_up`（GA4 推奨イベント。**サーバーが新規登録を返したときだけ**・2026-09-29 追加）|
  * | カード決済の途中の段 | `card_checkout_click` / `card_checkout_email_form` / `card_checkout_blocked` / `card_checkout_error` / `pricing_card_link_click`（2026-10-22 追加・下の cardCheckoutStep）|
+ * | 無料会員登録ページの途中の段 | `free_signup_form_start` / `free_signup_input_error` / `free_signup_email_mismatch` / `free_signup_submit` / `free_signup_existing_free` / `free_signup_paid_member` / `free_signup_denied` / `free_signup_error`（2026-10-27 追加・下の freeSignupStep）|
  *
  * ## なぜページごとに書かないのか
  *
@@ -306,7 +307,41 @@
     return { event: name, params: params };
   }
 
+  /**
+   * 無料会員登録ページ（/free-signup/）の途中の段（2026-10-27・GA4_CONVERSION_FUNNEL §3）。
+   *
+   * 28 日で /free-signup/ 到達 115 人 → `sign_up` 6 人。間の段が 1 つも無く、
+   * 「入力しなかった」「確認欄で弾かれた」「既存会員だった」「サーバーが失敗した」を区別できなかった。
+   * GA4 の自動の form_start / form_submit は `<form>` が無いこのページでは出ない。
+   *
+   * ⚠️ イベント名を段ごとに分ける（cardCheckoutStep と同じ理由。パラメータは送らない）。
+   * ⚠️ メールアドレス・エラー本文は受け取らない（引数は閉じた語彙の段名だけ）。
+   * ⚠️ どれも登録完了ではない（新規登録の完了は `sign_up` だけ）。
+   */
+  var FREE_SIGNUP_STEP_EVENTS = {
+    form_start: 'free_signup_form_start',       // メール欄に初めて入力した（1 ページ 1 回）
+    input_error: 'free_signup_input_error',     // 未入力・形式不正で送信前に止まった
+    mismatch: 'free_signup_email_mismatch',     // 確認用メールが一致せず送信前に止まった
+    submit: 'free_signup_submit',               // 入力検査を通り、サーバーへ送った
+    existing_free: 'free_signup_existing_free', // 既存の無料会員だった（ログイン扱い・sign_up ではない）
+    paid_member: 'free_signup_paid_member',     // 有料会員だった（ログインリンクが必要と返った）
+    denied: 'free_signup_denied',               // サーバーが拒否した（退会・停止・重複等）
+    error: 'free_signup_error'                  // サーバー失敗・通信失敗・応答不明
+  };
+
+  function freeSignupStep(step) {
+    var name = Object.prototype.hasOwnProperty.call(FREE_SIGNUP_STEP_EVENTS, step) ? FREE_SIGNUP_STEP_EVENTS[step] : null;
+    if (!name) return null;
+    if (!shouldSend(name, Date.now())) return null;
+    try {
+      if (typeof global.gtag === 'function') global.gtag('event', name, {});
+    } catch (_) {}
+    return { event: name, params: {} };
+  }
+
   global.AkFunnel = {
+    freeSignupStep: freeSignupStep,
+    FREE_SIGNUP_STEP_EVENTS: FREE_SIGNUP_STEP_EVENTS,
     cardCheckoutStep: cardCheckoutStep,
     CARD_STEP_EVENTS: CARD_STEP_EVENTS,
     checkoutStart: checkoutStart,

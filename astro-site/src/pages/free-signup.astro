@@ -438,6 +438,21 @@ import CampaignBanner from '../components/CampaignBanner.astro';
 </style>
 
 <script>
+    // 登録の途中の段を GA4 へ（段名だけ・メールアドレスは渡さない。正本 GA4_CONVERSION_FUNNEL.md §3）
+    function trackSignupStep(step) {
+        try { window.AkFunnel && window.AkFunnel.freeSignupStep(step); } catch (_) {}
+    }
+
+    // メール欄に初めて入力した（1 ページ 1 回）
+    let signupFormStarted = false;
+    ['email-input', 'email-confirm'].forEach(function(id) {
+        document.getElementById(id).addEventListener('input', function() {
+            if (signupFormStarted) return;
+            signupFormStarted = true;
+            trackSignupStep('form_start');
+        });
+    });
+
     // メールアドレス確認用リアルタイムチェック
     document.getElementById('email-confirm').addEventListener('input', function() {
         const email = document.getElementById('email-input').value.trim();
@@ -468,21 +483,25 @@ import CampaignBanner from '../components/CampaignBanner.astro';
         const emailConfirm = emailConfirmInput.value.trim();
 
         if (!email) {
+            trackSignupStep('input_error');
             showError('メールアドレスを入力してください');
             return;
         }
 
         if (!emailConfirm) {
+            trackSignupStep('input_error');
             showError('確認用メールアドレスを入力してください');
             return;
         }
 
         if (email !== emailConfirm) {
+            trackSignupStep('mismatch');
             showError('メールアドレスが一致しません。もう一度ご確認ください。');
             return;
         }
 
         if (!isValidEmail(email)) {
+            trackSignupStep('input_error');
             showError('有効なメールアドレスを入力してください');
             return;
         }
@@ -506,6 +525,9 @@ import CampaignBanner from '../components/CampaignBanner.astro';
     });
 
     async function registerFreeUser(email) {
+        trackSignupStep('submit');
+        // サーバーの応答で段を決めたら、catch で 'error' を重ねて送らない
+        let resultTracked = false;
         try {
             showSuccess('無料会員登録を処理中...');
             
@@ -588,7 +610,10 @@ import CampaignBanner from '../components/CampaignBanner.astro';
                 // 無料会員登録の完了を GA4 へ（**サーバーが新規登録を返したときだけ**。既存会員のログインは数えない）
                 if (data.isNewUser === true) {
                     window.AkFunnel && window.AkFunnel.signUpCompleted();
+                } else {
+                    trackSignupStep('existing_free');
                 }
+                resultTracked = true;
 
                 // 3秒後に完了画面を表示
                 setTimeout(() => {
@@ -598,10 +623,14 @@ import CampaignBanner from '../components/CampaignBanner.astro';
                 }, 3000);
                 
             } else {
+                trackSignupStep(data.requiresMagicLink === true ? 'paid_member'
+                    : data.denied === true ? 'denied' : 'error');
+                resultTracked = true;
                 throw new Error(data.message || 'サーバーエラー');
             }
             
         } catch (error) {
+            if (!resultTracked) trackSignupStep('error');
             console.error('Registration error:', error);
             showError('登録に失敗しました。再度お試しください。' + (error.message ? ' (' + error.message + ')' : ''));
         }
