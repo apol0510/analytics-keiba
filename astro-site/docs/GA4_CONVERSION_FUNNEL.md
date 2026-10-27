@@ -76,6 +76,32 @@ URL で確実に判別できるからである。イベントを増やすと同�
 `/free/` → `/free-signup/` → **登録完了** を同じセッションで数えられるようにするための段（それまで「登録完了は未計測」）。
 登録数そのものの正本は Airtable（Customers の作成日時）。GA4 は流入元と同じセッションで結びつける用途。
 
+### 無料会員登録ページの途中の段（2026-10-27 追加）
+
+**なぜ要るか**: 28 日（2026-09-23〜10-20）で `/free-signup/` 到達 115 人 → `sign_up` 6 人（約 5%）。
+`page_view` と `sign_up` の間に段が 1 つも無く、「入力しなかった」「確認欄で弾かれた」「既存会員だった（`sign_up` は新規だけ）」
+「サーバー・通信が失敗した」を区別できなかった。GA4 の拡張計測の `form_start` / `form_submit` は `<form>` 要素でしか出ないため、
+`<form>` を持たないこのページでは出ない（プロパティ全体の `form_start` / `form_submit` は他ページのもの）。
+
+発火は `/free-signup/` だけ・送信は `funnel-analytics.js` の `AkFunnel.freeSignupStep(step)` だけ。**パラメータは送らない**
+（段ごとにイベント名を分け、カスタム ディメンション無しで標準レポートの「イベント名」で数えられる）。
+
+| イベント | 意味 |
+|---|---|
+| `free_signup_form_start` | メール欄（本体 / 確認用）に初めて入力した（1 ページ 1 回）|
+| `free_signup_input_error` | 未入力・形式不正で送信前に止まった |
+| `free_signup_email_mismatch` | 確認用メールが一致せず送信前に止まった |
+| `free_signup_submit` | 入力検査を通り、`auth-user` へ送った |
+| `sign_up` | （既存）サーバーが新規登録を返した |
+| `free_signup_existing_free` | 既存の無料会員だった（ログイン扱い。登録完了ではない）|
+| `free_signup_paid_member` | 有料会員だった（`requiresMagicLink`。このページではログインできない）|
+| `free_signup_denied` | サーバーが拒否した（退会・停止・同一メール重複 等）|
+| `free_signup_error` | サーバー失敗・通信失敗・応答不明 |
+
+読み方: `form_start` 人数 ÷ `/free-signup/` 到達 = 入力に着手した率。`submit` ÷ `form_start` = 入力完了率（`mismatch` / `input_error` で原因）。
+`submit` = `sign_up` + `existing_free` + `paid_member` + `denied` + `error`（ブラウザ計測なので欠けはあり得る）。
+**どれも登録完了ではない**（登録完了は `sign_up`、登録数の正本は Airtable）。メールアドレス・エラー本文は渡さない（引数は閉じた語彙の段名だけ・テストで固定）。
+
 ### カード決済（PayPal 定期課金）の途中の段（2026-10-22 追加・実験記録 `docs/measurements/PRICING_CONV_2026_10.md`）
 
 `begin_checkout`（サーバーが決済画面の URL を返した後）と `purchase`（反映済みを確認した後）の**手前**が見えなかったため追加。
