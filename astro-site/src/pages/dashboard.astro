@@ -36,6 +36,7 @@ import MemberRankCard from '../components/membership/MemberRankCard.astro';
 import { memberRank } from '../lib/membership/memberRank.js';
 import { loadMemberAcquisitions, loadAcquiredResults } from '../lib/acquisition/acquisitionServer.js';
 import { summarizeUsage } from '../lib/acquisition/usageStats.js';
+import { MYPAGE_KEIBA_LIVE_URL } from '../lib/ailab/aiLabRedirect.js';
 
 // 判定が落ちても画面は出す（従来の localStorage 経路へフォールバックする）。
 let viewer = { state: VIEWER_STATE.UNKNOWN, reason: 'not_resolved', entitlements: null, profile: null, isMember: false };
@@ -188,8 +189,8 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
             </div>
 
             {rankInfo && <MemberRankCard rank={rankInfo} name={viewer.profile?.name || null} />}
-            {isPaidMember && (
-                <a class="ailab-entry" href="https://keiba-live.com/?utm_source=analytics-keiba&utm_medium=referral&utm_campaign=mypage_ai_live" target="_blank" rel="noopener" aria-label="KEIBA LIVE（別サイト・新しいタブで開きます）">
+            {viewer.isMember && (
+                <a class="ailab-entry" href={MYPAGE_KEIBA_LIVE_URL} target="_blank" rel="noopener" aria-label="KEIBA LIVE（別サイト・新しいタブで開きます）">
                     <span class="ailab-entry-kicker">KEIBA LIVE <em>別サイト</em></span>
                     <b>AI が全馬を評価する様子を、ライブで</b>
                     <small>中央・南関の全出走馬を AI が評価。発走直前まで再計算（keiba-live.com）</small>

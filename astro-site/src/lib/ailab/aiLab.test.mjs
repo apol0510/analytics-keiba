@@ -273,9 +273,6 @@ test('API/ページ: 取込は秘密ヘッダ必須・env 無しは 503／自動
   assert.match(viewCode, /verifyPlanAccess/); assert.equal(/airtable/i.test(viewCode), false);
   assert.match(view, /MARKETS\.includes\(market\)/);
   assert.equal(AILAB_POLL_PLANS.includes('free'), false);
-  const page = read('src/pages/ai-lab/index.astro');
-  assert.match(page, /gatePaidPage\(/);
-  assert.match(page, /<AiLabBoard initial=\{initial\} market=\{market\} \/>/, '中央・南関で同じ部品');
   const board = read('src/components/ailab/AiLabBoard.astro');
   assert.match(board, /import \{[^}]*raceDisplay[^}]*\} from '..\/..\/lib\/ailab\/aiLab.js'/, 'ブラウザも同じ判定（単一源）を使う');
   // aiLab.js はブラウザに同梱する: Node 専用の import を持たない
@@ -406,15 +403,23 @@ test('障害レースは対象外と明示する（レース一覧で番号が�
   assert.match(page, /障害レースは対象外です（AI は平地のレースだけを評価しています）/);
 });
 
-test('マイページの入口は KEIBA LIVE（keiba-live.com）へ: 有料会員だけ・新しいタブ・参照元が分かる UTM（2026-10-29 MK）', () => {
+test('KEIBA LIVE へ（2026-10-29 MK）: マイページの入口は会員全員（無料も）・新しいタブ／/ai-lab/ は誰でも 301 で keiba-live.com へ', async () => {
+  const { AI_LAB_REDIRECT_URL, MYPAGE_KEIBA_LIVE_URL } = await import('./aiLabRedirect.js');
+  assert.equal(MYPAGE_KEIBA_LIVE_URL, 'https://keiba-live.com/?utm_source=analytics-keiba&utm_medium=referral&utm_campaign=mypage_ai_live');
+  assert.equal(AI_LAB_REDIRECT_URL, 'https://keiba-live.com/?utm_source=analytics-keiba&utm_medium=referral&utm_campaign=ai_lab_redirect');
   const dash = read('src/pages/dashboard.astro');
-  const m = dash.match(/\{isPaidMember && \(\s*<a class="ailab-entry"([^>]*)>([\s\S]*?)<\/a>/);
-  assert.ok(m, '入口は有料会員の条件の内側');
+  const m = dash.match(/\{viewer\.isMember && \(\s*<a class="ailab-entry"([^>]*)>([\s\S]*?)<\/a>/);
+  assert.ok(m, '入口は会員（無料・有料）の条件の内側');
   const [, attrs, body] = m;
-  assert.match(attrs, /href="https:\/\/keiba-live\.com\/\?utm_source=analytics-keiba&utm_medium=referral&utm_campaign=mypage_ai_live"/);
+  assert.match(attrs, /href=\{MYPAGE_KEIBA_LIVE_URL\}/);
   assert.match(attrs, /target="_blank"/); assert.match(attrs, /rel="noopener"/);
   assert.match(body, /KEIBA LIVE/);
   // KEIBA LIVE はオッズ・期待値の数値を公開しないので、入口の文言でも約束しない
   assert.equal(/オッズ|期待値/.test(body), false);
   assert.equal(/href="\/ai-lab\/"/.test(dash), false, 'マイページから旧 AI ラボへの入口を残さない');
+  // /ai-lab/: 会員判定・Airtable を通さず、誰にでも同じ 301
+  const page = read('src/pages/ai-lab/index.astro');
+  const code = page.replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.match(code, /return Astro\.redirect\(AI_LAB_REDIRECT_URL, 301\)/);
+  assert.equal(/gatePaidPage|resolveViewer|airtable|AiLabBoard/i.test(code), false);
 });

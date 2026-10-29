@@ -785,7 +785,7 @@ test('ガラス面は必ず色付き（ag-tint-blue/violet/gold）か専用の�
   const files = [
     ...readdirSync(`${ROOT}src/components/acquisition`).filter((f) => f.endsWith('.astro')).map((f) => `src/components/acquisition/${f}`),
     'src/pages/free-prediction/jra.astro', 'src/pages/free-prediction/nankan.astro', 'src/pages/free-prediction/all.astro',
-    'src/pages/free-prediction/view.astro', 'src/pages/predictions/view.astro', 'src/pages/predictions/history.astro', 'src/pages/ai-lab/index.astro',
+    'src/pages/free-prediction/view.astro', 'src/pages/predictions/view.astro', 'src/pages/predictions/history.astro', 'src/components/ailab/AiLabBoard.astro',
   ];
   // 専用の色を CSS で持っているもの（レースカード・推奨度・三連複 中心）だけ許す
   const OWN_COLOR = /\b(acq-race|acq-selection|narrowed|lab-race|lab-stats|lab-next)\b/;
