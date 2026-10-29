@@ -3,8 +3,11 @@
 **2026-10-07 MK 確定（仕様変更）**。2026-10-05 版（中央のみ・AI 勝率ランキング・オッズ／期待値を出さない・発走後に AK 上位 5 頭と答え合わせ）を**置き換える**。
 開発中の AI（KAP = keiba-ai-predictor）が**全出走馬を評価している途中の様子**を、有料会員がマイページから見られる場所。
 
-> **2026-10-29 MK: マイページの入口は KEIBA LIVE（https://keiba-live.com/）へ変更**。`dashboard.astro` の入口（有料会員だけ）は新しいタブで keiba-live.com を開く
-> （UTM `utm_source=analytics-keiba&utm_medium=referral&utm_campaign=mypage_ai_live`）。`/ai-lab/` のページ本体と取込は残す（直接 URL では引き続き開ける・会員の権利は変えない）。
+> **2026-10-29 MK: AI ラボは KEIBA LIVE（https://keiba-live.com/）へ移行**。
+> - マイページの入口（`dashboard.astro`）は**会員全員（無料・有料）**に出し、新しいタブで keiba-live.com を開く（UTM `utm_campaign=mypage_ai_live`）。
+> - `/ai-lab/` は誰が来ても **301 で keiba-live.com へ転送**する（UTM `utm_campaign=ai_lab_redirect`・会員判定はしない）。転送先の単一源は `src/lib/ailab/aiLabRedirect.js`。
+> - 旧画面（`components/ailab/AiLabBoard.astro`）と取込・閲覧 API（`/api/ailab/*`）は残す。戻すときは `src/pages/ai-lab/index.astro` を戻す。
+> - 以下の本文は移行前の AI ラボの仕様（記録として残す）。
 
 基準 UI は KAP の Stage A dashboard（`127.0.0.1:8766/?market=nankan`）。中央（JRA）・南関を**同じ UI・同じ情報設計**で切り替える。
 2026-10-05 版の中央 AI ラボの UI・表示は廃止し、この共通 UI へ移行した（「中央は既存仕様維持」「南関だけ新 UI」はしない）。

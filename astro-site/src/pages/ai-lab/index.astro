@@ -1,29 +1,11 @@
 ---
 /**
- * /ai-lab/ — AI ラボ（中央・南関・試験運用）。正本 docs/AI_LAB.md（2026-10-07 MK 確定・2026-10-05 版を置き換え）
- * - KAP の Stage A dashboard（127.0.0.1:8766）の UI を基準に、中央・南関を**同じ UI**で切り替える
- *   （market タブ・開催場・レース・前後レース・自動追従・発走までのカウントダウン・自動更新）
- * - **全出走馬**の AI 勝率・単勝オッズ・期待値。🛑 買い目・◎・推奨馬・金額・的中の競わせ方は出さない。馬番順・強調なし
- * - 欠損・更新停止は数値を出さない（fail closed・判定は aiLab.raceDisplay）
- * - 有料会員だけ（gatePaidPage）。自動更新は /api/ailab/view/（ak_session の署名だけで確認）
+ * /ai-lab/ — 2026-10-29 MK: KEIBA LIVE（https://keiba-live.com/）へ転送する（正本 docs/AI_LAB.md 冒頭）。
+ * 会員の判定・Airtable の読み出しはしない（誰が来ても同じ 301・共有キャッシュ可）。
+ * 旧 AI ラボの画面（components/ailab/AiLabBoard.astro）と取込・閲覧 API は残す（戻すときはこの file を戻す）。
  */
 export const prerender = false;
-import BaseLayout from '../../layouts/BaseLayout.astro';
-import SessionKeepAlive from '../../components/SessionKeepAlive.astro';
-import { gatePaidPage, PAID_PAGE_HEADERS } from '../../lib/auth/paidPageGate.js';
-import { loadMarketView, pickInitialMarket } from '../../lib/ailab/aiLabServer.js';
-import { MARKETS } from '../../lib/ailab/aiLab.js';
-import AiLabBoard from '../../components/ailab/AiLabBoard.astro';
+import { AI_LAB_REDIRECT_URL } from '../../lib/ailab/aiLabRedirect.js';
 
-const gate = await gatePaidPage({ request: Astro.request, requiredPlan: ['standard', 'premium', 'Premium Sanrenpuku'], env: process.env });
-if (gate.response) return gate.response;
-for (const [k, v] of Object.entries(PAID_PAGE_HEADERS)) Astro.response.headers.set(k, v);
-const nowMs = Date.now();
-const views = await Promise.all(MARKETS.map((market) => loadMarketView({ env: process.env, market, nowMs })));
-const market = pickInitialMarket(views, { nowMs, requested: Astro.url.searchParams.get('market') });
-const initial = views[MARKETS.indexOf(market)] || null;
+return Astro.redirect(AI_LAB_REDIRECT_URL, 301);
 ---
-<BaseLayout title="AI ラボ" noindex>
-  <SessionKeepAlive />
-  <AiLabBoard initial={initial} market={market} />
-</BaseLayout>
