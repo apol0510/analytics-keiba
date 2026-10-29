@@ -189,10 +189,10 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
 
             {rankInfo && <MemberRankCard rank={rankInfo} name={viewer.profile?.name || null} />}
             {isPaidMember && (
-                <a class="ailab-entry" href="/ai-lab/" aria-label="AI ラボ（試験運用中）">
-                    <span class="ailab-entry-kicker">AI ラボ <em>試験運用中</em></span>
-                    <b>開発中の AI が全馬を評価する様子を、ライブで</b>
-                    <small>中央・南関の全出走馬を AI が評価。オッズ・期待値を発走直前まで自動更新</small>
+                <a class="ailab-entry" href="https://keiba-live.com/?utm_source=analytics-keiba&utm_medium=referral&utm_campaign=mypage_ai_live" target="_blank" rel="noopener" aria-label="KEIBA LIVE（別サイト・新しいタブで開きます）">
+                    <span class="ailab-entry-kicker">KEIBA LIVE <em>別サイト</em></span>
+                    <b>AI が全馬を評価する様子を、ライブで</b>
+                    <small>中央・南関の全出走馬を AI が評価。発走直前まで再計算（keiba-live.com）</small>
                     <span class="ailab-entry-go" aria-hidden="true">›</span>
                 </a>
             )}

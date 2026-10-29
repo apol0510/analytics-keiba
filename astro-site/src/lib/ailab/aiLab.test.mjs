@@ -405,3 +405,16 @@ test('障害レースは対象外と明示する（レース一覧で番号が�
   const page = read('src/components/ailab/AiLabBoard.astro');
   assert.match(page, /障害レースは対象外です（AI は平地のレースだけを評価しています）/);
 });
+
+test('マイページの入口は KEIBA LIVE（keiba-live.com）へ: 有料会員だけ・新しいタブ・参照元が分かる UTM（2026-10-29 MK）', () => {
+  const dash = read('src/pages/dashboard.astro');
+  const m = dash.match(/\{isPaidMember && \(\s*<a class="ailab-entry"([^>]*)>([\s\S]*?)<\/a>/);
+  assert.ok(m, '入口は有料会員の条件の内側');
+  const [, attrs, body] = m;
+  assert.match(attrs, /href="https:\/\/keiba-live\.com\/\?utm_source=analytics-keiba&utm_medium=referral&utm_campaign=mypage_ai_live"/);
+  assert.match(attrs, /target="_blank"/); assert.match(attrs, /rel="noopener"/);
+  assert.match(body, /KEIBA LIVE/);
+  // KEIBA LIVE はオッズ・期待値の数値を公開しないので、入口の文言でも約束しない
+  assert.equal(/オッズ|期待値/.test(body), false);
+  assert.equal(/href="\/ai-lab\/"/.test(dash), false, 'マイページから旧 AI ラボへの入口を残さない');
+});
