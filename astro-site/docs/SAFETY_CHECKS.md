@@ -138,6 +138,9 @@ CDN から返る静的ページでも、ナビのお知らせ（`BaseLayout`）�
 
 - 全ページに載る処理から API を叩くときは、**応答が確実に決まっている場合は通信しない**
   （`upsellClient.js` の `hasLoginHint()` / `isOutsideCampaignWindow()`）。表示結果は変えない。
+- 無料ログイン・無料登録の端末は `user-plan` があっても `ak_session` が無く、`/api/upsell.json` は必ず 404（2026-11-01 の `[ssr-path]` 実測で SSR 起動の最多・1 日 約 500 回）。
+  404 を受けた端末は `user-plan` の hash と時刻だけを `ak:upsell-no-session` に残し、30 分間は通信しない。
+  `user-plan` が書き換わる・`auth/verify` がセッションを発行する・2xx を受けると印は効かなくなる（`functionBudget.test.mjs`）
   ログイン済み・キャンペーン期間内（前後 1 日の余裕つき）・判定できない端末は従来どおり通信する
 - `getUpsellDecision()` の memo を省略側で作らない（同じページのマイページ等の判定を毒さない）
 - AK 自身が参照するファイル（manifest・アイコン）は `public/` に実在させる

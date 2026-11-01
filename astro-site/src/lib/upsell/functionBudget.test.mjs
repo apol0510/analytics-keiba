@@ -134,6 +134,60 @@ test('localStorage が読めない・無い端末は従来どおり通信する�
   assert.equal(m.hasLoginHint(memStorage({ 'user-plan': JSON.stringify({ plan: 'Light' }) })), true);
 });
 
+test('無料ログイン端末（user-plan はあるがセッションなし）: 404 を受けたら次のページからは叩かない', async () => {
+  const store = memStorage({ 'user-plan': JSON.stringify({ email: 'f@example.com', plan: 'free', nonAuthoritative: true }) });
+  globalThis.localStorage = store;
+  let now = END + 30 * DAY;
+  Date.now = () => now;
+  const calls = stubFetch({ '/api/upsell.json': { status: 404, body: {} } });
+  const n1 = await (await loadFresh()).getCouponNotice();
+  assert.deepEqual(calls, ['/api/upsell.json']);
+  // 印には email も本文も残さない（hash と時刻だけ）
+  const mark = store.getItem('ak:upsell-no-session');
+  assert.ok(mark && !mark.includes('example.com') && !mark.includes('free'));
+  // 次のページ（新しい module）: 通信しない・表示は同じ
+  const n2 = await (await loadFresh()).getCouponNotice();
+  assert.deepEqual(calls, ['/api/upsell.json']);
+  assert.equal(n2.count, n1.count);
+  assert.equal(n2.show, n1.show);
+  // 30 分を過ぎたら 1 回だけ確かめ直す
+  now += 31 * 60 * 1000;
+  await (await loadFresh()).getCouponNotice();
+  assert.deepEqual(calls, ['/api/upsell.json', '/api/upsell.json']);
+});
+
+test('404 の印は user-plan が書き換わると効かない（有料ログイン・購入の直後は通信する）', async () => {
+  const store = memStorage({ 'user-plan': JSON.stringify({ email: 'f@example.com', plan: 'free', nonAuthoritative: true }) });
+  globalThis.localStorage = store;
+  Date.now = () => END + 30 * DAY;
+  const calls = stubFetch({ '/api/upsell.json': { status: 404, body: {} } });
+  await (await loadFresh()).getCouponNotice();
+  store.setItem('user-plan', JSON.stringify({ email: 'f@example.com', plan: 'Premium' }));
+  await (await loadFresh()).getCouponNotice();
+  assert.deepEqual(calls, ['/api/upsell.json', '/api/upsell.json']);
+});
+
+test('2xx を受けたら 404 の印を消す・同じページの getUpsellDecision() は印があっても通信する', async () => {
+  const store = memStorage({ 'user-plan': JSON.stringify({ plan: 'Premium' }) });
+  globalThis.localStorage = store;
+  Date.now = () => END + 30 * DAY;
+  let status = 404;
+  const calls = [];
+  globalThis.fetch = async (u) => { calls.push(String(u)); return { ok: status === 200, status, json: async () => ({ channel: 'none' }) }; };
+  await (await loadFresh()).getCouponNotice();
+  assert.ok(store.getItem('ak:upsell-no-session'));
+  status = 200;
+  const d = await (await loadFresh()).getUpsellDecision();
+  assert.equal(d.channel, 'none');
+  assert.equal(calls.length, 2);
+  assert.equal(store.getItem('ak:upsell-no-session'), null);
+});
+
+test('auth/verify はセッション発行時に 404 の印を消す', () => {
+  const src = readFileSync(new URL('../../pages/auth/verify.astro', import.meta.url), 'utf8');
+  assert.match(src, /'ak:upsell-no-session'/);
+});
+
 test('期間判定は前後 1 日の余裕を持つ（端末の時計ずれで案内を落とさない）', async () => {
   const m = await loadFresh();
   assert.equal(m.isOutsideCampaignWindow(START + DAY), false);
