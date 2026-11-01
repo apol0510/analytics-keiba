@@ -23,6 +23,50 @@ export const UPSELL_CLIENT_CHANNEL = Object.freeze({
 const ENDPOINT = '/api/upsell.json';
 let cached = null;
 
+/** 取得できなかったとき（未ログイン・404・通信エラー）の判定。従来の値と同一 */
+function decisionFallback() {
+  return {
+    channel: UPSELL_CLIENT_CHANNEL.UNKNOWN,
+    sanrenpuku: { allowed: true },
+    plus: { allowed: false },
+    // 取得できなければ「持っていない」扱い＝カードを出さない（fail closed）
+    coupon: { claimed: false },
+  };
+}
+
+/**
+ * この端末にログインの手がかりがあるか（**通信するかどうかの判断にだけ**使う）。
+ *
+ * `ak_session` は HttpOnly で画面から見えない。発行されるのは有料のマジックリンク
+ * ログイン時だけで、そのとき `auth/verify` が必ず `user-plan` を書く。
+ * 手がかりが 1 つも無い端末では `/api/upsell.json` は 404 しか返さない。
+ * ⚠️ 権限の判定には使わない（権威はサーバーの `ak_session`）。
+ */
+export function hasLoginHint(storage) {
+  try {
+    const s = storage || (typeof localStorage !== 'undefined' ? localStorage : null);
+    // ⚠️ 読めない端末（ストレージ拒否など）は「手がかりが無い」と言い切れない → 従来どおり通信する
+    if (!s) return true;
+    s.getItem('user-plan');
+    return readNavAuthState(s).loggedIn === true;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * キャンペーン期間から十分に外れているか（**通信を省くかどうかの判断にだけ**使う）。
+ * 端末の時計のずれを考え、前後 1 日の余裕を持たせる。期間内・境界付近は従来どおり通信する。
+ * 期間外のサーバー応答は `active: false, offers: []` で、画面には何も出ない（下の `empty` と同じ）。
+ */
+const CLOCK_MARGIN_MS = 24 * 60 * 60 * 1000;
+export function isOutsideCampaignWindow(nowMs = Date.now()) {
+  const s = Date.parse(CAMPAIGN_WINDOW.startsAtIso);
+  const e = Date.parse(CAMPAIGN_WINDOW.endsAtIso);
+  if (!Number.isFinite(s) || !Number.isFinite(e) || !Number.isFinite(nowMs)) return false;
+  return nowMs < s - CLOCK_MARGIN_MS || nowMs >= e + CLOCK_MARGIN_MS;
+}
+
 /**
  * 販売導線を取得する（同一ページ内では 1 回だけ通信し、以後は使い回す）。
  * @returns {Promise<{channel: string, sanrenpuku: {allowed: boolean}, plus: object}>}
@@ -30,13 +74,7 @@ let cached = null;
 export function getUpsellDecision() {
   if (cached) return cached;
   cached = (async () => {
-    const fallback = {
-      channel: UPSELL_CLIENT_CHANNEL.UNKNOWN,
-      sanrenpuku: { allowed: true },
-      plus: { allowed: false },
-      // 取得できなければ「持っていない」扱い＝カードを出さない（fail closed）
-      coupon: { claimed: false },
-    };
+    const fallback = decisionFallback();
     try {
       const res = await fetch(ENDPOINT, { credentials: 'same-origin' });
       if (!res.ok) return fallback; // 404 = 未ログイン等 → 従来どおり
@@ -95,6 +133,9 @@ export async function canShowPlusUpsell() {
 // 読めない環境（プライベートウィンドウ等）では「未読」に倒す＝見落としを作らない。
 
 import { describeAllNotices } from '../premiumPlus/couponNotice.js';
+import { readNavAuthState } from '../navigation/navAuthState.js';
+// 期間の単一源（値はここへ書き写さない）
+import { CAMPAIGN_WINDOW } from '../promotions/campaignOffers.js';
 
 const SEEN_KEY = 'ak:coupon-notice-seen';
 
@@ -113,9 +154,16 @@ function readSeen() {
 /**
  * いま出すべきお知らせ（無ければ `show: false`）。追加の通信はしない。
  * @returns {Promise<{show: boolean, unseen: boolean, count: number, label: string, signature: string}>}
+ *
+ * ⚠️ ナビの赤い点は**全ページ・未ログインの方にも**載る。ログインの手がかりが無い端末では
+ *    `/api/upsell.json` は必ず 404 なので、通信せずに「取得できなかった」と同じ値を使う
+ *    （Netlify Functions の起動回数削減・2026-11-01・`docs/SAFETY_CHECKS.md` ルール 9）。
+ *    ここでは `cached` を作らない。同じページのマイページ等が `getUpsellDecision()` を
+ *    呼んだときは従来どおり通信する（判定を毒さない）。
  */
 export async function getCouponNotice() {
-  const d = await getUpsellDecision();
+  // 手がかりが無い端末は通信しない（上の説明・`cached` は作らない）
+  const d = (cached || hasLoginHint()) ? await getUpsellDecision() : decisionFallback();
   // ⚠️ 無料の方はセッションが無く `d.campaign` が取れない。公開 API から取り直す
   const campaign = (d && d.campaign) ? d.campaign : await getCampaign();
   const all = describeAllNotices({
@@ -195,18 +243,27 @@ function declaredPlan() {
 export async function getCampaign() {
   if (campaignCached) return campaignCached;
   campaignCached = (async () => {
-    const empty = { active: false, offers: [], deadlineText: '', signature: '' };
+    // ⚠️ ログインの手がかりが無い端末では `/api/upsell.json` は 404 しか返さないので叩かない
+    if (!cached && !hasLoginHint()) return fetchPublicCampaign();
     // 有料の方（セッションあり）は既存の 1 回の通信に相乗り
     const d = await getUpsellDecision();
     if (d && d.campaign) return d.campaign;
     // 無料の方はセッションが無いので公開 API を使う
-    try {
-      const q = encodeURIComponent(declaredPlan());
-      const r = await fetch(`/api/campaign.json?plan=${q}`, { credentials: 'same-origin' });
-      if (!r.ok) return empty;
-      const j = await r.json();
-      return j && Array.isArray(j.offers) ? j : empty;
-    } catch { return empty; }
+    return fetchPublicCampaign();
   })();
   return campaignCached;
+}
+
+/** 公開 API（`/api/campaign.json`）からキャンペーンを取る。期間外は通信しない */
+async function fetchPublicCampaign() {
+  const empty = { active: false, offers: [], deadlineText: '', signature: '' };
+  // 期間外は公開 API も `active: false` しか返さない（画面に何も出ない）ので叩かない
+  if (isOutsideCampaignWindow(Date.now())) return empty;
+  try {
+    const q = encodeURIComponent(declaredPlan());
+    const r = await fetch(`/api/campaign.json?plan=${q}`, { credentials: 'same-origin' });
+    if (!r.ok) return empty;
+    const j = await r.json();
+    return j && Array.isArray(j.offers) ? j : empty;
+  } catch { return empty; }
 }

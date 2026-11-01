@@ -127,6 +127,26 @@ Customers は 15,962 件。先頭 N 件だけ読んで黙って打ち切ると**
 
 検証: `npm run check:cdn-cache`
 
+## ルール 9: 全ページ共通の処理で、結果の決まっている API を叩かない・存在しないパスを SSR に渡さない
+
+**根拠**: 2026-11-01 の実測で SSR Function の起動が 1 日 約 9,100 回（月 約 27 万回）あり、
+CDN から返る静的ページでも、ナビのお知らせ（`BaseLayout`）が表示のたびに
+`/api/upsell.json`（ログインの手がかりが無い端末では必ず 404）と
+`/api/campaign.json`（キャンペーン期間外は必ず `active: false`）を叩いていた（1 表示 = 2 起動）。
+また `/apple-touch-icon.png`・manifest の `screenshot-*.png`・`/sitemap.xml`・ボットの探索（`/wp-login.php` 等）が
+すべて SSR 関数の 404 になっていた。
+
+- 全ページに載る処理から API を叩くときは、**応答が確実に決まっている場合は通信しない**
+  （`upsellClient.js` の `hasLoginHint()` / `isOutsideCampaignWindow()`）。表示結果は変えない。
+  ログイン済み・キャンペーン期間内（前後 1 日の余裕つき）・判定できない端末は従来どおり通信する
+- `getUpsellDecision()` の memo を省略側で作らない（同じページのマイページ等の判定を毒さない）
+- AK 自身が参照するファイル（manifest・アイコン）は `public/` に実在させる
+- 明らかなボットの探索は `public/_redirects` で `static-404.html` を 404 で返す。**AK の実ルートと重なるパスは書かない**
+- 会員ごとに結果が変わる 404（`/api/upsell.json`・`/api/premium-plus-delivery.json`・`/premium-plus/` の存在秘匿）は
+  CDN に載せない（キャッシュ鍵は Cookie を見ないため、権利のある会員にも 404 が返る）
+
+検証: `npm run test:upsell`（`src/lib/upsell/functionBudget.test.mjs`）
+
 ## ローカル確認コマンド
 
 ```bash
