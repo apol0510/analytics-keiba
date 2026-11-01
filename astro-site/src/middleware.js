@@ -12,7 +12,7 @@ export const onRequest = async (context, next) => {
   const response = await next();
   if (!context.isPrerendered) {
     try {
-      console.log(describeSsrRequest(context.request, response.status));
+      console.log(describeSsrRequest(context.request, response.status, context.routePattern));
     } catch {
       // 計測の失敗で応答を変えない
     }
