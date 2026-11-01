@@ -38,6 +38,7 @@
 import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
 // Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
 installAirtableCallMeter({ source: 'cron-marketing-rollout' });
+import { isCronTickRequest, directInvocationNotFound } from '../../src/lib/ops/cronTick.js';
 import {
   tickRollout, settleTick, describeTick, isRolloutComplete, TICK_ACTION, TICK_BLOCK,
 } from '../../src/lib/marketing/rolloutOrchestrator.js';
@@ -1492,6 +1493,8 @@ const TICK_LOCK_TTL_SEC = 110;
 
 /** Netlify Functions v2 のエントリ（下見だけ手動で叩ける） */
 export default async function handler(req) {
+  // 起動は cron-tick だけ（schedule は cron-tick へ移した・公開 URL からは 404・src/lib/ops/cronTick.js）
+  if (!isCronTickRequest(req)) return directInvocationNotFound();
   let body = {};
   try { body = await req.json(); } catch { body = {}; }
   const dryRun = body && body.dryRun === true;
@@ -1571,6 +1574,4 @@ export default async function handler(req) {
  * ⚠️ 同日に配り切る必要が出たときは `batchSize` を上げる（間隔ではなく 1 回の人数で稼ぐ）。
  * ⚠️ 止まっている / 終わっている tick は台帳を読む前に抜ける（副作用ゼロ・Airtable 0 回）。
  */
-export const config = {
-  schedule: '*/5 * * * *',
-};
+// schedule は cron-tick へ移した（同じ間隔・2026-11-01・src/lib/ops/cronTick.js）。ここに config.schedule を戻すと二重に起動する

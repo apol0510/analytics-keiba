@@ -182,7 +182,11 @@ test('対象キャンペーンは 24 通の連続配信', () => {
 });
 
 test('【重要】スケジュール登録されている（人が叩かなくても進む）', () => {
-  assert.ok(/export const config = \{\s*schedule:/.test(SOURCE), 'cron 登録が無い');
+  // 2026-11-01: schedule は cron-tick へ移した（同じ 5 分・src/lib/ops/cronTick.js）
+  const TICK = readFileSync(new URL('../../../netlify/functions/cron-tick.js', import.meta.url), 'utf8');
+  assert.ok(/name: 'cron-marketing-rollout', every: 5, run: rollout/.test(TICK), 'cron-tick に rollout が無い');
+  assert.ok(/export const config = \{\s*schedule: '\*\/5 \* \* \* \*'/.test(TICK), 'cron-tick の cron 登録が無い');
+  assert.ok(/if \(!isCronTickRequest\(req\)\) return directInvocationNotFound\(\);/.test(SOURCE), '公開 URL から起動できる');
 });
 
 test('【重要】実績の写しは「進めない tick」でも行う（送ったのに 0 通のまま残さない）', () => {

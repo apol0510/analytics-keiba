@@ -65,9 +65,12 @@ test('【配線】重い事実収集は条件付きで呼ばれる（無条件 a
 });
 
 test('【配線】cron の間隔を 2 分より短くしない（払う API 回数に直に比例する）', () => {
-  const m = /schedule: '(\*\/(\d+)) \* \* \* \*'/.exec(ROLLOUT);
-  assert.ok(m, 'schedule の宣言が読めない');
-  const minutes = Number(m[2]);
+  // 2026-11-01: schedule は cron-tick へ移した（同じ 5 分）。間隔は cron-tick の表から読む
+  const TICK = readFileSync(new URL('../../../netlify/functions/cron-tick.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(ROLLOUT, /export const config = \{[\s\S]*schedule:/, 'rollout 自身にも schedule があると二重に起動する');
+  const m = /name: 'cron-marketing-rollout', every: (\d+)/.exec(TICK);
+  assert.ok(m, 'cron-tick に rollout の行が無い');
+  const minutes = Number(m[1]);
   assert.ok(
     minutes >= 5,
     `間隔が ${minutes} 分になっている。速さの上限は関所であって cron の間隔ではない`

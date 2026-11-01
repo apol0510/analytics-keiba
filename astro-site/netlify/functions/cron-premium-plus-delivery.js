@@ -12,6 +12,7 @@
 import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
 // Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
 installAirtableCallMeter({ source: 'cron-premium-plus-delivery' });
+import { isCronTickRequest, directInvocationNotFound } from '../../src/lib/ops/cronTick.js';
 import { makeRedisCmd } from '../../src/lib/premiumPlus/premiumPlusFunnelServer.js';
 import { createOrderStore } from '../../src/lib/premiumPlus/premiumPlusOrderService.js';
 import {
@@ -106,10 +107,12 @@ export async function runDeliveryTick({ nowMs = Date.now() } = {}) {
   return { ok: true, delivery, thanks, passThanks };
 }
 
-export default async function handler() {
+export default async function handler(req) {
+  // 起動は cron-tick だけ（schedule は cron-tick へ移した・公開 URL からは 404・src/lib/ops/cronTick.js）
+  if (!isCronTickRequest(req)) return directInvocationNotFound();
   const out = await runDeliveryTick();
   console.log(TAG, JSON.stringify(out));
   return new Response(JSON.stringify({ ok: out.ok }), { status: 200, headers: { 'Content-Type': 'application/json' } });
 }
 
-export const config = { schedule: '*/5 * * * *' };
+// schedule は cron-tick へ移した（同じ間隔・2026-11-01・src/lib/ops/cronTick.js）。ここに config.schedule を戻すと二重に起動する

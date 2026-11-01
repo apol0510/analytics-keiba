@@ -149,11 +149,18 @@ CDN から返る静的ページでも、ナビのお知らせ（`BaseLayout`）�
   （`[ssr-path] <method> <status> <ua|bot|noua> <pf|-> <q|-> <route>`・`src/lib/ops/ssrPathLog.js`）。
   ルートに当たった起動は**ルートパターンだけ**（`/archive/nankan/[year]/[month]` 等。実際の値は残さない）。
   どのルートにも当たらない 404 は先頭区切りがありふれた英字名のときだけ残し、それ以外（数字・英数混在・長いもの・メール）は `:seg`、2 段目以降は `/*`。
-  クエリ・Cookie・IP・UA 本文は残さない。外部への書込はしない。集計は `netlify logs:function ssr` の出力を `[ssr-path]` で数える
+  クエリ・Cookie・IP・UA 本文は残さない。外部への書込はしない。集計は `netlify logs --source functions --since … --until … --json` を
+  **10 分ずつ**取って `[ssr-path]` を数える（長い窓は件数に上限があり古い側だけが返る・2026-11-01 実測）
+- 5 分ごとの定期処理は **`cron-tick` 1 本**にまとめて起動する（`netlify/functions/cron-tick.js`・`src/lib/ops/cronTick.js`）。
+  間隔（5 / 10 / 15 分・UTC）・中身・鍵・件数上限は従来どおりで、起動回数だけが 1 日 1,104 → 288 回になる。
+  まとめた Function は自分の `schedule` を持たず、`cron-tick` 以外の起動（公開 URL）は 404 で何もしない。
+  新しい 5 分毎の処理は個別の `schedule` を作らず `CRON_TICK_JOBS` へ足す（`cronTick.test.mjs` がまとめ漏れを検知）。
+  🛑 決済メール（`payment-email-dispatcher`・`cron-payment-email-reconciler`）と重い `cron-campaign-sequence` はまとめない
+  （1 起動 = 30 秒の予算で件数上限・deadline を設計してある）。Airtable 呼び出しはまとめた分を `cron-tick` として数える
 - `/dark-horse-picks/` は「当日」をリクエストごとに決めるため、stale-while-revalidate 付きの CDN キャッシュを掛けない
   （日付が変わった直後の 1 回目に前日の HTML が返り得る。2026-08-30 の不具合と同じ型）
 
-検証: `npm run test:upsell`（`src/lib/upsell/functionBudget.test.mjs`）・`npm run test:ops`（`src/lib/ops/ssrPathLog.test.mjs`）
+検証: `npm run test:upsell`（`src/lib/upsell/functionBudget.test.mjs`）・`npm run test:ops`（`src/lib/ops/ssrPathLog.test.mjs`・`src/lib/ops/cronTick.test.mjs`）
 
 ## ローカル確認コマンド
 

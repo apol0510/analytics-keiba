@@ -33,6 +33,7 @@
 import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
 // Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
 installAirtableCallMeter({ source: 'cron-marketing-dispatch' });
+import { isCronTickRequest, directInvocationNotFound } from '../../src/lib/ops/cronTick.js';
 import {
   planAutoDispatch, resolveMaxJobsPerTick, summarizeAutoDispatch, readWillSend, DEFAULT_COOLDOWN_MS,
 } from '../../src/lib/marketing/autoDispatchPlan.js';
@@ -254,7 +255,9 @@ export async function runAutoDispatchTick({ env = process.env, now = Date.now() 
 }
 
 /** Netlify Functions **v2** のエントリ（`export const config` が効くのはこの形式だけ） */
-export default async function handler() {
+export default async function handler(req) {
+  // 起動は cron-tick だけ（schedule は cron-tick へ移した・公開 URL からは 404・src/lib/ops/cronTick.js）
+  if (!isCronTickRequest(req)) return directInvocationNotFound();
   /**
    * ⚠️ **同じ tick を重ねて走らせない。** 同じジョブへ並行して dispatch を起動すると、
    *    `alreadySent` は「起動時点のスナップショット」なので**二重送信の余地**ができる。
@@ -296,6 +299,4 @@ export default async function handler() {
  * ⚠️ キュー登録（`cron-campaign-sequence`）は 10 分ごと。送信側を**それより短く**して、
  *    積まれたぶんが翌 tick までに捌ける形にする。
  */
-export const config = {
-  schedule: '*/5 * * * *',
-};
+// schedule は cron-tick へ移した（同じ間隔・2026-11-01・src/lib/ops/cronTick.js）。ここに config.schedule を戻すと二重に起動する

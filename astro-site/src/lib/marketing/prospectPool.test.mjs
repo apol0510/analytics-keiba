@@ -952,8 +952,11 @@ test('管理 API は写しの更新を依頼するだけ（自分では走査し
 test('guard: 写し更新は scheduled function だけが実行する（公開 URL から起動できない）', () => {
   const WORKER = readFileSync(fileURLToPath(
     new URL('../../../netlify/functions/cron-prospect-worker.js', import.meta.url)), 'utf8');
-  // schedule 登録があり、v1 の handler を持たない（持つと schedule が登録されない）
-  assert.match(WORKER, /export const config = \{[\s\S]*schedule:/);
+  // 2026-11-01: schedule は cron-tick へ移した（同じ 10 分）。cron-tick 以外の HTTP 起動は 404
+  const TICK = readFileSync(new URL('../../../netlify/functions/cron-tick.js', import.meta.url), 'utf8');
+  assert.match(TICK, /name: 'cron-prospect-worker', every: 10, run: prospectWorker/);
+  assert.doesNotMatch(WORKER, /export const config = \{[\s\S]*schedule:/);
+  assert.match(WORKER, /if \(!isCronTickRequest\(req\)\) return directInvocationNotFound\(\);/);
   assert.equal(/export const handler\s*=/.test(WORKER), false, 'v1 形式が残っている');
   assert.match(WORKER, /export default async function handler/);
   // 公開の background function は残っていない
