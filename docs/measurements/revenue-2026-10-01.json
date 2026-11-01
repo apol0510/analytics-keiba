@@ -3,11 +3,11 @@
   "repo": "analytics-keiba",
   "month": "2026-10",
   "currency": "JPY",
-  "generatedAt": "2026-10-19T04:09:23.300Z",
+  "generatedAt": "2026-11-01T06:32:41.054Z",
   "target_jpy": 1000000,
-  "gross_jpy": 100900,
+  "gross_jpy": 105880,
   "refunds_jpy": 0,
-  "net_jpy": 100900,
+  "net_jpy": 105880,
   "by_channel": {
     "bank_transfer": {
       "gross_jpy": 87960,
@@ -22,18 +22,17 @@
       "payments": 3
     },
     "paypal": {
-      "measured": false
+      "gross_jpy": 4980,
+      "refunds_jpy": 0,
+      "net_jpy": 4980,
+      "payments": 1
     }
   },
   "achieved": false,
   "sustained_months": 0,
   "data_quality": [
-    "月途中の速報値（2026-10-19 まで）— 月末の確定値ではない",
     "銀行振込: 金額の記録はこの月の途中（または未開始）から — 月初からの全額ではない",
-    "銀行振込: 返金は記録が無く差し引いていない",
-    "PayPal: 未計上（読取り鍵が未設定）"
+    "銀行振込: 返金は記録が無く差し引いていない"
   ],
-  "next_tasks": [],
-  "partial": true,
-  "period_end": "2026-10-19"
+  "next_tasks": []
 }
