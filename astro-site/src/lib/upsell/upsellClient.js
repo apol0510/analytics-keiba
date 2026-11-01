@@ -47,11 +47,53 @@ export function hasLoginHint(storage) {
     const s = storage || (typeof localStorage !== 'undefined' ? localStorage : null);
     // ⚠️ 読めない端末（ストレージ拒否など）は「手がかりが無い」と言い切れない → 従来どおり通信する
     if (!s) return true;
-    s.getItem('user-plan');
-    return readNavAuthState(s).loggedIn === true;
+    s.getItem('user-plan'); // 読めない端末はここで catch へ（従来どおり通信する）
+    if (readNavAuthState(s).loggedIn !== true) return false;
+    // 同じ `user-plan` のまま直近に 404 を受けた端末は、まだセッションが無い（下の NO_SESSION_KEY）
+    return !hasRecentNoSession(s);
   } catch {
     return true;
   }
+}
+
+/**
+ * 直近に `/api/upsell.json` が 404 を返した印（**通信するかどうかの判断にだけ**使う）。
+ *
+ * 無料ログイン（login.astro）・無料登録（free-signup.astro）も `user-plan` を書くが、
+ * `ak_session` は有料のマジックリンクログイン時にしか発行されない。そのため無料の方は
+ * ページを開くたびに 404 になっていた（2026-11-01 実測: SSR 起動の最多・1 日 約 500 回）。
+ *
+ * - 印は `user-plan` の値の hash に結びつける。`user-plan` が書き換わったら（ログイン・購入）印は効かない
+ * - 30 分で切れる（その後は 1 回だけ通信して確かめ直す）
+ * - `auth/verify` はセッション発行時に印を消す（同じ値の `user-plan` が書かれても次の表示で通信する）
+ * - 2xx を受けたら消す
+ * ⚠️ 本文・email は保存しない（hash と時刻だけ）。権限の判定には使わない
+ */
+export const NO_SESSION_KEY = 'ak:upsell-no-session';
+const NO_SESSION_TTL_MS = 30 * 60 * 1000;
+
+function planHash(s) {
+  const raw = String(s.getItem('user-plan') || '');
+  let h = 5381;
+  for (let i = 0; i < raw.length; i++) h = ((h * 33) ^ raw.charCodeAt(i)) >>> 0;
+  return `${raw.length}:${h.toString(36)}`;
+}
+
+function hasRecentNoSession(s) {
+  try {
+    const o = JSON.parse(s.getItem(NO_SESSION_KEY) || 'null');
+    if (!o || o.h !== planHash(s)) return false;
+    const age = Date.now() - Number(o.at);
+    return Number.isFinite(age) && age >= 0 && age < NO_SESSION_TTL_MS;
+  } catch { return false; }
+}
+
+function rememberNoSession(status) {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    if (status === 404) localStorage.setItem(NO_SESSION_KEY, JSON.stringify({ h: planHash(localStorage), at: Date.now() }));
+    else if (status >= 200 && status < 300) localStorage.removeItem(NO_SESSION_KEY);
+  } catch { /* 印を書けなくても表示は変えない */ }
 }
 
 /**
@@ -77,6 +119,7 @@ export function getUpsellDecision() {
     const fallback = decisionFallback();
     try {
       const res = await fetch(ENDPOINT, { credentials: 'same-origin' });
+      rememberNoSession(res.status);
       if (!res.ok) return fallback; // 404 = 未ログイン等 → 従来どおり
       const data = await res.json();
       if (!data || typeof data.channel !== 'string') return fallback;

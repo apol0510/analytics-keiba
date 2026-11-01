@@ -169,7 +169,8 @@ export const prerender = false;
             //    これを消さないと、カムバック無料特典を付けた**期限切れ顧客**が
             //    ログインできても画面上は Free のままになる（特典が機能しない）。
             //    有効期限の表示値は、サーバー由来の user-plan から再度書かれる。
-            for (const k of ['isExpired', 'originalPlan', 'validUntil', 'expiryDate']) {
+            // セッションを今発行したので「直近 404」の印も消す（upsellClient.js の NO_SESSION_KEY）
+            for (const k of ['isExpired', 'originalPlan', 'validUntil', 'expiryDate', 'ak:upsell-no-session']) {
               localStorage.removeItem(k);
             }
           } catch (e) {
