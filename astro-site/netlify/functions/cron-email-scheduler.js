@@ -4,7 +4,10 @@
 import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
 // Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
 installAirtableCallMeter({ source: 'cron-email-scheduler' });
+import { isCronTickRequest, directInvocationNotFound } from '../../src/lib/ops/cronTick.js';
 export default async function handler(request, context) {
+  // 起動は cron-tick だけ（schedule は cron-tick へ移した・公開 URL からは 404・src/lib/ops/cronTick.js）
+  if (!isCronTickRequest(request)) return directInvocationNotFound();
   const headers = {
     'Content-Type': 'application/json'
   };
@@ -80,6 +83,4 @@ export default async function handler(request, context) {
 }
 
 // Netlify Scheduled Functions設定
-export const config = {
-  schedule: "*/15 * * * *" // 15分毎に実行（送信数削減のため5分→15分に変更 2025-11-09）
-};
+// schedule は cron-tick へ移した（同じ間隔・2026-11-01・src/lib/ops/cronTick.js）。ここに config.schedule を戻すと二重に起動する

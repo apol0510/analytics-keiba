@@ -141,6 +141,11 @@ test('guard: 生成ジョブ・API は買い目をログへ出さず、API は�
   assert.doesNotMatch(api, /searchParams|request\.json\(\)/);
   assert.match(api, /no-store/);
   const toml = readFileSync(new URL('../../../netlify.toml', import.meta.url), 'utf8');
-  assert.match(toml, /\[functions\."cron-premium-plus-delivery"\]\s*\n\s*schedule = "\*\/5 \* \* \* \*"/);
-  assert.match(cron, /schedule: '\*\/5 \* \* \* \*'/);
+  // 2026-11-01: schedule は cron-tick へ移した（同じ 5 分）。toml・本体に残すと二重に起動する
+  assert.doesNotMatch(toml, /\[functions\."cron-premium-plus-delivery"\]/);
+  assert.doesNotMatch(cron, /export const config/);
+  assert.match(cron, /if \(!isCronTickRequest\(req\)\) return directInvocationNotFound\(\);/);
+  const tick = readFileSync(new URL('../../../netlify/functions/cron-tick.js', import.meta.url), 'utf8');
+  assert.match(tick, /name: 'cron-premium-plus-delivery', every: 5, run: premiumPlusDelivery/);
+  assert.match(tick, /schedule: '\*\/5 \* \* \* \*'/);
 });

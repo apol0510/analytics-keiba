@@ -1,8 +1,8 @@
 /**
  * cron-prospect-worker.js — 見込み客まわりの**自動処理**（Scheduled Function）
  *
- * ⚠️ **公開 URL からは起動できない。** `export const config = { schedule }` により
- *    scheduled function として配備され、HTTP 起動は Netlify が拒否する。
+ * ⚠️ **公開 URL からは起動できない。** 起動は `cron-tick`（netlify/functions/cron-tick.js・10 分ごと）だけで、
+ *    それ以外の HTTP 起動は `isCronTickRequest` が 404 で返す（2026-11-01 に schedule を cron-tick へ移した）。
  *    管理画面から「今すぐ」を押したいときは、**認証済みの管理 API が Redis に
  *    依頼札を立て**、次の tick がそれを拾う（起動経路は schedule だけ）。
  *
@@ -23,6 +23,7 @@
 import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
 // Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
 installAirtableCallMeter({ source: 'cron-prospect-worker' });
+import { isCronTickRequest, directInvocationNotFound } from '../../src/lib/ops/cronTick.js';
 import { createProspectStore } from '../../src/lib/marketing/prospectStore.js';
 import { planPromotions } from '../../src/lib/marketing/prospectPipeline.js';
 import {
@@ -135,7 +136,9 @@ export async function refreshSnapshot({ snapshot, KEY, BASE, now }) {
   return { 件数: meta.count, chunks: meta.chunks, pages };
 }
 
-export default async function handler() {
+export default async function handler(req) {
+  // 起動は cron-tick だけ（schedule は cron-tick へ移した・公開 URL からは 404・src/lib/ops/cronTick.js）
+  if (!isCronTickRequest(req)) return directInvocationNotFound();
   const now = Date.now();
   const out = { mode: 'prospect-worker', ran: true, 写し: null, 昇格: null, errors: [] };
 
@@ -188,9 +191,5 @@ export default async function handler() {
   return json(200, out);
 }
 
-// Netlify Scheduled Functions 設定
-// ⚠️ cron は **UTC**。10 分ごと。schedule 登録により **公開 URL からは起動できない**。
+// ⚠️ 起動は cron-tick（UTC の 10 分ごと・src/lib/ops/cronTick.js）。ここに config.schedule を戻すと二重に起動する。
 // ⚠️ 自動登録は `MARKETING_PROSPECT_AUTO_PROMOTE_ENABLED=true` のときだけ動く（production 未設定）。
-export const config = {
-  schedule: '*/10 * * * *',
-};
