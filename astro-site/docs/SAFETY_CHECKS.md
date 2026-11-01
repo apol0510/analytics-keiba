@@ -145,7 +145,15 @@ CDN から返る静的ページでも、ナビのお知らせ（`BaseLayout`）�
 - 会員ごとに結果が変わる 404（`/api/upsell.json`・`/api/premium-plus-delivery.json`・`/premium-plus/` の存在秘匿）は
   CDN に載せない（キャッシュ鍵は Cookie を見ないため、権利のある会員にも 404 が返る）
 
-検証: `npm run test:upsell`（`src/lib/upsell/functionBudget.test.mjs`）
+- 削減は**実測の大きい順**に行う。SSR の起動は `src/middleware.js` が関数ログへ 1 行ずつ残す
+  （`[ssr-path] <method> <status> <ua|bot|noua> <pf|-> <q|-> <route>`・`src/lib/ops/ssrPathLog.js`）。
+  ルートに当たった起動は**ルートパターンだけ**（`/archive/nankan/[year]/[month]` 等。実際の値は残さない）。
+  どのルートにも当たらない 404 は先頭区切りがありふれた英字名のときだけ残し、それ以外（数字・英数混在・長いもの・メール）は `:seg`、2 段目以降は `/*`。
+  クエリ・Cookie・IP・UA 本文は残さない。外部への書込はしない。集計は `netlify logs:function ssr` の出力を `[ssr-path]` で数える
+- `/dark-horse-picks/` は「当日」をリクエストごとに決めるため、stale-while-revalidate 付きの CDN キャッシュを掛けない
+  （日付が変わった直後の 1 回目に前日の HTML が返り得る。2026-08-30 の不具合と同じ型）
+
+検証: `npm run test:upsell`（`src/lib/upsell/functionBudget.test.mjs`）・`npm run test:ops`（`src/lib/ops/ssrPathLog.test.mjs`）
 
 ## ローカル確認コマンド
 
