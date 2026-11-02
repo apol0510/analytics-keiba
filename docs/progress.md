@@ -1,16 +1,21 @@
-# 💳 新規の月額・年額を Paddle へ一本化（2026-11-02 MK 確定 / **実装 PR 作成・Sandbox E2E 前・切替前（PayPal で受付中）**）
+# 💳 新規の月額・年額を Paddle へ一本化（2026-11-02 MK 確定 / **実装 PR #850（draft）・Sandbox E2E 済み・切替前（PayPal で受付中）・本番の前提待ち**）
 
 | 項目 | 状態 |
 |---|---|
 | 目的 | PayPal アカウント作成の負担を無くし、カード決済の申込完了率を上げる。新規の月額・年額は Paddle、既存 PayPal 契約者は PayPal のまま |
-| 正本 | `docs/decisions.md` 2026-11-02「Paddle へ一本化」・`docs/spec.md` 先頭・`astro-site/docs/CARD_PAYMENT_PROVIDERS.md` §3.8。前半の「Paddle 定期課金は提案段階・未着手」（下の #848 の節の表）は本決定で更新 |
+| 正本 | `docs/decisions.md` 2026-11-02「Paddle へ一本化」・`docs/spec.md` 先頭・`astro-site/docs/CARD_PAYMENT_PROVIDERS.md` §3.8。下の #848 の節の「Paddle 定期課金は提案段階」は本決定で更新 |
 | 完成条件 | 新規の月額・年額が Paddle で行われ、既存 PayPal 購読者も従来どおり利用・更新・退会できる。価格・権利・銀行振込・買い切りは不変 |
-| branch / worktree | `feat/paddle-subscriptions` / `/Users/user/Projects/analytics-keiba-paddlesub`（origin/main `e1cfaff1` から）|
-| 実装（済み）| `paddleSubscriptionCore.js`・`paddleSubscriptionServer.js`・`paddleApi.js`・通知の振り分け（`paddleServer.js`）・`monthly-create-checkout`（paddle）・戻り先（`?provider=paddle&order=`）・退会（kind paddle・中立サイト `paddle-subscription-cancel.mjs`）・中立サイトの取引作成（`kind: subscription`）と定期課金の版の英文・決済ページの戻り先・料金ページの決済会社別の文（`subscriptionProviderCopy.js`）・マイページのカード・更新リマインドの除外・GA4（`payment_method: paddle`）・売上集計の Paddle（`PADDLE_READ_KEY`）|
-| test（済み）| test:billing・check:safety 全 pass・build pass。新規 `paddleSubscription.test.mjs` 23 件ほか |
-| 切替（未）| `cardSales.js` の `ACTIVE_SUBSCRIPTION_PROVIDER='paddle'`・`SUBSCRIPTION_SALES_OPEN={paypal:false,paddle:true}` は**本番の前提が揃ってから別 PR**。それまで PayPal の新規受付を維持 |
-| 本番の前提（未）| ① Live の API 鍵に `subscription.read/write`（2026-11-02 の Live 鍵は取引だけ・購読と通知設定は 403＝**MK の Paddle 画面操作が要る**）② 通知先に `subscription.*` を追加 ③ 中立サイトの関数・ページを deploy ④ `PADDLE_READ_KEY`（売上集計の読み取り専用鍵）|
-| 次の作業 | Sandbox E2E（購入→更新→退会）→ PR の CI → merge → 中立サイト deploy → 本番の前提 → 切替 PR |
+| branch / PR | `feat/paddle-subscriptions`（worktree `/Users/user/Projects/analytics-keiba-paddlesub`）/ **#850 draft**。CI（build・Deploy Preview）green。Deploy Preview の料金ページの決済会社の文は本番と同一（PayPal のまま）を確認 |
+| 実装（済み）| `paddleSubscriptionCore.js`・`paddleSubscriptionServer.js`・`paddleApi.js`・通知の振り分け・`monthly-create-checkout`（paddle・`makeHandler`）・戻り先（`?provider=paddle&order=`）・退会（kind paddle・中立サイト `paddle-subscription-cancel.mjs`）・中立サイトの取引作成（`kind: subscription`）と定期課金の版の英文・決済ページの戻り先・料金ページの決済会社別の文（`subscriptionProviderCopy.js`）・マイページのカード・更新リマインドの除外・GA4（`payment_method: paddle`）・売上集計の Paddle（`PADDLE_READ_KEY`）・read-only 監視（`paddle-subscription-first-purchase/renewal-2026`）|
+| test（済み）| check:safety 全 pass（**切替前・切替後（cardSales を一時的に反転）の両方**）・build pass。新規 `paddleSubscription.test.mjs` 23 件ほか |
+| Sandbox E2E（2026-11-02・**本物の Paddle Sandbox**）| ローカル（localhost の決済ページ＋Paddle.js Sandbox＋Paddle 公開のテストカード）で購入、Paddle の events API から本物の通知の本文を取り、署名して Webhook と同じ「検証 → 解析 → 照会 → 反映」に通す（Airtable / Redis は偽物＝本番の顧客データに触れない）。結果は下の表 |
+| E2E で見つけて直したもの | Paddle の決済画面に**数量の +/- が出る**（2 つ買うと 2 倍課金・権限は 1 つ）→ 価格に `quantity: {minimum:1, maximum:1}`（`4f0c0548`）。再購入で「数量：1」固定を確認 |
+| 既存の実ブラウザ E2E | `e2e:paypal-post-purchase` は branch・**origin/main とも** 56 pass / 1 中断（同じ段「確認中・確認できない: 401 の案内」で astro dev が `upstream_timeout`＝E2E 環境の事情。#848 の記録と同じ）。branch と origin/main で結果が同一＝本変更による退行ではない |
+| 切替（未）| `cardSales.js` の `ACTIVE_SUBSCRIPTION_PROVIDER='paddle'`・`SUBSCRIPTION_SALES_OPEN={paypal:false,paddle:true}`（2 行）を #850 に足してから merge。**本番の前提が揃うまで足さない**（準備中は PayPal の新規受付を維持）|
+| 本番の前提（未）| ① Live の API 鍵に `subscription.read`・`subscription.write`・`notification_setting.read`・`notification_setting.write`（2026-11-02 の Live 鍵は transaction・adjustment だけ＝購読・通知設定・events は 403）＝**MK の Paddle 画面操作** ② 通知先 `https://checkout.tirol.link/hooks/paddle` に `subscription.*` を追加（①の後に Claude が API で）③ 中立サイト（`tirol-checkout`）へ関数と live token 付きのページを deploy ④ 本番で取引の作成（未払い・課金なし）と決済画面の表示を read-only 確認 ⑤ GA4 の除外に `checkout.tirol.link`（Paddle の決済ページ＝戻りの参照元）を追加し、初回実購入で確認 |
+| 売上集計 | `PADDLE_READ_KEY`（transaction.read・adjustment.read だけの鍵）が GitHub secret に入るまで、`revenue-*.json` の Paddle は「未計上」と明記される |
+| 実購入待ちの監視 | 初回実購入・初回実更新は `ops/scheduled-checks.json` の `paddle-subscription-first-purchase-2026`・`paddle-subscription-first-renewal-2026`（毎日 10:00 JST・read-only・Issue に記録）|
+| Paddle の決済画面の表示（Claude 観測・MK 判断）| Paddle の決済画面は「カードで支払い」の上に Paddle 経由の PayPal ボタンも出す（Paddle の支払い方法。AK の決済会社の選択ではない）。外すなら Paddle の Checkout settings で PayPal を無効化（MK 判断）|
 
 # 🧾 決済後のログイン案内を実態に合わせる・GA4 の決済戻り参照元除外（2026-11-02 MK 確定 / **#848 `c1bd570e` merge・本番反映・本番 smoke 済み**）
 

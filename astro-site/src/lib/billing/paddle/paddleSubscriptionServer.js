@@ -181,8 +181,16 @@ export async function decidePaddleSubscriptionEvent({ api, parsed, txn = null })
     if (!txn || !isSubscriptionTransaction(txn)) return null;
     transactionId = txn.id;
     subscriptionId = txn.subscription_id;
-    refund = Boolean(parsed.adjustmentId);
     if (!isPaddleSubscriptionId(subscriptionId)) return { result: 'awaiting_subscription' };
+    if (parsed.adjustmentId) {
+      // 返金・チャージバックは承認済みのものだけ管理者へ（申請中〔pending_approval〕・却下で知らせない＝1 件の返金で 1 回）
+      let adj;
+      try { adj = await api.getAdjustment(parsed.adjustmentId); } catch (e) { return { result: 'adjustment_lookup_failed', retry: e.status !== 404 }; }
+      const approved = adj && String(adj.transaction_id || '') === String(txn.id) && String(adj.status || '') === 'approved';
+      const kind = String(adj?.action || '') === 'refund' || /chargeback/.test(String(adj?.type || adj?.action || ''));
+      if (!approved || !kind) return { result: `ignored_adjustment_${adj?.status || 'unknown'}` };
+      refund = true;
+    }
   }
   if (!isPaddleSubscriptionId(subscriptionId)) return { result: 'ignored_event' };
   let raw;

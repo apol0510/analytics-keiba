@@ -352,10 +352,14 @@ test('返金・チャージバック: 定期課金の取引は権限を自動で
   const sid = w.pay(txn);
   await w.handle(w.event('transaction.completed', { id: txn }));
   const before = w.f()['有効期限'];
-  w.adjs.adj_test0000000001 = { id: 'adj_test0000000001', transaction_id: txn, action: 'refund', status: 'approved', type: 'full' };
-  const r = await w.handle(w.event('adjustment.created', { id: 'adj_test0000000001', transaction_id: txn }));
+  // 申請中（pending_approval）は知らせない・何も書かない
+  w.adjs.adj_test0000000001 = { id: 'adj_test0000000001', transaction_id: txn, action: 'refund', status: 'pending_approval', type: 'full' };
+  assert.equal((await w.handle(w.event('adjustment.created', { id: 'adj_test0000000001', transaction_id: txn }))).result, 'ignored_adjustment_pending_approval');
+  assert.equal(w.notes.filter((n) => n[0] === 'subscription_refunded').length, 0);
+  w.adjs.adj_test0000000001.status = 'approved';
+  const r = await w.handle(w.event('adjustment.updated', { id: 'adj_test0000000001', transaction_id: txn }));
   assert.equal(r.result, 'write_renewed');
-  assert.deepEqual(w.notes.at(-1), ['subscription_refunded', 'adjustment.created']);
+  assert.deepEqual(w.notes.at(-1), ['subscription_refunded', 'adjustment.updated']);
   assert.equal(w.f()['有効期限'], before);
   // 管理者が Paddle で解約すれば、その通知で期間の終わりへ縮む（再判定）
   Object.assign(w.subs[sid], { status: 'canceled', canceled_at: NOW.toISOString(), current_billing_period: { starts_at: NOW.toISOString(), ends_at: NOW.toISOString() } });
