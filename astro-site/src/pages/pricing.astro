@@ -294,7 +294,7 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
             })();
         </script>
 
-        <div class="plans-container plans-container--stripe">
+        <div class="plans-container plans-container--stripe plans-container--free">
             <!-- 無料プラン -->
             <div class="plan-card" data-plan-tier="0">
                 <div class="plan-header">
@@ -1048,6 +1048,8 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
     .bank-plans[open] > .bank-plans-summary::after { content: ' ▲'; }
     .bank-plans-summary:hover { background: rgba(59, 130, 246, 0.18); }
     .bank-plans[open] > .bank-plans-summary { margin-bottom: 1.5rem; }
+    /* 閉じた「銀行振込のプラン」と無料プランの間を空ける（2026-11-02 MK 指示）。開いたときは上の枠の下余白（5rem）と相殺される */
+    .plans-container--free { margin-top: 3rem; }
 
     .monthly-section { margin-top: 2.5rem; }
     .monthly-section .checkout-message { text-align: center; color: #e2e8f0; margin: 1rem auto 0; max-width: 640px; line-height: 1.7; }
