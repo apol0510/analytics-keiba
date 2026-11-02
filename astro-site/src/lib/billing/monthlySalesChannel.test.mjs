@@ -80,5 +80,5 @@ test('両方の cron が同じ経路判定を使い、Stripe だけのゲート�
 test('案内文の決済代行は月額を受け付けている決済会社（/pricing/ の注記と同じ）', () => {
   // 受付先（ACTIVE）の名前と料金ページの注記が一致する（Paddle へ切り替えると両方 Paddle になる・2026-11-02）
   assert.equal(MONTHLY_PROVIDER_LABEL[ACTIVE_SUBSCRIPTION_PROVIDER], subscriptionProviderCopy().label);
-  assert.match(expandProviderCopy(read('../../pages/pricing.astro')), new RegExp(`自動継続のお支払い（決済代行：${MONTHLY_PROVIDER_LABEL[ACTIVE_SUBSCRIPTION_PROVIDER]}）`));
+  assert.match(expandProviderCopy(read('../../pages/pricing.astro')), new RegExp(`決済代行は ${MONTHLY_PROVIDER_LABEL[ACTIVE_SUBSCRIPTION_PROVIDER]}`));
 });

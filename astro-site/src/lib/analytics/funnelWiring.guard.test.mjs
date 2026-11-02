@@ -165,18 +165,24 @@ test('pricing: each card checkout step is wired (click / email_form / blocked|er
   assert.match(src, /err === 'email_required'\) step\(planId, 'email_form'\);\s*if \(err === 'email_required'\) return askEmail/);
   assert.match(src, /\? 'blocked' : 'error'\);/);
   assert.match(src, /catch \(_\) \{\s*step\(planId, 'error'\);/);
-  assert.match(src, /step\('', 'section_link'\)/);
   // 計測へメールアドレスを渡さない
   assert.equal(/cardCheckoutStep\([^)]*email/.test(src), false);
   assert.equal(/step\([^)]*email\b/.test(src.replace(/'email_form'/g, '')), false);
 });
 
-test('pricing: the card-section link points at the card section and is shown only while card sales are open', () => {
+test('pricing: monthly card plans come first; bank-transfer plans are below and closed by default (2026-11-02 MK)', () => {
   const src = readFileSync(fileURLToPath(new URL('../../pages/pricing.astro', import.meta.url)), 'utf8');
-  assert.match(src, /<section class="monthly-section" id="credit-payment"/);
-  assert.match(src, /\{showMonthly && \(\s*<p class="pricing-card-link-wrap">\s*<a href="#credit-payment"[^>]*data-card-link>/);
-  // 主役（年払い・買い切り）の見出しより後ろにクレジット決済の枠がある順序は変えない
-  assert.ok(src.indexOf('年払い・買い切りで。') < src.indexOf('<section class="monthly-section"'));
-  // 現在 Premium をご契約中の方には出さない
-  assert.match(src, /data-premium-active="1"\]\) \.pricing-card-link-wrap/);
+  const monthly = src.indexOf('<section class="monthly-section" id="credit-payment"');
+  const bank = src.indexOf('<details class="bank-plans" id="bank-plans" open={!showMonthly}>');
+  assert.ok(monthly > 0 && bank > 0);
+  assert.ok(monthly < bank, '月額（クレジット）が銀行振込のプランより上');
+  assert.ok(bank < src.indexOf('data-bank-plan="annual"') && bank < src.indexOf('data-bank-plan="lifetime"'), '年払い・買い切りは閉じた枠の中');
+  assert.ok(src.indexOf('</details>') > src.indexOf('data-bank-plan="lifetime"'));
+  assert.match(src, /<summary class="bank-plans-summary">🏦 銀行振込のプラン（年払い・買い切り）<\/summary>/);
+  // Light 会員（乗り換え特典は年払い）と #bank-plans で来た方には開く
+  assert.match(src, /getAttribute\('data-plan-tier'\) === '1' \|\| location\.hash === '#bank-plans'\) d\.open = true/);
+  // 先頭に置いたので枠へのリンクは撤去
+  assert.equal(/data-card-link/.test(src), false);
+  // 現在 Premium をご契約中の方には月額の枠を出さない
+  assert.match(src, /data-premium-active="1"\]\) \.monthly-section/);
 });
