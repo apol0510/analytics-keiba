@@ -134,7 +134,7 @@ const LIBS = {
   'src/lib/billing/stripeServer.js': ['noMail'], 'src/lib/marketing/customerTimeline.js': ['noMail'],
   'src/lib/marketing/lightRenewal/lightRenewalReport.js': ['noMail'], 'src/lib/marketing/step1Preflight.js': ['noMail', /ScheduledEmails/],
   'src/lib/newsletter/airtable-fetch.js': ['noMail'], 'src/lib/ops/airtableCapacityWatch.js': ['noMail', /ScheduledEmails/],
-  'src/lib/ops/paymentFunnelCheck.js': ['noMail'], 'src/lib/ops/paypalFirstPurchaseCheck.js': ['noMail'],
+  'src/lib/ops/paymentFunnelCheck.js': ['noMail'], 'src/lib/ops/paypalFirstPurchaseCheck.js': ['noMail'], 'src/lib/ops/paddleFirstSubscriptionCheck.js': ['noMail'],
   'src/lib/ops/premiumConversionCheck.js': ['noMail'], 'src/lib/premiumPlus/purchaseAnchorLookup.js': ['noMail'],
   'src/lib/unsubscribe/akMarketingGroupBridge.js': ['noMail'],
 };

@@ -17,6 +17,11 @@ import { renderLightRenewalEmail, LIGHT_RENEWAL_CTA_URL } from './lightRenewalEm
 import { runLightRenewal, resolveMode, MODE } from './lightRenewalRunner.js';
 import { summarizeLightRenewalOutcomes } from './lightRenewalReport.js';
 import { clearProviderSuppressionCache } from '../providerSuppression.js';
+import { MONTHLY_PROVIDER_LABEL } from '../../billing/monthlySalesChannel.js';
+import { ACTIVE_SUBSCRIPTION_PROVIDER } from '../../billing/cardSales.js';
+/** 月額の決済代行名は受付先（ACTIVE）の名前（2026-10-15 PayPal → 2026-11-02 MK 確定で Paddle）*/
+const PROVIDER = MONTHLY_PROVIDER_LABEL[ACTIVE_SUBSCRIPTION_PROVIDER];
+
 
 const ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 const NOW = Date.parse('2026-10-01T03:00:00Z'); // JST 2026-10-01 12:00
@@ -302,7 +307,7 @@ test('既存の自動化のゲートを開けない（cron-marketing-automation 
 test('案内文の支払い方法は実際の月額の経路（クレジットカード・毎月自動更新・決済代行：PayPal）。Stripe を書かない（2026-10-20）', () => {
   for (const [stage, cycle] of [[STAGE.PRE, '2026-10-05'], [STAGE.POST, '2026-09-25']]) {
     const m = renderLightRenewalEmail({ stage, cycle, name: 'テスト' });
-    assert.match(m.text, /お支払いはクレジットカード（毎月自動更新・決済代行：PayPal）で、決済後すぐにご利用いただけます。/);
+    assert.ok(m.text.includes(`お支払いはクレジットカード（毎月自動更新・決済代行：${PROVIDER}）で、決済後すぐにご利用いただけます。`));
     assert.equal(/Stripe/.test(m.text + m.html + m.subject), false);
   }
 });

@@ -407,6 +407,7 @@ export function renderPayPage({ paddleClientToken = '', subscriptions = SUBSCRIP
   const token = CLIENT_TOKEN_RE.test(String(paddleClientToken)) ? String(paddleClientToken) : '';
   // 一回払い（CARD_PAYMENTS_AVAILABLE）か定期課金（SUBSCRIPTION_PAYMENTS_AVAILABLE）のどちらかを受け付けているときだけ開く
   const open = (CARD_PAYMENTS_AVAILABLE || subscriptions) && Boolean(token);
+  // 完了後の戻り先: 定期課金の申込（会員サイトが ak=s を付ける）は定期課金の戻り先、それ以外は一回払いの完了画面（このコメントは出力しない＝英語のページ）
   const body = open
     ? `<h1>Opening the secure payment form…</h1>
 <p>If the payment form does not open, please reload this page.</p>`
@@ -419,7 +420,6 @@ export function renderPayPage({ paddleClientToken = '', subscriptions = SUBSCRIP
   var q = new URLSearchParams(location.search);
   var txn = q.get('_ptxn') || '';
   if (!window.Paddle || !/^txn_[a-z0-9]{10,40}$/.test(txn)) return;
-  // 定期課金の申込（会員サイトが ${SUBSCRIPTION_CHECKOUT_FLAG.name}=${SUBSCRIPTION_CHECKOUT_FLAG.value} を付ける）は定期課金の戻り先へ。それ以外は一回払いの完了画面
   var done = q.get(${JSON.stringify(SUBSCRIPTION_CHECKOUT_FLAG.name)}) === ${JSON.stringify(SUBSCRIPTION_CHECKOUT_FLAG.value)} ? '${NEUTRAL_PATHS.paddleSubscriptionComplete}' : '${NEUTRAL_PATHS.paddleComplete}';
   window.Paddle.Initialize({
     token: ${JSON.stringify(token)},

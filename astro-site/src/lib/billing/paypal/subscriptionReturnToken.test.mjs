@@ -183,7 +183,9 @@ async function runFn(name, event) {
     globalThis.exports = {};
     globalThis.module = { exports: globalThis.exports };
     await import(`${FN(name)}?t=${Math.random()}`);
-    const r = await globalThis.exports.handler(event, {});
+    // 申込の入口は PayPal の経路を名指しで確かめる（受付先の切替〔2026-11-02 Paddle〕に依らない。既存 PayPal の戻り先・鍵の仕組み）
+    const h = name === 'monthly-create-checkout' ? globalThis.exports.makeHandler('paypal') : globalThis.exports.handler;
+    const r = await h(event, {});
     let body = {};
     try { body = JSON.parse(r.body); } catch { body = {}; }
     return { status: r.statusCode, headers: r.headers || {}, body, raw: r.body };

@@ -56,9 +56,11 @@ test('価格は CARD_PRODUCTS と一致する', () => {
   assert.equal(PLANS.length + 1, CARD_PRODUCTS.length);
 });
 
-test('カード受付の表示は CARD_SALES_OPEN と一致（閉じている間は「準備中」）', () => {
+test('カード受付の表示は CARD_SALES_OPEN と一致（閉じている間は「準備中」・Paddle の定期課金を受け付けている間は定期課金の版）', async () => {
   assert.equal(CARD_PAYMENTS_AVAILABLE, Object.values(CARD_SALES_OPEN).some(Boolean));
-  if (!CARD_PAYMENTS_AVAILABLE) assert.match(renderPage('/pricing/'), /not available yet/);
+  const { SUBSCRIPTION_PAYMENTS_AVAILABLE } = await import('../../../../ops/checkout-site/site.mjs');
+  if (!CARD_PAYMENTS_AVAILABLE && !SUBSCRIPTION_PAYMENTS_AVAILABLE) assert.match(renderPage('/pricing/'), /not available yet/);
+  if (SUBSCRIPTION_PAYMENTS_AVAILABLE) assert.match(renderPage('/pricing/'), /renew automatically/);
 });
 
 test('決済会社をお客様に選ばせる表示をしない（冗長化方針）', () => {
@@ -102,7 +104,7 @@ test('決済会社の戻り先・Webhook の中継（2026-10-15 MK 確定）: �
   for (const l of files._redirects.trim().split('\n').slice(1)) assert.doesNotMatch(l.split(/\s+/)[0], BANNED);
 });
 
-test('Paddle の決済ページ /pay/（2026-10-24）: ナビ・sitemap に載せず noindex・受付中かつ live token のときだけ Paddle.js を読む', () => {
+test('Paddle の決済ページ /pay/（2026-10-24）: ナビ・sitemap に載せず noindex・受付中かつ live token のときだけ Paddle.js を読む', async () => {
   assert.ok(files['pay/index.html']);
   assert.ok(!PAGE_PATHS.includes('/pay/'));
   assert.doesNotMatch(files['sitemap.xml'], /\/pay\//);
@@ -116,9 +118,10 @@ test('Paddle の決済ページ /pay/（2026-10-24）: ナビ・sitemap に載�
   assert.doesNotMatch(renderPayPage({ paddleClientToken: 'test_abc' }), /paddle\.js/);
   assert.doesNotMatch(renderPayPage(), /paddle\.js/);
   const live = renderPayPage({ paddleClientToken: TOKEN });
-  if (CARD_PAYMENTS_AVAILABLE) {
+  const { SUBSCRIPTION_PAYMENTS_AVAILABLE } = await import('../../../../ops/checkout-site/site.mjs');
+  if (CARD_PAYMENTS_AVAILABLE || SUBSCRIPTION_PAYMENTS_AVAILABLE) {
     assert.match(live, /cdn\.paddle\.com\/paddle\/v2\/paddle\.js/);
-    assert.match(live, /successUrl: location\.origin \+ '\/r\/paddle\/complete\?provider=paddle&order='/);
+    assert.match(live, /successUrl: location\.origin \+ done \+ '\?provider=paddle&order='/);
     assert.doesNotMatch(live, /Environment\.set\('sandbox'\)/);
   } else {
     // 受付を閉じている間は token があっても開かない
