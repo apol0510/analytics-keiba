@@ -82,7 +82,7 @@ test('料金ページの月額ボタン: 未ログインはログインへ直行
   assert.match(js, /addEventListener\('pageshow'/, '戻るで帰ったときにボタンが押せないまま残る');
 });
 
-test('料金ページ: 月額・自動更新・PayPal を前面に出さない（主役は年払い・買い切り／2026-10-15 MK 指示）', () => {
+test('料金ページ: 月額・自動更新・PayPal の訴求語を出さない（2026-10-15 MK 指示）・月額が先頭（2026-11-02 MK 指示）', () => {
   const s = read('src/pages/pricing.astro');
   const i = s.indexOf('<section class="monthly-section"'); const j = s.indexOf('</section>', i);
   const visible = expandProviderCopy(s.slice(i, j).replace(/<!--[\s\S]*?-->/g, '').replace(/\{\/\*[\s\S]*?\*\/\}/g, ''));
@@ -91,8 +91,9 @@ test('料金ページ: 月額・自動更新・PayPal を前面に出さない�
   }
   assert.match(visible, /クレジット決済/);
   assert.match(visible, /クレジットカードで申し込む/);
-  // 自動で継続する支払いであること・決済代行は隠さない（ボタン下の注記）
-  assert.match(visible, new RegExp(`自動継続のお支払い（決済代行：${subscriptionProviderCopy().label}）`));
-  // 主役は年払い・買い切り（クレジット決済の枠より前）
-  assert.ok(s.indexOf('年払い・買い切りで。') < i, '年払い・買い切りの見出しがクレジット決済より後ろにある');
+  // 2026-11-02 MK 指示: カード下の「※自動継続のお支払い（決済代行：…）」は出さない（自動更新・決済代行は FAQ・年払いの条件・規約で説明）
+  assert.equal(visible.includes('自動継続のお支払い'), false);
+  assert.match(expandProviderCopy(s), new RegExp(`決済代行は ${subscriptionProviderCopy().label}`));
+  // 月額（クレジット）が先頭、年払い・買い切り（銀行振込）は後ろ
+  assert.ok(i < s.indexOf('年払い・買い切りで。'), '月額の枠が年払い・買い切りより後ろにある');
 });
