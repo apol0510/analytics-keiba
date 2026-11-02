@@ -848,7 +848,7 @@ import BankApplicationEmailLock from '../components/BankApplicationEmailLock.ast
           return;
         }
 
-        // 退会はマイページの「アカウント管理」の「退会する」→ 確認 → 確定だけ（2026-10-15 MK 確定）。
+        // 退会はマイページの「登録変更」の「退会する」→ 確認 → 確定だけ（2026-10-15 MK 確定）。
         // このページからは退会しない（メールアドレスだけの旧経路 process-withdrawal は廃止）。マイページの確認画面へ移る。
         proceedBtn.addEventListener('click', function() {
           window.location.href = '/dashboard/?withdraw=1';

@@ -143,7 +143,7 @@ renewing every 12 months at the same price. This price is shown only to eligible
 <ul>
   <li>All prices are in Japanese yen and include Japanese consumption tax.</li>
   <li>Monthly and annual plans are subscriptions paid by card. They renew automatically at the same price until you cancel.</li>
-  <li>You can cancel at any time. See <a href="/refund/">Refund Policy</a> for how cancellation works.</li>
+  <li>Cancellation and refund terms are set out in the <a href="/refund/">Refund Policy</a>.</li>
   <li>Access starts once the payment is confirmed. See <a href="/billing/">Billing</a> for details.</li>
 </ul>` : `
 <h1>Pricing</h1>
@@ -178,8 +178,8 @@ If a renewal payment fails, access is not extended.</p>
 <h2>Who processes card payments</h2>
 <p>Card payments are processed by Paddle.com, which acts as our online reseller and Merchant of Record for card orders;
 Paddle's <a href="https://www.paddle.com/legal/checkout-buyer-terms">Buyer Terms</a> also apply, and the charges, receipts and
-any refunds are issued by Paddle. We do not receive or store your card number. You can update your card or cancel the
-subscription using the link in Paddle's receipt email.</p>
+any refunds are issued by Paddle. We do not receive or store your card number. You can update your card using the link in
+Paddle's receipt email. Cancellation terms are set out in the <a href="/refund/">Refund Policy</a>.</p>
 <p>You will not be asked to choose a payment company. Subscriptions that customers started earlier with another provider continue
 with that provider until they are cancelled; you are never charged twice for the same plan.</p>
 <h2>Product name on receipts</h2>
@@ -307,10 +307,11 @@ analytics), and where the law requires it. We do not sell personal information.<
 <h2>3. When a refund is made</h2>
 <p>The plan bought with that payment is removed from your account and your account returns to the state it was in before the purchase.</p>
 ${o.subscriptions ? `<h2>4. Automatic renewal and cancellation</h2>
-<p>Monthly and annual plans renew automatically until cancelled. You can cancel at any time in either of these ways:</p>
+<p>Monthly and annual plans renew automatically until cancelled. Cancellation works as follows:</p>
 <ul>
-  <li><strong>From your member account</strong> (account settings, <em>Cancel membership</em>): the subscription is stopped and paid
-  access ends immediately. No further charges are made.</li>
+  <li><strong>From your member account</strong> (My page, <em>Change registration</em>, <em>Cancel membership</em>, then confirm): the
+  subscription ends when you confirm. Paid access ends immediately, even if days remain until the expiry date, and no refund is
+  made for the remaining period. No further charges are made.</li>
   <li><strong>Using the link in the payment provider's receipt email</strong>: no further charges are made, and access continues
   until the end of the period you have already paid for.</li>
 </ul>

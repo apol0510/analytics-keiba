@@ -192,8 +192,16 @@ test('マイページ: 「退会する」は確認画面を開くだけ。確定
   assert.match(confirm, /confirm: true/);
   assert.match(confirm, /if \(akWithdrawInFlight\) return;/, '画面側の二重送信防止');
   // 確認画面の必須の説明
-  assert.match(dash, /退会すると、現在の利用期限<span id="ak-withdraw-valid-until"><\/span>を待たずに、すぐにご利用いただけなくなります。/);
-  assert.match(dash, /残りの期間のご利用を希望される場合は、退会せずにそのままご利用ください。/);
+  // 2026-11-02 MK 確定の文言とボタン（予約解約ではなく、確定した時点で即時終了）
+  assert.ok(dash.includes('<strong>退会すると、利用期限まで日数が残っていても、即時に有料コンテンツを閲覧できなくなります。残り期間分の返金はありません。それでも退会しますか？</strong>'), '確認画面に MK 確定の文言が無い');
+  assert.match(dash, /id="ak-withdraw-cancel"[^>]*>退会しない<\/button>/);
+  assert.match(dash, /id="ak-withdraw-confirm"[^>]*>退会を確定する<\/button>/);
+  // 入口は「登録変更」1 つ（カードごとに「退会する」は 1 つ・旧名「アカウント管理」を画面に残さない）
+  const markup = dash.replace(/<!--[\s\S]*?-->/g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.equal((markup.match(/<h3>⚙️ 登録変更<\/h3>/g) || []).length, 3, 'Stripe・PayPal・Paddle の 3 カード');
+  assert.doesNotMatch(markup, /アカウント管理/);
+  for (const id of ['stripe-billing-card', 'paypal-billing-card', 'paddle-billing-card']) assert.ok(markup.includes(`id="${id}"`), id);
+  assert.equal((markup.match(/onclick="akOpenWithdraw\(\)"/g) || []).length, 3, '退会の入口は各契約カードに 1 つだけ');
   // サーバーは confirm が無い送信を受けない・許可オリジンだけ・セッション必須
   const fn = stripComments(read('src/lib/billing/memberWithdrawServer.js'));
   assert.match(fn, /body\.confirm !== true\) return reply\(400/);

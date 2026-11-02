@@ -156,9 +156,12 @@ test('料金ページ: 買い切りのカードは銀行振込だけ（カード
   assert.match(annual, /data-only-for="light" data-subscription="premium-annual-light"/);
   // 決済会社によって変わる部分（名前・止め方）は受付先の行（subscriptionProviderCopy）。PayPal の行は従来の掲載文と同一
   const pc = subscriptionProviderCopy();
-  for (const w of ['自動更新です', '12 か月ごとに、お申し込み時と同じ金額で自動的に更新・請求されます', `決済代行：${pc.label}`,
-    pc.annualStop, '支払い済みの 12 か月が終わるまでご利用いただけます', '退会はその時点でご利用終了', '残りの期間の返金はありません']) {
+  for (const w of ['自動更新です', '12 か月ごとに、お申し込み時と同じ金額で自動的に更新・請求されます', `決済代行：${pc.label}`]) {
     assert.ok(annual.includes(w), `年払いの自動更新の条件に「${w}」が無い`);
+  }
+  // 2026-11-02 MK 確定: 販売ページで退会・解約の方法を案内しない（条件は FAQ・規約）
+  for (const w of ['支払い済みの 12 か月が終わるまで', '「退会する」でも止められます', '確認メール']) {
+    assert.equal(annual.includes(w), false, `年払いの販売欄に退会・解約の案内「${w}」がある`);
   }
   // 送るのは商品 ID だけ（共通入口・金額を送らない）。Live の年額 Plan が無い間はボタンを出さない
   assert.match(s, /startMonthly\(btn\.getAttribute\('data-monthly'\) \|\| btn\.getAttribute\('data-subscription'\), btn\)/);

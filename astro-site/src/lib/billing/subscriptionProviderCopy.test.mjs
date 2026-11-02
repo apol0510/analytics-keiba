@@ -12,15 +12,30 @@ test('PayPal の行は 2026-11-02 までの掲載文と同一', () => {
   const p = SUBSCRIPTION_PROVIDER_COPY.paypal;
   assert.equal(p.label, 'PayPal');
   assert.equal(p.annualTitle, 'カード（PayPal）の年払いは自動更新です。');
-  assert.equal(p.annualStop, '更新を止めるには、PayPal のアカウントで自動支払いを停止してください。次回から請求されず、支払い済みの 12 か月が終わるまでご利用いただけます。');
   assert.equal(p.flowStep2, '決済画面（PayPal）でお支払いを承認');
 });
 
-test('Paddle の行: PayPal の操作を案内しない・解約の結果は実装どおり（支払い済みの終わりまで）', () => {
+test('Paddle の行: PayPal の操作を案内しない', () => {
   const p = SUBSCRIPTION_PROVIDER_COPY.paddle;
   assert.equal(p.label, 'Paddle');
   for (const v of Object.values(p)) assert.doesNotMatch(v, /PayPal/);
-  assert.match(p.annualStop, /支払い済みの 12 か月が終わるまで/);
+});
+
+// 2026-11-02 MK 確定: 料金ページで退会・解約の方法を販売の訴求として出さない（決済会社のメール・アカウントでの解約、支払い済み期間までの利用）
+test('どの決済会社の行も退会・解約の方法を持たない', () => {
+  for (const [k, row] of Object.entries(SUBSCRIPTION_PROVIDER_COPY)) {
+    assert.equal('annualStop' in row, false, k);
+    for (const v of Object.values(row)) assert.doesNotMatch(v, /解約|退会|停止|支払い済み|確認メール/, k);
+  }
+});
+
+test('料金ページ（FAQ より前）に退会・解約の方法や支払い済み期間までの利用を出さない', () => {
+  const visible = page.replace(/<!--[\s\S]*?-->/g, '').replace(/\{\/\*[\s\S]*?\*\/\}/g, '');
+  const beforeFaq = visible.slice(0, visible.indexOf('class="faq-section"'));
+  assert.ok(beforeFaq.length > 1000);
+  assert.doesNotMatch(beforeFaq, /annualStop|確認メール[^。]*解約|支払い済み[^。]*(終わる|まで)|「退会する」でも止められます/);
+  // 購入時の料金・請求周期・自動更新の条件は出し続ける
+  assert.match(beforeFaq, /12 か月ごとに、お申し込み時と同じ金額で自動的に更新・請求されます/);
 });
 
 test('料金ページは ACTIVE の行だけを使い、決済会社名を直書きしない', () => {

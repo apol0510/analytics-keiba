@@ -1,4 +1,4 @@
-# 💳 新規の月額・年額を Paddle へ一本化（2026-11-02 MK 確定 / **実装 PR #850（draft）・Sandbox E2E 済み・切替前（PayPal で受付中）・本番の前提待ち**）
+# 💳 新規の月額・年額を Paddle へ一本化（2026-11-02 MK 確定 / **実装 #850 merge 済み（`6439c4d5`・切替なし＝本番は PayPal で受付中）・退会の案内と導線の PR・切替 PR は中立サイト deploy の後**）
 
 | 項目 | 状態 |
 |---|---|
@@ -15,6 +15,8 @@
 | 既存の実ブラウザ E2E | `e2e:paypal-post-purchase` は branch・**origin/main とも** 56 pass / 1 中断（同じ段「確認中・確認できない: 401 の案内」で astro dev が `upstream_timeout`＝E2E 環境の事情。#848 の記録と同じ）。branch と origin/main で結果が同一＝本変更による退行ではない |
 | 切替（未）| `cardSales.js` の `ACTIVE_SUBSCRIPTION_PROVIDER='paddle'`・`SUBSCRIPTION_SALES_OPEN={paypal:false,paddle:true}`（2 行）を #850 に足してから merge。**本番の前提が揃うまで足さない**（準備中は PayPal の新規受付を維持）|
 | 本番の前提（未）| ① Live の API 鍵に `subscription.read`・`subscription.write`・`notification_setting.read`・`notification_setting.write`（2026-11-02 の Live 鍵は transaction・adjustment だけ＝購読・通知設定・events は 403）＝**MK の Paddle 画面操作** ② 通知先 `https://checkout.tirol.link/hooks/paddle` に `subscription.*` を追加（①の後に Claude が API で）③ 中立サイト（`tirol-checkout`）へ関数と live token 付きのページを deploy ④ 本番で取引の作成（未払い・課金なし）と決済画面の表示を read-only 確認 ⑤ GA4 の除外に `checkout.tirol.link`（Paddle の決済ページ＝戻りの参照元）を追加し、初回実購入で確認 |
+| 本番の前提の進み（2026-11-02）| ① Live 鍵の権限（MK 付与・Claude の監視で検知: subscriptions 200・notification-settings 200）**済み** ② 通知先 `ntfset_01m5nxdwva1embw81e9xadbvva`（`https://checkout.tirol.link/hooks/paddle`）に `subscription.*` 9 種を API で追加 **済み**（transaction.completed / paid・adjustment.created / updated は維持。現行の中立サイトは subscription.* を無視して 200）③ 中立サイト deploy: env 3 つ（`PADDLE_API_KEY`・`PADDLE_WEBHOOK_SECRET`・`CARD_GRANT_INTERNAL_SECRET`）確認済み。**Claude の deploy は harness が拒否 → MK の 1 操作**（main から build → `netlify deploy --prod`）。rollback は前の deploy `6add540dc6a5e1890f3aa4bd` を publish ④ 切替（`cardSales.js` 2 行）は別 PR。**順序は中立サイト deploy → 切替 PR の merge**（逆だと本番が `kind: subscription` を旧中立サイトへ送り、月額の申込が失敗する）|
+| 退会の案内と導線（2026-11-02 MK 確定・decisions 同日）| 料金ページから退会方法の訴求（決済会社のメールでの解約・支払い済み期間まで）を削除・マイページの見出し「アカウント管理」→「登録変更」・確認画面を MK 確定文言とボタン「退会しない」「退会を確定する」へ・中立サイトの解約案内は Refund Policy §4 に集約。退会処理・Paddle / PayPal 側の解約処理・権限・請求は不変 |
 | 売上集計 | `PADDLE_READ_KEY`（transaction.read・adjustment.read だけの鍵）が GitHub secret に入るまで、`revenue-*.json` の Paddle は「未計上」と明記される |
 | 実購入待ちの監視 | 初回実購入・初回実更新は `ops/scheduled-checks.json` の `paddle-subscription-first-purchase-2026`・`paddle-subscription-first-renewal-2026`（毎日 10:00 JST・read-only・Issue に記録）|
 | Paddle の決済画面の表示（Claude 観測・MK 判断）| Paddle の決済画面は「カードで支払い」の上に Paddle 経由の PayPal ボタンも出す（Paddle の支払い方法。AK の決済会社の選択ではない）。外すなら Paddle の Checkout settings で PayPal を無効化（MK 判断）|

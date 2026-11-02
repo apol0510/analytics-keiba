@@ -112,7 +112,7 @@ export function viewerProfile(fields, now = Date.now()) {
     // ⚠️ `Number(null)` は 0（有限）になる。列が無いときに 0pt と表示しないよう、
     //    値が有ることを先に確かめる。
     points: points === null || !Number.isFinite(Number(points)) ? null : Number(points),
-    // Stripe の月額で契約中か（マイページの「アカウント管理」用）。ID そのものは渡さない。
+    // Stripe の月額で契約中か（マイページの「登録変更」用）。ID そのものは渡さない。
     // 退会済み（即時退会・2026-10-07）は契約が終わっているので出さない（退会ボタンも出さない）。
     // PayPal の月額（2026-10-15〜）・年額（2026-10-20〜）は 'paypal'（退会ボタンだけ。カード変更は PayPal 側・プラン変更は未提供）。
     billing: /^(true|1|yes)$/i.test(String(read(['WithdrawalRequested']) ?? '').trim()) ? null
