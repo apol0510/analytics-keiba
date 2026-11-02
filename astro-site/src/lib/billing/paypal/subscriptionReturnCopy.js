@@ -48,7 +48,7 @@ const LOGIN_HOW = 'ログイン画面でお申し込みのメールアドレス�
 // 購入完了（反映済み）の未ログイン購入者: ログイン画面へ自動で移る（2026-10-22 MK 確定）。ログイン後はサーバーの購入直後の印で Premium へ届く
 const LOGIN_AFTER_PURCHASE = Object.freeze(['ログインする', '/login/?from=paypal']);
 export const SUBSCRIPTION_RETURN_GUEST = Object.freeze({
-  activeNext: 'まもなくログイン画面へ移動します。お申し込みのメールアドレスを入力すると届くログインリンクを開くと、そのまま Premium 予想へご案内します。',
+  activeNext: 'まもなくログイン画面へ移動します。メールは自動では届きませんので、ログイン画面でお申し込みのメールアドレスを入力してください。届いたログインリンクを開くと、そのまま Premium 予想へご案内します。',
   activeLinks: Object.freeze([LOGIN_AFTER_PURCHASE]),
   activeRedirect: LOGIN_AFTER_PURCHASE[1],
   loginRequired: Object.freeze({

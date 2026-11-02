@@ -432,7 +432,7 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
                     <h3 class="faq-question">Q: 利用開始までの流れは？</h3>
                     <p class="faq-answer">
                         <strong>【銀行振込】</strong>①お振込み → ②振込完了後、報告フォームをご送信 → ③入金確認後、ご利用開始です。フォームは<strong>お振込みが済んでから</strong>ご送信ください。<br>
-                        <strong>【クレジット決済】</strong>①「クレジットカードで申し込む」（ログインしていない方は、ご利用になるメールアドレスを入力） → ②決済画面（PayPal）でお支払いを承認 → ③お支払いが確認でき次第、ご利用開始です（ログインはメールでお送りするリンクから）。
+                        <strong>【クレジット決済】</strong>①「クレジットカードで申し込む」（ログインしていない方は、ご利用になるメールアドレスを入力） → ②決済画面（PayPal）でお支払いを承認 → ③お支払いが確認でき次第、ご利用開始です。決済完了の画面から Premium の利用画面へ自動でご案内します（ログインしていない方は、ログイン画面でお申し込みのメールアドレスを入力し、届いたログインリンクからログイン。決済しただけでメールやログインリンクが自動で届くことはありません）。
                     </p>
                 </div>
 
@@ -606,7 +606,7 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
         + '<form class="checkout-email-form" novalidate>'
         + '<label class="form-label" for="monthlyEmail">ご利用になるメールアドレス</label>'
         + '<input type="email" id="monthlyEmail" class="form-input" required autocomplete="email" placeholder="example@email.com" value="' + esc(value || savedEmail()) + '">'
-        + '<small>お申し込み後のログインに使います（ログインリンクをこのアドレスへお送りします）。</small>'
+        + '<small>お申し込み後のログインに使います。決済後にメールは自動では届きません（ログイン画面でこのアドレスを入力すると、ログインリンクが届きます）。</small>'
         + '<button type="submit">決済へ進む</button>'
         + '</form>', btn);
       var form = msg.querySelector('form');

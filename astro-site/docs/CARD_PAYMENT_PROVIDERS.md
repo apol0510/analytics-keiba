@@ -175,6 +175,7 @@ Sandbox の Product `PROD-1DB142038K1860725`／Plan: premium `P-67290333XA263552
 | 確認中 | 「お支払いを確認しています…」のまま（3 秒ごと最大 20 回）。Premium へ移さない | `pending` は `destination` を返さない |
 | 確認できない | URL だけ（別のブラウザ）＝401 はログインの案内・404 はマイページ＋お問い合わせ・時間切れは「もう一度お支払いいただく必要はありません」＋マイページ／ログイン＋お問い合わせ。再決済は促さない | `subscriptionReturnCopy.js`（`SUBSCRIPTION_RETURN_CONTACT`）|
 | 不変 | 決済・Webhook・権限の反映（`applyPaypalSubscription`）・料金・更新・退会・GA4 `purchase`（active のときだけ 1 回）| 印の失敗は付与・ログインを止めない（best-effort）|
+| 案内の文言（2026-11-02 MK 確定）| 決済しただけではメールは届かない。料金ページのメール入力の注記・FAQ・未ログイン購入完了の戻り先は「メールは自動では届かない／ログイン画面で入力すると届く」と書き、自動送信と読める表現（「ログインリンクをこのアドレスへお送りします」等）を出さない | `pricing.astro`・`subscriptionReturnCopy.js`（`SUBSCRIPTION_RETURN_GUEST.activeNext`）。検査 `postPurchaseLoginCopy.test.mjs`・E2E |
 
 **検証**: `postPurchaseLanding.test.mjs`・`subscriptionReturnToken.test.mjs`（偽の PayPal / Airtable / Redis を通した申込 → 支払い → 戻り先 → 印 → ログイン）。実ブラウザ E2E `npm run e2e:paypal-post-purchase`（`scripts/e2e-paypal-post-purchase/`・偽の外部＋実 Function＋astro dev＋ヘッドレス Chrome・本物の外部へは出ない・ブラウザも localhost 以外を名前解決しない）: 未ログイン（月額 3・年額・スマホ／PC）→ ログイン画面 → **別のブラウザコンテキスト（メールアプリ内ブラウザ相当）**でリンク → 利用画面、ログイン済み Light 会員（全会場・南関版）→ 戻り先から利用画面、確認中は遷移しない、URL だけは 401 の案内、購入なしの通常ログインは `/dashboard/` のまま。
 
