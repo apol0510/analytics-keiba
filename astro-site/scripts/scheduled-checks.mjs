@@ -21,6 +21,7 @@ import {
   runPlusFirstOrderCheck, renderPlusFirstOrderMarkdown, runPlusOfferOutcomeCheck, renderPlusOfferOutcomeMarkdown,
 } from '../src/lib/ops/plusOrderCheck.js';
 import { runPaypalFirstPurchaseCheck, renderPaypalFirstPurchaseMarkdown, runPaypalFirstRenewalCheck, renderPaypalFirstRenewalMarkdown } from '../src/lib/ops/paypalFirstPurchaseCheck.js';
+import { runPaddleFirstPurchaseCheck, renderPaddleFirstPurchaseMarkdown, runPaddleFirstRenewalCheck, renderPaddleFirstRenewalMarkdown } from '../src/lib/ops/paddleFirstSubscriptionCheck.js';
 import { runLightRenewalOutcomesCheck, renderLightRenewalOutcomesMarkdown } from '../src/lib/ops/lightRenewalOutcomesCheck.js';
 
 const REGISTRY = fileURLToPath(new URL('../../ops/scheduled-checks.json', import.meta.url));
@@ -130,6 +131,12 @@ if (cmd === 'run') {
     } else if (check.kind === 'paypal-monthly-first-renewal') {
       result = await runPaypalFirstRenewalCheck({ check, token: process.env.AIRTABLE_READONLY_TOKEN, secret: process.env.PAYMENT_FUNNEL_READ_SECRET });
       md = renderPaypalFirstRenewalMarkdown({ check, result });
+    } else if (check.kind === 'paddle-subscription-first-purchase') {
+      result = await runPaddleFirstPurchaseCheck({ token: process.env.AIRTABLE_READONLY_TOKEN });
+      md = renderPaddleFirstPurchaseMarkdown({ check, result });
+    } else if (check.kind === 'paddle-subscription-first-renewal') {
+      result = await runPaddleFirstRenewalCheck({ token: process.env.AIRTABLE_READONLY_TOKEN });
+      md = renderPaddleFirstRenewalMarkdown({ check, result });
     } else if (check.kind === 'premium-plus-first-order') {
       result = await runPlusFirstOrderCheck({ check, secret: process.env.PAYMENT_FUNNEL_READ_SECRET });
       md = renderPlusFirstOrderMarkdown({ check, result });
