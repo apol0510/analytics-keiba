@@ -1,4 +1,4 @@
-# 🧾 決済後のログイン案内を実態に合わせる・GA4 の決済戻り参照元除外（2026-11-02 MK 確定 / **PR 作成中**）
+# 🧾 決済後のログイン案内を実態に合わせる・GA4 の決済戻り参照元除外（2026-11-02 MK 確定 / **#848 `c1bd570e` merge・本番反映・本番 smoke 済み**）
 
 | 項目 | 状態 |
 |---|---|
@@ -13,6 +13,9 @@
 | Paddle | 本番切替時に実際の戻り参照元を確認して同じリストへ追加（受付は閉のまま）|
 | 対象外 | ① 銀行振込の後日振込（MK 採用決定前は実装しない）／③ Stripe 既存会員（何もしない）／旧 Stripe の完了画面（実際にログインリンクを送るので文言は正しい）|
 | rollback | revert（文言とテストだけ）。GA4 は除外する参照のリストから 2 行を削除（変更前は空）|
+| 本番 smoke（2026-11-02 06:2x UTC）| `/pricing/` に新しい注記・FAQ あり／旧表現 0 件。`/checkout/paypal-subscription-return/` に「メールは自動では届きません」。`paypal-subscription-confirm` はセッション無しで 401（従来どおり）。決済・付与は変更なし（実購入は行っていない）|
+| 残り | ① 次の PayPal 実購入で GA4 の参照元（`paypal.com / referral` が増えない・`purchase` が元の流入元に付く）を確認（GA4 読取りの service account 付与後は自動化）② Paddle 本番切替時に実際の戻り参照元を除外リストへ |
+| cleanup | worktree `analytics-keiba-logincopy`・branch `fix/post-purchase-login-copy` 削除済み |
 
 ## Paddle 定期課金（月額・年額）へ移す場合の実装範囲（2026-11-02 調査・**提案段階・未着手**）
 
