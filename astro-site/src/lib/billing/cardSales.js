@@ -82,12 +82,13 @@ export function checkoutProviderGate({ provider, mode, entry = 'direct', active 
  * - 本番の受付はこの表を true にする PR だけで開く（env では開かない）。一回払い（CARD_SALES_OPEN）とは別の表。
  */
 export const SUBSCRIPTION_SALES_OPEN = Object.freeze({
-  paypal: true, // 2026-10-15 MK 決定で受付開始（Live の Plan・Webhook・production env 設定済み）
+  // 2026-11-02 MK 確定で新規の受付を Paddle へ一本化。PayPal は新規だけ閉じる（既存契約の更新・通知・退会・返金は settle モードで継続）
+  paypal: false,
   // 2026-11-02 MK 確定「新規の月額・年額は Paddle へ一本化」。定期課金の実装・Sandbox E2E・本番設定（鍵の権限・通知先）が
   // 成立してから、この値を true にし ACTIVE_SUBSCRIPTION_PROVIDER を 'paddle' にする PR で切り替える（準備中は PayPal の受付を維持）。
-  paddle: false,
+  paddle: true, // 2026-11-02 切替（本番の前提: Live 鍵の購読権限・通知先の subscription.*・中立サイト deploy を確認済み）
 });
-export const ACTIVE_SUBSCRIPTION_PROVIDER = 'paypal';
+export const ACTIVE_SUBSCRIPTION_PROVIDER = 'paddle';
 
 /** 月額の申込を始めてよいか（live は共通入口 entry='monthly' から ACTIVE_SUBSCRIPTION_PROVIDER だけ）*/
 export function subscriptionProviderGate({ provider, mode, entry = 'direct', active = ACTIVE_SUBSCRIPTION_PROVIDER } = {}) {

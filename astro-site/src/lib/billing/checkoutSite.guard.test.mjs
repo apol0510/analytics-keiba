@@ -145,7 +145,7 @@ test('Paddle の定期課金（2026-11-02 MK 確定）: 受付の切替と同時
   const pricing = sub['pricing/index.html'];
   for (const s of ['¥4,980', '¥2,980', '¥49,800', '¥44,820', 'renew automatically', 'bank transfer only']) assert.ok(pricing.includes(s), s);
   // 解約: マイページ＝即時終了／決済会社のメールのリンク＝支払い済み期間の終わりまで（実装どおり）
-  assert.match(sub['refund/index.html'], /paid\s+access ends immediately/);
+  assert.match(sub['refund/index.html'], /Paid access ends immediately, even if days remain until the expiry date, and no refund is\s+made for the remaining period/);
   assert.match(sub['refund/index.html'], /until the end of the period you have already paid for/);
   assert.match(sub['terms/index.html'], /renew automatically/);
   assert.match(sub['billing/index.html'], /Paddle\.com/);

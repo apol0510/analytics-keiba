@@ -201,8 +201,6 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
                             <p><strong>{providerCopy.annualTitle}</strong></p>
                             <ul>
                                 <li>12 か月ごとに、お申し込み時と同じ金額で自動的に更新・請求されます（決済代行：{providerCopy.label}）。</li>
-                                <li>{providerCopy.annualStop}</li>
-                                <li>マイページ「アカウント管理」の「退会する」でも止められます。退会はその時点でご利用終了となり、残りの期間の返金はありません。</li>
                             </ul>
                         </div>
                     </>
@@ -417,8 +415,8 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
                 <div class="faq-item">
                     <h3 class="faq-question">Q: クレジット決済の解約（退会）は？</h3>
                     <p class="faq-answer">
-                        退会のお手続きは、ログイン後のマイページの「アカウント管理」の「退会する」からだけ行えます（確認画面のあとに確定します）。以降のお支払いはその時点で止まります。<br>
-                        退会すると、現在の利用期限を待たずにすぐにご利用いただけなくなり、以降の請求はありません。残りの期間のご利用を希望される場合は、退会せずにそのままご利用ください。最低利用期間はなく、日割りでの返金は行っておりません。退会後もログインして無料予想をご利用いただけます。再びご利用の場合は新しくお申し込みいただけます。<br>
+                        退会のお手続きは、ログイン後のマイページの「登録変更」の「退会する」から行えます（確認画面で「退会を確定する」を押した時点で確定します）。以降のお支払いはその時点で止まります。<br>
+                        退会すると、利用期限まで日数が残っていても、即時に有料コンテンツを閲覧できなくなります。残り期間分の返金はありません。以降の請求はありません。残りの期間のご利用を希望される場合は、退会せずにそのままご利用ください。最低利用期間はなく、日割りでの返金は行っておりません。退会後もログインして無料予想をご利用いただけます。再びご利用の場合は新しくお申し込みいただけます。<br>
                         銀行振込のプラン（年払い・買い切り）は自動更新・継続課金がないため、退会のお手続きはありません。
                     </p>
                 </div>
@@ -653,7 +651,7 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
         step(planId, /^(account_conflict|account_unavailable|lifetime_bank_transfer_only|already_subscribed|not_eligible|already_premium|card_sales_not_open|plan_not_configured|[a-z_]+_key_missing)$/.test(err) ? 'blocked' : 'error');
         if (err === 'account_conflict' || err === 'account_unavailable') return show('このメールアドレスではお申し込みを受け付けられませんでした。お手数ですが<a href="/contact/">お問い合わせ</a>ください。', btn);
         if (err === 'lifetime_bank_transfer_only') return show('買い切りは銀行振込でお申し込みいただけます。', btn);
-        if (err === 'already_subscribed') return show('すでにクレジット決済でご契約中です。ご契約内容はマイページの「アカウント管理」でご確認いただけます。<a href="/dashboard/">マイページへ</a>', btn);
+        if (err === 'already_subscribed') return show('すでにクレジット決済でご契約中です。ご契約内容はマイページの「登録変更」でご確認いただけます。<a href="/dashboard/">マイページへ</a>', btn);
         if (err === 'not_eligible') return show('乗り換え特典価格は Light 会員さま限定です。通常価格でお申し込みいただけます。', btn);
         if (err === 'already_premium') return show('すでに Premium（中央＋南関）をご利用中のため、お申し込みは不要です。ご不明な点は<a href="/contact/">お問い合わせ</a>ください。', btn);
         if (err === 'card_sales_not_open' || /_key_missing$/.test(err) || err === 'plan_not_configured') return show('ただいまクレジット決済のお申し込みを準備中です。銀行振込（年払い・買い切り）は通常どおりお申し込みいただけます。', btn);
