@@ -19,6 +19,9 @@ import {
   createPaypalSubscription, applyPaypalSubscription, confirmPaypalSubscription, withdrawPaypalSubscriber, handlePaypalSubscriptionEvent,
 } from './paypalSubscriptionServer.js';
 import { classifyMemberWithdrawal } from '../memberWithdrawal.js';
+import { subscriptionProviderCopy } from '../subscriptionProviderCopy.js';
+/** 料金ページの決済会社別の説明（{providerCopy.x}）を受付先（ACTIVE）の値で展開する（2026-11-02・subscriptionProviderCopy.js）*/
+const expandProviderCopy = (src) => src.replace(/\{providerCopy\.(\w+)\}/g, (_, k) => subscriptionProviderCopy()[k]);
 
 const PREVIEW = 'https://deploy-preview-1--analytics-keiba.netlify.app';
 const REC = 'recAAAAAAAAAAAAAA';
@@ -148,11 +151,13 @@ test('料金ページ: 買い切りのカードは銀行振込だけ（カード
   assert.ok(lifetime.length > 100);
   assert.equal(/data-subscription|data-card-product|data-monthly|plan-button-credit|PayPal|card-create-checkout/.test(lifetime), false, '買い切りにカード・PayPal の入口がある');
   assert.match(lifetime, /openBankModal\('Premium Lifetime', 78000, 'lifetime'\)/);
-  const annual = s.slice(s.indexOf('data-bank-plan="annual"'), s.indexOf('data-bank-plan="lifetime"'));
+  const annual = expandProviderCopy(s.slice(s.indexOf('data-bank-plan="annual"'), s.indexOf('data-bank-plan="lifetime"')));
   assert.match(annual, /data-hide-for="light" data-subscription="premium-annual"/);
   assert.match(annual, /data-only-for="light" data-subscription="premium-annual-light"/);
-  for (const w of ['自動更新です', '12 か月ごとに、お申し込み時と同じ金額で自動的に更新・請求されます', '決済代行：PayPal',
-    'PayPal のアカウントで自動支払いを停止', '支払い済みの 12 か月が終わるまでご利用いただけます', '退会はその時点でご利用終了', '残りの期間の返金はありません']) {
+  // 決済会社によって変わる部分（名前・止め方）は受付先の行（subscriptionProviderCopy）。PayPal の行は従来の掲載文と同一
+  const pc = subscriptionProviderCopy();
+  for (const w of ['自動更新です', '12 か月ごとに、お申し込み時と同じ金額で自動的に更新・請求されます', `決済代行：${pc.label}`,
+    pc.annualStop, '支払い済みの 12 か月が終わるまでご利用いただけます', '退会はその時点でご利用終了', '残りの期間の返金はありません']) {
     assert.ok(annual.includes(w), `年払いの自動更新の条件に「${w}」が無い`);
   }
   // 送るのは商品 ID だけ（共通入口・金額を送らない）。Live の年額 Plan が無い間はボタンを出さない

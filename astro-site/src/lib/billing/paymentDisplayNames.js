@@ -78,3 +78,20 @@ export function assertPaypalPlanName(planId, text) {
   }
   return assertPaymentDisplayName(text, `paypal plan ${planId}`);
 }
+
+/**
+ * 定期課金（月額・年額）の名前の許可リスト（決済会社共通・2026-11-02 MK 確定「Paddle 一本化」で Paddle にも同じ名前を使う）。
+ * PayPal の Plan 名と同じ文字列・完全一致（新しい名前を作らない）。
+ */
+export const SUBSCRIPTION_PLAN_NAMES = PAYPAL_PLAN_NAMES;
+
+/** 定期課金の名前は許可リストの値だけ（Paddle の非カタログ価格・商品名に使う）*/
+export function assertSubscriptionPlanName(planId, text) {
+  const want = SUBSCRIPTION_PLAN_NAMES[planId];
+  if (!want || text !== want) {
+    const err = new Error(`subscription plan name for ${planId} is not the approved name`);
+    err.code = 'unapproved_subscription_plan_name';
+    throw err;
+  }
+  return assertPaymentDisplayName(text, `subscription plan ${planId}`);
+}

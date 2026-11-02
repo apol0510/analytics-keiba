@@ -67,6 +67,7 @@ const serverAuth = {
     stripeBilling: viewer.isMember && viewer.profile?.billing === 'stripe',
     // PayPal の月額（定期課金・2026-10-15〜）で契約中（退会ボタンを出す）
     paypalBilling: viewer.isMember && viewer.profile?.billing === 'paypal',
+    paddleBilling: viewer.isMember && viewer.profile?.billing === 'paddle',
 };
 // 会員ごとに中身が変わる。共有キャッシュに載せない（別人へ配られるのを防ぐ）。
 Astro.response.headers.set('Cache-Control', 'private, no-store');
@@ -471,6 +472,19 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
                         <div class="race-info">
                             <div class="race-title race-title-sm">自動更新プラン（PayPal）</div>
                             <div class="confidence">月額は毎月、年額は 12 か月ごとに自動で更新されます。お支払い方法の変更は PayPal のアカウントで行えます。</div>
+                        </div>
+                        <div class="sanrenpuku-view-buttons">
+                            <button type="button" class="view-btn ak-withdraw-open" onclick="akOpenWithdraw()">退会する</button>
+                        </div>
+                    </div>
+
+                    <div id="paddle-billing-card" class="prediction-card premium" style="display: none;">
+                        <div class="card-header">
+                            <h3>⚙️ アカウント管理</h3>
+                        </div>
+                        <div class="race-info">
+                            <div class="race-title race-title-sm">自動更新プラン（Paddle）</div>
+                            <div class="confidence">月額は毎月、年額は 12 か月ごとに自動で更新されます。お支払い方法の変更は Paddle から届くお支払い確認メールのリンクから行えます。</div>
                         </div>
                         <div class="sanrenpuku-view-buttons">
                             <button type="button" class="view-btn ak-withdraw-open" onclick="akOpenWithdraw()">退会する</button>
@@ -1973,6 +1987,10 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
             // PayPal 月額の会員 → 退会（アカウント管理）
             if (_serverAuth && _serverAuth.paypalBilling === true) {
                 document.getElementById('paypal-billing-card').style.display = 'block';
+            }
+            // Paddle の定期課金の会員（2026-11-02〜）→ 退会（アカウント管理）
+            if (_serverAuth && _serverAuth.paddleBilling === true) {
+                document.getElementById('paddle-billing-card').style.display = 'block';
             }
             // PayPal 購入直後の自動遷移（/dashboard/#premium-predictions・postPurchaseLanding.js）: 表示された Premium 枠まで送って強調する。
             // 枠が出ていない（権限が無い）ときは何もしない＝通常のマイページ
@@ -5494,7 +5512,7 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
                 if (!dash || !note) return;
                 const sa = (window.__AK_SERVER_AUTH__ && typeof window.__AK_SERVER_AUTH__ === 'object') ? window.__AK_SERVER_AUTH__ : null; // is:inline からは module の getServerAuth が見えない
                 const kind = sa && sa.profile && sa.profile.withdraw ? sa.profile.withdraw.kind : null;
-                const monthly = kind === 'stripe' || kind === 'paypal';
+                const monthly = kind === 'stripe' || kind === 'paypal' || kind === 'paddle';
                 const bank = kind === 'bank_transfer';
                 const bankNote = document.getElementById('withdrawal-bank-note');
                 const freeLine = document.getElementById('withdrawal-free-line');
@@ -5513,7 +5531,7 @@ const serverAuthJson = JSON.stringify(serverAuth).replace(/</g, '\\u003c');
                     setTimeout(function () {
                         const sa = (window.__AK_SERVER_AUTH__ && typeof window.__AK_SERVER_AUTH__ === 'object') ? window.__AK_SERVER_AUTH__ : null; // is:inline からは module の getServerAuth が見えない
                         const kind = sa && sa.profile && sa.profile.withdraw ? sa.profile.withdraw.kind : null;
-                        if ((kind === 'stripe' || kind === 'paypal') && typeof window.akOpenWithdraw === 'function') {
+                        if ((kind === 'stripe' || kind === 'paypal' || kind === 'paddle') && typeof window.akOpenWithdraw === 'function') {
                             window.akOpenWithdraw();
                         } else {
                             update();

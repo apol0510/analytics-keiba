@@ -10,6 +10,9 @@ import { fileURLToPath } from 'node:url';
 import { CARD_SALES_OPEN, resolveCardMode, PRODUCTION_ORIGIN, SUBSCRIPTION_SALES_OPEN, ACTIVE_SUBSCRIPTION_PROVIDER } from './cardSales.js';
 import { CARD_PRODUCTS } from './cardOneTime.js';
 import { MONTHLY_SALES_OPEN } from './stripePlans.js';
+import { subscriptionProviderCopy } from './subscriptionProviderCopy.js';
+/** 料金ページの決済会社別の説明（{providerCopy.x}）を受付先（ACTIVE）の値で展開する（2026-11-02・subscriptionProviderCopy.js）*/
+const expandProviderCopy = (src) => src.replace(/\{providerCopy\.(\w+)\}/g, (_, k) => subscriptionProviderCopy()[k]);
 
 const root = (p) => fileURLToPath(new URL(`../../../${p}`, import.meta.url));
 const read = (p) => readFileSync(root(p), 'utf8');
@@ -25,15 +28,20 @@ test('全決済会社の本番受付は閉じている（コード定数・env �
   }
 });
 
-test('一回払いの層は定期課金を持たない。月額は PayPal の定期課金だけ（2026-10-15 MK 決定）・Stripe の新規月払いは閉じたまま', () => {
+test('一回払いの層は定期課金を持たない。定期課金は専用の層（PayPal 2026-10-15・Paddle 2026-11-02 MK 確定）・Stripe の新規月払いは閉じたまま', () => {
   assert.equal(MONTHLY_SALES_OPEN, false, 'Stripe の新規月払いは閉じたまま');
   assert.deepEqual(CARD_PRODUCTS.map((p) => p.planType).sort(), ['Annual', 'Annual', 'Lifetime']);
   const libs = ['paddle/paddleCore.js', 'paddle/paddleServer.js', 'paypal/paypalCore.js', 'paypal/paypalServer.js']
     .map((f) => read(`src/lib/billing/${f}`)).join('\n');
   assert.equal(/billing_cycle|\/v1\/billing\/|\/subscriptions/.test(libs), false, '一回払いの層・Paddle は定期課金 API を使わない');
   assert.match(read('src/lib/billing/paypal/paypalSubscriptionServer.js'), /\/v1\/billing\/subscriptions/);
-  assert.deepEqual({ ...SUBSCRIPTION_SALES_OPEN }, { paypal: true }, '月額の本番受付は PR でだけ開く（2026-10-15 PayPal 受付開始）');
-  assert.equal(ACTIVE_SUBSCRIPTION_PROVIDER, 'paypal');
+  // Paddle の定期課金は専用の層（paddleSubscriptionCore / paddleSubscriptionServer）と API クライアント（paddleApi）だけ
+  assert.match(read('src/lib/billing/paddle/paddleSubscriptionCore.js'), /billing_cycle/);
+  assert.match(read('src/lib/billing/paddle/paddleApi.js'), /\/subscriptions\//);
+  // 新規の受付は 1 社だけ。切替（ACTIVE_SUBSCRIPTION_PROVIDER と SUBSCRIPTION_SALES_OPEN）は PR でだけ行う
+  const open = Object.entries(SUBSCRIPTION_SALES_OPEN).filter(([, v]) => v === true).map(([k]) => k);
+  assert.deepEqual(open, [ACTIVE_SUBSCRIPTION_PROVIDER], '新規の定期課金を受ける決済会社は ACTIVE_SUBSCRIPTION_PROVIDER の 1 社だけ');
+  assert.ok(['paypal', 'paddle'].includes(ACTIVE_SUBSCRIPTION_PROVIDER));
 });
 
 test('会員権限の書き換えは共通層（entitlementLedger）だけ: アダプタは Airtable を直接 PATCH しない', () => {
@@ -77,14 +85,14 @@ test('料金ページの月額ボタン: 未ログインはログインへ直行
 test('料金ページ: 月額・自動更新・PayPal を前面に出さない（主役は年払い・買い切り／2026-10-15 MK 指示）', () => {
   const s = read('src/pages/pricing.astro');
   const i = s.indexOf('<section class="monthly-section"'); const j = s.indexOf('</section>', i);
-  const visible = s.slice(i, j).replace(/<!--[\s\S]*?-->/g, '').replace(/\{\/\*[\s\S]*?\*\/\}/g, '');
+  const visible = expandProviderCopy(s.slice(i, j).replace(/<!--[\s\S]*?-->/g, '').replace(/\{\/\*[\s\S]*?\*\/\}/g, ''));
   for (const w of ['月額で始める', '毎月自動更新', 'PayPal で申し込む', '月額・', 'recommended-badge']) {
     assert.ok(!visible.includes(w), `クレジット決済の枠に「${w}」が前面に出ている`);
   }
   assert.match(visible, /クレジット決済/);
   assert.match(visible, /クレジットカードで申し込む/);
   // 自動で継続する支払いであること・決済代行は隠さない（ボタン下の注記）
-  assert.match(visible, /自動継続のお支払い（決済代行：PayPal）/);
+  assert.match(visible, new RegExp(`自動継続のお支払い（決済代行：${subscriptionProviderCopy().label}）`));
   // 主役は年払い・買い切り（クレジット決済の枠より前）
   assert.ok(s.indexOf('年払い・買い切りで。') < i, '年払い・買い切りの見出しがクレジット決済より後ろにある');
 });

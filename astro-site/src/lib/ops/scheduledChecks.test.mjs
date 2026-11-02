@@ -244,7 +244,7 @@ test('workflow: Airtable の読み取りトークンも失敗経路の検証で�
 
 test('待機中（まだ起きていない・未確定）は失敗と分ける: exit 3・赤にしない・待機中 Issue を 1 つだけ更新', async () => {
   const { exitCodeFor, EXIT, PENDING_CODES } = await import('./scheduledChecks.js');
-  assert.deepEqual([...PENDING_CODES].sort(), ['data_not_ready', 'no_application_yet', 'no_confirmation_yet', 'no_conversion_yet', 'no_paypal_monthly_purchase_yet', 'no_plus_confirmation_yet', 'no_plus_order_yet', 'no_reminder_sent_yet', 'paypal_no_renewal_candidate', 'paypal_renewal_not_due_yet', 'paypal_renewal_payment_failed', 'paypal_webhook_not_seen_yet', 'stripe_charges_not_enabled']);
+  assert.deepEqual([...PENDING_CODES].sort(), ['data_not_ready', 'no_application_yet', 'no_confirmation_yet', 'no_conversion_yet', 'no_paddle_subscription_purchase_yet', 'no_paypal_monthly_purchase_yet', 'no_plus_confirmation_yet', 'no_plus_order_yet', 'no_reminder_sent_yet', 'paddle_no_renewal_candidate', 'paddle_renewal_not_due_yet', 'paypal_no_renewal_candidate', 'paypal_renewal_not_due_yet', 'paypal_renewal_payment_failed', 'paypal_webhook_not_seen_yet', 'stripe_charges_not_enabled']);
   assert.equal(exitCodeFor('no_conversion_yet'), EXIT.PENDING);
   assert.equal(exitCodeFor('data_not_ready'), EXIT.PENDING);
   assert.equal(exitCodeFor('credentials_missing'), EXIT.FAILED);

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   buildDoc, buildRevenueMonth, fetchPaypalMonth, fetchRevenueMonth, measurementPeriod, monthRangeJst, previousMonthJst, readPrevious,
-  summarizePaypal, summarizeStripe, summaryLine, sustainedMonths, RevenueError, TARGET_JPY,
+  summarizePaypal, summarizeStripe, summaryLine, sustainedMonths, RevenueError, TARGET_JPY, summarizePaddle, fetchPaddleMonth,
 } from './revenueMonthly.mjs';
 
 const summary = (over = {}) => ({ month: '2026-10', confirmedCount: 3, pricedCount: 3, confirmedYen: 1_200_000, yenByPlan: {}, firstPricedDay: '20261001', ...over });
@@ -30,7 +30,7 @@ test('JST の月境界・当月は速報値・未来は拒否', () => {
 });
 
 test('目標達成と連続月数（全手段を計上）', () => {
-  const channels = { stripe: { gross: 0, refunds: 0, payments: 0 }, paypal: { gross: 0, refunds: 0, payments: 0 } };
+  const channels = { stripe: { gross: 0, refunds: 0, payments: 0 }, paypal: { gross: 0, refunds: 0, payments: 0 }, paddle: { gross: 0, refunds: 0, payments: 0 } };
   const d = buildDoc({ month: '2026-10', summary: summary(), channels, period: full, previous: new Map([['2026-09', TARGET_JPY]]), nowMs: 0 });
   assert.equal(d.schema, 'kao.revenue-month/v1');
   assert.equal(d.currency, 'JPY');
@@ -219,4 +219,31 @@ test('PayPal: 0 件の応答（transaction_details 省略・total_items=0）は 
       return true;
     });
   }
+});
+
+test('Paddle（2026-11-02〜）: 期間内の completed/paid の grand_total と承認済み返金だけ・JPY 以外は fail-closed・GET だけ', async () => {
+  const period = { startMs: Date.parse('2026-10-31T15:00:00Z'), untilMs: Date.parse('2026-11-30T15:00:00Z') };
+  const t = (id, status, billed, total, cur = 'JPY') => ({ id, status, billed_at: billed, currency_code: cur, details: { totals: { grand_total: String(total) } } });
+  const s = summarizePaddle({
+    period,
+    transactions: [t('a', 'completed', '2026-11-01T00:00:00Z', 4980), t('b', 'paid', '2026-11-30T14:59:59Z', 49800),
+      t('c', 'completed', '2026-10-31T14:59:59Z', 2980), t('d', 'past_due', '2026-11-05T00:00:00Z', 2980), t('e', 'completed', '2026-11-30T15:00:00Z', 2980)],
+    adjustments: [{ action: 'refund', status: 'approved', created_at: '2026-11-10T00:00:00Z', currency_code: 'JPY', totals: { total: '4980' } },
+      { action: 'refund', status: 'pending_approval', created_at: '2026-11-10T00:00:00Z', currency_code: 'JPY', totals: { total: '2980' } },
+      { action: 'credit', status: 'approved', created_at: '2026-11-10T00:00:00Z', currency_code: 'JPY', totals: { total: '100' } }],
+  });
+  assert.deepEqual(s, { gross: 54780, refunds: 4980, payments: 2 });
+  assert.throws(() => summarizePaddle({ period, transactions: [t('x', 'completed', '2026-11-02T00:00:00Z', 5, 'USD')] }), /non-JPY/);
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    calls.push({ url: String(url), method: init.method });
+    const isTxn = String(url).includes('/transactions?');
+    return { ok: true, json: async () => ({ data: isTxn ? [t('a', 'completed', '2026-11-01T00:00:00Z', 4980)] : [], meta: { pagination: { has_more: false } } }) };
+  };
+  const r = await fetchPaddleMonth({ key: 'k', period, fetchImpl });
+  assert.deepEqual(r, { gross: 4980, refunds: 0, payments: 1 });
+  assert.ok(calls.every((c) => c.method === 'GET'));
+  const d = buildDoc({ month: '2026-11', summary: summary(), channels: {}, period: full, nowMs: 0 });
+  assert.deepEqual(d.by_channel.paddle, { measured: false });
+  assert.ok(d.data_quality.includes('Paddle: 未計上（読取り鍵が未設定）'));
 });

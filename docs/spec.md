@@ -1,3 +1,11 @@
+# 新規の月額・年額は Paddle の定期課金（2026-11-02 MK 確定 / 根拠 `decisions.md` 2026-11-02「Paddle へ一本化」）
+
+- 新規の月額（Premium ¥4,980・中央版 ¥2,980・南関版 ¥2,980）・年額（¥49,800・Light 会員 ¥44,820・12 か月ごと自動更新）のカード決済は **Paddle の定期課金**。決済会社の選択 UI は置かない（入口は `monthly-create-checkout` 1 本・受付先は `cardSales.ACTIVE_SUBSCRIPTION_PROVIDER` の 1 社）。
+- **既存の PayPal 定期課金の契約者は PayPal のまま**（移行・一括解約・再契約・再課金をしない）。PayPal の更新・通知・退会・権限・返金の処理は新規受付を閉じた後も続ける（settle モード）。
+- 価格・商品・権限・更新条件・即時退会・Light 特典・銀行振込・買い切り（銀行振込のみ）・Stripe の新規停止は不変。購入後の自動遷移とマジックリンク認証（#848）も不変・利用開始メールは足さない。
+- 切替は Paddle 定期課金の実装・Sandbox E2E・本番設定（鍵の権限・通知先の購読イベント）の成立後に、`cardSales.js` を変える PR だけで行う。それまで PayPal の新規受付を維持する（販売空白を作らない）。実装・検証・本番設定の詳細は `astro-site/docs/CARD_PAYMENT_PROVIDERS.md` §3.8。
+- 上の「決済会社へ渡す名称・URL と PayPal 月額の請求」節の**新規申込先**の部分（月額は PayPal で受け付ける）は本節で更新。名称の許可リスト・中立ホスト・既存 PayPal 契約の請求と処理は引き続き有効。
+
 # 決済会社へ渡す名称・URL と PayPal 月額の請求（2026-10-15 MK 確定 / 根拠 `decisions.md` 2026-10-15（追記 7））
 
 **この節が、決済会社（PayPal・Paddle 等）へ渡す名称と、PayPal 月額の請求の正本**。下の「Stripe 定期購読」の商品名（`productName`）は Stripe 専用の旧名称で、PayPal には使わない。

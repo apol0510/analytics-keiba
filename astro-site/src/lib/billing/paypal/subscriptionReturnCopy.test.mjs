@@ -33,7 +33,7 @@ test('the return page uses the copy module and no hard-coded renewal wording', (
   const page = readFileSync(fileURLToPath(new URL('../../../pages/checkout/paypal-subscription-return.astro', import.meta.url)), 'utf8');
   assert.match(page, /SUBSCRIPTION_RETURN_COPY/);
   assert.doesNotMatch(page, /毎月自動で更新されます/);
-  assert.match(page, /purchaseCompleted\(x\.d\.plan, subscription, 'paypal'\)/);
+  assert.match(page, /purchaseCompleted\(x\.d\.plan, subscription, provider\)/);
 });
 
 test('未ログインの方の案内: お申し込みのメールでログインする手順を出し、確認できないときは完了と言わない', async () => {

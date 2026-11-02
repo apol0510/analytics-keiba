@@ -118,7 +118,9 @@ export function viewerProfile(fields, now = Date.now()) {
     billing: /^(true|1|yes)$/i.test(String(read(['WithdrawalRequested']) ?? '').trim()) ? null
       : String(read(['PaymentMethod']) || '').trim().toLowerCase() === 'stripe' && /^cus_/.test(String(read(['StripeCustomerId']) || '')) ? 'stripe'
         : String(read(['PaymentMethod']) || '').trim().toLowerCase() === 'paypal' && ['monthly', 'annual'].includes(String(read(['PlanType']) || '').trim().toLowerCase()) ? 'paypal'
-          : null,
+          // Paddle の定期課金（2026-11-02〜）も退会ボタンだけ（カード変更は Paddle から届くメールのリンク）
+          : String(read(['PaymentMethod']) || '').trim().toLowerCase() === 'paddle' && ['monthly', 'annual'].includes(String(read(['PlanType']) || '').trim().toLowerCase()) ? 'paddle'
+            : null,
     // 退会（マイページ「退会する」→ 確認 → 確定・2026-10-15 MK 確定）の種類と、退会後も残る買い切り。
     // kind: stripe | paypal（退会できるのは月額だけ）| bank_transfer（銀行振込には退会が無い）| none（無料など）| already_withdrawn
     withdraw: {

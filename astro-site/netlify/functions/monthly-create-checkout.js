@@ -22,11 +22,21 @@ import { createPaypalSubscription, resolvePaypalSubscriptionMode } from '../../s
 import { e2eCheck } from '../../src/lib/billing/cardE2E.js';
 import { makeRedisCmd } from '../../src/lib/premiumPlus/premiumPlusFunnelServer.js';
 import { returnCookieFor } from '../../src/lib/billing/paypal/subscriptionReturnToken.js';
+import { createPaddleSubscriptionCheckout, resolvePaddleSubscriptionMode } from '../../src/lib/billing/paddle/paddleSubscriptionServer.js';
 
-const CREATORS = Object.freeze({ paypal: { mode: resolvePaypalSubscriptionMode, create: createPaypalSubscription } });
+// 2026-11-02 MK 確定: 新規の月額・年額は Paddle へ一本化（ACTIVE_SUBSCRIPTION_PROVIDER を切り替える PR で受付先が変わる）。
+// Paddle の subscription は戻り先の確認に使う取引 ID（txn_…）。どちらも受け付けるのは 1 社だけ（自動フォールバックしない）
+const CREATORS = Object.freeze({
+  paypal: { mode: resolvePaypalSubscriptionMode, create: createPaypalSubscription },
+  paddle: { mode: resolvePaddleSubscriptionMode, create: createPaddleSubscriptionCheckout },
+});
 const json = (statusCode, headers, body) => ({ statusCode, headers, body: JSON.stringify(body) });
 
-exports.handler = async (event) => {
+/**
+ * 本番の入口は exports.handler（受付先は常に cardSales.ACTIVE_SUBSCRIPTION_PROVIDER）。
+ * makeHandler は決済会社ごとの経路をテストで個別に確かめるためだけ（本番の handler は引数を取らない＝外から受付先を変えられない）。
+ */
+const makeHandler = (activeProvider = ACTIVE_SUBSCRIPTION_PROVIDER) => async (event) => {
   const env = process.env;
   const headers = corsHeaders(event.headers);
   if (event.httpMethod === 'OPTIONS') return { statusCode: 204, headers, body: '' };
@@ -36,7 +46,7 @@ exports.handler = async (event) => {
   let body = {};
   try { body = JSON.parse(event.body || '{}'); } catch { return json(400, headers, { error: 'invalid_json' }); }
   const origin = resolveSiteOrigin(event.headers);
-  const provider = CREATORS[ACTIVE_SUBSCRIPTION_PROVIDER];
+  const provider = CREATORS[activeProvider];
   if (!provider) return json(503, headers, { error: 'subscription_provider_unset' });
   // 受け付けない状態（鍵なし・販売前・鍵と環境の不一致）は会員照会より先に止める
   const mode = provider.mode({ env, origin });
@@ -60,7 +70,10 @@ exports.handler = async (event) => {
     console.log(JSON.stringify({ event: 'monthly_checkout_created', provider: r.provider, plan: String(body.plan || ''), guest: r.guest === true, returnKey: Boolean(returnCookie) }));
     return json(200, returnCookie ? { ...headers, 'Set-Cookie': returnCookie } : headers, { url: r.url, subscription: r.subscriptionId, provider: r.provider });
   } catch (e) {
-    console.error(JSON.stringify({ event: 'monthly_checkout_failed', provider: ACTIVE_SUBSCRIPTION_PROVIDER, message: String(e?.message || e).slice(0, 120) }));
+    console.error(JSON.stringify({ event: 'monthly_checkout_failed', provider: activeProvider, message: String(e?.message || e).slice(0, 120) }));
     return json(502, headers, { error: 'checkout_failed' });
   }
 };
+
+exports.handler = makeHandler();
+exports.makeHandler = makeHandler;

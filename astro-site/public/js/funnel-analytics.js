@@ -238,14 +238,14 @@
    */
   var STRIPE_PLAN_LABELS = { 'premium': 'Premium', 'premium-jra': 'Premium JRA', 'premium-nankan': 'Premium NANKAN' };
   var STRIPE_PLAN_YEN = { 'premium': 4980, 'premium-jra': 2980, 'premium-nankan': 2980 };
-  /** PayPal 定期課金（2026-10-15〜）: 月額 3 本は Stripe と同じ商品・年額 2 本（paypalSubscriptionCore.SUBSCRIPTION_PLANS）。 */
+  /** PayPal（2026-10-15〜）・Paddle（2026-11-02〜）の定期課金: 月額 3 本は Stripe と同じ商品・年額 2 本（paypalSubscriptionCore.SUBSCRIPTION_PLANS）。 */
   var ANNUAL_PLAN_LABELS = { 'premium-annual': 'Premium Annual', 'premium-annual-light': 'Premium Annual Light' };
   var ANNUAL_PLAN_YEN = { 'premium-annual': 49800, 'premium-annual-light': 44820 };
-  var PAYMENT_METHODS = { stripe: 'stripe', paypal: 'paypal' };
+  var PAYMENT_METHODS = { stripe: 'stripe', paypal: 'paypal', paddle: 'paddle' };
 
   function stripeParams(planId, method) {
     var m = PAYMENT_METHODS[method] || 'stripe';
-    if (m === 'paypal' && ANNUAL_PLAN_LABELS[planId]) {
+    if (m !== 'stripe' && ANNUAL_PLAN_LABELS[planId]) {
       return { plan: ANNUAL_PLAN_LABELS[planId], plan_type: 'Annual', payment_method: m, currency: 'JPY', value: ANNUAL_PLAN_YEN[planId] };
     }
     var label = STRIPE_PLAN_LABELS[planId] || 'other';

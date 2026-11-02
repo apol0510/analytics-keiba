@@ -15,7 +15,10 @@
  * 2026-10-15 MK 確定: 決済会社へ渡す戻り先・Webhook の URL に競馬関連語を入れない → このサイトが中継する
  * （`_redirects` の行は astro-site/src/lib/billing/neutralCheckoutHost.js の NEUTRAL_ROUTES が正本。画面には何も足さない）。
  */
-import { NEUTRAL_ROUTES, NEUTRAL_PATHS } from '../../astro-site/src/lib/billing/neutralCheckoutHost.js';
+import { NEUTRAL_ROUTES, NEUTRAL_PATHS, SUBSCRIPTION_CHECKOUT_FLAG } from '../../astro-site/src/lib/billing/neutralCheckoutHost.js';
+import { SUBSCRIPTION_SALES_OPEN, ACTIVE_SUBSCRIPTION_PROVIDER } from '../../astro-site/src/lib/billing/cardSales.js';
+import { SUBSCRIPTION_PLANS } from '../../astro-site/src/lib/billing/paypal/paypalSubscriptionCore.js';
+import { SUBSCRIPTION_PLAN_NAMES } from '../../astro-site/src/lib/billing/paymentDisplayNames.js';
 
 export const BUSINESS = Object.freeze({
   name: 'TIROL DATA LABO',
@@ -37,7 +40,35 @@ export const MEMBER_PLAN = Object.freeze({ id: 'premium-annual-light', name: 'An
 /** カードでの受付状況。CARD_SALES_OPEN を開ける PR でこの値も true にする（テストで両者の一致を固定）。 */
 export const CARD_PAYMENTS_AVAILABLE = false;
 
+/**
+ * Paddle の定期課金（月額・年額・2026-11-02 MK 確定）を受け付けているか。cardSales の切替（SUBSCRIPTION_SALES_OPEN.paddle かつ
+ * ACTIVE_SUBSCRIPTION_PROVIDER='paddle'）だけで決まる（このサイトで別に開け閉めしない）。開いている間は、料金・請求・規約・返金の
+ * 説明を「自動更新の定期課金（いつでも解約できる）」の版にする（審査を受けたサイトの説明を実際の販売と一致させる）。
+ */
+export const SUBSCRIPTION_PAYMENTS_AVAILABLE = SUBSCRIPTION_SALES_OPEN.paddle === true && ACTIVE_SUBSCRIPTION_PROVIDER === 'paddle';
+
+/** 定期課金の版の商品（名前は決済会社へ渡す名前の許可リスト・金額は定期課金の商品表が正本）*/
+const SUB_SCOPE = Object.freeze({
+  'premium': 'All report sections.',
+  'premium-jra': 'Report section J only.',
+  'premium-nankan': 'Report section N only.',
+  'premium-annual': 'All report sections, billed once a year.',
+});
+export const SUBSCRIPTION_SITE_PLANS = Object.freeze(SUBSCRIPTION_PLANS.filter((p) => !p.memberOnly).map((p) => Object.freeze({
+  id: p.id,
+  name: SUBSCRIPTION_PLAN_NAMES[p.id],
+  priceYen: p.amountYen,
+  period: p.interval === 'YEAR' ? 'year' : 'month',
+  term: `${SUB_SCOPE[p.id]} Renews automatically every ${p.interval === 'YEAR' ? '12 months' : 'month'} at the same price until cancelled.`,
+})));
+export const SUBSCRIPTION_MEMBER_PLAN = Object.freeze({
+  name: SUBSCRIPTION_PLAN_NAMES['premium-annual-light'],
+  priceYen: SUBSCRIPTION_PLANS.find((p) => p.id === 'premium-annual-light').amountYen,
+});
+
 export const LAST_UPDATED = 'October 13, 2026';
+/** 定期課金の版の規約・返金の最終更新日 */
+export const SUBSCRIPTION_LAST_UPDATED = 'November 2, 2026';
 
 const yen = (n) => `¥${Number(n).toLocaleString('en-US')}`;
 
@@ -53,7 +84,7 @@ const WHAT_IT_IS = `Analytics Premium is an online, members-only information ser
 const WHAT_IT_IS_NOT = `The Service provides information only. The analysis is reference information; it is not investment or
   financial advice and does not guarantee any outcome or result. Any decision made using it is the member's own.`;
 
-const cardNotice = () => CARD_PAYMENTS_AVAILABLE
+const cardNotice = (o = {}) => (CARD_PAYMENTS_AVAILABLE || o.subscriptions)
   ? ''
   : `<p class="notice"><strong>Card payments are being prepared and are not available yet.</strong> Until they open, plans can be
   purchased by bank transfer (Japanese bank accounts) from the member site.</p>`;
@@ -101,7 +132,20 @@ const PAGES = {
   '/pricing/': {
     title: 'Pricing',
     description: 'Analytics Premium plans and prices.',
-    body: () => `
+    body: (o = {}) => o.subscriptions ? `
+<h1>Pricing</h1>
+<ul class="cards">
+${SUBSCRIPTION_SITE_PLANS.map((p) => `  <li><h3>${p.name}</h3><p class="price">${yen(p.priceYen)} <span>JPY per ${p.period}, tax included</span></p><p>${p.term}</p></li>`).join('\n')}
+  <li><h3>${PLANS[1].name}</h3><p class="price">${yen(PLANS[1].priceYen)} <span>JPY, tax included</span></p><p>Access for as long as the Service is operated. One-time payment by bank transfer only (not available by card); no further charges.</p></li>
+</ul>
+<p>Existing Light plan members can subscribe to the annual plan (${SUBSCRIPTION_MEMBER_PLAN.name}) for ${yen(SUBSCRIPTION_MEMBER_PLAN.priceYen)} per year (tax included),
+renewing every 12 months at the same price. This price is shown only to eligible members on the member site.</p>
+<ul>
+  <li>All prices are in Japanese yen and include Japanese consumption tax.</li>
+  <li>Monthly and annual plans are subscriptions paid by card. They renew automatically at the same price until you cancel.</li>
+  <li>You can cancel at any time. See <a href="/refund/">Refund Policy</a> for how cancellation works.</li>
+  <li>Access starts once the payment is confirmed. See <a href="/billing/">Billing</a> for details.</li>
+</ul>` : `
 <h1>Pricing</h1>
 ${cardNotice()}
 <ul class="cards">
@@ -118,7 +162,32 @@ eligible members on the member site.</p>
   '/billing/': {
     title: 'Billing',
     description: 'How payments for Analytics Premium are made and processed.',
-    body: () => `
+    body: (o = {}) => o.subscriptions ? `
+<h1>Billing information</h1>
+<h2>How to pay</h2>
+<ol>
+  <li>Choose a plan on the pricing page of the <a href="${BUSINESS.memberSignInUrl}">member site</a> and select <em>Pay by card</em>.
+  If you are not signed in, enter the email address you will use to sign in.</li>
+  <li>Enter your card details on the secure payment form provided by our payment provider.</li>
+  <li>When the payment is confirmed, the plan is applied to your account automatically. The payment provider sends you a receipt.</li>
+</ol>
+<h2>Automatic renewal</h2>
+<p>Monthly plans are charged every month and annual plans every 12 months, on the same date as the first payment, at the same
+price, until you cancel. Each renewal is charged to the card used for the subscription and a receipt is sent for each payment.
+If a renewal payment fails, access is not extended.</p>
+<h2>Who processes card payments</h2>
+<p>Card payments are processed by Paddle.com, which acts as our online reseller and Merchant of Record for card orders;
+Paddle's <a href="https://www.paddle.com/legal/checkout-buyer-terms">Buyer Terms</a> also apply, and the charges, receipts and
+any refunds are issued by Paddle. We do not receive or store your card number. You can update your card or cancel the
+subscription using the link in Paddle's receipt email.</p>
+<p>You will not be asked to choose a payment company. Subscriptions that customers started earlier with another provider continue
+with that provider until they are cancelled; you are never charged twice for the same plan.</p>
+<h2>Product name on receipts</h2>
+<p>Receipts show the plan name, such as “${SUBSCRIPTION_SITE_PLANS[0].name}”, and the seller or reseller name.</p>
+<h2>Bank transfer</h2>
+<p>Bank transfer to a Japanese bank account is available from the member site. Transfer fees are paid by the customer.</p>
+<h2>Billing questions</h2>
+<p>Email <a href="mailto:${BUSINESS.email}">${BUSINESS.email}</a> from your registered address.</p>` : `
 <h1>Billing information</h1>
 ${cardNotice()}
 <h2>How to pay</h2>
@@ -144,9 +213,9 @@ started are completed or refunded with the provider that took them, and you are 
   '/terms/': {
     title: 'Terms of Service',
     description: 'Terms of Service for Analytics Premium.',
-    body: () => `
+    body: (o = {}) => `
 <h1>Terms of Service</h1>
-<p class="updated">Last updated: ${LAST_UPDATED}</p>
+<p class="updated">Last updated: ${o.subscriptions ? SUBSCRIPTION_LAST_UPDATED : LAST_UPDATED}</p>
 <p>These Terms govern the use of ${BUSINESS.serviceName} (the “Service”) operated by ${BUSINESS.name} (“we”, “us”).
 By purchasing a plan or using the Service you agree to these Terms. The Terms are provided in English.</p>
 <h2>1. The Service</h2>
@@ -157,10 +226,14 @@ By purchasing a plan or using the Service you agree to these Terms. The Terms ar
 <h2>3. Accounts</h2>
 <p>Accounts are personal. Do not share your sign-in links or let others use your account. Keep your email address up to date.</p>
 <h2>4. Plans and payment</h2>
-<p>Plans and prices are listed on the <a href="/pricing/">Pricing</a> page. Each plan is a one-time payment and does not renew
+${o.subscriptions ? `<p>Plans and prices are listed on the <a href="/pricing/">Pricing</a> page. Monthly and annual plans are subscriptions
+that renew automatically at the same price, every month or every 12 months, until cancelled. Access is extended only when a
+renewal payment succeeds. You can cancel at any time as described in the <a href="/refund/">Refund Policy</a>. The Lifetime plan
+is a one-time payment by bank transfer and gives access for as long as the Service is operated. Card orders are processed by
+our reseller, Paddle.com, as Merchant of Record (see <a href="/billing/">Billing</a>).</p>` : `<p>Plans and prices are listed on the <a href="/pricing/">Pricing</a> page. Each plan is a one-time payment and does not renew
 automatically. The Annual plan gives access for 12 months from the payment confirmation date; the Lifetime plan gives
 access for as long as the Service is operated. Card orders may be processed by our reseller, Paddle.com, as Merchant of
-Record (see <a href="/billing/">Billing</a>).</p>
+Record (see <a href="/billing/">Billing</a>).</p>`}
 <h2>5. Refunds</h2>
 <p>Refunds are handled under the <a href="/refund/">Refund Policy</a>.</p>
 <h2>6. Acceptable use</h2>
@@ -219,9 +292,9 @@ analytics), and where the law requires it. We do not sell personal information.<
   '/refund/': {
     title: 'Refund Policy',
     description: 'Refund and cancellation policy for Analytics Premium.',
-    body: () => `
+    body: (o = {}) => `
 <h1>Refund Policy</h1>
-<p class="updated">Last updated: ${LAST_UPDATED}</p>
+<p class="updated">Last updated: ${o.subscriptions ? SUBSCRIPTION_LAST_UPDATED : LAST_UPDATED}</p>
 <h2>1. Digital content</h2>
 <p>Plans give immediate access to digital content. Once a payment is completed it is not refundable, except as set out below.</p>
 <h2>2. When we refund</h2>
@@ -233,8 +306,16 @@ analytics), and where the law requires it. We do not sell personal information.<
 <p>For card orders processed by Paddle.com as Merchant of Record, refunds are issued by Paddle to the original payment method.</p>
 <h2>3. When a refund is made</h2>
 <p>The plan bought with that payment is removed from your account and your account returns to the state it was in before the purchase.</p>
-<h2>4. No automatic renewal</h2>
-<p>Plans do not renew, so there is nothing to cancel to stop future charges.</p>
+${o.subscriptions ? `<h2>4. Automatic renewal and cancellation</h2>
+<p>Monthly and annual plans renew automatically until cancelled. You can cancel at any time in either of these ways:</p>
+<ul>
+  <li><strong>From your member account</strong> (account settings, <em>Cancel membership</em>): the subscription is stopped and paid
+  access ends immediately. No further charges are made.</li>
+  <li><strong>Using the link in the payment provider's receipt email</strong>: no further charges are made, and access continues
+  until the end of the period you have already paid for.</li>
+</ul>
+<p>Cancelling does not by itself refund payments already made; refunds are made only as set out in section 2.</p>` : `<h2>4. No automatic renewal</h2>
+<p>Plans do not renew, so there is nothing to cancel to stop future charges.</p>`}
 <h2>5. How to ask</h2>
 <p>Email <a href="mailto:${BUSINESS.email}">${BUSINESS.email}</a> from your registered address with the date and amount of the payment.</p>`,
   },
@@ -277,7 +358,7 @@ footer{border-top:1px solid var(--line);padding-top:16px;padding-bottom:32px;col
 
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
 
-export function renderPage(path) {
+export function renderPage(path, { subscriptions = SUBSCRIPTION_PAYMENTS_AVAILABLE } = {}) {
   const page = PAGES[path];
   if (!page) throw new Error(`unknown page ${path}`);
   const title = path === '/' ? BUSINESS.name : `${page.title} — ${BUSINESS.name}`;
@@ -294,7 +375,7 @@ export function renderPage(path) {
 </head>
 <body>
 <header><a class="brand" href="/">${BUSINESS.name}</a><nav>${nav}</nav></header>
-<main>${page.body()}
+<main>${page.body({ subscriptions })}
 </main>
 <footer>
 <p>${BUSINESS.name} · ${BUSINESS.address} · <a href="mailto:${BUSINESS.email}">${BUSINESS.email}</a></p>
@@ -322,9 +403,11 @@ const CLIENT_TOKEN_RE = /^live_[A-Za-z0-9]+$/;
  * - 完了後は /r/paddle/complete（→ 会員サイトの完了画面へ 302）。付与は Webhook が正本（このページは何も書かない）。
  * - ナビ・sitemap に載せない（noindex）。
  */
-export function renderPayPage({ paddleClientToken = '' } = {}) {
+export function renderPayPage({ paddleClientToken = '', subscriptions = SUBSCRIPTION_PAYMENTS_AVAILABLE } = {}) {
   const token = CLIENT_TOKEN_RE.test(String(paddleClientToken)) ? String(paddleClientToken) : '';
-  const open = CARD_PAYMENTS_AVAILABLE && Boolean(token);
+  // 一回払い（CARD_PAYMENTS_AVAILABLE）か定期課金（SUBSCRIPTION_PAYMENTS_AVAILABLE）のどちらかを受け付けているときだけ開く
+  const open = (CARD_PAYMENTS_AVAILABLE || subscriptions) && Boolean(token);
+  // 完了後の戻り先: 定期課金の申込（会員サイトが ak=s を付ける）は定期課金の戻り先、それ以外は一回払いの完了画面（このコメントは出力しない＝英語のページ）
   const body = open
     ? `<h1>Opening the secure payment form…</h1>
 <p>If the payment form does not open, please reload this page.</p>`
@@ -334,11 +417,13 @@ export function renderPayPage({ paddleClientToken = '' } = {}) {
 <script src="https://cdn.paddle.com/paddle/v2/paddle.js"></script>
 <script>
 (function () {
-  var txn = new URLSearchParams(location.search).get('_ptxn') || '';
+  var q = new URLSearchParams(location.search);
+  var txn = q.get('_ptxn') || '';
   if (!window.Paddle || !/^txn_[a-z0-9]{10,40}$/.test(txn)) return;
+  var done = q.get(${JSON.stringify(SUBSCRIPTION_CHECKOUT_FLAG.name)}) === ${JSON.stringify(SUBSCRIPTION_CHECKOUT_FLAG.value)} ? '${NEUTRAL_PATHS.paddleSubscriptionComplete}' : '${NEUTRAL_PATHS.paddleComplete}';
   window.Paddle.Initialize({
     token: ${JSON.stringify(token)},
-    checkout: { settings: { displayMode: 'overlay', locale: 'ja', successUrl: location.origin + '${NEUTRAL_PATHS.paddleComplete}?provider=paddle&order=' + encodeURIComponent(txn) } },
+    checkout: { settings: { displayMode: 'overlay', locale: 'ja', successUrl: location.origin + done + '?provider=paddle&order=' + encodeURIComponent(txn) } },
   });
 })();
 </script>` : '';
@@ -363,10 +448,10 @@ export function renderPayPage({ paddleClientToken = '' } = {}) {
 `;
 }
 
-export function buildFiles({ paddleClientToken = '' } = {}) {
+export function buildFiles({ paddleClientToken = '', subscriptions = SUBSCRIPTION_PAYMENTS_AVAILABLE } = {}) {
   const files = { 'style.css': CSS.trimStart() };
-  files[`${NEUTRAL_PATHS.paddleCheckout.slice(1)}index.html`] = renderPayPage({ paddleClientToken });
-  for (const p of PAGE_PATHS) files[p === '/' ? 'index.html' : `${p.slice(1)}index.html`] = renderPage(p);
+  files[`${NEUTRAL_PATHS.paddleCheckout.slice(1)}index.html`] = renderPayPage({ paddleClientToken, subscriptions });
+  for (const p of PAGE_PATHS) files[p === '/' ? 'index.html' : `${p.slice(1)}index.html`] = renderPage(p, { subscriptions });
   files['_headers'] = `/*\n  X-Content-Type-Options: nosniff\n  Referrer-Policy: strict-origin-when-cross-origin\n${INDEXABLE ? '' : '  X-Robots-Tag: noindex, nofollow\n'}`;
   files['robots.txt'] = INDEXABLE ? `User-agent: *\nAllow: /\nSitemap: ${SITE_ORIGIN}/sitemap.xml\n` : 'User-agent: *\nDisallow: /\n';
   // Netlify の既定サブドメインは独自ドメインへ寄せる（重複掲載を防ぐ）

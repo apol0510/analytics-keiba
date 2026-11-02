@@ -12,8 +12,8 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 /** 本文の箇条書き（種類ごと）。退会 ≠ アカウント削除・買い切りは残る（2026-10-15 MK 確定） */
 export function withdrawalCompleteLines({ kind = 'stripe', keeps = {} } = {}) {
   const lines = [];
-  if (kind === 'stripe' || kind === 'paypal') {
-    lines.push(kind === 'paypal' ? '自動更新のご契約（月額・年額）は終了し、今後の請求はありません。' : '月額プランのご契約は終了し、今後の請求はありません。');
+  if (kind === 'stripe' || kind === 'paypal' || kind === 'paddle') {
+    lines.push(kind === 'paypal' || kind === 'paddle' ? '自動更新のご契約（月額・年額）は終了し、今後の請求はありません。' : '月額プランのご契約は終了し、今後の請求はありません。');
     lines.push('退会と同時に有料会員としてのご利用は終了しています（残りの期間はご利用いただけません）。');
   }
   if (keeps.premiumLifetime) lines.push('Premium 買い切りは、退会後も引き続きご利用いただけます。');

@@ -209,6 +209,36 @@
       },
       "record": "GitHub Issue「[自動測定] paypal-monthly-first-renewal-2026」に更新された会員数・最初の請求日と延びた期限・Webhook の種別と処理結果。完了後に docs/progress.md の未検証事項（本番での更新）を閉じる",
       "onFailure": "購入なし・請求日 + 3 日前・全員が更新前に退会・お客様側の支払い失敗は待機中 Issue を更新して翌日再確認。請求日 + 3 日を過ぎても延びず支払い失敗の Webhook も無いときは job 赤＋失敗 Issue（Claude が Webhook の受信を調査）。顧客の退会・返金操作は行わない"
+    },
+    {
+      "id": "paddle-subscription-first-purchase-2026",
+      "title": "Paddle 定期課金（月額・年額）の本番の初回実購入で、決済・通知・権限付与が成立したか（read-only）",
+      "kind": "paddle-subscription-first-purchase",
+      "runFrom": "2026-11-03",
+      "runUntil": "2027-05-31",
+      "trigger": "毎日 10:00 JST（scheduled-checks.yml）。2026-11-02 MK: 実顧客への試験課金・不要な本番契約は作らず、初回の実購入は read-only で確認。切替（ACTIVE_SUBSCRIPTION_PROVIDER='paddle'）前・購入が来るまでは待機中のまま毎日確認する",
+      "compare": {
+        "since": "2026-11-02",
+        "siteUrl": "https://analytics.keiba.link/",
+        "baseline": "2026-11-02 時点で Paddle 定期課金の購入 0（切替前）。権限 = Premium / Monthly or Annual / active / PaymentMethod=Paddle・期限 = 期間の終わり（JST）+ 2 日（paddleSubscriptionCore）"
+      },
+      "record": "GitHub Issue「[自動測定] paddle-subscription-first-purchase-2026」（label: scheduled-check）に購入件数・商品の内訳・最初の支払い。完了後に docs/progress.md の実購入待ちの監視項目を閉じ、GA4 の参照元（checkout.tirol.link の除外）も確認する",
+      "onFailure": "購入なしは待機中 Issue を更新して翌日再確認。権限の形の不一致は job 赤＋失敗 Issue（Claude が中立サイトの通知・内部付与を調査）。顧客の退会・返金操作は行わない。2027-05-31 まで購入が無ければ期限切れを追記"
+    },
+    {
+      "id": "paddle-subscription-first-renewal-2026",
+      "title": "Paddle 定期課金の本番の初回実更新（2 回目の自動課金）で期限が延びたか（read-only）",
+      "kind": "paddle-subscription-first-renewal",
+      "runFrom": "2026-12-01",
+      "runUntil": "2027-06-30",
+      "trigger": "毎日 10:00 JST（scheduled-checks.yml）。2026-11-02 MK: 初回の実更新は read-only 監視で確認（実際の再課金を伴う本番の自己テストはしない）。Sandbox では 2026-11-02 に実更新を確認済み",
+      "compare": {
+        "since": "2026-11-02",
+        "siteUrl": "https://analytics.keiba.link/",
+        "baseline": "2026-11-02 時点で Paddle 定期課金の購入 0・更新 0。初回分の期限 = PaidAt（JST）+ 1 か月 or 12 か月 + 2 日"
+      },
+      "record": "GitHub Issue「[自動測定] paddle-subscription-first-renewal-2026」に更新された会員数・最初の請求日と延びた期限。完了後に docs/progress.md の監視項目を閉じる",
+      "onFailure": "購入なし・請求日 + 3 日前・全員が更新前に終了は待機中 Issue を更新して翌日再確認。請求日 + 3 日を過ぎても延びないときは job 赤＋失敗 Issue（Claude が Paddle の取引・通知・中立サイトの転送を調査）。顧客の退会・返金操作は行わない"
     }
   ]
 }

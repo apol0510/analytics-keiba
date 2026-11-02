@@ -102,7 +102,9 @@ async function handlerFor(name) {
   if (!existsSync(src)) return null;
   const out = join(BUNDLE_DIR, `${name}.cjs`);
   await esbuild.build({ entryPoints: [src], bundle: true, platform: 'node', format: 'cjs', target: 'node20', outfile: out, packages: 'external', plugins: [sendgridStub], logLevel: 'silent' });
-  const h = require(out).handler;
+  // 申込の入口は PayPal の経路を名指し（この E2E は PayPal の戻り先・自動遷移。受付先の切替〔2026-11-02 Paddle〕に依らない）
+  const mod = require(out);
+  const h = name === 'monthly-create-checkout' && mod.makeHandler ? mod.makeHandler('paypal') : mod.handler;
   handlers.set(name, h);
   return h;
 }

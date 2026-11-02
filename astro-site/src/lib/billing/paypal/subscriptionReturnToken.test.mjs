@@ -183,7 +183,9 @@ async function runFn(name, event) {
     globalThis.exports = {};
     globalThis.module = { exports: globalThis.exports };
     await import(`${FN(name)}?t=${Math.random()}`);
-    const r = await globalThis.exports.handler(event, {});
+    // 申込の入口は PayPal の経路を名指しで確かめる（受付先の切替〔2026-11-02 Paddle〕に依らない。既存 PayPal の戻り先・鍵の仕組み）
+    const h = name === 'monthly-create-checkout' ? globalThis.exports.makeHandler('paypal') : globalThis.exports.handler;
+    const r = await h(event, {});
     let body = {};
     try { body = JSON.parse(r.body); } catch { body = {}; }
     return { status: r.statusCode, headers: r.headers || {}, body, raw: r.body };
@@ -278,7 +280,9 @@ test('ログイン中の申込は従来どおり（Cookie を出さない・戻�
 test('配線: purchase は active の分岐だけ・1 か所・401 / 404 / 処理中 / 要確認では送らない。未ログインには正直な案内', () => {
   const page = readFileSync(fileURLToPath(new URL('../../../pages/checkout/paypal-subscription-return.astro', import.meta.url)), 'utf8');
   assert.equal(page.split('purchaseCompleted(').length - 1, 1, '呼び出しは 1 か所だけ');
-  const call = page.indexOf("window.AkFunnel.purchaseCompleted(x.d.plan, subscription, 'paypal')");
+  // 決済会社は戻り先の URL で決まる（PayPal ?subscription_id= / Paddle ?provider=paddle&order=・2026-11-02）
+  const call = page.indexOf('window.AkFunnel.purchaseCompleted(x.d.plan, subscription, provider)');
+  assert.match(page, /const provider = isPaddle \? 'paddle' : 'paypal';/);
   assert.ok(call > 0);
   const activeAt = page.indexOf("if (st === 'active') {");
   assert.ok(activeAt > 0 && activeAt < call, 'active の分岐の中');

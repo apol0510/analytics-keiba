@@ -18,6 +18,11 @@ import { runPremiumRenewal, resolveMode, MODE } from './premiumRenewalRunner.js'
 import { summarizePremiumRenewalOutcomes } from './premiumRenewalReport.js';
 import { deliveryKeyFor as lightKeyFor, claimKeyFor as lightClaimFor, LIGHT_RENEWAL_CAMPAIGN_TYPE } from '../lightRenewal/lightRenewalPolicy.js';
 import { clearProviderSuppressionCache } from '../providerSuppression.js';
+import { MONTHLY_PROVIDER_LABEL } from '../../billing/monthlySalesChannel.js';
+import { ACTIVE_SUBSCRIPTION_PROVIDER } from '../../billing/cardSales.js';
+/** 月額の決済代行名は受付先（ACTIVE）の名前（2026-10-15 PayPal → 2026-11-02 MK 確定で Paddle）*/
+const PROVIDER = MONTHLY_PROVIDER_LABEL[ACTIVE_SUBSCRIPTION_PROVIDER];
+
 
 const ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 const NOW = Date.parse('2026-10-01T03:00:00Z'); // JST 2026-10-01 12:00
@@ -91,8 +96,8 @@ test('本文: 価格は /pricing/ の Premium 月額（Stripe）と同じ・割�
   assert.equal(/openBankModal\('Premium Monthly'/.test(pricing), false, '販売終了した銀行振込の月払いが /pricing/ に残っている');
   for (const stage of [STAGE.PRE, STAGE.POST]) {
     const m = renderPremiumRenewalEmail({ stage, cycle: '2026-10-05', name: '山田' });
-    assert.match(m.text, /¥4,980／月・中央＋南関・クレジットカードで毎月自動更新・決済代行：PayPal/);
-    assert.equal(/Stripe/.test(m.text + m.html + m.subject), false, '案内文に Stripe を出さない（月額は PayPal で受付中）');
+    assert.ok(m.text.includes(`¥4,980／月・中央＋南関・クレジットカードで毎月自動更新・決済代行：${PROVIDER}`));
+    assert.equal(/Stripe/.test(m.text + m.html + m.subject), false, '案内文に Stripe を出さない（月額は受付先の決済会社）');
     assert.match(m.text, /中央版・南関版（各 ¥2,980／月）/);
     assert.equal(/Light/.test(m.text), false, 'Premium 会員向けに Light を案内している');
     assert.equal(/18,000|銀行振込で/.test(m.text), false, '販売終了した月払いの案内が残っている');

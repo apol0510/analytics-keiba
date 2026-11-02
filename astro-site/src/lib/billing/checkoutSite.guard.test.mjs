@@ -56,9 +56,11 @@ test('価格は CARD_PRODUCTS と一致する', () => {
   assert.equal(PLANS.length + 1, CARD_PRODUCTS.length);
 });
 
-test('カード受付の表示は CARD_SALES_OPEN と一致（閉じている間は「準備中」）', () => {
+test('カード受付の表示は CARD_SALES_OPEN と一致（閉じている間は「準備中」・Paddle の定期課金を受け付けている間は定期課金の版）', async () => {
   assert.equal(CARD_PAYMENTS_AVAILABLE, Object.values(CARD_SALES_OPEN).some(Boolean));
-  if (!CARD_PAYMENTS_AVAILABLE) assert.match(renderPage('/pricing/'), /not available yet/);
+  const { SUBSCRIPTION_PAYMENTS_AVAILABLE } = await import('../../../../ops/checkout-site/site.mjs');
+  if (!CARD_PAYMENTS_AVAILABLE && !SUBSCRIPTION_PAYMENTS_AVAILABLE) assert.match(renderPage('/pricing/'), /not available yet/);
+  if (SUBSCRIPTION_PAYMENTS_AVAILABLE) assert.match(renderPage('/pricing/'), /renew automatically/);
 });
 
 test('決済会社をお客様に選ばせる表示をしない（冗長化方針）', () => {
@@ -87,6 +89,7 @@ test('決済会社の戻り先・Webhook の中継（2026-10-15 MK 確定）: �
     '/r/paypal/cancel  https://analytics.keiba.link/pricing/?checkout=cancelled  302!',
     '/hooks/paypal  https://analytics.keiba.link/.netlify/functions/paypal-order-webhook  200!',
     '/r/paddle/complete  https://analytics.keiba.link/checkout/card-complete/  302!',
+    '/r/paddle/subscription-complete  https://analytics.keiba.link/checkout/paypal-subscription-return/  302!',
     '/hooks/paddle  /.netlify/functions/paddle-webhook  200!',
     '',
   ].join('\n'));
@@ -101,7 +104,7 @@ test('決済会社の戻り先・Webhook の中継（2026-10-15 MK 確定）: �
   for (const l of files._redirects.trim().split('\n').slice(1)) assert.doesNotMatch(l.split(/\s+/)[0], BANNED);
 });
 
-test('Paddle の決済ページ /pay/（2026-10-24）: ナビ・sitemap に載せず noindex・受付中かつ live token のときだけ Paddle.js を読む', () => {
+test('Paddle の決済ページ /pay/（2026-10-24）: ナビ・sitemap に載せず noindex・受付中かつ live token のときだけ Paddle.js を読む', async () => {
   assert.ok(files['pay/index.html']);
   assert.ok(!PAGE_PATHS.includes('/pay/'));
   assert.doesNotMatch(files['sitemap.xml'], /\/pay\//);
@@ -115,13 +118,49 @@ test('Paddle の決済ページ /pay/（2026-10-24）: ナビ・sitemap に載�
   assert.doesNotMatch(renderPayPage({ paddleClientToken: 'test_abc' }), /paddle\.js/);
   assert.doesNotMatch(renderPayPage(), /paddle\.js/);
   const live = renderPayPage({ paddleClientToken: TOKEN });
-  if (CARD_PAYMENTS_AVAILABLE) {
+  const { SUBSCRIPTION_PAYMENTS_AVAILABLE } = await import('../../../../ops/checkout-site/site.mjs');
+  if (CARD_PAYMENTS_AVAILABLE || SUBSCRIPTION_PAYMENTS_AVAILABLE) {
     assert.match(live, /cdn\.paddle\.com\/paddle\/v2\/paddle\.js/);
-    assert.match(live, /successUrl: location\.origin \+ '\/r\/paddle\/complete\?provider=paddle&order='/);
+    assert.match(live, /successUrl: location\.origin \+ done \+ '\?provider=paddle&order='/);
     assert.doesNotMatch(live, /Environment\.set\('sandbox'\)/);
   } else {
     // 受付を閉じている間は token があっても開かない
     assert.doesNotMatch(live, /paddle\.js/);
     assert.match(live, /not available yet/);
   }
+});
+
+test('Paddle の定期課金（2026-11-02 MK 確定）: 受付の切替と同時に、料金・請求・規約・返金を自動更新の版にする（実際の販売と説明を一致させる）', async () => {
+  const { SUBSCRIPTION_PAYMENTS_AVAILABLE, SUBSCRIPTION_SITE_PLANS } = await import('../../../../ops/checkout-site/site.mjs');
+  const { SUBSCRIPTION_SALES_OPEN, ACTIVE_SUBSCRIPTION_PROVIDER } = await import('./cardSales.js');
+  assert.equal(SUBSCRIPTION_PAYMENTS_AVAILABLE, SUBSCRIPTION_SALES_OPEN.paddle === true && ACTIVE_SUBSCRIPTION_PROVIDER === 'paddle', 'サイトで別に開け閉めしない');
+  const sub = buildFiles({ subscriptions: true });
+  const all = PAGE_PATHS.map((p) => renderPage(p, { subscriptions: true })).join('\n');
+  // 自動更新の販売中に「自動更新しない・定期課金は無い」とは書かない
+  assert.doesNotMatch(all, /no subscriptions that renew|does not renew\s+automatically|Plans do not renew|not available yet/i);
+  // 料金: 月額 3・年額・Light 会員の年額（名前は決済会社へ渡す許可リスト・金額は商品表）・買い切りは銀行振込だけ
+  assert.deepEqual(SUBSCRIPTION_SITE_PLANS.map((p) => [p.name, p.priceYen, p.period]), [
+    ['Analytics Premium', 4980, 'month'], ['Analytics Premium J', 2980, 'month'], ['Analytics Premium N', 2980, 'month'], ['Analytics Premium Annual', 49800, 'year'],
+  ]);
+  const pricing = sub['pricing/index.html'];
+  for (const s of ['¥4,980', '¥2,980', '¥49,800', '¥44,820', 'renew automatically', 'bank transfer only']) assert.ok(pricing.includes(s), s);
+  // 解約: マイページ＝即時終了／決済会社のメールのリンク＝支払い済み期間の終わりまで（実装どおり）
+  assert.match(sub['refund/index.html'], /paid\s+access ends immediately/);
+  assert.match(sub['refund/index.html'], /until the end of the period you have already paid for/);
+  assert.match(sub['terms/index.html'], /renew automatically/);
+  assert.match(sub['billing/index.html'], /Paddle\.com/);
+  for (const p of PAGE_PATHS) assert.doesNotMatch(visible(renderPage(p, { subscriptions: true })), BANNED, p);
+  assert.doesNotMatch(all, /[぀-ヿ一-鿿]/);
+  // 受付前（いま）の版は従来どおり
+  assert.match(buildFiles({ subscriptions: false })['pricing/index.html'], /There are no subscriptions that renew automatically/);
+});
+
+test('決済ページ /pay/: 定期課金の申込（ak=s）は定期課金の戻り先へ・それ以外は一回払いの完了画面・受付前は Paddle.js を読まない', () => {
+  const TOKEN = 'live_0123456789abcdef0123456789a';
+  const open = renderPayPage({ paddleClientToken: TOKEN, subscriptions: true });
+  assert.match(open, /paddle\.js/);
+  assert.match(open, /q\.get\("ak"\) === "s" \? '\/r\/paddle\/subscription-complete' : '\/r\/paddle\/complete'/);
+  assert.match(open, /\?provider=paddle&order=/);
+  assert.doesNotMatch(renderPayPage({ paddleClientToken: TOKEN, subscriptions: false }), /paddle\.js/);
+  assert.doesNotMatch(renderPayPage({ paddleClientToken: 'test_abc', subscriptions: true }), /paddle\.js/, 'live の token のときだけ');
 });
