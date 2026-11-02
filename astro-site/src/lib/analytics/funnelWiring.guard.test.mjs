@@ -181,6 +181,8 @@ test('pricing: monthly card plans come first; bank-transfer plans are below and 
   assert.match(src, /<summary class="bank-plans-summary">🏦 銀行振込のプラン（年払い・買い切り）<\/summary>/);
   // Light 会員（乗り換え特典は年払い）と #bank-plans で来た方には開く
   assert.match(src, /getAttribute\('data-plan-tier'\) === '1' \|\| location\.hash === '#bank-plans'\) d\.open = true/);
+  // 閉じた枠と無料プランの間の余白: 後ろの .plans-container { margin: … } に負けない 2 クラス指定（#855 は 1 クラスで上書きされ効いていなかった）
+  assert.match(src, /\.plans-container\.plans-container--free \{ margin-top: 3rem; \}/);
   // 先頭に置いたので枠へのリンクは撤去
   assert.equal(/data-card-link/.test(src), false);
   // 現在 Premium をご契約中の方には月額の枠を出さない
