@@ -137,6 +137,7 @@ test('商品: 月額 3・年額 2 は既存の金額と請求周期・名前は�
     assert.deepEqual(price.billing_cycle, { interval: p.interval === 'YEAR' ? 'year' : 'month', frequency: 1 });
     assert.equal(price.tax_mode, 'internal');
     assert.equal(price.trial_period, undefined, '無料期間なし');
+    assert.deepEqual(price.quantity, { minimum: 1, maximum: 1 }, '決済画面で数量を変えられない（2 倍課金を作らない）');
     assert.deepEqual(b.custom_data, { ak_record: REC, ak_sub: PADDLE_PLAN_CODES[p.id] });
     assert.equal(b.custom_data.ak_product, undefined, '一回払いの付与経路（ak_product）に入らない');
     assert.equal(b.checkout, undefined, 'checkout.url は送らない（承認ドメインの Default payment link）');

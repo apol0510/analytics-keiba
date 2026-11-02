@@ -104,6 +104,8 @@ export function buildSubscriptionTransactionBody({ planId, recordId }) {
         unit_price: { amount: String(plan.amountYen), currency_code: 'JPY' },
         tax_mode: 'internal',
         billing_cycle: { interval: BILLING_INTERVAL[plan.interval] || 'month', frequency: 1 },
+        // 数量は 1 に固定（Paddle の決済画面は既定で数量の +/- を出す＝2 つ買うと 2 倍課金・権限は 1 つ。Sandbox E2E で発見）
+        quantity: { minimum: 1, maximum: 1 },
         product: { name, tax_category: 'standard' },
       },
     }],
