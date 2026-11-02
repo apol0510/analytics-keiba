@@ -7,9 +7,12 @@
 | 実装 ② | 料金ページのメール入力の注記・FAQ・未ログイン購入完了の戻り先（`SUBSCRIPTION_RETURN_GUEST.activeNext`）を「メールは自動では届かない／ログイン画面で入力すると届く」に。決済・Webhook・権限・遷移先・マジックリンク認証・退会は不変 |
 | test | test:billing 274 pass（新規 `postPurchaseLoginCopy.test.mjs`）。実ブラウザ E2E `e2e:paypal-post-purchase` **80 pass / 0 fail**（追加: 料金ページの注記 月額 3・年額 × スマホ／PC、FAQ、未ログイン完了画面の案内 × 4 プラン。既存: 未ログイン月額 3・年額、ログイン済み 2、確認中・確認できない（401）、購入なしの通常ログイン）|
 | E2E の環境の事情 | この worktree では astro dev が途中のページ要求に応答しなくなり（harness の `astro dev timeout`）3 回中断。同じ 4 ファイルを origin/main の別 worktree へ置くと 80/0（origin/main 単体も 58/0 × 3）→ 変更ではなく dev サーバーの環境要因 |
-| ④ GA4 | 作業中（現行設定の確認 → Stripe・PayPal の実際の戻り参照元を「除外する参照のリスト」へ → 計測結果の確認）|
+| ④ GA4（**設定済み 2026-11-02**）| property 517256438・データストリーム `analytics-keiba`（G-BTDCZE1B13）→ Google タグ → 除外する参照のリスト。**変更前は空**。2026-08-01〜11-01 のセッション参照元で実際の決済戻りは `checkout.stripe.com / referral` 59 セッション・`paypal.com / referral` 11 セッション（`www.paypal.com`・中立ホスト `checkout.tirol.link`（302 で参照元を残す）は 0）→ 「参照ドメインが次を含む」`checkout.stripe.com`・`paypal.com` の 2 行を保存し、再表示で保存を確認。feeder のドメインは入れていない |
+| ④ 計測結果の確認 | 除外は**設定後の新しいセッションだけ**に効く。次の PayPal 実購入の後、トラフィック獲得（セッションの参照元 / メディア）に `paypal.com / referral` が増えず、`purchase` が元の流入元に付くことを見る。GA4 の自動読取りは service account の Viewer 付与待ち（KAO 未達「AK・KI の GA4 実データ取得」・MK の GA4 管理画面操作）で、付与されるまでは画面で確認 |
+| ④ 不変 | GA4 の `purchase` 54 件・¥202,920（2026-10-05〜11-01・全件 Direct）は実決済 7 件・¥105,880 と不一致 → 別課題として維持（ローカル E2E のテスト purchase 混入の疑い・KAO 未達 `580258cf`）。売上の正本は `docs/measurements/revenue-*.json` |
+| Paddle | 本番切替時に実際の戻り参照元を確認して同じリストへ追加（受付は閉のまま）|
 | 対象外 | ① 銀行振込の後日振込（MK 採用決定前は実装しない）／③ Stripe 既存会員（何もしない）／旧 Stripe の完了画面（実際にログインリンクを送るので文言は正しい）|
-| rollback | revert（文言とテストだけ）。GA4 は除外リストから該当行を削除 |
+| rollback | revert（文言とテストだけ）。GA4 は除外する参照のリストから 2 行を削除（変更前は空）|
 
 ## Paddle 定期課金（月額・年額）へ移す場合の実装範囲（2026-11-02 調査・**提案段階・未着手**）
 
