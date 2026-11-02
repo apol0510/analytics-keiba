@@ -359,6 +359,8 @@ try {
     await approveAndReturn(buyer, sid, c.plan);
     await waitFor(() => buyer.ev(`document.getElementById('ccTitle').textContent === 'お申し込みが完了しました'`), 60000, `${label}: 完了表示`);
     check(true, `${label}: 戻り先で購入完了を表示`);
+    const doneText = await buyer.ev(`document.body.innerText`);
+    check(/メールは自動では届きません/.test(doneText) && /ログイン画面でお申し込みのメールアドレスを入力/.test(doneText), `${label}: 完了画面でメールが自動では届かないことと入力手順を案内`);
     check(await buyer.ev(`window['ga-disable-G-BTDCZE1B13'] === true`), `${label}: ローカルでは GA4 へ送らない（本番 GA4 を汚さない）`);
     const loginUrl = await waitFor(async () => { const u = await buyer.url(); return u.startsWith('/login/') ? u : null; }, 30000, `${label}: ログイン画面への自動遷移`);
     check(loginUrl === '/login/?from=paypal', `${label}: ログイン画面へ自動遷移`, loginUrl);
@@ -436,6 +438,30 @@ try {
   check(dialogs.length === 0, 'alert/confirm などのダイアログ 0', dialogs.join(' | '));
   check(st.unknownFormulas.length === 0, '偽の Airtable が知らない検索式 0', st.unknownFormulas.slice(0, 3).join(' | '));
   check((globalThis.__akE2eBlocked || []).length === 0, '本物の外部への通信 0（このプロセス）', (globalThis.__akE2eBlocked || []).join(','));
+  // P: 料金ページの未ログインのカード申込（月額 3・年額）— メール入力欄の注記が「決済後にメールは自動では届かない」（2026-11-02 MK 確定）
+  // 最後に置く: 料金ページの読み込みが増えると astro dev が後続のページ要求に応答しなくなることがある（E2E 環境の事情）
+  {
+    const label = '料金ページのメール入力の注記';
+    step(label);
+    await startBrowser();
+    for (const mobile of [true, false]) {
+      const tab = await newTab({ mobile });
+      await tab.goto(`${APP}/pricing/`);
+      for (const [attr, plan] of [['data-monthly', 'premium'], ['data-monthly', 'premium-jra'], ['data-monthly', 'premium-nankan'], ['data-subscription', 'premium-annual']]) {
+        const sel = `[${attr}="${plan}"]`;
+        const has = await tab.ev(`!!document.querySelector(${JSON.stringify(sel)})`);
+        check(has, `${label}（${mobile ? 'スマホ' : 'PC'}）: ${plan} のボタンがある`);
+        if (!has) continue;
+        await tab.ev(`document.querySelector(${JSON.stringify(sel)}).click(), true`);
+        const note = await waitFor(() => tab.ev(`(() => { const s = document.querySelector('#monthlyMessage .checkout-email-form small'); return s && !document.getElementById('monthlyMessage').hidden ? s.textContent : null; })()`), 30000, `${label}: ${plan} のメール入力`).catch(() => '');
+        check(/決済後にメールは自動では届きません/.test(note) && !/お送りします/.test(note), `${label}（${mobile ? 'スマホ' : 'PC'}）: ${plan} で自動送信と読めない注記`, note);
+      }
+      const faq = await tab.ev(`document.body.innerText`);
+      check(/Premium の利用画面へ自動でご案内します/.test(faq) && !/ログインはメールでお送りするリンクから/.test(faq), `${label}（${mobile ? 'スマホ' : 'PC'}）: FAQ が自動遷移と入力手順を案内`);
+      await tab.close();
+    }
+  }
+
   exitCode = fails.length ? 1 : 0;
 } catch (e) {
   console.error('❌ E2E 中断:', e.message);
