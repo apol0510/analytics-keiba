@@ -1,3 +1,17 @@
+# 💳 新規の月額・年額を Paddle へ一本化（2026-11-02 MK 確定 / **実装 PR 作成・Sandbox E2E 前・切替前（PayPal で受付中）**）
+
+| 項目 | 状態 |
+|---|---|
+| 目的 | PayPal アカウント作成の負担を無くし、カード決済の申込完了率を上げる。新規の月額・年額は Paddle、既存 PayPal 契約者は PayPal のまま |
+| 正本 | `docs/decisions.md` 2026-11-02「Paddle へ一本化」・`docs/spec.md` 先頭・`astro-site/docs/CARD_PAYMENT_PROVIDERS.md` §3.8。前半の「Paddle 定期課金は提案段階・未着手」（下の #848 の節の表）は本決定で更新 |
+| 完成条件 | 新規の月額・年額が Paddle で行われ、既存 PayPal 購読者も従来どおり利用・更新・退会できる。価格・権利・銀行振込・買い切りは不変 |
+| branch / worktree | `feat/paddle-subscriptions` / `/Users/user/Projects/analytics-keiba-paddlesub`（origin/main `e1cfaff1` から）|
+| 実装（済み）| `paddleSubscriptionCore.js`・`paddleSubscriptionServer.js`・`paddleApi.js`・通知の振り分け（`paddleServer.js`）・`monthly-create-checkout`（paddle）・戻り先（`?provider=paddle&order=`）・退会（kind paddle・中立サイト `paddle-subscription-cancel.mjs`）・中立サイトの取引作成（`kind: subscription`）と定期課金の版の英文・決済ページの戻り先・料金ページの決済会社別の文（`subscriptionProviderCopy.js`）・マイページのカード・更新リマインドの除外・GA4（`payment_method: paddle`）・売上集計の Paddle（`PADDLE_READ_KEY`）|
+| test（済み）| test:billing・check:safety 全 pass・build pass。新規 `paddleSubscription.test.mjs` 23 件ほか |
+| 切替（未）| `cardSales.js` の `ACTIVE_SUBSCRIPTION_PROVIDER='paddle'`・`SUBSCRIPTION_SALES_OPEN={paypal:false,paddle:true}` は**本番の前提が揃ってから別 PR**。それまで PayPal の新規受付を維持 |
+| 本番の前提（未）| ① Live の API 鍵に `subscription.read/write`（2026-11-02 の Live 鍵は取引だけ・購読と通知設定は 403＝**MK の Paddle 画面操作が要る**）② 通知先に `subscription.*` を追加 ③ 中立サイトの関数・ページを deploy ④ `PADDLE_READ_KEY`（売上集計の読み取り専用鍵）|
+| 次の作業 | Sandbox E2E（購入→更新→退会）→ PR の CI → merge → 中立サイト deploy → 本番の前提 → 切替 PR |
+
 # 🧾 決済後のログイン案内を実態に合わせる・GA4 の決済戻り参照元除外（2026-11-02 MK 確定 / **#848 `c1bd570e` merge・本番反映・本番 smoke 済み**）
 
 | 項目 | 状態 |

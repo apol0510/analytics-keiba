@@ -20,6 +20,7 @@ import { corsHeaders, readSessionRecordId, isAllowedOrigin, resolveSiteOrigin, g
 import { airtable } from './stripeServer.js';
 import { withdrawStripeSubscriber } from './stripeWithdrawal.js';
 import { withdrawPaypalSubscriber, resolvePaypalSubscriptionSettleMode } from './paypal/paypalSubscriptionServer.js';
+import { withdrawPaddleSubscriber, resolvePaddleSubscriptionSettleMode } from './paddle/paddleSubscriptionServer.js';
 import {
   classifyMemberWithdrawal, markSessionRevoked, MEMBER_WITHDRAWAL_KIND as KIND,
 } from './memberWithdrawal.js';
@@ -35,6 +36,7 @@ const STATUS = Object.freeze({
   record_not_found: 404,
   not_stripe_subscriber: 404,
   not_paypal_subscriber: 404,
+  not_paddle_subscriber: 404,
   cancel_failed: 502,
   stripe_cancel_failed: 502,
   record_write_failed: 502,
@@ -92,7 +94,7 @@ export async function handleWithdrawRequest(event, env, { only = null, deps = {}
   }
   if (kind === KIND.ALREADY_WITHDRAWN) return reply(409, { error: 'already_withdrawn' });
   if (kind === KIND.BANK_TRANSFER) return reply(409, { error: 'bank_transfer_no_withdrawal' });
-  if (kind !== KIND.STRIPE && kind !== KIND.PAYPAL) return reply(409, { error: 'no_contract' });
+  if (kind !== KIND.STRIPE && kind !== KIND.PAYPAL && kind !== KIND.PADDLE) return reply(409, { error: 'no_contract' });
 
   let r;
   try {
@@ -100,6 +102,11 @@ export async function handleWithdrawRequest(event, env, { only = null, deps = {}
       const stripe = deps.stripe || getStripe(env);
       if (!stripe) return reply(503, { error: 'billing_not_configured' });
       r = await (deps.withdrawStripe || withdrawStripeSubscriber)({ stripe, env, recordId, reason, redis, now, fetchImpl: deps.fetchImpl });
+    } else if (kind === KIND.PADDLE) {
+      // Paddle の定期課金（2026-11-02〜）: 即時解約（本番は中立サイトへ委譲）→ 退会状態。解約に失敗したら何も変えない
+      const mode = resolvePaddleSubscriptionSettleMode({ env, origin });
+      if (!deps.withdrawPaddle && !mode.ok) return reply(503, { error: 'not_configured' });
+      r = await (deps.withdrawPaddle || withdrawPaddleSubscriber)({ env, origin, recordId, reason, redis, now, fetchImpl: deps.fetchImpl });
     } else {
       const mode = resolvePaypalSubscriptionSettleMode({ env, origin });
       if (!deps.withdrawPaypal && !mode.ok) return reply(503, { error: 'not_configured' });

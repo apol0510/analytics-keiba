@@ -322,3 +322,24 @@ test('旧入口 process-withdrawal は廃止（メールアドレスで呼んで
   assert.equal(r.statusCode, 410);
   assert.equal(JSON.parse(r.body).error, 'moved_to_mypage');
 });
+
+test('退会: Paddle の定期課金（2026-11-02〜）もマイページから即時退会でき、Paddle の解約に失敗したら 502 で何も変えない', async () => {
+  const paddleMonthly = (email) => ({ ...paypalMonthly(email), PaymentMethod: 'Paddle' });
+  const cookie = await sessionCookie(REC_A);
+  for (const [result, code] of [['withdrawn', 200], ['cancel_failed', 502]]) {
+    const at = fakeAirtable([{ id: REC_A, fields: paddleMonthly('a@example.com') }]);
+    const redis = fakeRedis();
+    const calls = [];
+    const deps = {
+      fetchImpl: at.fetchImpl, redis, now: NOW,
+      withdrawPaddle: async ({ recordId }) => { calls.push(recordId); return result === 'withdrawn' ? { ok: true, result, email: 'a@example.com', cancelled: true } : { ok: false, result }; },
+      withdrawPaypal: async () => assert.fail('PayPal の退会は呼ばない'),
+      sendMail: async () => {}, adminNotice: async () => {},
+    };
+    const r = await handleWithdrawRequest(event({ cookie, body: { confirm: true } }), ENV, { deps });
+    assert.equal(r.statusCode, code, result);
+    assert.deepEqual(calls, [REC_A]);
+    if (code === 200) assert.deepEqual(JSON.parse(r.body), { ok: true, kind: 'paddle' });
+    else assert.deepEqual(JSON.parse(r.body), { error: 'cancel_failed' });
+  }
+});

@@ -24,6 +24,8 @@ export const NEUTRAL_PATHS = Object.freeze({
   // → 決済画面を開くページはこのサイト（静的・ops/checkout-site）に置き、完了後は会員サイトの完了画面へ 302
   paddleCheckout: '/pay/',
   paddleComplete: '/r/paddle/complete',
+  // Paddle の定期課金（2026-11-02 MK 確定）: 決済完了 → 会員サイトの定期課金の戻り先（PayPal と同じ画面・?provider=paddle&order=txn_…）
+  paddleSubscriptionComplete: '/r/paddle/subscription-complete',
   paddleWebhook: '/hooks/paddle',
 });
 
@@ -34,6 +36,7 @@ export const NEUTRAL_ROUTES = Object.freeze([
   Object.freeze({ from: NEUTRAL_PATHS.paypalCancel, to: `${PRODUCTION_ORIGIN}/pricing/?checkout=cancelled`, status: '302!' }),
   Object.freeze({ from: NEUTRAL_PATHS.paypalWebhook, to: `${PRODUCTION_ORIGIN}/.netlify/functions/paypal-order-webhook`, status: '200!' }),
   Object.freeze({ from: NEUTRAL_PATHS.paddleComplete, to: `${PRODUCTION_ORIGIN}/checkout/card-complete/`, status: '302!' }),
+  Object.freeze({ from: NEUTRAL_PATHS.paddleSubscriptionComplete, to: `${PRODUCTION_ORIGIN}/checkout/paypal-subscription-return/`, status: '302!' }),
   // Paddle webhook はこの中立サイト自身の modern function が受ける（4KB 回避・案 B）。
   // 検証は local（PADDLE_API_KEY を持つ）、会員付与だけ本番 internal-paddle-grant へ委譲する。
   Object.freeze({ from: NEUTRAL_PATHS.paddleWebhook, to: '/.netlify/functions/paddle-webhook', status: '200!' }),
@@ -53,6 +56,12 @@ export const PADDLE_LIVE_WEBHOOK_URL = `${NEUTRAL_CHECKOUT_ORIGIN}${NEUTRAL_PATH
  * webhook の内部委譲（internal-paddle-grant）と対称で、どちらも Netlify の function パスを直接呼ぶ（`_redirects` は増やさない）。
  */
 export const PADDLE_CHECKOUT_CREATE_URL = `${NEUTRAL_CHECKOUT_ORIGIN}/.netlify/functions/paddle-create-checkout`;
+
+/** 分離サイト上の定期課金の即時解約 endpoint（マイページの即時退会・2026-11-02）。本番は鍵を持たないので署名付き intent で頼む */
+export const PADDLE_SUBSCRIPTION_CANCEL_URL = `${NEUTRAL_CHECKOUT_ORIGIN}/.netlify/functions/paddle-subscription-cancel`;
+
+/** 定期課金の申込で返す決済ページ URL に付ける印（決済ページが完了後の戻り先を定期課金の画面にする）*/
+export const SUBSCRIPTION_CHECKOUT_FLAG = Object.freeze({ name: 'ak', value: 's' });
 
 /**
  * Paddle の取引の checkout.url が指すべきページ（Default payment link）。本番サイトだけ中立ホストの決済ページ、

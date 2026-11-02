@@ -73,7 +73,8 @@ export function isPaidPremiumAnnualBankTransfer(fields = {}) {
   if (normalizePlan(f['プラン']) !== 'premium') return { ok: false, reason: SKIP.NOT_PREMIUM };
   if (lower(f.PlanType) !== 'annual') return { ok: false, reason: SKIP.NOT_ANNUAL };
   // ⚠️ PayPal の年額定期課金（2026-10-20〜）・Stripe は自動で更新される。ここで拾うと「振込で更新を」と誤案内になる。
-  if (['stripe', 'paypal'].includes(lower(f.PaymentMethod))) return { ok: false, reason: SKIP.AUTO_RENEW };
+  // Paddle の年額定期課金（2026-11-02〜）も自動で更新される
+  if (['stripe', 'paypal', 'paddle'].includes(lower(f.PaymentMethod))) return { ok: false, reason: SKIP.AUTO_RENEW };
   if (lower(f.PaymentMethod) !== 'bank transfer') return { ok: false, reason: SKIP.PAYMENT_METHOD_UNKNOWN };
   if (isBlank(f.PaidAt)) return { ok: false, reason: SKIP.NOT_PAID };
   if (isRenewalApplied(f)) return { ok: false, reason: SKIP.RENEWAL_APPLIED };

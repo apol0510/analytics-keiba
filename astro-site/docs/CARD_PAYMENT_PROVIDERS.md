@@ -10,7 +10,7 @@
 | Sandbox E2E | **PASS**（2026-10-12・§4）| **PASS**（2026-10-13・§4）|
 | 本番審査 | **本番アカウント承認**（2026-10-24 MK 報告・Payoneer 審査通過・Payout settings 保存。dashboard の Verify your account = Complete と API `GET /verifications` の onboarding・domain = completed を Claude が観測）。Website approval `checkout.tirol.link` = approved（Apple Pay verified）| **審査通過**（MK 報告 2026-10-15。承認の書面・メールは MK が保管）|
 | 本番の鍵・Webhook | 設定中（2026-10-24〜・§2.1）。Live は**中立ホスト経由**（決済ページ `https://checkout.tirol.link/pay/`・通知先 `https://checkout.tirol.link/hooks/paddle`）| **設定済み（2026-10-15）**: Live Product `PROD-3CX00591EL992881E`・Plan 3 本（`PAYPAL_PLAN_IDS.live`）・Webhook `78F83880DR5445808`（本番 URL・15 イベント）・production env 4 件（scope functions）。⚠️ 関数 env は 4KB 上限ぎりぎり（決済メール v2 カナリア env を外して空けた）|
-| 本番受付 | **閉じている**（`CARD_SALES_OPEN.paddle=false`）| 一回払いは**閉じている**（`.paypal=false`）。**月額の定期課金は PayPal で受ける方針**（2026-10-15 MK 決定・§3.5）。**2026-10-15 受付開始**（`SUBSCRIPTION_SALES_OPEN.paypal=true`）|
+| 本番受付 | 一回払いは**閉じている**（`CARD_SALES_OPEN.paddle=false`）。**新規の月額・年額は Paddle へ一本化（2026-11-02 MK 確定・§3.8）**。切替前は `SUBSCRIPTION_SALES_OPEN.paddle=false`（PayPal で受付中）| 一回払いは**閉じている**（`.paypal=false`）。**月額の定期課金は PayPal で受ける方針**（2026-10-15 MK 決定・§3.5）。**2026-10-15 受付開始**（`SUBSCRIPTION_SALES_OPEN.paypal=true`）|
 | 取扱可否（一次情報）| ⚠️ 禁止リストに「Betting-related products」「Sports forecasting/odds making where monetary or material prizes are involved」。**書面確認が要る** | 利用規定で「競馬またはドッグレース」は**事前承認**区分 → 審査通過 |
 
 - 売るのは銀行振込と同じ一回払い（Premium 年払い ¥49,800／Light 会員 ¥44,820・買い切り ¥78,000）だけ。**月払い・定期課金は作らない**（Paddle の定期価格・PayPal Subscriptions は使わない。guard で固定）。
@@ -180,6 +180,30 @@ Sandbox の Product `PROD-1DB142038K1860725`／Plan: premium `P-67290333XA263552
 **検証**: `postPurchaseLanding.test.mjs`・`subscriptionReturnToken.test.mjs`（偽の PayPal / Airtable / Redis を通した申込 → 支払い → 戻り先 → 印 → ログイン）。実ブラウザ E2E `npm run e2e:paypal-post-purchase`（`scripts/e2e-paypal-post-purchase/`・偽の外部＋実 Function＋astro dev＋ヘッドレス Chrome・本物の外部へは出ない・ブラウザも localhost 以外を名前解決しない）: 未ログイン（月額 3・年額・スマホ／PC）→ ログイン画面 → **別のブラウザコンテキスト（メールアプリ内ブラウザ相当）**でリンク → 利用画面、ログイン済み Light 会員（全会場・南関版）→ 戻り先から利用画面、確認中は遷移しない、URL だけは 401 の案内、購入なしの通常ログインは `/dashboard/` のまま。
 
 **rollback**: revert（印は 24 時間で消える・権限には影響しない）。
+
+## 3.8 Paddle 定期課金（月額 3・年額 2・新規の受付先・2026-11-02 MK 確定）
+
+根拠 `docs/decisions.md` 2026-11-02「Paddle へ一本化」。新規の月額・年額は Paddle、**既存の PayPal 契約は PayPal のまま**（§3.5・§3.6 の処理は継続）。
+
+| 項目 | 仕様 | 実装 |
+|---|---|---|
+| 商品 | §3.5・§3.6 と同じ 5 商品（月額 ¥4,980／¥2,980／¥2,980・年額 ¥49,800・Light ¥44,820）。買い切りは銀行振込だけ | 表は `paypalSubscriptionCore.SUBSCRIPTION_PLANS`（決済会社ごとに持たない）。判定 `paddle/paddleSubscriptionCore.js` |
+| Paddle の価格 | 非カタログ価格を取引ごとに渡す（Live カタログを作らない・一回払いと同じ）。`billing_cycle` 月 1／年 1・JPY・`tax_mode: internal`・無料期間なし。名前は許可リスト（`SUBSCRIPTION_PLAN_NAMES`＝PayPal の Plan 名と同じ）。`custom_data` = `{ ak_record, ak_sub: A/J/N/Y/L }`（一回払いの `ak_product` は付けない＝一回払いの付与経路に入らない）| `buildSubscriptionTransactionBody` |
+| 申込 | 共通入口 `monthly-create-checkout`（受付先が paddle のとき）。ログイン中はその会員・未ログインは入力メールの会員（§3.5 と同じ `resolveCheckoutRecord`）。二重契約（生きている PayPal / Stripe / 別の Paddle 購読・有効な Premium・買い切り）は 409。二重クリックは 30 分同じ取引（Redis `ak:paddle:sub:open:{rec}:{plan}`＋中立サイトの冪等化 `sub:<plan>`）| `createPaddleSubscriptionCheckout`。本番は鍵が無いので署名付き intent（`kind: subscription`）を中立サイト `paddle-create-checkout.mjs` へ（§2.2）|
+| 決済画面 | 取引の checkout.url（Default payment link `https://checkout.tirol.link/pay/?_ptxn=…`）に `ak=s` を付けて返す。決済ページは `ak=s` のとき完了後 `/r/paddle/subscription-complete?provider=paddle&order=txn_…` → 会員サイトの `/checkout/paypal-subscription-return/`（PayPal と共通の戻り先・302）。Paddle の決済画面はメール・国・カードだけ（Paddle のアカウント作成なし）| `ops/checkout-site/site.mjs renderPayPage`・`NEUTRAL_ROUTES`・Sandbox は会員サイトの `/checkout/paddle/` |
+| 反映 | 通知（`transaction.*`・`subscription.*`・`adjustment.*`）を中立サイトが署名検証 → 取引・購読を API で照会 → 購読の写し（会員 ID・商品・状態・期間・価格だけ）を本番 `internal-paddle-grant` へ署名付きで → 本番が購読ごとのロックで絶対値を書く。期限 = `current_billing_period.ends_at`（JST 暦日）+ 2 日。**status=active のときだけ**期間を信じる。past_due は延ばさない。順不同の古い通知で縮めない。支払い時点で購読 ID が無い `transaction.paid` は後続の通知に任せる | `decidePaddleSubscriptionEvent`（照会）→ `applyPaddleSubscription`（`decidePaddleSubscriptionSync`）。権限 = Premium / Monthly or Annual / active / **PaymentMethod=Paddle** / VenueAccess |
+| 会員と購読 | 購読の `custom_data.ak_record` だけで会員を決める。いまの購読は Redis `ak:paddle:sub:member:{rec}` | 価格・周期・数量・商品コードの改ざんや会員 ID なしは書かずに管理者へ（`subscription_conflict`）|
+| 戻り先 | ログイン中はセッション、未ログインは申込の鍵（`ak_pp_return`・取引 ID に署名）。本人の申込（Redis `ak:paddle:sub:checkout:{txn}`）だけ。反映結果（`ak:paddle:sub:txn:{txn}` = active / needs_support）を表示し、active なら §3.7 と同じ自動遷移。GA4 `purchase` は active のときだけ（`payment_method: paddle`）| `paypal-subscription-confirm?provider=paddle&order=…`→`confirmPaddleSubscription`（本番は Paddle を照会しない）|
+| 退会（マイページ）| 即時。退会の印（`ak:paddle:sub:withdrawn:{sub}`）→ 中立サイトが本人の購読か確かめて `effective_from=immediately` で解約 → 照会し直して canceled を確認 → 退会状態。**解約に失敗したら会員の状態を変えない**（印も外す）。canceled の通知は印で退会へ収束、遅れた active では権限を戻さない | `withdrawPaddleSubscriber`・中立サイト `paddle-subscription-cancel.mjs`・`member-withdraw`（kind `paddle`）|
+| Paddle 側の解約 | お客様が Paddle のメールのリンク等で解約 → 期間の終わりに終了（予約中は利用継続）。終了の通知で支払い済み期間の終わりの翌日まで（縮めるだけ・退会フラグなし） | `decidePaddleSubscriptionSync`（ended）|
+| 返金・チャージバック | 定期課金は自動で権限を戻さず管理者へ（§3.5 と同じ方針）。購読の状態で再判定する | `applyPaddleSubscription`（refund）|
+| 管理 | Customers の `PaymentMethod`（Paddle / PayPal / Stripe）で区別。管理者通知（新規・競合・返金）は provider 付き。マイページの「アカウント管理」も別カード | `cardNotify`・`viewerEntitlements.billing='paddle'`・`dashboard.astro #paddle-billing-card` |
+| 売上 | `revenue-monthly` に Paddle の取引（completed / paid の grand_total）・承認済み返金を追加。読み取り専用の鍵 `PADDLE_READ_KEY`（GitHub secret）が無い間は「未計上」と明記 | `scripts/revenueMonthly.mjs fetchPaddleMonth` |
+| 切替 | `cardSales.js`: `ACTIVE_SUBSCRIPTION_PROVIDER='paddle'`・`SUBSCRIPTION_SALES_OPEN={ paypal:false, paddle:true }` を変える PR だけ。料金ページの決済会社別の文（`subscriptionProviderCopy.js`）・中立サイトの英文（`SUBSCRIPTION_PAYMENTS_AVAILABLE`）・更新リマインドの決済代行名も同じ値で切り替わる | guard: `cardSales.guard.test.mjs`（新規の受付は ACTIVE の 1 社だけ）|
+| 切替の前提（本番）| ① Live の API 鍵に `subscription.read`・`subscription.write`（＋通知設定を API で直すなら `notification_setting.read/write`）② 通知先（`https://checkout.tirol.link/hooks/paddle`）に `subscription.created/activated/updated/canceled/past_due/paused/resumed` を追加 ③ 中立サイトの関数（`paddle-subscription-cancel` 追加）と live client token 付きの静的ページを deploy ④ 本番で取引の作成（未払い・課金なし）と決済画面の表示を read-only 確認 | 2026-11-02 時点の Live 鍵は取引だけ（購読・通知設定は 403）|
+| rollback | 切替 PR の revert（受付先を PayPal に戻す）。Paddle の既存購読の反映・退会は settle モードで続く（販売を閉じても止まらない）| `resolvePaddleSubscriptionSettleMode` |
+
+**検証**: `paddle/paddleSubscription.test.mjs`（偽の Paddle / Airtable / Redis・23 件: 商品と名前・Light 資格・ログイン済み／未ログイン・二重クリック・通知の重複／順不同／同時・更新成功／失敗・月末／JST・即時退会／解約失敗・Paddle 側の解約・返金・誤付与防止・二重契約・買い切り拒否・一回払いと混ざらない・切替と rollback・委譲（本番↔中立サイト）・署名）。`checkoutSite.guard.test.mjs`（中立サイトの定期課金の版）・`subscriptionProviderCopy.test.mjs`・`memberWithdrawal.test.mjs`（kind paddle）・`revenueMonthly.test.mjs`（Paddle）。
 
 ## 4. Sandbox E2E 手順（Deploy Preview）
 

@@ -7,6 +7,9 @@ import { LIGHT_SWITCH_GRACE_DAYS } from '../lib/pricing/pricingEligibility.js';
 import { SUBSCRIPTION_SALES_OPEN, ACTIVE_SUBSCRIPTION_PROVIDER } from '../lib/billing/cardSales.js';
 import { STRIPE_PLANS } from '../lib/billing/stripePlans.js';
 import { PAYPAL_PLAN_IDS, ANNUAL_SUBSCRIPTION_PLANS } from '../lib/billing/paypal/paypalSubscriptionCore.js';
+import { subscriptionProviderCopy } from '../lib/billing/subscriptionProviderCopy.js';
+// 決済会社によって変わる説明（決済代行の名前・年払いの止め方・決済画面での操作）。受付先（ACTIVE）の行だけを出す
+const providerCopy = subscriptionProviderCopy();
 
 // 正規化済みプラン名 → tier。インライン script へ焼き込む（別名表の単一源は planNormalization.js）
 const planTierByToken = buildPlanTierByToken();
@@ -21,7 +24,8 @@ const MONTHLY_COPY = {
 };
 // 年払いの PayPal 年額定期課金（12 か月ごと自動更新・2026-10-20 MK 決定）。買い切りは銀行振込だけ（カード・PayPal の入口を置かない）。
 // 本番は月額と同じ受付（SUBSCRIPTION_SALES_OPEN）かつ Live の年額 Plan ID が登録済みのときだけ表示する（未登録の間は出さない＝押しても申し込めない状態を作らない）。
-const annualLivePlans = ANNUAL_SUBSCRIPTION_PLANS.every((p) => Boolean(PAYPAL_PLAN_IDS.live?.[p.id]));
+// Paddle（2026-11-02〜）は取引ごとに価格を渡す（Plan ID が無い）ので、受付の切替だけで表示する
+const annualLivePlans = ACTIVE_SUBSCRIPTION_PROVIDER === 'paddle' || ANNUAL_SUBSCRIPTION_PLANS.every((p) => Boolean(PAYPAL_PLAN_IDS.live?.[p.id]));
 const showAnnualSub = (SUBSCRIPTION_SALES_OPEN[ACTIVE_SUBSCRIPTION_PROVIDER] === true && annualLivePlans) || process.env.CONTEXT === 'deploy-preview';
 const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }));
 ---
@@ -194,10 +198,10 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
                             💳 乗り換え特典価格をカードで申し込む（自動更新）
                         </button>
                         <div class="annual-renewal-terms" data-annual-terms>
-                            <p><strong>カード（PayPal）の年払いは自動更新です。</strong></p>
+                            <p><strong>{providerCopy.annualTitle}</strong></p>
                             <ul>
-                                <li>12 か月ごとに、お申し込み時と同じ金額で自動的に更新・請求されます（決済代行：PayPal）。</li>
-                                <li>更新を止めるには、PayPal のアカウントで自動支払いを停止してください。次回から請求されず、支払い済みの 12 か月が終わるまでご利用いただけます。</li>
+                                <li>12 か月ごとに、お申し込み時と同じ金額で自動的に更新・請求されます（決済代行：{providerCopy.label}）。</li>
+                                <li>{providerCopy.annualStop}</li>
                                 <li>マイページ「アカウント管理」の「退会する」でも止められます。退会はその時点でご利用終了となり、残りの期間の返金はありません。</li>
                             </ul>
                         </div>
@@ -313,7 +317,7 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
                             <button type="button" class="plan-button plan-button-credit" data-monthly={p.id}>
                                 クレジットカードで申し込む
                             </button>
-                            <p class="plan-billing-note">※自動継続のお支払い（決済代行：PayPal）</p>
+                            <p class="plan-billing-note">※自動継続のお支払い（決済代行：{providerCopy.label}）</p>
                         </div>
                     ))}
                 </div>
@@ -406,7 +410,7 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
                     <h3 class="faq-question">Q: 支払い方法は何が利用できますか？</h3>
                     <p class="faq-answer">
                         Premium の年払い・買い切りは銀行振込でお申し込みいただけます。{showAnnualSub && <>年払いはクレジットカード（12 か月ごとの自動更新）でもお申し込みいただけます。</>}<br>
-                        銀行振込が難しい方は、クレジット決済（Premium・中央版・南関版）もご利用いただけます。決済代行は PayPal で、お支払いは自動で継続されます。
+                        銀行振込が難しい方は、クレジット決済（Premium・中央版・南関版）もご利用いただけます。決済代行は {providerCopy.label} で、お支払いは自動で継続されます。
                     </p>
                 </div>
 
@@ -432,7 +436,7 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
                     <h3 class="faq-question">Q: 利用開始までの流れは？</h3>
                     <p class="faq-answer">
                         <strong>【銀行振込】</strong>①お振込み → ②振込完了後、報告フォームをご送信 → ③入金確認後、ご利用開始です。フォームは<strong>お振込みが済んでから</strong>ご送信ください。<br>
-                        <strong>【クレジット決済】</strong>①「クレジットカードで申し込む」（ログインしていない方は、ご利用になるメールアドレスを入力） → ②決済画面（PayPal）でお支払いを承認 → ③お支払いが確認でき次第、ご利用開始です。決済完了の画面から Premium の利用画面へ自動でご案内します（ログインしていない方は、ログイン画面でお申し込みのメールアドレスを入力し、届いたログインリンクからログイン。決済しただけでメールやログインリンクが自動で届くことはありません）。
+                        <strong>【クレジット決済】</strong>①「クレジットカードで申し込む」（ログインしていない方は、ご利用になるメールアドレスを入力） → ②{providerCopy.flowStep2} → ③お支払いが確認でき次第、ご利用開始です。決済完了の画面から Premium の利用画面へ自動でご案内します（ログインしていない方は、ログイン画面でお申し込みのメールアドレスを入力し、届いたログインリンクからログイン。決済しただけでメールやログインリンクが自動で届くことはありません）。
                     </p>
                 </div>
 
@@ -635,7 +639,7 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
         var data = await res.json().catch(function () { return {}; });
         if (res.ok && data.url) {
           // GA4 begin_checkout: サーバーが決済画面の URL を返した後だけ（閉じた語彙・個人情報なし）
-          try { if (window.AkFunnel && window.AkFunnel.checkoutStart) window.AkFunnel.checkoutStart(planId, data.provider === 'paypal' ? 'paypal' : 'stripe'); } catch (_) {}
+          try { if (window.AkFunnel && window.AkFunnel.checkoutStart) window.AkFunnel.checkoutStart(planId, data.provider === 'paypal' || data.provider === 'paddle' ? data.provider : 'stripe'); } catch (_) {}
           leaving = true; location.href = data.url; return;
         }
         var err = data.error || '';

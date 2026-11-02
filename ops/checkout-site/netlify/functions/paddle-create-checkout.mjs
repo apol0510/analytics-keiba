@@ -15,6 +15,7 @@
  * 応答: 200 { url, transactionId } / 401 invalid_signature / 400 不正 intent / 409 gate / 503 受付前・設定不足 / 502 作成失敗
  */
 import { createPaddleTransaction } from '../../../../astro-site/src/lib/billing/paddle/paddleServer.js';
+import { createPaddleSubscriptionTransaction } from '../../../../astro-site/src/lib/billing/paddle/paddleSubscriptionServer.js';
 import { verifyPaddleSignature } from '../../../../astro-site/src/lib/billing/paddle/paddleCore.js';
 import { PRODUCTION_ORIGIN } from '../../../../astro-site/src/lib/billing/cardSales.js';
 import { makeBlobStore, idempotentCreateCheckout } from './lib/checkoutIdempotency.mjs';
@@ -27,7 +28,7 @@ const INTENT_TTL_SEC = 120;
 /**
  * テスト可能な本体。store を注入できる（本番は Netlify Blobs、テストは偽ストア）。
  */
-export async function handleCreateCheckout({ request, env, store, now = new Date(), createTransaction = createPaddleTransaction }) {
+export async function handleCreateCheckout({ request, env, store, now = new Date(), createTransaction = createPaddleTransaction, createSubscriptionTransaction = createPaddleSubscriptionTransaction }) {
   if (request.method !== 'POST') return resp(405, { error: 'method_not_allowed' });
   const raw = await request.text();
   if (!env.CARD_GRANT_INTERNAL_SECRET) return resp(503, { error: 'internal_secret_missing' });
@@ -41,8 +42,12 @@ export async function handleCreateCheckout({ request, env, store, now = new Date
   if (!intent || String(intent.origin || '') !== origin) return resp(400, { error: 'origin_mismatch' });
 
   const recordId = String(intent.recordId || '');
-  const productId = String(intent.productId || '');
-  const entry = intent.entry === 'card' ? 'card' : 'direct';
+  // 定期課金（2026-11-02 MK 確定・kind=subscription）: 商品は定期課金の表（planId）。入口は monthly だけ。
+  // 冪等化のキーは一回払いの商品 ID と混ざらないよう `sub:<planId>`（同じ会員の同じ申込の二重クリックだけを束ねる）
+  const isSub = intent.kind === 'subscription';
+  const planId = String(intent.planId || '');
+  const productId = isSub ? `sub:${planId}` : String(intent.productId || '');
+  const entry = isSub ? (intent.entry === 'monthly' ? 'monthly' : 'direct') : (intent.entry === 'card' ? 'card' : 'direct');
   let r;
   try {
     r = await idempotentCreateCheckout({
@@ -51,7 +56,9 @@ export async function handleCreateCheckout({ request, env, store, now = new Date
       recordId,
       productId,
       now,
-      create: () => createTransaction({ env, origin, recordId, productId, entry, now }),
+      create: () => (isSub
+        ? createSubscriptionTransaction({ env, origin, recordId, planId, entry })
+        : createTransaction({ env, origin, recordId, productId, entry, now })),
     });
   } catch (e) {
     console.error(JSON.stringify({ event: 'paddle_create_checkout_sep_error', message: String(e?.message || e).slice(0, 120) }));

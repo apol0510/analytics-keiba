@@ -7,6 +7,8 @@
  *  - CARD_GRANT_INTERNAL_SECRET による HMAC（ts:rawBody）で本番へ内部認証。
  *  - 冪等性・二重付与防止は本番 entitlementLedger がそのまま担保（同一 Redis キー）。
  *
+ * 定期課金（2026-11-02）: 取引・購読を照会し、購読の写し（apply.kind='subscription'）を同じ経路で本番へ渡す。
+ *
  * 必要 env（このサイト）: PADDLE_WEBHOOK_SECRET / PADDLE_API_KEY / CARD_GRANT_INTERNAL_SECRET
  * 応答: 200=処理済/無視/照合違い、500=再送希望（照会失敗・本番付与が再送可）。
  */
@@ -30,7 +32,8 @@ export default async (request) => {
   if (!parsed || parsed.ignored) return resp(200, { received: true });
 
   const origin = PRODUCTION_ORIGIN; // 本番専用サイト
-  const mode = resolvePaddleMode({ key: env.PADDLE_API_KEY, origin });
+  // 鍵の種類（live/test）だけを見る（一回払いの販売停止中でも、定期課金の反映指示の種類は正しく伝える）
+  const mode = resolvePaddleMode({ key: env.PADDLE_API_KEY, origin, salesOpen: true });
   const dec = await decidePaddleGrant({ env, origin, parsed });
 
   // 付与も照合アラートも無い＝無視 or 再送希望（照会失敗）。本番へは呼ばない。

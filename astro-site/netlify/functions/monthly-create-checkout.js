@@ -22,8 +22,14 @@ import { createPaypalSubscription, resolvePaypalSubscriptionMode } from '../../s
 import { e2eCheck } from '../../src/lib/billing/cardE2E.js';
 import { makeRedisCmd } from '../../src/lib/premiumPlus/premiumPlusFunnelServer.js';
 import { returnCookieFor } from '../../src/lib/billing/paypal/subscriptionReturnToken.js';
+import { createPaddleSubscriptionCheckout, resolvePaddleSubscriptionMode } from '../../src/lib/billing/paddle/paddleSubscriptionServer.js';
 
-const CREATORS = Object.freeze({ paypal: { mode: resolvePaypalSubscriptionMode, create: createPaypalSubscription } });
+// 2026-11-02 MK 確定: 新規の月額・年額は Paddle へ一本化（ACTIVE_SUBSCRIPTION_PROVIDER を切り替える PR で受付先が変わる）。
+// Paddle の subscription は戻り先の確認に使う取引 ID（txn_…）。どちらも受け付けるのは 1 社だけ（自動フォールバックしない）
+const CREATORS = Object.freeze({
+  paypal: { mode: resolvePaypalSubscriptionMode, create: createPaypalSubscription },
+  paddle: { mode: resolvePaddleSubscriptionMode, create: createPaddleSubscriptionCheckout },
+});
 const json = (statusCode, headers, body) => ({ statusCode, headers, body: JSON.stringify(body) });
 
 exports.handler = async (event) => {

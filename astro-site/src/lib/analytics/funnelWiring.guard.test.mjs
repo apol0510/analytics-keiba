@@ -150,7 +150,8 @@ test('pricing: begin_checkout fires after the checkout URL is returned, before l
   const i = src.indexOf("if (res.ok && data.url) {");
   assert.ok(i > 0, 'checkout success branch');
   const branch = src.slice(i, src.indexOf('return;', i));
-  assert.match(branch, /AkFunnel\.checkoutStart\(planId, data\.provider === 'paypal' \? 'paypal' : 'stripe'\)/);
+  // 決済会社はサーバーが返した provider（閉じた語彙 paypal / paddle・それ以外は stripe）。Paddle は 2026-11-02〜
+  assert.match(branch, /AkFunnel\.checkoutStart\(planId, data\.provider === 'paypal' \|\| data\.provider === 'paddle' \? data\.provider : 'stripe'\)/);
   assert.ok(branch.indexOf('checkoutStart') < branch.indexOf('location.href = data.url'));
 });
 

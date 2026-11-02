@@ -39,7 +39,8 @@ test('対象: 銀行振込で実際に支払った Premium 年払いだけ（Pay
   assert.equal(isPaidPremiumAnnualBankTransfer(PAID({ PaymentMethod: 'Stripe' })).reason, SKIP.AUTO_RENEW);
   assert.equal(isPaidPremiumAnnualBankTransfer(PAID({ PaymentMethod: '' })).reason, SKIP.PAYMENT_METHOD_UNKNOWN);
   assert.equal(isPaidPremiumAnnualBankTransfer(PAID({ PaymentMethod: undefined })).reason, SKIP.PAYMENT_METHOD_UNKNOWN);
-  assert.equal(isPaidPremiumAnnualBankTransfer(PAID({ PaymentMethod: 'Paddle' })).reason, SKIP.PAYMENT_METHOD_UNKNOWN);
+  // Paddle の年額定期課金（2026-11-02 MK 確定）も自動で更新される（振込の更新案内を送らない）
+  assert.equal(isPaidPremiumAnnualBankTransfer(PAID({ PaymentMethod: 'Paddle' })).reason, SKIP.AUTO_RENEW);
   assert.equal(isPaidPremiumAnnualBankTransfer(PAID({ PaidAt: '' })).reason, SKIP.NOT_PAID);
   assert.equal(isPaidPremiumAnnualBankTransfer(PAID({ PlanType: 'Monthly' })).reason, SKIP.NOT_ANNUAL);
   assert.equal(isPaidPremiumAnnualBankTransfer(PAID({ PlanType: 'Lifetime' })).reason, SKIP.NOT_ANNUAL);

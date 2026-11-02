@@ -12,7 +12,10 @@ const token = String(process.env.PADDLE_CLIENT_TOKEN || '');
 const mode = resolveCardMode({ provider: 'paddle', keyMode: clientTokenMode(token), origin: Astro.url.origin });
 const txn = Astro.url.searchParams.get('_ptxn') || '';
 const safeTxn = /^txn_[a-z0-9]{10,40}$/.test(txn) ? txn : '';
-const cfg = mode.ok && safeTxn ? { token, sandbox: mode.mode === 'test', txn: safeTxn } : null;
+// 定期課金の申込（2026-11-02・会員サイトが ak=s を付ける）は定期課金の戻り先へ。それ以外は一回払いの完了画面
+const isSub = Astro.url.searchParams.get('ak') === 's';
+const done = isSub ? '/checkout/paypal-subscription-return/' : '/checkout/card-complete/';
+const cfg = mode.ok && safeTxn ? { token, sandbox: mode.mode === 'test', txn: safeTxn, done } : null;
 ---
 
 <BaseLayout title="お支払い" noindex={true}>
@@ -44,7 +47,7 @@ const cfg = mode.ok && safeTxn ? { token, sandbox: mode.mode === 'test', txn: sa
       if (cfg.sandbox) window.Paddle.Environment.set('sandbox');
       window.Paddle.Initialize({
         token: cfg.token,
-        checkout: { settings: { displayMode: 'overlay', locale: 'ja', successUrl: location.origin + '/checkout/card-complete/?provider=paddle&order=' + encodeURIComponent(cfg.txn) } },
+        checkout: { settings: { displayMode: 'overlay', locale: 'ja', successUrl: location.origin + cfg.done + '?provider=paddle&order=' + encodeURIComponent(cfg.txn) } },
       });
     })();
   </script>

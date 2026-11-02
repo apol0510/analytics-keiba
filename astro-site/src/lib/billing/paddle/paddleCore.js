@@ -29,6 +29,12 @@ export const GRANT_EVENTS = Object.freeze(['transaction.completed', 'transaction
 /** 返金・チャージバック: adjustment の作成・更新（承認済みだけ戻す） */
 export const ADJUSTMENT_EVENTS = Object.freeze(['adjustment.created', 'adjustment.updated']);
 
+/** 定期課金の購読の通知（paddleSubscriptionCore.SUBSCRIPTION_EVENTS と同じ・循環 import を避けてここにも持つ）*/
+export const PADDLE_SUBSCRIPTION_EVENTS = Object.freeze([
+  'subscription.created', 'subscription.activated', 'subscription.updated', 'subscription.canceled',
+  'subscription.past_due', 'subscription.paused', 'subscription.resumed', 'subscription.trialing', 'subscription.imported',
+]);
+
 const TXN_RE = /^txn_[a-z0-9]{10,40}$/;
 const ADJ_RE = /^adj_[a-z0-9]{10,40}$/;
 const RECORD_RE = /^rec[A-Za-z0-9]{14}$/;
@@ -138,6 +144,8 @@ export function parsePaddleWebhook(body) {
   if (ADJUSTMENT_EVENTS.includes(eventType) && ADJ_RE.test(String(d.id || '')) && isTransactionId(d.transaction_id)) {
     return { eventType, adjustmentId: d.id, transactionId: d.transaction_id };
   }
+  // 定期課金（2026-11-02）: 購読の通知は購読 ID だけを手がかりにする（中身は照会で確かめる）
+  if (PADDLE_SUBSCRIPTION_EVENTS.includes(eventType) && /^sub_[a-z0-9]{10,40}$/.test(String(d.id || ''))) return { eventType, subscriptionId: d.id };
   return { eventType, ignored: true };
 }
 

@@ -18,13 +18,17 @@ import { SUBSCRIPTION_SALES_OPEN, ACTIVE_SUBSCRIPTION_PROVIDER, PRODUCTION_ORIGI
 import { MONTHLY_SALES_OPEN } from './stripePlans.js';
 import { checkStripeLiveSales } from './stripeSalesGate.js';
 import { keyMode } from './paypal/paypalCore.js';
+import { keyMode as paddleKeyMode } from './paddle/paddleCore.js';
 
 /** 月額の案内文に書く決済代行の表示名（/pricing/ の注記「決済代行：PayPal」と同じ） */
-export const MONTHLY_PROVIDER_LABEL = Object.freeze({ paypal: 'PayPal', stripe: 'Stripe' });
+export const MONTHLY_PROVIDER_LABEL = Object.freeze({ paypal: 'PayPal', stripe: 'Stripe', paddle: 'Paddle' });
 
 /** 決済会社ごとの本番鍵の判定（値は読まない・形だけ） */
 const KEY_MODE = {
   paypal: (env) => keyMode({ clientId: env.PAYPAL_CLIENT_ID, secret: env.PAYPAL_CLIENT_SECRET, env: env.PAYPAL_ENV }),
+  // Paddle（2026-11-02〜）: 本番サイトは鍵を持たず中立サイトへ委譲する（案 B）。委譲の内部鍵があれば本番として live と扱う
+  // （resolvePaddleSubscriptionMode と同じ判定。鍵がローカルにあればその種類）
+  paddle: (env) => (env.PADDLE_API_KEY ? paddleKeyMode(env.PADDLE_API_KEY) : (env.CARD_GRANT_INTERNAL_SECRET ? 'live' : null)),
 };
 
 /**

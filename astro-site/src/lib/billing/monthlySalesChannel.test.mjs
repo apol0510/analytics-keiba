@@ -9,6 +9,9 @@ import { resolveMonthlySalesChannel, MONTHLY_PROVIDER_LABEL } from './monthlySal
 import { gateModeOnStripeSales } from './stripeSalesGate.js';
 import { SUBSCRIPTION_SALES_OPEN, ACTIVE_SUBSCRIPTION_PROVIDER } from './cardSales.js';
 import { MONTHLY_SALES_OPEN } from './stripePlans.js';
+import { subscriptionProviderCopy } from './subscriptionProviderCopy.js';
+/** 料金ページの決済会社別の説明（{providerCopy.x}）を受付先（ACTIVE）の値で展開する（2026-11-02・subscriptionProviderCopy.js）*/
+const expandProviderCopy = (src) => src.replace(/\{providerCopy\.(\w+)\}/g, (_, k) => subscriptionProviderCopy()[k]);
 
 const LIVE = { PAYPAL_CLIENT_ID: 'id', PAYPAL_CLIENT_SECRET: 'secret', PAYPAL_ENV: 'live' };
 const noFetch = async () => { throw new Error('Stripe を呼んではいけない'); };
@@ -66,6 +69,7 @@ test('両方の cron が同じ経路判定を使い、Stripe だけのゲート�
 });
 
 test('案内文の決済代行は月額を受け付けている決済会社（/pricing/ の注記と同じ）', () => {
-  assert.equal(MONTHLY_PROVIDER_LABEL[ACTIVE_SUBSCRIPTION_PROVIDER], 'PayPal');
-  assert.match(read('../../pages/pricing.astro'), /自動継続のお支払い（決済代行：PayPal）/);
+  // 受付先（ACTIVE）の名前と料金ページの注記が一致する（Paddle へ切り替えると両方 Paddle になる・2026-11-02）
+  assert.equal(MONTHLY_PROVIDER_LABEL[ACTIVE_SUBSCRIPTION_PROVIDER], subscriptionProviderCopy().label);
+  assert.match(expandProviderCopy(read('../../pages/pricing.astro')), new RegExp(`自動継続のお支払い（決済代行：${MONTHLY_PROVIDER_LABEL[ACTIVE_SUBSCRIPTION_PROVIDER]}）`));
 });

@@ -83,7 +83,7 @@ export const CHECKOUT_RECORD_SOURCE = UNVERIFIED_CHECKOUT_SOURCE;
  * 他人のメールで払っても、決済後のログインはそのメールに届くマジックリンクなので、払った人は閲覧できない（Stripe と同じ考え方）。
  * @returns {Promise<{ ok: true, recordId: string, fields: object, created: boolean } | { ok: false, status: number, code: string }>}
  */
-async function resolveCheckoutRecord({ at, email, planId, redis, now }) {
+export async function resolveCheckoutRecord({ at, email, planId, redis, now, decidePurchase = decidePaypalSubscriptionPurchase }) {
   const existing = await findCustomerByEmail(at, email);
   if (existing.kind === 'conflict') return { ok: false, status: 409, code: 'account_conflict' };
   if (existing.kind === 'one') {
@@ -92,7 +92,7 @@ async function resolveCheckoutRecord({ at, email, planId, redis, now }) {
     return { ok: true, recordId: existing.record.id, fields: existing.record.fields || {}, created: false };
   }
   // 新しい方: レコードを作る前に、空の会員として申込めるかを先に確かめる（特典価格など作っても申込めないなら作らない）
-  const pre = decidePaypalSubscriptionPurchase({ planId, fields: {}, ownedSubLive: false, now });
+  const pre = decidePurchase({ planId, fields: {}, ownedSubLive: false, now });
   if (!pre.ok) return { ok: false, status: pre.code === 'invalid_plan' ? 400 : 409, code: pre.code };
   // メールアドレスそのものを Redis の鍵に残さない（ハッシュ）
   const lockKey = `email-${createHash('sha256').update(email).digest('hex').slice(0, 32)}`;

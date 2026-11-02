@@ -29,7 +29,7 @@ exports.handler = async (event) => {
   if (!parsed || parsed.ignored) return OK;
   // 本番の通知は中立ホスト（checkout.tirol.link/hooks/paddle）経由で届く → 本番サイトとして判定
   const origin = webhookSiteOrigin(event.headers?.host || event.headers?.Host || '');
-  const mode = resolvePaddleMode({ key: env.PADDLE_API_KEY, origin });
+  const mode = resolvePaddleMode({ key: env.PADDLE_API_KEY, origin, salesOpen: true });
   try {
     const r = await handlePaddleEvent({
       env, origin, parsed, redis: makeRedisCmd(env),

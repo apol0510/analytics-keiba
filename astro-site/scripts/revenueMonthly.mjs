@@ -14,6 +14,9 @@
  *      gross = 成功した charge の amount_captured、refunds = 成功 / 保留中の refund の amount。
  *   3. paypal（任意）: PayPal Transaction Search（GET /v1/reporting/transactions のみ・PAYPAL_READ_CLIENT_ID / PAYPAL_READ_CLIENT_SECRET）。
  *      gross = 完了した入金（T00xx・正の金額）、refunds = 返金・取消（T11xx・負の金額）。
+ *   4. paddle（任意・2026-11-02〜 新規の月額・年額）: Paddle Billing の取引一覧（GET /transactions・GET /adjustments のみ・
+ *      読み取り専用の鍵 PADDLE_READ_KEY＝transaction.read / adjustment.read）。
+ *      gross = この月（JST）に請求された completed / paid の取引の grand_total、refunds = この月に作られた承認済み refund の total。
  *   任意の手段は、鍵が無い・取得に失敗した場合 **0 円として数えず**「未計上」と data_quality に明記する
  *   （KAO では「一部推定値」と表示される）。
  *
@@ -36,6 +39,7 @@ export const REPO = 'analytics-keiba';
 const JST_OFFSET_MS = 9 * 3600 * 1000;
 const STRIPE_API = 'https://api.stripe.com/v1';
 const PAYPAL_API = 'https://api-m.paypal.com';
+const PADDLE_API = 'https://api.paddle.com';
 const MAX_PAGES = 200;
 
 export class RevenueError extends Error {}
@@ -190,6 +194,58 @@ export async function fetchPaypalMonth({ clientId, clientSecret, period, fetchIm
   throw new RevenueError('paypal transactions: too many pages');
 }
 
+// ---------------------------------------------------------------- paddle（GET のみ）
+
+/** 取引・返金の一覧 → 集計値（JPY 以外は fail-closed）。取引は billed_at、返金は created_at が期間内のものだけ。 */
+export function summarizePaddle({ transactions = [], adjustments = [], period }) {
+  const inPeriod = (iso) => {
+    const t = Date.parse(String(iso || ''));
+    return Number.isFinite(t) && t >= period.startMs && t < period.untilMs;
+  };
+  let gross = 0;
+  let refunded = 0;
+  let payments = 0;
+  for (const t of transactions) {
+    if (!['completed', 'paid'].includes(String(t?.status || '')) || !inPeriod(t.billed_at)) continue;
+    if (String(t.currency_code || '').toUpperCase() !== 'JPY') throw new RevenueError('paddle: non-JPY transaction found');
+    const v = Number(t?.details?.totals?.grand_total);
+    if (!Number.isFinite(v) || v <= 0) continue;
+    gross += Math.round(v);
+    payments += 1;
+  }
+  for (const a of adjustments) {
+    if (String(a?.action || '') !== 'refund' || String(a?.status || '') !== 'approved' || !inPeriod(a.created_at)) continue;
+    if (String(a.currency_code || '').toUpperCase() !== 'JPY') throw new RevenueError('paddle: non-JPY adjustment found');
+    const v = Number(a?.totals?.total);
+    if (Number.isFinite(v) && v > 0) refunded += Math.round(v);
+  }
+  return { gross, refunds: refunded, payments };
+}
+
+async function paddleList({ key, url, fetchImpl, label }) {
+  const out = [];
+  let next = url;
+  for (let page = 1; page <= MAX_PAGES && next; page += 1) {
+    const res = await fetchImpl(next, { method: 'GET', headers: { Authorization: `Bearer ${key}` } });
+    if (!res.ok) throw new RevenueError(`paddle ${label}: HTTP ${res.status}`);
+    const body = await res.json();
+    if (!body || !Array.isArray(body.data)) throw new RevenueError(`paddle ${label}: unexpected response`);
+    out.push(...body.data);
+    next = body.meta?.pagination?.has_more ? body.meta.pagination.next : null;
+  }
+  if (next) throw new RevenueError(`paddle ${label}: too many pages`);
+  return out;
+}
+
+export async function fetchPaddleMonth({ key, period, fetchImpl = fetch, apiBase = PADDLE_API }) {
+  const iso = (ms) => new Date(ms).toISOString();
+  const tq = new URLSearchParams({ status: 'completed,paid', 'billed_at[GTE]': iso(period.startMs), 'billed_at[LT]': iso(period.untilMs), per_page: '200' });
+  const transactions = await paddleList({ key, url: `${apiBase}/transactions?${tq}`, fetchImpl, label: 'transactions' });
+  const aq = new URLSearchParams({ action: 'refund', status: 'approved', per_page: '200' });
+  const adjustments = await paddleList({ key, url: `${apiBase}/adjustments?${aq}`, fetchImpl, label: 'adjustments' });
+  return summarizePaddle({ transactions, adjustments, period });
+}
+
 // ---------------------------------------------------------------- 文書
 
 export function sustainedMonths(month, netJpy, previous) {
@@ -219,7 +275,7 @@ export function readPrevious(dir) {
   return out;
 }
 
-const CHANNEL_LABEL = { stripe: 'Stripe', paypal: 'PayPal' };
+const CHANNEL_LABEL = { stripe: 'Stripe', paypal: 'PayPal', paddle: 'Paddle' };
 
 /**
  * channels.stripe / channels.paypal:
@@ -240,7 +296,7 @@ export function buildDoc({ month, summary, channels = {}, period, previous = new
   };
   let gross = summary.confirmedYen;
   let refunds = 0;
-  for (const name of ['stripe', 'paypal']) {
+  for (const name of ['stripe', 'paypal', 'paddle']) {
     const c = channels[name];
     if (c === undefined || c === null) {
       byChannel[name] = { measured: false };
@@ -295,9 +351,11 @@ export async function buildRevenueMonth({ month, env, fetchImpl = fetch, previou
   const stripeKey = String(env.STRIPE_READ_KEY || '').trim();
   const ppId = String(env.PAYPAL_READ_CLIENT_ID || '').trim();
   const ppSecret = String(env.PAYPAL_READ_CLIENT_SECRET || '').trim();
+  const paddleKey = String(env.PADDLE_READ_KEY || '').trim();
   const channels = {
     stripe: await optionalChannel(Boolean(stripeKey), () => fetchStripeMonth({ key: stripeKey, period, fetchImpl })),
     paypal: await optionalChannel(Boolean(ppId && ppSecret), () => fetchPaypalMonth({ clientId: ppId, clientSecret: ppSecret, period, fetchImpl })),
+    paddle: await optionalChannel(Boolean(paddleKey), () => fetchPaddleMonth({ key: paddleKey, period, fetchImpl })),
   };
   return buildDoc({ month, summary, channels, period, previous, nowMs });
 }

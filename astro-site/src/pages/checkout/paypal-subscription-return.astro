@@ -11,8 +11,13 @@ const guest = SUBSCRIPTION_RETURN_GUEST;
 const contact = SUBSCRIPTION_RETURN_CONTACT;
 // 自動遷移の行き先は許可リストの完全一致だけ（サーバーの値でもそのまま信じない）
 const destinations = POST_PURCHASE_DESTINATIONS;
-const raw = Astro.url.searchParams.get('subscription_id') || '';
-const subscription = /^I-[A-Z0-9]{10,24}$/.test(raw) ? raw : '';
+// 定期課金の戻り先（決済会社共通）。PayPal は ?subscription_id=I-…、Paddle（2026-11-02〜）は中立ホスト経由で ?provider=paddle&order=txn_…
+// Paddle は購読 ID が支払い後にできるので、申込（取引）ID で本人の申込の反映結果を確かめる（反映は Paddle の通知が正本）
+const isPaddle = Astro.url.searchParams.get('provider') === 'paddle';
+const raw = isPaddle ? (Astro.url.searchParams.get('order') || '') : (Astro.url.searchParams.get('subscription_id') || '');
+const subscription = isPaddle ? (/^txn_[a-z0-9]{10,40}$/.test(raw) ? raw : '') : (/^I-[A-Z0-9]{10,24}$/.test(raw) ? raw : '');
+const provider = isPaddle ? 'paddle' : 'paypal';
+const confirmQuery = isPaddle ? 'provider=paddle&order=' : 'subscription=';
 ---
 
 <BaseLayout title="お申し込みありがとうございます" noindex={true}>
@@ -26,7 +31,7 @@ const subscription = /^I-[A-Z0-9]{10,24}$/.test(raw) ? raw : '';
   </main>
 </BaseLayout>
 
-<script is:inline define:vars={{ subscription, copy, guest, contact, destinations }}>
+<script is:inline define:vars={{ subscription, provider, confirmQuery, copy, guest, contact, destinations }}>
   (function () {
     var $ = function (id) { return document.getElementById(id); };
     function show(icon, title, text, links) {
@@ -42,7 +47,7 @@ const subscription = /^I-[A-Z0-9]{10,24}$/.test(raw) ? raw : '';
     var asGuest = false;
     function poll() {
       tries += 1;
-      fetch('/.netlify/functions/paypal-subscription-confirm?subscription=' + encodeURIComponent(subscription), { credentials: 'include' })
+      fetch('/.netlify/functions/paypal-subscription-confirm?' + confirmQuery + encodeURIComponent(subscription), { credentials: 'include' })
         .then(function (r) { return r.json().catch(function () { return {}; }).then(function (d) { return { s: r.status, d: d }; }); })
         .then(function (x) {
           var st = x.d && x.d.status;
@@ -50,8 +55,8 @@ const subscription = /^I-[A-Z0-9]{10,24}$/.test(raw) ? raw : '';
           if (st === 'active') {
             var t = copy[x.d.plan] || FALLBACK;
             // GA4 purchase: サーバーが反映済み（active）を返したときだけ。同じ購読は AkFunnel 側で 1 回だけ
-            if (copy[x.d.plan] && window.AkFunnel && window.AkFunnel.purchaseCompleted) window.AkFunnel.purchaseCompleted(x.d.plan, subscription, 'paypal');
-            // 決済完了 → 自動遷移（2026-10-22 MK 確定・postPurchaseLanding.js）。active＝サーバーが PayPal で照会して反映済みのときだけ
+            if (copy[x.d.plan] && window.AkFunnel && window.AkFunnel.purchaseCompleted) window.AkFunnel.purchaseCompleted(x.d.plan, subscription, provider);
+            // 決済完了 → 自動遷移（2026-10-22 MK 確定・postPurchaseLanding.js）。active＝サーバーが決済会社で照会して反映済みのときだけ
             if (asGuest) {
               // 未ログイン: 完了を読める時間を置いてからログイン画面へ。ログイン後はサーバーが Premium の利用画面へ送る
               show('✅', 'お申し込みが完了しました', t.text + guest.activeNext, guest.activeLinks);

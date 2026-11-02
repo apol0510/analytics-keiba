@@ -13,32 +13,12 @@ import { PADDLE_CHECKOUT_CREATE_URL } from '../neutralCheckoutHost.js';
 import { applyCardGrant, applyCardRefund, readCardOrderStatus } from '../entitlementLedger.js';
 import {
   resolvePaddleMode, buildTransactionBody, matchTransaction, decideAdjustment, isTransactionId, checkoutUrlMatchesOrigin,
-  signTsBody, GRANT_EVENTS, ADJUSTMENT_EVENTS, PROVIDER,
+  signTsBody, GRANT_EVENTS, ADJUSTMENT_EVENTS, PADDLE_SUBSCRIPTION_EVENTS, PROVIDER,
 } from './paddleCore.js';
+import { decidePaddleSubscriptionEvent, applyPaddleSubscription } from './paddleSubscriptionServer.js';
 
-export function paddleApi({ apiBase, key, fetchImpl }) {
-  const f = fetchImpl || fetch;
-  async function call(method, path, body) {
-    const headers = { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' };
-    const res = await f(`${apiBase}${path}`, { method, headers, ...(body ? { body: JSON.stringify(body) } : {}) });
-    const text = await res.text();
-    let json = null;
-    try { json = text ? JSON.parse(text) : null; } catch { json = null; }
-    if (!res.ok) {
-      const code = json?.error?.code || res.status;
-      throw Object.assign(new Error(`paddle_${res.status}_${code}`), { status: res.status });
-    }
-    return json?.data ?? null;
-  }
-  return {
-    createTransaction: (body) => call('POST', '/transactions', body),
-    getTransaction: (id) => call('GET', `/transactions/${encodeURIComponent(id)}`),
-    getAdjustment: async (id) => {
-      const list = await call('GET', `/adjustments?id=${encodeURIComponent(id)}`);
-      return Array.isArray(list) ? list.find((a) => a?.id === id) || null : null;
-    },
-  };
-}
+export { paddleApi } from './paddleApi.js';
+import { paddleApi } from './paddleApi.js';
 
 /**
  * Paddle API で取引だけを作る（会員資格の確認・Airtable 読みはしない・PADDLE_API_KEY が要る）。
@@ -94,13 +74,8 @@ async function delegatePaddleCheckout({ env, origin, recordId, productId, entry,
   return { ok: true, url: data.url, transactionId: data.transactionId };
 }
 
-/**
- * このサイト・この鍵が無い本番で、取引作成を分離サイトへ委譲する条件。
- * 本番サイト（PADDLE_API_KEY を 4KB 制約で置けない）だけが true。鍵を持つサイト（分離サイト・Sandbox preview）は false。
- */
-export function shouldDelegatePaddle({ env = {}, origin } = {}) {
-  return !env.PADDLE_API_KEY && Boolean(env.CARD_GRANT_INTERNAL_SECRET) && String(origin || '') === PRODUCTION_ORIGIN;
-}
+export { shouldDelegatePaddle } from './paddleApi.js';
+import { shouldDelegatePaddle } from './paddleApi.js';
 
 /**
  * 「このサイト・この鍵・この origin で Paddle を受け付けられるか」を委譲の有無に関わらず同じ基準で返す。
@@ -137,30 +112,37 @@ export async function createPaddleCheckout({ env, origin, recordId, productId, e
 }
 
 /**
- * Webhook 1 件（署名検証は呼び出し側）。
- * @returns {{ result: string, retry?: boolean }}  retry=true は Paddle に再送させる（500）
+ * 前段チェック。一回払いの付与・返金（CARD_SALES_OPEN）と定期課金（販売を閉じた後も既存契約は反映する）の両方を受けるため、
+ * 照会は「鍵とサイトの組合せが正しいか」（settle）で判定し、一回払いの反映だけを CARD_SALES_OPEN で止める。
  */
-/** 前段チェック（mode / parsed / event-type）。grant/adjustment でなければ stop を返す。 */
 function paddlePrecheck({ env, origin, parsed }) {
-  const mode = resolvePaddleMode({ key: env.PADDLE_API_KEY, origin });
-  if (!mode.ok) return { stop: { result: `ignored_${mode.reason}` } };
   if (!parsed || parsed.ignored) return { stop: { result: 'ignored_event' } };
   const isGrant = GRANT_EVENTS.includes(parsed.eventType);
-  if (!isGrant && !ADJUSTMENT_EVENTS.includes(parsed.eventType)) return { stop: { result: 'ignored_event' } };
-  return { mode, isGrant };
+  const isSub = PADDLE_SUBSCRIPTION_EVENTS.includes(parsed.eventType);
+  if (!isGrant && !isSub && !ADJUSTMENT_EVENTS.includes(parsed.eventType)) return { stop: { result: 'ignored_event' } };
+  const settle = resolvePaddleMode({ key: env.PADDLE_API_KEY, origin, salesOpen: true });
+  if (!settle.ok) return { stop: { result: `ignored_${settle.reason}` } };
+  return { mode: settle, isGrant, isSub };
 }
 
 /**
- * Paddle API で取引を照会・照合し、付与/返金の「指示」だけを返す（DB 書き込み・notify はしない）。
- * PADDLE_API_KEY だけ必要。分離サイト（独立 runtime）から会員付与を本番へ委譲するために使う。
+ * Paddle API で取引・購読を照会・照合し、付与/返金/購読反映の「指示」だけを返す（DB 書き込み・notify はしない）。
+ * PADDLE_API_KEY だけ必要。分離サイト（独立 runtime）から会員反映を本番へ委譲するために使う。
  * @returns {{ result: string, retry?: boolean, alert?: { reason: string },
- *   apply?: { kind: 'grant'|'refund', provider: string, paymentId: string, recordId: string, productId?: string, paidAt?: *, full?: boolean } }}
+ *   apply?: { kind: 'grant'|'refund'|'subscription', provider: string, ... } }}
  */
-async function paddleGrantDecision({ api, parsed, isGrant }) {
+async function paddleGrantDecision({ env, origin, api, parsed, isGrant, isSub }) {
+  if (isSub) return decidePaddleSubscriptionEvent({ api, parsed });
   let txn;
   try { txn = await api.getTransaction(parsed.transactionId); } catch (e) {
     return { result: 'transaction_lookup_failed', retry: e.status !== 404 };
   }
+  // 定期課金の取引（初回・更新・返金）は購読として反映する（一回払いの付与経路に入れない）
+  const sub = await decidePaddleSubscriptionEvent({ api, parsed, txn });
+  if (sub) return sub;
+  // 一回払いは販売中（CARD_SALES_OPEN）のときだけ反映する（従来どおり）
+  const oneTime = resolvePaddleMode({ key: env.PADDLE_API_KEY, origin });
+  if (!oneTime.ok) return { result: `ignored_${oneTime.reason}` };
   const m = matchTransaction(txn);
   if (!m.ok) {
     // 未払い（ready/billed）の通知は正常な途中経過。照合違いだけ管理者へ
@@ -180,22 +162,23 @@ async function paddleGrantDecision({ api, parsed, isGrant }) {
 }
 
 /**
- * 署名検証済み Webhook を照会・照合して付与/返金「指示」を返す（DB・notify なし）。
+ * 署名検証済み Webhook を照会・照合して付与/返金/購読反映の「指示」を返す（DB・notify なし）。
  * 分離サイト（checkout.tirol.link の modern function）が使い、apply を本番 grant endpoint へ渡す。
  */
 export async function decidePaddleGrant({ env, origin, parsed, fetchImpl }) {
   const pc = paddlePrecheck({ env, origin, parsed });
   if (pc.stop) return pc.stop;
   const api = paddleApi({ apiBase: pc.mode.apiBase, key: env.PADDLE_API_KEY, fetchImpl });
-  return paddleGrantDecision({ api, parsed, isGrant: pc.isGrant });
+  return paddleGrantDecision({ env, origin, api, parsed, isGrant: pc.isGrant, isSub: pc.isSub });
 }
 
 /**
- * 本番の付与「指示」（decidePaddleGrant の apply）を entitlementLedger へ反映する。
- * Airtable / Redis だけ必要（PADDLE_API_KEY 不要）。本番 grant endpoint が使う。
+ * 本番の反映「指示」（decidePaddleGrant の apply）を反映する。Airtable / Redis だけ必要（PADDLE_API_KEY 不要）。
+ * 一回払いは entitlementLedger、定期課金は applyPaddleSubscription。本番 grant endpoint が使う。
  */
 export async function applyPaddleGrant({ env, apply, redis, notify = async () => {}, fetchImpl, now }) {
   if (!redis) return { result: 'redis_missing', retry: true };
+  if (apply?.kind === 'subscription') return applyPaddleSubscription({ env, apply, redis, notify, fetchImpl, ...(now ? { now } : {}) });
   if (!apply || (apply.kind !== 'grant' && apply.kind !== 'refund')) return { result: 'ignored_no_apply' };
   const at = airtable(env, fetchImpl);
   const common = { redis, at, provider: apply.provider || PROVIDER, paymentId: apply.paymentId, recordId: apply.recordId, notify, ...(now ? { now } : {}) };
@@ -203,18 +186,16 @@ export async function applyPaddleGrant({ env, apply, redis, notify = async () =>
   return applyCardRefund({ ...common, full: apply.full });
 }
 
+/** 鍵を持つサイト（Sandbox の Deploy Preview）の Webhook: 照会から反映まで 1 か所で行う */
 export async function handlePaddleEvent({ env, origin, parsed, redis, notify = async () => {}, fetchImpl, now }) {
   const pc = paddlePrecheck({ env, origin, parsed });
   if (pc.stop) return pc.stop;
   if (!redis) return { result: 'redis_missing', retry: true };
   const api = paddleApi({ apiBase: pc.mode.apiBase, key: env.PADDLE_API_KEY, fetchImpl });
-  const dec = await paddleGrantDecision({ api, parsed, isGrant: pc.isGrant });
+  const dec = await paddleGrantDecision({ env, origin, api, parsed, isGrant: pc.isGrant, isSub: pc.isSub });
   if (dec.alert) await notify('mismatch', { provider: PROVIDER, paymentId: parsed.transactionId, reason: dec.alert.reason });
   if (!dec.apply) return dec.retry ? { result: dec.result, retry: dec.retry } : { result: dec.result };
-  const at = airtable(env, fetchImpl);
-  const common = { redis, at, provider: PROVIDER, paymentId: parsed.transactionId, recordId: dec.apply.recordId, notify, ...(now ? { now } : {}) };
-  if (dec.apply.kind === 'grant') return applyCardGrant({ ...common, productId: dec.apply.productId, paidAt: dec.apply.paidAt });
-  return applyCardRefund({ ...common, full: dec.apply.full });
+  return applyPaddleGrant({ env, apply: dec.apply, redis, notify, fetchImpl, now });
 }
 
 /** 決済完了画面の確認用（本人の取引だけ） */

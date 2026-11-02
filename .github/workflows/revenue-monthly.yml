@@ -45,6 +45,7 @@ jobs:
           STRIPE_READ_KEY: ${{ secrets.STRIPE_ACCOUNT_READ_KEY }}
           PAYPAL_READ_CLIENT_ID: ${{ secrets.PAYPAL_READ_CLIENT_ID }}
           PAYPAL_READ_CLIENT_SECRET: ${{ secrets.PAYPAL_READ_CLIENT_SECRET }}
+          PADDLE_READ_KEY: ${{ secrets.PADDLE_READ_KEY }}
           MONTH_INPUT: ${{ github.event.inputs.month }}
           DRY_RUN: ${{ github.event.inputs.dry_run == 'true' && 'true' || 'false' }}
         run: |

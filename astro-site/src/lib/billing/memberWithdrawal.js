@@ -23,10 +23,12 @@
 import { resolveEntitlements, fromAirtableFields } from '../entitlements/resolveEntitlements.js';
 import { isStripeSubscriber } from './stripeSubscriptionSync.js';
 import { isPaypalSubscriber } from './paypal/paypalSubscriptionCore.js';
+import { isPaddleSubscriber } from './paddle/paddleSubscriptionCore.js';
 
 export const MEMBER_WITHDRAWAL_KIND = Object.freeze({
   STRIPE: 'stripe',
   PAYPAL: 'paypal',
+  PADDLE: 'paddle', // Paddle の定期課金（月額・年額・2026-11-02〜）
   BANK_TRANSFER: 'bank_transfer',
   NONE: 'none',
   ALREADY_WITHDRAWN: 'already_withdrawn',
@@ -52,6 +54,7 @@ export function classifyMemberWithdrawal(fields, nowMs = Date.now()) {
   if (isTruthy(f.WithdrawalRequested)) return { kind: MEMBER_WITHDRAWAL_KIND.ALREADY_WITHDRAWN, keeps };
   if (isStripeSubscriber(f)) return { kind: MEMBER_WITHDRAWAL_KIND.STRIPE, keeps };
   if (isPaypalSubscriber(f)) return { kind: MEMBER_WITHDRAWAL_KIND.PAYPAL, keeps };
+  if (isPaddleSubscriber(f)) return { kind: MEMBER_WITHDRAWAL_KIND.PADDLE, keeps };
   // 銀行振込（年払い・Light・買い切り）は継続課金が無いので退会の概念が無い（2026-10-15 MK 確定）
   const prepaid = ent.paidPremiumActive === true || ent.paidPremiumVenueActive === true || ent.paidLightActive === true
     || keeps.premiumLifetime || keeps.sanrenpukuLifetime;

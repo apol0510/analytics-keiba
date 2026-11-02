@@ -27,6 +27,8 @@ export const RETURN_TOKEN_TTL_SECONDS = 2 * 60 * 60;
 const VERSION = 'v1';
 const PURPOSE = 'ak-paypal-subscription-return:v1';
 const REC_RE = /^rec[A-Za-z0-9]{14}$/;
+/** 鍵に結び付ける申込の参照: PayPal の購読 ID（I-…）か、Paddle の定期課金の取引 ID（txn_…・2026-11-02）*/
+const isReturnRef = (id) => isSubscriptionId(id) || /^txn_[a-z0-9]{10,40}$/.test(String(id || ''));
 
 function keyOf(secret) {
   if (typeof secret !== 'string' || secret.length < MIN_SECRET_LENGTH) return null;
@@ -43,7 +45,7 @@ function sign(key, input) {
  */
 export function issueReturnToken({ secret, subscriptionId, recordId, now = Date.now(), ttlSeconds = RETURN_TOKEN_TTL_SECONDS }) {
   const key = keyOf(secret);
-  if (!key || !isSubscriptionId(subscriptionId) || !REC_RE.test(String(recordId || ''))) return null;
+  if (!key || !isReturnRef(subscriptionId) || !REC_RE.test(String(recordId || ''))) return null;
   const exp = Math.floor(now / 1000) + ttlSeconds;
   const body = `${VERSION}.${subscriptionId}.${recordId}.${exp}`;
   return `${body}.${sign(key, body)}`;
@@ -59,7 +61,7 @@ export function verifyReturnToken({ secret, token, subscriptionId, now = Date.no
   const parts = String(token).split('.');
   if (parts.length !== 5 || parts[0] !== VERSION) return { ok: false, reason: 'malformed' };
   const [, sub, rec, expRaw, sig] = parts;
-  if (!isSubscriptionId(sub) || !REC_RE.test(rec) || !/^\d{1,12}$/.test(expRaw)) return { ok: false, reason: 'malformed' };
+  if (!isReturnRef(sub) || !REC_RE.test(rec) || !/^\d{1,12}$/.test(expRaw)) return { ok: false, reason: 'malformed' };
   const expected = Buffer.from(sign(key, parts.slice(0, 4).join('.')));
   const got = Buffer.from(String(sig));
   if (got.length !== expected.length || !timingSafeEqual(got, expected)) return { ok: false, reason: 'bad_signature' };

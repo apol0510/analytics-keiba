@@ -83,6 +83,9 @@ export function checkoutProviderGate({ provider, mode, entry = 'direct', active 
  */
 export const SUBSCRIPTION_SALES_OPEN = Object.freeze({
   paypal: true, // 2026-10-15 MK 決定で受付開始（Live の Plan・Webhook・production env 設定済み）
+  // 2026-11-02 MK 確定「新規の月額・年額は Paddle へ一本化」。定期課金の実装・Sandbox E2E・本番設定（鍵の権限・通知先）が
+  // 成立してから、この値を true にし ACTIVE_SUBSCRIPTION_PROVIDER を 'paddle' にする PR で切り替える（準備中は PayPal の受付を維持）。
+  paddle: false,
 });
 export const ACTIVE_SUBSCRIPTION_PROVIDER = 'paypal';
 

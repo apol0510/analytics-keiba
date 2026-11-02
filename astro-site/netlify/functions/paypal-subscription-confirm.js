@@ -15,6 +15,7 @@ import { makeCardNotifier } from '../../src/lib/billing/cardNotify.js';
 import { e2eRecordIdFor } from '../../src/lib/billing/cardE2E.js';
 import { makeRedisCmd } from '../../src/lib/premiumPlus/premiumPlusFunnelServer.js';
 import { resolveConfirmViewer } from '../../src/lib/billing/paypal/subscriptionReturnToken.js';
+import { confirmPaddleSubscription } from '../../src/lib/billing/paddle/paddleSubscriptionServer.js';
 
 exports.handler = async (event) => {
   const env = process.env;
@@ -24,6 +25,16 @@ exports.handler = async (event) => {
   const mode = resolvePaypalSubscriptionSettleMode({ env, origin });
   try {
     const q = event.queryStringParameters || {};
+    // Paddle の定期課金（2026-11-02）: ?provider=paddle&order=txn_…。本人（ak_session か申込の鍵）の申込の反映結果を読むだけ
+    // （反映は Paddle の通知 → 本番の internal-paddle-grant が行う。本番は Paddle を照会しない）
+    if (q.provider === 'paddle') {
+      const order = String(q.order || '');
+      const pv = await resolveConfirmViewer({ cookieHeader: event.headers?.cookie || event.headers?.Cookie || '', env, subscriptionId: order, readSession: readSessionRecordId });
+      if (!pv.recordId) return { statusCode: 401, headers, body: '{"error":"login_required"}' };
+      const pr = await confirmPaddleSubscription({ transactionId: order, recordId: pv.recordId, redis: makeRedisCmd(env) });
+      const pbody = pr.status === 200 ? { ...pr.body, viewer: pv.viewer || 'member' } : pr.body;
+      return { statusCode: pr.status, headers, body: JSON.stringify(pbody) };
+    }
     const subscriptionId = String(q.subscription || '');
     const viewer = await resolveConfirmViewer({ cookieHeader: event.headers?.cookie || event.headers?.Cookie || '', env, subscriptionId, readSession: readSessionRecordId });
     const recordId = viewer.recordId
