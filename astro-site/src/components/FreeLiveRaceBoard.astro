@@ -1,0 +1,173 @@
+---
+/**
+ * FreeLiveRaceBoard.astro — 無料予想ページの「次のレース発走まで」＋「有料版の的中 ✅/✗」
+ *
+ * 単一源: src/lib/freeLiveBoard.js（2026-11-03 MK 確定の公開範囲・メインレースを特別扱いしない）
+ * 🛑 買い目・払戻・印・指数は出さない。ブラウザへ渡すのは venueName / raceNumber / startAt / hit だけ。
+ *
+ * props:
+ *   cat:   'jra' | 'nankan'
+ *   model: buildListModel の戻り値（ページと同じ日付を使う）
+ */
+import { readFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { buildFreeLiveBoard, headline, raceStatus } from '../lib/freeLiveBoard.js';
+
+const { cat, model } = Astro.props as { cat: 'jra' | 'nankan'; model: any };
+const ARCHIVE_FILE = cat === 'jra' ? 'archiveResultsJra.json' : 'archiveResults.json';
+
+let archive: any[] = [];
+try {
+  const p = join(process.cwd(), 'src', 'data', ARCHIVE_FILE);
+  if (existsSync(p)) archive = JSON.parse(readFileSync(p, 'utf-8'));
+} catch (e) {
+  console.error('[FreeLiveRaceBoard] archive load error:', e);
+}
+
+const board = buildFreeLiveBoard({ cat, model, archiveArray: archive });
+const nowMs = Date.now();
+const head = headline(board, nowMs);
+const venues = [...new Set(board.races.map((r) => r.venueName))].map((name) => ({
+  name,
+  races: board.races.filter((r) => r.venueName === name),
+}));
+const json = JSON.stringify(board).replace(/</g, '\\u003c');
+---
+
+{board.races.length > 0 && (
+  <section class="ag-glass ag-tint-blue flb" data-free-live-board aria-label="次のレースと有料版の的中">
+    <script is:inline type="application/json" data-flb-data set:html={json}></script>
+    <div class="flb-head">
+      <span class="ag-pill blue flb-pill">LIVE</span>
+      <div class="flb-headline" data-flb-headline aria-live="off">
+        {head.state === 'countdown' ? (
+          <>
+            <span class="flb-next">次は <b>{head.label}</b>（{head.at} 発走）</span>
+            <span class="flb-count">発走まで <b data-flb-count>{head.countdown}</b></span>
+          </>
+        ) : (
+          <span class="flb-next">{head.text}</span>
+        )}
+      </div>
+    </div>
+
+    <p class="flb-tally" data-flb-tally hidden={!board.tally}>
+      有料版の的中 <b>{board.tally?.hit ?? 0}</b> / {board.tally?.total ?? 0} レース
+    </p>
+
+    <div class="flb-venues">
+      {venues.map((v) => (
+        <div class="flb-venue">
+          <span class="flb-venue-name">{v.name}</span>
+          <ol class="flb-races">
+            {v.races.map((r) => {
+              const s = raceStatus(r, nowMs, board.resultsIn);
+              return (
+                <li class={`flb-race is-${s.state}`} data-flb-race={`${r.venueName}|${r.raceNumber}`}>
+                  <span class="flb-rn">{r.raceNumber}R</span>
+                  <span class="flb-st" data-flb-st>{s.mark ? `${s.mark} ${s.text}` : s.text}</span>
+                </li>
+              );
+            })}
+          </ol>
+        </div>
+      ))}
+    </div>
+
+    <p class="flb-note">
+      ✅/✗ は有料版の予想が的中したかどうかです（買い目は有料版で公開）。結果は当日の全レース終了後にまとめて反映されます。
+    </p>
+    <a class="ag-cta flb-cta" href="/pricing/" data-flb-cta>Premiumで次のレースの予想を見る</a>
+  </section>
+)}
+
+<script>
+  import { headline, raceStatus } from '../lib/freeLiveBoard.js';
+
+  for (const root of document.querySelectorAll<HTMLElement>('[data-free-live-board]')) {
+    let board: any = null;
+    try {
+      board = JSON.parse(root.querySelector('[data-flb-data]')?.textContent || 'null');
+    } catch {
+      board = null;
+    }
+    if (!board) continue;
+    const headEl = root.querySelector<HTMLElement>('[data-flb-headline]');
+    const rows = [...root.querySelectorAll<HTMLElement>('[data-flb-race]')];
+    const byKey = new Map(board.races.map((r: any) => [`${r.venueName}|${r.raceNumber}`, r]));
+    let lastKey = '';
+
+    const render = () => {
+      const now = Date.now();
+      const h = headline(board, now);
+      const key = h.state === 'countdown' ? `c:${h.label}` : `s:${h.state}`;
+      if (headEl) {
+        if (key !== lastKey) {
+          headEl.textContent = '';
+          if (h.state === 'countdown') {
+            const a = document.createElement('span');
+            a.className = 'flb-next';
+            a.append('次は ', Object.assign(document.createElement('b'), { textContent: h.label }), `（${h.at} 発走）`);
+            const b = document.createElement('span');
+            b.className = 'flb-count';
+            const c = Object.assign(document.createElement('b'), { textContent: h.countdown });
+            c.setAttribute('data-flb-count', '');
+            b.append('発走まで ', c);
+            headEl.append(a, b);
+          } else if (h.state !== 'none') {
+            const a = document.createElement('span');
+            a.className = 'flb-next';
+            a.textContent = h.text;
+            headEl.append(a);
+          }
+          lastKey = key;
+        } else if (h.state === 'countdown') {
+          const c = headEl.querySelector('[data-flb-count]');
+          if (c) c.textContent = h.countdown;
+        }
+      }
+      for (const row of rows) {
+        const r = byKey.get(row.dataset.flbRace || '');
+        if (!r) continue;
+        const s = raceStatus(r, now, board.resultsIn);
+        row.className = `flb-race is-${s.state}`;
+        const st = row.querySelector('[data-flb-st]');
+        const text = s.mark ? `${s.mark} ${s.text}` : s.text;
+        if (st && st.textContent !== text) st.textContent = text;
+      }
+    };
+    render();
+    setInterval(render, 1000);
+
+    root.querySelector('[data-flb-cta]')?.addEventListener('click', () => {
+      try {
+        (window as any).gtag?.('event', 'free_live_board_cta_click', { category: board.cat });
+      } catch {
+        /* 計測失敗で遷移を止めない */
+      }
+    });
+  }
+</script>
+
+<style>
+  .flb { padding: 16px; display: grid; gap: 12px; }
+  .flb-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+  .flb-pill { width: fit-content; }
+  .flb-headline { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; color: var(--ag-text); }
+  .flb-next { font-size: 0.95rem; }
+  .flb-count { font-size: 0.95rem; color: var(--ag-text-2); }
+  .flb-count b { font-size: 1.35rem; color: #7cc4ff; font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
+  .flb-tally { margin: 0; color: var(--ag-text-2); font-size: 0.92rem; }
+  .flb-tally b { color: #86efac; font-size: 1.1rem; }
+  .flb-venues { display: grid; gap: 10px; }
+  .flb-venue { display: grid; gap: 6px; }
+  .flb-venue-name { font-weight: 700; color: var(--ag-text); font-size: 0.9rem; }
+  .flb-races { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 6px; }
+  .flb-race { display: grid; gap: 2px; padding: 6px 8px; border-radius: 10px; background: var(--ag-glass); border: 1px solid var(--ag-border); font-size: 0.8rem; color: var(--ag-text-3); }
+  .flb-rn { font-weight: 700; color: var(--ag-text); }
+  .flb-race.is-result { color: var(--ag-text); }
+  .flb-race.is-waiting { color: #fcd34d; }
+  .flb-note { margin: 0; color: var(--ag-text-3); font-size: 0.78rem; line-height: 1.6; }
+  .flb-cta { width: 100%; }
+  @media (min-width: 720px) { .flb-cta { width: fit-content; } }
+</style>
