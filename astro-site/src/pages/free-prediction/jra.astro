@@ -12,6 +12,7 @@ export const prerender = false;
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import PremiumRaceBoard from '../../components/acquisition/PremiumRaceBoard.astro';
 import ResultsShowcaseBanner from '../../components/ResultsShowcaseBanner.astro';
+import FreeLiveRaceBoard from '../../components/FreeLiveRaceBoard.astro';
 import '../../styles/acquisitionGlass.css';
 import { buildListModel } from '../../lib/acquisition/listModel.js';
 import { setPublicCdnCache } from '../../lib/cdnCache.mjs';
@@ -29,6 +30,7 @@ setPublicCdnCache(Astro);
   description="KEIBA Analytics 中央競馬（JRA）の Premium 予想プレビュー。Premium ではこの画面から気になるレースの予想を 1 件ずつ取得できます。AI予測買い目・AI総合指数・役割は Premium で公開しています。"
 >
   <div class="fp-page">
+    <FreeLiveRaceBoard cat="jra" model={model} />
     <PremiumRaceBoard mode="preview" venue="jra" model={model} basePath="/free-prediction/jra/" />
     <!-- 穴馬ページリンク（旧プレビューから継続） -->
     <div class="dark-horse-link-section">
