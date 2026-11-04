@@ -10,6 +10,7 @@ import { setPublicCdnCache } from '../../lib/cdnCache.mjs';
  * /free-prediction/ の役割（有料版プレビュー）は変更しない。ここは別ページ。
  */
 import BaseLayout from '../../layouts/BaseLayout.astro';
+import NextRaceStrip from '../../components/NextRaceStrip.astro';
 import RaceViewpointsBoard from '../../components/RaceViewpointsBoard.astro';
 import ResultsShowcaseBanner from '../../components/ResultsShowcaseBanner.astro';
 import { buildViewpoints } from '../../lib/freeViewpoints/loadRaceViewpoints.js';
@@ -34,6 +35,7 @@ setPublicCdnCache(Astro);
   title={`無料予想（中央競馬）| 今日のレースの見どころ`}
   description="出走馬の近走から、レースごとの条件の替わり方と近走の比べやすさを無料で公開しています。買い目や評価数値は含みません。"
 >
+  <NextRaceStrip base="/free-prediction/" cats={['jra']} />
   {view
     ? <RaceViewpointsBoard view={view} categoryLabel="中央競馬" freeUrl="/free-prediction/jra/">
         <ResultsShowcaseBanner slot="results" category="jra" />

@@ -1,5 +1,6 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro';
+import NextRaceStrip from '../../components/NextRaceStrip.astro';
 import { readdirSync, existsSync, statSync } from 'fs';
 import { join } from 'path';
 
@@ -74,6 +75,8 @@ const pageDescription = '中央競馬（JRA）と南関競馬の AI 予想プレ
         どちらのカテゴリの予想を見ますか？
       </p>
     </div>
+
+    <NextRaceStrip base="/free-prediction/" flush />
 
     <div class="category-grid">
       <div class="category-card jra">

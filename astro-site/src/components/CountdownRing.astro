@@ -1,0 +1,54 @@
+---
+/**
+ * CountdownRing.astro — 発走までの残り時間を円形ゲージで出す部品
+ *
+ * 1 周 = 60 分（時計と同じ読み方）。60 分以上前は満タンで、発走に向かって時計回りに減る。
+ * 外周の点は秒を刻む。残り 5 分から金色（役割表の「目印」）。単一源は lib/freeLiveBoard.js（ringModel / paintRing）。
+ * props: ring … ringModel の戻り値（null なら隠して出す。ブラウザ側で paintRing が塗る）
+ *        lead … 中央 1 行目の小さな文字（省略可）／ size … 'lg' | 'sm'
+ */
+const { ring = null, lead = '', size = 'lg' } = Astro.props as { ring?: any; lead?: string; size?: 'lg' | 'sm' };
+const TICKS = Array.from({ length: 12 }, (_, i) => i * 30);
+---
+
+<div class={`cdr cdr-${size}${ring?.soon ? ' is-soon' : ''}`} data-countdown-ring role="timer" aria-live="off" hidden={!ring}>
+  <svg viewBox="0 0 100 100" aria-hidden="true" focusable="false">
+    <circle class="cdr-track" cx="50" cy="50" r="44" />
+    {TICKS.map((deg) => <line class="cdr-tick" x1="50" y1="11" x2="50" y2="15" transform={`rotate(${deg} 50 50)`} />)}
+    <circle class="cdr-arc" data-ring-arc cx="50" cy="50" r="44" pathLength="100"
+      stroke-dasharray={`${((ring?.fraction ?? 0) * 100).toFixed(2)} 100`} transform="rotate(-90 50 50)" />
+    <circle class="cdr-dot" data-ring-dot cx="50" cy="6" r="3" transform={`rotate(${(ring?.second ?? 0) * 6} 50 50)`} />
+  </svg>
+  <span class="cdr-text">
+    {lead && <span class="cdr-lead">{lead}</span>}
+    <b class="cdr-main" data-ring-main>{ring?.main}</b>
+    <span class="cdr-sub" data-ring-sub>{ring?.sub}</span>
+  </span>
+</div>
+
+<style>
+  .cdr { --cdr: #7cc4ff; position: relative; flex: none; display: grid; place-items: center; border-radius: 50%; background: rgba(124, 196, 255, 0.08); }
+  .cdr[hidden] { display: none; }
+  .cdr.is-soon { --cdr: var(--ag-gold, #fcd34d); background: rgba(252, 211, 77, 0.10); }
+  .cdr-lg { width: 116px; height: 116px; }
+  .cdr-sm { width: 84px; height: 84px; }
+  .cdr svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+  .cdr circle { fill: none; }
+  .cdr-track { stroke: var(--cdr); stroke-opacity: 0.18; stroke-width: 6; }
+  .cdr-tick { stroke: var(--cdr); stroke-opacity: 0.4; stroke-width: 1; }
+  .cdr-arc { stroke: var(--cdr); stroke-width: 6; stroke-linecap: round; transition: stroke-dasharray 0.9s linear; filter: drop-shadow(0 0 4px var(--cdr)); }
+  .cdr .cdr-dot { fill: var(--cdr); }
+  .cdr-text { position: relative; display: grid; justify-items: center; line-height: 1.15; color: var(--cdr); font-variant-numeric: tabular-nums; }
+  .cdr-lead { font-size: 0.62rem; color: var(--ag-text-2, #c9d3ea); margin-bottom: 2px; }
+  .cdr-main { font-size: 1.4rem; font-weight: 800; }
+  .cdr-sub { font-size: 0.86rem; font-weight: 700; }
+  .cdr-sm .cdr-main { font-size: 1.02rem; }
+  .cdr-sm .cdr-sub { font-size: 0.72rem; }
+  .cdr.is-soon .cdr-arc { animation: cdr-pulse 1.6s ease-in-out infinite; }
+  @keyframes cdr-pulse { 50% { stroke-opacity: 0.6; } }
+  @media (prefers-reduced-motion: reduce) {
+    .cdr-arc { transition: none; }
+    .cdr.is-soon .cdr-arc { animation: none; }
+    .cdr .cdr-dot { display: none; }
+  }
+</style>

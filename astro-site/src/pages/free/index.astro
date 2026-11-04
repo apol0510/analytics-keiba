@@ -16,6 +16,7 @@ import { setPublicCdnCache } from '../../lib/cdnCache.mjs';
  * 出さないもの: 買い目 / pt / AI総合指数 / 役割 / 特徴量（各ページと同じ制約）
  */
 import BaseLayout from '../../layouts/BaseLayout.astro';
+import NextRaceStrip from '../../components/NextRaceStrip.astro';
 import { buildViewpoints } from '../../lib/freeViewpoints/loadRaceViewpoints.js';
 
 export const prerender = false;
@@ -87,6 +88,8 @@ setPublicCdnCache(Astro);
       <strong>登録なしで全レース見られます。</strong>
     </p>
 
+    <div class="rvi-next"><NextRaceStrip base="/free/" flush /></div>
+
     <div class="rvi-grid">
       {CATEGORIES.map((c) => (
         <a class={`rvi-card rvi-${c.key}`} href={c.href}>
@@ -132,6 +135,7 @@ setPublicCdnCache(Astro);
   .rvi-lead { font-size: .92rem; line-height: 1.95; color: #e2e8f0; text-align: center; margin: 0 0 26px; }
   .rvi-lead strong { color: #f8fafc; }
 
+  .rvi-next { margin: 0 0 16px; }
   .rvi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
   .rvi-card {
     display: flex; flex-direction: column; gap: 8px;

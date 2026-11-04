@@ -1,3 +1,12 @@
+# ⏱ 次のレースのカウントダウンを円形ゲージ化＋トップ・/free/ へ展開（2026-11-04 MK 指示）
+
+| 項目 | 状態 |
+|---|---|
+| 目的 | 発走までの時間を図形でも見せ、トップ・`/free/` でも次のレースが分かるようにして当日の盛り上がりを作る |
+| 実装 | `CountdownRing.astro`（1 周 60 分・残り 5 分から金）・`NextRaceStrip.astro`・`lib/nextRaceFeed.js`。対象: `/free-prediction/{jra,nankan}/`（LIVE ボード）・`/`・`/free/`・`/free/{jra,nankan}/`・`/free-prediction/` |
+| 対象外 | 有料ページ（`/premium-prediction/`）: 依頼が無料側のみ。GA4 の新イベントは足さない（遷移は page_view で読む・CLAUDE.md の GA4 節） |
+| 既知の限界 | JRA の開催が無い平日は JRA の次回開催日のデータが無いので、中央側は何も出さない（推測しない。金曜に土曜分が入ると自動で出る） |
+
 # 💳 新規の月額・年額を Paddle へ一本化（2026-11-02 MK 確定 / **本番切替済み（#852 `d3e9e07b`・2026-11-02 22:33 JST）・新規の月額・年額は Paddle・PayPal は既存契約のみ・初回の実購入／更新は read-only 監視待ち**）
 
 | 項目 | 状態 |

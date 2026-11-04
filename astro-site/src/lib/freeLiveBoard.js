@@ -112,12 +112,78 @@ export function raceStatus(race, nowMs, resultsIn = false) {
   return { state: 'upcoming', mark: '', text: `${jstHm(race.startAt)} 発走` };
 }
 
+/** 発走日の表示。今日は ''・翌日は '明日 '・それ以外は 'M/D '（前日夜に翌日分を出すときに時刻だけだと今日に読める） */
+export function dayPrefix(startAt, nowMs) {
+  const t = Date.parse(startAt || '');
+  if (!Number.isFinite(t)) return '';
+  const day = jstDate(t);
+  if (day === jstDate(nowMs)) return '';
+  if (day === jstDate(nowMs + 86400e3)) return '明日 ';
+  return `${mdLabel(day)} `;
+}
+
+/** 円形ゲージの目盛り: 1 周 = 60 分（時計と同じ読み方）。60 分以上前は満タン */
+export const RING_WINDOW_SEC = 3600;
+/** ここから先は「まもなく」の色（金）に変える */
+export const RING_SOON_SEC = 300;
+
+/**
+ * 円形ゲージの表示モデル。発走済み・時刻不明は null（ゲージを出さない）。
+ *   fraction … 残りの割合 0〜1 ／ second … 周回する点の位置 0〜59 ／ main・sub … 中央の 2 行
+ */
+export function ringModel(startAt, nowMs) {
+  const c = countdown(startAt, nowMs);
+  if (c.started || c.seconds == null) return null;
+  const sec = c.seconds;
+  const hr = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  return {
+    fraction: Math.min(1, sec / RING_WINDOW_SEC),
+    second: s,
+    soon: sec <= RING_SOON_SEC,
+    main: hr > 0 ? `${hr}時間` : `${m}分`,
+    sub: hr > 0 ? `${String(m).padStart(2, '0')}分` : `${String(s).padStart(2, '0')}秒`,
+  };
+}
+
+/** CountdownRing.astro の DOM を ringModel で塗る（ブラウザ専用）。null なら隠す */
+export function paintRing(el, ring) {
+  if (!el) return;
+  el.hidden = !ring;
+  if (!ring) return;
+  el.classList.toggle('is-soon', ring.soon);
+  el.querySelector('[data-ring-arc]')?.setAttribute('stroke-dasharray', `${(ring.fraction * 100).toFixed(2)} 100`);
+  el.querySelector('[data-ring-dot]')?.setAttribute('transform', `rotate(${ring.second * 6} 50 50)`);
+  const main = el.querySelector('[data-ring-main]');
+  const sub = el.querySelector('[data-ring-sub]');
+  if (main && main.textContent !== ring.main) main.textContent = ring.main;
+  if (sub && sub.textContent !== ring.sub) sub.textContent = ring.sub;
+}
+
+/**
+ * トップ・/free/ の「次のレース」。feed = [{ cat, venueName, raceNumber, startAt }]
+ * 一番早いレースと同じ日にレースがある区分だけを、区分ごとに 1 件返す
+ * （土日は中央・南関が並び、夜は翌日分へ切り替わる。翌日分と当日分を混ぜない）。発走前のレースが無ければ []。
+ */
+export function nextRacesByCat(feed, nowMs) {
+  const byCat = new Map();
+  for (const cat of new Set((feed || []).map((r) => r?.cat))) {
+    const next = nextRace(feed.filter((r) => r?.cat === cat), nowMs);
+    if (next) byCat.set(cat, next);
+  }
+  const list = [...byCat.values()].sort((a, b) => Date.parse(a.startAt) - Date.parse(b.startAt));
+  if (!list.length) return [];
+  const day = jstDate(Date.parse(list[0].startAt));
+  return list.filter((r) => jstDate(Date.parse(r.startAt)) === day);
+}
+
 /** 上部の見出し行（次のレースのカウントダウン、または全レース発走後の案内） */
 export function headline(board, nowMs) {
   const next = nextRace(board?.races, nowMs);
   if (next) {
     const c = countdown(next.startAt, nowMs);
-    return { state: 'countdown', label: `${next.venueName} ${next.raceNumber}R`, countdown: c.text, at: jstHm(next.startAt) };
+    return { state: 'countdown', label: `${next.venueName} ${next.raceNumber}R`, countdown: c.text, at: `${dayPrefix(next.startAt, nowMs)}${jstHm(next.startAt)}`, startAt: next.startAt };
   }
   if (!board?.races?.length) return { state: 'none' };
   const day = board.date === jstDate(nowMs) ? '本日' : mdLabel(board.date);
