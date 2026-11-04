@@ -1,0 +1,89 @@
+---
+/**
+ * NextRaceStrip.astro — トップ・/free/ の「次のレース」（円形ゲージ＋会場・レース番号・発走時刻）
+ *
+ * 中央・南関それぞれの次のレースを 1 件ずつ出す。発走前のレースが無ければ何も出さない。
+ * メインレースを特別扱いしない（LIVE ボードと同じ）。単一源は lib/freeLiveBoard.js / lib/nextRaceFeed.js。
+ * props: base … リンク先の親（'/free-prediction/' | '/free/'）／ cats … 出す区分（省略時は両方）
+ *        flush … 親の幅いっぱいに置く（/free/ のカード列と左右をそろえる）
+ */
+import '../styles/acquisitionGlass.css';
+import CountdownRing from './CountdownRing.astro';
+import { buildNextRaceFeed } from '../lib/nextRaceFeed.js';
+import { dayPrefix, jstHm, nextRacesByCat, ringModel } from '../lib/freeLiveBoard.js';
+
+const { base = '/free-prediction/', cats = ['jra', 'nankan'], flush = false } = Astro.props as { base?: string; cats?: Array<'jra' | 'nankan'>; flush?: boolean };
+const CAT_LABEL = { jra: '中央競馬', nankan: '南関競馬' };
+const nowMs = Date.now();
+const feed = buildNextRaceFeed({ cats, now: nowMs });
+const initial = new Map(nextRacesByCat(feed, nowMs).map((r) => [r.cat, r]));
+const json = JSON.stringify(feed).replace(/</g, '\\u003c');
+---
+
+{feed.length > 0 && (
+  <section class={`ag-glass ag-tint-blue nrs${flush ? ' nrs-flush' : ''}`} data-next-race-strip aria-label="次のレース" hidden={initial.size === 0}>
+    <script is:inline type="application/json" data-nrs-data set:html={json}></script>
+    <div class="nrs-tiles">
+      {cats.map((cat) => {
+        const r = initial.get(cat);
+        return (
+          <a class="nrs-tile" href={`${base}${cat}/`} data-nrs-tile={cat} hidden={!r}>
+            <CountdownRing ring={r ? ringModel(r.startAt, nowMs) : null} size="sm" />
+            <span class="nrs-text">
+              <span class="nrs-cat">次のレース・{CAT_LABEL[cat]}</span>
+              <b class="nrs-race" data-nrs-race>{r ? `${r.venueName} ${r.raceNumber}R` : ''}</b>
+              <span class="nrs-at" data-nrs-at>{r ? `${dayPrefix(r.startAt, nowMs)}${jstHm(r.startAt)} 発走` : ''}</span>
+            </span>
+            <span class="nrs-go" aria-hidden="true">→</span>
+          </a>
+        );
+      })}
+    </div>
+  </section>
+)}
+
+<script>
+  import { dayPrefix, jstHm, nextRacesByCat, paintRing, ringModel } from '../lib/freeLiveBoard.js';
+
+  for (const root of document.querySelectorAll<HTMLElement>('[data-next-race-strip]')) {
+    let feed: any[] = [];
+    try {
+      feed = JSON.parse(root.querySelector('[data-nrs-data]')?.textContent || '[]');
+    } catch {
+      feed = [];
+    }
+    const tiles = [...root.querySelectorAll<HTMLElement>('[data-nrs-tile]')];
+    const set = (el: Element | null, text: string) => {
+      if (el && el.textContent !== text) el.textContent = text;
+    };
+    const render = () => {
+      const now = Date.now();
+      const next = new Map(nextRacesByCat(feed, now).map((r: any) => [r.cat, r]));
+      root.hidden = next.size === 0;
+      for (const tile of tiles) {
+        const r: any = next.get(tile.dataset.nrsTile);
+        tile.hidden = !r;
+        if (!r) continue;
+        paintRing(tile.querySelector('[data-countdown-ring]'), ringModel(r.startAt, now));
+        set(tile.querySelector('[data-nrs-race]'), `${r.venueName} ${r.raceNumber}R`);
+        set(tile.querySelector('[data-nrs-at]'), `${dayPrefix(r.startAt, now)}${jstHm(r.startAt)} 発走`);
+      }
+    };
+    render();
+    setInterval(render, 1000);
+  }
+</script>
+
+<style>
+  .nrs { padding: 12px; margin: 12px auto; width: min(100% - 24px, 860px); box-sizing: border-box; }
+  .nrs-flush { width: 100%; }
+  .nrs[hidden], .nrs-tile[hidden] { display: none; }
+  .nrs-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
+  .nrs-tile { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 6px 8px; border-radius: 12px; text-decoration: none; color: var(--ag-text); }
+  .nrs-tile:hover { background: rgba(124, 196, 255, 0.08); }
+  .nrs-text { display: grid; gap: 2px; min-width: 0; flex: 1; }
+  .nrs-cat { font-size: 0.76rem; color: var(--ag-text-2); }
+  .nrs-race { font-size: 1.15rem; font-weight: 800; }
+  .nrs-at { font-size: 0.86rem; color: var(--ag-text-2); }
+  .nrs-go { color: #7cc4ff; font-weight: 800; }
+</style>
