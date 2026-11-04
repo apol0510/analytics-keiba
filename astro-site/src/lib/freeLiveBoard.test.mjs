@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildFreeLiveBoard, dayPrefix, headline, hitMapFor, jstToIso, nextRace, nextRacesByCat, raceStatus, ringModel, currentRace, DUE_HOLD_SEC, RESULT_NOTE } from './freeLiveBoard.js';
+import { buildFreeLiveBoard, dayPrefix, headline, hitMapFor, jstToIso, nextRace, nextRacesByCat, raceStatus, ringModel, currentRace, applyLive, tallyOf, DUE_HOLD_SEC, RESULT_NOTE } from './freeLiveBoard.js';
 import { buildNextRaceFeed } from './nextRaceFeed.js';
 
 const model = {
@@ -211,4 +211,22 @@ test('🛑 待ち表示を並べず、発走済みと断定しない（1 日の�
   const src = readFileSync(new URL('../components/FreeLiveRaceBoard.astro', import.meta.url), 'utf-8');
   assert.equal(src.match(/RESULT_NOTE\}/g)?.length, 1, '案内は 1 か所だけ');
   assert.ok(!src.includes('結果待ち') && !src.includes('まとめて反映'));
+});
+
+test('applyLive: 順次反映するが archive の確定値は上書きしない・日付違いは捨てる', () => {
+  const races = [
+    { venueName: '船橋', raceNumber: 1, startAt: '2026-11-04T05:40:00.000Z', hit: true },
+    { venueName: '船橋', raceNumber: 2, startAt: '2026-11-04T06:10:00.000Z', hit: null },
+    { venueName: '船橋', raceNumber: 3, startAt: '2026-11-04T06:40:00.000Z', hit: null },
+  ];
+  const live = { date: '2026-11-04', hits: { '船橋|1': false, '船橋|2': false }, times: { '船橋|3': '2026-11-04T06:45:00.000Z' } };
+  assert.equal(applyLive(races, '2026-11-05', live), false);
+  assert.equal(races[1].hit, null);
+  assert.equal(applyLive(races, '2026-11-04', live), true);
+  assert.deepEqual(races.map((r) => r.hit), [true, false, null]);
+  assert.equal(races[2].startAt, '2026-11-04T06:45:00.000Z');
+  assert.deepEqual(tallyOf(races), { hit: 1, total: 2 });
+  // 変更が取り消されたら元の時刻へ戻す
+  applyLive(races, '2026-11-04', { date: '2026-11-04', hits: {}, times: {} });
+  assert.equal(races[2].startAt, '2026-11-04T06:40:00.000Z');
 });

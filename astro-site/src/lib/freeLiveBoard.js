@@ -79,13 +79,13 @@ export function buildFreeLiveBoard({ cat, model, archiveArray }) {
       });
     }
   }
-  const settled = races.filter((r) => r.hit !== null);
+  const tally = tallyOf(races);
   return {
     cat,
     date,
     races,
-    resultsIn: settled.length > 0,
-    tally: settled.length ? { hit: settled.filter((r) => r.hit).length, total: settled.length } : null,
+    resultsIn: tally !== null,
+    tally,
   };
 }
 
@@ -138,6 +138,34 @@ export function raceStatus(race, nowMs, next = null) {
   const hm = jstHm(race.startAt);
   if (t > nowMs) return next && race === next ? { state: 'next', mark: '', text: `次 ${hm}` } : { state: 'upcoming', mark: '', text: `${hm} 予定` };
   return t + DUE_HOLD_SEC * 1000 > nowMs ? { state: 'due', mark: '', text: `${hm} 予定` } : { state: 'past', mark: '', text: hm };
+}
+
+/** ライブ情報の取得先（南関だけ。単一源は lib/freeBoardLive.js） */
+export const LIVE_URL = '/api/free-board/live.json';
+export const LIVE_POLL_MS = 60 * 1000;
+
+/**
+ * /api/free-board/live.json の値を races へ反映する（ブラウザ専用の入口・races を書き換える）。
+ * 🛑 archive から入った hit は上書きしない（確定値が勝つ）。date が違う応答は使わない。
+ */
+export function applyLive(races, date, live) {
+  if (!live || live.date !== date) return false;
+  let changed = false;
+  for (const r of races || []) {
+    const key = `${r.venueName}|${r.raceNumber}`;
+    if (r.scheduledAt === undefined) r.scheduledAt = r.startAt;
+    const startAt = live.times?.[key] || r.scheduledAt;
+    if (startAt !== r.startAt) { r.startAt = startAt; changed = true; }
+    if (r.hit === true || r.hit === false) continue;
+    if (typeof live.hits?.[key] === 'boolean') { r.hit = live.hits[key]; changed = true; }
+  }
+  return changed;
+}
+
+/** 当日累計（的中数 / 結果が出たレース数）。無ければ null */
+export function tallyOf(races) {
+  const settled = (races || []).filter((r) => typeof r?.hit === 'boolean');
+  return settled.length ? { hit: settled.filter((r) => r.hit).length, total: settled.length } : null;
 }
 
 /** 発走日の表示。今日は ''・翌日は '明日 '・それ以外は 'M/D '（前日夜に翌日分を出すときに時刻だけだと今日に読める） */

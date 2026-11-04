@@ -44,7 +44,8 @@ const json = JSON.stringify(feed).replace(/</g, '\\u003c');
 )}
 
 <script>
-  import { dayPrefix, jstHm, nextRacesByCat, paintRing, ringModel } from '../lib/freeLiveBoard.js';
+  import { LIVE_POLL_MS, LIVE_URL, applyLive, dayPrefix, jstHm, nextRacesByCat, paintRing, ringModel } from '../lib/freeLiveBoard.js';
+  import { jstDate } from '../lib/ailab/aiLab.js';
 
   for (const root of document.querySelectorAll<HTMLElement>('[data-next-race-strip]')) {
     let feed: any[] = [];
@@ -72,6 +73,22 @@ const json = JSON.stringify(feed).replace(/</g, '\\u003c');
     };
     render();
     setInterval(render, 1000);
+
+    // 南関の当日分だけ、結果が出たレースを飛ばし、変更後の発走時刻へ合わせる
+    const today = feed.filter((r) => r.cat === 'nankan' && jstDate(Date.parse(r.startAt)) === jstDate(Date.now()));
+    if (today.length) {
+      const poll = async () => {
+        if (document.hidden) return;
+        try {
+          const res = await fetch(LIVE_URL);
+          if (res.ok && applyLive(today, jstDate(Date.now()), await res.json())) render();
+        } catch {
+          /* 読めなくても帯はそのまま動かす */
+        }
+      };
+      poll();
+      setInterval(poll, LIVE_POLL_MS);
+    }
   }
 </script>
 

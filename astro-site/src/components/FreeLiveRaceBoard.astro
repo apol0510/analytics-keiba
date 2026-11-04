@@ -87,7 +87,8 @@ const json = JSON.stringify(board).replace(/</g, '\\u003c');
 )}
 
 <script>
-  import { headline, nextRace, paintRing, raceStatus, ringModel } from '../lib/freeLiveBoard.js';
+  import { LIVE_POLL_MS, LIVE_URL, applyLive, headline, nextRace, paintRing, raceStatus, ringModel, tallyOf } from '../lib/freeLiveBoard.js';
+  import { jstDate } from '../lib/ailab/aiLab.js';
 
   for (const root of document.querySelectorAll<HTMLElement>('[data-free-live-board]')) {
     let board: any = null;
@@ -135,6 +136,31 @@ const json = JSON.stringify(board).replace(/</g, '\\u003c');
     };
     render();
     setInterval(render, 1000);
+
+    // 南関の当日だけ、取得できたレースから ✅/✗ と変更後の発走時刻を反映する
+    if (board.cat === 'nankan' && board.date === jstDate(Date.now())) {
+      const tallyEl = root.querySelector<HTMLElement>('[data-flb-tally]');
+      const poll = async () => {
+        if (document.hidden) return;
+        try {
+          const res = await fetch(LIVE_URL);
+          if (!res.ok || !applyLive(board.races, board.date, await res.json())) return;
+        } catch {
+          return; // 読めなくても板はそのまま動かす
+        }
+        board.tally = tallyOf(board.races);
+        board.resultsIn = board.tally !== null;
+        if (tallyEl && board.tally) {
+          tallyEl.hidden = false;
+          tallyEl.textContent = '有料版の的中 ';
+          tallyEl.append(Object.assign(document.createElement('b'), { textContent: String(board.tally.hit) }), ` / ${board.tally.total} レース`);
+        }
+        lastKey = '';
+        render();
+      };
+      poll();
+      setInterval(poll, LIVE_POLL_MS);
+    }
 
     root.querySelector('[data-flb-cta]')?.addEventListener('click', () => {
       try {
