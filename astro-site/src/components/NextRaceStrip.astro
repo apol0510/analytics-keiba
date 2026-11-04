@@ -2,7 +2,7 @@
 /**
  * NextRaceStrip.astro — トップ・/free/ の「次のレース」（円形ゲージ＋会場・レース番号・発走時刻）
  *
- * 中央・南関それぞれの次のレースを 1 件ずつ出す。発走前のレースが無ければ何も出さない。
+ * 中央・南関それぞれの次のレースを 1 件ずつ出す。予定時刻を過ぎた直後のレースは保留して次へ切り替えない（lib/freeLiveBoard.js の currentRace）。
  * メインレースを特別扱いしない（LIVE ボードと同じ）。単一源は lib/freeLiveBoard.js / lib/nextRaceFeed.js。
  * props: base … リンク先の親（'/free-prediction/' | '/free/'）／ cats … 出す区分（省略時は両方）
  *        flush … 親の幅いっぱいに置く（/free/ のカード列と左右をそろえる）
@@ -13,6 +13,7 @@ import { buildNextRaceFeed } from '../lib/nextRaceFeed.js';
 import { dayPrefix, jstHm, nextRacesByCat, ringModel } from '../lib/freeLiveBoard.js';
 
 const { base = '/free-prediction/', cats = ['jra', 'nankan'], flush = false } = Astro.props as { base?: string; cats?: Array<'jra' | 'nankan'>; flush?: boolean };
+const atText = (r: any, now: number) => (r.due ? `発走予定時刻（${jstHm(r.startAt)}）を過ぎました` : `${dayPrefix(r.startAt, now)}${jstHm(r.startAt)} 発走予定`);
 const CAT_LABEL = { jra: '中央競馬', nankan: '南関競馬' };
 const nowMs = Date.now();
 const feed = buildNextRaceFeed({ cats, now: nowMs });
@@ -32,7 +33,7 @@ const json = JSON.stringify(feed).replace(/</g, '\\u003c');
             <span class="nrs-text">
               <span class="nrs-cat">次のレース・{CAT_LABEL[cat]}</span>
               <b class="nrs-race" data-nrs-race>{r ? `${r.venueName} ${r.raceNumber}R` : ''}</b>
-              <span class="nrs-at" data-nrs-at>{r ? `${dayPrefix(r.startAt, nowMs)}${jstHm(r.startAt)} 発走` : ''}</span>
+              <span class="nrs-at" data-nrs-at>{r ? atText(r, nowMs) : ''}</span>
             </span>
             <span class="nrs-go" aria-hidden="true">→</span>
           </a>
@@ -66,7 +67,7 @@ const json = JSON.stringify(feed).replace(/</g, '\\u003c');
         if (!r) continue;
         paintRing(tile.querySelector('[data-countdown-ring]'), ringModel(r.startAt, now));
         set(tile.querySelector('[data-nrs-race]'), `${r.venueName} ${r.raceNumber}R`);
-        set(tile.querySelector('[data-nrs-at]'), `${dayPrefix(r.startAt, now)}${jstHm(r.startAt)} 発走`);
+        set(tile.querySelector('[data-nrs-at]'), r.due ? `発走予定時刻（${jstHm(r.startAt)}）を過ぎました` : `${dayPrefix(r.startAt, now)}${jstHm(r.startAt)} 発走予定`);
       }
     };
     render();

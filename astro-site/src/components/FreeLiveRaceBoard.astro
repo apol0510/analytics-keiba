@@ -11,7 +11,7 @@
  */
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { buildFreeLiveBoard, headline, nextRace, raceProgress, raceStatus, ringModel } from '../lib/freeLiveBoard.js';
+import { RESULT_NOTE, buildFreeLiveBoard, headline, nextRace, raceStatus, ringModel } from '../lib/freeLiveBoard.js';
 import CountdownRing from './CountdownRing.astro';
 
 const { cat, model } = Astro.props as { cat: 'jra' | 'nankan'; model: any };
@@ -34,7 +34,6 @@ const venues = [...new Set(board.races.map((r) => r.venueName))].map((name) => (
 }));
 const ring = head.state === 'countdown' ? ringModel(head.startAt, nowMs) : null;
 const next = nextRace(board.races, nowMs);
-const progress = raceProgress(board, nowMs);
 const json = JSON.stringify(board).replace(/</g, '\\u003c');
 ---
 
@@ -47,7 +46,9 @@ const json = JSON.stringify(board).replace(/</g, '\\u003c');
         <span class="ag-pill blue flb-pill">LIVE</span>
         <div class="flb-headline" data-flb-headline aria-live="off">
           {head.state === 'countdown' ? (
-            <span class="flb-next">次は <b>{head.label}</b>（{head.at} 発走）</span>
+            <span class="flb-next">次は <b>{head.label}</b>（{head.at} 発走予定）</span>
+          ) : head.state === 'due' ? (
+            <span class="flb-next"><b>{head.label}</b> は発走予定時刻（{head.at}）を過ぎました</span>
           ) : (
             <span class="flb-next">{head.text}</span>
           )}
@@ -59,18 +60,13 @@ const json = JSON.stringify(board).replace(/</g, '\\u003c');
       有料版の的中 <b>{board.tally?.hit ?? 0}</b> / {board.tally?.total ?? 0} レース
     </p>
 
-    <div class="flb-progress" data-flb-progress hidden={!progress}>
-      <p class="flb-progress-text"><b data-flb-progress-text>{progress?.text}</b><span data-flb-progress-eta>{progress?.eta}</span></p>
-      <span class="flb-bar" aria-hidden="true"><i data-flb-bar style={`width:${((progress?.fraction ?? 0) * 100).toFixed(1)}%`}></i></span>
-    </div>
-
     <div class="flb-venues">
       {venues.map((v) => (
         <div class="flb-venue">
           <span class="flb-venue-name">{v.name}</span>
           <ol class="flb-races">
             {v.races.map((r) => {
-              const s = raceStatus(r, nowMs, board.resultsIn, next);
+              const s = raceStatus(r, nowMs, next);
               return (
                 <li class={`flb-race is-${s.state}`} data-flb-race={`${r.venueName}|${r.raceNumber}`}>
                   <span class="flb-rn">{r.raceNumber}R</span>
@@ -84,14 +80,14 @@ const json = JSON.stringify(board).replace(/</g, '\\u003c');
     </div>
 
     <p class="flb-note">
-      ✅/✗ は有料版の予想が的中したかどうかです（買い目は有料版で公開）。結果は当日の全レース終了後にまとめて反映されます。
+      ✅/✗ は有料版の予想が的中したかどうかです（買い目は有料版で公開）。{RESULT_NOTE}。発走時刻は予定で、遅れることがあります。
     </p>
     <a class="ag-cta flb-cta" href="/pricing/" data-flb-cta>Premiumで次のレースの予想を見る</a>
   </section>
 )}
 
 <script>
-  import { headline, nextRace, paintRing, raceProgress, raceStatus, ringModel } from '../lib/freeLiveBoard.js';
+  import { headline, nextRace, paintRing, raceStatus, ringModel } from '../lib/freeLiveBoard.js';
 
   for (const root of document.querySelectorAll<HTMLElement>('[data-free-live-board]')) {
     let board: any = null;
@@ -104,42 +100,33 @@ const json = JSON.stringify(board).replace(/</g, '\\u003c');
     const headEl = root.querySelector<HTMLElement>('[data-flb-headline]');
     const ringEl = root.querySelector<HTMLElement>('[data-countdown-ring]');
     const rows = [...root.querySelectorAll<HTMLElement>('[data-flb-race]')];
-    const progressEl = root.querySelector<HTMLElement>('[data-flb-progress]');
-    const progressText = root.querySelector('[data-flb-progress-text]');
-    const progressEta = root.querySelector('[data-flb-progress-eta]');
-    const barEl = root.querySelector<HTMLElement>('[data-flb-bar]');
     const byKey = new Map(board.races.map((r: any) => [`${r.venueName}|${r.raceNumber}`, r]));
     let lastKey = '';
 
     const render = () => {
       const now = Date.now();
       const h = headline(board, now);
-      const key = h.state === 'countdown' ? `c:${h.label}` : `s:${h.state}`;
+      const key = `${h.state}:${h.label || ''}`;
       paintRing(ringEl, h.state === 'countdown' ? ringModel(h.startAt, now) : null);
       if (headEl && key !== lastKey) {
         headEl.textContent = '';
         const a = document.createElement('span');
         a.className = 'flb-next';
         if (h.state === 'countdown') {
-          a.append('次は ', Object.assign(document.createElement('b'), { textContent: h.label }), `（${h.at} 発走）`);
+          a.append('次は ', Object.assign(document.createElement('b'), { textContent: h.label }), `（${h.at} 発走予定）`);
+        } else if (h.state === 'due') {
+          a.append(Object.assign(document.createElement('b'), { textContent: h.label }), ` は発走予定時刻（${h.at}）を過ぎました`);
         } else if (h.state !== 'none') {
           a.textContent = h.text;
         }
         headEl.append(a);
         lastKey = key;
       }
-      const p = raceProgress(board, now);
-      if (progressEl) progressEl.hidden = !p;
-      if (p) {
-        if (progressText && progressText.textContent !== p.text) progressText.textContent = p.text;
-        if (progressEta && progressEta.textContent !== p.eta) progressEta.textContent = p.eta;
-        if (barEl) barEl.style.width = `${(p.fraction * 100).toFixed(1)}%`;
-      }
       const next = nextRace(board.races, now);
       for (const row of rows) {
         const r = byKey.get(row.dataset.flbRace || '');
         if (!r) continue;
-        const s = raceStatus(r, now, board.resultsIn, next);
+        const s = raceStatus(r, now, next);
         row.className = `flb-race is-${s.state}`;
         const st = row.querySelector('[data-flb-st]');
         const text = s.mark ? `${s.mark} ${s.text}` : s.text;
@@ -179,13 +166,7 @@ const json = JSON.stringify(board).replace(/</g, '\\u003c');
   .flb-race.is-past { background: transparent; border-color: transparent; opacity: 0.6; }
   .flb-race.is-past .flb-rn { color: var(--ag-text-3); }
   .flb-race.is-next { color: var(--ag-text); border-color: #60a5fa; background: rgba(96, 165, 250, 0.16); font-weight: 700; }
-  .flb-progress { display: grid; gap: 6px; }
-  .flb-progress[hidden] { display: none; }
-  .flb-progress-text { margin: 0; display: flex; flex-wrap: wrap; gap: 2px 10px; font-size: 0.86rem; color: var(--ag-text-3); }
-  .flb-progress-text b { color: var(--ag-text); }
-  .flb-bar { display: block; height: 4px; border-radius: 999px; background: var(--ag-border); overflow: hidden; }
-  .flb-bar i { display: block; height: 100%; border-radius: inherit; background: #60a5fa; transition: width 0.4s ease; }
-  @media (prefers-reduced-motion: reduce) { .flb-bar i { transition: none; } }
+  .flb-race.is-due { color: var(--ag-text); border-color: #fcd34d; }
   .flb-note { margin: 0; color: var(--ag-text-3); font-size: 0.78rem; line-height: 1.6; }
   .flb-cta { width: 100%; }
   @media (min-width: 720px) { .flb-cta { width: fit-content; } }
