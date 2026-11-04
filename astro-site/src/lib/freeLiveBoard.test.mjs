@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildFreeLiveBoard, dayPrefix, headline, hitMapFor, jstToIso, nextRace, nextRacesByCat, raceStatus, ringModel } from './freeLiveBoard.js';
+import { buildFreeLiveBoard, dayPrefix, headline, hitMapFor, jstToIso, nextRace, nextRacesByCat, raceStatus, ringModel, currentRace, applyLive, tallyOf, DUE_HOLD_SEC, RESULT_NOTE } from './freeLiveBoard.js';
 import { buildNextRaceFeed } from './nextRaceFeed.js';
 
 const model = {
@@ -47,17 +47,20 @@ test('結果が入った日は ✅/✗ を全部出し、累計は正直に数�
   const b = buildFreeLiveBoard({ cat: 'nankan', model, archiveArray: archive });
   assert.deepEqual(b.races.map((r) => r.hit), [true, false, true, null]);
   assert.deepEqual(b.tally, { hit: 2, total: 3 });
-  assert.equal(raceStatus(b.races[0], at('21:30'), true).text, '的中');
-  assert.equal(raceStatus(b.races[1], at('21:30'), true).text, '不的中');
+  assert.equal(raceStatus(b.races[0], at('21:30')).text, '的中');
+  assert.equal(raceStatus(b.races[1], at('21:30')).text, '不的中');
 });
 
 test('結果が無い日は ✅/✗ を付けない（推測しない）', () => {
   const b = buildFreeLiveBoard({ cat: 'nankan', model, archiveArray: archive.slice(1) });
   assert.equal(b.resultsIn, false);
   assert.equal(b.tally, null);
-  assert.equal(raceStatus(b.races[0], at('13:00'), false).text, '結果待ち');
-  assert.equal(raceStatus(b.races[2], at('13:00'), false).text, '20:15 発走');
-  assert.equal(raceStatus(b.races[3], at('13:00'), false).text, '発走時刻未定');
+  const past = raceStatus(b.races[0], at('13:00'));
+  assert.equal(past.state, 'past');
+  assert.match(past.text, /^\d{2}:\d{2}$/, '結果が無いレースは予定時刻だけ');
+  assert.equal(raceStatus(b.races[2], at('13:00'), b.races[2]).text, '次 20:15');
+  assert.equal(raceStatus(b.races[2], at('13:00')).text, '20:15 予定');
+  assert.equal(raceStatus(b.races[3], at('13:00')).text, '発走時刻未定');
   assert.equal(hitMapFor(archive, '2026-11-04'), null);
 });
 
@@ -73,9 +76,9 @@ test('カウントダウンは全レース共通（メインを優先しない�
   assert.equal(h.at, '12:45');
 });
 
-test('全レース発走後: 結果前は反映予定、結果後は終了', () => {
+test('全レース後: 結果前は予定時刻を過ぎたとだけ言い、結果後は終了', () => {
   const pending = buildFreeLiveBoard({ cat: 'nankan', model, archiveArray: [] });
-  assert.match(headline(pending, at('20:30')).text, /本日の発走はすべて終了.*21 時台/);
+  assert.equal(headline(pending, at('20:30')).text, '本日の最終レースの発走予定時刻を過ぎました');
   const done = buildFreeLiveBoard({ cat: 'nankan', model, archiveArray: archive });
   assert.equal(headline(done, at('21:30')).text, '本日のレースはすべて終了しました');
   // 過去日を表示しているときは「本日」と書かない
@@ -167,4 +170,63 @@ test('guard: 次のレース部品は買い目系を参照せず、対象ペー�
   for (const page of ['index', 'free/index', 'free/jra', 'free/nankan', 'free-prediction/index']) {
     assert.match(readFileSync(new URL(`../pages/${page}.astro`, import.meta.url), 'utf-8'), /<NextRaceStrip /, page);
   }
+});
+
+test('発走遅延: 予定時刻を過ぎても保留中は同じ会場の次へ切り替えず、発走済みと言わない', () => {
+  const r = (venueName, raceNumber, hm) => ({ venueName, raceNumber, startAt: `2026-11-04T${hm}:00+09:00`, hit: null });
+  const t = (hm, s = 0) => Date.parse(`2026-11-04T${hm}:00+09:00`) + s * 1000;
+  const races = [r('船橋', 10, '19:25'), r('船橋', 11, '20:05')];
+  const board = { date: '2026-11-04', races, resultsIn: false, tally: null };
+  assert.equal(headline(board, t('19:24')).state, 'countdown');
+  const due = headline(board, t('19:25'));
+  assert.deepEqual([due.state, due.label, due.at], ['due', '船橋 10R', '19:25']);
+  assert.equal(raceStatus(races[0], t('19:30')).state, 'due');
+  assert.equal(headline(board, t('19:25', DUE_HOLD_SEC - 1)).state, 'due');
+  assert.equal(headline(board, t('19:25', DUE_HOLD_SEC)).label, '船橋 11R', '保留が終われば次へ');
+  assert.equal(raceStatus(races[0], t('19:40')).state, 'past');
+  // 結果が入ったレースは確かに終わっているので保留しない
+  assert.equal(headline({ ...board, races: [{ ...races[0], hit: true }, races[1]] }, t('19:26')).label, '船橋 11R');
+});
+
+test('発走遅延: 別の会場のカウントダウンは止めない・トップの帯も保留する', () => {
+  const r = (venueName, raceNumber, hm) => ({ cat: 'jra', venueName, raceNumber, startAt: `2026-11-07T${hm}:00+09:00` });
+  const t = Date.parse('2026-11-07T15:02:00+09:00');
+  const c = currentRace([r('東京', 10, '15:00'), r('東京', 11, '15:40'), r('京都', 10, '15:10')], t);
+  assert.deepEqual([c.race.venueName, c.due], ['京都', false]);
+  const [only] = nextRacesByCat([r('東京', 10, '15:00'), r('東京', 11, '15:40')], t);
+  assert.deepEqual([only.raceNumber, only.due], [10, true]);
+});
+
+test('🛑 待ち表示を並べず、発走済みと断定しない（1 日の全状態を走査）', () => {
+  const r = (n, hm, hit = null) => ({ venueName: '船橋', raceNumber: n, startAt: `2026-11-04T${hm}:00+09:00`, hit });
+  const races = [r(1, '14:40'), r(2, '15:10'), r(3, '15:40')];
+  const board = { date: '2026-11-04', races, resultsIn: false, tally: null };
+  const seen = [];
+  for (let m = 13 * 60; m < 24 * 60; m += 5) {
+    const now = Date.parse(`2026-11-04T${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}:00+09:00`);
+    seen.push(JSON.stringify(headline(board, now)), ...races.map((x) => raceStatus(x, now).text));
+  }
+  for (const banned of ['結果待ち', '集計中', '確認中', '発走済み', '発走はすべて終了']) assert.ok(!seen.join().includes(banned), banned);
+  assert.equal(RESULT_NOTE, 'レース結果は取得後に反映されます');
+  const src = readFileSync(new URL('../components/FreeLiveRaceBoard.astro', import.meta.url), 'utf-8');
+  assert.equal(src.match(/RESULT_NOTE\}/g)?.length, 1, '案内は 1 か所だけ');
+  assert.ok(!src.includes('結果待ち') && !src.includes('まとめて反映'));
+});
+
+test('applyLive: 順次反映するが archive の確定値は上書きしない・日付違いは捨てる', () => {
+  const races = [
+    { venueName: '船橋', raceNumber: 1, startAt: '2026-11-04T05:40:00.000Z', hit: true },
+    { venueName: '船橋', raceNumber: 2, startAt: '2026-11-04T06:10:00.000Z', hit: null },
+    { venueName: '船橋', raceNumber: 3, startAt: '2026-11-04T06:40:00.000Z', hit: null },
+  ];
+  const live = { date: '2026-11-04', hits: { '船橋|1': false, '船橋|2': false }, times: { '船橋|3': '2026-11-04T06:45:00.000Z' } };
+  assert.equal(applyLive(races, '2026-11-05', live), false);
+  assert.equal(races[1].hit, null);
+  assert.equal(applyLive(races, '2026-11-04', live), true);
+  assert.deepEqual(races.map((r) => r.hit), [true, false, null]);
+  assert.equal(races[2].startAt, '2026-11-04T06:45:00.000Z');
+  assert.deepEqual(tallyOf(races), { hit: 1, total: 2 });
+  // 変更が取り消されたら元の時刻へ戻す
+  applyLive(races, '2026-11-04', { date: '2026-11-04', hits: {}, times: {} });
+  assert.equal(races[2].startAt, '2026-11-04T06:40:00.000Z');
 });

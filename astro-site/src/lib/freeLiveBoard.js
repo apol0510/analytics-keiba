@@ -7,12 +7,17 @@
  *   - 的中・不的中は正直に全部出す（当日の累計は 的中数 / 結果が出たレース数）
  *
  * 結果は当日の全レース終了後にまとめて取り込まれる（中央 17 時台・南関 21 時台 / aiLab.js RESULT_ETA）。
- * 1 レースごとのリアルタイム結果のデータ源は無いので、取込前は「結果待ち」と出す（推測で ✅/✗ を付けない）。
+ * 結果が無いレースは発走予定時刻だけを出す（推測で ✅/✗ を付けない）。
+ *
+ * 2026-11-04 MK 確定:
+ *   - レースごとの待ち表示は出さない。結果の案内は画面の注記に 1 か所だけ（RESULT_NOTE）
+ *   - 発走予定時刻を過ぎただけで発走済み・終了と断定しない（放馬等で遅れることがある）
+ *   - 予定時刻を過ぎても DUE_HOLD_SEC の間は、同じ会場の次のレースへ切り替えない
  *
  * 🛑 出力は許可リストのキーだけ（race: venueName / raceNumber / startAt / hit）。archive の bettingLines・umatan・payout を写さない。
  * ⚠️ Node 専用 import を持たない（ブラウザにも同梱する）。時刻は必ず引数 nowMs で受ける。
  */
-import { countdown, jstHm, jstDate, RESULT_ETA } from './ailab/aiLab.js';
+import { countdown, jstHm, jstDate } from './ailab/aiLab.js';
 
 export { countdown, jstHm };
 
@@ -54,7 +59,7 @@ export function hitMapFor(archiveArray, date) {
 
 /**
  * listModel（buildListModel の戻り値）と結果 archive から表示モデルを作る。
- * @returns {{ cat, date, races: Array<{venueName, raceNumber, startAt, hit}>, resultsIn: boolean, tally: null|{hit,total}, resultEta: string }}
+ * @returns {{ cat, date, races: Array<{venueName, raceNumber, startAt, hit}>, resultsIn: boolean, tally: null|{hit,total} }}
  *   hit: true（✅）/ false（✗）/ null（結果がまだ無い）
  */
 export function buildFreeLiveBoard({ cat, model, archiveArray }) {
@@ -74,42 +79,93 @@ export function buildFreeLiveBoard({ cat, model, archiveArray }) {
       });
     }
   }
-  const settled = races.filter((r) => r.hit !== null);
+  const tally = tallyOf(races);
   return {
     cat,
     date,
     races,
-    resultsIn: settled.length > 0,
-    tally: settled.length ? { hit: settled.filter((r) => r.hit).length, total: settled.length } : null,
-    resultEta: RESULT_ETA[cat] || '',
+    resultsIn: tally !== null,
+    tally,
   };
 }
 
-/** これから発走するうち一番早いレース（時刻未定は除く）。無ければ null */
-export function nextRace(races, nowMs) {
-  let best = null;
+/** 予定時刻を過ぎても、この秒数は同じ会場の次のレースへ切り替えない（放馬・蹄鉄の打ち直しなどの遅れ） */
+export const DUE_HOLD_SEC = 600;
+/** 結果の案内はこの 1 か所だけ */
+export const RESULT_NOTE = 'レース結果は取得後に反映されます';
+
+/**
+ * 今見せるレース。{ race, due } か null。
+ * 会場ごとに「結果が無く、予定時刻 + DUE_HOLD_SEC を過ぎていない最初のレース」を先頭とし、
+ * 予定時刻前の先頭があれば一番早いもの（due: false）、全会場が予定時刻を過ぎていれば due: true。
+ * 別の会場は遅れの影響を受けないので、そちらのカウントダウンは止めない。
+ */
+export function currentRace(races, nowMs) {
+  const heads = new Map();
   for (const r of races || []) {
     const t = Date.parse(r?.startAt || '');
-    if (!Number.isFinite(t) || t <= nowMs) continue;
-    if (!best || t < best.t) best = { t, race: r };
+    if (!Number.isFinite(t) || typeof r.hit === 'boolean' || t + DUE_HOLD_SEC * 1000 <= nowMs) continue;
+    const key = `${r.cat || ''}|${r.venueName}`;
+    const cur = heads.get(key);
+    if (!cur || t < cur.t) heads.set(key, { t, race: r });
   }
-  return best ? best.race : null;
+  const list = [...heads.values()].sort((a, b) => a.t - b.t);
+  const upcoming = list.find((h) => h.t > nowMs);
+  if (upcoming) return { race: upcoming.race, due: false };
+  return list.length ? { race: list[0].race, due: true } : null;
+}
+
+/** 次に発走を迎えるレース（時刻未定は除く）。予定時刻を過ぎたレースを保留中なら null */
+export function nextRace(races, nowMs) {
+  const c = currentRace(races, nowMs);
+  return c && !c.due ? c.race : null;
 }
 
 /**
- * 1 レースの状態表示。
+ * 1 レースの状態表示。next は nextRace の戻り値（同じオブジェクトなら「次」として強調する）。
  *   result  … ✅ 的中 / ✗ 不的中（有料版の結果）
- *   waiting … 発走済み・結果待ち
- *   upcoming… 発走前（HH:MM 発走）
+ *   past    … 予定時刻を過ぎて結果が無い（予定時刻だけを控えめに出す）
+ *   due     … 予定時刻を過ぎた直後（遅れの可能性があるので控えめにしない）
+ *   next    … 次のレース
+ *   upcoming… 予定時刻前
  *   unknown … 発走時刻未定
  */
-export function raceStatus(race, nowMs, resultsIn = false) {
+export function raceStatus(race, nowMs, next = null) {
   if (race?.hit === true) return { state: 'result', mark: '✅', text: '的中' };
   if (race?.hit === false) return { state: 'result', mark: '✗', text: '不的中' };
   const t = Date.parse(race?.startAt || '');
   if (!Number.isFinite(t)) return { state: 'unknown', mark: '', text: '発走時刻未定' };
-  if (t <= nowMs) return resultsIn ? { state: 'none', mark: '', text: '—' } : { state: 'waiting', mark: '', text: '結果待ち' };
-  return { state: 'upcoming', mark: '', text: `${jstHm(race.startAt)} 発走` };
+  const hm = jstHm(race.startAt);
+  if (t > nowMs) return next && race === next ? { state: 'next', mark: '', text: `次 ${hm}` } : { state: 'upcoming', mark: '', text: `${hm} 予定` };
+  return t + DUE_HOLD_SEC * 1000 > nowMs ? { state: 'due', mark: '', text: `${hm} 予定` } : { state: 'past', mark: '', text: hm };
+}
+
+/** ライブ情報の取得先（南関だけ。単一源は lib/freeBoardLive.js） */
+export const LIVE_URL = '/api/free-board/live.json';
+export const LIVE_POLL_MS = 60 * 1000;
+
+/**
+ * /api/free-board/live.json の値を races へ反映する（ブラウザ専用の入口・races を書き換える）。
+ * 🛑 archive から入った hit は上書きしない（確定値が勝つ）。date が違う応答は使わない。
+ */
+export function applyLive(races, date, live) {
+  if (!live || live.date !== date) return false;
+  let changed = false;
+  for (const r of races || []) {
+    const key = `${r.venueName}|${r.raceNumber}`;
+    if (r.scheduledAt === undefined) r.scheduledAt = r.startAt;
+    const startAt = live.times?.[key] || r.scheduledAt;
+    if (startAt !== r.startAt) { r.startAt = startAt; changed = true; }
+    if (r.hit === true || r.hit === false) continue;
+    if (typeof live.hits?.[key] === 'boolean') { r.hit = live.hits[key]; changed = true; }
+  }
+  return changed;
+}
+
+/** 当日累計（的中数 / 結果が出たレース数）。無ければ null */
+export function tallyOf(races) {
+  const settled = (races || []).filter((r) => typeof r?.hit === 'boolean');
+  return settled.length ? { hit: settled.filter((r) => r.hit).length, total: settled.length } : null;
 }
 
 /** 発走日の表示。今日は ''・翌日は '明日 '・それ以外は 'M/D '（前日夜に翌日分を出すときに時刻だけだと今日に読める） */
@@ -128,7 +184,7 @@ export const RING_WINDOW_SEC = 3600;
 export const RING_SOON_SEC = 300;
 
 /**
- * 円形ゲージの表示モデル。発走済み・時刻不明は null（ゲージを出さない）。
+ * 円形ゲージの表示モデル。予定時刻を過ぎた・時刻不明は null（ゲージを出さない）。
  *   fraction … 残りの割合 0〜1 ／ second … 周回する点の位置 0〜59 ／ main・sub … 中央の 2 行
  */
 export function ringModel(startAt, nowMs) {
@@ -169,8 +225,8 @@ export function paintRing(el, ring) {
 export function nextRacesByCat(feed, nowMs) {
   const byCat = new Map();
   for (const cat of new Set((feed || []).map((r) => r?.cat))) {
-    const next = nextRace(feed.filter((r) => r?.cat === cat), nowMs);
-    if (next) byCat.set(cat, next);
+    const c = currentRace(feed.filter((r) => r?.cat === cat), nowMs);
+    if (c) byCat.set(cat, { ...c.race, due: c.due });
   }
   const list = [...byCat.values()].sort((a, b) => Date.parse(a.startAt) - Date.parse(b.startAt));
   if (!list.length) return [];
@@ -178,15 +234,19 @@ export function nextRacesByCat(feed, nowMs) {
   return list.filter((r) => jstDate(Date.parse(r.startAt)) === day);
 }
 
-/** 上部の見出し行（次のレースのカウントダウン、または全レース発走後の案内） */
+/** 上部の見出し行（次のレースのカウントダウン、予定時刻を過ぎたレース、または全レース後の案内） */
 export function headline(board, nowMs) {
-  const next = nextRace(board?.races, nowMs);
-  if (next) {
-    const c = countdown(next.startAt, nowMs);
-    return { state: 'countdown', label: `${next.venueName} ${next.raceNumber}R`, countdown: c.text, at: `${dayPrefix(next.startAt, nowMs)}${jstHm(next.startAt)}`, startAt: next.startAt };
+  const cur = currentRace(board?.races, nowMs);
+  if (cur && !cur.due) {
+    const c = countdown(cur.race.startAt, nowMs);
+    return { state: 'countdown', label: `${cur.race.venueName} ${cur.race.raceNumber}R`, countdown: c.text, at: `${dayPrefix(cur.race.startAt, nowMs)}${jstHm(cur.race.startAt)}`, startAt: cur.race.startAt };
   }
+  if (cur) return { state: 'due', label: `${cur.race.venueName} ${cur.race.raceNumber}R`, at: jstHm(cur.race.startAt) };
   if (!board?.races?.length) return { state: 'none' };
-  const day = board.date === jstDate(nowMs) ? '本日' : mdLabel(board.date);
-  if (board.resultsIn) return { state: 'done', text: `${day}のレースはすべて終了しました` };
-  return { state: 'waiting', text: `${day}の発走はすべて終了。有料版の的中結果は${board.date === jstDate(nowMs) && board.resultEta ? `${board.resultEta}に` : '確定後に'}表示します` };
+  const today = board.date === jstDate(nowMs);
+  const day = today ? '本日' : mdLabel(board.date);
+  const timed = board.races.filter((r) => Number.isFinite(Date.parse(r?.startAt || '')));
+  const allIn = timed.length > 0 && timed.every((r) => typeof r.hit === 'boolean');
+  if (allIn || (board.resultsIn && !today)) return { state: 'done', text: `${day}のレースはすべて終了しました` };
+  return { state: 'passed', text: `${day}の最終レースの発走予定時刻を過ぎました` };
 }

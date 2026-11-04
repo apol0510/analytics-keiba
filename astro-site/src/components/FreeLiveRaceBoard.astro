@@ -11,7 +11,7 @@
  */
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { buildFreeLiveBoard, headline, raceStatus, ringModel } from '../lib/freeLiveBoard.js';
+import { RESULT_NOTE, buildFreeLiveBoard, headline, nextRace, raceStatus, ringModel } from '../lib/freeLiveBoard.js';
 import CountdownRing from './CountdownRing.astro';
 
 const { cat, model } = Astro.props as { cat: 'jra' | 'nankan'; model: any };
@@ -33,6 +33,7 @@ const venues = [...new Set(board.races.map((r) => r.venueName))].map((name) => (
   races: board.races.filter((r) => r.venueName === name),
 }));
 const ring = head.state === 'countdown' ? ringModel(head.startAt, nowMs) : null;
+const next = nextRace(board.races, nowMs);
 const json = JSON.stringify(board).replace(/</g, '\\u003c');
 ---
 
@@ -45,7 +46,9 @@ const json = JSON.stringify(board).replace(/</g, '\\u003c');
         <span class="ag-pill blue flb-pill">LIVE</span>
         <div class="flb-headline" data-flb-headline aria-live="off">
           {head.state === 'countdown' ? (
-            <span class="flb-next">次は <b>{head.label}</b>（{head.at} 発走）</span>
+            <span class="flb-next">次は <b>{head.label}</b>（{head.at} 発走予定）</span>
+          ) : head.state === 'due' ? (
+            <span class="flb-next"><b>{head.label}</b> は発走予定時刻（{head.at}）を過ぎました</span>
           ) : (
             <span class="flb-next">{head.text}</span>
           )}
@@ -63,7 +66,7 @@ const json = JSON.stringify(board).replace(/</g, '\\u003c');
           <span class="flb-venue-name">{v.name}</span>
           <ol class="flb-races">
             {v.races.map((r) => {
-              const s = raceStatus(r, nowMs, board.resultsIn);
+              const s = raceStatus(r, nowMs, next);
               return (
                 <li class={`flb-race is-${s.state}`} data-flb-race={`${r.venueName}|${r.raceNumber}`}>
                   <span class="flb-rn">{r.raceNumber}R</span>
@@ -77,14 +80,15 @@ const json = JSON.stringify(board).replace(/</g, '\\u003c');
     </div>
 
     <p class="flb-note">
-      ✅/✗ は有料版の予想が的中したかどうかです（買い目は有料版で公開）。結果は当日の全レース終了後にまとめて反映されます。
+      ✅/✗ は有料版の予想が的中したかどうかです（買い目は有料版で公開）。{RESULT_NOTE}。発走時刻は予定で、遅れることがあります。
     </p>
     <a class="ag-cta flb-cta" href="/pricing/" data-flb-cta>Premiumで次のレースの予想を見る</a>
   </section>
 )}
 
 <script>
-  import { headline, paintRing, raceStatus, ringModel } from '../lib/freeLiveBoard.js';
+  import { LIVE_POLL_MS, LIVE_URL, applyLive, headline, nextRace, paintRing, raceStatus, ringModel, tallyOf } from '../lib/freeLiveBoard.js';
+  import { jstDate } from '../lib/ailab/aiLab.js';
 
   for (const root of document.querySelectorAll<HTMLElement>('[data-free-live-board]')) {
     let board: any = null;
@@ -103,24 +107,27 @@ const json = JSON.stringify(board).replace(/</g, '\\u003c');
     const render = () => {
       const now = Date.now();
       const h = headline(board, now);
-      const key = h.state === 'countdown' ? `c:${h.label}` : `s:${h.state}`;
+      const key = `${h.state}:${h.label || ''}`;
       paintRing(ringEl, h.state === 'countdown' ? ringModel(h.startAt, now) : null);
       if (headEl && key !== lastKey) {
         headEl.textContent = '';
         const a = document.createElement('span');
         a.className = 'flb-next';
         if (h.state === 'countdown') {
-          a.append('次は ', Object.assign(document.createElement('b'), { textContent: h.label }), `（${h.at} 発走）`);
+          a.append('次は ', Object.assign(document.createElement('b'), { textContent: h.label }), `（${h.at} 発走予定）`);
+        } else if (h.state === 'due') {
+          a.append(Object.assign(document.createElement('b'), { textContent: h.label }), ` は発走予定時刻（${h.at}）を過ぎました`);
         } else if (h.state !== 'none') {
           a.textContent = h.text;
         }
         headEl.append(a);
         lastKey = key;
       }
+      const next = nextRace(board.races, now);
       for (const row of rows) {
         const r = byKey.get(row.dataset.flbRace || '');
         if (!r) continue;
-        const s = raceStatus(r, now, board.resultsIn);
+        const s = raceStatus(r, now, next);
         row.className = `flb-race is-${s.state}`;
         const st = row.querySelector('[data-flb-st]');
         const text = s.mark ? `${s.mark} ${s.text}` : s.text;
@@ -129,6 +136,31 @@ const json = JSON.stringify(board).replace(/</g, '\\u003c');
     };
     render();
     setInterval(render, 1000);
+
+    // 南関の当日だけ、取得できたレースから ✅/✗ と変更後の発走時刻を反映する
+    if (board.cat === 'nankan' && board.date === jstDate(Date.now())) {
+      const tallyEl = root.querySelector<HTMLElement>('[data-flb-tally]');
+      const poll = async () => {
+        if (document.hidden) return;
+        try {
+          const res = await fetch(LIVE_URL);
+          if (!res.ok || !applyLive(board.races, board.date, await res.json())) return;
+        } catch {
+          return; // 読めなくても板はそのまま動かす
+        }
+        board.tally = tallyOf(board.races);
+        board.resultsIn = board.tally !== null;
+        if (tallyEl && board.tally) {
+          tallyEl.hidden = false;
+          tallyEl.textContent = '有料版の的中 ';
+          tallyEl.append(Object.assign(document.createElement('b'), { textContent: String(board.tally.hit) }), ` / ${board.tally.total} レース`);
+        }
+        lastKey = '';
+        render();
+      };
+      poll();
+      setInterval(poll, LIVE_POLL_MS);
+    }
 
     root.querySelector('[data-flb-cta]')?.addEventListener('click', () => {
       try {
@@ -157,7 +189,10 @@ const json = JSON.stringify(board).replace(/</g, '\\u003c');
   .flb-race { display: grid; gap: 2px; padding: 6px 8px; border-radius: 10px; background: var(--ag-glass); border: 1px solid var(--ag-border); font-size: 0.8rem; color: var(--ag-text-3); }
   .flb-rn { font-weight: 700; color: var(--ag-text); }
   .flb-race.is-result { color: var(--ag-text); }
-  .flb-race.is-waiting { color: #fcd34d; }
+  .flb-race.is-past { background: transparent; border-color: transparent; opacity: 0.6; }
+  .flb-race.is-past .flb-rn { color: var(--ag-text-3); }
+  .flb-race.is-next { color: var(--ag-text); border-color: #60a5fa; background: rgba(96, 165, 250, 0.16); font-weight: 700; }
+  .flb-race.is-due { color: var(--ag-text); border-color: #fcd34d; }
   .flb-note { margin: 0; color: var(--ag-text-3); font-size: 0.78rem; line-height: 1.6; }
   .flb-cta { width: 100%; }
   @media (min-width: 720px) { .flb-cta { width: fit-content; } }
