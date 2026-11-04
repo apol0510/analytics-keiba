@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildFreeLiveBoard, dayPrefix, headline, hitMapFor, jstToIso, nextRace, nextRacesByCat, raceStatus, ringModel } from './freeLiveBoard.js';
+import { buildFreeLiveBoard, dayPrefix, headline, hitMapFor, jstToIso, nextRace, nextRacesByCat, raceProgress, raceStatus, ringModel } from './freeLiveBoard.js';
 import { buildNextRaceFeed } from './nextRaceFeed.js';
 
 const model = {
@@ -55,7 +55,10 @@ test('結果が無い日は ✅/✗ を付けない（推測しない）', () =>
   const b = buildFreeLiveBoard({ cat: 'nankan', model, archiveArray: archive.slice(1) });
   assert.equal(b.resultsIn, false);
   assert.equal(b.tally, null);
-  assert.equal(raceStatus(b.races[0], at('13:00'), false).text, '結果待ち');
+  const past = raceStatus(b.races[0], at('13:00'), false);
+  assert.equal(past.state, 'past');
+  assert.match(past.text, /^\d{2}:\d{2}$/, '発走済みは時刻だけ（「結果待ち」を並べない）');
+  assert.equal(raceStatus(b.races[2], at('13:00'), false, b.races[2]).text, '次 20:15');
   assert.equal(raceStatus(b.races[2], at('13:00'), false).text, '20:15 発走');
   assert.equal(raceStatus(b.races[3], at('13:00'), false).text, '発走時刻未定');
   assert.equal(hitMapFor(archive, '2026-11-04'), null);
@@ -167,4 +170,18 @@ test('guard: 次のレース部品は買い目系を参照せず、対象ペー�
   for (const page of ['index', 'free/index', 'free/jra', 'free/nankan', 'free-prediction/index']) {
     assert.match(readFileSync(new URL(`../pages/${page}.astro`, import.meta.url), 'utf-8'), /<NextRaceStrip /, page);
   }
+});
+
+test('raceProgress: 結果の案内は 1 回だけ・結果が入ったら消える', () => {
+  const start = (h) => `2026-11-04T${h}:00+09:00`;
+  const board = { date: '2026-11-04', resultsIn: false, resultEta: '21 時台', races: [{ startAt: start('14:40') }, { startAt: start('15:10') }, { startAt: start('15:40') }, { startAt: null }] };
+  const t = (h) => Date.parse(start(h));
+  assert.equal(raceProgress(board, t('14:00')), null, '発走前は出さない');
+  const p = raceProgress(board, t('15:20'));
+  assert.equal(p.text, '発走済み 2 / 3 レース');
+  assert.equal(p.eta, '有料版の的中は21 時台にまとめて表示');
+  assert.equal(raceProgress(board, t('16:00')), null, '全レース発走後は見出しが案内する');
+  assert.equal(raceProgress({ ...board, resultsIn: true }, t('15:20')), null);
+  const yesterday = { ...board, date: '2026-11-03' };
+  assert.match(raceProgress(yesterday, t('15:20')).eta, /確定後に/);
 });

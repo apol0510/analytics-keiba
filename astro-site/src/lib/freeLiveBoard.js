@@ -7,7 +7,8 @@
  *   - 的中・不的中は正直に全部出す（当日の累計は 的中数 / 結果が出たレース数）
  *
  * 結果は当日の全レース終了後にまとめて取り込まれる（中央 17 時台・南関 21 時台 / aiLab.js RESULT_ETA）。
- * 1 レースごとのリアルタイム結果のデータ源は無いので、取込前は「結果待ち」と出す（推測で ✅/✗ を付けない）。
+ * 1 レースごとのリアルタイム結果のデータ源は無いので、取込前は発走時刻だけを出し（推測で ✅/✗ を付けない）、
+ * 結果の案内は進み具合の行で 1 回だけ出す（2026-11-04 MK: 「結果待ち」を並べない）。
  *
  * 🛑 出力は許可リストのキーだけ（race: venueName / raceNumber / startAt / hit）。archive の bettingLines・umatan・payout を写さない。
  * ⚠️ Node 専用 import を持たない（ブラウザにも同梱する）。時刻は必ず引数 nowMs で受ける。
@@ -97,19 +98,34 @@ export function nextRace(races, nowMs) {
 }
 
 /**
- * 1 レースの状態表示。
+ * 1 レースの状態表示。next は nextRace の戻り値（同じオブジェクトなら「次」として強調する）。
  *   result  … ✅ 的中 / ✗ 不的中（有料版の結果）
- *   waiting … 発走済み・結果待ち
+ *   past    … 発走時刻を過ぎて結果がまだ（発走時刻だけを控えめに出す。同じ「結果待ち」を並べない）
+ *   next    … 次に発走するレース
  *   upcoming… 発走前（HH:MM 発走）
  *   unknown … 発走時刻未定
  */
-export function raceStatus(race, nowMs, resultsIn = false) {
+export function raceStatus(race, nowMs, resultsIn = false, next = null) {
   if (race?.hit === true) return { state: 'result', mark: '✅', text: '的中' };
   if (race?.hit === false) return { state: 'result', mark: '✗', text: '不的中' };
   const t = Date.parse(race?.startAt || '');
   if (!Number.isFinite(t)) return { state: 'unknown', mark: '', text: '発走時刻未定' };
-  if (t <= nowMs) return resultsIn ? { state: 'none', mark: '', text: '—' } : { state: 'waiting', mark: '', text: '結果待ち' };
+  if (t <= nowMs) return resultsIn ? { state: 'none', mark: '', text: '—' } : { state: 'past', mark: '', text: jstHm(race.startAt) };
+  if (next && race === next) return { state: 'next', mark: '', text: `次 ${jstHm(race.startAt)}` };
   return { state: 'upcoming', mark: '', text: `${jstHm(race.startAt)} 発走` };
+}
+
+/**
+ * 当日の進み具合（発走済み n / 全 m レース）。結果の案内はレースごとではなくここで 1 回だけ出す。
+ * 結果が入った後・まだ 1 レースも発走していないとき・全レース発走後（見出しが案内する）は null。
+ */
+export function raceProgress(board, nowMs) {
+  const races = (board?.races || []).filter((r) => Number.isFinite(Date.parse(r?.startAt || '')));
+  if (board?.resultsIn || !races.length) return null;
+  const started = races.filter((r) => Date.parse(r.startAt) <= nowMs).length;
+  if (started === 0 || started === races.length) return null;
+  const eta = board.date === jstDate(nowMs) && board.resultEta ? `${board.resultEta}に` : '確定後に';
+  return { started, total: races.length, fraction: started / races.length, text: `発走済み ${started} / ${races.length} レース`, eta: `有料版の的中は${eta}まとめて表示` };
 }
 
 /** 発走日の表示。今日は ''・翌日は '明日 '・それ以外は 'M/D '（前日夜に翌日分を出すときに時刻だけだと今日に読める） */
