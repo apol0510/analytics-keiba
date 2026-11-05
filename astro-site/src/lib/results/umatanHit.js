@@ -40,3 +40,30 @@ export function checkUmatanHit(bettingLine, result) {
 
   return false;
 }
+
+/**
+ * 本線＋連下・抑えを含めた馬単の的中判定（内部集計専用）。
+ * 括弧内の (抑え…)／（抑え…） の馬も相手として数える。区切り記号の方向は checkUmatanHit と同じ。
+ * 公開実績の isHit はこの関数で作らない。集計は scripts/report-umatan-with-osae.mjs。
+ */
+export function checkUmatanHitWithOsae(bettingLine, result) {
+  return checkUmatanHit(String(bettingLine).replace(/[(（]抑え([^)）]*)[)）]/g, '.$1'), result);
+}
+
+/** 買い目行の全体が実際に買う馬単の組（"軸>相手" の Set）。行をまたぐ同じ組は 1 点と数える */
+export function umatanTickets(bettingLines, { includeOsae = false } = {}) {
+  const tickets = new Set();
+  for (const raw of bettingLines || []) {
+    const line = includeOsae
+      ? String(raw).replace(/[(（]抑え([^)）]*)[)）]/g, '.$1')
+      : String(raw).replace(/[(（]抑え[^)）]*[)）]/g, '');
+    const m = line.match(/^(\d+)([\-↔⇔→])(.+)$/);
+    if (!m) continue;
+    const axis = parseInt(m[1]);
+    for (const n of m[3].split('.').map((v) => parseInt(v)).filter((v) => !isNaN(v) && v !== axis)) {
+      tickets.add(`${axis}>${n}`);
+      if (m[2] !== '→') tickets.add(`${n}>${axis}`);
+    }
+  }
+  return tickets;
+}
