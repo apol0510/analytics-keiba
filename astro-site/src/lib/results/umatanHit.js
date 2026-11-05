@@ -1,9 +1,7 @@
 /**
- * 馬単の的中判定（公開本線のみ・2026-07 仕様）
- *
- * Premium でユーザーへ公開した「本線相手」だけを的中対象とする。
- * 括弧内の内部保険 (抑え…)／（抑え…） は判定対象外（公開買い目とアーカイブ実績の基準を一致させる）。
- * 投資額は従来どおり全レース5点固定・保存 bettingLines.umatan の形式は不変（抑え表記は記録として残置）。
+ * 馬単の本線だけの判定。実績の isHit は checkUmatanHitWithOsae で作る（2026-11-06 MK 指示・docs/BET_POINT_LOGIC.md）。
+ * この関数は「抑えで的中したか」の見分けと、取得した買い目の的中判定に使う。
+ * 括弧内の (抑え…)／（抑え…） は判定対象外。保存 bettingLines.umatan の形式は不変。
  * 区切り記号 -（旧）/ ↔・⇔（双方向）/ →（片方向）、半角/全角括弧に対応。
  * 例: "4-1.11.2.5.7.9(抑え10.8.6)" → 本線 1.11.2.5.7.9 のみで判定 / "5↔9.11.6.8.4" / "4→8.4.7.5.3"
  */
@@ -42,9 +40,9 @@ export function checkUmatanHit(bettingLine, result) {
 }
 
 /**
- * 本線＋連下・抑えを含めた馬単の的中判定（内部集計専用）。
+ * 実績の的中判定（本線＋連下・抑え）。買い目行の全部を有効な買い目として扱う。
  * 括弧内の (抑え…)／（抑え…） の馬も相手として数える。区切り記号の方向は checkUmatanHit と同じ。
- * 公開実績の isHit はこの関数で作らない。集計は scripts/report-umatan-with-osae.mjs。
+ * 回収率の分母も同じ範囲の組（umatanTickets の includeOsae）にそろえる。
  */
 export function checkUmatanHitWithOsae(bettingLine, result) {
   return checkUmatanHit(String(bettingLine).replace(/[(（]抑え([^)）]*)[)）]/g, '.$1'), result);

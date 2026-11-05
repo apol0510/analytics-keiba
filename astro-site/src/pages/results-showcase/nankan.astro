@@ -135,7 +135,7 @@ setPublicCdnCache(Astro);
                 <div class="sc-result">
                   {g.mainRace.isHit ? (
                     <>
-                      <span class="sc-hit-badge">✅ 的中</span>
+                      <span class="sc-hit-badge">✅ {g.mainRace.hitByOsae ? "抑えで的中" : "的中"}</span>
                       {g.mainRace.combination && (
                         <span class="sc-hit-combo">{g.mainRace.combination}</span>
                       )}

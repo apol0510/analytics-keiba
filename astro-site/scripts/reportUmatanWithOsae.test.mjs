@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { checkUmatanHit, checkUmatanHitWithOsae, umatanTickets } from '../src/lib/results/umatanHit.js';
 import { summarize } from './report-umatan-with-osae.mjs';
+import { recomputeEntryWithOsae } from './recalculate-umatan-archive-with-osae.mjs';
 
 const res = (a, b) => ({ results: [{ number: a }, { number: b }] });
 
@@ -41,4 +42,17 @@ test('集計: 欠損レースは数えず、回収率は 2 つの分母で出す
   assert.equal(s.hitWithOsae, 1);
   assert.equal(s.recoveryOnAiPoints, 1000);
   assert.equal(s.recoveryOnActualTickets, 500);
+});
+
+test('再計算: 全レースに同じ規則を当て、再実行しても変わらず、買い目行の無い開催は据え置く', () => {
+  const race = (first, second, payout) => ({ bettingLines: ['1→2(抑え3)'], isHit: false, hitLines: [], result: { first: { number: first }, second: { number: second } }, umatan: { payout } });
+  const entry = { betAmount: 1000, hitRaces: 0, totalPayout: 0, races: [race(1, 3, 500), race(9, 8, 900)] };
+  const once = recomputeEntryWithOsae(entry);
+  assert.equal(once.hitRaces, 1);
+  assert.equal(once.missRaces, 1);
+  assert.equal(once.totalPayout, 500);
+  assert.equal(once.races[1].isHit, false);
+  assert.deepEqual(recomputeEntryWithOsae(once), once);
+  const legacy = { races: [{ isHit: true, payout: 100 }] };
+  assert.equal(recomputeEntryWithOsae(legacy), legacy);
 });

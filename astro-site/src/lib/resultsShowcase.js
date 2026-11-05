@@ -22,6 +22,7 @@
 // ─────────────────────────────────────────────────────────────
 
 import { summarizeAiDay } from './results/aiBetPoints.js';
+import { checkUmatanHit } from './results/umatanHit.js';
 import { getMainRaceNumber } from '../utils/mainRaceBetting.js';
 
 /**
@@ -67,6 +68,9 @@ function buildMainRace(race) {
   const payout = Number(race?.umatan?.payout);
   const isHit = !!race?.isHit;
   const combination = race?.umatan?.combination ?? null;
+  // 公開している本線では外れ、抑えで的中したレース。画面で「抑えで的中」と分かるようにする
+  const placed = { results: [{ number: race?.result?.first?.number }, { number: race?.result?.second?.number }] };
+  const hitByOsae = isHit && !(race?.bettingLines || []).some((l) => checkUmatanHit(l, placed));
 
   // 表示形態の決定:
   //   配信買い目は双方向馬単（本命⇄相手5頭・表裏両取り）。
@@ -96,6 +100,7 @@ function buildMainRace(race) {
     displayPartners,
     betPoints: Number(race?.betPoints) || parsed.partners.length,
     isHit,
+    hitByOsae,
     combination,
     payout: Number.isFinite(payout) && payout > 0 ? payout : null,
     result: race?.result ?? null,

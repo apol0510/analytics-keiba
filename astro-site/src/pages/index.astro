@@ -8,7 +8,7 @@ import HomeResultsShowcasePreview from '../components/HomeResultsShowcasePreview
 import NextRaceStrip from '../components/NextRaceStrip.astro';
 import archiveResults from '../data/archiveResults.json';
 import archiveResultsJra from '../data/archiveResultsJra.json';
-import { summarizeAiDay, AI_POINTS_NOTE } from '../lib/results/aiBetPoints.js';
+import { summarizeAiDay, racePurchasedPoints, AI_POINTS_NOTE } from '../lib/results/aiBetPoints.js';
 import { weeklyResults, dailyTabs, dailyResultsData } from './light-predictions.astro';
 import { pickLatestAndAdapt, pickLatestJraPrediction } from '../lib/adaptLatestPrediction.js';
 
@@ -447,7 +447,7 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                                             ✅ 的中
                                         </div>
                                         <div class="bet-info" style="color: #8b5cf6; font-size: 0.9rem; font-weight: 600;">
-                                            {race.betType}{race.aiBet?.points ?? ''}{race.aiBet ? '点' : ''}
+                                            {race.betType}{racePurchasedPoints(race) || ''}{racePurchasedPoints(race) ? '点' : ''}
                                         </div>
                                         <div class="payout" style="font-size: 1.2rem; font-weight: bold; color: #fbbf24; text-align: right;">
                                             ¥{race.payout.toLocaleString()}
