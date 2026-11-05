@@ -3,7 +3,7 @@ import { setPublicCdnCache } from '../../../../lib/cdnCache.mjs';
 import BaseLayout from '../../../../layouts/BaseLayout.astro';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
-import { summarizeAiDays, AI_POINTS_NOTE } from '../../../../lib/results/aiBetPoints.js';
+import { summarizeAiDays, AI_POINTS_NOTE, AI_RECOVERY_DISCLOSURE } from '../../../../lib/results/aiBetPoints.js';
 
 export const prerender = false;
 
@@ -126,7 +126,7 @@ setPublicCdnCache(Astro);
               <div class="stat-label">年間的中レース数</div>
             </div>
           </section>
-          {yearReturnRate != null && <p class="ai-points-note">※ {AI_POINTS_NOTE}</p>}
+          {yearReturnRate != null && <p class="ai-points-note">※ {AI_POINTS_NOTE}。{AI_RECOVERY_DISCLOSURE}</p>}
 
           {/* 月別一覧 */}
           <section class="months-grid">

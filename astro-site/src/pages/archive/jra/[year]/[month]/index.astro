@@ -3,7 +3,7 @@ import { setPublicCdnCache } from '../../../../../lib/cdnCache.mjs';
 import BaseLayout from '../../../../../layouts/BaseLayout.astro';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
-import { summarizeAiDay, summarizeAiDays, AI_POINTS_NOTE } from '../../../../../lib/results/aiBetPoints.js';
+import { summarizeAiDay, summarizeAiDays, AI_POINTS_NOTE, AI_RECOVERY_DISCLOSURE } from '../../../../../lib/results/aiBetPoints.js';
 import { sortRacesByVenueAndNumber } from '../../../../../utils/sortRaces.js';
 
 export const prerender = false;
@@ -107,7 +107,7 @@ setPublicCdnCache(Astro);
               <div class="stat-label">的中レース数</div>
             </div>
           </section>
-          {monthStats.returnRate != null && <p class="ai-points-note">※ {AI_POINTS_NOTE}</p>}
+          {monthStats.returnRate != null && <p class="ai-points-note">※ {AI_POINTS_NOTE}。{AI_RECOVERY_DISCLOSURE}</p>}
 
           {/* 日別アーカイブ */}
           {monthData.map((dayData: any) => {

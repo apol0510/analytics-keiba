@@ -1,0 +1,58 @@
+---
+/**
+ * 的中結果ページの通算回収率。中央・南関はそれぞれのページで別々に出す（合算しない）。
+ * 数字は lib/results/aiBetPoints.js の summarizeCumulative から作る。固定値を書かない。
+ */
+import { AI_POINTS_NOTE, AI_RECOVERY_DISCLOSURE } from '../lib/results/aiBetPoints.js';
+
+const { cumulative, label } = Astro.props;
+const fmt = (d) => d.replaceAll('-', '/');
+const show = cumulative?.overall?.recoveryRate != null;
+---
+
+{show && (
+  <section class="cumulative-recovery" aria-label={`${label}の通算回収率`}>
+    <h2 class="cr-title">{label}の通算実績</h2>
+    <p class="cr-period">{fmt(cumulative.from)}〜{fmt(cumulative.to)}・{cumulative.overall.totalRaces.toLocaleString()}レース</p>
+    <div class="cr-grid">
+      <div class="cr-item">
+        <div class="cr-value">{cumulative.overall.recoveryRate}%</div>
+        <div class="cr-label">通算回収率</div>
+      </div>
+      {cumulative.recent.recoveryRate != null && (
+        <div class="cr-item">
+          <div class="cr-value">{cumulative.recent.recoveryRate}%</div>
+          <div class="cr-label">直近3か月の回収率</div>
+        </div>
+      )}
+      <div class="cr-item">
+        <div class="cr-value">{cumulative.overall.hitRate}%</div>
+        <div class="cr-label">通算的中率</div>
+      </div>
+    </div>
+    <p class="cr-note">※ {AI_POINTS_NOTE}。{AI_RECOVERY_DISCLOSURE}</p>
+  </section>
+)}
+
+<style>
+  .cumulative-recovery {
+    background: rgba(30, 41, 59, 0.8);
+    border: 1px solid rgba(100, 116, 139, 0.3);
+    border-radius: 16px;
+    padding: 1.5rem;
+    margin: 0 auto 2rem;
+    text-align: center;
+  }
+  .cr-title { font-size: 1.25rem; font-weight: 700; color: #f1f5f9; margin: 0 0 0.25rem; }
+  .cr-period { font-size: 0.85rem; color: #94a3b8; margin: 0 0 1rem; }
+  .cr-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+  .cr-value { font-size: 1.75rem; font-weight: 800; color: #fbbf24; line-height: 1.2; }
+  .cr-label { font-size: 0.8rem; color: #cbd5e1; margin-top: 0.25rem; }
+  .cr-note { font-size: 0.8rem; color: #94a3b8; line-height: 1.6; margin: 1rem 0 0; }
+  @media (max-width: 480px) {
+    .cumulative-recovery { padding: 1.25rem 1rem; }
+    .cr-grid { gap: 0.5rem; }
+    .cr-value { font-size: 1.3rem; }
+    .cr-label { font-size: 0.72rem; }
+  }
+</style>

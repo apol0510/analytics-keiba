@@ -7,7 +7,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   expandUmatanLine, extraCount, aiPointBasis, buildAiBet, raceAiResult, summarizeAiDay, summarizeAiDays,
-  EXTRA_MIN, EXTRA_MAX, AI_POINTS_NOTE, AI_BET_VERSION,
+  EXTRA_MIN, EXTRA_MAX, AI_POINTS_NOTE, AI_RECOVERY_DISCLOSURE, summarizeCumulative, AI_BET_VERSION,
 } from './aiBetPoints.js';
 import { narrowUmatan } from '../acquisition/predictionContent.js';
 
@@ -205,4 +205,30 @@ test('Premium の少ない買い目・通常買い目は実績算定に引きず
   // 絞った買い目の仕様（本命軸×上位 3 頭・通常 ↔ = 6 点 / メイン → = 3 点）は不変
   assert.equal(narrowUmatan(field, normalLines).points, 6);
   assert.equal(narrowUmatan(field, mainLines).points, 3);
+});
+
+test('通算表示: 全期間と最新開催日から 3 か月を分けて数える', () => {
+  const day = (date, payout) => ({ date, races: [{ isHit: true, umatan: { payout }, aiBet: { v: 2, points: 10 } }] });
+  const c = summarizeCumulative([day('2026-11-05', 2000), day('2026-08-05', 1000), day('2026-08-04', 4000)]);
+  assert.equal(c.from, '2026-08-04');
+  assert.equal(c.to, '2026-11-05');
+  assert.equal(c.overall.recoveryRate, 233.3);
+  assert.equal(c.recent.days, 2);
+  assert.equal(c.recent.recoveryRate, 150);
+});
+
+test('通算表示: 月末の開催日でも 3 か月前の日付が繰り上がらない', () => {
+  const day = (date) => ({ date, races: [{ isHit: false, aiBet: { v: 2, points: 10 } }] });
+  const c = summarizeCumulative([day('2026-05-31'), day('2026-03-01'), day('2026-02-28'), day('2026-02-27')]);
+  assert.equal(c.recent.days, 3);
+});
+
+test('通算表示: データが無ければ出さない', () => {
+  assert.equal(summarizeCumulative([]), null);
+  assert.equal(summarizeCumulative([{ races: [] }]), null);
+});
+
+test('回収率の説明は理論値で実購入の収支と異なることを伝える', () => {
+  assert.match(AI_RECOVERY_DISCLOSURE, /理論値/);
+  assert.match(AI_RECOVERY_DISCLOSURE, /買い目どおりに購入した場合の収支とは異なります/);
 });
