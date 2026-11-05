@@ -31,6 +31,8 @@
 
 # 固定マーケティング表示の代表値は 回収率 73% / 的中率 70%（2026-11-06 MK 指示・本線＋抑えの全レース実測で南関と中央の合計）
 
+> 2026-11-06 MK 指示で AK の回収率は一時非表示。計算値は `astro-site/src/lib/results/recoveryVisibility.js` の `RECOVERY_RATE_PUBLIC`、固定文言と静的ページはこの変更の PR を revert して戻す。集計データは持ち続ける。
+
 > 経緯は `decisions.md` 2026-10-06。テスト `astro-site/src/lib/marketing/fixedMarketingStats.test.mjs`（`npm run test:marketing-stats`・`check:safety` 組込）。
 
 - トップ・カード・CTA・バナー・Hero・料金 / 無料 / Light / Premium 導線・ブログの CTA・共通レイアウト（既定 description）等に**ハードコードする代表値・平均値・訴求値**は、

@@ -1,4 +1,5 @@
 ---
+import { publicRate } from '../lib/results/recoveryVisibility.js';
 // ⚠️ SSR。有料本文を組み立てる前にサーバー側で認可を確定させる（2026-08-08）。
 //    prerender=true のままだと静的 HTML に有料本文が入り、localStorage の書き換えだけで読めてしまう。
 export const prerender = false;
@@ -249,10 +250,6 @@ export const dailyResultsData = {
                     <div class="metric-label">平均的中率</div>
                 </div>
                 <div class="metric">
-                    <div class="metric-value">73%</div>
-                    <div class="metric-label">平均回収率</div>
-                </div>
-                <div class="metric">
                     <div class="metric-value">全12R</div>
                     <div class="metric-label">対応レース数</div>
                 </div>
@@ -300,7 +297,7 @@ export const dailyResultsData = {
                         <span style="color: #94a3b8; font-size: 0.9rem;">📊 的中率:</span>
                         <span style="color: #60a5fa; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">{yesterdayResults.hitRate}%</span>
                     </div>
-                    {yesterdayResults.recoveryRate != null && (
+                    {publicRate(yesterdayResults.recoveryRate) != null && (
                         <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(139, 92, 246, 0.3); border-radius: 12px; padding: 15px 25px;">
                             <span style="color: #94a3b8; font-size: 0.9rem;">📈 回収率:</span>
                             <span style="color: #a78bfa; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">{yesterdayResults.recoveryRate}%</span>
@@ -311,7 +308,7 @@ export const dailyResultsData = {
                         <span style="color: #fbbf24; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">¥{yesterdayResults.totalPayout.toLocaleString()}</span>
                     </div>
                 </div>
-                {yesterdayResults.recoveryRate != null && <p style="margin: -18px 0 24px; text-align: center; font-size: 0.72rem; color: rgba(203, 213, 225, 0.55);">※ {AI_POINTS_NOTE}</p>}
+                {publicRate(yesterdayResults.recoveryRate) != null && <p style="margin: -18px 0 24px; text-align: center; font-size: 0.72rem; color: rgba(203, 213, 225, 0.55);">※ {AI_POINTS_NOTE}</p>}
 
                 <!-- レース一覧（archiveと統一デザイン） -->
                 <!-- 🔧 2026-05-13 修正: 新フォーマット対応

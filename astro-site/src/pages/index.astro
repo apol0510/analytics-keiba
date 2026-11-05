@@ -1,4 +1,5 @@
 ---
+import { publicRate } from '../lib/results/recoveryVisibility.js';
 // 静的プリレンダリング: output:'server' 下では prerender 無印 = SSR(毎回 ~1秒) になるため
 // 明示的に true にして CDN 静的配信（TTFB 短縮・hover 先読みを有効化）。
 // データは日次の取込コミット → Netlify 再ビルドで更新される（他の静的予想ページと同じ運用）。
@@ -244,7 +245,7 @@ const formattedDate = `${year}年${parseInt(month)}月${parseInt(day)}日`;
 const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || ''}${enhancedRaceInfo?.raceName !== 'レース情報未検出' && enhancedRaceInfo?.raceName ? ' ' + enhancedRaceInfo.raceName : ''}`;
 ---
 
-<BaseLayout title="中央競馬・南関競馬のAI予想｜大井・船橋・川崎・浦和の無料予想と的中実績" description="KEIBA Analytics（競馬アナリティクス）— 南関東4場（大井・船橋・川崎・浦和）と中央競馬をAIで分析。XGBoost・LSTMによる予想は的中率70%、回収率73%（全レース実測）。">
+<BaseLayout title="中央競馬・南関競馬のAI予想｜大井・船橋・川崎・浦和の無料予想と的中実績" description="KEIBA Analytics（競馬アナリティクス）— 南関東4場（大井・船橋・川崎・浦和）と中央競馬をAIで分析。XGBoost・LSTMによる予想は的中率70%（全レース実測）。">
             <!-- Hero Key Visual（ファーストビュー / PC・モバイルで切替） -->
             <section class="hero-keyvisual">
                 <picture>
@@ -275,7 +276,7 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                 <h1 class="hero-title">AI競馬予想で投資効率を最大化</h1>
                 <p class="hero-subtitle">
                     XGBoost・LSTM・ニューラルネットワークによる高精度分析で<br>
-                    的中率70%、回収率73%（全レース実測）
+                    的中率70%（全レース実測）
                 </p>
                 <p class="hero-description">
                     従来の感覚的予想から、データサイエンスによる科学的投資へ。<br>
@@ -306,19 +307,6 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                             </div>
                             <div style="color: var(--accent-text-color); font-size: 0.75rem; line-height: 1.3;">
                                 XGBoost・LSTM技術
-                            </div>
-                        </div>
-
-                        <!-- Average Return Rate -->
-                        <div class="stats-card" style="background: linear-gradient(135deg, rgba(16, 185, 129, 0.15) 0%, rgba(59, 130, 246, 0.15) 100%); padding: 20px 15px; border-radius: 10px; text-align: center; border: 2px solid rgba(16, 185, 129, 0.2); transition: transform 0.3s, box-shadow 0.3s;">
-                            <div class="stats-number" data-target="73" data-suffix="%" style="font-size: 2.2rem; font-weight: 800; color: var(--success-color); margin-bottom: 8px; text-shadow: 0 2px 4px rgba(16, 185, 129, 0.3);">
-                                73%
-                            </div>
-                            <div style="color: var(--body-text-color); font-weight: 600; font-size: 0.95rem; margin-bottom: 5px;">
-                                平均回収率
-                            </div>
-                            <div style="color: var(--accent-text-color); font-size: 0.75rem; line-height: 1.3;">
-                                投資効率最大化
                             </div>
                         </div>
 
@@ -411,7 +399,7 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                                 <span style="color: #94a3b8; font-size: 0.9rem;">📊 的中率:</span>
                                 <span style="color: #60a5fa; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">{yesterdayResults.hitRate}%</span>
                             </div>
-                            {yesterdayResults.recoveryRate != null && (
+                            {publicRate(yesterdayResults.recoveryRate) != null && (
                                 <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(139, 92, 246, 0.3); border-radius: 12px; padding: 15px 25px;">
                                     <span style="color: #94a3b8; font-size: 0.9rem;">📈 回収率:</span>
                                     <span style="color: #a78bfa; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">{yesterdayResults.recoveryRate}%</span>
@@ -428,7 +416,7 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                                 <span style="color: #fbbf24; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">¥{yesterdayResults.totalPayout.toLocaleString()}</span>
                             </div>
                         </div>
-                        {yesterdayResults.recoveryRate != null && <p style="margin: -18px 0 24px; text-align: center; font-size: 0.72rem; color: rgba(203, 213, 225, 0.55);">※ {AI_POINTS_NOTE}</p>}
+                        {publicRate(yesterdayResults.recoveryRate) != null && <p style="margin: -18px 0 24px; text-align: center; font-size: 0.72rem; color: rgba(203, 213, 225, 0.55);">※ {AI_POINTS_NOTE}</p>}
 
                         <!-- レース一覧（的中レースのみ表示） -->
                         <div style="display: grid; gap: 12px;">
@@ -488,7 +476,7 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                                     <span style="color: #94a3b8; font-size: 0.9rem;">📊 的中率:</span>
                                     <span style="color: #60a5fa; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">{yesterdayJraResults.hitRate}%</span>
                                 </div>
-                                {yesterdayJraResults.recoveryRate != null && (
+                                {publicRate(yesterdayJraResults.recoveryRate) != null && (
                                     <div style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(139, 92, 246, 0.3); border-radius: 12px; padding: 15px 25px;">
                                         <span style="color: #94a3b8; font-size: 0.9rem;">📈 回収率:</span>
                                         <span style="color: #a78bfa; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">{yesterdayJraResults.recoveryRate}%</span>
@@ -505,7 +493,7 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                                     <span style="color: #fbbf24; font-weight: bold; font-size: 1.1rem; margin-left: 8px;">¥{yesterdayJraResults.totalPayout.toLocaleString()}</span>
                                 </div>
                             </div>
-                            {yesterdayJraResults.recoveryRate != null && <p style="margin: -18px 0 24px; text-align: center; font-size: 0.72rem; color: rgba(203, 213, 225, 0.55);">※ {AI_POINTS_NOTE}</p>}
+                            {publicRate(yesterdayJraResults.recoveryRate) != null && <p style="margin: -18px 0 24px; text-align: center; font-size: 0.72rem; color: rgba(203, 213, 225, 0.55);">※ {AI_POINTS_NOTE}</p>}
 
                             <!-- レース個別一覧は /archive/jra/ で確認できるため、トップでは南関同様コンパクト表示 -->
 
