@@ -1,4 +1,5 @@
 ---
+import { publicRate } from '../../../../lib/results/recoveryVisibility.js';
 import { setPublicCdnCache } from '../../../../lib/cdnCache.mjs';
 import BaseLayout from '../../../../layouts/BaseLayout.astro';
 import { readFileSync, existsSync, readdirSync } from 'fs';
@@ -138,7 +139,7 @@ setPublicCdnCache(Astro);
             <div class="stat-value">{yearHitRate}%</div>
             <div class="stat-label">年間的中率</div>
           </div>
-          {yearRecoveryRate != null && (
+          {publicRate(yearRecoveryRate) != null && (
             <div class="stat-card">
               <div class="stat-value">{yearRecoveryRate}%</div>
               <div class="stat-label">年間回収率</div>
@@ -154,7 +155,7 @@ setPublicCdnCache(Astro);
             <div class="stat-label">年間的中レース数</div>
           </div>
         </div>
-        {yearRecoveryRate != null && <p class="recovery-note">※ {AI_RECOVERY_DISCLOSURE}</p>}
+        {publicRate(yearRecoveryRate) != null && <p class="recovery-note">※ {AI_RECOVERY_DISCLOSURE}</p>}
 
         <p class="basis-note">
           現在の公開買い目基準による実績は、{CURRENT_BASIS_START_LABEL}以降を集計しています。

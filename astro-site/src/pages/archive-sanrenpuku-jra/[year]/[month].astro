@@ -1,4 +1,5 @@
 ---
+import { publicRate } from '../../../lib/results/recoveryVisibility.js';
 // 中央競馬（JRA）三連複 的中実績 月別詳細ページ。
 // archiveSanrenpukuResultsJra.json（ネスト辞書 {YYYY}{MM}{DD}）の {年}{月} を URL パラメータで引く（SSR）。
 // ランディング /archive-sanrenpuku-jra/ の月カードからここへ遷移。会員ゲート＋Sticky CTA＋SEO＋戻るリンク。
@@ -74,7 +75,7 @@ const mRecovery = mBetPoints > 0 ? Math.round((mPayout / (mBetPoints * 100)) * 1
 const mHitRate = mRaces > 0 ? Math.round((mHits / mRaces) * 100) : 0;
 
 const pageTitle = `${monthLabel} 中央競馬（JRA）三連複 的中実績`;
-const pageDesc = `${monthLabel}の中央競馬（JRA）三連複 AI厳選買い目 的中実績。的中率${mHitRate}%・回収率${mRecovery}%・合計配当¥${mPayout.toLocaleString()}。Premium Sanrenpuku なら中央＋南関の三連複が1購入で両方使えます。`;
+const pageDesc = `${monthLabel}の中央競馬（JRA）三連複 AI厳選買い目 的中実績。的中率${mHitRate}%・${publicRate(mRecovery) != null ? `回収率${mRecovery}%・` : ''}合計配当¥${mPayout.toLocaleString()}。Premium Sanrenpuku なら中央＋南関の三連複が1購入で両方使えます。`;
 const canonicalPath = `/archive-sanrenpuku-jra/${year}/${month}/`;
 
 const jsonLd = {
@@ -101,7 +102,7 @@ const jsonLd = {
             <h1 class="month-detail-title">{monthLabel} 中央競馬（JRA）三連複 的中実績</h1>
             <div class="month-detail-stats">
                 <div class="mds-item"><div class="mds-value">{mHitRate}%</div><div class="mds-label">的中率</div></div>
-                <div class="mds-item"><div class="mds-value">{mRecovery}%</div><div class="mds-label">回収率</div></div>
+                {publicRate(mRecovery) != null && <div class="mds-item"><div class="mds-value">{mRecovery}%</div><div class="mds-label">回収率</div></div>}
                 <div class="mds-item"><div class="mds-value">{mHits}<span class="unit">/{mRaces}</span></div><div class="mds-label">的中/レース</div></div>
                 <div class="mds-item"><div class="mds-value">¥{mPayout.toLocaleString()}</div><div class="mds-label">合計配当</div></div>
             </div>
@@ -118,7 +119,7 @@ const jsonLd = {
                 </div>
                 <div class="day-summary">
                     <div class="summary-item">📊 的中率: <span class="summary-value">{hitRate}%</span></div>
-                    <div class="summary-item">📈 回収率: <span class="summary-value">{dayRecovery}%</span></div>
+                    {publicRate(dayRecovery) != null && <div class="summary-item">📈 回収率: <span class="summary-value">{dayRecovery}%</span></div>}
                     <div class="summary-item">💰 合計配当: <span class="summary-value">¥{(dd.totalPayout || 0).toLocaleString()}</span></div>
                 </div>
                 {hitRaces.length > 0 ? (

@@ -1,4 +1,5 @@
 ---
+import { publicRate } from '../../lib/results/recoveryVisibility.js';
 import PremiumRaceBoard from '../../components/acquisition/PremiumRaceBoard.astro';
 import { buildValueSummary } from '../../lib/acquisition/valueSummary.js';
 import { buildListModel } from '../../lib/acquisition/listModel.js';
@@ -571,12 +572,12 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                         </div>
                         <div style="font-size: 0.85rem; color: #94a3b8;">的中率</div>
                       </div>
-                      <div style="background: rgba(245, 158, 11, 0.1); padding: 1rem; border-radius: 8px; text-align: center;">
+                      {publicRate(sanrenpukuLatestResultJra.recoveryRate) != null && (<div style="background: rgba(245, 158, 11, 0.1); padding: 1rem; border-radius: 8px; text-align: center;">
                         <div style="font-size: 1.8rem; font-weight: 700; color: #f59e0b; margin-bottom: 0.5rem;">
                           {sanrenpukuLatestResultJra.recoveryRate}%
                         </div>
                         <div style="font-size: 0.85rem; color: #94a3b8;">回収率</div>
-                      </div>
+                      </div>)}
                       <div style="background: rgba(59, 130, 246, 0.1); padding: 1rem; border-radius: 8px; text-align: center;">
                         <div style="font-size: 1.8rem; font-weight: 700; color: #3b82f6; margin-bottom: 0.5rem;">
                           ¥{sanrenpukuLatestResultJra.totalPayout?.toLocaleString()}

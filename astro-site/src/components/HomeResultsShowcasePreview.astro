@@ -1,4 +1,5 @@
 ---
+import { publicRate } from '../lib/results/recoveryVisibility.js';
 // HomeResultsShowcasePreview.astro
 // トップページ Hero Key Visual 直下に置く「当日の実績」プレビュー。
 //
@@ -58,7 +59,7 @@ const cards = [
                 <b class="rsp__sum-value">{c.hitRaces}<i>/{c.totalRaces}</i></b>
                 <i class="rsp__sum-label">当日の的中レース</i>
               </span>
-              {c.recoveryRate != null && (
+              {publicRate(c.recoveryRate) != null && (
                 <span class={`rsp__sum ${c.recoveryRate >= 100 ? 'is-profit' : ''}`}>
                   <b class="rsp__sum-value">{c.recoveryRate}<i>%</i></b>
                   <i class="rsp__sum-label">回収率</i>

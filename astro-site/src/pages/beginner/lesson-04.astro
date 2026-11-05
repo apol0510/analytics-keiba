@@ -1,4 +1,6 @@
 ---
+import { RECOVERY_RATE_PUBLIC } from '../../lib/results/recoveryVisibility.js';
+if (!RECOVERY_RATE_PUBLIC) return Astro.redirect('/beginner/', 302);
 export const prerender = true;const title = "Step 4: 買い目の作り方 - 資金配分・点数管理・やってはいけない買い方";
 const description = "南関競馬で安定的に勝つための買い目構築法。資金配分の基本ルール、適切な点数管理、初心者が避けるべき買い方を具体例で解説。";
 ---

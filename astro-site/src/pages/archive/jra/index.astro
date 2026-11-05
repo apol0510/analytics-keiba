@@ -1,4 +1,5 @@
 ---
+import { publicRate } from '../../../lib/results/recoveryVisibility.js';
 import BaseLayout from '../../../layouts/BaseLayout.astro';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
@@ -144,7 +145,7 @@ const pageDescription = '中央競馬（JRA）の全的中実績アーカイブ�
                 <div class="month-stat-value">{monthData.hitRate}%</div>
                 <div class="month-stat-label">的中率</div>
               </div>
-              {monthData.returnRate != null && (
+              {publicRate(monthData.returnRate) != null && (
                 <div class="month-stat">
                   <div class={`month-stat-value ${parseFloat(monthData.returnRate) >= 100 ? 'profit' : ''}`}>{monthData.returnRate}%</div>
                   <div class="month-stat-label">回収率</div>

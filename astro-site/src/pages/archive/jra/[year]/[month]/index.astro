@@ -1,4 +1,5 @@
 ---
+import { publicRate } from '../../../../../lib/results/recoveryVisibility.js';
 import { setPublicCdnCache } from '../../../../../lib/cdnCache.mjs';
 import BaseLayout from '../../../../../layouts/BaseLayout.astro';
 import { readFileSync, existsSync } from 'fs';
@@ -54,7 +55,7 @@ const pageTitle = monthData.length > 0
   : '的中実績が見つかりません';
 
 const pageDescription = monthData.length > 0
-  ? `${year}年${parseInt(month)}月の中央競馬的中実績。開催日数${monthStats.totalDays}日、月間的中率${monthStats.hitRate}%、${monthStats.returnRate != null ? `月間回収率${monthStats.returnRate}%、` : ''}月間合計配当¥${monthStats.totalPayout.toLocaleString()}`
+  ? `${year}年${parseInt(month)}月の中央競馬的中実績。開催日数${monthStats.totalDays}日、月間的中率${monthStats.hitRate}%、${publicRate(monthStats.returnRate) != null ? `月間回収率${monthStats.returnRate}%、` : ''}月間合計配当¥${monthStats.totalPayout.toLocaleString()}`
   : '中央競馬（JRA）の的中実績アーカイブ';
 
 // 【2026-08-31】公開ページなのでエッジに 5 分だけ載せる（Function 実行回数の削減）。
@@ -90,7 +91,7 @@ setPublicCdnCache(Astro);
               <div class="stat-value">{monthStats.hitRate}%</div>
               <div class="stat-label">月間的中率</div>
             </div>
-            {monthStats.returnRate != null && (
+            {publicRate(monthStats.returnRate) != null && (
               <div class="stat-card">
                 <div class={`stat-value ${parseFloat(monthStats.returnRate) >= 100 ? 'profit' : ''}`}>
                   {monthStats.returnRate}%
@@ -107,7 +108,7 @@ setPublicCdnCache(Astro);
               <div class="stat-label">的中レース数</div>
             </div>
           </section>
-          {monthStats.returnRate != null && <p class="ai-points-note">※ {AI_POINTS_NOTE}。{AI_RECOVERY_DISCLOSURE}</p>}
+          {publicRate(monthStats.returnRate) != null && <p class="ai-points-note">※ {AI_POINTS_NOTE}。{AI_RECOVERY_DISCLOSURE}</p>}
 
           {/* 日別アーカイブ */}
           {monthData.map((dayData: any) => {
@@ -134,7 +135,7 @@ setPublicCdnCache(Astro);
                   <div class="summary-item">
                     📊 的中率: <span class="summary-value">{dayData.hitRate}%</span>
                   </div>
-                  {dayAi.recoveryRate != null && (
+                  {publicRate(dayAi.recoveryRate) != null && (
                     <div class="summary-item">
                       📈 回収率: <span class={`summary-value ${dayAi.recoveryRate >= 100 ? 'profit' : ''}`}>{dayAi.recoveryRate}%</span>
                     </div>
