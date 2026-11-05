@@ -5,6 +5,7 @@
   "description": "AI-Powered Analytics for 南関競馬 + 中央競馬 (analytics.keiba.link)",
   "scripts": {
     "report:umatan-with-osae": "node scripts/report-umatan-with-osae.mjs",
+    "test:ev-filter": "node --test src/lib/results/evFilter.test.mjs",
     "test:umatan-with-osae": "node --test scripts/reportUmatanWithOsae.test.mjs",
     "dev": "astro dev",
     "validate": "node scripts/validate-archive-data.js",

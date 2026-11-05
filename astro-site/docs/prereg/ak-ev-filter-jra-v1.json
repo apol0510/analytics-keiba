@@ -1,0 +1,12 @@
+{
+  "id": "AK_EV_FILTER_JRA_V1",
+  "market": "jra",
+  "status": "FORWARD_SHADOW",
+  "registeredAt": "2026-11-05T21:15:37Z",
+  "forwardFrom": "2026-11-07",
+  "rule": { "model": "blend", "universe": "ak", "rule": "ticket", "threshold": 1.2 },
+  "decisionLeadMinutes": 10,
+  "origin": "同じ期間で 36 通りを比べた中の 1 つ。開発期間の選定条件は満たしていない。過去の成績は証拠に数えず、forwardFrom 以降のレースだけで判定する。",
+  "checkpoint": { "minRaces": 150, "minHits": 15, "minRoi": 1.2, "minRoiCi95Low": 1.0 },
+  "customerDisplay": false
+}
