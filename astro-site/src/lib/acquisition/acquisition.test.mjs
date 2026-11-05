@@ -178,8 +178,9 @@ test('取得記録の保存は recordId 形式と予想キー・本文の一致�
 // ── 商品ごとの本文 ──
 test('Premium 馬単は通常の買い目＋点数を絞った買い目（本命軸・上位 3 頭・向きは通常と同じ）', () => {
   const c = buildPredictionContent({ product: 'premium', cat: 'nankan', venueName: '船橋', race: race(1), venueTotalRaces: 12 });
-  assert.deepEqual(c.umatan.normal.map((l) => l.line), ['3↔2.4.5.9.10', '4↔2.3.5.9.10']);
-  assert.deepEqual(c.umatan.normal.map((l) => l.points), [10, 10]);
+  assert.deepEqual(c.umatan.normal.map((l) => l.line), ['3↔2.4.5.9.10(抑え7.11)', '4↔2.3.5.9.10(抑え7.11)']);
+  assert.deepEqual(c.umatan.normal.map((l) => l.points), [14, 14]);
+  assert.equal(c.umatan.total, 26, '行をまたぐ 3-4 の表裏は 1 点ずつ');
   assert.deepEqual(c.umatan.narrowed, { line: '3↔2.4.9', points: 6 }, '対抗4・単穴2/9（pt 降順で 2→9）');
   const main = narrowUmatan(horses, ['3→2.4.5.9.10']);
   assert.deepEqual(main, { line: '3→2.4.9', points: 3 }, 'メインレースは一方向');
@@ -661,12 +662,13 @@ import { umatanLineHits, sanrenpukuLineHits, buildResultIndex, judgeAcquired } f
 import { readContentsFor } from './acquisitionStore.js';
 import { loadAcquiredResults } from './acquisitionServer.js';
 
-test('結果: 馬単は → 一方向／↔ 双方向・抑えは判定に含めない（importResults の checkUmatanHit と同じ）', () => {
+test('結果: 馬単は → 一方向／↔ 双方向・行に載った抑えは判定に含める（importResults と同じ）', () => {
   assert.equal(umatanLineHits('3↔4.5.10.11.12', 3, 12), true);
   assert.equal(umatanLineHits('3↔4.5.10.11.12', 12, 3), true, '↔ は裏目も的中');
   assert.equal(umatanLineHits('3→4.5.10.11.12', 12, 3), false, '→ の裏目は不的中');
   assert.equal(umatanLineHits('3→4.5.10.11.12', 3, 5), true);
-  assert.equal(umatanLineHits('3↔4.5(抑え9)', 3, 9), false, '抑えは馬単の判定に含めない');
+  assert.equal(umatanLineHits('3↔4.5(抑え9)', 3, 9), true, '配信した行の抑えは的中');
+  assert.equal(umatanLineHits('3↔4.5', 3, 9), false, '抑えが載っていない過去の取得本文は本線だけ');
   assert.equal(umatanLineHits('壊れた行', 3, 4), false);
 });
 

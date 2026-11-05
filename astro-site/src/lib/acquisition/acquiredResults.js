@@ -5,7 +5,7 @@
  *   取得時点の買い目（本文スナップショット）と、結果アーカイブの着順だけで判定する。推測で「的中」と出さない。
  *   - 馬単: 取得した買い目（通常＋絞り）のどれかで 1・2 着が当たっていれば的中。
  *           `→` は一方向（軸→相手のみ）、`↔` `⇔` `-` は双方向（importResults*.js の checkUmatanHit と同じ規則）。
- *           (抑え…) は馬単の判定に含めない。
+ *           取得した行に (抑え…) があれば判定に含める（抑えを配信する前の取得本文には載っていないので本線だけで判定される）。
  *   - 三連複: 取得した買い目（通常＋中心）のフォーメーション「軸 - 2列目 - 3列目(抑え…)」に 1〜3 着の組が含まれれば的中。
  *           抑えは 3 列目に含める（sanrenpukuBetting の buildCombos と同じ）。
  *   - 着順が無い（レース前・取込前）は pending。買い目が無い（見送り等）は none。
@@ -21,12 +21,12 @@ const num = (v) => { const n = Number(String(v ?? '').replace(/R$/, '')); return
 const nums = (s) => String(s || '').split(/[.,・]/).map((x) => parseInt(x, 10)).filter((n) => Number.isFinite(n));
 const rkey = (date, venueName, raceNumber) => `${date}|${venueName}|${raceNumber}`;
 
-/** 馬単 1 行の的中判定（importResults*.js の checkUmatanHit と同じ規則・抑えは除外） */
+/** 馬単 1 行の的中判定（importResults*.js の checkUmatanHitWithOsae と同じ規則） */
 export function umatanLineHits(line, first, second) {
   const m = String(line || '').match(/^\s*(\d+)\s*([\-↔⇔→])\s*(.+)$/);
   if (!m || !first || !second) return false;
   const axis = Number(m[1]);
-  const partners = nums(m[3].replace(/[(（]抑え[^)）]*[)）]/g, ''));
+  const partners = nums(m[3].replace(/[(（]抑え([^)）]*)[)）]/g, '.$1'));
   if (axis === first && partners.includes(second)) return true;
   return m[2] !== '→' && axis === second && partners.includes(first);
 }

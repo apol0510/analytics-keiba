@@ -54,10 +54,13 @@ const markSub = (h) => (h.profile ? [h.profile.sexAge, h.profile.weight, h.profi
 function splitLine(line) {
   const m = /^(\d+)\s*(↔|⇔|→|-)\s*(.+)$/.exec(String(line || ''));
   if (!m) return { axis: null, arrow: '', partners: [String(line || '')] };
-  return { axis: m[1], arrow: m[2] === '→' ? '→' : '⇔', partners: m[3].split('.').filter(Boolean) };
+  const osae = /[(（]抑え([^)）]*)[)）]/.exec(m[3]);
+  const main = m[3].replace(/[(（]抑え[^)）]*[)）]/g, '');
+  return { axis: m[1], arrow: m[2] === '→' ? '→' : '⇔', partners: main.split('.').filter(Boolean), osae: osae ? osae[1].split('.').filter(Boolean) : [] };
 }
 const rankClass = (rank) => { const n = Number(rank); return n === 1 ? 'rk rk-1' : n === 2 ? 'rk rk-2' : n === 3 ? 'rk rk-3' : 'rk'; };
-const umatanTotal = (isSrp || isPreview) ? 0 : c.umatan.normal.reduce((s, l) => s + l.points, 0);
+// total は行をまたぐ同じ組を 1 点と数える。total の無い過去の取得本文は従来どおり行の合計
+const umatanTotal = (isSrp || isPreview) ? 0 : (c.umatan.total ?? c.umatan.normal.reduce((s, l) => s + l.points, 0));
 /** 過去走の列（値のある列だけ出す。データ元によって日付・レース名・上り等が無いため）*/
 const PAST_COLS = [
   { key: 'date', label: '日付' }, { key: 'venue', label: '開催' }, { key: 'raceName', label: 'レース名', cls: 'race' },
@@ -104,13 +107,13 @@ const metaFor = (r) => [
                 <h3>馬単 通常の買い目</h3>
                 <span class="ag-pill">{umatanTotal}点</span>
               </header>
-              <p class="acq-note">{c.isMainRace ? '本命から相手 5 頭への馬単（一方向）です。' : '本命・対抗を軸に、相手との組み合わせ（表裏）で購入する買い目です。'}</p>
+              <p class="acq-note">{c.isMainRace ? '本命から相手 5 頭への馬単（一方向）です。' : '本命・対抗を軸に、相手との組み合わせ（表裏）で購入する買い目です。'}{c.umatan.normal.some((l) => /抑え/.test(l.line)) && ' 抑えの馬も買い目に含みます。'}</p>
               <ul class="bet-list">
                 {c.umatan.normal.map((l) => { const p = splitLine(l.line); const hit = umHit(l.line); return (
                   <li class={`bet-item ag-inset${hit ? ' is-hit-line' : ''}`} data-hit={hit ? 'true' : undefined}>
                     <span class="acq-axis"><span class="acq-axis-label">軸</span>{p.axis && <span class={`ag-num lg acq-axis-num${numRank(hit, p.axis)}`}>{p.axis}</span>}</span>
                     <span class="acq-arrow" aria-hidden="true">{p.arrow}</span>
-                    <span class="acq-partners">{p.partners.map((n) => <span class={`acq-pnum${numRank(hit, n)}`}>{n}</span>)}</span>
+                    <span class="acq-partners">{p.partners.map((n) => <span class={`acq-pnum${numRank(hit, n)}`}>{n}</span>)}{p.osae.length > 0 && <span class="acq-osae"><span class="acq-osae-label">抑え</span>{p.osae.map((n) => <span class={`acq-pnum${numRank(hit, n)}`}>{n}</span>)}</span>}</span>
                     <span class={`ag-pill acq-line-pts${hit ? ' acq-hit-pill' : ''}`}>{hit ? `✓ 的中・${l.points}点` : `${l.points}点`}</span>
                   </li>
                 ); })}
@@ -442,4 +445,6 @@ const metaFor = (r) => [
     .acq-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); align-items: start; gap: 18px; }
     .acq-body { gap: 18px; }
   }
+  .acq-osae { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+  .acq-osae-label { font-size: 0.75rem; opacity: 0.75; margin-left: 6px; }
 </style>

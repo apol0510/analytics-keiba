@@ -11,13 +11,15 @@
  *  - Premium の買い目（少ない買い目・通常買い目）は一切変えない。第 3 の買い目は作らない・画面にも出さない。
  *  - AI が算定するのは購入点数だけ（race.aiBet = { v, points }）。
  *    点数 = 少ない買い目（narrowUmatan）の組数 ＋ 通常買い目を参照した 2〜6 組。レース前のデータだけで決める（結果は使わない）。
- *  - 的中（✅）は通常買い目で判定する（importResults*.js の isHit をそのまま使う）。
- *  - 払戻は、通常買い目で記録されたそのレースの払戻（umatan.payout）をそのまま使う。
- *  - 回収率 = 通常買い目で記録された払戻 ÷（AI レース別算定購入点数 × 100 円）。
- *  - 算定が無いレースを含む日は購入点数・回収率を出さない（推測で埋めない）。
+ *  - 的中（✅）は本線＋抑えの買い目行で判定する（importResults*.js の isHit をそのまま使う・2026-11-06 MK 指示）。
+ *  - 払戻は、そのレースで記録された払戻（umatan.payout）をそのまま使う。
+ *  - 回収率 = 払戻 ÷（本線＋抑えの全組の点数 × 100 円）。分子と分母の買い目の範囲をそろえる。
+ *    race.aiBet は記録として残すが、回収率の分母には使わない。
+ *  - 買い目行の無いレースを含む日は購入点数・回収率を出さない（推測で埋めない）。
  */
 import { narrowUmatan } from '../acquisition/predictionContent.js';
 import { SELECTION_RULES } from '../acquisition/sanrenpukuSelection.js';
+import { umatanTickets } from './umatanHit.js';
 
 /** v1: 組の一覧も保存していた Preview 初版。v2: 点数だけを保存（MK 確定仕様） */
 export const AI_BET_VERSION = 2;
@@ -123,9 +125,14 @@ export function buildAiBet(horses, normalLines, opts = {}) {
 const payoutOf = (race) => num(race?.umatan?.payout ?? race?.payout) ?? 0;
 const isHitOf = (race) => !!(race?.isHit ?? race?.hit);
 
-/** 1 レースの実績（的中は通常買い目・払戻は通常買い目で記録された払戻・点数は AI 算定） */
+/** 1 レースの購入点数（買い目行の本線＋抑えの全組。行をまたぐ同じ組は 1 点） */
+export function racePurchasedPoints(race) {
+  return umatanTickets(race?.bettingLines, { includeOsae: true }).size;
+}
+
+/** 1 レースの実績（的中は本線＋抑え・払戻は記録された払戻・点数は本線＋抑えの全組） */
 export function raceAiResult(race) {
-  const points = num(race?.aiBet?.points);
+  const points = racePurchasedPoints(race);
   if (!(points > 0)) return null;
   const hit = isHitOf(race);
   return { points, hit, payout: hit ? payoutOf(race) : 0 };
@@ -181,10 +188,10 @@ export function summarizeAiDays(entries) {
 }
 
 /** 画面に添える小さな注記（これ以上の内部計算は画面で説明しない） */
-export const AI_POINTS_NOTE = '購入点数はAIによるレース別算定';
+export const AI_POINTS_NOTE = '的中は本線＋抑えで判定・購入点数は本線＋抑えの全組';
 
 /** 的中結果ページの回収率に添える説明。回収率は実購入の収支ではないことを読者に伝える（docs/BET_POINT_LOGIC.md） */
-export const AI_RECOVERY_DISCLOSURE = '回収率は、通常買い目で記録された払戻をAIによるレース別算定の購入点数で割った理論値です。買い目どおりに購入した場合の収支とは異なります。';
+export const AI_RECOVERY_DISCLOSURE = '的中は本線に抑えを含めて判定しています。回収率は、払戻を本線＋抑えの全組を各100円で購入した金額で割った値です。Premium の買い目に抑えを表示する前のレースは、抑えの馬を含めて再集計した値です。';
 
 /**
  * 的中結果ページの通算表示。全期間と、最新開催日から recentMonths か月の 2 区間を返す。

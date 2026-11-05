@@ -14,6 +14,7 @@ import crypto from 'crypto';
 import { createSharedClient, resolveSharedToken } from './lib/sharedFetch.mjs';
 import { exitDeferredOrFatal } from './lib/sharedCheckerSupport.mjs';
 import { buildAiBet } from '../src/lib/results/aiBetPoints.js';
+import { checkUmatanHitWithOsae } from '../src/lib/results/umatanHit.js';
 
 const LABEL = 'importResultsJra.js';
 
@@ -378,7 +379,7 @@ function verifyResults(prediction, results) {
     }
 
     const bettingLines = predRace.bettingLines?.umatan || [];
-    const hits = bettingLines.filter(line => checkUmatanHit(line, race));
+    const hits = bettingLines.filter(line => checkUmatanHitWithOsae(line, race));
 
     // 買い目点数を計算（全ラインの本線合計 / 最大12点に cap）
     // 運用ルール: お客向け表示は 1レースあたり最大12点

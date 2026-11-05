@@ -1,4 +1,4 @@
-// homeStatCardsVisibility.test.mjs — トップの 4 つの実績カード（62% / 126% / 10,000+ / 50+）が JS に依存せず見えること
+// homeStatCardsVisibility.test.mjs — トップの 4 つの実績カード（70% / 73% / 10,000+ / 50+）が JS に依存せず見えること
 // 原因: BaseLayout が DOMContentLoaded で .stats-card を opacity:0 にし、IntersectionObserver でだけ 1 に戻していた。
 //       非表示タブ・prerender・クローラ・スクリプト失敗では IO / rAF が走らず、カードが opacity:0・「0%」のまま残った。
 import { test } from 'node:test';
@@ -19,7 +19,7 @@ test('BaseLayout のフェードイン（opacity:0 で隠す対象）に .stats-
 
 test('トップの実績カードは SSR で最終値を出す（JS 前・JS 失敗時も 0% にならない）', () => {
   const s = read('src/pages/index.astro');
-  for (const [t, suf, v] of [['62', '%', '62%'], ['126', '%', '126%'], ['10000', '\\+', '10,000\\+'], ['50', '\\+', '50\\+']]) {
+  for (const [t, suf, v] of [['70', '%', '70%'], ['73', '%', '73%'], ['10000', '\\+', '10,000\\+'], ['50', '\\+', '50\\+']]) {
     assert.match(s, new RegExp(`data-target="${t}" data-suffix="${suf}"[^>]*>\\s*${v}\\s*</div>`), `${t}: SSR 値`);
   }
   assert.doesNotMatch(s, /class="stats-number"[^>]*>\s*0[%+]\s*</);

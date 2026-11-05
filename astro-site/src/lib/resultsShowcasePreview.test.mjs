@@ -260,13 +260,14 @@ test('集計は単一源の値をそのまま使う（一覧から数え直さ�
   const view = buildLatestShowcase([day]);
   assert.equal(p.hitRaces, view.hitRaces);
   assert.equal(p.totalRaces, view.totalRaces);
-  // 2026-10-06: 回収率は AI レース別算定（aiBet が無い日は null）。単一源の値をそのまま使うことだけを見る
+  // 2026-10-06: 回収率は本線＋抑えの全組が分母（買い目行が無い日は null）。単一源の値をそのまま使うことだけを見る
   assert.equal(p.recoveryRate, view.recoveryRate == null ? null : Number(view.recoveryRate));
 });
 
 test('回収率が無い日は null（0% などを捏造しない）', () => {
   const day = makeDay();
   delete day.recoveryRate;
+  day.races = day.races.map(({ bettingLines, ...r }) => r); // 点数を数える買い目行が無い日
   const p = buildShowcasePreview([day], 'nankan');
   assert.equal(p.recoveryRate, null);
 });

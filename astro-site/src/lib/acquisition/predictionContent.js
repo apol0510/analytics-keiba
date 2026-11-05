@@ -5,6 +5,7 @@
  * 外部由来の指数は raw のまま入れない（getHorseAiIndex＝raw−1 だけを入れる）。正本 docs/PREDICTION_ACQUISITION.md
  */
 import { getMainRaceNumber, generateRaceUmatanLines, countPointsFromUmatanLine } from '../../utils/mainRaceBetting.js';
+import { umatanTickets } from '../results/umatanHit.js';
 import { generateNormalSanrenpuku, generateNarrowSanrenpuku, formatSanrenpukuLine } from '../../utils/sanrenpukuBetting.js';
 import { getHorseAiIndex, isOsaeCandidate, isIneligibleHorse } from '../shared-prediction-logic.js';
 import { evaluateSanrenpukuRace } from './sanrenpukuSelection.js';
@@ -129,13 +130,13 @@ export function buildPredictionContent({ product, cat, venueName, race, venueTot
   }
   const stored = Array.isArray(race?.bettingLines?.umatan) && race.bettingLines.umatan.length
     ? race.bettingLines.umatan : generateRaceUmatanLines(horses, isMain);
-  // 点数は保存文字列（原文）から数える。表示だけ抑えを除く。bettingLines は書き換えない
+  // 抑えは正式な買い目として配信する（2026-11-06 MK 決定）。点数も抑えの組まで数える。bettingLines は書き換えない
   const normal = stored.filter(Boolean)
-    .map((lineStr) => ({ line: stripOsaeForDisplay(lineStr), points: countPointsFromUmatanLine(lineStr) }));
+    .map((lineStr) => ({ line: lineStr, points: umatanTickets([lineStr], { includeOsae: true }).size }));
   // Premium は馬単専用。三連複は Premium Sanrenpuku の商品価値なので入れない（2026-10-03 MK 確定）
   return {
     ...head,
-    umatan: { normal, narrowed: narrowUmatan(horses, stored) },
+    umatan: { normal, total: umatanTickets(stored, { includeOsae: true }).size, narrowed: narrowUmatan(horses, stored) },
   };
 }
 

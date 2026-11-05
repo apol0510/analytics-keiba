@@ -61,11 +61,11 @@ test('追加組数はレース前のデータで変わる（毎レース同じ�
   assert.ok(a >= EXTRA_MIN && b <= EXTRA_MAX);
 });
 
-test('通常買い目で的中なら実績も的中・払戻は通常買い目で記録された払戻をそのまま使う', () => {
-  // 勝ち組がどの組でも（少ない買い目の外でも）、通常買い目で的中していれば払戻を 0 にしない
-  const race = { isHit: true, umatan: { combination: '6-2', payout: 3000 }, aiBet: { v: 2, points: 8 } };
+test('的中なら記録された払戻をそのまま使い、点数は本線＋抑えの全組で数える', () => {
+  // 勝ち組がどの組でも（少ない買い目の外でも）、的中していれば払戻を 0 にしない
+  const race = { isHit: true, umatan: { combination: '6-2', payout: 3000 }, bettingLines: ['6→1.2.3.4(抑え5.7.8.9)'], aiBet: { v: 2, points: 3 } };
   const r = raceAiResult(race);
-  assert.equal(r.hit, true, '通常買い目で的中していれば的中');
+  assert.equal(r.hit, true, '的中');
   assert.equal(r.payout, 3000, '記録された払戻をそのまま使う');
   assert.equal(r.points, 8);
   assert.equal('covered' in r, false, 'AI 内部の組に当たりが含まれるかを判定しない');
@@ -76,11 +76,12 @@ test('通常買い目で的中なら実績も的中・払戻は通常買い目�
   assert.equal(raceAiResult({ ...race, isHit: false }).payout, 0);
 });
 
-test('回収率 = 通常買い目で記録された払戻 ÷（AI 算定購入点数 × 100 円）', () => {
+test('回収率 = 払戻 ÷（本線＋抑えの全組の点数 × 100 円）。分母に aiBet を使わない', () => {
+  const lines = (n) => [`1→${Array.from({ length: n }, (_, i) => i + 2).join('.')}`];
   const day = { races: [
-    { isHit: true, umatan: { combination: '6-2', payout: 3000 }, aiBet: { v: 2, points: 10 } },
-    { isHit: false, umatan: { combination: '1-2', payout: 900 }, aiBet: { v: 2, points: 12 } },
-    { isHit: true, umatan: { combination: '1-3', payout: 450 }, aiBet: { v: 2, points: 5 } },
+    { isHit: true, umatan: { combination: '6-2', payout: 3000 }, bettingLines: lines(10), aiBet: { v: 2, points: 1 } },
+    { isHit: false, umatan: { combination: '1-2', payout: 900 }, bettingLines: lines(12), aiBet: { v: 2, points: 1 } },
+    { isHit: true, umatan: { combination: '1-3', payout: 450 }, bettingLines: lines(5), aiBet: { v: 2, points: 1 } },
   ] };
   const d = summarizeAiDay(day);
   assert.equal(d.points, 27);
@@ -93,8 +94,8 @@ test('回収率 = 通常買い目で記録された払戻 ÷（AI 算定購入�
   assert.equal(s.recoveryRate, d.recoveryRate);
 });
 
-test('算定の無いレースがある日は購入点数・回収率を出さない（推測で埋めない）', () => {
-  const d = summarizeAiDay({ races: [{ isHit: true, umatan: { combination: '1-2', payout: 500 }, aiBet: { v: 2, points: 8 } }, { isHit: false }] });
+test('買い目行の無いレースがある日は購入点数・回収率を出さない（推測で埋めない）', () => {
+  const d = summarizeAiDay({ races: [{ isHit: true, umatan: { combination: '1-2', payout: 500 }, bettingLines: ['1→2'] }, { isHit: false }] });
   assert.equal(d.complete, false);
   assert.equal(d.points, null);
   assert.equal(d.recoveryRate, null);
@@ -163,7 +164,7 @@ test('第 3 の買い目に見せない: 算定した組を画面に出さず、
     assert.doesNotMatch(s, /厳選|AI選定|AI推奨|AI買い目/, `${p}: 第 3 の買い目に見える語`);
   }
   assert.doesNotMatch(AI_POINTS_NOTE, /厳選|買い目/);
-  assert.equal(AI_POINTS_NOTE, '購入点数はAIによるレース別算定');
+  assert.equal(AI_POINTS_NOTE, '的中は本線＋抑えで判定・購入点数は本線＋抑えの全組');
 });
 
 test('回収率 100% 未満を赤字で警告しない（他の実績値と同じ扱い）', () => {
@@ -208,7 +209,7 @@ test('Premium の少ない買い目・通常買い目は実績算定に引きず
 });
 
 test('通算表示: 全期間と最新開催日から 3 か月を分けて数える', () => {
-  const day = (date, payout) => ({ date, races: [{ isHit: true, umatan: { payout }, aiBet: { v: 2, points: 10 } }] });
+  const day = (date, payout) => ({ date, races: [{ isHit: true, umatan: { payout }, bettingLines: ['1→2.3.4.5.6.7.8.9.10.11'] }] });
   const c = summarizeCumulative([day('2026-11-05', 2000), day('2026-08-05', 1000), day('2026-08-04', 4000)]);
   assert.equal(c.from, '2026-08-04');
   assert.equal(c.to, '2026-11-05');
@@ -218,7 +219,7 @@ test('通算表示: 全期間と最新開催日から 3 か月を分けて数え
 });
 
 test('通算表示: 月末の開催日でも 3 か月前の日付が繰り上がらない', () => {
-  const day = (date) => ({ date, races: [{ isHit: false, aiBet: { v: 2, points: 10 } }] });
+  const day = (date) => ({ date, races: [{ isHit: false, bettingLines: ['1→2'] }] });
   const c = summarizeCumulative([day('2026-05-31'), day('2026-03-01'), day('2026-02-28'), day('2026-02-27')]);
   assert.equal(c.recent.days, 3);
 });
@@ -228,7 +229,20 @@ test('通算表示: データが無ければ出さない', () => {
   assert.equal(summarizeCumulative([{ races: [] }]), null);
 });
 
-test('回収率の説明は理論値で実購入の収支と異なることを伝える', () => {
-  assert.match(AI_RECOVERY_DISCLOSURE, /理論値/);
-  assert.match(AI_RECOVERY_DISCLOSURE, /買い目どおりに購入した場合の収支とは異なります/);
+test('回収率の説明は抑えを含む判定と全組購入の分母を伝える', () => {
+  assert.match(AI_RECOVERY_DISCLOSURE, /本線に抑えを含めて判定/);
+  assert.match(AI_RECOVERY_DISCLOSURE, /本線＋抑えの全組を各100円で購入した金額/);
+  assert.match(AI_RECOVERY_DISCLOSURE, /抑えを表示する前のレースは、抑えの馬を含めて再集計した値/);
+});
+
+test('実データ: 2026-11-05 船橋 10R・12R は抑えの買い目で的中、分母はその全組', () => {
+  const day = JSON.parse(read('src/data/archiveResults.json')).find((e) => e.date === '2026-11-05');
+  const pick = (n) => day.races.find((r) => r.raceNumber === n);
+  assert.equal(pick(10).isHit, true);
+  assert.equal(pick(12).isHit, true);
+  const d = summarizeAiDay(day);
+  assert.equal(d.hitRaces, 6);
+  assert.equal(d.payout, 36630);
+  assert.equal(d.points, 349);
+  assert.equal(d.recoveryRate, 105);
 });

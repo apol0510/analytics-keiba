@@ -14,7 +14,7 @@ import crypto from 'crypto';
 import { createSharedClient, resolveSharedToken } from './lib/sharedFetch.mjs';
 import { exitDeferredOrFatal } from './lib/sharedCheckerSupport.mjs';
 import { buildAiBet } from '../src/lib/results/aiBetPoints.js';
-import { checkUmatanHit } from '../src/lib/results/umatanHit.js';
+import { checkUmatanHit, checkUmatanHitWithOsae } from '../src/lib/results/umatanHit.js';
 
 const LABEL = 'importResults.js';
 
@@ -237,7 +237,7 @@ function verifyResults(prediction, results) {
     }
 
     const bettingLines = predRace.bettingLines?.umatan || [];
-    const hits = bettingLines.filter(line => checkUmatanHit(line, race));
+    const hits = bettingLines.filter(line => checkUmatanHitWithOsae(line, race));
 
     const first = race.results[0];
     const second = race.results[1];

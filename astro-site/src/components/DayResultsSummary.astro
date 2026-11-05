@@ -23,7 +23,7 @@ const { view, heading } = Astro.props;
             <p>有料版の買い目（馬単 {v.mainRace.betPoints}点）:<strong class="drs-bet"> {v.mainRace.honmei} {v.mainRace.displayArrow} {v.mainRace.displayPartners.join('・')}</strong></p>
             <p>
               {v.mainRace.isHit
-                ? <>✅ 的中{v.mainRace.combination && <> 馬単 {v.mainRace.combination}</>}{v.mainRace.payout && <> ／ 払戻 ¥{v.mainRace.payout.toLocaleString()}（100円あたり）</>}</>
+                ? <>✅ {v.mainRace.hitByOsae ? '抑えで的中' : '的中'}{v.mainRace.combination && <> 馬単 {v.mainRace.combination}</>}{v.mainRace.payout && <> ／ 払戻 ¥{v.mainRace.payout.toLocaleString()}（100円あたり）</>}</>
                 : <>✗ 不的中{v.mainRace.combination && <> （結果 馬単 {v.mainRace.combination}）</>}</>}
             </p>
           </div>
