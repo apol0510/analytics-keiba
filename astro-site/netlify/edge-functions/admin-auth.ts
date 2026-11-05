@@ -73,5 +73,5 @@ export default async (request: Request) => {
 };
 
 export const config = {
-  path: '/admin/*',
+  path: ['/admin/*', '/admin-newsletter-simple', '/admin-newsletter-simple/*'],
 };

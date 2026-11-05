@@ -1,8 +1,12 @@
 // デバッグ用：1週間前通知テスト（詳細ログ付き）
 
+const { adminDenialResult } = require('../../src/lib/auth/adminFunctionGuard.js');
 const Airtable = require('airtable');
 
 exports.handler = async (event, context) => {
+  const denied = adminDenialResult(event);
+  if (denied) return denied;
+
   const headers = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Content-Type',

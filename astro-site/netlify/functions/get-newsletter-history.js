@@ -1,8 +1,12 @@
 // 配信履歴取得Function
+import { adminDenialResponse } from '../../src/lib/auth/adminFunctionGuard.js';
 import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
 // Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
 installAirtableCallMeter({ source: 'get-newsletter-history' });
 export default async function handler(request, context) {
+  const denied = adminDenialResponse(request);
+  if (denied) return denied;
+
   const headers = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Content-Type',

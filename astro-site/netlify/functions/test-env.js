@@ -3,7 +3,11 @@
  * URL: /.netlify/functions/test-env
  */
 
+const { adminDenialResult } = require('../../src/lib/auth/adminFunctionGuard.js');
 exports.handler = async (event, context) => {
+  const denied = adminDenialResult(event);
+  if (denied) return denied;
+
   const headers = {
     'Access-Control-Allow-Origin': '*',
     'Content-Type': 'application/json'

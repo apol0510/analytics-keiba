@@ -6,7 +6,11 @@
  * https://analytics.keiba.link/.netlify/functions/fix-free-plantype
  */
 
+const { adminDenialResult } = require('../../src/lib/auth/adminFunctionGuard.js');
 exports.handler = async (event, context) => {
+  const denied = adminDenialResult(event);
+  if (denied) return denied;
+
   const headers = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Content-Type',

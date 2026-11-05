@@ -37,11 +37,14 @@ export const SITEMAP_EXCLUDE_EXACT = Object.freeze([
   '/dashboard/',
   '/welcome/',
   '/withdrawal-upsell/',
+  '/withdrawal-complete/',
 ]);
 
 /** 前方一致で除外するパス（配下すべてが対象のもの） */
 export const SITEMAP_EXCLUDE_PREFIX = Object.freeze([
   '/admin/',
+  '/admin-newsletter-simple', // 管理画面（Basic 認証）
+  '/checkout/', // 決済の戻り先（noindex）
   '/auth/',
   '/premium-prediction/', // 会員限定（未ログインは 302）
   '/predictions/', // Premium の取得一覧・本文・履歴（会員限定・未ログインは 302）
