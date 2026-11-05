@@ -1,3 +1,4 @@
+import { adminDenialResult } from '../../src/lib/auth/adminFunctionGuard.js';
 import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
 // Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
 installAirtableCallMeter({ source: 'update-betting-data' });
@@ -5,6 +6,9 @@ import { promises as fs } from 'fs';
 import path from 'path';
 
 export async function handler(event, context) {
+  const denied = adminDenialResult(event);
+  if (denied) return denied;
+
     // CORS headers
     const headers = {
         'Access-Control-Allow-Origin': '*',

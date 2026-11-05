@@ -1,8 +1,12 @@
 // デバッグ用：すべての顧客レコードを表示
 
+const { adminDenialResult } = require('../../src/lib/auth/adminFunctionGuard.js');
 const Airtable = require('airtable');
 
 exports.handler = async (event, context) => {
+  const denied = adminDenialResult(event);
+  if (denied) return denied;
+
   const headers = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Content-Type',

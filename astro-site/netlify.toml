@@ -158,6 +158,15 @@
   function = "admin-auth"
   path = "/admin/*"
 
+# 顧客の件数とメールを表示する管理画面。/admin/ の外にあるので個別に守る
+[[edge_functions]]
+  function = "admin-auth"
+  path = "/admin-newsletter-simple"
+
+[[edge_functions]]
+  function = "admin-auth"
+  path = "/admin-newsletter-simple/*"
+
 [functions]
   directory = "netlify/functions"
   node_bundler = "esbuild"
