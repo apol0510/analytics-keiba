@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import {
   expandUmatanLine, extraCount, aiPointBasis, buildAiBet, raceAiResult, summarizeAiDay, summarizeAiDays,
   EXTRA_MIN, EXTRA_MAX, AI_POINTS_NOTE, AI_RECOVERY_DISCLOSURE, summarizeCumulative, AI_BET_VERSION,
+  raceAiIndex, summarizeAiIndex, AI_SELECT_MODEL, buildAiSelect, raceAiSelect, summarizeAiSelect,
 } from './aiBetPoints.js';
 import { narrowUmatan } from '../acquisition/predictionContent.js';
 
@@ -161,7 +162,7 @@ test('第 3 の買い目に見せない: 算定した組を画面に出さず、
   for (const p of RESULT_PAGES) {
     const s = read(p);
     assert.doesNotMatch(s, /aiBet\??\.combos/, `${p}: 算定した組を表示している`);
-    assert.doesNotMatch(s, /厳選|AI選定|AI推奨|AI買い目/, `${p}: 第 3 の買い目に見える語`);
+    assert.doesNotMatch(s, /厳選|AI選定(?!回収率)|AI推奨|AI買い目/, `${p}: 第 3 の買い目に見える語`);
   }
   assert.doesNotMatch(AI_POINTS_NOTE, /厳選|買い目/);
   assert.equal(AI_POINTS_NOTE, '的中は本線＋抑えで判定・購入点数は本線＋抑えの全組');
@@ -245,4 +246,50 @@ test('実データ: 2026-11-05 船橋 10R・12R は抑えの買い目で的中�
   assert.equal(d.payout, 36630);
   assert.equal(d.points, 349);
   assert.equal(d.recoveryRate, 105);
+});
+
+test('AI算定指標は 10/6 の式で、抑えの払戻を含めず、分母に aiBet を使う', () => {
+  const race = (first, second, payout) => ({
+    bettingLines: ['1↔2.3(抑え4)'], aiBet: { v: 2, points: 5 },
+    result: { first: { number: first }, second: { number: second } }, umatan: { payout }, isHit: true,
+  });
+  assert.deepEqual(raceAiIndex(race(1, 2, 1000)), { points: 5, payout: 1000 });
+  assert.deepEqual(raceAiIndex(race(1, 4, 9000)), { points: 5, payout: 0 });
+  assert.equal(summarizeAiIndex([{ races: [race(1, 2, 1000), race(1, 4, 9000)] }]).value, 100);
+  assert.equal(raceAiIndex({ ...race(1, 2, 1000), aiBet: null }), null);
+});
+
+test('実データ: AI算定指標は 10/6 の式で南関 118.6%・中央 127.3% 付近を再現する', () => {
+  const read = (f) => JSON.parse(readFileSync(new URL(`../../data/${f}`, import.meta.url), 'utf8'));
+  const nankan = read('archiveResults.json').filter((e) => e.date >= '2026-04-15');
+  assert.ok(Math.abs(summarizeAiIndex(nankan).value - 118.6) < 3);
+  assert.ok(Math.abs(summarizeAiIndex(read('archiveResultsJra.json')).value - 127.3) < 3);
+});
+
+test('AI 事前選定: 実現回収率は選定した組の払戻 ÷ 選定した組の点数で、結果で組を変えない', () => {
+  const race = (first, second, payout) => ({
+    aiSelect: { model: AI_SELECT_MODEL, tickets: ['1-2', '2-1'], points: 2 },
+    result: { first: { number: first }, second: { number: second } }, umatan: { payout }, isHit: true,
+  });
+  assert.deepEqual(raceAiSelect(race(1, 2, 1000)), { points: 2, hit: true, payout: 1000 });
+  assert.deepEqual(raceAiSelect(race(1, 3, 9000)), { points: 2, hit: false, payout: 0 });
+  const s = summarizeAiSelect([{ races: [race(1, 2, 1000), race(1, 3, 9000)] }]);
+  assert.equal(s.recoveryRate, 250);
+  assert.equal(s.races, 2);
+  assert.equal(s.points, 4);
+  assert.equal(raceAiSelect({ result: race(1, 2, 1).result }), null);
+});
+
+test('実データ: 保存した選定は同じ予想と買い目から再現でき、南関・中央を別々に数える', () => {
+  const read = (f) => JSON.parse(readFileSync(new URL(`../../data/${f}`, import.meta.url), 'utf8'));
+  for (const f of ['archiveResults.json', 'archiveResultsJra.json']) {
+    const races = read(f).flatMap((e) => e.races || []).filter((r) => r.aiSelect);
+    assert.ok(races.length > 1000);
+    for (const r of races) {
+      assert.equal(r.aiSelect.model, AI_SELECT_MODEL);
+      assert.equal(r.aiSelect.points, r.aiSelect.tickets.length);
+      assert.equal(r.aiSelect.points, r.aiBet.points);
+    }
+  }
+  assert.equal(buildAiSelect([], []), null);
 });

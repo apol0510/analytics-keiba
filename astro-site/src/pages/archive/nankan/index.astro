@@ -1,4 +1,5 @@
 ---
+import AiSelectionRecovery from '../../../components/AiSelectionRecovery.astro';
 import BaseLayout from '../../../layouts/BaseLayout.astro';
 import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join } from 'path';
@@ -120,6 +121,7 @@ const pageDescription = '南関競馬の全的中実績アーカイブ。マリ�
     </div>
 
     <CumulativeRecovery cumulative={cumulative} label="南関" />
+    <AiSelectionRecovery entries={currentBasisDays} label="南関・通算" />
 
     <div class="cta-box">
       <p class="cta-text">

@@ -1,4 +1,7 @@
 ---
+import AiSelectionRecovery from '../../../../../components/AiSelectionRecovery.astro';
+import { summarizeAiSelect } from '../../../../../lib/results/aiBetPoints.js';
+import { AI_SELECTION_RATE_PUBLIC } from '../../../../../lib/results/recoveryVisibility.js';
 import { publicRate } from '../../../../../lib/results/recoveryVisibility.js';
 import { setPublicCdnCache } from '../../../../../lib/cdnCache.mjs';
 import BaseLayout from '../../../../../layouts/BaseLayout.astro';
@@ -108,6 +111,7 @@ setPublicCdnCache(Astro);
               <div class="stat-label">的中レース数</div>
             </div>
           </section>
+          <AiSelectionRecovery entries={monthData} label={`中央・${year}年${parseInt(month)}月`} />
           {publicRate(monthStats.returnRate) != null && <p class="ai-points-note">※ {AI_POINTS_NOTE}。{AI_RECOVERY_DISCLOSURE}</p>}
 
           {/* 日別アーカイブ */}
@@ -120,6 +124,7 @@ setPublicCdnCache(Astro);
             const hitRaces = sortRacesByVenueAndNumber(dayData.races || [], dayData.venues)
               .filter((race: any) => race.isHit);
             const dayAi = summarizeAiDay(dayData);
+          const daySelect = AI_SELECTION_RATE_PUBLIC ? summarizeAiSelect([dayData]) : null;
 
             return (
               <section class="day-section">
@@ -135,6 +140,7 @@ setPublicCdnCache(Astro);
                   <div class="summary-item">
                     📊 的中率: <span class="summary-value">{dayData.hitRate}%</span>
                   </div>
+                  {daySelect && (<div class="summary-item">🤖 AI選定回収率: <span class="summary-value">{daySelect.recoveryRate}%</span>（{daySelect.points}点）</div>)}
                   {publicRate(dayAi.recoveryRate) != null && (
                     <div class="summary-item">
                       📈 回収率: <span class={`summary-value ${dayAi.recoveryRate >= 100 ? 'profit' : ''}`}>{dayAi.recoveryRate}%</span>
