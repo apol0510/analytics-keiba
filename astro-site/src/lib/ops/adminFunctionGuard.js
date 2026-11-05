@@ -9,7 +9,7 @@
  *   OPTIONS を処理しない関数が本体を実行するのを防ぐ。
  * - 認証情報と判定理由を本文へ出さない。
  */
-import { decideAdminAccess } from './adminBasicAuth.js';
+import { decideAdminAccess } from '../auth/adminBasicAuth.js';
 
 const REALM = 'Basic realm="KEIBA Admin Panel"';
 const BODY = JSON.stringify({ error: 'Authentication required' });

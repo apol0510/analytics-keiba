@@ -1,6 +1,6 @@
 /**
  * adminFunctionGuard.test.mjs — 管理者専用 Function が認証なしで動かないことを固定する
- *   node --test src/lib/auth/adminFunctionGuard.test.mjs
+ *   node --test src/lib/ops/adminFunctionGuard.test.mjs
  *
  * 2026-11-05: 配信先メールを返す get-scheduled-jobs、全顧客の PlanType を消す reset-all-plantype などが
  * 認証なしで公開されていた。/.netlify/functions/* は Edge の対象外なので関数の入口で止める。
@@ -16,8 +16,8 @@ const basic = (s) => `Basic ${Buffer.from(s).toString('base64')}`;
 const req = (auth, method = 'GET') => new Request('https://x.test/f', { method, headers: auth ? { authorization: auth } : {} });
 
 const GUARDED = {
-  adminDenialResponse: ['get-scheduled-jobs', 'get-newsletter-history', 'get-newsletter-status', 'get-customer-stats', 'domain-protection'],
-  adminDenialResult: ['reset-all-plantype', 'migrate-customers-plantype', 'fix-free-plantype', 'test-all-customers', 'test-env', 'test-expiry-warning', 'get-point-exchange-requests', 'update-betting-data', 'update-complete-data'],
+  adminDenialResponse: ['get-scheduled-jobs', 'get-newsletter-history', 'get-newsletter-status', 'get-customer-stats', 'domain-protection', 'domain-protection-alert', 'step-due-preview', 'step-email-preview', 'newsletter-preview', 'enqueue-step-emails', 'reconcile-step-deliveries'],
+  adminDenialResult: ['reset-all-plantype', 'migrate-customers-plantype', 'fix-free-plantype', 'test-all-customers', 'test-env', 'test-expiry-warning', 'get-point-exchange-requests', 'update-betting-data', 'update-complete-data', 'send-payment-confirmation-auto', 'daily-points', 'claim-reward', 'gemini-race-analysis'],
 };
 
 test('Request 形式: 正しい認証だけ通す', async () => {
@@ -47,7 +47,7 @@ test('対象の関数は本体より先に認証を確認する', () => {
   for (const [guard, names] of Object.entries(GUARDED)) {
     for (const n of names) {
       const s = read(`netlify/functions/${n}.js`);
-      const start = s.search(/(export default async function handler\(|exports\.handler = async \(|export async function handler\()/);
+      const start = s.search(/(export default async function handler\(|export const handler = async \(|exports\.handler = async \(|export async function handler\()/);
       assert.ok(start >= 0, n);
       const body = s.slice(start);
       const call = body.indexOf(`${guard}(`);

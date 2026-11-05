@@ -1,6 +1,6 @@
 // ポイント交換申請データ取得（管理画面用）
 
-const { adminDenialResult } = require('../../src/lib/auth/adminFunctionGuard.js');
+const { adminDenialResult } = require('../../src/lib/ops/adminFunctionGuard.js');
 const Airtable = require('airtable');
 
 const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE_ID);

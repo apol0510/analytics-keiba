@@ -16,6 +16,7 @@
 //     master の NEWSLETTER_AUTOMATION_ENABLED に加えて STEP_EMAIL_AUTOMATION_ENABLED
 //     （既定 false）ガードを必ず入れること。本関数はその「送信ゼロの事前検証」用。
 
+import { adminDenialResponse } from '../../src/lib/ops/adminFunctionGuard.js';
 import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
 // Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
 installAirtableCallMeter({ source: 'step-email-preview' });
@@ -78,6 +79,9 @@ function structuredErrorResponse(headers, { httpStatusSource, errorClass, error,
 }
 
 export default async function handler(request) {
+  const denied = adminDenialResponse(request);
+  if (denied) return denied;
+
   const headers = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Content-Type',

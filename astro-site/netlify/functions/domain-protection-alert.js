@@ -1,12 +1,16 @@
 // ドメイン保護アラートシステム
 // 高リスク状況の早期検知・管理者通知
 
+import { adminDenialResponse } from '../../src/lib/ops/adminFunctionGuard.js';
 import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
 // Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
 installAirtableCallMeter({ source: 'domain-protection-alert' });
 import { formatJst } from '../../src/lib/datetime/jstTimestamp.js';
 
 export default async function handler(request, context) {
+  const denied = adminDenialResponse(request);
+  if (denied) return denied;
+
   const headers = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Content-Type',
@@ -50,7 +54,9 @@ async function checkRiskLevel(request, headers) {
   try {
     // domain-protection.jsから統計を取得
     const baseUrl = request.url.substring(0, request.url.lastIndexOf('/'));
-    const statsResponse = await fetch(`${baseUrl}/domain-protection?action=get-stats`);
+    const statsResponse = await fetch(`${baseUrl}/domain-protection?action=get-stats`, {
+      headers: { Authorization: request.headers.get('authorization') ?? '' },
+    });
 
     if (!statsResponse.ok) {
       throw new Error(`Stats API error: ${statsResponse.status}`);
