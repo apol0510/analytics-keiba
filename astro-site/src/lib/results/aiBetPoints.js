@@ -191,7 +191,7 @@ export function summarizeAiDays(entries) {
 export const AI_POINTS_NOTE = '的中は本線＋抑えで判定・購入点数は本線＋抑えの全組';
 
 /** 的中結果ページの回収率に添える説明。回収率は実購入の収支ではないことを読者に伝える（docs/BET_POINT_LOGIC.md） */
-export const AI_RECOVERY_DISCLOSURE = '的中は本線に抑えを含めて判定しています。回収率は、払戻を本線＋抑えの全組を各100円で購入した金額で割った値です。';
+export const AI_RECOVERY_DISCLOSURE = '的中は本線に抑えを含めて判定しています。回収率は、払戻を本線＋抑えの全組を各100円で購入した金額で割った値です。Premium の買い目に抑えを表示する前のレースは、抑えの馬を含めて再集計した値です。';
 
 /**
  * 的中結果ページの通算表示。全期間と、最新開催日から recentMonths か月の 2 区間を返す。

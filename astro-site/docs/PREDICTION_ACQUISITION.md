@@ -100,7 +100,7 @@
 
 | 項目 | 定義 | 単一源 |
 |---|---|---|
-| 通常の馬単 | 取込時の `bettingLines.umatan`（無ければ `generateRaceUmatanLines`）。`(抑え…)` は表示しない | `src/lib/acquisition/predictionContent.js` |
+| 通常の馬単 | 取込時の `bettingLines.umatan`（無ければ `generateRaceUmatanLines`）。`(抑え…)` も買い目として表示する（2026-11-06 MK 決定） | `src/lib/acquisition/predictionContent.js` |
 | 点数を絞った馬単 | 本命軸、相手を**役割優先（対抗→単穴→連下最上位→連下、同役割は pt 降順）の上位 3 頭**に絞る。向きは通常の 1 行目と同じ（メインレース `→` = 3 点／通常 `↔` = 6 点）。対抗軸の 2 行目は作らない | 同上 `narrowUmatan` |
 | 三連複 通常 | `generateNormalSanrenpuku(horses,'本命' / '対抗')` | `src/utils/sanrenpukuBetting.js` |
 | 三連複 中心 | `generateNarrowSanrenpuku(horses)` | 同上 |

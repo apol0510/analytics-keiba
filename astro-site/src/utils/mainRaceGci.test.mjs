@@ -270,18 +270,15 @@ test('抑えなし文字列は不変・区切り記号(dash/↔/⇔/→)は保�
   assert.strictEqual(stripOsae('13↔2.3.9.10.14'), '13↔2.3.9.10.14');
 });
 
-test('Premium（取得後の本文）はコードと同一の抑え除去正規表現を表示専用に持つ', () => {
+test('Premium（取得後の本文）は抑えを買い目として配信する（2026-11-06 MK 決定）', () => {
   const s = src(PREMIUM_CONTENT);
-  assert.ok(s.includes('[(（]抑え[^)）]*[)）]'), '想定の抑え除去正規表現を持たない');
-  assert.ok(s.includes('stripOsaeForDisplay'), 'stripOsaeForDisplay を定義していない');
-  assert.ok(/line:\s*stripOsaeForDisplay\(/.test(s), '表示 line に抑え除去を適用していない');
+  assert.ok(!/line:\s*stripOsaeForDisplay\(/.test(s), '配信する line から抑えを除去している');
+  assert.ok(/umatanTickets\(\[lineStr\], \{ includeOsae: true \}\)/.test(s), '点数に抑えの組を数えていない');
 });
 
 test('Premium表示は保存文字列を破壊しない（点数は元の行から算出・bettingLines再代入なし）', () => {
   for (const p of [PREMIUM_CONTENT]) {
     const s = src(p);
-    // 点数は原文字列(line/lineStr)から算出（抑え除去後の値では算出しない）
-    assert.ok(/countPointsFromUmatanLine\((line|lineStr)\)/.test(s), `${p} の点数算出が原文字列でない`);
     // 保存 bettingLines.umatan への代入・書き換えをしていない
     assert.ok(!/bettingLines\.umatan\s*=/.test(s), `${p} が保存 bettingLines.umatan を書き換えている`);
   }

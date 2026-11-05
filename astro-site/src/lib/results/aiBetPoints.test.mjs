@@ -232,6 +232,7 @@ test('通算表示: データが無ければ出さない', () => {
 test('回収率の説明は抑えを含む判定と全組購入の分母を伝える', () => {
   assert.match(AI_RECOVERY_DISCLOSURE, /本線に抑えを含めて判定/);
   assert.match(AI_RECOVERY_DISCLOSURE, /本線＋抑えの全組を各100円で購入した金額/);
+  assert.match(AI_RECOVERY_DISCLOSURE, /抑えを表示する前のレースは、抑えの馬を含めて再集計した値/);
 });
 
 test('実データ: 2026-11-05 船橋 10R・12R は抑えの買い目で的中、分母はその全組', () => {

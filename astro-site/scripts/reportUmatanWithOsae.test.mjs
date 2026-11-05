@@ -56,3 +56,13 @@ test('再計算: 全レースに同じ規則を当て、再実行しても変わ
   const legacy = { races: [{ isHit: true, payout: 100 }] };
   assert.equal(recomputeEntryWithOsae(legacy), legacy);
 });
+
+test('少点数の収支: 買った組に当たり組があるときだけ払戻を数え、分母は買った組の点数', async () => {
+  const { settle, total } = await import('./report-umatan-narrow.mjs');
+  const rows = [settle(new Set(['1>2', '2>1']), { combination: '1-2', payout: 900 }), settle(new Set(['1>2']), { combination: '2-1', payout: 5000 })];
+  assert.deepEqual(rows[1], { points: 1, hit: false, payout: 0 });
+  const t = total(rows);
+  assert.equal(t.points, 3);
+  assert.equal(t.payout, 900);
+  assert.equal(t.recovery, 300);
+});
