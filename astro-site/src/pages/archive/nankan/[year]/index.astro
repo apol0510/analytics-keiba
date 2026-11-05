@@ -4,7 +4,7 @@ import BaseLayout from '../../../../layouts/BaseLayout.astro';
 import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { buildMergedMonthData, aggregateMonthByBasis, isCurrentBasisEntry, CURRENT_BASIS_START_LABEL, LEGACY_BASIS_END_LABEL } from '../../../../lib/archiveMonthlyView.js';
-import { summarizeAiDays, AI_POINTS_NOTE } from '../../../../lib/results/aiBetPoints.js';
+import { summarizeAiDays, AI_POINTS_NOTE, AI_RECOVERY_DISCLOSURE } from '../../../../lib/results/aiBetPoints.js';
 
 export const prerender = false;
 
@@ -154,6 +154,7 @@ setPublicCdnCache(Astro);
             <div class="stat-label">年間的中レース数</div>
           </div>
         </div>
+        {yearRecoveryRate != null && <p class="recovery-note">※ {AI_RECOVERY_DISCLOSURE}</p>}
 
         <p class="basis-note">
           現在の公開買い目基準による実績は、{CURRENT_BASIS_START_LABEL}以降を集計しています。
@@ -272,6 +273,7 @@ setPublicCdnCache(Astro);
     }
 
     .stat-sub { margin-top: 4px; font-size: 0.68rem; color: rgba(203, 213, 225, 0.55); }
+    .recovery-note { margin: 12px 0 0; text-align: center; font-size: 0.78rem; line-height: 1.6; color: rgba(203, 213, 225, 0.7); }
     .stat-label {
       font-size: 0.95rem;
       color: #94a3b8;

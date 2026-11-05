@@ -2,7 +2,9 @@
 import BaseLayout from '../../../layouts/BaseLayout.astro';
 import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join } from 'path';
-import { buildMergedMonthData, aggregateMonthByBasis, CURRENT_BASIS_START_LABEL, LEGACY_BASIS_END_LABEL } from '../../../lib/archiveMonthlyView.js';
+import CumulativeRecovery from '../../../components/CumulativeRecovery.astro';
+import { buildMergedMonthData, aggregateMonthByBasis, isCurrentBasisEntry, CURRENT_BASIS_START_LABEL, LEGACY_BASIS_END_LABEL } from '../../../lib/archiveMonthlyView.js';
+import { summarizeCumulative } from '../../../lib/results/aiBetPoints.js';
 
 export const prerender = true;
 
@@ -59,6 +61,9 @@ const loadSnapshot = (year: string, month: string) => {
 
 const years = Array.from(yearMonthSet.keys()).sort().reverse();
 
+// 通算回収率に数える日（現在基準だけ。年ページの年間回収率と同じ範囲）
+const currentBasisDays: any[] = [];
+
 // 現在基準（2026-04-15 以降）だけで年間集計する。旧基準期間は混在させず、旧基準のみの年は「参考」表示。
 const yearSummaries = years.map(year => {
   const months = Array.from(yearMonthSet.get(year)!).sort().reverse();
@@ -70,6 +75,11 @@ const yearSummaries = years.map(year => {
     const snapshot = loadSnapshot(year, month);
     const monthData = buildMergedMonthData(archiveResults, snapshot, year, month);
     const { current, legacy } = aggregateMonthByBasis(monthData, year, month);
+    for (const dayKey of Object.keys(monthData)) {
+      if (isCurrentBasisEntry(year, month, dayKey, monthData[dayKey])) {
+        currentBasisDays.push({ ...monthData[dayKey], date: `${year}-${month}-${String(parseInt(dayKey, 10)).padStart(2, '0')}` });
+      }
+    }
     cur.days += current.days; cur.hitRaces += current.hitRaces; cur.totalRaces += current.totalRaces; cur.payout += current.payout; cur.perfectDays += current.perfectDays; if (current.days > 0) cur.months.add(month);
     leg.days += legacy.days; leg.hitRaces += legacy.hitRaces; leg.totalRaces += legacy.totalRaces; leg.payout += legacy.payout; leg.perfectDays += legacy.perfectDays; if (legacy.days > 0) leg.months.add(month);
   });
@@ -92,6 +102,8 @@ const yearSummaries = years.map(year => {
   };
 });
 
+const cumulative = summarizeCumulative(currentBasisDays);
+
 const pageTitle = '南関競馬的中実績アーカイブ';
 const pageDescription = '南関競馬の全的中実績アーカイブ。マリーンカップ・日本テレビ盃等の重賞レース含む年別・月別の的中記録と配当金額を完全公開。';
 ---
@@ -106,6 +118,8 @@ const pageDescription = '南関競馬の全的中実績アーカイブ。マリ�
         透明性と信頼性を最優先にしています。
       </p>
     </div>
+
+    <CumulativeRecovery cumulative={cumulative} label="南関" />
 
     <div class="cta-box">
       <p class="cta-text">

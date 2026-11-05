@@ -182,3 +182,30 @@ export function summarizeAiDays(entries) {
 
 /** 画面に添える小さな注記（これ以上の内部計算は画面で説明しない） */
 export const AI_POINTS_NOTE = '購入点数はAIによるレース別算定';
+
+/** 的中結果ページの回収率に添える説明。回収率は実購入の収支ではないことを読者に伝える（docs/BET_POINT_LOGIC.md） */
+export const AI_RECOVERY_DISCLOSURE = '回収率は、通常買い目で記録された払戻をAIによるレース別算定の購入点数で割った理論値です。買い目どおりに購入した場合の収支とは異なります。';
+
+/**
+ * 的中結果ページの通算表示。全期間と、最新開催日から recentMonths か月の 2 区間を返す。
+ * 中央と南関は別々に渡す（合算しない）。date の無いエントリは数えない。
+ * @returns {{ from:string, to:string, overall:object, recent:object } | null}
+ */
+export function summarizeCumulative(entries, { recentMonths = 3 } = {}) {
+  const dated = (Array.isArray(entries) ? entries : []).filter((e) => /^\d{4}-\d{2}-\d{2}$/.test(e?.date || ''));
+  if (dated.length === 0) return null;
+  const dates = dated.map((e) => e.date).sort();
+  const from = dates[0];
+  const to = dates[dates.length - 1];
+  const [y, m, d] = to.split('-').map(Number);
+  const cut = new Date(Date.UTC(y, m - 1 - recentMonths, 1));
+  const lastDay = new Date(Date.UTC(cut.getUTCFullYear(), cut.getUTCMonth() + 1, 0)).getUTCDate();
+  cut.setUTCDate(Math.min(d, lastDay));
+  const cutoff = cut.toISOString().slice(0, 10);
+  return {
+    from,
+    to,
+    overall: summarizeAiDays(dated),
+    recent: summarizeAiDays(dated.filter((e) => e.date >= cutoff)),
+  };
+}

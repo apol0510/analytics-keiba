@@ -2,7 +2,8 @@
 import BaseLayout from '../../../layouts/BaseLayout.astro';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
-import { summarizeAiDays, AI_POINTS_NOTE } from '../../../lib/results/aiBetPoints.js';
+import CumulativeRecovery from '../../../components/CumulativeRecovery.astro';
+import { summarizeAiDays, summarizeCumulative, AI_POINTS_NOTE } from '../../../lib/results/aiBetPoints.js';
 
 export const prerender = true;
 
@@ -19,11 +20,13 @@ let allMonths: Array<{
   totalPayout: number;
   returnRate: string | null;
 }> = [];
+let cumulative: ReturnType<typeof summarizeCumulative> = null;
 
 try {
   if (existsSync(archivePath)) {
     const fileContent = readFileSync(archivePath, 'utf-8');
     const allData = JSON.parse(fileContent);
+    cumulative = summarizeCumulative(allData);
 
     const monthsMap = new Map<string, any[]>();
     allData.forEach((entry: any) => {
@@ -102,6 +105,8 @@ const pageDescription = '中央競馬（JRA）の全的中実績アーカイブ�
         透明性と信頼性を最優先にしています。
       </p>
     </div>
+
+    <CumulativeRecovery cumulative={cumulative} label="中央競馬" />
 
     <div class="cta-box">
       <p class="cta-text">
