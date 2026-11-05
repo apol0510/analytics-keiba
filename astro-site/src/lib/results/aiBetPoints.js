@@ -19,7 +19,7 @@
  */
 import { narrowUmatan } from '../acquisition/predictionContent.js';
 import { SELECTION_RULES } from '../acquisition/sanrenpukuSelection.js';
-import { umatanTickets } from './umatanHit.js';
+import { checkUmatanHit, umatanTickets } from './umatanHit.js';
 
 /** v1: 組の一覧も保存していた Preview 初版。v2: 点数だけを保存（MK 確定仕様） */
 export const AI_BET_VERSION = 2;
@@ -185,6 +185,35 @@ export function summarizeAiDays(entries) {
     recoveryRate: investment > 0 ? Math.round((payout / investment) * 1000) / 10 : null,
     maxPayout: days.reduce((m, d) => Math.max(m, d.maxPayout || 0), 0) || null,
   };
+}
+
+/**
+ * AI算定指標（2026-10-06 MK 確定の式）= 本線の記録払戻 ÷（AI レース別算定購入点数 × 100 円）。
+ * 内部管理の値で、現金の実測値とは別に持つ。払戻と点数で買い目の範囲が違う理論値なので、
+ * 「回収率」とだけ書いて公開しない。抑えの払戻は含めない。算定の無い日は数えない。
+ */
+export function raceAiIndex(race) {
+  const points = num(race?.aiBet?.points);
+  const first = race?.result?.first?.number;
+  const second = race?.result?.second?.number;
+  if (!(points > 0) || first == null || second == null) return null;
+  const placed = { results: [{ number: first }, { number: second }] };
+  const hit = (race?.bettingLines || []).some((line) => checkUmatanHit(line, placed));
+  return { points, payout: hit ? payoutOf(race) : 0 };
+}
+
+export function summarizeAiIndex(entries) {
+  let points = 0;
+  let payout = 0;
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    const rs = (entry?.races || []).map(raceAiIndex);
+    if (!rs.length || !rs.every(Boolean)) continue;
+    for (const r of rs) {
+      points += r.points;
+      payout += r.payout;
+    }
+  }
+  return points > 0 ? { points, payout, value: Math.round((payout / (points * 100)) * 1000) / 10 } : null;
 }
 
 /** 画面に添える小さな注記（これ以上の内部計算は画面で説明しない） */

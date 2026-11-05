@@ -29,19 +29,22 @@
 | Paddle | 第一優先の将来の利用先として準備を維持（審査・販売可否は変えない）。同じ禁止語ルールを適用（商品名は `cardOneTime.displayName`）|
 | 本番の確認 | 販売者本人の自己決済・実顧客への不要な課金はしない。初回実購入は `paypal-monthly-first-purchase-2026`、初回実更新は `paypal-monthly-first-renewal-2026`（scheduled-checks・read-only）で確認する |
 
-# 固定マーケティング表示の代表値は 回収率 73% / 的中率 70%（2026-11-06 MK 指示・本線＋抑えの全レース実測で南関と中央の合計）
+# 回収率の公開方針（2026-11-06 MK 指示）
 
-> 2026-11-06 MK 指示で AK の回収率は一時非表示。計算値は `astro-site/src/lib/results/recoveryVisibility.js` の `RECOVERY_RATE_PUBLIC`、固定文言と静的ページはこの変更の PR を revert して戻す。集計データは持ち続ける。
+> 経緯は `decisions.md` 2026-11-06。テスト `astro-site/src/lib/marketing/fixedMarketingStats.test.mjs`。
 
-> 経緯は `decisions.md` 2026-10-06。テスト `astro-site/src/lib/marketing/fixedMarketingStats.test.mjs`（`npm run test:marketing-stats`・`check:safety` 組込）。
-
-- トップ・カード・CTA・バナー・Hero・料金 / 無料 / Light / Premium 導線・ブログの CTA・共通レイアウト（既定 description）等に**ハードコードする代表値・平均値・訴求値**は、
-  **回収率 73% / 的中率 70%** に統一する。小数表記にしない（カウントアップも整数で止める）
-- 同じカード・同じ行に回収率と的中率が並ぶ箇所は両方そろえる（AIモデル精度 / 総合精度の旧 87.3% も同じ旧代表値として 70%）
+- AK の回収率は公開 UI に出さない（#870・`astro-site/src/lib/results/recoveryVisibility.js`）。実績データ・配当・買い目は変えない
+- 固定の代表値は **的中率 70%** だけ。小数表記にしない。回収率 73% / 173% / 126% などを固定表示に戻さない
 - **日別・月別・年別・レース別など実データから都度計算する実績は書き換えない**（単一源 `src/lib/results/aiBetPoints.js`）
-- 旧値（126% / 62% / 87% / 87.3% / 156% / 176% / 72% / 203% / 78% / 265% / 89% / 平均回収率 120%）を公開 UI に戻さない。実在しない期間表記（「過去1年間」）は付けない
-- 対象外（数字の置換では整合しないため MK の内容判断）: 初心者講座（`/beginner/`）の分析記事内の数値、`/about` の沿革・モデル指標、
-  モデル精度 89.1% の技術説明、pro-demo の平均配当、管理画面のテンプレート文言
+- 入門講座 Step 1・2・4・5・6・7 は過去の回収率を前提にしているので、非表示の間は `/beginner/` へ転送する
+
+内部では次の 3 つを別々に持つ。同じ名前で混ぜない。
+
+| 区分 | 定義 | 公開 |
+|---|---|---|
+| 実測値（現金回収率） | 本線＋抑えの払戻 ÷（本線＋抑えの全組 × 100 円） | しない |
+| AI算定指標 | 本線の記録払戻 ÷（AI レース別算定購入点数 × 100 円）。下の 10/6 確定の式。`summarizeAiIndex` | しない |
+| 目標値 | 回収率 150% 前後（MK の事業目標） | しない（未達成。掲載の扱いは `decisions.md` 2026-11-06） |
 
 ---
 

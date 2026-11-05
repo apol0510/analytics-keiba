@@ -1,6 +1,5 @@
-// fixedMarketingStats.test.mjs — 固定マーケティング表示の代表値（MK 確定 2026-10-06）
-// 正本 docs/spec.md 冒頭「固定マーケティング表示の代表値は 回収率 73% / 的中率 70%」
-// 2026-11-06 MK 指示で回収率は一時非表示（src/lib/results/recoveryVisibility.js）。再表示は PR の revert で戻す。
+// fixedMarketingStats.test.mjs — 固定マーケティング表示の代表値
+// 正本 docs/spec.md「回収率の公開方針」。回収率は公開 UI に出さず、固定の代表値は的中率 70% だけ。
 //
 // 対象: トップ・カード・CTA・バナー・料金導線・無料ページ・Light / Premium 導線・ブログの CTA・共通レイアウト等に
 //       ハードコードされている「代表値・平均値・訴求値」。

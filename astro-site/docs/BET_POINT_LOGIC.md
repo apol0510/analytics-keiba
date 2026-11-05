@@ -3,13 +3,13 @@
 > archiveResults における購入点数と回収率の算出仕様。
 > 実装: `astro-site/scripts/importResults.js` / `importResultsJra.js`
 
-## 2026-11-06 MK 指示: 的中を本線＋抑えで判定（PR #868・Deploy Preview 確認中・本番未反映）
+## 2026-11-06 MK 指示: 的中を本線＋抑えで判定（PR #868・本番反映済み）
 
-下の確定事項 3・8・11 を次のとおり置き換える。
+下の確定事項 3・11 を次のとおり置き換える。確定事項 8 の式は置き換えず、AI算定指標（`summarizeAiIndex`）として保持する。回収率の公開方針は `docs/spec.md`。
 
 - 的中は買い目行の全部（本線＋抑え）で判定する。全レース同じ規則で、特定レースだけの書き換えはしない（`checkUmatanHitWithOsae`）
-- 抑えも買い目なので、回収率の分母も同じ範囲にそろえる: **回収率 = 払戻 ÷（本線＋抑えの全組の点数 × 100 円）**（`racePurchasedPoints`）
-- `race.aiBet` は記録として残すが分母には使わない
+- 現金の実測値は抑えも含めて範囲をそろえる: **現金回収率 = 払戻 ÷（本線＋抑えの全組の点数 × 100 円）**（`racePurchasedPoints`）
+- `race.aiBet` は AI算定指標の分母として使う。現金回収率の分母には使わない
 - 過去分の再計算は `node scripts/recalculate-umatan-archive-with-osae.mjs [--execute]`。main の自動取込で archive が先へ進んだら再実行する
 - Premium の通常の買い目に抑えを表示し、点数も抑えの組まで数える（2026-11-06 MK 決定）。取得した行に抑えがあれば `acquiredResults.js` も的中に含める。抑えを表示する前の取得本文は本線だけで判定される
 - 抑えを配信した実績と言えるのは、この表示が本番に入った後のレースから。それ以前は再集計として注記する（`AI_RECOVERY_DISCLOSURE`）
