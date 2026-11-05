@@ -1,6 +1,6 @@
 ---
-import { RECOVERY_RATE_PUBLIC } from '../../lib/results/recoveryVisibility.js';
-if (!RECOVERY_RATE_PUBLIC) return Astro.redirect('/beginner/', 302);
+import { LEGACY_RECOVERY_LESSONS_PUBLIC } from '../../lib/results/recoveryVisibility.js';
+if (!LEGACY_RECOVERY_LESSONS_PUBLIC) return Astro.redirect('/beginner/', 302);
 export const prerender = true;const title = "Step 5: 配当の考え方 - 的中率≠回収率、期待値の超入門";
 const description = "南関競馬で長期的に勝つための配当理論。的中率と回収率の違い、期待値計算の基本、控除率を超える考え方を解説。";
 ---

@@ -19,7 +19,7 @@
  */
 import { narrowUmatan } from '../acquisition/predictionContent.js';
 import { SELECTION_RULES } from '../acquisition/sanrenpukuSelection.js';
-import { umatanTickets } from './umatanHit.js';
+import { checkUmatanHit, umatanTickets } from './umatanHit.js';
 
 /** v1: 組の一覧も保存していた Preview 初版。v2: 点数だけを保存（MK 確定仕様） */
 export const AI_BET_VERSION = 2;
@@ -187,11 +187,43 @@ export function summarizeAiDays(entries) {
   };
 }
 
+/**
+ * AI算定指標（2026-10-06 MK 確定の式）= 本線の記録払戻 ÷（AI レース別算定購入点数 × 100 円）。
+ * 払戻の範囲（本線の全組）と点数の範囲（AI 算定分）が違う理論値なので、現金回収率とは別の名前で出す。
+ * 抑えの払戻は含めない。算定の無い日は数えない。
+ */
+export function raceAiIndex(race) {
+  const points = num(race?.aiBet?.points);
+  const first = race?.result?.first?.number;
+  const second = race?.result?.second?.number;
+  if (!(points > 0) || first == null || second == null) return null;
+  const placed = { results: [{ number: first }, { number: second }] };
+  const hit = (race?.bettingLines || []).some((line) => checkUmatanHit(line, placed));
+  return { points, payout: hit ? payoutOf(race) : 0 };
+}
+
+export function summarizeAiIndex(entries) {
+  let points = 0;
+  let payout = 0;
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    const rs = (entry?.races || []).map(raceAiIndex);
+    if (!rs.length || !rs.every(Boolean)) continue;
+    for (const r of rs) {
+      points += r.points;
+      payout += r.payout;
+    }
+  }
+  return points > 0 ? { points, payout, value: Math.round((payout / (points * 100)) * 1000) / 10 } : null;
+}
+
 /** 画面に添える小さな注記（これ以上の内部計算は画面で説明しない） */
 export const AI_POINTS_NOTE = '的中は本線＋抑えで判定・購入点数は本線＋抑えの全組';
 
 /** 的中結果ページの回収率に添える説明。回収率は実購入の収支ではないことを読者に伝える（docs/BET_POINT_LOGIC.md） */
-export const AI_RECOVERY_DISCLOSURE = '的中は本線に抑えを含めて判定しています。回収率は、払戻を本線＋抑えの全組を各100円で購入した金額で割った値です。Premium の買い目に抑えを表示する前のレースは、抑えの馬を含めて再集計した値です。';
+export const AI_RECOVERY_DISCLOSURE = '的中は本線に抑えを含めて判定しています。現金回収率は、払戻を本線＋抑えの全組を各100円で購入した金額で割った値です。Premium の買い目に抑えを表示する前のレースは、抑えの馬を含めて再集計した値です。';
+
+/** AI算定指標の説明。実際に買った場合の回収率と誤解されないように必ず添える */
+export const AI_INDEX_DISCLOSURE = 'AI算定指標は、本線の払戻をAIによるレース別算定の購入点数で割った理論値です。払戻と購入点数で買い目の範囲が異なるため、買い目どおりに購入した場合の回収率ではなく、この値の回収を保証するものでもありません。';
 
 /**
  * 的中結果ページの通算表示。全期間と、最新開催日から recentMonths か月の 2 区間を返す。
@@ -212,7 +244,7 @@ export function summarizeCumulative(entries, { recentMonths = 3 } = {}) {
   return {
     from,
     to,
-    overall: summarizeAiDays(dated),
+    overall: { ...summarizeAiDays(dated), aiIndex: summarizeAiIndex(dated) },
     recent: summarizeAiDays(dated.filter((e) => e.date >= cutoff)),
   };
 }

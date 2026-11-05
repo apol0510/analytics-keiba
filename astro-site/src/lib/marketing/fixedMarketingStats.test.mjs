@@ -1,6 +1,6 @@
 // fixedMarketingStats.test.mjs — 固定マーケティング表示の代表値（MK 確定 2026-10-06）
 // 正本 docs/spec.md 冒頭「固定マーケティング表示の代表値は 回収率 73% / 的中率 70%」
-// 2026-11-06 MK 指示で回収率は一時非表示（src/lib/results/recoveryVisibility.js）。再表示は PR の revert で戻す。
+// 2026-11-06: 固定の回収率は出さない。計算値は現金回収率と AI算定指標に分けて出す（src/lib/results/recoveryVisibility.js）。
 //
 // 対象: トップ・カード・CTA・バナー・料金導線・無料ページ・Light / Premium 導線・ブログの CTA・共通レイアウト等に
 //       ハードコードされている「代表値・平均値・訴求値」。
@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { publicRate, RECOVERY_RATE_PUBLIC } from '../results/recoveryVisibility.js';
+import { LEGACY_RECOVERY_LESSONS_PUBLIC, publicRate, RECOVERY_RATE_PUBLIC } from '../results/recoveryVisibility.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const read = (p) => readFileSync(join(root, p), 'utf8');
@@ -69,9 +69,9 @@ test('旧固定の代表値（87% / 87.3% / 72% / 78% / 89% / 203% / 265% / 平�
   }
 });
 
-test('回収率の一時非表示中は 73% / 173% の成績を出さず、的中率 70% は残す（2026-11-06 MK 指示）', () => {
-  assert.equal(RECOVERY_RATE_PUBLIC, false);
-  assert.equal(publicRate(73), null);
+test('計算値の表示を戻しても、固定の 73% / 173% の成績は出さず、的中率 70% は残す', () => {
+  assert.equal(RECOVERY_RATE_PUBLIC, true);
+  assert.equal(publicRate(73), 73);
   const STATIC = walk('public').filter((p) => p.endsWith('.html'));
   for (const p of [...PUBLIC_UI, ...STATIC]) {
     const s = strip(read(p));
@@ -89,9 +89,10 @@ test('回収率の一時非表示中は 73% / 173% の成績を出さず、的�
   assert.match(read('src/pages/service-description.astro'), /的中率：<\/strong>約70%/);
 });
 
-test('回収率を前提に書いた入門講座は非表示の間だけ転送し、スイッチで戻せる', () => {
+test('193.9% などを前提に書いた入門講座は、本文を直すまで転送したままにする', () => {
+  assert.equal(LEGACY_RECOVERY_LESSONS_PUBLIC, false);
   for (const n of ['01', '02', '04', '05', '06', '07']) {
-    assert.match(read(`src/pages/beginner/lesson-${n}.astro`), /if \(!RECOVERY_RATE_PUBLIC\) return Astro\.redirect\('\/beginner\/', 302\);/);
+    assert.match(read(`src/pages/beginner/lesson-${n}.astro`), /if \(!LEGACY_RECOVERY_LESSONS_PUBLIC\) return Astro\.redirect\('\/beginner\/', 302\);/);
   }
   assert.doesNotMatch(read('src/pages/beginner/lesson-03.astro'), /Astro\.redirect/);
 });

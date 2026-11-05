@@ -1,5 +1,5 @@
 ---
-import { RECOVERY_RATE_PUBLIC } from '../lib/results/recoveryVisibility.js';
+import { LEGACY_RECOVERY_LESSONS_PUBLIC } from '../lib/results/recoveryVisibility.js';
 import { publicJsSrc } from '../lib/assets/publicJsVersion.mjs';
 import '../styles/global.css';
 import BankApplicationEmailLock from '../components/BankApplicationEmailLock.astro';
@@ -1057,8 +1057,8 @@ const fullTitle = buildFullTitle(title);
                     <ul class="footer-links">
                         <li><a href="/blog/">ブログ</a></li>
                         <li><a href="/beginner/">南関競馬入門</a></li>
-                        {RECOVERY_RATE_PUBLIC && <li><a href="/beginner/lesson-01/">Lesson 1: 基本を学ぶ</a></li>}
-                        {RECOVERY_RATE_PUBLIC && <li><a href="/beginner/lesson-02/">Lesson 2: 馬券の種類</a></li>}
+                        {LEGACY_RECOVERY_LESSONS_PUBLIC && <li><a href="/beginner/lesson-01/">Lesson 1: 基本を学ぶ</a></li>}
+                        {LEGACY_RECOVERY_LESSONS_PUBLIC && <li><a href="/beginner/lesson-02/">Lesson 2: 馬券の種類</a></li>}
                         <li><a href="/beginner/lesson-03/">Lesson 3: 予想の基本</a></li>
                     </ul>
                 </div>

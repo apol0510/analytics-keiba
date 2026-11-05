@@ -178,7 +178,7 @@ const ownsSanrenpuku = gate.entitlements?.canViewSanrenpuku === true;
                         <div class="vs-title">中央（JRA）三連複 実績{jra.period && ` ・ ${jra.period}`}</div>
                         <div class="venue-stats">
                             <div class="venue-stat"><div class="venue-stat-value">{jra.hitRate}%</div><div class="venue-stat-label">的中率</div></div>
-                            {publicRate(jra.recovery) != null && <div class="venue-stat"><div class="venue-stat-value">{jra.recovery}%</div><div class="venue-stat-label">回収率</div></div>}
+                            {publicRate(jra.recovery) != null && <div class="venue-stat"><div class="venue-stat-value">{jra.recovery}%</div><div class="venue-stat-label">現金回収率</div></div>}
                             <div class="venue-stat"><div class="venue-stat-value">{jra.hits}<span class="unit">/{jra.races}</span></div><div class="venue-stat-label">的中/レース</div></div>
                             <div class="venue-stat"><div class="venue-stat-value">¥{jra.payout.toLocaleString()}</div><div class="venue-stat-label">累計配当</div></div>
                         </div>
@@ -196,7 +196,7 @@ const ownsSanrenpuku = gate.entitlements?.canViewSanrenpuku === true;
                                 </div>
                                 <div class="month-card-stats">
                                     <div class="mc-stat"><div class="mc-stat-value">{mc.mHitRate}%</div><div class="mc-stat-label">的中率</div></div>
-                                    {publicRate(mc.mRecovery) != null && <div class="mc-stat"><div class="mc-stat-value">{mc.mRecovery}%</div><div class="mc-stat-label">回収率</div></div>}
+                                    {publicRate(mc.mRecovery) != null && <div class="mc-stat"><div class="mc-stat-value">{mc.mRecovery}%</div><div class="mc-stat-label">現金回収率</div></div>}
                                     <div class="mc-stat"><div class="mc-stat-value">{mc.daysCount}日</div><div class="mc-stat-label">開催日数</div></div>
                                     <div class="mc-stat"><div class="mc-stat-value">¥{mc.mPayout.toLocaleString()}</div><div class="mc-stat-label">合計配当</div></div>
                                 </div>
@@ -219,7 +219,7 @@ const ownsSanrenpuku = gate.entitlements?.canViewSanrenpuku === true;
                         <div class="vs-title">南関競馬 三連複 実績{nankan.period && ` ・ ${nankan.period}`}</div>
                         <div class="venue-stats">
                             <div class="venue-stat"><div class="venue-stat-value">{nankan.hitRate}%</div><div class="venue-stat-label">的中率</div></div>
-                            {publicRate(nankan.recovery) != null && <div class="venue-stat"><div class="venue-stat-value">{nankan.recovery}%</div><div class="venue-stat-label">回収率</div></div>}
+                            {publicRate(nankan.recovery) != null && <div class="venue-stat"><div class="venue-stat-value">{nankan.recovery}%</div><div class="venue-stat-label">現金回収率</div></div>}
                             <div class="venue-stat"><div class="venue-stat-value">{nankan.hits}<span class="unit">/{nankan.races}</span></div><div class="venue-stat-label">的中/レース</div></div>
                             <div class="venue-stat"><div class="venue-stat-value">¥{nankan.payout.toLocaleString()}</div><div class="venue-stat-label">累計配当</div></div>
                         </div>
@@ -237,7 +237,7 @@ const ownsSanrenpuku = gate.entitlements?.canViewSanrenpuku === true;
                                 </div>
                                 <div class="month-card-stats">
                                     <div class="mc-stat"><div class="mc-stat-value">{mc.mHitRate}%</div><div class="mc-stat-label">的中率</div></div>
-                                    {publicRate(mc.mRecovery) != null && <div class="mc-stat"><div class="mc-stat-value">{mc.mRecovery}%</div><div class="mc-stat-label">回収率</div></div>}
+                                    {publicRate(mc.mRecovery) != null && <div class="mc-stat"><div class="mc-stat-value">{mc.mRecovery}%</div><div class="mc-stat-label">現金回収率</div></div>}
                                     <div class="mc-stat"><div class="mc-stat-value">{mc.daysCount}日</div><div class="mc-stat-label">開催日数</div></div>
                                     <div class="mc-stat"><div class="mc-stat-value">¥{mc.mPayout.toLocaleString()}</div><div class="mc-stat-label">合計配当</div></div>
                                 </div>

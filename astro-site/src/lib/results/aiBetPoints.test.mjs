@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import {
   expandUmatanLine, extraCount, aiPointBasis, buildAiBet, raceAiResult, summarizeAiDay, summarizeAiDays,
   EXTRA_MIN, EXTRA_MAX, AI_POINTS_NOTE, AI_RECOVERY_DISCLOSURE, summarizeCumulative, AI_BET_VERSION,
+  AI_INDEX_DISCLOSURE, raceAiIndex, summarizeAiIndex,
 } from './aiBetPoints.js';
 import { narrowUmatan } from '../acquisition/predictionContent.js';
 
@@ -245,4 +246,24 @@ test('実データ: 2026-11-05 船橋 10R・12R は抑えの買い目で的中�
   assert.equal(d.payout, 36630);
   assert.equal(d.points, 349);
   assert.equal(d.recoveryRate, 105);
+});
+
+test('AI算定指標は 10/6 の式で、抑えの払戻を含めず、分母に aiBet を使う', () => {
+  const race = (first, second, payout) => ({
+    bettingLines: ['1↔2.3(抑え4)'], aiBet: { v: 2, points: 5 },
+    result: { first: { number: first }, second: { number: second } }, umatan: { payout }, isHit: true,
+  });
+  assert.deepEqual(raceAiIndex(race(1, 2, 1000)), { points: 5, payout: 1000 });
+  assert.deepEqual(raceAiIndex(race(1, 4, 9000)), { points: 5, payout: 0 });
+  assert.equal(summarizeAiIndex([{ races: [race(1, 2, 1000), race(1, 4, 9000)] }]).value, 100);
+  assert.equal(raceAiIndex({ ...race(1, 2, 1000), aiBet: null }), null);
+});
+
+test('実データ: AI算定指標は旧表示の南関 118.6%・中央 127.3% を再現し、現金回収率とは別に出す', () => {
+  const read = (f) => JSON.parse(readFileSync(new URL(`../../data/${f}`, import.meta.url), 'utf8'));
+  const nankan = read('archiveResults.json').filter((e) => e.date >= '2026-04-15');
+  assert.ok(Math.abs(summarizeAiIndex(nankan).value - 118.6) < 3);
+  assert.ok(Math.abs(summarizeAiIndex(read('archiveResultsJra.json')).value - 127.3) < 3);
+  assert.match(AI_INDEX_DISCLOSURE, /理論値/);
+  assert.match(AI_INDEX_DISCLOSURE, /購入した場合の回収率ではなく/);
 });

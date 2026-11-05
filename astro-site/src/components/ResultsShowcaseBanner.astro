@@ -50,7 +50,7 @@ const teaserMain = view?.venueGroups?.map((g: any) => g.mainRace).find(Boolean) 
         <span class="scb-stat">的中 <b>{view.hitRaces}/{view.totalRaces}</b></span>
         {publicRate(view.recoveryRate) != null && (
           <span class={`scb-stat ${Number(view.recoveryRate) >= 100 ? 'profit' : ''}`}>
-            回収率 <b>{view.recoveryRate}%</b>
+            現金回収率 <b>{view.recoveryRate}%</b>
           </span>
         )}
         {teaserMain && teaserMain.isHit && teaserMain.payout && (

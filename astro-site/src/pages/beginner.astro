@@ -1,5 +1,5 @@
 ---
-import { RECOVERY_RATE_PUBLIC } from '../lib/results/recoveryVisibility.js';
+import { LEGACY_RECOVERY_LESSONS_PUBLIC } from '../lib/results/recoveryVisibility.js';
 export const prerender = true;const title = "南関競馬・初心者講座【完全ガイド】7ステップで基礎完成";
 const description = "南関4場の特徴から買い方・資金管理まで、約1時間50分で基礎を習得。各Stepの実戦チェックリスト付き。";
 ---
@@ -74,16 +74,16 @@ const description = "南関4場の特徴から買い方・資金管理まで、�
 
             <section class="course-overview">
                 <h2>受講の流れと所要時間</h2>
-                {RECOVERY_RATE_PUBLIC && <p>全7ステップで構成されており、各ステップ約15分で学習できます。</p>}
+                {LEGACY_RECOVERY_LESSONS_PUBLIC && <p>全7ステップで構成されており、各ステップ約15分で学習できます。</p>}
                 
                 <div class="lessons-grid">
-                    {RECOVERY_RATE_PUBLIC && (<div class="lesson-card">
+                    {LEGACY_RECOVERY_LESSONS_PUBLIC && (<div class="lesson-card">
                         <h3><a href="/beginner/lesson-01/">Step 1: 馬券の基本</a></h3>
                         <p>券種・オッズ・控除率の超要点</p>
                         <span class="duration">約15分</span>
                     </div>)}
                     
-                    {RECOVERY_RATE_PUBLIC && (<div class="lesson-card">
+                    {LEGACY_RECOVERY_LESSONS_PUBLIC && (<div class="lesson-card">
                         <h3><a href="/beginner/lesson-02/">Step 2: 南関の特徴</a></h3>
                         <p>4場の違いと番組・距離のクセ</p>
                         <span class="duration">約15分</span>
@@ -95,25 +95,25 @@ const description = "南関4場の特徴から買い方・資金管理まで、�
                         <span class="duration">約15分</span>
                     </div>
                     
-                    {RECOVERY_RATE_PUBLIC && (<div class="lesson-card">
+                    {LEGACY_RECOVERY_LESSONS_PUBLIC && (<div class="lesson-card">
                         <h3><a href="/beginner/lesson-04/">Step 4: 買い目の作り方</a></h3>
                         <p>資金配分・点数管理・やってはいけない買い方</p>
                         <span class="duration">約20分</span>
                     </div>)}
                     
-                    {RECOVERY_RATE_PUBLIC && (<div class="lesson-card">
+                    {LEGACY_RECOVERY_LESSONS_PUBLIC && (<div class="lesson-card">
                         <h3><a href="/beginner/lesson-05/">Step 5: 配当の考え方</a></h3>
                         <p>的中率≠回収率、期待値の超入門</p>
                         <span class="duration">約15分</span>
                     </div>)}
                     
-                    {RECOVERY_RATE_PUBLIC && (<div class="lesson-card">
+                    {LEGACY_RECOVERY_LESSONS_PUBLIC && (<div class="lesson-card">
                         <h3><a href="/beginner/lesson-06/">Step 6: コース別の最初の一手</a></h3>
                         <p>大井1200・川崎900など実例解説</p>
                         <span class="duration">約20分</span>
                     </div>)}
                     
-                    {RECOVERY_RATE_PUBLIC && (<div class="lesson-card">
+                    {LEGACY_RECOVERY_LESSONS_PUBLIC && (<div class="lesson-card">
                         <h3><a href="/beginner/lesson-07/">Step 7: 実戦チェックリスト</a></h3>
                         <p>発走30分前〜購入直前の確認事項</p>
                         <span class="duration">約10分</span>
@@ -201,7 +201,7 @@ const description = "南関4場の特徴から買い方・資金管理まで、�
 
             <section class="getting-started">
                 <h2>さあ、始めましょう</h2>
-                <p>南関競馬で安定的に勝つための第一歩を踏み出しましょう。まずは<a href={RECOVERY_RATE_PUBLIC ? "/beginner/lesson-01/" : "/beginner/lesson-03/"}>{RECOVERY_RATE_PUBLIC ? "Step 1: 馬券の基本" : "Step 3: 馬柱の読み方"}</a>から始めてください。</p>
+                <p>南関競馬で安定的に勝つための第一歩を踏み出しましょう。まずは<a href={LEGACY_RECOVERY_LESSONS_PUBLIC ? "/beginner/lesson-01/" : "/beginner/lesson-03/"}>{LEGACY_RECOVERY_LESSONS_PUBLIC ? "Step 1: 馬券の基本" : "Step 3: 馬柱の読み方"}</a>から始めてください。</p>
                 <p>各ステップは順番に学習することを推奨しますが、興味のある項目から始めても構いません。重要なのは、<strong>実際にやってみること</strong>です。</p>
             </section>
 

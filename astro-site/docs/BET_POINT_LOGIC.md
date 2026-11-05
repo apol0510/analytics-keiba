@@ -1,5 +1,7 @@
 # BET POINT LOGIC（購入点数ロジック）
 
+> 2026-11-06: 回収率は現金回収率と AI算定指標に分けて表示する（正本 `docs/spec.md`）。10/6 確定の式は AI算定指標として維持する。
+
 > archiveResults における購入点数と回収率の算出仕様。
 > 実装: `astro-site/scripts/importResults.js` / `importResultsJra.js`
 

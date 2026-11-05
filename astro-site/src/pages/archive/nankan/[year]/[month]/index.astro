@@ -104,7 +104,7 @@ setPublicCdnCache(Astro);
           {publicRate(recoveryRateMonth) != null && (
             <div class="stat-card">
               <div class="stat-value">{recoveryRateMonth}%</div>
-              <div class="stat-label">月間回収率</div>
+              <div class="stat-label">月間の現金回収率</div>
               <div class="stat-sub">{AI_POINTS_NOTE}</div>
             </div>
           )}
@@ -145,7 +145,7 @@ setPublicCdnCache(Astro);
                 </div>
                 {hasInvestment && (
                   <div class="summary-item">
-                    📈 回収率: <span class="summary-value">{recoveryRate}%</span>
+                    📈 現金回収率: <span class="summary-value">{recoveryRate}%</span>
                   </div>
                 )}
                 {totalBetPoints > 0 && (
