@@ -1,10 +1,14 @@
 // デイリーポイント付与Function（ESModule版）
+import { adminDenialResult } from '../../src/lib/ops/adminFunctionGuard.js';
 import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
 // Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
 installAirtableCallMeter({ source: 'daily-points' });
 import Airtable from 'airtable';
 
 export const handler = async (event, context) => {
+  const denied = adminDenialResult(event);
+  if (denied) return denied;
+
   console.log('デイリーポイント付与開始');
   
   // 環境変数チェック（エラー防止）

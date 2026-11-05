@@ -722,7 +722,7 @@ if (devBase) {
   let adminOk = false; let adminNote = '';
   try {
     const edgeSrc = await readFile(join(ROOT, 'netlify', 'edge-functions', 'admin-auth.ts'), 'utf8');
-    const wiredPath = /path:\s*'\/admin\/\*'/.test(edgeSrc);
+    const wiredPath = /path:\s*(?:\[[^\]]*)?'\/admin\/\*'/.test(edgeSrc);
     const usesSingleSource = /decideAdminAccess\(/.test(edgeSrc);
     const denies401 = /status:\s*401/.test(edgeSrc);
     const { decideAdminAccess } = await import(pathToFileURL(join(ROOT, 'src', 'lib', 'auth', 'adminBasicAuth.js')).href);

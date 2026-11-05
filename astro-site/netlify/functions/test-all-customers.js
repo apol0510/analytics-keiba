@@ -1,6 +1,6 @@
 // デバッグ用：すべての顧客レコードを表示
 
-const { adminDenialResult } = require('../../src/lib/auth/adminFunctionGuard.js');
+const { adminDenialResult } = require('../../src/lib/ops/adminFunctionGuard.js');
 const Airtable = require('airtable');
 
 exports.handler = async (event, context) => {

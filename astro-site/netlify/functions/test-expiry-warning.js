@@ -1,6 +1,6 @@
 // デバッグ用：1週間前通知テスト（詳細ログ付き）
 
-const { adminDenialResult } = require('../../src/lib/auth/adminFunctionGuard.js');
+const { adminDenialResult } = require('../../src/lib/ops/adminFunctionGuard.js');
 const Airtable = require('airtable');
 
 exports.handler = async (event, context) => {

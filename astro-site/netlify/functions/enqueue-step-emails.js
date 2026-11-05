@@ -15,6 +15,7 @@
 //    STEP_EMAIL_AUTOMATION_ENABLED ＋ NEWSLETTER_AUTOMATION_ENABLED の両ガード下のみ実装する。
 //    本ファイル（Phase 3.1）は dryRun=true 専用で、dryRun=false は早期 return（送信パス未到達）。
 
+import { adminDenialResponse } from '../../src/lib/ops/adminFunctionGuard.js';
 import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
 // Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
 installAirtableCallMeter({ source: 'enqueue-step-emails' });
@@ -121,6 +122,9 @@ function structuredError(headers, httpStatusSource, errorClass, error, extra = {
 }
 
 export default async function handler(request) {
+  const denied = adminDenialResponse(request);
+  if (denied) return denied;
+
   const headers = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Content-Type',
