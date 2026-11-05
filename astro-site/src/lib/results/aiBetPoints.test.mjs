@@ -228,7 +228,7 @@ test('通算表示: データが無ければ出さない', () => {
   assert.equal(summarizeCumulative([{ races: [] }]), null);
 });
 
-test('回収率の説明は理論値で実購入の収支と異なることを伝える', () => {
+test('回収率の説明は理論値で実際の収支と異なることを伝える', () => {
   assert.match(AI_RECOVERY_DISCLOSURE, /理論値/);
-  assert.match(AI_RECOVERY_DISCLOSURE, /買い目どおりに購入した場合の収支とは異なります/);
+  assert.match(AI_RECOVERY_DISCLOSURE, /実際の収支は購入点数・金額配分により異なります/);
 });

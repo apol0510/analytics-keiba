@@ -184,7 +184,7 @@ export function summarizeAiDays(entries) {
 export const AI_POINTS_NOTE = '購入点数はAIによるレース別算定';
 
 /** 的中結果ページの回収率に添える説明。回収率は実購入の収支ではないことを読者に伝える（docs/BET_POINT_LOGIC.md） */
-export const AI_RECOVERY_DISCLOSURE = '回収率は、通常買い目で記録された払戻をAIによるレース別算定の購入点数で割った理論値です。買い目どおりに購入した場合の収支とは異なります。';
+export const AI_RECOVERY_DISCLOSURE = '回収率は理論値です。実際の収支は購入点数・金額配分により異なります。';
 
 /**
  * 的中結果ページの通算表示。全期間と、最新開催日から recentMonths か月の 2 区間を返す。

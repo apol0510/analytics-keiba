@@ -52,7 +52,7 @@
 ### 通算表示（2026-11-05 MK 指示）
 - `/archive/jra/`・`/archive/nankan/` に通算回収率・直近 3 か月の回収率・通算的中率を出す（`components/CumulativeRecovery.astro`・`summarizeCumulative`）
 - 計算は上の確定仕様のまま。中央と南関は別々に出し、合算しない。南関は現在基準（2026-04-15 以降）だけを数える
-- 的中結果の 6 ページ（JRA・南関の索引・年・月）には `AI_RECOVERY_DISCLOSURE` も添える。確定事項 11「補足は AI_POINTS_NOTE だけ」への追加で、MK が Deploy Preview で確認する
+- 的中結果の 6 ページ（JRA・南関の索引・年・月）には `AI_RECOVERY_DISCLOSURE` も添える。確定事項 11「補足は AI_POINTS_NOTE だけ」への追加。初版の文は客が混乱すると MK 指摘があり（2026-11-05）、`/archive/jra/` に既にある理論値の説明に揃えて短くした
 - 固定表示の回収率 126% / 的中率 62% は変えない
 
 内部確認（2026-11-05 時点・公開しない）: 分子と分母の買い目の範囲を揃えると次の値になる。
