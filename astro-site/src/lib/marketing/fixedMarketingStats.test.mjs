@@ -1,5 +1,5 @@
 // fixedMarketingStats.test.mjs — 固定マーケティング表示の代表値（MK 確定 2026-10-06）
-// 正本 docs/spec.md 冒頭「固定マーケティング表示の代表値は 回収率 126% / 的中率 62%」
+// 正本 docs/spec.md 冒頭「固定マーケティング表示の代表値は 回収率 73% / 的中率 70%」
 //
 // 対象: トップ・カード・CTA・バナー・料金導線・無料ページ・Light / Premium 導線・ブログの CTA・共通レイアウト等に
 //       ハードコードされている「代表値・平均値・訴求値」。
@@ -22,7 +22,7 @@ function walk(dir) {
 
 /**
  * 公開マーケティング UI。管理画面と、表示用ではない学習コンテンツ（数値どうしが連動した分析記事。
- * 126% / 62% へ数字だけ置換すると記事内の数値が矛盾するため MK の内容判断待ち・progress に記録）は除く。
+ * 73% / 70% へ数字だけ置換すると記事内の数値が矛盾するため MK の内容判断待ち・progress に記録）は除く。
  */
 const PUBLIC_UI = [...walk('src/pages'), ...walk('src/components'), ...walk('src/layouts')]
   .filter((p) => p.endsWith('.astro'))
@@ -48,7 +48,7 @@ test('管理画面ニュースレター / メール配信テンプレートに�
     const s = strip(read(p));
     assert.doesNotMatch(s, /(?<![\d.])(156|176)(\.\d)?\s*%/, `${p}: 旧固定回収率`);
   }
-  assert.match(read('src/pages/admin-newsletter-simple.astro'), /実績証明済み<\/strong>: 回収率126%/);
+  assert.match(read('src/pages/admin-newsletter-simple.astro'), /実績証明済み<\/strong>: 回収率73%/);
 });
 
 test('旧固定の代表値（87% / 87.3% / 72% / 78% / 89% / 203% / 265% / 平均回収率 120%）が訴求箇所に残らない', () => {
@@ -67,51 +67,51 @@ test('旧固定の代表値（87% / 87.3% / 72% / 78% / 89% / 203% / 265% / 平�
   }
 });
 
-test('固定マーケティング回収率は 126%・的中率は 62%（同じカード・同じ行で両方そろう）', () => {
-  const pair = '的中率62%、回収率126%を実現';
+test('固定マーケティング回収率は 73%・的中率は 70%（同じカード・同じ行で両方そろう）', () => {
+  const pair = '的中率70%、回収率73%（全レース実測）';
   assert.ok(read('src/layouts/BaseLayout.astro').includes(pair), 'BaseLayout の既定 description');
   const index = read('src/pages/index.astro');
   assert.equal(index.split(pair).length - 1, 2, 'トップの meta description と Hero');
-  assert.match(index, /data-target="62" data-suffix="%"/);
-  assert.match(index, /data-target="126" data-suffix="%"/);
+  assert.match(index, /data-target="70" data-suffix="%"/);
+  assert.match(index, /data-target="73" data-suffix="%"/);
   for (const p of ['src/pages/light-predictions.astro', 'src/pages/light-predictions-jra.astro']) {
     const s = read(p);
-    assert.match(s, /metric-value">62%<\/div>\s*<div class="metric-label">平均的中率/, `${p}: 平均的中率`);
-    assert.match(s, /metric-value">126%<\/div>\s*<div class="metric-label">平均回収率/, `${p}: 平均回収率`);
+    assert.match(s, /metric-value">70%<\/div>\s*<div class="metric-label">平均的中率/, `${p}: 平均的中率`);
+    assert.match(s, /metric-value">73%<\/div>\s*<div class="metric-label">平均回収率/, `${p}: 平均回収率`);
   }
   for (const p of ['src/pages/premium-predictions-funabashi.astro', 'src/pages/premium-predictions-urawa.astro',
     'src/pages/premium-prediction/nankan.astro']) {
     const s = read(p);
-    assert.match(s, /📊 的中率62% 回収率126%/, `${p}: 実績訴求（Desktop）`);
-    assert.match(s, /✅ 的中率62% 回収率126%/, `${p}: 実績訴求（リスト）`);
+    assert.match(s, /📊 的中率70% 回収率73%/, `${p}: 実績訴求（Desktop）`);
+    assert.match(s, /✅ 的中率70% 回収率73%/, `${p}: 実績訴求（リスト）`);
   }
-  assert.match(read('src/pages/dashboard.astro'), /✅ 的中率62% 回収率126%/);
+  assert.match(read('src/pages/dashboard.astro'), /✅ 的中率70% 回収率73%/);
   const tech = read('src/pages/technology.astro');
-  assert.match(tech, />62%<\/div>\s*<div[^>]*>総合精度/);
-  assert.match(tech, />126%<\/div>\s*<div[^>]*>平均回収率/);
+  assert.match(tech, />70%<\/div>\s*<div[^>]*>総合精度/);
+  assert.match(tech, />73%<\/div>\s*<div[^>]*>平均回収率/);
   // ブログのコース記事 CTA: バナー文言とカード（AIモデル精度・回収率）が同じ値
-  const blogs = walk('src/pages/blog/course').filter((p) => read(p).includes('回収率126%を実現'));
+  const blogs = walk('src/pages/blog/course').filter((p) => read(p).includes('回収率73%（全レース実測）'));
   assert.ok(blogs.length >= 15, `ブログ CTA ${blogs.length} 件`);
   for (const p of blogs) {
     const s = read(p);
     assert.ok(s.includes(pair), `${p}: バナー`);
     if (/AIモデル精度/.test(s)) {
-      assert.match(s, />62%<\/div>\s*<div[^>]*>AIモデル精度/, `${p}: AIモデル精度`);
-      assert.match(s, />126%<\/div>\s*<div[^>]*>回収率/, `${p}: 回収率カード`);
+      assert.match(s, />70%<\/div>\s*<div[^>]*>AIモデル精度/, `${p}: AIモデル精度`);
+      assert.match(s, />73%<\/div>\s*<div[^>]*>回収率/, `${p}: 回収率カード`);
     }
   }
   for (const p of ['src/pages/course.astro', ...walk('src/pages/blog/course')]) {
     const s = read(p);
-    if (/trust-label">平均回収率/.test(s)) assert.match(s, /trust-value">126%<\/span>\s*<span class="trust-label">平均回収率/, `${p}: trust`);
+    if (/trust-label">平均回収率/.test(s)) assert.match(s, /trust-value">73%<\/span>\s*<span class="trust-label">平均回収率/, `${p}: trust`);
   }
   const demo = read('src/pages/sanrenpuku-demo.astro');
-  assert.match(demo, /perf-value">62%<\/div>\s*<div class="perf-label">的中率/);
-  assert.match(demo, /perf-value">126%<\/div>\s*<div class="perf-label">平均回収率/);
-  assert.match(read('src/pages/pro-demo.astro'), /的中率<\/div>\s*<div class="value">62%/);
-  assert.match(read('src/pages/service-description.astro'), /的中率：<\/strong>約62%/);
+  assert.match(demo, /perf-value">70%<\/div>\s*<div class="perf-label">的中率/);
+  assert.match(demo, /perf-value">73%<\/div>\s*<div class="perf-label">平均回収率/);
+  assert.match(read('src/pages/pro-demo.astro'), /的中率<\/div>\s*<div class="value">70%/);
+  assert.match(read('src/pages/service-description.astro'), /的中率：<\/strong>約70%/);
 });
 
-test('固定値は小数表記にしない（カウントアップも 126% / 62% のまま整数で表示）', () => {
+test('固定値は小数表記にしない（カウントアップも 73% / 70% のまま整数で表示）', () => {
   // コース統計の表（例: 複勝率 62.9%）は対象外。訴求ラベル付きの値と data-target だけを見る
   for (const p of PUBLIC_UI) {
     const t = strip(read(p));
