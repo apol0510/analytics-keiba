@@ -1,4 +1,5 @@
 ---
+import AiSelectionRecovery from '../../../../components/AiSelectionRecovery.astro';
 import { publicRate } from '../../../../lib/results/recoveryVisibility.js';
 import { setPublicCdnCache } from '../../../../lib/cdnCache.mjs';
 import BaseLayout from '../../../../layouts/BaseLayout.astro';
@@ -127,6 +128,7 @@ setPublicCdnCache(Astro);
               <div class="stat-label">年間的中レース数</div>
             </div>
           </section>
+          <AiSelectionRecovery entries={yearEntries} label={`中央・${year}年`} />
           {publicRate(yearReturnRate) != null && <p class="ai-points-note">※ {AI_POINTS_NOTE}。{AI_RECOVERY_DISCLOSURE}</p>}
 
           {/* 月別一覧 */}

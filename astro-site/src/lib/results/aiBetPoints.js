@@ -216,6 +216,47 @@ export function summarizeAiIndex(entries) {
   return points > 0 ? { points, payout, value: Math.round((payout / (points * 100)) * 1000) / 10 } : null;
 }
 
+/**
+ * AI 事前選定（2026-11-06 MK 指示）。レース前の予想と本線の買い目だけで買う組を確定する。
+ * 組は aiPointBasis の結果で、結果を見て変えない。規則を変えるときは AI_SELECT_MODEL を上げて別の版にする。
+ * 実現回収率 = 選定した組に当たりがあるときの払戻 ÷（選定した組の点数 × 100 円）。分子と分母の組は同じ。
+ */
+export const AI_SELECT_MODEL = 'ak-select-v1';
+
+/** @returns {{ model:string, tickets:string[], points:number } | null} tickets は "1着-2着" */
+export function buildAiSelect(horses, normalLines, opts = {}) {
+  const tickets = aiPointBasis(horses, normalLines, opts);
+  return tickets?.length ? { model: AI_SELECT_MODEL, tickets, points: tickets.length } : null;
+}
+
+/** 1 レースの実現値。選定が無い、または結果が無いレースは null */
+export function raceAiSelect(race) {
+  const select = race?.aiSelect;
+  const first = race?.result?.first?.number;
+  const second = race?.result?.second?.number;
+  if (!select?.tickets?.length || first == null || second == null) return null;
+  const hit = select.tickets.includes(`${first}-${second}`);
+  return { points: select.tickets.length, hit, payout: hit ? payoutOf(race) : 0 };
+}
+
+/** 複数日の AI選定回収率。選定のあるレースだけを数え、レース数と点数を一緒に返す */
+export function summarizeAiSelect(entries) {
+  const rs = (Array.isArray(entries) ? entries : []).flatMap((e) => (e?.races || []).map(raceAiSelect)).filter(Boolean);
+  const points = rs.reduce((s, r) => s + r.points, 0);
+  const payout = rs.reduce((s, r) => s + r.payout, 0);
+  if (!(points > 0)) return null;
+  return {
+    races: rs.length,
+    hits: rs.filter((r) => r.hit).length,
+    points,
+    investment: points * 100,
+    payout,
+    recoveryRate: Math.round((payout / (points * 100)) * 1000) / 10,
+  };
+}
+
+export const AI_SELECT_NOTE = 'AI選定回収率は、AIがレース前に本線の中から選んだ組（規則 ak-select-v1）を各100円で購入した場合の実現値です。選定した組は Premium の買い目の一部で、組の一覧は表示していません。導入前のレースは同じ規則で再集計しています。今後の回収を保証するものではありません。';
+
 /** 画面に添える小さな注記（これ以上の内部計算は画面で説明しない） */
 export const AI_POINTS_NOTE = '的中は本線＋抑えで判定・購入点数は本線＋抑えの全組';
 

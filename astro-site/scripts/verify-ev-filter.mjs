@@ -398,8 +398,31 @@ function main() {
     return t ? [{ date: r.date, ...settleTickets(t, r.payouts) }] : [];
   });
 
+  // AI 事前選定の予測期待回収率（判定時点のオッズ）と実現回収率。別の指標なので別々に出す
+  const selected = new Map();
+  for (const e of JSON.parse(readFileSync(join(DATA, MARKETS[market].archive), 'utf8'))) {
+    for (const r of e.races || []) if (r.aiSelect?.tickets) selected.set(raceKey(e.date, r.venue || e.venue, parseInt(r.raceNumber, 10)), r.aiSelect.tickets.map((t) => t.replace('-', '>')));
+  }
+  const aiSelect = {};
+  for (const model of ['ak', 'blend']) {
+    let points = 0; let expected = 0; let payout = 0; let races = 0;
+    for (const r of scored) {
+      const tickets = selected.get(r.key);
+      const probs = r.models[model];
+      if (!tickets || !probs) continue;
+      const evs = ticketEvs(tickets, probs, r.odds.exacta);
+      if (!evs.length) continue;
+      races += 1;
+      points += evs.length;
+      expected += evs.reduce((s, e) => s + e.ev, 0);
+      payout += settleTickets(evs.map((e) => e.ticket), r.payouts).payout;
+    }
+    aiSelect[model] = { races, points, expectedRecovery: points ? expected / points : null, realizedRecovery: points ? payout / (points * 100) : null };
+  }
+
   const report = {
     market,
+    aiSelect,
     decisionLeadMinutes: DECISION_LEAD_MIN,
     devEnd: DEV_END,
     coverage: {
@@ -423,6 +446,7 @@ function main() {
   const pct = (v) => (v == null ? '-' : `${(v * 100).toFixed(1)}%`);
   console.log(`[${market}]`, JSON.stringify(report.coverage));
   console.log(JSON.stringify(report.diagnostics));
+  console.log('AI 事前選定', JSON.stringify(report.aiSelect));
   console.log('全買い目（基準）: 開発', pct(report.baselineAllAkTickets.dev.roi), '検証', pct(report.baselineAllAkTickets.holdout.roi));
   for (const r of results) {
     console.log([r.spec.model, r.spec.universe, r.spec.rule, r.spec.threshold,

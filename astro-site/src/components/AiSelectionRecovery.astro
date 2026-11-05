@@ -1,0 +1,28 @@
+---
+/**
+ * AI選定回収率（実現）。日別・月別・年別・通算で同じ計算（lib/results/aiBetPoints.js の summarizeAiSelect）。
+ * 中央と南関は別々に渡す。
+ */
+import { AI_SELECT_NOTE, summarizeAiSelect } from '../lib/results/aiBetPoints.js';
+import { AI_SELECTION_RATE_PUBLIC } from '../lib/results/recoveryVisibility.js';
+
+const { entries, label } = Astro.props;
+const s = AI_SELECTION_RATE_PUBLIC ? summarizeAiSelect(entries) : null;
+---
+
+{s && (
+  <section class="ai-select" aria-label={`${label}のAI選定回収率`}>
+    <h2 class="as-title">{label}のAI選定回収率（実現）</h2>
+    <div class="as-value">{s.recoveryRate}%</div>
+    <p class="as-basis">対象 {s.races.toLocaleString()}レース・購入 {s.points.toLocaleString()}点（¥{s.investment.toLocaleString()}）・払戻 ¥{s.payout.toLocaleString()}</p>
+    <p class="as-note">※ {AI_SELECT_NOTE}</p>
+  </section>
+)}
+
+<style>
+  .ai-select { background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(100, 116, 139, 0.3); border-radius: 16px; padding: 1.25rem; margin: 0 auto 2rem; text-align: center; }
+  .as-title { font-size: 1.05rem; font-weight: 700; color: #f1f5f9; margin: 0 0 0.5rem; }
+  .as-value { font-size: 1.9rem; font-weight: 800; color: #fbbf24; line-height: 1.2; }
+  .as-basis { font-size: 0.85rem; color: #cbd5e1; margin: 0.5rem 0 0; }
+  .as-note { font-size: 0.75rem; line-height: 1.6; color: #94a3b8; margin: 0.5rem 0 0; }
+</style>

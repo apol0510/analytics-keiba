@@ -5,5 +5,8 @@
  */
 export const RECOVERY_RATE_PUBLIC = false;
 
+/** AI選定回収率（実現）を的中実績ページに出す。規則は aiBetPoints.js の AI_SELECT_MODEL */
+export const AI_SELECTION_RATE_PUBLIC = true;
+
 /** 非公開の間は null を返す。テンプレートの `!= null` 判定でカードごと消える */
 export const publicRate = (value) => (RECOVERY_RATE_PUBLIC ? value : null);

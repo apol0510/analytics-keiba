@@ -7,7 +7,8 @@
 | #871 | Draft。merge しない（MK 指示） |
 | 未実施 | 「目標回収率150%」の掲載（理由は `decisions.md` 2026-11-06） |
 | 点検 | データの欠損・集計漏れなし。150% 前後の確定値は成立しない（`BET_POINT_LOGIC.md`） |
-| 別件 | #869（EV フィルター検証）は merge 待ち |
+| AI選定回収率 | `ak-select-v1` を実装。南関 71.8%・中央 66.5%。的中実績ページに表示（PR 中）。main の archive が進んだら `scripts/backfill-ai-select.mjs --apply` を再実行 |
+| 別件 | #869（EV フィルター検証）はこの PR に含む |
 
 # 📊 的中結果の通算回収率（2026-11-05 MK 指示・PR 中）
 

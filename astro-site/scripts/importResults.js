@@ -13,7 +13,7 @@ import crypto from 'crypto';
 
 import { createSharedClient, resolveSharedToken } from './lib/sharedFetch.mjs';
 import { exitDeferredOrFatal } from './lib/sharedCheckerSupport.mjs';
-import { buildAiBet } from '../src/lib/results/aiBetPoints.js';
+import { buildAiBet, buildAiSelect } from '../src/lib/results/aiBetPoints.js';
 import { checkUmatanHit, checkUmatanHitWithOsae } from '../src/lib/results/umatanHit.js';
 
 const LABEL = 'importResults.js';
@@ -263,6 +263,11 @@ function verifyResults(prediction, results) {
       ...(() => {
         const aiBet = buildAiBet(predRace.horses, bettingLines, { cat: 'nankan', horseCount: predRace.raceInfo?.horseCount });
         return aiBet ? { aiBet } : {};
+      })(),
+      // AI 事前選定（買う組と点数）。予想と買い目だけで決まり、結果を使わない
+      ...(() => {
+        const aiSelect = buildAiSelect(predRace.horses, bettingLines, { cat: 'nankan', horseCount: predRace.raceInfo?.horseCount });
+        return aiSelect ? { aiSelect } : {};
       })(),
       isHit: hits.length > 0,
       hitLines: hits,
