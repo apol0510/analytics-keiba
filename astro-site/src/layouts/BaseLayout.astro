@@ -116,6 +116,13 @@ const fullTitle = buildFullTitle(title);
       "url": "https://analytics.keiba.link",
       "inLanguage": "ja-JP"
     })} />
+    <script type="application/ld+json" set:html={JSON.stringify({
+      "@context": "https://schema.org",
+      "@type": "Organization",
+      "name": SITE_BRAND,
+      "alternateName": [SITE_BRAND_JA, "南関アナリティクス"],
+      "url": "https://analytics.keiba.link"
+    })} />
     
     <!-- Tailwind CSS CDN削除（CORSエラー回避） -->
     
