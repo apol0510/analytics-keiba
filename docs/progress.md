@@ -6,7 +6,7 @@
 | 確認した露出 | `get-scheduled-jobs` は配信先メールを含む予約ジョブ 100 件を返していた（`@` の数で約 7,100・アドレス本文は記録していない）。`get-point-exchange-requests` は申請情報（`@` 14）。`/admin-newsletter-simple/` は顧客件数とメール 3 件を表示し sitemap にも載っていた |
 | 認証のない破壊操作 | `reset-all-plantype`・`migrate-customers-plantype`・`fix-free-plantype` は GET だけで全顧客の PlanType を書き換えられる形だった。今回の調査では呼び出していない |
 | 送信経路 | `send-newsletter` 系は本番 env `NEWSLETTER_AUTOMATION_ENABLED=false` で止まっている |
-| 修正 | `src/lib/auth/adminFunctionGuard.js` を 14 関数の入口に追加。`/admin-newsletter-simple` を Edge の Basic 認証・noindex・robots・sitemap 除外へ |
+| 修正 | `src/lib/ops/adminFunctionGuard.js` を 14 関数の入口に追加。`/admin-newsletter-simple` を Edge の Basic 認証・noindex・robots・sitemap 除外へ |
 | 未確認 | 過去のアクセス有無（Netlify の function ログの保持範囲を確認する）。PlanType の異常な一括変更の有無 |
 | 残り | 認証の無い他の関数（`daily-points`・`point-exchange`・`claim-reward`・`user-notification`・`step-*-preview`・`newsletter-preview`・`domain-protection-alert`・`send-payment-confirmation-auto`）の個別監査 |
 

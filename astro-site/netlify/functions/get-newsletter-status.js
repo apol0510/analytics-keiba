@@ -1,7 +1,7 @@
 // Queue方式メルマガ配信システム - 進捗取得API
 // 🔧 専門家推奨: 管理画面のAPI Key露出対策（Functions経由）
 
-import { adminDenialResponse } from '../../src/lib/auth/adminFunctionGuard.js';
+import { adminDenialResponse } from '../../src/lib/ops/adminFunctionGuard.js';
 import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
 // Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
 installAirtableCallMeter({ source: 'get-newsletter-status' });

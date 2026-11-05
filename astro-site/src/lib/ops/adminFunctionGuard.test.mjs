@@ -1,6 +1,6 @@
 /**
  * adminFunctionGuard.test.mjs — 管理者専用 Function が認証なしで動かないことを固定する
- *   node --test src/lib/auth/adminFunctionGuard.test.mjs
+ *   node --test src/lib/ops/adminFunctionGuard.test.mjs
  *
  * 2026-11-05: 配信先メールを返す get-scheduled-jobs、全顧客の PlanType を消す reset-all-plantype などが
  * 認証なしで公開されていた。/.netlify/functions/* は Edge の対象外なので関数の入口で止める。

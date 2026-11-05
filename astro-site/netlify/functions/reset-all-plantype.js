@@ -6,7 +6,7 @@
  * https://analytics.keiba.link/.netlify/functions/reset-all-plantype
  */
 
-const { adminDenialResult } = require('../../src/lib/auth/adminFunctionGuard.js');
+const { adminDenialResult } = require('../../src/lib/ops/adminFunctionGuard.js');
 exports.handler = async (event, context) => {
   const denied = adminDenialResult(event);
   if (denied) return denied;
