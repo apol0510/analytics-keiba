@@ -21,6 +21,7 @@
 //   - StepEnrollments が completed/converted/removed/unsubscribed のものは進めない（active のみ）。
 //   - 同じ jobId を再実行しても、既に sent 化済み delivery は対象外なので CurrentStepNumber は二重に進まない。
 
+import { adminDenialResponse } from '../../src/lib/ops/adminFunctionGuard.js';
 import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js';
 // Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
 installAirtableCallMeter({ source: 'reconcile-step-deliveries' });
@@ -88,6 +89,9 @@ function structuredError(headers, httpStatusSource, errorClass, error, extra = {
 }
 
 export default async function handler(request) {
+  const denied = adminDenialResponse(request);
+  if (denied) return denied;
+
   const headers = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Content-Type',

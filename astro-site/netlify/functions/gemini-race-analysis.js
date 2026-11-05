@@ -6,6 +6,7 @@
  * - 結果ページ: レース結果の振り返りコメント生成
  */
 
+const { adminDenialResult } = require('../../src/lib/ops/adminFunctionGuard.js');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const PREDICTION_PROMPT = `あなたは競馬AI予想の解説ライターです。
@@ -63,6 +64,9 @@ const RESULT_PROMPT = `あなたは競馬AI予想の結果振り返りライタ�
 - 「KEIBA Intelligenceがお届けする」等の前置き・自己紹介は不要。いきなり本文から始める`;
 
 exports.handler = async (event, context) => {
+  const denied = adminDenialResult(event);
+  if (denied) return denied;
+
   const headers = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Content-Type',
