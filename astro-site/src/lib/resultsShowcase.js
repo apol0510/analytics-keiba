@@ -22,7 +22,6 @@
 // ─────────────────────────────────────────────────────────────
 
 import { summarizeAiDay } from './results/aiBetPoints.js';
-import { simulatedRateOf } from './results/simulatedRateDisplay.js';
 import { checkUmatanHit } from './results/umatanHit.js';
 import { getMainRaceNumber } from '../utils/mainRaceBetting.js';
 
@@ -166,8 +165,6 @@ export function buildShowcaseDay(dayEntry) {
     totalBetPoints: ai.points,
     hitRate: dayEntry.hitRate ?? null,
     recoveryRate: ai.recoveryRate,
-    // 事後シミュレーション算定値（実際の購入の回収率ではない。画面では説明文と一緒に出す）
-    simulatedRate: simulatedRateOf([dayEntry]),
     totalPayout: Number(dayEntry.totalPayout) || 0,
     verifiedAt: dayEntry.verifiedAt ?? null,
     venueGroups,

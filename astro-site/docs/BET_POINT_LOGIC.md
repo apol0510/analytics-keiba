@@ -247,7 +247,7 @@ const recoveryRate      = Math.round((totalPayout / totalInvestment) * 1000) / 1
 
 月別カードの表示名は「回収率（試算）」（2026-11-06 MK 確定・部品 `SimulatedCardNote.astro`・算定方法 `/archive/simulation-method/`）。計算とパラメータは同じ。
 
-単一の入口は `simulatedRateDisplay.js`。月の値は加重、バナーの日の値はその日の算定値。中央と南関は合算せず別々に出す。公開先と禁止事項は `docs/spec.md`。
+単一の入口は `simulatedRateDisplay.js`。月の値は加重。中央と南関は合算せず別々に出す。公開先と禁止事項は `docs/spec.md`。
 
 ### 性質
 
