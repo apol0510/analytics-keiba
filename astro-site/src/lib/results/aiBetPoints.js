@@ -1,8 +1,10 @@
 /**
  * aiBetPoints.js — 的中実績の「購入点数・回収率」を数える単一源（純粋関数・Node/SSR 安全）
  *
- * 【状態】MK 確定仕様（2026-10-06）。本番反映は MK の Deploy Preview 目視後。
- * 正本: docs/BET_POINT_LOGIC.md「MK確定仕様: 実績の購入点数は AI レース別算定」
+ * 【状態】購入点数の算定は MK 確定仕様（2026-10-06）。的中判定は 2026-11-06 MK 指示で本線＋抑え。
+ * 🛑 ここの recoveryRate は非採用の方式で、公式の回収率ではない（公式の方式は未確定）。
+ *    公開は recoveryVisibility.js で止めている。新方式はここへ足し、この値を公開しない。
+ * 正本: docs/BET_POINT_LOGIC.md「回収率の算定方式の状態」
  *
  * 目的: 実績の購入点数を「全レース 5 点固定」にせず、レースごとに AI が算定する。
  *       これは実績の購入点数の算定方式であり、Premium で提供する新しい買い目ではない。
@@ -13,8 +15,8 @@
  *    点数 = 少ない買い目（narrowUmatan）の組数 ＋ 通常買い目を参照した 2〜6 組。レース前のデータだけで決める（結果は使わない）。
  *  - 的中（✅）は本線＋抑えの買い目行で判定する（importResults*.js の isHit をそのまま使う・2026-11-06 MK 指示）。
  *  - 払戻は、そのレースで記録された払戻（umatan.payout）をそのまま使う。
- *  - 回収率 = 払戻 ÷（本線＋抑えの全組の点数 × 100 円）。分子と分母の買い目の範囲をそろえる。
- *    race.aiBet は記録として残すが、回収率の分母には使わない。
+ *  - recoveryRate = 払戻 ÷（本線＋抑えの全組の点数 × 100 円）。非採用の方式で、内部の集計だけに使う。
+ *    race.aiBet は記録として残すが、この値の分母には使わない。
  *  - 買い目行の無いレースを含む日は購入点数・回収率を出さない（推測で埋めない）。
  */
 import { narrowUmatan } from '../acquisition/predictionContent.js';
@@ -59,6 +61,15 @@ export const GAP_TIERS = Object.freeze({
   nankan: Object.freeze({ mid: 13, strong: 22 }),
 });
 
+/** 本命と 2 番手の評価差（レース前のデータだけ）。本命がいなければ null */
+export function honmeiGap(horses) {
+  const list = Array.isArray(horses) ? horses.filter(Boolean) : [];
+  const honmei = list.find((h) => h.role === '本命');
+  if (!honmei) return null;
+  const others = list.filter((h) => h !== honmei).map(ptOf).sort((a, b) => b - a);
+  return ptOf(honmei) - (others[0] ?? 0);
+}
+
 /**
  * 追加する組数（レース前のデータだけで決める）。
  * 軸が堅い（2 番手との差が大きい・指数が高い）ほど少なく、混戦・指数が低いほど多く。頭数が多いと +1、少ないと −1。
@@ -70,8 +81,7 @@ export function extraCount(horses, { cat = 'nankan', horseCount } = {}) {
   const R = SELECTION_RULES[cat] || SELECTION_RULES.nankan;
   const G = GAP_TIERS[cat] || GAP_TIERS.nankan;
   const idx = rawIndex(honmei) ?? 0;
-  const others = list.filter((h) => h !== honmei).map(ptOf).sort((a, b) => b - a);
-  const gap = ptOf(honmei) - (others[0] ?? 0);
+  const gap = honmeiGap(list);
   let k = gap >= G.strong ? 3 : gap >= G.mid ? 4 : 5;
   if (idx > 0) {                         // 指数が無い（古いデータ）ときは差だけで決める
     if (idx >= R.aMinIndex) k -= 1;
@@ -190,7 +200,7 @@ export function summarizeAiDays(entries) {
 /** 画面に添える小さな注記（これ以上の内部計算は画面で説明しない） */
 export const AI_POINTS_NOTE = '的中は本線＋抑えで判定・購入点数は本線＋抑えの全組';
 
-/** 的中結果ページの回収率に添える説明。回収率は実購入の収支ではないことを読者に伝える（docs/BET_POINT_LOGIC.md） */
+/** 非採用の方式の説明文。回収率が非公開の間は画面に出ない。新方式では書き直す（docs/BET_POINT_LOGIC.md） */
 export const AI_RECOVERY_DISCLOSURE = '的中は本線に抑えを含めて判定しています。回収率は、払戻を本線＋抑えの全組を各100円で購入した金額で割った値です。Premium の買い目に抑えを表示する前のレースは、抑えの馬を含めて再集計した値です。';
 
 /**
