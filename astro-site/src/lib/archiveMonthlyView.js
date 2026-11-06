@@ -182,8 +182,8 @@ export function dayKeyToInt(key) {
  * 旧期間データ自体は削除せず、月別履歴として閲覧可能なまま維持する。
  */
 export const CURRENT_BASIS_START = '2026-04-15';
-export const CURRENT_BASIS_START_LABEL = '2026年4月15日';
 export const LEGACY_BASIS_END_LABEL = '2026年4月14日';
+export const LEGACY_BASIS_NOTE = `※ ${LEGACY_BASIS_END_LABEL}以前は参考実績で、実績の集計には含めていません。`;
 
 /** dayKey("14"|"14j") と year,month から日付が現在基準期間（>= CURRENT_BASIS_START）か判定（日付のみ）。 */
 export function isCurrentBasisDay(year, month, dayKey) {
