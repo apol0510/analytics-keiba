@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import {
+import { BET_CUTOFF_LEAD_SEC,
   parseRaceId, sanitizeIngest, countdown, followTarget, buildNav, raceDisplay,
   jstHm, jstHms, jstDate, INGEST_SCHEMA, STALE_MS, MARKETS, resultLine, startLine, nextUpcoming, RESULT_ETA,
 } from './aiLab.js';
@@ -371,8 +371,10 @@ test('着順（結果アーカイブの 1〜3 着）: レースと全頭の行�
 test('発走後の表示: 「発走済み（HH:MM 発走）」・着順の目安時刻・オッズは発走 10 分前で固定と明示・次に発走するレースへの案内', () => {
   const start = '2026-10-10T01:47:00.000Z'; // 10:47 JST
   const t = Date.parse(start);
-  assert.deepEqual(startLine(start, t - 61_000), { started: false, lead: '発走まで ', value: '1分01秒', tail: '（発走 10:47）' });
-  assert.deepEqual(startLine(start, t), { started: true, lead: '', value: '発走済み', tail: '（10:47 発走）' }, '「発走まで 発走済み」と並べない');
+  assert.deepEqual(startLine(start, t - 121_000), { started: false, closed: false, lead: '締切まで ', value: '1分01秒', tail: '（締切 10:46・発走 10:47）' });
+  assert.deepEqual(startLine(start, t - 60_000), { started: false, closed: true, lead: '', value: '締切済み', tail: '（10:47 発走予定）' }, '発走 1 分前で締切');
+  assert.deepEqual(startLine(start, t), { started: true, lead: '', value: '発走済み', tail: '（10:47 発走）' }, '「締切まで 発走済み」と並べない');
+  assert.equal(BET_CUTOFF_LEAD_SEC, 60);
   // 着順待ち: market ごとの目安（market 不明なら目安なし）
   const r = { raceId: '2026-10-10-08-03', startAt: start, venueName: '京都', raceNumber: 3 };
   assert.equal(resultLine(r, { nowMs: t + 1, market: 'jra' }).text, '着順は当日の全レース終了後（17 時台）に表示されます');
@@ -394,7 +396,7 @@ test('発走後の表示: 「発走済み（HH:MM 発走）」・着順の目安
   assert.match(board, /startLine\(r\.startAt, now\(\)\)/);
   assert.match(board, /nextUpcoming\(races\(\), r\.raceId, now\(\)\)/);
   assert.match(board, /b\.onclick = \(\) => \{ ST\.follow = true;/);
-  assert.match(board, /el\.dataset\.started === '1'/);
+  assert.match(board, /el\.dataset\.stage/);
   assert.equal(/発走まで ', h\('b', \{ id: 'ailab-countdown' \}, countdown/.test(board), false);
 });
 

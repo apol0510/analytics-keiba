@@ -17,9 +17,11 @@
  * 🛑 出力は許可リストのキーだけ（race: venueName / raceNumber / startAt / hit）。archive の bettingLines・umatan・payout を写さない。
  * ⚠️ Node 専用 import を持たない（ブラウザにも同梱する）。時刻は必ず引数 nowMs で受ける。
  */
-import { countdown, jstHm, jstDate } from './ailab/aiLab.js';
+import { BET_CUTOFF_LEAD_SEC, BET_CUTOFF_NOTE, countdown, cutoffAt, jstHm, jstDate } from './ailab/aiLab.js';
 
-export { countdown, jstHm };
+export { BET_CUTOFF_NOTE, countdown, cutoffAt, jstHm };
+
+const CUTOFF_MS = BET_CUTOFF_LEAD_SEC * 1000;
 
 /** 'YYYY-MM-DD' → 'M/D' */
 export function mdLabel(date) {
@@ -97,7 +99,7 @@ export const RESULT_NOTE = 'レース結果は取得後に反映されます';
 /**
  * 今見せるレース。{ race, due } か null。
  * 会場ごとに「結果が無く、予定時刻 + DUE_HOLD_SEC を過ぎていない最初のレース」を先頭とし、
- * 予定時刻前の先頭があれば一番早いもの（due: false）、全会場が予定時刻を過ぎていれば due: true。
+ * 締切前の先頭があれば一番早いもの（due: false）、全会場が締切を過ぎていれば due: true。
  * 別の会場は遅れの影響を受けないので、そちらのカウントダウンは止めない。
  */
 export function currentRace(races, nowMs) {
@@ -110,7 +112,7 @@ export function currentRace(races, nowMs) {
     if (!cur || t < cur.t) heads.set(key, { t, race: r });
   }
   const list = [...heads.values()].sort((a, b) => a.t - b.t);
-  const upcoming = list.find((h) => h.t > nowMs);
+  const upcoming = list.find((h) => h.t - CUTOFF_MS > nowMs);
   if (upcoming) return { race: upcoming.race, due: false };
   return list.length ? { race: list[0].race, due: true } : null;
 }
@@ -136,7 +138,7 @@ export function raceStatus(race, nowMs, next = null) {
   const t = Date.parse(race?.startAt || '');
   if (!Number.isFinite(t)) return { state: 'unknown', mark: '', text: '発走時刻未定' };
   const hm = jstHm(race.startAt);
-  if (t > nowMs) return next && race === next ? { state: 'next', mark: '', text: `次 ${hm}` } : { state: 'upcoming', mark: '', text: `${hm} 予定` };
+  if (t - CUTOFF_MS > nowMs) return next && race === next ? { state: 'next', mark: '', text: `次 ${hm}` } : { state: 'upcoming', mark: '', text: `${hm} 予定` };
   return t + DUE_HOLD_SEC * 1000 > nowMs ? { state: 'due', mark: '', text: `${hm} 予定` } : { state: 'past', mark: '', text: hm };
 }
 
@@ -184,11 +186,11 @@ export const RING_WINDOW_SEC = 3600;
 export const RING_SOON_SEC = 300;
 
 /**
- * 円形ゲージの表示モデル。予定時刻を過ぎた・時刻不明は null（ゲージを出さない）。
+ * 円形ゲージの表示モデル。残り時間は締切まで。startAt は発走予定時刻で渡す。締切を過ぎた・時刻不明は null（ゲージを出さない）。
  *   fraction … 残りの割合 0〜1 ／ second … 周回する点の位置 0〜59 ／ main・sub … 中央の 2 行
  */
 export function ringModel(startAt, nowMs) {
-  const c = countdown(startAt, nowMs);
+  const c = countdown(cutoffAt(startAt), nowMs);
   if (c.started || c.seconds == null) return null;
   const sec = c.seconds;
   const hr = Math.floor(sec / 3600);
@@ -234,14 +236,20 @@ export function nextRacesByCat(feed, nowMs) {
   return list.filter((r) => jstDate(Date.parse(r.startAt)) === day);
 }
 
+/** 「次のレース」の時刻の行。r は nextRacesByCat の要素 */
+export function nextRaceAtText(r, nowMs) {
+  const cut = jstHm(cutoffAt(r.startAt));
+  return r.due ? `締切時刻（${cut}）を過ぎました` : `${dayPrefix(r.startAt, nowMs)}${cut} 締切（${jstHm(r.startAt)} 発走予定）`;
+}
+
 /** 上部の見出し行（次のレースのカウントダウン、予定時刻を過ぎたレース、または全レース後の案内） */
 export function headline(board, nowMs) {
   const cur = currentRace(board?.races, nowMs);
   if (cur && !cur.due) {
-    const c = countdown(cur.race.startAt, nowMs);
-    return { state: 'countdown', label: `${cur.race.venueName} ${cur.race.raceNumber}R`, countdown: c.text, at: `${dayPrefix(cur.race.startAt, nowMs)}${jstHm(cur.race.startAt)}`, startAt: cur.race.startAt };
+    const c = countdown(cutoffAt(cur.race.startAt), nowMs);
+    return { state: 'countdown', cutoff: `${dayPrefix(cur.race.startAt, nowMs)}${jstHm(cutoffAt(cur.race.startAt))}`, label: `${cur.race.venueName} ${cur.race.raceNumber}R`, countdown: c.text, at: `${dayPrefix(cur.race.startAt, nowMs)}${jstHm(cur.race.startAt)}`, startAt: cur.race.startAt };
   }
-  if (cur) return { state: 'due', label: `${cur.race.venueName} ${cur.race.raceNumber}R`, at: jstHm(cur.race.startAt) };
+  if (cur) return { state: 'due', label: `${cur.race.venueName} ${cur.race.raceNumber}R`, at: jstHm(cur.race.startAt), cutoff: jstHm(cutoffAt(cur.race.startAt)) };
   if (!board?.races?.length) return { state: 'none' };
   const today = board.date === jstDate(nowMs);
   const day = today ? '本日' : mdLabel(board.date);

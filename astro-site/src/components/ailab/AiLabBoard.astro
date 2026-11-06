@@ -177,7 +177,7 @@ const initialJson = JSON.stringify(initial ?? null).replace(/</g, '\\u003c');
       box.appendChild(h('div', { class: 'ailab-mute' }, `${MARKET_LABEL[ST.market]} / ${view.date} / AI の評価は発走${DECISION_LEAD_MIN}分前に確定`));
       box.appendChild(h('div', { class: 'ailab-big' }, `${r.venueName} ${r.raceNumber}R`));
       const sl = startLine(r.startAt, now());
-      box.appendChild(h('div', {}, sl.lead, h('b', { id: 'ailab-countdown', 'data-started': sl.started ? '1' : '0' }, sl.value), sl.tail));
+      box.appendChild(h('div', {}, sl.lead, h('b', { id: 'ailab-countdown', 'data-stage': sl.started ? 'started' : sl.closed ? 'closed' : 'open' }, sl.value), sl.tail));
       const res = resultLine(r, { nowMs: now(), market: ST.market });
       if (res.state === 'result') box.appendChild(h('div', { class: 'ailab-result' }, '着順 ', res.order.map((n, i) => h('span', { class: 'ailab-rank' }, `${i + 1}着 ${n}`))));
       else if (res.state === 'waiting') box.appendChild(h('div', { class: 'ailab-mute' }, res.text));
@@ -264,9 +264,10 @@ const initialJson = JSON.stringify(initial ?? null).replace(/</g, '\\u003c');
       if (ST.follow && currentRaceId() !== shown) { render(); return; }
       const r = races().find((x) => x.raceId === shown);
       const el = $('ailab-countdown');
-      // 発走時刻を跨いだら行ごと描き直す（「発走まで」→「発走済み（HH:MM 発走）」・次レースの案内）
-      if (r && el && countdown(r.startAt, now()).started !== (el.dataset.started === '1')) { render(); return; }
-      if (r && el) el.textContent = countdown(r.startAt, now()).text;
+      // 締切・発走を跨いだら行ごと描き直す（「締切まで」→「締切済み」→「発走済み（HH:MM 発走）」・次レースの案内）
+      const sl = r && startLine(r.startAt, now());
+      if (sl && el && (sl.started ? 'started' : sl.closed ? 'closed' : 'open') !== el.dataset.stage) { render(); return; }
+      if (sl && el) el.textContent = sl.value;
     }, 1000);
     setInterval(() => { if (!document.hidden) load(); }, POLL_MS);
     document.addEventListener('visibilitychange', () => { if (!document.hidden) load(); });

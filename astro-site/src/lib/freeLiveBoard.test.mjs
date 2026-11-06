@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildFreeLiveBoard, dayPrefix, headline, hitMapFor, jstToIso, nextRace, nextRacesByCat, raceStatus, ringModel, currentRace, applyLive, tallyOf, DUE_HOLD_SEC, RESULT_NOTE } from './freeLiveBoard.js';
+import { nextRaceAtText, buildFreeLiveBoard, dayPrefix, headline, hitMapFor, jstToIso, nextRace, nextRacesByCat, raceStatus, ringModel, currentRace, applyLive, tallyOf, DUE_HOLD_SEC, RESULT_NOTE } from './freeLiveBoard.js';
 import { buildNextRaceFeed } from './nextRaceFeed.js';
 
 const model = {
@@ -70,10 +70,12 @@ test('カウントダウンは全レース共通（メインを優先しない�
   assert.equal(nextRace(b.races, at('12:20')).raceNumber, 2);
   assert.equal(nextRace(b.races, at('13:00')).raceNumber, 11);
   assert.equal(nextRace(b.races, at('20:20')), null);
-  const h = headline(b, at('12:44'));
+  const h = headline(b, at('12:43'));
   assert.equal(h.state, 'countdown');
   assert.equal(h.label, '船橋 2R');
   assert.equal(h.at, '12:45');
+  assert.equal(h.cutoff, '12:44');
+  assert.equal(headline(b, at('12:44')).state, 'due', '発走 1 分前で締切');
 });
 
 test('全レース後: 結果前は予定時刻を過ぎたとだけ言い、結果後は終了', () => {
@@ -101,9 +103,10 @@ test('guard: 部品は単一源だけを使い、買い目系フィールドを�
   }
 });
 
-test('ringModel: 1 周 60 分・60 分以上は満タン・発走後と時刻不明は null', () => {
+test('ringModel: 締切まで数える・1 周 60 分・60 分以上は満タン・締切後と時刻不明は null', () => {
   const start = '2026-11-03T08:15:00.000Z'; // 17:15 JST
-  const ms = (m, s = 0) => Date.parse(start) - (m * 60 + s) * 1000;
+  const cutoff = Date.parse(start) - 60_000; // 発走 1 分前
+  const ms = (m, s = 0) => cutoff - (m * 60 + s) * 1000;
   assert.deepEqual(ringModel(start, ms(19, 47)), { fraction: 1187 / 3600, second: 47, soon: false, main: '19分', sub: '47秒' });
   assert.equal(ringModel(start, ms(30)).fraction, 0.5);
   assert.equal(ringModel(start, ms(60)).fraction, 1);
@@ -111,7 +114,8 @@ test('ringModel: 1 周 60 分・60 分以上は満タン・発走後と時刻不
   assert.deepEqual([far.fraction, far.main, far.sub], [1, '2時間', '05分']);
   assert.equal(ringModel(start, ms(5, 1)).soon, false);
   assert.equal(ringModel(start, ms(5)).soon, true, '残り 5 分から金色');
-  assert.equal(ringModel(start, Date.parse(start)), null);
+  assert.equal(ringModel(start, cutoff), null);
+  assert.equal(ringModel(start, cutoff - 1000).sub, '01秒');
   assert.equal(ringModel(null, ms(5)), null);
 });
 
@@ -172,14 +176,16 @@ test('guard: 次のレース部品は買い目系を参照せず、対象ペー�
   }
 });
 
-test('発走遅延: 予定時刻を過ぎても保留中は同じ会場の次へ切り替えず、発走済みと言わない', () => {
+test('締切後と発走遅延: 予定時刻を過ぎても保留中は同じ会場の次へ切り替えず、発走済みと言わない', () => {
   const r = (venueName, raceNumber, hm) => ({ venueName, raceNumber, startAt: `2026-11-04T${hm}:00+09:00`, hit: null });
   const t = (hm, s = 0) => Date.parse(`2026-11-04T${hm}:00+09:00`) + s * 1000;
   const races = [r('船橋', 10, '19:25'), r('船橋', 11, '20:05')];
   const board = { date: '2026-11-04', races, resultsIn: false, tally: null };
-  assert.equal(headline(board, t('19:24')).state, 'countdown');
-  const due = headline(board, t('19:25'));
-  assert.deepEqual([due.state, due.label, due.at], ['due', '船橋 10R', '19:25']);
+  assert.equal(headline(board, t('19:23', 59)).state, 'countdown');
+  const due = headline(board, t('19:24'));
+  assert.deepEqual([due.state, due.label, due.at, due.cutoff], ['due', '船橋 10R', '19:25', '19:24']);
+  assert.equal(nextRaceAtText({ ...races[0], due: false }, t('19:00')), '19:24 締切（19:25 発走予定）');
+  assert.equal(nextRaceAtText({ ...races[0], due: true }, t('19:24')), '締切時刻（19:24）を過ぎました');
   assert.equal(raceStatus(races[0], t('19:30')).state, 'due');
   assert.equal(headline(board, t('19:25', DUE_HOLD_SEC - 1)).state, 'due');
   assert.equal(headline(board, t('19:25', DUE_HOLD_SEC)).label, '船橋 11R', '保留が終われば次へ');

@@ -1,6 +1,6 @@
 ---
 /**
- * FreeLiveRaceBoard.astro — 無料予想ページの「次のレース発走まで」＋「有料版の的中 ✅/✗」
+ * FreeLiveRaceBoard.astro — 無料予想ページの「次のレースの締切まで」＋「有料版の的中 ✅/✗」
  *
  * 単一源: src/lib/freeLiveBoard.js（2026-11-03 MK 確定の公開範囲・メインレースを特別扱いしない）
  * 🛑 買い目・払戻・印・指数は出さない。ブラウザへ渡すのは venueName / raceNumber / startAt / hit だけ。
@@ -11,7 +11,7 @@
  */
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { RESULT_NOTE, buildFreeLiveBoard, headline, nextRace, raceStatus, ringModel } from '../lib/freeLiveBoard.js';
+import { BET_CUTOFF_NOTE, RESULT_NOTE, buildFreeLiveBoard, headline, nextRace, raceStatus, ringModel } from '../lib/freeLiveBoard.js';
 import CountdownRing from './CountdownRing.astro';
 
 const { cat, model } = Astro.props as { cat: 'jra' | 'nankan'; model: any };
@@ -41,14 +41,14 @@ const json = JSON.stringify(board).replace(/</g, '\\u003c');
   <section class="ag-glass ag-tint-blue flb" data-free-live-board aria-label="次のレースと有料版の的中">
     <script is:inline type="application/json" data-flb-data set:html={json}></script>
     <div class="flb-head">
-      <CountdownRing ring={ring} lead="発走まで" />
+      <CountdownRing ring={ring} lead="締切まで" />
       <div class="flb-head-text">
         <span class="ag-pill blue flb-pill">LIVE</span>
         <div class="flb-headline" data-flb-headline aria-live="off">
           {head.state === 'countdown' ? (
-            <span class="flb-next">次は <b>{head.label}</b>（{head.at} 発走予定）</span>
+            <span class="flb-next">次は <b>{head.label}</b>（{head.cutoff} 締切・{head.at} 発走予定）</span>
           ) : head.state === 'due' ? (
-            <span class="flb-next"><b>{head.label}</b> は発走予定時刻（{head.at}）を過ぎました</span>
+            <span class="flb-next"><b>{head.label}</b> は締切時刻（{head.cutoff}）を過ぎました（{head.at} 発走予定）</span>
           ) : (
             <span class="flb-next">{head.text}</span>
           )}
@@ -80,7 +80,7 @@ const json = JSON.stringify(board).replace(/</g, '\\u003c');
     </div>
 
     <p class="flb-note">
-      ✅/✗ は有料版の予想が的中したかどうかです（買い目は有料版で公開）。{RESULT_NOTE}。発走時刻は予定で、遅れることがあります。
+      ✅/✗ は有料版の予想が的中したかどうかです（買い目は有料版で公開）。{RESULT_NOTE}。{BET_CUTOFF_NOTE}発走時刻は予定で、遅れることがあります。
     </p>
     <a class="ag-cta flb-cta" href="/pricing/" data-flb-cta>Premiumで次のレースの予想を見る</a>
   </section>
@@ -114,9 +114,9 @@ const json = JSON.stringify(board).replace(/</g, '\\u003c');
         const a = document.createElement('span');
         a.className = 'flb-next';
         if (h.state === 'countdown') {
-          a.append('次は ', Object.assign(document.createElement('b'), { textContent: h.label }), `（${h.at} 発走予定）`);
+          a.append('次は ', Object.assign(document.createElement('b'), { textContent: h.label }), `（${h.cutoff} 締切・${h.at} 発走予定）`);
         } else if (h.state === 'due') {
-          a.append(Object.assign(document.createElement('b'), { textContent: h.label }), ` は発走予定時刻（${h.at}）を過ぎました`);
+          a.append(Object.assign(document.createElement('b'), { textContent: h.label }), ` は締切時刻（${h.cutoff}）を過ぎました（${h.at} 発走予定）`);
         } else if (h.state !== 'none') {
           a.textContent = h.text;
         }
