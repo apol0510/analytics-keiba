@@ -5,8 +5,8 @@ import BaseLayout from '../../../../../layouts/BaseLayout.astro';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { summarizeAiDay, summarizeAiDays, AI_POINTS_NOTE, AI_RECOVERY_DISCLOSURE } from '../../../../../lib/results/aiBetPoints.js';
-import SimulatedRate from '../../../../../components/SimulatedRate.astro';
-import { simulatedRateOf } from '../../../../../lib/results/simulatedRateDisplay.js';
+import SimulatedCardNote from '../../../../../components/SimulatedCardNote.astro';
+import { simulatedMonthRate } from '../../../../../lib/results/simulatedRateDisplay.js';
 import { sortRacesByVenueAndNumber } from '../../../../../utils/sortRaces.js';
 
 export const prerender = false;
@@ -65,6 +65,7 @@ const pageDescription = monthData.length > 0
 // ⚠️ このページは Cookie も会員判定も使っていないことが前提
 //    （check-cdn-cache-safety.mjs が CI で検査する）。
 setPublicCdnCache(Astro);
+const simulatedMonth = simulatedMonthRate(monthData);
 ---
 
 <BaseLayout title={pageTitle} description={pageDescription}>
@@ -93,6 +94,12 @@ setPublicCdnCache(Astro);
               <div class="stat-value">{monthStats.hitRate}%</div>
               <div class="stat-label">月間的中率</div>
             </div>
+            {simulatedMonth != null && (
+              <div class="stat-card">
+                <div class="stat-value">{simulatedMonth}%</div>
+                <div class="stat-label">回収率<span class="sim-suffix">（試算）</span></div>
+              </div>
+            )}
             {publicRate(monthStats.returnRate) != null && (
               <div class="stat-card">
                 <div class={`stat-value ${parseFloat(monthStats.returnRate) >= 100 ? 'profit' : ''}`}>
@@ -110,7 +117,7 @@ setPublicCdnCache(Astro);
               <div class="stat-label">的中レース数</div>
             </div>
           </section>
-          <SimulatedRate items={[{ label: `${year}年${parseInt(month)}月`, value: simulatedRateOf(monthData) }]} />
+          {simulatedMonth != null && <SimulatedCardNote />}
           {publicRate(monthStats.returnRate) != null && <p class="ai-points-note">※ {AI_POINTS_NOTE}。{AI_RECOVERY_DISCLOSURE}</p>}
 
           {/* 日別アーカイブ */}
@@ -506,4 +513,5 @@ setPublicCdnCache(Astro);
       .payout { min-width: auto; }
     }
   }
+  .sim-suffix { font-size: 0.72em; }
 </style>

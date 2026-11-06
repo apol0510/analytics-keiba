@@ -6,7 +6,8 @@ import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { summarizeAiDays, AI_POINTS_NOTE, AI_RECOVERY_DISCLOSURE } from '../../../../lib/results/aiBetPoints.js';
 import SimulatedRate from '../../../../components/SimulatedRate.astro';
-import { simulatedRateOf } from '../../../../lib/results/simulatedRateDisplay.js';
+import { simulatedRateOf, simulatedMonthRate } from '../../../../lib/results/simulatedRateDisplay.js';
+import SimulatedCardNote from '../../../../components/SimulatedCardNote.astro';
 
 export const prerender = false;
 
@@ -49,7 +50,7 @@ const monthSummaries = Array.from(monthsMap.entries())
     // 回収率は AI レース別算定（単一源 lib/results/aiBetPoints.js）
     const aiM = summarizeAiDays(entries);
     const returnRate = aiM.recoveryRate != null ? aiM.recoveryRate.toFixed(1) : null;
-    return { month, daysCount: entries.length, totalRaces, totalHitRaces, totalBetAmount, totalPayout, hitRate, returnRate };
+    return { month, daysCount: entries.length, totalRaces, totalHitRaces, totalBetAmount, totalPayout, hitRate, returnRate, simulatedRate: simulatedMonthRate(entries) };
   })
   .sort((a, b) => b.month.localeCompare(a.month));
 
@@ -137,6 +138,7 @@ setPublicCdnCache(Astro);
           {/* 月別一覧 */}
           <section class="months-grid">
             {monthSummaries.map((m) => (
+              <div class="month-card-wrap">
               <a href={`/archive/jra/${year}/${m.month}/`} class="month-card">
                 <div class="month-header">
                   <h2 class="month-title">{parseInt(m.month, 10)}月</h2>
@@ -152,6 +154,12 @@ setPublicCdnCache(Astro);
                     <div class="month-stat-value">{m.hitRate}%</div>
                     <div class="month-stat-label">的中率</div>
                   </div>
+                  {m.simulatedRate != null && (
+                    <div class="month-stat">
+                      <div class="month-stat-value">{m.simulatedRate}%</div>
+                      <div class="month-stat-label">回収率<span class="sim-suffix">（試算）</span></div>
+                    </div>
+                  )}
                   {publicRate(m.returnRate) != null && (
                     <div class="month-stat">
                       <div class={`month-stat-value ${parseFloat(m.returnRate) >= 100 ? 'profit' : ''}`}>{m.returnRate}%</div>
@@ -174,6 +182,8 @@ setPublicCdnCache(Astro);
 
                 <div class="view-details-button">📊 詳細を見る →</div>
               </a>
+              {m.simulatedRate != null && <SimulatedCardNote />}
+              </div>
             ))}
           </section>
 
@@ -343,5 +353,9 @@ setPublicCdnCache(Astro);
     .month-header { flex-direction: column; align-items: flex-start; gap: 1rem; }
     .month-stats-grid { grid-template-columns: repeat(2, 1fr); }
     .page-footer { flex-direction: column; }
+  }
+  .sim-suffix { font-size: 0.72em; }
+  @media (max-width: 768px) {
+    .month-stats-grid .month-stat:last-child:nth-child(odd) { grid-column: 1 / -1; }
   }
 </style>

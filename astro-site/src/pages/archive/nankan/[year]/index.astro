@@ -7,7 +7,8 @@ import { join } from 'path';
 import { buildMergedMonthData, aggregateMonthByBasis, isCurrentBasisEntry, CURRENT_BASIS_START_LABEL, LEGACY_BASIS_END_LABEL } from '../../../../lib/archiveMonthlyView.js';
 import { summarizeAiDays, AI_POINTS_NOTE, AI_RECOVERY_DISCLOSURE } from '../../../../lib/results/aiBetPoints.js';
 import SimulatedRate from '../../../../components/SimulatedRate.astro';
-import { simulatedRateOf } from '../../../../lib/results/simulatedRateDisplay.js';
+import { simulatedRateOf, simulatedMonthRate } from '../../../../lib/results/simulatedRateDisplay.js';
+import SimulatedCardNote from '../../../../components/SimulatedCardNote.astro';
 
 export const prerender = false;
 
@@ -90,6 +91,7 @@ const monthSummaries = months.map(month => {
 
   return {
     month,
+    simulatedRate: simulatedMonthRate(Object.keys(monthData).filter((k) => isCurrentBasisEntry(year, month, k, monthData[k])).map((k) => monthData[k])),
     isLegacyReference: !hasCurrent,                 // 旧基準のみの月（参考）
     hasLegacyDays: hasCurrent && legacy.days > 0,   // 現在基準の月だが参考日を含む
     payout: shown.payout,
@@ -168,6 +170,7 @@ setPublicCdnCache(Astro);
         <!-- 月別一覧 -->
         <div class="months-grid">
           {monthSummaries.map(summary => (
+            <div class="month-card-wrap">
             <a href={`/archive/nankan/${year}/${summary.month}/`} class="month-card">
               <div class="month-header">
                 <h2 class="month-title">{parseInt(summary.month, 10)}月</h2>
@@ -187,6 +190,12 @@ setPublicCdnCache(Astro);
                   <div class="month-stat-value">{summary.hitRate}%</div>
                   <div class="month-stat-label">的中率</div>
                 </div>
+                {summary.simulatedRate != null && (
+                  <div class="month-stat">
+                    <div class="month-stat-value">{summary.simulatedRate}%</div>
+                    <div class="month-stat-label">回収率<span class="sim-suffix">（試算）</span></div>
+                  </div>
+                )}
                 <div class="month-stat">
                   <div class="month-stat-value">{summary.daysCount}日</div>
                   <div class="month-stat-label">開催日数</div>
@@ -205,6 +214,8 @@ setPublicCdnCache(Astro);
                 📊 詳細を見る →
               </div>
             </a>
+            {summary.simulatedRate != null && <SimulatedCardNote />}
+            </div>
           ))}
         </div>
       </>
@@ -439,4 +450,8 @@ setPublicCdnCache(Astro);
 
       .basis-note { font-size: 0.85rem; }
     }
+  .sim-suffix { font-size: 0.72em; }
+  @media (max-width: 768px) {
+    .month-stats-grid .month-stat:last-child:nth-child(odd) { grid-column: 1 / -1; }
+  }
 </style>
