@@ -6,6 +6,7 @@ import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { buildLatestShowcase } from '../../lib/resultsShowcase.js';
 import { AI_POINTS_NOTE } from '../../lib/results/aiBetPoints.js';
+import SimulatedRate from '../../components/SimulatedRate.astro';
 
 export const prerender = false;
 
@@ -102,6 +103,7 @@ setPublicCdnCache(Astro);
             )}
           </div>
           {view.totalBetPoints != null && <p class="sc-ai-note">※ {AI_POINTS_NOTE}</p>}
+          <SimulatedRate items={[{ label: dateLabel, value: view.simulatedRate }]} />
         </section>
 
         {/* 会場ごと */}

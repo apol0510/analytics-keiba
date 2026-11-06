@@ -200,17 +200,21 @@ export const AI_RECOVERY_DISCLOSURE = '的中は本線に抑えを含めて判�
  * 中央と南関は別々に渡す（合算しない）。date の無いエントリは数えない。
  * @returns {{ from:string, to:string, overall:object, recent:object } | null}
  */
+export function recentCutoff(to, recentMonths) {
+  const [y, m, d] = to.split('-').map(Number);
+  const cut = new Date(Date.UTC(y, m - 1 - recentMonths, 1));
+  const lastDay = new Date(Date.UTC(cut.getUTCFullYear(), cut.getUTCMonth() + 1, 0)).getUTCDate();
+  cut.setUTCDate(Math.min(d, lastDay));
+  return cut.toISOString().slice(0, 10);
+}
+
 export function summarizeCumulative(entries, { recentMonths = 3 } = {}) {
   const dated = (Array.isArray(entries) ? entries : []).filter((e) => /^\d{4}-\d{2}-\d{2}$/.test(e?.date || ''));
   if (dated.length === 0) return null;
   const dates = dated.map((e) => e.date).sort();
   const from = dates[0];
   const to = dates[dates.length - 1];
-  const [y, m, d] = to.split('-').map(Number);
-  const cut = new Date(Date.UTC(y, m - 1 - recentMonths, 1));
-  const lastDay = new Date(Date.UTC(cut.getUTCFullYear(), cut.getUTCMonth() + 1, 0)).getUTCDate();
-  cut.setUTCDate(Math.min(d, lastDay));
-  const cutoff = cut.toISOString().slice(0, 10);
+  const cutoff = recentCutoff(to, recentMonths);
   return {
     from,
     to,

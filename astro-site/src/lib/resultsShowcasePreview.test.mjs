@@ -140,6 +140,7 @@ test('公開キーは固定（増やすときは意図的に）', () => {
     'hitRaces',
     'href',
     'recoveryRate',
+    'simulatedRate',
     'totalRaces',
     'venueGroups',
     'venueLabel',

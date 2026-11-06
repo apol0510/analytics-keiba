@@ -1,5 +1,6 @@
 ---
 import { publicRate } from '../lib/results/recoveryVisibility.js';
+import { SIMULATED_RATE_LABEL, SIMULATED_RATE_NOTE_SHORT } from '../lib/results/simulatedRateDisplay.js';
 // HomeResultsShowcasePreview.astro
 // トップページ Hero Key Visual 直下に置く「当日の実績」プレビュー。
 //
@@ -65,7 +66,14 @@ const cards = [
                   <i class="rsp__sum-label">回収率</i>
                 </span>
               )}
+              {c.simulatedRate != null && (
+                <span class="rsp__sum">
+                  <b class="rsp__sum-value">{c.simulatedRate}<i>%</i></b>
+                  <i class="rsp__sum-label">{SIMULATED_RATE_LABEL}</i>
+                </span>
+              )}
             </div>
+            {c.simulatedRate != null && <p class="rsp__sim-note">※ {SIMULATED_RATE_NOTE_SHORT}</p>}
 
             {/* ② 全会場・全レースの ✅/✗（全レース同列・強調なし） */}
             <div class="rsp__races">
@@ -219,6 +227,7 @@ const cards = [
   .rsp__sum.is-profit .rsp__sum-value {
     color: #10b981;
   }
+  .rsp__sim-note { font-size: 0.72rem; color: #cbd5e1; margin: 0.25rem 0 0.5rem; }
   .rsp__sum-label {
     font-size: 0.7rem;
     font-style: normal;

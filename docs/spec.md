@@ -40,7 +40,9 @@
 - 旧 4 段階方式は内部の再計算用に復元した（`src/lib/results/legacySimulation.js`）。合算 211.5%・日別平均 193.7% は結果判明後のシミュレーション値として内部保持する。公開ページ・メールで使わない
 - 購入点数と合計配当の公開表示は現状維持（2026-11-06 MK 決定）
 - 事後シミュレーション算定値 v2（`ak-sim-v2`・`src/lib/results/simulatedRecoveryV2.js`）を旧 4 段階方式の構造を基礎に実装した。MK の希望水準は 150% 前後。実際の購入の回収率とは別の値で、旧方式とも別に管理する。結果を固定値へ上書きしない。定義は `astro-site/docs/BET_POINT_LOGIC.md`
-- v2 は未公開。的中実績・販売導線への接続は第 3 段階で、算定方式に一致する名称と説明を用いる
+- v2 は「事後シミュレーション算定値」の名称で公開する（`src/lib/results/simulatedRateDisplay.js`・`SimulatedRate.astro`）。公開先は的中実績（`/archive/jra/`・`/archive/nankan/` の索引・年・月）、`/results-showcase/{jra,nankan}`、トップの実績プレビュー、無料ページのショーケースバナー
+- 数値には名称と、実際の購入の回収率ではないという説明を必ず近くに添える。「回収率」の名前で出さない。title・meta・構造化データ・メール・料金ページに数値を入れない。利益の色を付けない
+- 止めるときは `SIMULATED_RATE_PUBLIC` を false にする。`RECOVERY_RATE_PUBLIC` は false のまま
 
 ---
 

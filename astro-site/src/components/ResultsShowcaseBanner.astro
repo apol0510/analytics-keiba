@@ -1,5 +1,6 @@
 ---
 import { publicRate } from '../lib/results/recoveryVisibility.js';
+import { SIMULATED_RATE_LABEL, SIMULATED_RATE_NOTE_SHORT } from '../lib/results/simulatedRateDisplay.js';
 // ResultsShowcaseBanner.astro
 // 無料予想ページ上部に埋め込む「有料版の直近実績」コンパクトバナー。
 // 既存の結果アーカイブ（最新日 index 0）を読み、有料実績ショーケースへ誘導する。
@@ -53,10 +54,14 @@ const teaserMain = view?.venueGroups?.map((g: any) => g.mainRace).find(Boolean) 
             回収率 <b>{view.recoveryRate}%</b>
           </span>
         )}
+        {view.simulatedRate != null && (
+          <span class="scb-stat">{SIMULATED_RATE_LABEL} <b>{view.simulatedRate}%</b></span>
+        )}
         {teaserMain && teaserMain.isHit && teaserMain.payout && (
           <span class="scb-stat hit">メイン的中 <b>¥{teaserMain.payout.toLocaleString()}</b></span>
         )}
       </div>
+      {view.simulatedRate != null && <div class="scb-sim-note">※ {SIMULATED_RATE_NOTE_SHORT}</div>}
     </div>
     <span class="scb-arrow">見る →</span>
   </a>
@@ -103,6 +108,7 @@ const teaserMain = view?.venueGroups?.map((g: any) => g.mainRace).find(Boolean) 
     margin-bottom: 0.35rem;
     strong { color: #f5c542; }
   }
+  .scb-sim-note { font-size: 0.72rem; opacity: 0.9; margin-top: 0.3rem; }
   .scb-stats { display: flex; gap: 0.7rem; flex-wrap: wrap; }
   .scb-stat {
     font-size: 0.78rem;
