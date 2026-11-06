@@ -1,6 +1,7 @@
 // fixedMarketingStats.test.mjs — 固定マーケティング表示の代表値（MK 確定 2026-10-06）
-// 正本 docs/spec.md 冒頭「固定マーケティング表示の代表値は 回収率 73% / 的中率 70%」
-// 2026-11-06 MK 指示で回収率は一時非表示（src/lib/results/recoveryVisibility.js）。再表示は PR の revert で戻す。
+// 正本 docs/spec.md「固定マーケティング表示の代表値は 的中率 70%」「回収率の公式算定方式は未確定」
+// 2026-11-06 MK 指示で回収率は一時非表示（src/lib/results/recoveryVisibility.js）。
+// 再表示は新方式の実装と同じ PR で行う。#870 の revert では戻さない（73% / 173% が復活する）。
 //
 // 対象: トップ・カード・CTA・バナー・料金導線・無料ページ・Light / Premium 導線・ブログの CTA・共通レイアウト等に
 //       ハードコードされている「代表値・平均値・訴求値」。
@@ -96,7 +97,40 @@ test('回収率を前提に書いた入門講座は非表示の間だけ転送�
   assert.doesNotMatch(read('src/pages/beginner/lesson-03.astro'), /Astro\.redirect/);
 });
 
-test('固定値は小数表記にしない（カウントアップも 73% / 70% のまま整数で表示）', () => {
+test('非採用の回収率方式の名称・数値を公開面に出さない（docs/BET_POINT_LOGIC.md「回収率の算定方式の状態」）', () => {
+  const BEGINNER = walk('src/pages/beginner').filter((p) => p.endsWith('.astro'));
+  const STATIC = walk('public').filter((p) => p.endsWith('.html'));
+  const NAMES = /現金回収率|AI選定回収率|AI算定指標|ak-select/;
+  const RATES = /回収率\s*(<[^>]+>|[:：])?\s*(66\.8|76\.2|71\.8|66\.5|118\.6|127\.3)\s*%/;
+  const BACKDOOR = /87,400|累計収支|TOTAL PROFIT/; // 120 レース × 1,000 円で回収率 173% と同じ意味になる
+  for (const p of [...PUBLIC_UI, ...BEGINNER, ...STATIC]) {
+    const s = strip(read(p));
+    assert.doesNotMatch(s, NAMES, `${p}: 非採用の方式の名称`);
+    assert.doesNotMatch(s, RATES, `${p}: 非採用の回収率`);
+    assert.doesNotMatch(s, BACKDOOR, `${p}: 回収率に換算できる収支の訴求`);
+  }
+  // 入門講座は転送中で本文に例があるので、公開中のページだけ見る
+  for (const p of [...PUBLIC_UI, ...STATIC]) {
+    assert.doesNotMatch(strip(read(p)), /回収率\s*100%\s*(超|以上|を超)|回収率\s*150%|回収率\s*(211\.5|193\.7)\s*%/, `${p}: 回収率の数値目標`);
+  }
+});
+
+test('旧方式のシミュレーションを公開面へ接続しない', () => {
+  const SURFACES = [...PUBLIC_UI, ...walk('src/pages').filter((p) => p.endsWith('.astro')),
+    ...walk('netlify/functions').filter((p) => /\.m?js$/.test(p)), 'src/lib/email-templates.js'];
+  for (const p of SURFACES) assert.doesNotMatch(read(p), /from\s+['"][^'"]*legacySimulation/, `${p}: legacySimulation の import`);
+});
+
+test('正本が公式の回収率を未確定とし、revert や true への切替を再表示の手順にしない', () => {
+  const spec = readFileSync(join(root, '..', 'docs', 'spec.md'), 'utf8');
+  assert.match(spec, /回収率の公式算定方式は未確定/);
+  assert.doesNotMatch(spec, /PR を revert して戻す/);
+  assert.doesNotMatch(spec, /代表値は 回収率 73%|\*\*回収率 73% \/ 的中率 70%\*\*/);
+  assert.match(read('docs/BET_POINT_LOGIC.md'), /## 回収率の算定方式の状態/);
+  assert.doesNotMatch(read('src/lib/results/recoveryVisibility.js'), /再表示するときは true にする/);
+});
+
+test('固定値は小数表記にしない（カウントアップも整数で表示）', () => {
   // コース統計の表（例: 複勝率 62.9%）は対象外。訴求ラベル付きの値と data-target だけを見る
   for (const p of PUBLIC_UI) {
     const t = strip(read(p));

@@ -41,7 +41,7 @@ const FREE_ONBOARDING_STEPS = [
     subjectTemplate: '【KEIBA Analytics】直近の的中実績をまとめました',
     bodyTemplate:
       '<p>{{firstName}} 様</p>' +
-      '<p>AI予想の直近の的中実績・回収率をアーカイブで公開しています。データで予想の精度をご確認ください。</p>' +
+      '<p>AI予想の直近の的中実績をアーカイブで公開しています。データで予想の精度をご確認ください。</p>' +
       '<p><a href="https://analytics.keiba.link/archive/nankan/">▶ 的中実績アーカイブを見る</a></p>',
   },
   {
