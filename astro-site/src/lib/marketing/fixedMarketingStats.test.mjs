@@ -128,6 +128,16 @@ test('静的ページに期限切れの固定文言を置かない（連勝・�
   for (const p of STATIC) assert.doesNotMatch(strip(read(p)), STALE, `${p}: 期限切れの固定文言`);
 });
 
+test('南関アーカイブの基準説明はカード上に置かず、旧基準のバッジと最下部の 1 回だけ（2026-11-06 MK 確定）', () => {
+  for (const p of ['src/pages/archive/nankan/index.astro', 'src/pages/archive/nankan/[year]/index.astro']) {
+    const s = read(p);
+    assert.doesNotMatch(s, /現在の公開買い目基準|card-legacy-note|basis-note/, `${p}: 説明の重複`);
+    assert.match(s, /旧基準（参考）/, `${p}: バッジ`);
+    assert.equal(s.split('<LegacyBasisNote').length - 1, 1, `${p}: 説明は 1 回だけ`);
+    assert.ok(s.indexOf('<LegacyBasisNote') > s.lastIndexOf('class="back-link"'), `${p}: 最下部ではない`);
+  }
+});
+
 test('正本が公式の回収率を未確定とし、revert や true への切替を再表示の手順にしない', () => {
   const spec = readFileSync(join(root, '..', 'docs', 'spec.md'), 'utf8');
   assert.match(spec, /回収率の公式算定方式は未確定/);

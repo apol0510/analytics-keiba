@@ -3,7 +3,8 @@ import BaseLayout from '../../../layouts/BaseLayout.astro';
 import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join } from 'path';
 import CumulativeRecovery from '../../../components/CumulativeRecovery.astro';
-import { buildMergedMonthData, aggregateMonthByBasis, isCurrentBasisEntry, CURRENT_BASIS_START_LABEL, LEGACY_BASIS_END_LABEL } from '../../../lib/archiveMonthlyView.js';
+import LegacyBasisNote from '../../../components/LegacyBasisNote.astro';
+import { buildMergedMonthData, aggregateMonthByBasis, isCurrentBasisEntry } from '../../../lib/archiveMonthlyView.js';
 import { summarizeCumulative } from '../../../lib/results/aiBetPoints.js';
 
 export const prerender = true;
@@ -128,10 +129,6 @@ const pageDescription = '南関競馬の全的中実績アーカイブ。マリ�
       <a href="/pricing/" class="cta-button">プレミアム予想を見る →</a>
     </div>
 
-    <p class="basis-note">
-      現在の公開買い目基準による実績は、{CURRENT_BASIS_START_LABEL}以降を集計しています。
-    </p>
-
     <div class="years-grid">
       {yearSummaries.map(summary => (
         <a href={`/archive/nankan/${summary.year}/`} class="year-card">
@@ -144,12 +141,6 @@ const pageDescription = '南関競馬の全的中実績アーカイブ。マリ�
               <div class="perfect-highlight">🏆 {summary.hitRaces}/{summary.totalRaces}的中</div>
             )}
           </div>
-          {summary.isLegacyReference && (
-            <p class="card-legacy-note">{LEGACY_BASIS_END_LABEL}以前は参考実績です。</p>
-          )}
-          {summary.hasLegacyMonths && (
-            <p class="card-legacy-note">{LEGACY_BASIS_END_LABEL}以前の月は参考実績のため、実績の集計には含めていません。</p>
-          )}
 
           <div class="year-stats-grid">
             <div class="year-stat">
@@ -184,6 +175,8 @@ const pageDescription = '南関競馬の全的中実績アーカイブ。マリ�
       <a href="/archive/jra/">JRAアーカイブ</a>      <a href="/free-prediction/nankan/archive/">開催日別の予想と結果</a>
       <a href="/pricing/">プレミアム予想</a>
     </div>
+
+    {yearSummaries.some((s) => s.isLegacyReference || s.hasLegacyMonths) && <LegacyBasisNote />}
   </div>
 </BaseLayout>
 
@@ -315,18 +308,6 @@ const pageDescription = '南関競馬の全的中実績アーカイブ。マリ�
     box-shadow: 0 8px 20px rgba(245, 158, 11, 0.3);
   }
 
-  .basis-note {
-    text-align: center;
-    color: #94a3b8;
-    font-size: 0.9rem;
-    line-height: 1.6;
-    margin: 0 auto 1.5rem;
-    max-width: 640px;
-    padding: 0.75rem 1rem;
-    background: rgba(15, 23, 42, 0.5);
-    border: 1px solid rgba(100, 116, 139, 0.25);
-    border-radius: 8px;
-  }
   .legacy-badge {
     background: rgba(100, 116, 139, 0.25);
     color: #cbd5e1;
@@ -336,18 +317,12 @@ const pageDescription = '南関競馬の全的中実績アーカイブ。マリ�
     font-size: 0.9rem;
     border: 1px solid rgba(100, 116, 139, 0.4);
   }
-  .card-legacy-note {
-    color: #94a3b8;
-    font-size: 0.8rem;
-    margin: 0 0 1rem;
-  }
 
   @media (max-width: 768px) {
     .title { font-size: 1.8rem; }
     .year-header { flex-direction: column; align-items: flex-start; gap: 1rem; }
     .year-title { font-size: 2rem; }
     .year-stats-grid { grid-template-columns: repeat(2, 1fr); }
-    .basis-note { font-size: 0.85rem; }
   }
   .year-card, .view-details-button { box-sizing: border-box; max-width: 100%; }
   @media (max-width: 768px) {

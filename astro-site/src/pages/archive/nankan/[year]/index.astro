@@ -4,10 +4,11 @@ import { setPublicCdnCache } from '../../../../lib/cdnCache.mjs';
 import BaseLayout from '../../../../layouts/BaseLayout.astro';
 import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join } from 'path';
-import { buildMergedMonthData, aggregateMonthByBasis, isCurrentBasisEntry, CURRENT_BASIS_START_LABEL, LEGACY_BASIS_END_LABEL } from '../../../../lib/archiveMonthlyView.js';
+import { buildMergedMonthData, aggregateMonthByBasis, isCurrentBasisEntry } from '../../../../lib/archiveMonthlyView.js';
 import { summarizeAiDays, AI_POINTS_NOTE, AI_RECOVERY_DISCLOSURE } from '../../../../lib/results/aiBetPoints.js';
 import { simulatedMonthRate } from '../../../../lib/results/simulatedRateDisplay.js';
 import SimulatedCardNote from '../../../../components/SimulatedCardNote.astro';
+import LegacyBasisNote from '../../../../components/LegacyBasisNote.astro';
 
 export const prerender = false;
 
@@ -104,7 +105,6 @@ const monthSummaries = months.map(month => {
 const yearHitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) : 0;
 const yearRecoveryRate = summarizeAiDays(currentBasisDaysYear).recoveryRate;
 const hasData = months.length > 0;
-const hasCurrentBasisData = totalRaces > 0;
 
 const pageTitle = `${year}年 的中実績アーカイブ | KEIBA Analytics｜競馬アナリティクス`;
 const pageDescription = `${year}年の全月別的中実績。パーフェクト的中の記録と月間統計を確認できます。`;
@@ -160,11 +160,6 @@ setPublicCdnCache(Astro);
         </div>
         {publicRate(yearRecoveryRate) != null && <p class="recovery-note">※ {AI_RECOVERY_DISCLOSURE}</p>}
 
-        <p class="basis-note">
-          現在の公開買い目基準による実績は、{CURRENT_BASIS_START_LABEL}以降を集計しています。
-          {!hasCurrentBasisData && <>この年は{LEGACY_BASIS_END_LABEL}以前の参考実績です。</>}
-        </p>
-
         <!-- 月別一覧 -->
         <div class="months-grid">
           {monthSummaries.map(summary => (
@@ -178,9 +173,6 @@ setPublicCdnCache(Astro);
                   <div class="perfect-count">🏆 {summary.hitRaces}/{summary.totalRaces}的中</div>
                 )}
               </div>
-              {(summary.isLegacyReference || summary.hasLegacyDays) && (
-                <p class="card-legacy-note">{LEGACY_BASIS_END_LABEL}以前は参考実績です。</p>
-              )}
 
               <div class="month-stats-grid">
                 <div class="month-stat">
@@ -221,6 +213,7 @@ setPublicCdnCache(Astro);
       <a href="/pricing/">プレミアム予想</a>
     </div>
 
+    {monthSummaries.some((m) => m.isLegacyReference || m.hasLegacyDays) && <LegacyBasisNote />}
     {monthSummaries.some((m) => m.simulatedRate != null) && <SimulatedCardNote />}
   </div>
 </BaseLayout>
@@ -403,18 +396,6 @@ setPublicCdnCache(Astro);
       box-shadow: 0 8px 20px rgba(245, 158, 11, 0.3);
     }
 
-    .basis-note {
-      text-align: center;
-      color: #94a3b8;
-      font-size: 0.9rem;
-      line-height: 1.6;
-      margin: 0 auto 2.5rem;
-      max-width: 640px;
-      padding: 0.75rem 1rem;
-      background: rgba(15, 23, 42, 0.5);
-      border: 1px solid rgba(100, 116, 139, 0.25);
-      border-radius: 8px;
-    }
     .legacy-badge {
       background: rgba(100, 116, 139, 0.25);
       color: #cbd5e1;
@@ -423,11 +404,6 @@ setPublicCdnCache(Astro);
       font-weight: bold;
       font-size: 0.85rem;
       border: 1px solid rgba(100, 116, 139, 0.4);
-    }
-    .card-legacy-note {
-      color: #94a3b8;
-      font-size: 0.8rem;
-      margin: 0 0 1rem;
     }
 
     @media (max-width: 768px) {
@@ -445,7 +421,6 @@ setPublicCdnCache(Astro);
         grid-template-columns: repeat(2, 1fr);
       }
 
-      .basis-note { font-size: 0.85rem; }
     }
   .sim-suffix { font-size: 0.72em; }
   @media (max-width: 768px) {
