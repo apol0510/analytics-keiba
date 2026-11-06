@@ -77,7 +77,6 @@ export function buildShowcasePreview(archiveArray, category) {
     totalRaces: view.totalRaces,
     hitRaces: view.hitRaces,
     recoveryRate: Number.isFinite(recoveryRate) ? recoveryRate : null,
-    simulatedRate: view.simulatedRate ?? null,
     // 全会場・全レースの ✅/✗（買い目・払戻は持たせない）
     venueGroups,
   };
