@@ -121,6 +121,13 @@ test('旧方式のシミュレーションを公開面へ接続しない', () =>
   for (const p of SURFACES) assert.doesNotMatch(read(p), /from\s+['"][^'"]*(legacySimulation|simulatedRecoveryV2)/, `${p}: 事後シミュレーションの import`);
 });
 
+test('静的ページに期限切れの固定文言を置かない（連勝・直近の勝敗・過去の締切）', () => {
+  const STALE = /\d+連勝|直近(7日間|10戦|30レース)|今週の無料|今週の南関|\d{1,2}\/\d{1,2}まで|\d{1,2}月\d{1,2}日まで/;
+  const STATIC = walk('public').filter((p) => p.endsWith('.html'));
+  assert.ok(STATIC.length > 30);
+  for (const p of STATIC) assert.doesNotMatch(strip(read(p)), STALE, `${p}: 期限切れの固定文言`);
+});
+
 test('正本が公式の回収率を未確定とし、revert や true への切替を再表示の手順にしない', () => {
   const spec = readFileSync(join(root, '..', 'docs', 'spec.md'), 'utf8');
   assert.match(spec, /回収率の公式算定方式は未確定/);
