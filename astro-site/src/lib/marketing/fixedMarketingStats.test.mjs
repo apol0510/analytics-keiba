@@ -118,7 +118,7 @@ test('非採用の回収率方式の名称・数値を公開面に出さない�
 test('旧方式のシミュレーションを公開面へ接続しない', () => {
   const SURFACES = [...PUBLIC_UI, ...walk('src/pages').filter((p) => p.endsWith('.astro')),
     ...walk('netlify/functions').filter((p) => /\.m?js$/.test(p)), 'src/lib/email-templates.js'];
-  for (const p of SURFACES) assert.doesNotMatch(read(p), /from\s+['"][^'"]*legacySimulation/, `${p}: legacySimulation の import`);
+  for (const p of SURFACES) assert.doesNotMatch(read(p), /from\s+['"][^'"]*(legacySimulation|simulatedRecoveryV2)/, `${p}: 事後シミュレーションの import`);
 });
 
 test('正本が公式の回収率を未確定とし、revert や true への切替を再表示の手順にしない', () => {
