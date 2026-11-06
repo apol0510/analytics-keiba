@@ -5,14 +5,14 @@ import { SIMULATED_PARAMS } from '../../lib/results/simulatedRateDisplay.js';
 export const prerender = true;
 
 const { tiers, floorPercent, unitYen } = SIMULATED_PARAMS;
-const pageTitle = '回収率（試算）の算定方法 | KEIBA Analytics｜競馬アナリティクス';
-const pageDescription = '的中実績の月別カードに表示している回収率（試算）の計算方法と、実際の購入成績との違いを説明します。';
+const pageTitle = '回収率（Sim）の算定方法 | KEIBA Analytics｜競馬アナリティクス';
+const pageDescription = '的中実績の月別カードに表示している回収率（Sim）の計算方法と、実際の購入成績との違いを説明します。';
 ---
 
 <BaseLayout title={pageTitle} description={pageDescription}>
   <main class="sim-method">
-    <h1>回収率（試算）の算定方法</h1>
-    <p>的中実績の回収率（試算）は、結果が確定した後に、過去の払戻をもとに計算した試算です。実際に購入した場合の回収率ではなく、実際の購入成績とは異なります。</p>
+    <h1>回収率（Sim）の算定方法</h1>
+    <p>的中実績の回収率（Sim）の Sim は、結果確定後のシミュレーション値を表します。結果が確定した後に、過去の払戻をもとに計算した試算です。実際に購入した場合の回収率ではなく、実際の購入成績とは異なります。</p>
 
     <h2>計算方法</h2>
     <ol>

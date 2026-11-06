@@ -56,10 +56,10 @@ const MONTH_CARD_PAGES = [
   'src/pages/archive/nankan/[year]/index.astro', 'src/pages/archive/nankan/[year]/[month]/index.astro',
 ];
 
-test('月別カードは的中率の隣に「回収率（試算）」を出す（2026-11-06 MK 確定）', () => {
+test('月別カードは的中率の隣に「回収率（Sim）」を出す（2026-11-06 MK 確定）', () => {
   for (const p of MONTH_CARD_PAGES) {
     const s = read(p);
-    assert.match(s, /回収率<span class="sim-suffix">（試算）<\/span>/, `${p}: 見出し`);
+    assert.match(s, /回収率<span class="sim-suffix">（Sim）<\/span>/, `${p}: 見出し`);
     assert.match(s, /\.sim-suffix \{ font-size: 0\.72em; \}/, `${p}: 小さい文字`);
     assert.equal(s.split('<SimulatedCardNote').length - 1, 1, `${p}: 注記は 1 回だけ`);
     assert.doesNotMatch(s, /month-card-wrap/, `${p}: カード直下の注記の枠`);
@@ -76,18 +76,18 @@ test('月別カードは的中率の隣に「回収率（試算）」を出す�
   }
 });
 
-test('見出しの「回収率」は必ず（試算）付きで、値は当該月の v2 の計算', () => {
+test('見出しの「回収率」は必ず（Sim）付きで、値は当該月の v2 の計算', () => {
   const day = (date, payout) => ({ date, totalRaces: 1, races: [{ isHit: true, umatan: { payout } }] });
   assert.equal(simulatedMonthRate([day('2026-01-01', 1500)]), '150.0');
   assert.equal(simulatedMonthRate([day('2026-01-01', 1500)]), summarizeSimulationV2([day('2026-01-01', 1500)]).weightedRate.toFixed(1));
   assert.equal(simulatedMonthRate([]), null);
   for (const p of MONTH_CARD_PAGES) {
-    assert.doesNotMatch(read(p), /simulated[^\n]*\n[^\n]*label">回収率<\/div>/i, `${p}: （試算）なし`);
+    assert.doesNotMatch(read(p), /simulated[^\n]*\n[^\n]*label">回収率<\/div>/i, `${p}: （Sim）なし`);
   }
 });
 
 test('カードの注記と算定方法のページ', () => {
-  assert.equal(SIMULATED_CARD_NOTE, '※ 過去の払戻をもとに、結果確定後に想定点数を設定した試算です。実際の購入成績とは異なります。');
+  assert.equal(SIMULATED_CARD_NOTE, '※ Sim＝結果確定後のシミュレーション値。過去の払戻をもとに、結果確定後に想定点数を設定した試算です。実際の購入成績とは異なります。');
   assert.equal(SIMULATED_METHOD_PATH, '/archive/simulation-method/');
   assert.match(read('src/components/SimulatedCardNote.astro'), /算定方法を見る/);
   const page = read('src/pages/archive/simulation-method.astro');
