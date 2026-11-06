@@ -5,6 +5,8 @@ import BaseLayout from '../../../../../layouts/BaseLayout.astro';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { summarizeAiDay, summarizeAiDays, AI_POINTS_NOTE, AI_RECOVERY_DISCLOSURE } from '../../../../../lib/results/aiBetPoints.js';
+import SimulatedRate from '../../../../../components/SimulatedRate.astro';
+import { simulatedRateOf } from '../../../../../lib/results/simulatedRateDisplay.js';
 import { sortRacesByVenueAndNumber } from '../../../../../utils/sortRaces.js';
 
 export const prerender = false;
@@ -108,6 +110,7 @@ setPublicCdnCache(Astro);
               <div class="stat-label">的中レース数</div>
             </div>
           </section>
+          <SimulatedRate items={[{ label: `${year}年${parseInt(month)}月`, value: simulatedRateOf(monthData) }]} />
           {publicRate(monthStats.returnRate) != null && <p class="ai-points-note">※ {AI_POINTS_NOTE}。{AI_RECOVERY_DISCLOSURE}</p>}
 
           {/* 日別アーカイブ */}

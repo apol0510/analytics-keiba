@@ -6,6 +6,8 @@ import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { buildMergedMonthData, aggregateMonthByBasis, isCurrentBasisEntry, CURRENT_BASIS_START_LABEL, LEGACY_BASIS_END_LABEL } from '../../../../lib/archiveMonthlyView.js';
 import { summarizeAiDays, AI_POINTS_NOTE, AI_RECOVERY_DISCLOSURE } from '../../../../lib/results/aiBetPoints.js';
+import SimulatedRate from '../../../../components/SimulatedRate.astro';
+import { simulatedRateOf } from '../../../../lib/results/simulatedRateDisplay.js';
 
 export const prerender = false;
 
@@ -155,6 +157,7 @@ setPublicCdnCache(Astro);
             <div class="stat-label">年間的中レース数</div>
           </div>
         </div>
+        <SimulatedRate items={[{ label: `${year}年（現在基準）`, value: simulatedRateOf(currentBasisDaysYear) }]} />
         {publicRate(yearRecoveryRate) != null && <p class="recovery-note">※ {AI_RECOVERY_DISCLOSURE}</p>}
 
         <p class="basis-note">
