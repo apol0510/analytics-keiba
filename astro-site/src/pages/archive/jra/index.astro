@@ -392,4 +392,13 @@ const pageDescription = '中央競馬（JRA）の全的中実績アーカイブ�
   @media (max-width: 768px) {
     .month-stats-grid .month-stat:last-child:nth-child(odd) { grid-column: 1 / -1; }
   }
+  .months-grid { grid-template-columns: minmax(0, 1fr); }
+  .month-card-wrap { min-width: 0; }
+  .month-card, .view-details-button, .year-heading { box-sizing: border-box; max-width: 100%; }
+  .month-stat { min-width: 0; }
+  @media (max-width: 768px) {
+    .month-card { padding: 1.25rem; }
+    .month-stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem; }
+    .year-heading { flex-wrap: wrap; gap: 0.25rem 1rem; }
+  }
 </style>

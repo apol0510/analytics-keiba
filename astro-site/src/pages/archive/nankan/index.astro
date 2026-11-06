@@ -353,4 +353,9 @@ const pageDescription = '南関競馬の全的中実績アーカイブ。マリ�
     .year-stats-grid { grid-template-columns: repeat(2, 1fr); }
     .basis-note { font-size: 0.85rem; }
   }
+  .year-card, .view-details-button { box-sizing: border-box; max-width: 100%; }
+  @media (max-width: 768px) {
+    .year-card { padding: 1.25rem; }
+    .year-stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
 </style>
