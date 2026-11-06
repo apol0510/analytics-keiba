@@ -6,8 +6,8 @@ import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { buildMergedMonthData, dayKeyToInt, isCurrentBasisEntry, LEGACY_BASIS_END_LABEL } from '../../../../../lib/archiveMonthlyView.js';
 import { summarizeAiDay, summarizeAiDays, AI_POINTS_NOTE, AI_RECOVERY_DISCLOSURE } from '../../../../../lib/results/aiBetPoints.js';
-import SimulatedRate from '../../../../../components/SimulatedRate.astro';
-import { simulatedRateOf } from '../../../../../lib/results/simulatedRateDisplay.js';
+import SimulatedCardNote from '../../../../../components/SimulatedCardNote.astro';
+import { simulatedMonthRate } from '../../../../../lib/results/simulatedRateDisplay.js';
 
 export const prerender = false;
 
@@ -58,7 +58,7 @@ days.forEach(dayKey => {
 const hitRate = totalRaces > 0 ? Math.round((totalHitRaces / totalRaces) * 100) : 0;
 // 月間回収率は AI レース別算定（単一源 lib/results/aiBetPoints.js）。算定がそろった日だけで数える
 const recoveryRateMonth = summarizeAiDays(days.map((k) => monthData[k])).recoveryRate;
-const monthSimulatedRate = simulatedRateOf(days.filter((k) => isCurrentBasisEntry(year, month, k, monthData[k])).map((k) => monthData[k]));
+const monthSimulatedRate = simulatedMonthRate(days.filter((k) => isCurrentBasisEntry(year, month, k, monthData[k])).map((k) => monthData[k]));
 const hasData = days.length > 0;
 // この月に旧集計基準（2026-04-14以前、または snapshot 由来の旧判定日）が含まれるか（参考実績の注記用）。
 const monthHasLegacyDays = days.some(dayKey => !isCurrentBasisEntry(year, month, dayKey, monthData[dayKey]));
@@ -104,6 +104,12 @@ setPublicCdnCache(Astro);
             <div class="stat-value">{hitRate}%</div>
             <div class="stat-label">月間的中率</div>
           </div>
+          {monthSimulatedRate != null && (
+            <div class="stat-card">
+              <div class="stat-value">{monthSimulatedRate}%</div>
+              <div class="stat-label">回収率<span class="sim-suffix">（試算）</span></div>
+            </div>
+          )}
           {publicRate(recoveryRateMonth) != null && (
             <div class="stat-card">
               <div class="stat-value">{recoveryRateMonth}%</div>
@@ -120,7 +126,7 @@ setPublicCdnCache(Astro);
             <div class="stat-label">的中レース数</div>
           </div>
         </div>
-        <SimulatedRate items={[{ label: `${year}年${parseInt(month)}月（現在基準）`, value: monthSimulatedRate }]} />
+        {monthSimulatedRate != null && <SimulatedCardNote />}
         {publicRate(recoveryRateMonth) != null && <p class="recovery-note">※ {AI_RECOVERY_DISCLOSURE}</p>}
 
         {monthHasLegacyDays && (
@@ -596,4 +602,5 @@ setPublicCdnCache(Astro);
         padding-bottom: 180px;
       }
     }
+  .sim-suffix { font-size: 0.72em; }
 </style>

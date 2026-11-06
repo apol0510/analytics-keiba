@@ -1,0 +1,45 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { SIMULATED_PARAMS } from '../../lib/results/simulatedRateDisplay.js';
+
+export const prerender = true;
+
+const { tiers, floorPercent, unitYen } = SIMULATED_PARAMS;
+const pageTitle = '回収率（試算）の算定方法 | KEIBA Analytics｜競馬アナリティクス';
+const pageDescription = '的中実績の月別カードに表示している回収率（試算）の計算方法と、実際の購入成績との違いを説明します。';
+---
+
+<BaseLayout title={pageTitle} description={pageDescription}>
+  <main class="sim-method">
+    <h1>回収率（試算）の算定方法</h1>
+    <p>的中実績の回収率（試算）は、結果が確定した後に、過去の払戻をもとに計算した試算です。実際に購入した場合の回収率ではなく、実際の購入成績とは異なります。</p>
+
+    <h2>計算方法</h2>
+    <ol>
+      <li>その日の的中レースの払戻（100円あたり）を合計します。的中は本線＋抑えで判定します。</li>
+      <li>払戻の合計に応じて、1レースあたりの想定点数を {tiers.join('・')} 点から選びます。</li>
+      <li>試算の値 = 払戻の合計 ÷（レース数 × 想定点数 × {unitYen}円）です。月別はその月の払戻の合計を、想定購入額の合計で割ります。</li>
+    </ol>
+
+    <h2>想定点数の選び方</h2>
+    <p>払戻の合計が「レース数 × 点数 × {unitYen}円 × {floorPercent}%」以上となる、最も大きい点数を選びます。どの段階にも届かない日は {tiers[0]} 点です。中央競馬と南関競馬で同じ規則を使います。南関競馬は2026年4月15日以降を数えます。</p>
+
+    <h2>実際の購入成績との違い</h2>
+    <ul>
+      <li>想定点数は結果を見た後に決めています。レース前に同じ点数を選んで買えるわけではありません。</li>
+      <li>想定点数は多くの場合、実際の本線＋抑えの全組より少なく、表示の購入点数とも異なります。</li>
+      <li>過去の試算であり、将来の結果を保証するものではありません。</li>
+    </ul>
+
+    <p class="back"><a href="/archive/jra/">中央競馬の的中実績</a>／<a href="/archive/nankan/">南関競馬の的中実績</a></p>
+  </main>
+</BaseLayout>
+
+<style>
+  .sim-method { max-width: 760px; margin: 0 auto; padding: 2rem 1rem 3rem; color: #e2e8f0; line-height: 1.8; }
+  .sim-method h1 { font-size: 1.6rem; margin: 0 0 1rem; color: #f1f5f9; }
+  .sim-method h2 { font-size: 1.15rem; margin: 1.75rem 0 0.5rem; color: #f1f5f9; }
+  .sim-method ol, .sim-method ul { padding-left: 1.4rem; }
+  .sim-method a { color: #93c5fd; }
+  .back { margin-top: 2rem; }
+</style>

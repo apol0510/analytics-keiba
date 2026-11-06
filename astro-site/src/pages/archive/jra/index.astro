@@ -5,7 +5,8 @@ import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import CumulativeRecovery from '../../../components/CumulativeRecovery.astro';
 import SimulatedRate from '../../../components/SimulatedRate.astro';
-import { simulatedRateSummary } from '../../../lib/results/simulatedRateDisplay.js';
+import { simulatedRateSummary, simulatedMonthRate } from '../../../lib/results/simulatedRateDisplay.js';
+import SimulatedCardNote from '../../../components/SimulatedCardNote.astro';
 import { summarizeAiDays, summarizeCumulative, AI_POINTS_NOTE } from '../../../lib/results/aiBetPoints.js';
 
 export const prerender = true;
@@ -22,6 +23,7 @@ let allMonths: Array<{
   hitRate: string;
   totalPayout: number;
   returnRate: string | null;
+  simulatedRate: string | null;
 }> = [];
 let cumulative: ReturnType<typeof summarizeCumulative> = null;
 let simulated: ReturnType<typeof simulatedRateSummary> = null;
@@ -71,7 +73,8 @@ try {
         totalHitRaces,
         hitRate,
         totalPayout,
-        returnRate
+        returnRate,
+        simulatedRate: simulatedMonthRate(entries)
       });
     });
 
@@ -135,6 +138,7 @@ const pageDescription = '中央競馬（JRA）の全的中実績アーカイブ�
             </a>
             <div class="months-grid">
               {group.months.map((monthData) => (
+                <div class="month-card-wrap">
                 <a href={`/archive/jra/${monthData.year}/${monthData.month}/`} class="month-card">
                   <div class="month-header">
                     <h2 class="month-title">{monthData.displayMonth}</h2>
@@ -150,6 +154,12 @@ const pageDescription = '中央競馬（JRA）の全的中実績アーカイブ�
                 <div class="month-stat-value">{monthData.hitRate}%</div>
                 <div class="month-stat-label">的中率</div>
               </div>
+              {monthData.simulatedRate != null && (
+                <div class="month-stat">
+                  <div class="month-stat-value">{monthData.simulatedRate}%</div>
+                  <div class="month-stat-label">回収率<span class="sim-suffix">（試算）</span></div>
+                </div>
+              )}
               {publicRate(monthData.returnRate) != null && (
                 <div class="month-stat">
                   <div class={`month-stat-value ${parseFloat(monthData.returnRate) >= 100 ? 'profit' : ''}`}>{monthData.returnRate}%</div>
@@ -172,6 +182,8 @@ const pageDescription = '中央競馬（JRA）の全的中実績アーカイブ�
 
                   <div class="view-details-button">📊 詳細を見る →</div>
                 </a>
+                {monthData.simulatedRate != null && <SimulatedCardNote />}
+                </div>
               ))}
             </div>
           </section>
@@ -375,5 +387,18 @@ const pageDescription = '中央競馬（JRA）の全的中実績アーカイブ�
     .month-header { flex-direction: column; align-items: flex-start; gap: 1rem; }
     .month-title { font-size: 2rem; }
     .month-stats-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+  .sim-suffix { font-size: 0.72em; }
+  @media (max-width: 768px) {
+    .month-stats-grid .month-stat:last-child:nth-child(odd) { grid-column: 1 / -1; }
+  }
+  .months-grid { grid-template-columns: minmax(0, 1fr); }
+  .month-card-wrap { min-width: 0; }
+  .month-card, .view-details-button, .year-heading { box-sizing: border-box; max-width: 100%; }
+  .month-stat { min-width: 0; }
+  @media (max-width: 768px) {
+    .month-card { padding: 1.25rem; }
+    .month-stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem; }
+    .year-heading { flex-wrap: wrap; gap: 0.25rem 1rem; }
   }
 </style>

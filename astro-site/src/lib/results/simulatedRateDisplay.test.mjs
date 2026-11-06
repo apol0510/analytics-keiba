@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { SIMULATED_RATE_LABEL, SIMULATED_RATE_NOTE, SIMULATED_RATE_NOTE_SHORT, simulatedRateOf, simulatedRateSummary } from './simulatedRateDisplay.js';
+import { SIMULATED_RATE_LABEL, SIMULATED_RATE_NOTE, SIMULATED_RATE_NOTE_SHORT, SIMULATED_CARD_NOTE, SIMULATED_METHOD_PATH, SIMULATED_PARAMS, simulatedRateOf, simulatedMonthRate, simulatedRateSummary } from './simulatedRateDisplay.js';
 import { summarizeSimulationV2 } from './simulatedRecoveryV2.js';
 import { RECOVERY_RATE_PUBLIC } from './recoveryVisibility.js';
 
@@ -38,10 +38,10 @@ test('値は v2 の計算そのもので、上書きしない', () => {
 });
 
 test('数値を出す画面は名称と説明を同じファイルに持つ', () => {
-  const users = SURFACES.filter((p) => /simulatedRate\b|simulatedRateOf|simulatedRateSummary/.test(read(p)));
+  const users = SURFACES.filter((p) => /simulatedRate\b|simulatedRateOf|simulatedRateSummary|simulatedMonthRate/.test(read(p)));
   assert.ok(users.length >= 10, `接続先 ${users.length}`);
   for (const p of users) {
-    assert.match(read(p), /<SimulatedRate\b|SIMULATED_RATE_NOTE_SHORT/, `${p}: 説明なしの表示`);
+    assert.match(read(p), /<SimulatedRate\b|<SimulatedCardNote\b|SIMULATED_RATE_NOTE_SHORT/, `${p}: 説明なしの表示`);
   }
 });
 
@@ -56,6 +56,46 @@ test('画面は v2 を直接使わず、title・meta に数値を入れず、利
       if (/simulatedRate/.test(line)) assert.doesNotMatch(line, /profit|回収率/, `${p}: ${line.trim()}`);
     }
   }
+});
+
+const MONTH_CARD_PAGES = [
+  'src/pages/archive/jra/index.astro', 'src/pages/archive/jra/[year]/index.astro', 'src/pages/archive/jra/[year]/[month]/index.astro',
+  'src/pages/archive/nankan/[year]/index.astro', 'src/pages/archive/nankan/[year]/[month]/index.astro',
+];
+
+test('月別カードは的中率の隣に「回収率（試算）」を出す（2026-11-06 MK 確定）', () => {
+  for (const p of MONTH_CARD_PAGES) {
+    const s = read(p);
+    assert.match(s, /回収率<span class="sim-suffix">（試算）<\/span>/, `${p}: 見出し`);
+    assert.match(s, /\.sim-suffix \{ font-size: 0\.72em; \}/, `${p}: 小さい文字`);
+    assert.match(s, /<SimulatedCardNote \/>/, `${p}: 注記`);
+    const sim = s.indexOf('回収率<span class="sim-suffix">');
+    const hit = s.lastIndexOf('的中率</div>', sim);
+    assert.ok(hit >= 0 && hit < sim && sim - hit < 400, `${p}: 的中率の隣ではない`);
+    assert.match(s, /simulatedMonthRate\(/, `${p}: 当該月の値を使っていない`);
+  }
+});
+
+test('見出しの「回収率」は必ず（試算）付きで、値は当該月の v2 の計算', () => {
+  const day = (date, payout) => ({ date, totalRaces: 1, races: [{ isHit: true, umatan: { payout } }] });
+  assert.equal(simulatedMonthRate([day('2026-01-01', 1500)]), '150.0');
+  assert.equal(simulatedMonthRate([day('2026-01-01', 1500)]), summarizeSimulationV2([day('2026-01-01', 1500)]).weightedRate.toFixed(1));
+  assert.equal(simulatedMonthRate([]), null);
+  for (const p of MONTH_CARD_PAGES) {
+    assert.doesNotMatch(read(p), /simulated[^\n]*\n[^\n]*label">回収率<\/div>/i, `${p}: （試算）なし`);
+  }
+});
+
+test('カードの注記と算定方法のページ', () => {
+  assert.equal(SIMULATED_CARD_NOTE, '※ 過去の払戻をもとに、結果確定後に想定点数を設定した試算です。実際の購入成績とは異なります。');
+  assert.equal(SIMULATED_METHOD_PATH, '/archive/simulation-method/');
+  assert.match(read('src/components/SimulatedCardNote.astro'), /算定方法を見る/);
+  const page = read('src/pages/archive/simulation-method.astro');
+  assert.match(page, /SIMULATED_PARAMS/);
+  assert.match(page, /実際に購入した場合の回収率ではなく/);
+  assert.match(page, /全組より少なく/);
+  assert.deepEqual([...SIMULATED_PARAMS.tiers], [10, 18, 26, 34]);
+  assert.equal(SIMULATED_PARAMS.floorPercent, 125);
 });
 
 test('メールと配信文面に算定値を入れない', () => {

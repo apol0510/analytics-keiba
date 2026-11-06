@@ -1,0 +1,11 @@
+---
+/** 月別カードの「回収率（試算）」に対応する注記。カード全体がリンクなので、カードのすぐ下に置く */
+import { SIMULATED_CARD_NOTE, SIMULATED_METHOD_PATH } from '../lib/results/simulatedRateDisplay.js';
+---
+
+<p class="sim-card-note">{SIMULATED_CARD_NOTE}<a href={SIMULATED_METHOD_PATH}>算定方法を見る</a></p>
+
+<style>
+  .sim-card-note { font-size: 0.78rem; color: #cbd5e1; line-height: 1.6; margin: 0.5rem 0.25rem 0; }
+  .sim-card-note a { color: #93c5fd; margin-left: 0.5em; white-space: nowrap; }
+</style>
