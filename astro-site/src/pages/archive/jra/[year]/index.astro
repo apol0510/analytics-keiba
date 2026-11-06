@@ -5,8 +5,7 @@ import BaseLayout from '../../../../layouts/BaseLayout.astro';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { summarizeAiDays, AI_POINTS_NOTE, AI_RECOVERY_DISCLOSURE } from '../../../../lib/results/aiBetPoints.js';
-import SimulatedRate from '../../../../components/SimulatedRate.astro';
-import { simulatedRateOf, simulatedMonthRate } from '../../../../lib/results/simulatedRateDisplay.js';
+import { simulatedMonthRate } from '../../../../lib/results/simulatedRateDisplay.js';
 import SimulatedCardNote from '../../../../components/SimulatedCardNote.astro';
 
 export const prerender = false;
@@ -70,7 +69,6 @@ monthSummaries.forEach((m) => {
 const yearHitRate = yTotalRaces > 0 ? ((yTotalHitRaces / yTotalRaces) * 100).toFixed(1) : '0.0';
 const aiY = summarizeAiDays(yearEntries);
 const yearReturnRate = aiY.recoveryRate != null ? aiY.recoveryRate.toFixed(1) : null;
-const yearSimulatedRate = simulatedRateOf(yearEntries);
 
 const hasData = monthSummaries.length > 0;
 
@@ -132,8 +130,6 @@ setPublicCdnCache(Astro);
             </div>
           </section>
           {publicRate(yearReturnRate) != null && <p class="ai-points-note">※ {AI_POINTS_NOTE}。{AI_RECOVERY_DISCLOSURE}</p>}
-
-          <SimulatedRate items={[{ label: `${year}年`, value: yearSimulatedRate }]} />
 
           {/* 月別一覧 */}
           <section class="months-grid">

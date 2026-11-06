@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { SIMULATED_RATE_LABEL, SIMULATED_RATE_NOTE, SIMULATED_RATE_NOTE_SHORT, SIMULATED_CARD_NOTE, SIMULATED_METHOD_PATH, SIMULATED_PARAMS, simulatedRateOf, simulatedMonthRate, simulatedRateSummary } from './simulatedRateDisplay.js';
+import { SIMULATED_RATE_LABEL, SIMULATED_RATE_NOTE_SHORT, SIMULATED_CARD_NOTE, SIMULATED_METHOD_PATH, SIMULATED_PARAMS, simulatedRateOf, simulatedMonthRate } from './simulatedRateDisplay.js';
 import { summarizeSimulationV2 } from './simulatedRecoveryV2.js';
 import { RECOVERY_RATE_PUBLIC } from './recoveryVisibility.js';
 
@@ -18,10 +18,6 @@ const SURFACES = [...walk('src/pages'), ...walk('src/components'), ...walk('src/
 test('名称と説明が事後の試算であることを示す', () => {
   assert.match(SIMULATED_RATE_LABEL, /事後シミュレーション/);
   assert.doesNotMatch(SIMULATED_RATE_LABEL, /回収率/);
-  assert.match(SIMULATED_RATE_NOTE, /結果確定後/);
-  assert.match(SIMULATED_RATE_NOTE, /実際に購入した場合の回収率ではなく/);
-  assert.match(SIMULATED_RATE_NOTE, /表示の購入点数とも異なります/);
-  assert.match(SIMULATED_RATE_NOTE, /将来の結果を保証するものではありません/);
   assert.match(SIMULATED_RATE_NOTE_SHORT, /実際の購入の回収率ではありません/);
 });
 
@@ -33,15 +29,14 @@ test('値は v2 の計算そのもので、上書きしない', () => {
   const day = { date: '2026-01-01', totalRaces: 2, races: [{ isHit: true, umatan: { payout: 20000 } }, { isHit: false }] };
   assert.equal(simulatedRateOf([day]), summarizeSimulationV2([day]).weightedRate);
   assert.equal(simulatedRateOf([]), null);
-  assert.equal(simulatedRateSummary([]), null);
-  assert.equal(simulatedRateSummary([day]).overall, 294.1);
+  assert.equal(simulatedRateOf([day]), 294.1);
 });
 
 test('数値を出す画面は名称と説明を同じファイルに持つ', () => {
-  const users = SURFACES.filter((p) => /simulatedRate\b|simulatedRateOf|simulatedRateSummary|simulatedMonthRate/.test(read(p)));
-  assert.ok(users.length >= 10, `接続先 ${users.length}`);
+  const users = SURFACES.filter((p) => /simulatedRate\b|simulatedRateOf|simulatedMonthRate/.test(read(p)));
+  assert.equal(users.length, 6, `接続先 ${users.join(', ')}`);
   for (const p of users) {
-    assert.match(read(p), /<SimulatedRate\b|<SimulatedCardNote\b|SIMULATED_RATE_NOTE_SHORT/, `${p}: 説明なしの表示`);
+    assert.match(read(p), /<SimulatedCardNote\b|SIMULATED_RATE_NOTE_SHORT/, `${p}: 説明なしの表示`);
   }
 });
 
@@ -96,6 +91,14 @@ test('カードの注記と算定方法のページ', () => {
   assert.match(page, /全組より少なく/);
   assert.deepEqual([...SIMULATED_PARAMS.tiers], [10, 18, 26, 34]);
   assert.equal(SIMULATED_PARAMS.floorPercent, 125);
+});
+
+test('入口ページと索引・年別に独立した算定値を出さない（2026-11-06 MK 指示）', () => {
+  const ENTRY = ['src/components/HomeResultsShowcasePreview.astro', 'src/pages/index.astro', 'src/pages/results-showcase/jra.astro', 'src/pages/results-showcase/nankan.astro'];
+  for (const p of ENTRY) assert.doesNotMatch(read(p), /simulated|事後シミュレーション|SimulatedRate/i, p);
+  for (const p of ['src/pages/archive/jra/index.astro', 'src/pages/archive/nankan/index.astro', 'src/pages/archive/jra/[year]/index.astro', 'src/pages/archive/nankan/[year]/index.astro']) {
+    assert.doesNotMatch(read(p), /<SimulatedRate\b|simulatedRateOf|事後シミュレーション/, p);
+  }
 });
 
 test('メールと配信文面に算定値を入れない', () => {

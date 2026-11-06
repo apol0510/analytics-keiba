@@ -200,7 +200,7 @@ export const AI_RECOVERY_DISCLOSURE = '的中は本線に抑えを含めて判�
  * 中央と南関は別々に渡す（合算しない）。date の無いエントリは数えない。
  * @returns {{ from:string, to:string, overall:object, recent:object } | null}
  */
-export function recentCutoff(to, recentMonths) {
+function recentCutoff(to, recentMonths) {
   const [y, m, d] = to.split('-').map(Number);
   const cut = new Date(Date.UTC(y, m - 1 - recentMonths, 1));
   const lastDay = new Date(Date.UTC(cut.getUTCFullYear(), cut.getUTCMonth() + 1, 0)).getUTCDate();

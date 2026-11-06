@@ -4,8 +4,7 @@ import BaseLayout from '../../../layouts/BaseLayout.astro';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import CumulativeRecovery from '../../../components/CumulativeRecovery.astro';
-import SimulatedRate from '../../../components/SimulatedRate.astro';
-import { simulatedRateSummary, simulatedMonthRate } from '../../../lib/results/simulatedRateDisplay.js';
+import { simulatedMonthRate } from '../../../lib/results/simulatedRateDisplay.js';
 import SimulatedCardNote from '../../../components/SimulatedCardNote.astro';
 import { summarizeAiDays, summarizeCumulative, AI_POINTS_NOTE } from '../../../lib/results/aiBetPoints.js';
 
@@ -26,14 +25,12 @@ let allMonths: Array<{
   simulatedRate: string | null;
 }> = [];
 let cumulative: ReturnType<typeof summarizeCumulative> = null;
-let simulated: ReturnType<typeof simulatedRateSummary> = null;
 
 try {
   if (existsSync(archivePath)) {
     const fileContent = readFileSync(archivePath, 'utf-8');
     const allData = JSON.parse(fileContent);
     cumulative = summarizeCumulative(allData);
-    simulated = simulatedRateSummary(allData);
 
     const monthsMap = new Map<string, any[]>();
     allData.forEach((entry: any) => {
@@ -115,7 +112,6 @@ const pageDescription = '中央競馬（JRA）の全的中実績アーカイブ�
     </div>
 
     <CumulativeRecovery cumulative={cumulative} label="中央競馬" />
-    {simulated && <SimulatedRate period={`中央競馬 ${simulated.from.replaceAll('-', '/')}〜${simulated.to.replaceAll('-', '/')}・${simulated.races.toLocaleString()}レース`} items={[{ label: '通算', value: simulated.overall }, { label: '直近3か月', value: simulated.recent }]} />}
 
     <div class="cta-box">
       <p class="cta-text">

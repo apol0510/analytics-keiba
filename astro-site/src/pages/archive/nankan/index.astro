@@ -3,8 +3,6 @@ import BaseLayout from '../../../layouts/BaseLayout.astro';
 import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join } from 'path';
 import CumulativeRecovery from '../../../components/CumulativeRecovery.astro';
-import SimulatedRate from '../../../components/SimulatedRate.astro';
-import { simulatedRateSummary } from '../../../lib/results/simulatedRateDisplay.js';
 import { buildMergedMonthData, aggregateMonthByBasis, isCurrentBasisEntry, CURRENT_BASIS_START_LABEL, LEGACY_BASIS_END_LABEL } from '../../../lib/archiveMonthlyView.js';
 import { summarizeCumulative } from '../../../lib/results/aiBetPoints.js';
 
@@ -105,7 +103,6 @@ const yearSummaries = years.map(year => {
 });
 
 const cumulative = summarizeCumulative(currentBasisDays);
-const simulated = simulatedRateSummary(currentBasisDays);
 
 const pageTitle = '南関競馬的中実績アーカイブ';
 const pageDescription = '南関競馬の全的中実績アーカイブ。マリーンカップ・日本テレビ盃等の重賞レース含む年別・月別の的中記録と配当金額を完全公開。';
@@ -123,7 +120,6 @@ const pageDescription = '南関競馬の全的中実績アーカイブ。マリ�
     </div>
 
     <CumulativeRecovery cumulative={cumulative} label="南関" />
-    {simulated && <SimulatedRate period={`南関 ${simulated.from.replaceAll('-', '/')}〜${simulated.to.replaceAll('-', '/')}・${simulated.races.toLocaleString()}レース`} items={[{ label: '通算', value: simulated.overall }, { label: '直近3か月', value: simulated.recent }]} />}
 
     <div class="cta-box">
       <p class="cta-text">
