@@ -2,7 +2,7 @@
 
 新しい回収率の算定方式へ移る準備として、AK の回収率関連の記載を全件確認した。
 方式の状態は `BET_POINT_LOGIC.md`「回収率の算定方式の状態」が正本。購入回収率の新方式の名称と数値はここに書かない。
-旧 4 段階方式の復元値は `BET_POINT_LOGIC.md`「旧 4 段階方式の復元」、AI評価指数は `docs/spec.md`。
+旧 4 段階方式の復元値は `BET_POINT_LOGIC.md`「旧 4 段階方式の復元」。
 
 ## 調べた範囲
 
@@ -21,10 +21,10 @@
 
 | 分類 | 対象ファイル | 記載内容 | 対応 | 公開影響 |
 |---|---|---|---|---|
-| 公開中 | `public/seo/*` 32 ページ | `+87,400円`・累計収支・収支ログ（120R × 1,000 円で回収率 173% に相当） | **撤去済み** | 本番から販売訴求が消える |
+| 公開中 | `public/seo/*` 32 ページ | `+87,400円`・累計収支・収支ログ（120R × 1,000 円で回収率 173% に相当） | **置換済み**: 検証レース数・毎日の結果公開と実績ページへの導線へ。収支ログは複勝・ワイドの記録で archive と照合できないので戻さない | 収支の訴求が消え、情報量と導線は残る |
 | 公開中 | `src/pages/free-prediction/archive.astro` | 「戦略別の回収率を比較」 | **撤去済み** | 1 行消える |
-| 公開中 | `/archive/*`・`/results-showcase/*`・トップ（`AI_POINTS_NOTE`・合計購入点数） | 購入点数（本線＋抑えの全組）と合計配当 | **MK 判断待ち** | 非採用の回収率を読者が計算できる（中央 10/31: ¥33,410 ÷ 788 点 = 42.4%） |
-| 公開中 | `public/seo/keiba-kaishuuritsu-ageru`・`keiba-shoshinsha-kachikata`・`keiba-fukushou-kotsu-kachikata` | 「回収率100%超え」「回収率150%を目指す」 | **MK 判断待ち** | AK の実績とは書いていないが、title と meta に出ている |
+| 公開中 | `/archive/*`・`/results-showcase/*`・トップ（`AI_POINTS_NOTE`・合計購入点数） | 購入点数（本線＋抑えの全組）と合計配当 | **現状維持**（2026-11-06 MK 決定） | 非採用の回収率を読者が計算できる（中央 10/31: ¥33,410 ÷ 788 点 = 42.4%） |
+| 公開中 | `public/seo/keiba-kaishuuritsu-ageru`・`keiba-shoshinsha-kachikata`・`keiba-fukushou-kotsu-kachikata` | 「回収率100%超え」「回収率150%を目指す」 | **置換済み**: 「回収率を上げる」「回収率アップ」へ。検索語の「回収率」は残す | title と meta の数値が消える |
 | 公開中 | `src/pages/beginner/lesson-03.astro` | 的中率 76.2% | 残す（別用途の統計。回収率ではない。中央の 76.2% とは別の値） | なし |
 | 公開中 | `public/seo/*`（`回収率80%以下`・`回収率70〜85%`） | 読者の現状の例え | 残す（別用途の統計） | なし |
 | 公開中 | `src/pages/blog/**`・`course.astro`・`BettingSelectionQA.astro`・`keiba-ai-yosou-*` | 「回収率重視の予想」など数値のない語 | 残す（別用途の統計） | なし |

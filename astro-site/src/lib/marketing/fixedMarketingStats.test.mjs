@@ -109,11 +109,15 @@ test('非採用の回収率方式の名称・数値を公開面に出さない�
     assert.doesNotMatch(s, RATES, `${p}: 非採用の回収率`);
     assert.doesNotMatch(s, BACKDOOR, `${p}: 回収率に換算できる収支の訴求`);
   }
+  // 入門講座は転送中で本文に例があるので、公開中のページだけ見る
+  for (const p of [...PUBLIC_UI, ...STATIC]) {
+    assert.doesNotMatch(strip(read(p)), /回収率\s*100%\s*(超|以上|を超)|回収率\s*150%|回収率\s*(211\.5|193\.7)\s*%/, `${p}: 回収率の数値目標`);
+  }
 });
 
-test('旧方式のシミュレーションを公開面と AI評価指数へ接続しない', () => {
+test('旧方式のシミュレーションを公開面へ接続しない', () => {
   const SURFACES = [...PUBLIC_UI, ...walk('src/pages').filter((p) => p.endsWith('.astro')),
-    ...walk('netlify/functions').filter((p) => /\.m?js$/.test(p)), 'src/lib/email-templates.js', 'src/lib/results/aiEvaluationIndex.js'];
+    ...walk('netlify/functions').filter((p) => /\.m?js$/.test(p)), 'src/lib/email-templates.js'];
   for (const p of SURFACES) assert.doesNotMatch(read(p), /from\s+['"][^'"]*legacySimulation/, `${p}: legacySimulation の import`);
 });
 

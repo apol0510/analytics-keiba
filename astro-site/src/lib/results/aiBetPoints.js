@@ -61,15 +61,6 @@ export const GAP_TIERS = Object.freeze({
   nankan: Object.freeze({ mid: 13, strong: 22 }),
 });
 
-/** 本命と 2 番手の評価差（レース前のデータだけ）。本命がいなければ null */
-export function honmeiGap(horses) {
-  const list = Array.isArray(horses) ? horses.filter(Boolean) : [];
-  const honmei = list.find((h) => h.role === '本命');
-  if (!honmei) return null;
-  const others = list.filter((h) => h !== honmei).map(ptOf).sort((a, b) => b - a);
-  return ptOf(honmei) - (others[0] ?? 0);
-}
-
 /**
  * 追加する組数（レース前のデータだけで決める）。
  * 軸が堅い（2 番手との差が大きい・指数が高い）ほど少なく、混戦・指数が低いほど多く。頭数が多いと +1、少ないと −1。
@@ -81,7 +72,8 @@ export function extraCount(horses, { cat = 'nankan', horseCount } = {}) {
   const R = SELECTION_RULES[cat] || SELECTION_RULES.nankan;
   const G = GAP_TIERS[cat] || GAP_TIERS.nankan;
   const idx = rawIndex(honmei) ?? 0;
-  const gap = honmeiGap(list);
+  const others = list.filter((h) => h !== honmei).map(ptOf).sort((a, b) => b - a);
+  const gap = ptOf(honmei) - (others[0] ?? 0);
   let k = gap >= G.strong ? 3 : gap >= G.mid ? 4 : 5;
   if (idx > 0) {                         // 指数が無い（古いデータ）ときは差だけで決める
     if (idx >= R.aMinIndex) k -= 1;

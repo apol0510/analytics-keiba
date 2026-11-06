@@ -71,7 +71,7 @@
     "test:free-live-board": "node --test src/lib/freeLiveBoard.test.mjs src/lib/freeBoardLive.test.mjs",
     "test:ai-bet-points": "node --test src/lib/results/aiBetPoints.test.mjs",
     "test:marketing-stats": "node --test src/lib/marketing/fixedMarketingStats.test.mjs",
-    "test:recovery-methods": "node --test src/lib/results/legacySimulation.test.mjs src/lib/results/aiEvaluationIndex.test.mjs",
+    "test:recovery-methods": "node --test src/lib/results/legacySimulation.test.mjs",
     "test:auth-session": "node --test src/lib/auth/*.test.mjs",
     "check:ssr-runtime-data": "node scripts/check-ssr-runtime-data.mjs",
     "test:ssr-retention": "node --test src/lib/ssr/runtimeDataRetention.test.mjs",

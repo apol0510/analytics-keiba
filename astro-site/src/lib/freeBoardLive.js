@@ -70,7 +70,7 @@ export function judgeHit(lines, top2) {
 }
 
 async function getPage(url, fetchImpl) {
-  const res = await fetchImpl(url, { headers: { 'User-Agent': USER_AGENT }, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+  const res = await fetchImpl(url, { headers: { 'User-Agent': USER_AGENT }, signal: globalThis.AbortSignal.timeout(FETCH_TIMEOUT_MS) });
   if (BLOCK_STATUS.has(res.status)) return { blocked: true };
   return { html: res.ok ? await res.text() : null };
 }
