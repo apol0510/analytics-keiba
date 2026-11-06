@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { SIMULATED_RATE_LABEL, SIMULATED_RATE_NOTE_SHORT, SIMULATED_CARD_NOTE, SIMULATED_METHOD_PATH, SIMULATED_PARAMS, simulatedRateOf, simulatedMonthRate } from './simulatedRateDisplay.js';
+import { SIMULATED_CARD_NOTE, SIMULATED_METHOD_PATH, SIMULATED_PARAMS, simulatedMonthRate } from './simulatedRateDisplay.js';
 import { summarizeSimulationV2 } from './simulatedRecoveryV2.js';
 import { RECOVERY_RATE_PUBLIC } from './recoveryVisibility.js';
 
@@ -15,29 +15,27 @@ const walk = (dir) => readdirSync(join(root, dir)).flatMap((n) => {
 });
 const SURFACES = [...walk('src/pages'), ...walk('src/components'), ...walk('src/layouts')].filter((p) => p.endsWith('.astro'));
 
-test('名称と説明が事後の試算であることを示す', () => {
-  assert.match(SIMULATED_RATE_LABEL, /事後シミュレーション/);
-  assert.doesNotMatch(SIMULATED_RATE_LABEL, /回収率/);
-  assert.match(SIMULATED_RATE_NOTE_SHORT, /実際の購入の回収率ではありません/);
-});
-
 test('非採用の値が出るスイッチは閉じたまま', () => {
   assert.equal(RECOVERY_RATE_PUBLIC, false);
 });
 
 test('値は v2 の計算そのもので、上書きしない', () => {
   const day = { date: '2026-01-01', totalRaces: 2, races: [{ isHit: true, umatan: { payout: 20000 } }, { isHit: false }] };
-  assert.equal(simulatedRateOf([day]), summarizeSimulationV2([day]).weightedRate);
-  assert.equal(simulatedRateOf([]), null);
-  assert.equal(simulatedRateOf([day]), 294.1);
+  assert.equal(simulatedMonthRate([day]), summarizeSimulationV2([day]).weightedRate.toFixed(1));
+  assert.equal(simulatedMonthRate([]), null);
+  assert.equal(simulatedMonthRate([day]), '294.1');
 });
 
 test('数値を出す画面は名称と説明を同じファイルに持つ', () => {
-  const users = SURFACES.filter((p) => /simulatedRate\b|simulatedRateOf|simulatedMonthRate/.test(read(p)));
-  assert.equal(users.length, 6, `接続先 ${users.join(', ')}`);
+  const users = SURFACES.filter((p) => /simulatedRate\b|simulatedMonthRate/.test(read(p)));
+  assert.equal(users.length, 5, `接続先 ${users.join(', ')}`);
   for (const p of users) {
-    assert.match(read(p), /<SimulatedCardNote\b|SIMULATED_RATE_NOTE_SHORT/, `${p}: 説明なしの表示`);
+    assert.match(read(p), /<SimulatedCardNote\b/, `${p}: 説明なしの表示`);
   }
+});
+
+test('公開面の文言に事後シミュレーションの名称と短い説明が残らない', () => {
+  for (const p of SURFACES) assert.doesNotMatch(read(p), /事後シミュレーション算定値|結果確定後の試算/, p);
 });
 
 test('画面は v2 を直接使わず、title・meta に数値を入れず、利益の色を付けない', () => {
@@ -94,10 +92,11 @@ test('カードの注記と算定方法のページ', () => {
 });
 
 test('入口ページと索引・年別に独立した算定値を出さない（2026-11-06 MK 指示）', () => {
-  const ENTRY = ['src/components/HomeResultsShowcasePreview.astro', 'src/pages/index.astro', 'src/pages/results-showcase/jra.astro', 'src/pages/results-showcase/nankan.astro'];
+  const ENTRY = ['src/components/HomeResultsShowcasePreview.astro', 'src/components/ResultsShowcaseBanner.astro', 'src/pages/index.astro', 'src/pages/results-showcase/jra.astro', 'src/pages/results-showcase/nankan.astro',
+    'src/pages/free/jra.astro', 'src/pages/free/nankan.astro', 'src/pages/free-prediction/jra.astro', 'src/pages/free-prediction/nankan.astro', 'src/lib/resultsShowcase.js', 'src/lib/resultsShowcasePreview.js'];
   for (const p of ENTRY) assert.doesNotMatch(read(p), /simulated|事後シミュレーション|SimulatedRate/i, p);
   for (const p of ['src/pages/archive/jra/index.astro', 'src/pages/archive/nankan/index.astro', 'src/pages/archive/jra/[year]/index.astro', 'src/pages/archive/nankan/[year]/index.astro']) {
-    assert.doesNotMatch(read(p), /<SimulatedRate\b|simulatedRateOf|事後シミュレーション/, p);
+    assert.doesNotMatch(read(p), /<SimulatedRate\b|事後シミュレーション/, p);
   }
 });
 
