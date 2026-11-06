@@ -134,7 +134,6 @@ setPublicCdnCache(Astro);
           {/* 月別一覧 */}
           <section class="months-grid">
             {monthSummaries.map((m) => (
-              <div class="month-card-wrap">
               <a href={`/archive/jra/${year}/${m.month}/`} class="month-card">
                 <div class="month-header">
                   <h2 class="month-title">{parseInt(m.month, 10)}月</h2>
@@ -178,8 +177,6 @@ setPublicCdnCache(Astro);
 
                 <div class="view-details-button">📊 詳細を見る →</div>
               </a>
-              {m.simulatedRate != null && <SimulatedCardNote />}
-              </div>
             ))}
           </section>
 
@@ -187,6 +184,8 @@ setPublicCdnCache(Astro);
             <a href="/archive/jra/" class="btn-back">← JRAアーカイブトップ</a>
             <a href="/pricing/" class="btn-primary">💎 プレミアム予想を見る</a>
           </footer>
+
+          {monthSummaries.some((m) => m.simulatedRate != null) && <SimulatedCardNote />}
         </>
       )}
     </div>
@@ -355,7 +354,6 @@ setPublicCdnCache(Astro);
     .month-stats-grid .month-stat:last-child:nth-child(odd) { grid-column: 1 / -1; }
   }
   .months-grid { grid-template-columns: minmax(0, 1fr); }
-  .month-card-wrap { min-width: 0; }
   .month-card, .view-details-button, .year-heading { box-sizing: border-box; max-width: 100%; }
   .month-stat { min-width: 0; }
   @media (max-width: 768px) {

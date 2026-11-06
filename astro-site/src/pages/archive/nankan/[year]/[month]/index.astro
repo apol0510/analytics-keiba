@@ -126,7 +126,6 @@ setPublicCdnCache(Astro);
             <div class="stat-label">的中レース数</div>
           </div>
         </div>
-        {monthSimulatedRate != null && <SimulatedCardNote />}
         {publicRate(recoveryRateMonth) != null && <p class="recovery-note">※ {AI_RECOVERY_DISCLOSURE}</p>}
 
         {monthHasLegacyDays && (
@@ -196,6 +195,8 @@ setPublicCdnCache(Astro);
           <a href="/archive/nankan/">アーカイブトップ</a> |
           <a href="/pricing/">プレミアム予想</a>
         </div>
+
+        {monthSimulatedRate != null && <SimulatedCardNote />}
       </>
     )}
   </div>
