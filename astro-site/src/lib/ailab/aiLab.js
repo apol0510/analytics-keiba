@@ -133,6 +133,19 @@ export function jstDate(nowMs) {
   return new Date(nowMs + JST_MS).toISOString().slice(0, 10);
 }
 
+/**
+ * ネット投票の締切（発走の何秒前か）。中央は即PAT、南関は SPAT4 を基準に発走 1 分前（2026-11-06 MK 確定）。
+ * 変えるときはこの定数だけを直す。
+ */
+export const BET_CUTOFF_LEAD_SEC = 60;
+export const BET_CUTOFF_NOTE = '締切は発走1分前（中央は即PAT、南関はSPAT4）の目安です。';
+
+/** 発走予定時刻から締切時刻（ISO）を出す。読めなければ null */
+export function cutoffAt(startAt) {
+  const t = isoMs(startAt);
+  return t == null ? null : new Date(t - BET_CUTOFF_LEAD_SEC * 1000).toISOString();
+}
+
 /** 発走までの表示（dashboard と同じ書き方）。発走時刻ちょうど以降は「発走済み」 */
 export function countdown(startAt, nowMs) {
   const t = isoMs(startAt);
@@ -146,14 +159,17 @@ export function countdown(startAt, nowMs) {
 }
 
 /**
- * 発走の行（発走前はカウントダウン・発走後は「発走済み（HH:MM 発走）」）。
- * 発走後に「発走まで 発走済み」と並べない。
+ * 発走の行（締切前は締切までのカウントダウン・締切後は「締切済み」・発走後は「発走済み（HH:MM 発走）」）。
+ * 発走後に「締切まで 発走済み」と並べない。
  */
 export function startLine(startAt, nowMs) {
   const c = countdown(startAt, nowMs);
   const at = jstHm(startAt);
   if (c.started) return { started: true, lead: '', value: '発走済み', tail: `（${at} 発走）` };
-  return { started: false, lead: '発走まで ', value: c.text, tail: `（発走 ${at}）` };
+  const cut = cutoffAt(startAt);
+  const d = countdown(cut, nowMs);
+  if (d.started) return { started: false, closed: true, lead: '', value: '締切済み', tail: `（${at} 発走予定）` };
+  return { started: false, closed: false, lead: '締切まで ', value: d.text, tail: `（締切 ${jstHm(cut)}・発走 ${at}）` };
 }
 
 /**

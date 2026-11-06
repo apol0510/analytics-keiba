@@ -1,8 +1,8 @@
 ---
 /**
- * CountdownRing.astro — 発走までの残り時間を円形ゲージで出す部品
+ * CountdownRing.astro — 締切までの残り時間を円形ゲージで出す部品
  *
- * 1 周 = 60 分（時計と同じ読み方）。60 分以上前は満タンで、発走に向かって時計回りに減る。
+ * 1 周 = 60 分（時計と同じ読み方）。60 分以上前は満タンで、締切に向かって時計回りに減る。
  * 外周の点は秒を刻む。残り 5 分から金色（役割表の「目印」）。単一源は lib/freeLiveBoard.js（ringModel / paintRing）。
  * props: ring … ringModel の戻り値（null なら隠して出す。ブラウザ側で paintRing が塗る）
  *        lead … 中央 1 行目の小さな文字（省略可）／ size … 'lg' | 'sm'
