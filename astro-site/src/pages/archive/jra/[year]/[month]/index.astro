@@ -117,7 +117,6 @@ const simulatedMonth = simulatedMonthRate(monthData);
               <div class="stat-label">的中レース数</div>
             </div>
           </section>
-          {simulatedMonth != null && <SimulatedCardNote />}
           {publicRate(monthStats.returnRate) != null && <p class="ai-points-note">※ {AI_POINTS_NOTE}。{AI_RECOVERY_DISCLOSURE}</p>}
 
           {/* 日別アーカイブ */}
@@ -193,6 +192,7 @@ const simulatedMonth = simulatedMonthRate(monthData);
 
           {/* 買い目点数に関する注記（intelligence 方式に合わせて点数は非公開）。最下部に控えめに表示。 */}
           <p class="rule-note">※買い目は当社の予想ロジックに基づいて構成しています</p>
+          {simulatedMonth != null && <SimulatedCardNote />}
         </>
       )}
     </div>

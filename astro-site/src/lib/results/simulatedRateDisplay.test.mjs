@@ -61,7 +61,14 @@ test('月別カードは的中率の隣に「回収率（試算）」を出す�
     const s = read(p);
     assert.match(s, /回収率<span class="sim-suffix">（試算）<\/span>/, `${p}: 見出し`);
     assert.match(s, /\.sim-suffix \{ font-size: 0\.72em; \}/, `${p}: 小さい文字`);
-    assert.match(s, /<SimulatedCardNote \/>/, `${p}: 注記`);
+    assert.equal(s.split('<SimulatedCardNote').length - 1, 1, `${p}: 注記は 1 回だけ`);
+    assert.doesNotMatch(s, /month-card-wrap/, `${p}: カード直下の注記の枠`);
+    const body = s.slice(0, s.indexOf('</BaseLayout>'));
+    const note = body.indexOf('<SimulatedCardNote');
+    for (const later of ['class="month-card"', 'class="back-link"', 'class="page-footer"', 'class="results-notice"', 'class="rule-note"', 'class="stat-card"']) {
+      assert.ok(body.lastIndexOf(later) < note, `${p}: ${later} より前に注記がある`);
+    }
+    assert.match(body.slice(note - 90, note), /(\.some\(|simulatedMonth != null|monthSimulatedRate != null)/, `${p}: 試算値が無いページにも注記が出る`);
     const sim = s.indexOf('回収率<span class="sim-suffix">');
     const hit = s.lastIndexOf('的中率</div>', sim);
     assert.ok(hit >= 0 && hit < sim && sim - hit < 400, `${p}: 的中率の隣ではない`);

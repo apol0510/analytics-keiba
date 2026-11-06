@@ -134,7 +134,6 @@ const pageDescription = '中央競馬（JRA）の全的中実績アーカイブ�
             </a>
             <div class="months-grid">
               {group.months.map((monthData) => (
-                <div class="month-card-wrap">
                 <a href={`/archive/jra/${monthData.year}/${monthData.month}/`} class="month-card">
                   <div class="month-header">
                     <h2 class="month-title">{monthData.displayMonth}</h2>
@@ -178,8 +177,6 @@ const pageDescription = '中央競馬（JRA）の全的中実績アーカイブ�
 
                   <div class="view-details-button">📊 詳細を見る →</div>
                 </a>
-                {monthData.simulatedRate != null && <SimulatedCardNote />}
-                </div>
               ))}
             </div>
           </section>
@@ -199,6 +196,8 @@ const pageDescription = '中央競馬（JRA）の全的中実績アーカイブ�
       <p>※ 本サービスで提示する買い目は複数パターンの候補を含むため、表示点数と集計上の基準点数が異なる場合があります。</p>
       <p>※ 過去の実績は将来の結果を保証するものではありません。馬券購入は自己責任でお願いいたします。</p>
     </div>
+
+    {allMonths.some((m) => m.simulatedRate != null) && <SimulatedCardNote />}
   </div>
 </BaseLayout>
 
@@ -389,7 +388,6 @@ const pageDescription = '中央競馬（JRA）の全的中実績アーカイブ�
     .month-stats-grid .month-stat:last-child:nth-child(odd) { grid-column: 1 / -1; }
   }
   .months-grid { grid-template-columns: minmax(0, 1fr); }
-  .month-card-wrap { min-width: 0; }
   .month-card, .view-details-button, .year-heading { box-sizing: border-box; max-width: 100%; }
   .month-stat { min-width: 0; }
   @media (max-width: 768px) {
