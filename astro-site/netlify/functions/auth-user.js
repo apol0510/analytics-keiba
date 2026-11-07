@@ -282,11 +282,6 @@ async function handleNewFreeRegistration(base, email, jsonHeaders, authLib) {
 
   // 付随処理はベストエフォート（本体を壊さない）
   try {
-    await registerToBlastMail(email, 'nankan-analytics');
-  } catch (e) {
-    console.error('⚠️ [auth-user] BlastMail 登録失敗（継続）:', e.message);
-  }
-  try {
     const { enrollSignupOnboarding } = await import('../../src/lib/newsletter/step-enroll.js');
     await enrollSignupOnboarding({
       apiKey: process.env.AIRTABLE_API_KEY,
@@ -320,59 +315,4 @@ async function handleNewFreeRegistration(base, email, jsonHeaders, authLib) {
       message: '新規無料登録が完了しました。',
     }),
   };
-}
-
-// BlastMail読者登録関数（無料会員）
-async function registerToBlastMail(email, registrationSource = 'nankan-analytics') {
-  const BLASTMAIL_USERNAME = process.env.BLASTMAIL_USERNAME;
-  const BLASTMAIL_PASSWORD = process.env.BLASTMAIL_PASSWORD;
-  const BLASTMAIL_API_KEY = process.env.BLASTMAIL_API_KEY;
-
-  if (!BLASTMAIL_USERNAME || !BLASTMAIL_PASSWORD || !BLASTMAIL_API_KEY) {
-    console.warn('⚠️ BlastMail credentials not configured, skipping reader registration');
-    return null;
-  }
-
-  try {
-    const loginUrl = 'https://api.bme.jp/rest/1.0/authenticate/login';
-    const loginParams = new URLSearchParams({
-      username: BLASTMAIL_USERNAME,
-      password: BLASTMAIL_PASSWORD,
-      api_key: BLASTMAIL_API_KEY,
-      format: 'json',
-    });
-    const loginResponse = await fetch(loginUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: loginParams.toString(),
-    });
-    if (!loginResponse.ok) throw new Error(`BlastMail login failed: ${loginResponse.status}`);
-    const loginData = await loginResponse.json();
-    const accessToken = loginData.accessToken;
-    if (!accessToken) throw new Error('BlastMail access token not returned');
-
-    const registerUrl = 'https://api.bme.jp/rest/1.0/contact/detail/create';
-    const registerParams = new URLSearchParams({
-      access_token: accessToken,
-      format: 'json',
-      c15: email,
-      recipient_group_no: '2',
-    });
-    const registerResponse = await fetch(registerUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: registerParams.toString(),
-    });
-    if (!registerResponse.ok) {
-      const errorText = await registerResponse.text();
-      if (registerResponse.status === 400 && errorText.includes('already been registered')) {
-        return null;
-      }
-      throw new Error(`BlastMail registration failed: ${registerResponse.status} - ${errorText}`);
-    }
-    return await registerResponse.json();
-  } catch (error) {
-    console.error('❌ BlastMail registration error:', error.message);
-    return null;
-  }
 }

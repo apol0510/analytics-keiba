@@ -1,3 +1,11 @@
+# 🧹 BlastMail の完全削除（2026-11-07 MK 決定）
+
+| 項目 | 状態 |
+|---|---|
+| 背景 | BlastMail は解約済み・今後使わない。AK の env に `BLASTMAIL_*` は無く、登録処理は skip の no-op だった |
+| 削除 | `auth-user.js`・`bank-transfer-application.js` の読者登録、`test-env.js` の env 確認、guard test と現行文書の記述 |
+| 維持 | 会員登録・銀行振込申込の結果・応答・メール・Airtable 書込・顧客向け文言 |
+
 # ⏱️ カウントダウンの締切基準化（2026-11-06 MK 確定）
 
 | 項目 | 状態 |

@@ -15,7 +15,7 @@ PayPay銀行 本店営業部
 1. **申請受付**: `bank-transfer-application.js`
    - フォーム送信 → 管理者メール
    - 顧客メール（申請受付確認）
-   - Airtable/BlastMail自動登録
+   - Airtable自動登録
 
 2. **入金確認**: `send-payment-confirmation-auto.js`
    - Airtable Status: `pending` → `active`
@@ -29,7 +29,7 @@ PayPay銀行 本店営業部
 
 **実装予定:**
 - Payment Links設定
-- Webhook統合（Airtable/BlastMail自動登録）
+- Webhook統合（Airtable自動登録）
 - nankan-analytics.keiba.linkに統合
 
 ---
@@ -146,7 +146,7 @@ PayPay銀行 本店営業部
 1. Paddleダッシュボードにログイン
 2. Product作成（5プラン: Standard/Premium/Sanrenpuku/Combo/Plus）
 3. Payment Links生成（各プラン用URL）
-4. Webhook設定（Airtable/BlastMail自動登録）
+4. Webhook設定（Airtable自動登録）
 
 **Step 2: nankan-analytics.keiba.link に統合**
 1. `/pricing/` に Paddle Payment Links追加
@@ -157,7 +157,7 @@ PayPay銀行 本店営業部
 **Step 3: テスト決済実施**
 1. Paddle Sandbox環境でテスト
 2. 本番環境で少額決済テスト（Standard ¥5,980）
-3. Webhook連携確認（Airtable/BlastMail）
+3. Webhook連携確認（Airtable）
 4. 入金確認（Paddle → 銀行口座）
 
 ---
@@ -203,7 +203,7 @@ const data = await response.json();  // API Keyなし・安全
 → 送信
 → 管理者メール送信 ✅
 → 顧客メール送信（申請受付確認） ✅
-→ Airtable/BlastMail自動登録 ✅
+→ Airtable自動登録 ✅
 ```
 
 **Step 2: 管理者が入金確認**

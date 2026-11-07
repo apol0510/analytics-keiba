@@ -73,12 +73,12 @@ test('送信直前の再確認（marketing-campaign-dispatch）と予約の簡�
   assert.match(nl, /quickFilterFormula = withUnverifiedCheckoutExcluded\(quickFilterFormula\);\s*const quickCheckUrl/);
 });
 
-test('申込でレコードを作るときは何も送らない（ポイント・BlastMail・ステップ配信・ウェルカム通知を呼ばない）', () => {
+test('申込でレコードを作るときは何も送らない（ポイント・ステップ配信・ウェルカム通知を呼ばない）', () => {
   const s = strip(read('src/lib/billing/paypal/paypalSubscriptionServer.js'));
   const i = s.indexOf('async function resolveCheckoutRecord'); const j = s.indexOf('export async function createPaypalSubscription');
   const body = s.slice(i, j);
   assert.match(body, /at\.create\(\{ Email: email, 'プラン': 'Free', Source: CHECKOUT_RECORD_SOURCE \}\)/);
-  assert.equal(/notify\(|BlastMail|enroll|user-notification|sendMail|sendEmail|mail\/send|fetch\(|ポイント/.test(body), false, 'レコード作成に通知・配信を足さない');
+  assert.equal(/notify\(|enroll|user-notification|sendMail|sendEmail|mail\/send|fetch\(|ポイント/.test(body), false, 'レコード作成に通知・配信を足さない');
 });
 
 // ── Customers を読む全経路の分類 ───────────────────────────────────────────
@@ -86,7 +86,7 @@ test('申込でレコードを作るときは何も送らない（ポイント�
 // structural … 条件で構造的に当たらない（有料のみ・取り込みコホートのみ・決済メールの印のみ。RE で条件を確かめる）
 // transactional … 操作した本人 / 管理者が名指しした 1 人 / 管理者宛だけ（宛先を Customers から選ばない）
 // noMail … メールを送らない（MAIL が本文に無いことを確かめる）
-const MAIL = /v3\/mail\/send|singlesends|\bsendEmail\s*\(|\bsendMail\s*\(|ScheduledEmails|sgMail|registerToBlastMail/;
+const MAIL = /v3\/mail\/send|singlesends|\bsendEmail\s*\(|\bsendMail\s*\(|ScheduledEmails|sgMail/;
 const COVERED = /resolveAudienceRecipients\(|countAudience\(|resolveCustomerMarketing\(|isUnverifiedCheckoutRecord\(|withUnverifiedCheckoutExcluded\(/;
 const FUNCTIONS = {
   'admin-marketing.js': ['covered', COVERED],
