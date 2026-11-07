@@ -71,17 +71,17 @@ Premium Plus（単品商品）
 
 ### 各ページで購入できる商品
 
-| ページURL | 対象ユーザー | 購入できる商品 | productName | Airtable登録 | BlastMail登録 |
-|-----------|-------------|----------------|-------------|-------------|--------------|
-| `/pricing/` | 新規ユーザー | **Standard, Premium のみ** | `Standard`, `Premium` | ✅ | ✅ |
-| `/dashboard/` | 既存Premium会員 | **Sanrenpuku/Combo（アップグレード）** 🚨 | `Premium Sanrenpuku Lifetime`, `Premium Combo Lifetime` | ✅ | ✅ |
-| `/premium-predictions/` | Premium会員 | **Sanrenpuku/Combo（アップセル）** 🚨 | `Premium Sanrenpuku Lifetime`, `Premium Combo Lifetime` | ✅ | ✅ |
-| `/standard-predictions/` | 一般ユーザー | **Sanrenpuku/Combo** 🚨 | `Premium Sanrenpuku Lifetime`, `Premium Combo Lifetime` | ✅ | ✅ |
-| `/sanrenpuku-demo/` | デモページ | **Sanrenpuku/Combo** 🚨 | `Premium Sanrenpuku Lifetime`, `Premium Combo Lifetime` | ✅ | ✅ |
-| `/archive-sanrenpuku/` | アーカイブ | **Sanrenpuku/Combo** 🚨 | `Premium Sanrenpuku Lifetime`, `Premium Combo Lifetime` | ✅ | ✅ |
-| **⚠️ `/premium-sanrenpuku/`** | **Sanrenpuku/Combo会員** | **🚨 Premium Plus（単品商品）のみ** | `Premium Plus` | **❌ スキップ** | **❌ スキップ** |
-| **⚠️ `/withdrawal-upsell/`** | **退会時** | **🚨 Premium Plus（単品商品）のみ** | `Premium Plus` | **❌ スキップ** | **❌ スキップ** |
-| `/premium-plus/` | - | **Premium Plus（単品商品）** | `Premium Plus` | ❌ | ❌ |
+| ページURL | 対象ユーザー | 購入できる商品 | productName | Airtable登録 |
+|-----------|-------------|----------------|-------------|-------------|
+| `/pricing/` | 新規ユーザー | **Standard, Premium のみ** | `Standard`, `Premium` | ✅ |
+| `/dashboard/` | 既存Premium会員 | **Sanrenpuku/Combo（アップグレード）** 🚨 | `Premium Sanrenpuku Lifetime`, `Premium Combo Lifetime` | ✅ |
+| `/premium-predictions/` | Premium会員 | **Sanrenpuku/Combo（アップセル）** 🚨 | `Premium Sanrenpuku Lifetime`, `Premium Combo Lifetime` | ✅ |
+| `/standard-predictions/` | 一般ユーザー | **Sanrenpuku/Combo** 🚨 | `Premium Sanrenpuku Lifetime`, `Premium Combo Lifetime` | ✅ |
+| `/sanrenpuku-demo/` | デモページ | **Sanrenpuku/Combo** 🚨 | `Premium Sanrenpuku Lifetime`, `Premium Combo Lifetime` | ✅ |
+| `/archive-sanrenpuku/` | アーカイブ | **Sanrenpuku/Combo** 🚨 | `Premium Sanrenpuku Lifetime`, `Premium Combo Lifetime` | ✅ |
+| **⚠️ `/premium-sanrenpuku/`** | **Sanrenpuku/Combo会員** | **🚨 Premium Plus（単品商品）のみ** | `Premium Plus` | **❌ スキップ** |
+| **⚠️ `/withdrawal-upsell/`** | **退会時** | **🚨 Premium Plus（単品商品）のみ** | `Premium Plus` | **❌ スキップ** |
+| `/premium-plus/` | - | **Premium Plus（単品商品）** | `Premium Plus` | ❌ |
 
 **🚨 三連複買い切り重要ルール:**
 - 全て `Lifetime` = 買い切り（¥78,000）
@@ -102,7 +102,7 @@ Premium Plus（単品商品）
 - ❌ 間違い！このページで買えるのは**Premium Plus（単品商品）のみ**
 - ✅ 正しい：このページはSanrenpuku/Combo会員向けで、Premium Plusのみ販売
 
-### 3. Premium Plusに対してAirtable/BlastMail登録する
+### 3. Premium Plusに対してAirtable登録する
 
 - ❌ 間違い！Premium Plusは単品商品なのでスキップ
 - ✅ 正しい：月額プラン（Standard/Premium/Sanrenpuku/Combo）のみ登録
@@ -122,12 +122,12 @@ Premium Plus（単品商品）
 ```
 新規ユーザー
   ↓
-/pricing/ → Standard または Premium 購入（Airtable/BlastMail登録 ✅）
+/pricing/ → Standard または Premium 購入（Airtable登録 ✅）
   ↓
-/dashboard/ → Premium Sanrenpuku Lifetime または Premium Combo Lifetime にアップグレード（Airtable/BlastMail登録 ✅）
+/dashboard/ → Premium Sanrenpuku Lifetime または Premium Combo Lifetime にアップグレード（Airtable登録 ✅）
   🚨 買い切り（¥78,000）だがPremium有効期間内のみ閲覧可能
   ↓
-/premium-sanrenpuku/ → Premium Plus（単品商品）購入（Airtable/BlastMail登録 ❌）
+/premium-sanrenpuku/ → Premium Plus（単品商品）購入（Airtable登録 ❌）
 ```
 
 ### 🚨 三連複買い切りの重要ポイント
@@ -139,12 +139,12 @@ Premium Plus（単品商品）
 
 ### テスト時の正しいページ選択
 
-**月額プランテスト（Airtable/BlastMail登録あり）:**
+**月額プランテスト（Airtable登録あり）:**
 - `/pricing/` → Standard/Premium
 - `/dashboard/` → Premium Sanrenpuku/Combo
 - `/premium-predictions/` → Premium Sanrenpuku/Combo
 - `/standard-predictions/` → Premium Sanrenpuku/Combo
 
-**単品商品テスト（Airtable/BlastMail登録なし）:**
+**単品商品テスト（Airtable登録なし）:**
 - `/premium-sanrenpuku/` → Premium Plus
 - `/withdrawal-upsell/` → Premium Plus

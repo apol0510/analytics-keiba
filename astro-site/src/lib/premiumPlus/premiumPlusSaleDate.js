@@ -203,7 +203,7 @@ export function buildSaleProductName(label, price) {
  * その注文が Premium Plus か（**商品名から判定する唯一の単一源**）。
  *
  * ⚠️ 申込 Function は「Premium Plus か否か」で処理を大きく分ける
- *    （Airtable 登録の要否 / BlastMail 登録の要否 / 決済開始の計測）。
+ *    （Airtable 登録の要否 / 決済開始の計測）。
  *    判定を各所へ書き写すと**大文字小文字の揺れで分岐がねじれる**。
  *    実際 `productName.includes('Premium Plus')`（大小区別あり）と
  *    `/Premium Plus/i.test(...)`（区別なし）が混在しており、`premium plus` のような

@@ -18,9 +18,6 @@ exports.handler = async (event, context) => {
     AIRTABLE_API_KEY: !!process.env.AIRTABLE_API_KEY,
     AIRTABLE_BASE_ID: !!process.env.AIRTABLE_BASE_ID,
     SENDGRID_API_KEY: !!process.env.SENDGRID_API_KEY,
-    BLASTMAIL_USERNAME: !!process.env.BLASTMAIL_USERNAME,
-    BLASTMAIL_PASSWORD: !!process.env.BLASTMAIL_PASSWORD,
-    BLASTMAIL_API_KEY: !!process.env.BLASTMAIL_API_KEY,
     MAKE_MAILHOOK_EMAIL: !!process.env.MAKE_MAILHOOK_EMAIL,
 
     // 長さも確認（設定されているが空文字の場合を検出）
