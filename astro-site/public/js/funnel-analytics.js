@@ -339,7 +339,40 @@
     return { event: name, params: {} };
   }
 
+  /**
+   * お問い合わせ（/contact/）の段（2026-11-09 リニューアル・docs/CONTACT_RENEWAL.md）。
+   *
+   * 7〜8 月は月 20 件以上あった問い合わせが 9 月以降 月 10 件前後へ減った。
+   * 送信成功はこれまで GA4 に 1 つも出ておらず（Function も成功時はログ無し）、
+   * 「ページに来ない」のか「来ても送らない」のか「自己解決した」のかを区別できなかった。
+   *
+   * ⚠️ 申込成功（application_submitted）にも sign_up にも数えない。
+   * ⚠️ 送るのは段名と閉じた語彙の種類（contact_topic）だけ。本文・メール・名前は受け取らない。
+   */
+  var CONTACT_STEP_EVENTS = {
+    form_start: 'contact_form_start',   // 入力を始めた（1 ページ 1 回）
+    help_click: 'contact_help_click',   // よくある質問のカードから案内先へ進んだ（自己解決の目安）
+    submit: 'contact_submit',           // サーバーが受理した（送信成功）
+    error: 'contact_error'              // サーバー失敗・通信失敗
+  };
+  var CONTACT_TOPIC_KEYS = ['usage', 'plan', 'payment', 'login', 'cancel', 'bug', 'request', 'other'];
+
+  function contactStep(step, topic) {
+    var name = Object.prototype.hasOwnProperty.call(CONTACT_STEP_EVENTS, step) ? CONTACT_STEP_EVENTS[step] : null;
+    if (!name) return null;
+    var params = {};
+    if (CONTACT_TOPIC_KEYS.indexOf(String(topic)) !== -1) params.contact_topic = String(topic);
+    if (!shouldSend(name + '|' + (params.contact_topic || ''), Date.now())) return null;
+    try {
+      if (typeof global.gtag === 'function') global.gtag('event', name, params);
+    } catch (_) {}
+    return { event: name, params: params };
+  }
+
   global.AkFunnel = {
+    contactStep: contactStep,
+    CONTACT_STEP_EVENTS: CONTACT_STEP_EVENTS,
+    CONTACT_TOPIC_KEYS: CONTACT_TOPIC_KEYS,
     freeSignupStep: freeSignupStep,
     FREE_SIGNUP_STEP_EVENTS: FREE_SIGNUP_STEP_EVENTS,
     cardCheckoutStep: cardCheckoutStep,

@@ -1,361 +1,247 @@
 ---
 export const prerender = true;
 import BaseLayout from '../layouts/BaseLayout.astro';
+import { CONTACT_TOPICS } from '../lib/contact/contactForm.js';
+
+// 2026-11-09 リニューアル（docs/CONTACT_RENEWAL.md）
+//  - よくある質問のカードで「その場で解決」と「このまま質問する」を両方出す
+//  - お名前は任意・種類は閉じた語彙（contactForm.js が正本）・返信の目安と差出人を明記
+//  - 計測は AkFunnel.contactStep（段名と種類だけ。本文・メールは送らない）
+const topics = Object.entries(CONTACT_TOPICS);
+
+const helpCards = [
+  {
+    topic: 'login',
+    icon: '✉️',
+    title: 'ログインのメールが届かない',
+    body: '件名「【KEIBA Analytics】ログインリンク」の最新の 1 通を開いてください。見当たらないときは迷惑メールフォルダもご確認ください。',
+    href: '/login/',
+    linkText: 'ログインリンクを送り直す',
+  },
+  {
+    topic: 'payment',
+    icon: '💳',
+    title: '支払ったのに使えない・入金の報告',
+    body: '銀行振込のあとは、マイページの「銀行振込完了フォーム」からご報告ください。お申し込みに使ったメールアドレスでログインしているかもご確認ください。',
+    href: '/dashboard/',
+    linkText: 'マイページを開く',
+  },
+  {
+    topic: 'plan',
+    icon: '💰',
+    title: 'プランと料金を知りたい',
+    body: '各プランで見られる内容と料金、よくある質問を 1 ページにまとめています。',
+    href: '/pricing/',
+    linkText: 'プランと料金を見る',
+  },
+  {
+    topic: 'cancel',
+    icon: '🚪',
+    title: '退会・解約したい',
+    body: '退会はマイページの「退会する」からお手続きいただけます。',
+    href: '/dashboard/',
+    linkText: 'マイページを開く',
+  },
+];
 ---
 
-<BaseLayout title="お問い合わせ">
+<BaseLayout
+    title="お問い合わせ"
+    description="KEIBA Analytics へのご質問・ご相談はこちら。ログイン・お支払い・プラン・予想の見方など、運営者が直接読んで通常 2 営業日以内にメールでお返事します。"
+>
     <div class="contact-container">
-        <div class="contact-header">
-            <h1>💬 お気軽にお問い合わせください</h1>
-            <p class="header-main">ご質問・ご要望・ご相談など、どんなことでもお気軽にお寄せください。</p>
-            <p class="header-sub">専門スタッフが丁寧にサポートいたします 😊</p>
-        </div>
+        <header class="contact-header">
+            <h1>お問い合わせ</h1>
+            <p class="header-main">ご質問・ご相談は、このページからお気軽にどうぞ。</p>
+            <ul class="promise-list">
+                <li><span aria-hidden="true">👀</span> 運営者がすべて直接読みます</li>
+                <li><span aria-hidden="true">⏱️</span> 通常 2 営業日以内にメールでお返事</li>
+                <li><span aria-hidden="true">🆓</span> 無料会員・未登録の方もどうぞ</li>
+            </ul>
+        </header>
 
-        <div class="contact-form-wrapper">
-            <form id="contactForm" class="contact-form">
-                <div class="form-intro">
-                    <p>✨ 些細なことでも構いません。お困りのことがあれば、ぜひご連絡ください！</p>
-                </div>
+        <section class="help-section" aria-labelledby="help-title">
+            <h2 id="help-title" class="section-title">よくあるご質問</h2>
+            <p class="section-lead">すぐに解決できることもあります。解決しないときは「このまま質問する」からどうぞ。</p>
+            <div class="help-grid">
+                {helpCards.map((c) => (
+                    <article class="help-card">
+                        <h3><span aria-hidden="true">{c.icon}</span> {c.title}</h3>
+                        <p>{c.body}</p>
+                        <div class="help-actions">
+                            <a class="help-link" href={c.href} data-contact-help={c.topic}>{c.linkText} →</a>
+                            <button type="button" class="help-ask" data-contact-ask={c.topic}>このまま質問する</button>
+                        </div>
+                    </article>
+                ))}
+            </div>
+        </section>
+
+        <div class="contact-form-wrapper" id="contact-form">
+            <div class="form-column">
+            <form id="contactForm" class="contact-form" novalidate>
+                <h2 class="section-title">質問を送る</h2>
 
                 <div class="form-group">
-                    <label for="name">お名前 <span class="required">*</span></label>
-                    <input type="text" id="name" name="name" required autocomplete="name" placeholder="例：山田 太郎">
-                </div>
-
-                <div class="form-group">
-                    <label for="email">メールアドレス <span class="required">*</span></label>
-                    <input type="email" id="email" name="email" required autocomplete="email" placeholder="例：yamada@example.com">
-                </div>
-
-                <div class="form-group">
-                    <label for="subject">お問い合わせの種類 <span class="required">*</span></label>
-                    <select id="subject" name="subject" required>
+                    <label for="topic">お問い合わせの種類 <span class="required">必須</span></label>
+                    <select id="topic" name="topic" required>
                         <option value="">お選びください</option>
-                        <option value="サービスについて">💡 サービスについて知りたい</option>
-                        <option value="料金プランについて">💰 料金プランについて相談したい</option>
-                        <option value="使い方について">📖 使い方を教えてほしい</option>
-                        <option value="アカウントについて">👤 アカウントについて相談したい</option>
-                        <option value="不具合報告">🔧 不具合を報告したい</option>
-                        <option value="ご要望・ご意見">💭 ご要望・ご意見を伝えたい</option>
-                        <option value="その他">📝 その他</option>
+                        {topics.map(([key, label]) => <option value={key}>{label}</option>)}
                     </select>
                 </div>
 
                 <div class="form-group">
-                    <label for="message">お問い合わせ内容 <span class="required">*</span></label>
-                    <textarea id="message" name="message" rows="8" required placeholder="どんなことでもお気軽にお書きください。詳しく教えていただけると、より的確にサポートできます 😊"></textarea>
+                    <label for="message">お問い合わせ内容 <span class="required">必須</span></label>
+                    <textarea id="message" name="message" rows="7" required maxlength="5000" placeholder="ご質問の内容をお書きください。"></textarea>
+                    <p class="field-hint" id="messageHint">短くても大丈夫です。</p>
                 </div>
 
-                <div class="form-actions">
-                    <button type="submit" class="submit-btn">
-                        <span class="btn-text">📨 送信する</span>
-                        <span class="btn-loading" style="display: none;">
-                            <span class="spinner"></span>
-                            送信中...
-                        </span>
-                    </button>
+                <div class="form-group">
+                    <label for="email">返信先のメールアドレス <span class="required">必須</span></label>
+                    <input type="email" id="email" name="email" required autocomplete="email" inputmode="email" placeholder="例：yamada@example.com">
+                    <p class="field-hint">返信は <strong>support@keiba.link</strong> から届きます。届かないときは迷惑メールフォルダもご確認ください。</p>
                 </div>
 
-                <div id="formMessage" class="form-message"></div>
+                <div class="form-group">
+                    <label for="name">お名前 <span class="optional">任意</span></label>
+                    <input type="text" id="name" name="name" autocomplete="name" maxlength="100" placeholder="ニックネームでも構いません">
+                </div>
+
+                <div class="hp-field" aria-hidden="true">
+                    <label for="website">この欄は空のままにしてください</label>
+                    <input type="text" id="website" name="website" tabindex="-1" autocomplete="off">
+                </div>
+
+                <button type="submit" class="submit-btn">
+                    <span class="btn-text">送信する</span>
+                    <span class="btn-loading" style="display: none;">
+                        <span class="spinner"></span>
+                        送信中...
+                    </span>
+                </button>
+                <p class="field-hint center">送信すると、受付の控えが自動でメール送信されます。</p>
             </form>
-
-            <div class="contact-info">
-                <div class="welcome-message">
-                    <p>💙 お客様の声を大切にしています</p>
-                    <p class="welcome-sub">困ったこと、分からないこと、改善してほしいことなど、何でもお聞かせください。一緒により良いサービスを作っていきましょう！</p>
-                </div>
-
-                <div class="info-item">
-                    <h3>📧 メールでのお問い合わせ</h3>
-                    <p class="email-address">support@keiba.link</p>
-                </div>
-
-                <div class="info-item">
-                    <h3>⏰ サポート対応時間</h3>
-                    <p class="business-hours">24時間対応　順次ご返信いたします</p>
-                </div>
+            <!-- ⚠️ form の外に置く。SubmissionResult は成功時に formEl を display:none にするため、
+                 中に置くと成功表示ごと消える（2026-11-09 まで本番で起きていた）。 -->
+            <div id="formMessage" class="form-message" role="status" aria-live="polite"></div>
             </div>
+
+            <aside class="contact-info">
+                <div class="info-item">
+                    <h3>メールで直接送る</h3>
+                    <p class="email-address"><a href="mailto:support@keiba.link">support@keiba.link</a></p>
+                    <p class="info-note">フォームと同じ窓口に届きます。</p>
+                </div>
+                <div class="info-item">
+                    <h3>お返事の目安</h3>
+                    <p>受付は 24 時間。お返事は通常 2 営業日以内です。</p>
+                </div>
+                <div class="info-item">
+                    <h3>早く確認するために</h3>
+                    <ul>
+                        <li>お支払いの件：お支払い日・金額・プラン名</li>
+                        <li>不具合の件：見ていたページと、使っている端末（iPhone・Android・パソコン）</li>
+                    </ul>
+                </div>
+                <p class="info-note"><a href="/legal/">運営者情報</a></p>
+            </aside>
         </div>
     </div>
 
     <style>
-        .contact-container {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 40px 20px;
+        .contact-container { max-width: 1100px; margin: 0 auto; padding: 40px 20px 60px; }
+
+        .contact-header { text-align: center; margin-bottom: 36px; }
+        .contact-header h1 { font-size: 2.2rem; font-weight: 800; color: var(--body-text-color); margin-bottom: 12px; }
+        .header-main { color: var(--body-text-color); font-size: 1.1rem; margin-bottom: 16px; }
+        .promise-list { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
+        .promise-list li {
+            background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.25);
+            border-radius: 999px; padding: 6px 14px; color: var(--body-text-color); font-size: 0.92rem;
         }
 
-        .contact-header {
-            text-align: center;
-            margin-bottom: 50px;
-        }
+        .section-title { font-size: 1.3rem; font-weight: 700; color: var(--body-text-color); margin: 0 0 8px; }
+        .section-lead { color: var(--accent-text-color); margin: 0 0 18px; font-size: 0.95rem; }
 
-        .contact-header h1 {
-            font-size: 2.5rem;
-            font-weight: 800;
-            background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-            margin-bottom: 15px;
+        .help-section { margin-bottom: 40px; }
+        .help-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+        .help-card {
+            background: rgba(30, 41, 59, 0.5); border: 1px solid rgba(59, 130, 246, 0.2);
+            border-radius: 12px; padding: 18px 20px; display: flex; flex-direction: column;
         }
-
-        .contact-header .header-main {
-            color: var(--body-text-color);
-            font-size: 1.2rem;
-            margin-bottom: 8px;
-            font-weight: 500;
+        .help-card h3 { font-size: 1.05rem; color: var(--body-text-color); margin: 0 0 8px; }
+        .help-card p { color: var(--accent-text-color); font-size: 0.92rem; line-height: 1.7; margin: 0 0 14px; flex: 1; }
+        .help-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; }
+        .help-link { color: #60a5fa; font-weight: 600; text-decoration: none; font-size: 0.95rem; }
+        .help-link:hover { text-decoration: underline; }
+        .help-ask {
+            background: transparent; color: var(--body-text-color); border: 1px solid rgba(148, 163, 184, 0.4);
+            border-radius: 8px; padding: 8px 12px; font-size: 0.88rem; cursor: pointer; min-height: 40px;
         }
+        .help-ask:hover { border-color: #60a5fa; color: #60a5fa; }
 
-        .contact-header .header-sub {
-            color: var(--accent-text-color);
-            font-size: 1rem;
-        }
-
-        .contact-form-wrapper {
-            display: grid;
-            grid-template-columns: 2fr 1fr;
-            gap: 40px;
-            align-items: start;
-        }
-
+        .contact-form-wrapper { display: grid; grid-template-columns: 2fr 1fr; gap: 32px; align-items: start; scroll-margin-top: 90px; }
         .contact-form {
-            background: rgba(30, 41, 59, 0.5);
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(59, 130, 246, 0.2);
-            border-radius: 12px;
-            padding: 30px;
+            background: rgba(30, 41, 59, 0.5); border: 1px solid rgba(59, 130, 246, 0.25);
+            border-radius: 12px; padding: 28px;
         }
+        .contact-form .section-title { margin-bottom: 20px; }
 
-        .form-intro {
-            background: rgba(59, 130, 246, 0.1);
-            border-left: 3px solid var(--primary-color);
-            padding: 15px;
-            margin-bottom: 25px;
-            border-radius: 8px;
-        }
+        .form-group { margin-bottom: 22px; }
+        .form-group label { display: block; color: var(--body-text-color); font-weight: 600; margin-bottom: 8px; }
+        .required, .optional { font-size: 0.75rem; font-weight: 600; border-radius: 4px; padding: 1px 6px; margin-left: 6px; vertical-align: middle; }
+        .required { background: rgba(239, 68, 68, 0.15); color: #f87171; }
+        .optional { background: rgba(148, 163, 184, 0.15); color: var(--accent-text-color); }
 
-        .form-intro p {
-            color: var(--body-text-color);
-            margin: 0;
-            font-size: 0.95rem;
+        .form-group input, .form-group select, .form-group textarea {
+            width: 100%; padding: 12px 14px; background: rgba(15, 23, 42, 0.6);
+            border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 8px;
+            color: var(--body-text-color); font-size: 1rem; transition: border-color 0.2s ease, box-shadow 0.2s ease;
         }
+        .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+            outline: none; border-color: #60a5fa; box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+        }
+        .form-group textarea { resize: vertical; min-height: 140px; }
+        .form-group .invalid { border-color: #ef4444; }
+        .field-hint { color: var(--accent-text-color); font-size: 0.85rem; margin: 6px 0 0; line-height: 1.6; }
+        .field-hint.center { text-align: center; margin-top: 10px; }
 
-        .form-group {
-            margin-bottom: 25px;
-        }
-
-        .form-group label {
-            display: block;
-            color: var(--body-text-color);
-            font-weight: 600;
-            margin-bottom: 8px;
-        }
-
-        .required {
-            color: #ef4444;
-        }
-
-        .form-group input,
-        .form-group select,
-        .form-group textarea {
-            width: 100%;
-            padding: 12px 15px;
-            background: rgba(15, 23, 42, 0.6);
-            border: 1px solid rgba(59, 130, 246, 0.3);
-            border-radius: 8px;
-            color: var(--body-text-color);
-            font-size: 1rem;
-            transition: all 0.3s ease;
-        }
-
-        .form-group input:focus,
-        .form-group select:focus,
-        .form-group textarea:focus {
-            outline: none;
-            border-color: var(--primary-color);
-            background: rgba(15, 23, 42, 0.8);
-            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
-        }
-
-        .form-group textarea {
-            resize: vertical;
-            min-height: 120px;
-        }
-
-        .form-actions {
-            margin-top: 30px;
-        }
+        .hp-field { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; }
 
         .submit-btn {
-            width: 100%;
-            padding: 15px 30px;
-            background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
-            color: white;
-            border: none;
-            border-radius: 8px;
-            font-size: 1.1rem;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            position: relative;
+            width: 100%; padding: 15px 30px; background: linear-gradient(135deg, #3b82f6 0%, #6366f1 100%);
+            color: white; border: none; border-radius: 8px; font-size: 1.1rem; font-weight: 700; cursor: pointer;
         }
-
-        .submit-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 10px 25px rgba(59, 130, 246, 0.3);
-        }
-
-        .submit-btn:disabled {
-            opacity: 0.7;
-            cursor: not-allowed;
-        }
-
+        .submit-btn:hover { filter: brightness(1.08); }
+        .submit-btn:disabled { opacity: 0.7; cursor: not-allowed; }
         .spinner {
-            display: inline-block;
-            width: 16px;
-            height: 16px;
-            border: 2px solid rgba(255, 255, 255, 0.3);
-            border-top-color: white;
-            border-radius: 50%;
-            animation: spin 0.8s linear infinite;
-            margin-right: 8px;
+            display: inline-block; width: 16px; height: 16px; border: 2px solid rgba(255, 255, 255, 0.3);
+            border-top-color: white; border-radius: 50%; animation: spin 0.8s linear infinite; margin-right: 8px;
         }
+        @keyframes spin { to { transform: rotate(360deg); } }
 
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-
-        .form-message {
-            margin-top: 20px;
-            padding: 15px;
-            border-radius: 8px;
-            display: none;
-            animation: slideIn 0.3s ease;
-        }
-
-        .form-message.success {
-            background: rgba(16, 185, 129, 0.1);
-            border: 1px solid rgba(16, 185, 129, 0.3);
-            color: #10b981;
-            display: block;
-        }
-
-        .form-message.error {
-            background: rgba(239, 68, 68, 0.1);
-            border: 1px solid rgba(239, 68, 68, 0.3);
-            color: #ef4444;
-            display: block;
-        }
-
-        @keyframes slideIn {
-            from {
-                opacity: 0;
-                transform: translateY(-10px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
+        .form-message { margin-top: 18px; padding: 14px; border-radius: 8px; display: none; }
+        .form-message.success { background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); color: #10b981; display: block; }
+        .form-message.error { background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); color: #f87171; display: block; }
 
         .contact-info {
-            background: rgba(30, 41, 59, 0.5);
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(139, 92, 246, 0.2);
-            border-radius: 12px;
-            padding: 30px;
+            background: rgba(30, 41, 59, 0.5); border: 1px solid rgba(139, 92, 246, 0.2);
+            border-radius: 12px; padding: 24px;
         }
-
-        .welcome-message {
-            background: rgba(139, 92, 246, 0.1);
-            border: 1px solid rgba(139, 92, 246, 0.2);
-            border-radius: 10px;
-            padding: 20px;
-            margin-bottom: 35px;
-            text-align: center;
-        }
-
-        .welcome-message p {
-            color: var(--body-text-color);
-            font-size: 1.1rem;
-            font-weight: 600;
-            margin-bottom: 10px;
-        }
-
-        .welcome-sub {
-            color: var(--accent-text-color);
-            font-size: 0.95rem;
-            font-weight: 400;
-            line-height: 1.6;
-        }
-
-        .info-item {
-            margin-bottom: 35px;
-        }
-
-        .info-item:last-child {
-            margin-bottom: 0;
-        }
-
-        .info-item h3 {
-            color: var(--primary-color);
-            font-size: 1.2rem;
-            margin-bottom: 12px;
-            font-weight: 600;
-        }
-
-        .info-item p {
-            color: var(--body-text-color);
-            margin-bottom: 5px;
-        }
-
-        .info-note {
-            color: var(--accent-text-color);
-            font-size: 0.9rem;
-        }
-
-        .email-address {
-            color: var(--primary-color);
-            font-size: 1.2rem;
-            font-weight: 600;
-            margin: 10px 0;
-        }
-
-        .business-hours {
-            color: var(--body-text-color);
-            font-size: 1.1rem;
-            font-weight: 600;
-            margin: 10px 0;
-        }
-
-        .info-item ul {
-            list-style: none;
-            padding: 0;
-        }
-
-        .info-item li {
-            color: var(--body-text-color);
-            padding: 8px 0;
-            border-bottom: 1px solid rgba(59, 130, 246, 0.1);
-        }
-
-        .info-item li:last-child {
-            border-bottom: none;
-        }
+        .info-item { margin-bottom: 24px; }
+        .info-item h3 { color: var(--body-text-color); font-size: 1rem; margin: 0 0 8px; font-weight: 700; }
+        .info-item p { color: var(--body-text-color); margin: 0 0 4px; font-size: 0.92rem; line-height: 1.6; }
+        .info-item ul { margin: 0; padding-left: 1.2em; color: var(--body-text-color); font-size: 0.9rem; line-height: 1.7; }
+        .email-address a { color: #60a5fa; font-weight: 700; font-size: 1.05rem; text-decoration: none; word-break: break-all; }
+        .info-note { color: var(--accent-text-color); font-size: 0.85rem; }
+        .info-note a { color: var(--accent-text-color); }
 
         @media (max-width: 768px) {
-            .contact-form-wrapper {
-                grid-template-columns: 1fr;
-            }
-
-            .contact-header h1 {
-                font-size: 2rem;
-            }
-
-            .contact-form {
-                padding: 20px;
-            }
+            .contact-container { padding: 28px 16px 48px; }
+            .contact-header h1 { font-size: 1.8rem; }
+            .help-grid { grid-template-columns: 1fr; }
+            .contact-form-wrapper { grid-template-columns: 1fr; }
+            .contact-form { padding: 20px; }
         }
     </style>
 
@@ -363,12 +249,36 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         // 🔑 氏名・メールの自動入力。このページは is:inline ではない通常の <script> なので、
         //    複製せず正本モジュールをそのまま import する（有料会員用モーダルは import
         //    できないため同一ロジックを複製している）。
-        //    無料・未登録は氏名を持たないので contactNameForInput が 'お客様' を返す。
+        //    2026-11-09: お名前は任意になったため、会員の実名があるときだけ入れる
+        //    （無料・未登録に「お客様」を入れない。空欄なら Function 側が「お客様」とする）。
         import { getLoggedInContact, contactNameForInput } from '../lib/contact-autofill.js';
+        import { CONTACT_TOPICS } from '../lib/contact/contactForm.js';
+
+        // 種類ごとの書き方の案内（本文の placeholder とヒント）
+        const TOPIC_HINTS = {
+            payment: ['例：11/2 に Premium 年額を銀行振込で支払いましたが、予想が見られません。', 'お支払い日・金額・プラン名があると早く確認できます。'],
+            login: ['例：ログインリンクを送っても、メールが届きません。', 'お使いのメールアドレス（返信先）を正しく入力してください。'],
+            bug: ['例：iPhone で南関の予想ページを開くと、買い目が表示されません。', '見ていたページと、使っている端末を書いていただけると助かります。'],
+            usage: ['例：指数と総合評価はどう使い分ければいいですか？', '短くても大丈夫です。'],
+            plan: ['例：中央だけ見たいのですが、どのプランが合っていますか？', '短くても大丈夫です。'],
+            cancel: ['例：退会の手続きが分かりません。', '退会はマイページの「退会する」からもお手続きいただけます。'],
+        };
+        const DEFAULT_HINT = ['ご質問の内容をお書きください。', '短くても大丈夫です。'];
+
+        function trackContact(step, topic) {
+            try {
+                if (window.AkFunnel && typeof window.AkFunnel.contactStep === 'function') {
+                    window.AkFunnel.contactStep(step, topic);
+                }
+            } catch (_) { /* 計測の失敗で問い合わせを止めない */ }
+        }
 
         document.addEventListener('DOMContentLoaded', () => {
             const form = document.getElementById('contactForm');
             const formMessage = document.getElementById('formMessage');
+            const topicEl = document.getElementById('topic');
+            const messageEl = document.getElementById('message');
+            const hintEl = document.getElementById('messageHint');
             const submitBtn = form.querySelector('.submit-btn');
             const btnText = submitBtn.querySelector('.btn-text');
             const btnLoading = submitBtn.querySelector('.btn-loading');
@@ -378,40 +288,91 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                 const contact = getLoggedInContact();
                 const nameEl = document.getElementById('name');
                 const emailEl = document.getElementById('email');
-                if (nameEl && !nameEl.value) nameEl.value = contactNameForInput(contact.name);
+                if (nameEl && !nameEl.value && contact.name) nameEl.value = contactNameForInput(contact.name);
                 if (emailEl && !emailEl.value && contact.email) emailEl.value = contact.email;
             }
             prefillContactFields();
 
+            function applyTopicHint() {
+                const [placeholder, hint] = TOPIC_HINTS[topicEl.value] || DEFAULT_HINT;
+                messageEl.placeholder = placeholder;
+                hintEl.textContent = hint;
+            }
+            topicEl.addEventListener('change', applyTopicHint);
+
+            function chooseTopic(topic) {
+                if (!Object.prototype.hasOwnProperty.call(CONTACT_TOPICS, topic)) return;
+                topicEl.value = topic;
+                applyTopicHint();
+            }
+
+            // /contact/?topic=payment のように他ページから種類を指定して来られる
+            const fromUrl = new URLSearchParams(location.search).get('topic');
+            if (fromUrl) chooseTopic(fromUrl);
+
+            document.querySelectorAll('[data-contact-ask]').forEach((btn) => {
+                btn.addEventListener('click', () => {
+                    chooseTopic(btn.getAttribute('data-contact-ask'));
+                    document.getElementById('contact-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    setTimeout(() => messageEl.focus({ preventScroll: true }), 300);
+                });
+            });
+            document.querySelectorAll('[data-contact-help]').forEach((a) => {
+                a.addEventListener('click', () => trackContact('help_click', a.getAttribute('data-contact-help')));
+            });
+
+            let started = false;
+            form.addEventListener('input', (e) => {
+                if (e.target && e.target.classList) e.target.classList.remove('invalid');
+                if (started) return;
+                started = true;
+                trackContact('form_start', topicEl.value);
+            });
+
+            function showError(text, field) {
+                formMessage.textContent = text;
+                formMessage.className = 'form-message error';
+                if (field) {
+                    field.classList.add('invalid');
+                    field.focus();
+                }
+            }
+
             form.addEventListener('submit', async (e) => {
                 e.preventDefault();
+                formMessage.className = 'form-message';
 
-                // ボタンの状態を変更
+                const emailEl = form.querySelector('#email');
+                if (!topicEl.value) return showError('お問い合わせの種類をお選びください。', topicEl);
+                if (!messageEl.value.trim()) return showError('お問い合わせ内容をご記入ください。', messageEl);
+                if (!emailEl.value.trim() || !emailEl.checkValidity()) return showError('返信先のメールアドレスを正しくご入力ください。', emailEl);
+
                 submitBtn.disabled = true;
                 btnText.style.display = 'none';
                 btnLoading.style.display = 'inline-flex';
-                formMessage.className = 'form-message';
 
+                const topic = topicEl.value;
                 const formData = {
-                    name: form.name.value,
-                    email: form.email.value,
-                    subject: form.subject.value,
-                    message: form.message.value,
+                    name: form.querySelector('#name').value,
+                    email: emailEl.value,
+                    topic,
+                    message: messageEl.value,
+                    website: form.querySelector('#website').value,
                 };
 
                 try {
                     // SendGrid API経由（Netlify Functions）
                     const response = await fetch('/.netlify/functions/contact-form', {
                         method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
+                        headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(formData),
                     });
 
-                    const result = await response.json();
+                    let result = {};
+                    try { result = await response.json(); } catch (_) { result = {}; }
 
                     if (response.ok) {
+                        trackContact('submit', topic);
                         form.reset();
                         if (window.SubmissionResult) {
                             window.SubmissionResult.showSuccessScreen({
@@ -419,27 +380,26 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                                 messageEl: formMessage,
                                 options: {
                                     title: 'お問い合わせを送信しました',
-                                    message: 'ご連絡ありがとうございます。',
-                                    subMessage: '担当者から順次ご返信いたします。マイページから送信履歴も確認できます。'
+                                    message: 'ご連絡ありがとうございます。受付の控えをメールでお送りしました。',
+                                    subMessage: '通常 2 営業日以内に support@keiba.link からお返事します。届かないときは迷惑メールフォルダもご確認ください。'
                                 },
                                 history: {
                                     type: 'contact',
-                                    label: `お問い合わせ: ${formData.subject || '(種類未選択)'}`,
+                                    label: `お問い合わせ: ${CONTACT_TOPICS[topic] || 'その他'}`,
                                     status: 'sent',
-                                    details: { email: formData.email, subject: formData.subject }
+                                    details: { email: formData.email, subject: CONTACT_TOPICS[topic] || 'その他' }
                                 }
                             });
                         } else {
-                            formMessage.textContent = 'お問い合わせを送信しました。ご連絡ありがとうございます。';
+                            formMessage.textContent = 'お問い合わせを送信しました。通常 2 営業日以内にメールでお返事します。';
                             formMessage.className = 'form-message success';
                         }
                         return;
-                    } else {
-                        throw new Error(result.error || '送信に失敗しました');
                     }
+                    throw new Error(result.error || '送信に失敗しました');
                 } catch (error) {
-                    formMessage.textContent = error.message || 'エラーが発生しました。しばらくしてから再度お試しください。';
-                    formMessage.className = 'form-message error';
+                    trackContact('error', topic);
+                    showError(`${error.message || 'エラーが発生しました。'} うまくいかないときは support@keiba.link へ直接メールでお送りください。`);
                 }
 
                 // ボタンの状態を戻す（エラー時のみ到達）
