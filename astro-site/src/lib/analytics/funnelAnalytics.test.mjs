@@ -392,3 +392,42 @@ test('card checkout steps: unknown step is dropped, accidental double fire is dr
   const bare = load({ withGtag: false });
   assert.doesNotThrow(() => bare.AkFunnel.cardCheckoutStep('premium', 'click'));
 });
+
+// ── お問い合わせ（2026-11-09 リニューアル）────────────────────────────────
+test('contact: 段は閉じた語彙・種類は正本の key だけ・申込成功にも sign_up にも数えない', async () => {
+  const { CONTACT_TOPICS } = await import('../contact/contactForm.js');
+  const { AkFunnel, sent } = load();
+  assert.deepEqual([...AkFunnel.CONTACT_TOPIC_KEYS].sort(), Object.keys(CONTACT_TOPICS).sort());
+  AkFunnel.contactStep('form_start', 'payment');
+  AkFunnel.contactStep('help_click', 'login');
+  AkFunnel.contactStep('submit', 'usage');
+  AkFunnel.contactStep('error', 'nope');
+  assert.deepEqual(sent.map((x) => [x.name, x.params]), [
+    ['contact_form_start', { contact_topic: 'payment' }],
+    ['contact_help_click', { contact_topic: 'login' }],
+    ['contact_submit', { contact_topic: 'usage' }],
+    ['contact_error', {}],
+  ]);
+  assert.equal(sent.some((x) => ['application_submitted', 'sign_up', 'purchase'].includes(x.name)), false);
+});
+
+test('contact: 語彙外（メールアドレス等）は送らない・二重送信は落とす・gtag 無しでも投げない', () => {
+  const { AkFunnel, sent } = load();
+  assert.equal(AkFunnel.contactStep('someone@example.com', 'usage'), null);
+  assert.deepEqual(AkFunnel.contactStep('submit', 'someone@example.com').params, {});
+  AkFunnel.contactStep('submit', 'someone@example.com');
+  assert.equal(sent.length, 1);
+  const noGtag = load({ withGtag: false });
+  assert.doesNotThrow(() => noGtag.AkFunnel.contactStep('submit', 'usage'));
+});
+
+test('配線: /contact/ は受理後だけ contact_submit を送り、本文・メールを渡さない', () => {
+  const page = readFileSync(fileURLToPath(new URL('../../pages/contact.astro', import.meta.url)), 'utf8');
+  const calls = [...page.matchAll(/trackContact\('([a-z_]+)'/g)].map((m) => m[1]);
+  for (const c of calls) assert.ok(['form_start', 'help_click', 'submit', 'error'].includes(c), c);
+  assert.ok(calls.includes('submit') && calls.includes('error') && calls.includes('form_start'));
+  assert.equal(/trackContact\([^)]*(email|message|name)/.test(page), false);
+  const okAt = page.indexOf('if (response.ok)');
+  const submitAt = page.indexOf("trackContact('submit'");
+  assert.ok(okAt > 0 && submitAt > okAt, 'contact_submit は response.ok の後');
+});
