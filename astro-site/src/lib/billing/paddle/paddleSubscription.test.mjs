@@ -165,9 +165,10 @@ test('ログイン済みの購入: 申込 → 戻り先は確認中 → 通知�
   assert.equal(r.provider, 'paddle');
   assert.match(r.url, /\/checkout\/paddle\/\?_ptxn=txn_\w+&ak=s$/, '定期課金の印つき（決済ページが定期課金の戻り先へ送る）');
   const txn = r.subscriptionId;
-  assert.deepEqual(JSON.parse(w.redis.get(checkoutMarkKey(txn))), { recordId: REC, planId: 'premium-jra' });
+  // 過去にカードの定期課金が無い会員なので特別価格（2026-11-11）が付く
+  assert.deepEqual(JSON.parse(w.redis.get(checkoutMarkKey(txn))), { recordId: REC, planId: 'premium-jra', firstYen: 2480, campaignId: 'special-2026-11' });
   // 支払い前: 確認中（Premium へ移さない）
-  assert.deepEqual((await confirmPaddleSubscription({ transactionId: txn, recordId: REC, redis: w.redisCmd })).body, { status: 'pending', plan: 'premium-jra' });
+  assert.deepEqual((await confirmPaddleSubscription({ transactionId: txn, recordId: REC, redis: w.redisCmd })).body, { status: 'pending', plan: 'premium-jra', firstYen: 2480, campaign: 'special-2026-11' });
   // 支払い済み・購読 ID がまだ無い transaction.paid は何もしない（後続の通知で反映）
   w.txns[txn].status = 'paid';
   assert.equal((await w.handle(w.event('transaction.paid', { id: txn }))).result, 'awaiting_subscription');
@@ -181,7 +182,7 @@ test('ログイン済みの購入: 申込 → 戻り先は確認中 → 通知�
     ...Object.fromEntries(Object.entries(w.f()).filter(([k]) => !['プラン', 'PlanType', 'Status', '有効期限', 'VenueAccess', 'PaymentMethod', 'CancelledAt', 'WithdrawalRequested', 'WithdrawalDate', 'WithdrawalReason', 'Email', 'PaidAt'].includes(k))),
   });
   assert.equal(w.redis.get(memberKey(REC)), sid);
-  assert.deepEqual((await confirmPaddleSubscription({ transactionId: txn, recordId: REC, redis: w.redisCmd })).body, { status: 'active', plan: 'premium-jra', destination: '/premium-prediction/jra/' });
+  assert.deepEqual((await confirmPaddleSubscription({ transactionId: txn, recordId: REC, redis: w.redisCmd })).body, { status: 'active', plan: 'premium-jra', firstYen: 2480, campaign: 'special-2026-11', destination: '/premium-prediction/jra/' });
   assert.ok(w.redis.get(`ak:paypal:post-purchase:v1:${REC}`), '購入直後の印（ログイン後の自動遷移・PayPal と共通）');
   assert.deepEqual(w.notes.map((n) => n[0]), ['subscription_attached']);
 });
@@ -571,4 +572,104 @@ test('通知の署名（Paddle-Signature ts:rawBody）は変わらない', () =>
   assert.equal(verifyPaddleSignature({ header, rawBody: raw, secret: 'whsec', nowSec: now }), true);
   assert.equal(verifyPaddleSignature({ header, rawBody: raw.replace('0001', '0002'), secret: 'whsec', nowSec: now }), false);
   assert.deepEqual(parsePaddleWebhook(raw), { eventType: 'subscription.activated', subscriptionId: 'sub_test0000000001' });
+});
+
+// ───────────────────────────────── 特別価格（2026-11-11 MK・subscriptionCampaign.js）
+
+test('特別価格 新規: 取引に一回限りの値引き（recur:false）・単価は通常のまま → 反映は通る・更新は通常料金', async () => {
+  for (const [planId, off, regular] of [['premium', 1000, 4980], ['premium-jra', 500, 2980], ['premium-nankan', 500, 2980], ['premium-annual', 5000, 49800]]) {
+    const w = world();
+    const r = await checkout(w, { planId });
+    assert.equal(r.ok, true, planId);
+    assert.deepEqual(r.price, { firstYen: regular - off, regularYen: regular, discountYen: off, campaign: true }, planId);
+    const body = w.creates[0];
+    assert.equal(body.items[0].price.unit_price.amount, String(regular), `${planId}: 購読の単価は通常料金（更新はこの額）`);
+    assert.deepEqual(body.discount, { description: `特別価格 ${off.toLocaleString('ja-JP')}円OFF`, type: 'flat', amount: String(off), recur: false });
+    assert.deepEqual(body.custom_data, { ak_record: REC, ak_sub: PADDLE_PLAN_CODES[planId], ak_cmp: 'special-2026-11' });
+    const sid = w.pay(r.subscriptionId);
+    const out = await w.handle(w.event('transaction.completed', { id: r.subscriptionId }));
+    assert.equal(out.result, 'write_attached', `${planId}: 値引きがあっても amount_mismatch にならない`);
+    const renewTxn = w.renew(sid);
+    assert.equal(w.txns[renewTxn].details.totals.grand_total, String(regular), `${planId}: 更新は通常料金`);
+    await w.handle(w.event('transaction.completed', { id: renewTxn }));
+    assert.deepEqual(w.notes.filter((n) => n[0] === 'subscription_conflict'), [], `${planId}: 競合の通知なし`);
+  }
+});
+
+test('特別価格 対象外: 過去に Paddle / PayPal / Stripe の定期課金がある・履歴が読めない → 通常価格（値引きを付けない）', async () => {
+  const cases = [
+    ['paddle 履歴', (w) => w.redis.set(memberKey(REC), 'sub_old00000000001')],
+    ['paypal 履歴', (w) => w.redis.set(`ak:paypal:sub:member:${REC}`, 'I-OLD0000000')],
+    ['Stripe 購読 ID', (w) => { w.f().StripeSubscriptionId = 'sub_1Old'; }],
+    ['PaymentMethod 残り', (w) => { w.f().PaymentMethod = 'PayPal'; }],
+  ];
+  for (const [name, setup] of cases) {
+    const w = world();
+    setup(w);
+    const r = await checkout(w, { planId: 'premium-nankan' });
+    assert.equal(r.ok, true, name);
+    assert.deepEqual(r.price, { firstYen: 2980, regularYen: 2980, discountYen: 0, campaign: false }, name);
+    assert.equal(w.creates[0].discount, undefined, name);
+    assert.equal(w.creates[0].custom_data.ak_cmp, undefined, name);
+  }
+  // 履歴の読み出しに失敗 → 付けない（安全側）
+  const w = world();
+  const base = w.redisCmd;
+  const r = await checkout(w, { planId: 'premium', redis: async (c) => { if (c[0] === 'GET' && String(c[1]).startsWith('ak:paypal:sub:member:')) throw new Error('down'); return base(c); } });
+  assert.equal(r.ok, true);
+  assert.equal(r.price.campaign, false);
+  assert.equal(w.creates[0].discount, undefined);
+});
+
+test('特別価格: 前回と特別価格の有無が違う申込は取引を使い回さない（見せた額と請求額をずらさない）', async () => {
+  const w = world();
+  const a = await checkout(w, { planId: 'premium' });
+  assert.equal(a.price.campaign, true);
+  const again = await checkout(w, { planId: 'premium' });
+  assert.equal(again.subscriptionId, a.subscriptionId, '同じ条件の二重クリックは同じ取引');
+  assert.equal(again.price.campaign, true);
+  w.f().PaymentMethod = 'Stripe'; // 履歴が見つかった（対象外へ）
+  const b = await checkout(w, { planId: 'premium' });
+  assert.notEqual(b.subscriptionId, a.subscriptionId);
+  assert.equal(b.price.campaign, false);
+  assert.equal(w.creates[1].discount, undefined);
+});
+
+test('特別価格 委譲: 本番の intent は campaignId だけ（金額なし）・中立サイトは表から引き直す・受付中でない ID と Light 特典は 400', async () => {
+  const w = world({ origin: PRODUCTION_ORIGIN });
+  const store = memStore();
+  const create = (a) => import('./paddleSubscriptionServer.js').then((m) => m.createPaddleSubscriptionTransaction({ ...a, salesOpen: true, active: 'paddle', fetchImpl: w.fetch }));
+  const call = (intent) => {
+    const b = JSON.stringify({ v: 1, kind: 'subscription', recordId: REC, origin: PRODUCTION_ORIGIN, entry: 'monthly', ...intent });
+    return handleCreateCheckout({ request: new Request('https://x/', { method: 'POST', headers: { 'x-internal-signature': signTsBody({ rawBody: b, secret: SECRET }) }, body: b }), env: SITE_ENV, store, createSubscriptionTransaction: create });
+  };
+  const ok = await call({ planId: 'premium-jra', campaignId: 'special-2026-11', discountYen: 2980, amount: 1, nonce: 'c-1' });
+  assert.equal(ok.status, 200);
+  const okBody = await ok.json();
+  assert.equal(w.creates[0].discount.amount, '500', '改ざんされた金額は使わない');
+  assert.equal(w.creates[0].items[0].price.unit_price.amount, '2980');
+  const bad = await call({ planId: 'premium-jra', campaignId: 'special-2099-01', nonce: 'c-2' });
+  assert.equal(bad.status, 400);
+  assert.equal((await bad.json()).error, 'invalid_campaign');
+  const light = await call({ planId: 'premium-annual-light', campaignId: 'special-2026-11', nonce: 'c-3' });
+  assert.equal(light.status, 400, 'Light 乗り換え特典には重ねない');
+  const plain = await (await call({ planId: 'premium-jra', nonce: 'c-4' })).json();
+  assert.notEqual(plain.transactionId, okBody.transactionId, '特別価格の有無で冪等キーを分ける');
+  assert.equal(w.creates.at(-1).discount, undefined, 'campaignId の無い intent は通常価格');
+
+  // 本番側: 委譲の intent に campaignId が乗り、金額は乗らない
+  const seen = [];
+  const site = async (url, init) => {
+    if (!String(url).startsWith('https://checkout.tirol.link/')) return w.fetch(url, init);
+    seen.push(JSON.parse(init.body));
+    const resp = await handleCreateCheckout({ request: new Request(url, { method: 'POST', headers: init.headers, body: init.body }), env: SITE_ENV, store: memStore(), createSubscriptionTransaction: create });
+    return { ok: resp.ok, status: resp.status, text: () => resp.text() };
+  };
+  const mod = await import('./paddleSubscriptionServer.js');
+  if (mod.resolvePaddleSubscriptionMode({ env: PROD_ENV, origin: PRODUCTION_ORIGIN }).ok) {
+    const r = await createPaddleSubscriptionCheckout({ env: PROD_ENV, origin: PRODUCTION_ORIGIN, recordId: REC, planId: 'premium', entry: 'monthly', redis: w.redisCmd, fetchImpl: site, now: NOW });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.equal(seen[0].campaignId, 'special-2026-11');
+    for (const k of ['amount', 'discountYen', 'firstYen', 'price']) assert.equal(seen[0][k], undefined, `intent に ${k} を載せない`);
+  }
 });

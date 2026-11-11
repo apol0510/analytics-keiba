@@ -46,7 +46,11 @@ export async function handleCreateCheckout({ request, env, store, now = new Date
   // 冪等化のキーは一回払いの商品 ID と混ざらないよう `sub:<planId>`（同じ会員の同じ申込の二重クリックだけを束ねる）
   const isSub = intent.kind === 'subscription';
   const planId = String(intent.planId || '');
-  const productId = isSub ? `sub:${planId}` : String(intent.productId || '');
+  // 特別価格（2026-11-11 MK）: 本番が対象と判定した申込だけ campaignId が付く。金額は受け取らず、表から引き直す
+  // （subscriptionCampaign.paddleCampaignDiscount・受付中でない ID は 400 invalid_campaign）。
+  // 冪等化のキーも分ける（特別価格の有無が違う取引を使い回さない）
+  const campaignId = isSub && intent.campaignId ? String(intent.campaignId) : null;
+  const productId = isSub ? `sub:${planId}${campaignId ? `:${campaignId}` : ''}` : String(intent.productId || '');
   const entry = isSub ? (intent.entry === 'monthly' ? 'monthly' : 'direct') : (intent.entry === 'card' ? 'card' : 'direct');
   let r;
   try {
@@ -57,7 +61,7 @@ export async function handleCreateCheckout({ request, env, store, now = new Date
       productId,
       now,
       create: () => (isSub
-        ? createSubscriptionTransaction({ env, origin, recordId, planId, entry })
+        ? createSubscriptionTransaction({ env, origin, recordId, planId, entry, campaignId })
         : createTransaction({ env, origin, recordId, productId, entry, now })),
     });
   } catch (e) {

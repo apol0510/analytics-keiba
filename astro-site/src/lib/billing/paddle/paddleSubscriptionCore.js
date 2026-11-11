@@ -32,6 +32,7 @@ import { checkMemberOnlyPricing } from '../../pricing/pricingEligibility.js';
 import { jstDateString } from '../../payments/bankPaymentFlow.js';
 import { normalizePlan } from '../../auth/planNormalization.js';
 import { withdrawalFields } from '../stripeSubscriptionSync.js';
+import { paddleCampaignDiscount } from '../subscriptionCampaign.js';
 
 export const PROVIDER = 'paddle';
 export const PAYMENT_METHOD = 'Paddle';
@@ -89,13 +90,17 @@ export function paddlePlanDisplay(planId) {
  * 定期課金の取引（POST /transactions）。非カタログ価格・税込・請求周期つき。checkout.url は送らない（一回払いと同じ理由）。
  * custom_data は会員 ID と商品コード（ak_sub）だけ。一回払いの ak_product は付けない（一回払いの付与経路に入らない）。
  */
-export function buildSubscriptionTransactionBody({ planId, recordId }) {
+export function buildSubscriptionTransactionBody({ planId, recordId, campaignId = null }) {
   if (String(planId || '') === 'premium-lifetime') throw Object.assign(new Error(LIFETIME_BANK_ONLY), { code: LIFETIME_BANK_ONLY });
   const plan = subscriptionPlanById(planId);
   if (!plan) throw Object.assign(new Error('invalid_plan'), { code: 'invalid_plan' });
   if (!RECORD_RE.test(String(recordId || ''))) throw Object.assign(new Error('invalid_record'), { code: 'invalid_record' });
   const { name, description } = paddlePlanDisplay(plan.id);
-  return {
+  // 特別価格（2026-11-11 MK・subscriptionCampaign.js）: 単価は通常料金のまま、最初の取引だけの値引き（recur:false）を付ける。
+  // 更新は購読の単価（通常料金）で請求される。値引き額は campaignId から表で引き直す（intent の金額は使わない）。
+  const discount = campaignId ? paddleCampaignDiscount({ planId: plan.id, campaignId }) : null;
+  if (campaignId && !discount) throw Object.assign(new Error('invalid_campaign'), { code: 'invalid_campaign' });
+  const body = {
     items: [{
       quantity: 1,
       price: {
@@ -113,6 +118,12 @@ export function buildSubscriptionTransactionBody({ planId, recordId }) {
     collection_mode: 'automatic',
     custom_data: { ak_record: String(recordId), ak_sub: PADDLE_PLAN_CODES[plan.id] },
   };
+  if (discount) {
+    body.discount = discount;
+    // 継続率をキャンペーン別に測るための印（購読へ引き継がれる・反映の判定には使わない）
+    body.custom_data.ak_cmp = campaignId;
+  }
+  return body;
 }
 
 /** 取引が定期課金のものか（一回払いの付与経路へ入れない）*/

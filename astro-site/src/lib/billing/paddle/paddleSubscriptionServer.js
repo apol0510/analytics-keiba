@@ -21,6 +21,8 @@ import { PADDLE_CHECKOUT_CREATE_URL, PADDLE_SUBSCRIPTION_CANCEL_URL, SUBSCRIPTIO
 import { resolveCheckoutRecord } from '../paypal/paypalSubscriptionServer.js';
 import { markPostPurchase, destinationForPlan } from '../paypal/postPurchaseLanding.js';
 import { paddleApi, shouldDelegatePaddle, postSignedIntent } from './paddleApi.js';
+import { decideCampaignForCheckout } from '../subscriptionCampaign.js';
+import { memberKey as paypalMemberKey } from '../paypal/paypalSubscriptionCore.js';
 import { keyMode, PADDLE_API, checkoutUrlMatchesOrigin, isTransactionId } from './paddleCore.js';
 import {
   PROVIDER, buildSubscriptionTransactionBody, snapshotPaddleSubscription, decidePaddleSubscriptionSync,
@@ -62,6 +64,21 @@ function hasLivePaddleFields(fields = {}, now = new Date()) {
   return Number.isFinite(end) && end >= now.getTime();
 }
 
+/**
+ * これまでにカードの定期課金（Paddle / PayPal）を持ったことがあるか。購読の対応は反映時に書かれ、退会後も残る。
+ * 読めなければ null（特別価格を付けない）。
+ */
+async function readHadCardSubscription(redis, recordId, ownedPaddleSubId) {
+  if (ownedPaddleSubId) return true;
+  try {
+    const [paddle, paypal] = await Promise.all([
+      redis(['GET', memberKey(recordId)]),
+      redis(['GET', paypalMemberKey(recordId)]),
+    ]);
+    return Boolean(paddle || paypal);
+  } catch { return null; }
+}
+
 async function readOwnedSubId(redis, recordId) {
   const v = await redis(['GET', memberKey(recordId)]);
   return isPaddleSubscriptionId(v) ? v : null;
@@ -78,7 +95,7 @@ function withSubscriptionFlag(url) {
  * 中立サイト（鍵を持つ）が、本番で資格確認済みの intent を受けて使う。Sandbox の Deploy Preview は直接使う。
  * @returns {{ ok: true, url, transactionId } | { ok: false, status, code }}
  */
-export async function createPaddleSubscriptionTransaction({ env, origin, recordId, planId, entry = 'direct', salesOpen, active, fetchImpl }) {
+export async function createPaddleSubscriptionTransaction({ env, origin, recordId, planId, entry = 'direct', campaignId = null, salesOpen, active, fetchImpl }) {
   const mode = resolveCardMode({
     provider: PROVIDER, keyMode: keyMode(env.PADDLE_API_KEY), origin,
     salesOpen: salesOpen === undefined ? SUBSCRIPTION_SALES_OPEN[PROVIDER] === true : salesOpen,
@@ -89,7 +106,7 @@ export async function createPaddleSubscriptionTransaction({ env, origin, recordI
   if (String(planId || '') === 'premium-lifetime') return { ok: false, status: 409, code: LIFETIME_BANK_ONLY };
   if (!subscriptionPlanById(planId)) return { ok: false, status: 400, code: 'invalid_plan' };
   let body;
-  try { body = buildSubscriptionTransactionBody({ planId, recordId }); } catch (e) { return { ok: false, status: 400, code: e.code || 'invalid_plan' }; }
+  try { body = buildSubscriptionTransactionBody({ planId, recordId, campaignId }); } catch (e) { return { ok: false, status: 400, code: e.code || 'invalid_plan' }; }
   const api = paddleApi({ apiBase: PADDLE_API[mode.mode], key: env.PADDLE_API_KEY, fetchImpl });
   const txn = await api.createTransaction(body);
   if (!isTransactionId(txn?.id) || !txn?.checkout?.url) return { ok: false, status: 502, code: 'checkout_failed' };
@@ -131,12 +148,24 @@ export async function createPaddleSubscriptionCheckout({ env, origin, recordId, 
   const d = decidePaddleSubscriptionPurchase({ planId, fields, ownedSubLive: Boolean(owned) && hasLivePaddleFields(fields, now), now });
   if (!d.ok) return { ok: false, status: d.code === 'invalid_plan' ? 400 : 409, code: d.code };
 
+  // 特別価格（2026-11-11 MK・subscriptionCampaign.js）: 過去にカードの定期課金を持ったことがない会員だけ。
+  // 履歴が読めなければ付けない（安全側）。戻り値の price は画面が「請求される額」を案内するのに使う。
+  const campaign = decideCampaignForCheckout({
+    planId: d.plan.id, plan: d.plan, fields,
+    hadCardSubscription: await readHadCardSubscription(redis, recordId, owned),
+  });
+  const campaignId = campaign.applied ? campaign.campaignId : null;
+  const price = campaign.applied
+    ? { firstYen: campaign.firstYen, regularYen: campaign.regularYen, discountYen: campaign.discountYen, campaign: true }
+    : { firstYen: d.plan.amountYen, regularYen: d.plan.amountYen, discountYen: 0, campaign: false };
+
   // 二重クリック・再読み込み: 30 分以内の同じ申込は同じ取引を返す（Paddle の取引は支払うまで課金されない）
+  // 特別価格の有無が前回と違う取引は使い回さない（見せた額と請求額をずらさない）
   const openKey = openCheckoutKey(recordId, d.plan.id);
   try {
     const prev = JSON.parse(await redis(['GET', openKey]) || 'null');
-    if (prev && isTransactionId(prev.transactionId) && checkoutUrlMatchesOrigin(prev.url, origin)) {
-      return { ok: true, url: withSubscriptionFlag(prev.url), subscriptionId: prev.transactionId, provider: PROVIDER, recordId, guest, reused: true };
+    if (prev && isTransactionId(prev.transactionId) && checkoutUrlMatchesOrigin(prev.url, origin) && (prev.campaignId || null) === campaignId) {
+      return { ok: true, url: withSubscriptionFlag(prev.url), subscriptionId: prev.transactionId, provider: PROVIDER, recordId, guest, price, reused: true };
     }
   } catch { /* 読めなければ作る */ }
 
@@ -144,7 +173,7 @@ export async function createPaddleSubscriptionCheckout({ env, origin, recordId, 
   if (mode.delegate) {
     const res = await postSignedIntent({
       url: PADDLE_CHECKOUT_CREATE_URL, secret: env.CARD_GRANT_INTERNAL_SECRET, fetchImpl,
-      intent: { kind: 'subscription', recordId, planId: d.plan.id, origin, entry },
+      intent: { kind: 'subscription', recordId, planId: d.plan.id, origin, entry, ...(campaignId ? { campaignId } : {}) },
     });
     if (!res.ok) {
       const code = res.status === 503 && typeof res.data?.error === 'string' ? res.data.error : 'checkout_failed';
@@ -153,13 +182,14 @@ export async function createPaddleSubscriptionCheckout({ env, origin, recordId, 
     if (!isTransactionId(res.data?.transactionId) || !checkoutUrlMatchesOrigin(res.data?.url, origin)) return { ok: false, status: 502, code: 'checkout_failed' };
     r = { ok: true, url: res.data.url, transactionId: res.data.transactionId };
   } else {
-    r = await createPaddleSubscriptionTransaction({ env, origin, recordId, planId: d.plan.id, entry, fetchImpl });
+    r = await createPaddleSubscriptionTransaction({ env, origin, recordId, planId: d.plan.id, entry, campaignId, fetchImpl });
     if (!r.ok) return r;
   }
   // 戻り先で「本人の申込か」を確かめるための印（会員 ID・商品）。お客様へは返さない
-  await redis(['SET', checkoutMarkKey(r.transactionId), JSON.stringify({ recordId, planId: d.plan.id }), 'EX', String(MARK_TTL_SECONDS)]);
-  try { await redis(['SET', openKey, JSON.stringify({ url: r.url, transactionId: r.transactionId }), 'EX', String(OPEN_CHECKOUT_TTL_SECONDS)]); } catch { /* 二重クリック対策は best-effort */ }
-  return { ok: true, url: withSubscriptionFlag(r.url), subscriptionId: r.transactionId, provider: PROVIDER, recordId, guest };
+  // firstYen は戻り先の GA4 purchase の金額（実際の初回請求額）に使う
+  await redis(['SET', checkoutMarkKey(r.transactionId), JSON.stringify({ recordId, planId: d.plan.id, firstYen: price.firstYen, ...(campaignId ? { campaignId } : {}) }), 'EX', String(MARK_TTL_SECONDS)]);
+  try { await redis(['SET', openKey, JSON.stringify({ url: r.url, transactionId: r.transactionId, campaignId }), 'EX', String(OPEN_CHECKOUT_TTL_SECONDS)]); } catch { /* 二重クリック対策は best-effort */ }
+  return { ok: true, url: withSubscriptionFlag(r.url), subscriptionId: r.transactionId, provider: PROVIDER, recordId, guest, price };
 }
 
 // ───────────────────────────────── 通知（照会して購読の写しを作る＝鍵を持つ側）
@@ -277,7 +307,9 @@ export async function confirmPaddleSubscription({ transactionId, recordId, redis
   if (!mark || !recordId || mark.recordId !== recordId) return { status: 404, body: { status: 'not_found' } };
   const status = returnStatusOf(await redis(['GET', txnResultKey(transactionId)]));
   const destination = status === 'active' ? destinationForPlan(mark.planId) : null;
-  return { status: 200, body: { status, plan: mark.planId, ...(destination ? { destination } : {}) } };
+  // 初回の請求額（特別価格なら値引き後）。GA4 の purchase の value に使う（申込時にサーバーが決めた値だけ）
+  const firstYen = Number.isInteger(mark.firstYen) ? mark.firstYen : null;
+  return { status: 200, body: { status, plan: mark.planId, ...(firstYen !== null ? { firstYen } : {}), ...(mark.campaignId ? { campaign: mark.campaignId } : {}), ...(destination ? { destination } : {}) } };
 }
 
 // ───────────────────────────────── 退会（即時）
