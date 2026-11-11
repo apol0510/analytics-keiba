@@ -108,10 +108,20 @@ export async function createPaddleSubscriptionTransaction({ env, origin, recordI
   let body;
   try { body = buildSubscriptionTransactionBody({ planId, recordId, campaignId }); } catch (e) { return { ok: false, status: 400, code: e.code || 'invalid_plan' }; }
   const api = paddleApi({ apiBase: PADDLE_API[mode.mode], key: env.PADDLE_API_KEY, fetchImpl });
-  const txn = await api.createTransaction(body);
+  let txn;
+  try {
+    txn = await api.createTransaction(body);
+  } catch (e) {
+    // 特別価格（2026-11-11）: 値引き付きの取引を Paddle が受け付けなかった（4xx）→ 通常価格の取引で作り直す。
+    // 申込を止めない。本番は campaignApplied=false を見て、決済画面の前に通常価格を案内する（見せた額 = 請求する額）。
+    if (!body.discount || !(e?.status >= 400 && e?.status < 500)) throw e;
+    console.error(JSON.stringify({ event: 'paddle_campaign_discount_rejected', status: e.status, plan: planId }));
+    body = buildSubscriptionTransactionBody({ planId, recordId });
+    txn = await api.createTransaction(body);
+  }
   if (!isTransactionId(txn?.id) || !txn?.checkout?.url) return { ok: false, status: 502, code: 'checkout_failed' };
   if (!checkoutUrlMatchesOrigin(txn.checkout.url, origin)) return { ok: false, status: 502, code: 'checkout_url_mismatch' };
-  return { ok: true, url: txn.checkout.url, transactionId: txn.id };
+  return { ok: true, url: txn.checkout.url, transactionId: txn.id, ...(campaignId ? { campaignApplied: Boolean(body.discount) } : {}) };
 }
 
 /**
@@ -154,8 +164,8 @@ export async function createPaddleSubscriptionCheckout({ env, origin, recordId, 
     planId: d.plan.id, plan: d.plan, fields,
     hadCardSubscription: await readHadCardSubscription(redis, recordId, owned),
   });
-  const campaignId = campaign.applied ? campaign.campaignId : null;
-  const price = campaign.applied
+  let campaignId = campaign.applied ? campaign.campaignId : null;
+  let price = campaign.applied
     ? { firstYen: campaign.firstYen, regularYen: campaign.regularYen, discountYen: campaign.discountYen, campaign: true }
     : { firstYen: d.plan.amountYen, regularYen: d.plan.amountYen, discountYen: 0, campaign: false };
 
@@ -180,12 +190,18 @@ export async function createPaddleSubscriptionCheckout({ env, origin, recordId, 
       return { ok: false, status: res.status === 503 ? 503 : 502, code };
     }
     if (!isTransactionId(res.data?.transactionId) || !checkoutUrlMatchesOrigin(res.data?.url, origin)) return { ok: false, status: 502, code: 'checkout_failed' };
-    r = { ok: true, url: res.data.url, transactionId: res.data.transactionId };
+    // 中立サイトが値引きを実際に付けたと返したときだけ特別価格（古い中立サイト・値引きの拒否 → 通常価格として案内）
+    r = { ok: true, url: res.data.url, transactionId: res.data.transactionId, campaignApplied: res.data.campaignApplied === true };
   } else {
     r = await createPaddleSubscriptionTransaction({ env, origin, recordId, planId: d.plan.id, entry, campaignId, fetchImpl });
     if (!r.ok) return r;
   }
   // 戻り先で「本人の申込か」を確かめるための印（会員 ID・商品）。お客様へは返さない
+  // 値引きが付かなかった（中立サイトが古い・Paddle が値引きを拒否）→ 通常価格として案内・記録する
+  if (campaignId && r.campaignApplied !== true) {
+    campaignId = null;
+    price = { firstYen: d.plan.amountYen, regularYen: d.plan.amountYen, discountYen: 0, campaign: false };
+  }
   // firstYen は戻り先の GA4 purchase の金額（実際の初回請求額）に使う
   await redis(['SET', checkoutMarkKey(r.transactionId), JSON.stringify({ recordId, planId: d.plan.id, firstYen: price.firstYen, ...(campaignId ? { campaignId } : {}) }), 'EX', String(MARK_TTL_SECONDS)]);
   try { await redis(['SET', openKey, JSON.stringify({ url: r.url, transactionId: r.transactionId, campaignId }), 'EX', String(OPEN_CHECKOUT_TTL_SECONDS)]); } catch { /* 二重クリック対策は best-effort */ }

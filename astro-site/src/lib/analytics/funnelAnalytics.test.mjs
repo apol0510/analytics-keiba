@@ -462,3 +462,19 @@ test('test purchases on Deploy Preview / localhost are not sent to production GA
     assert.deepEqual(sent.filter((e) => e.name === 'purchase' || e.name === 'begin_checkout'), [], host);
   }
 });
+
+// ---- 無料予想 → Premium の段（2026-11-11）
+test('premiumStep: closed vocabulary, per-step event names, no PII, campaign group', () => {
+  const { AkFunnel, sent } = load();
+  assert.equal(AkFunnel.premiumStep('free_row_click', 'nankan').event, 'free_premium_row_click');
+  assert.deepEqual(AkFunnel.premiumStep('campaign_impression', 'jra', 'premium-jra', 'show').params,
+    { category: 'jra', plan: 'Premium JRA', plan_type: 'Monthly', campaign_group: 'show' });
+  assert.deepEqual(AkFunnel.premiumStep('campaign_click', 'all', 'premium-annual', 'show').params,
+    { category: 'all', plan: 'Premium Annual', plan_type: 'Annual', campaign_group: 'show' });
+  assert.equal(AkFunnel.premiumStep('unknown_step', 'jra'), null);
+  assert.deepEqual(AkFunnel.premiumStep('sample_view', 'a@b.example', 'me@x.example', 'x').params, { category: 'all' }, '語彙外は捨てる');
+  for (const e of sent) assert.doesNotMatch(JSON.stringify(e.params), /@/);
+  assert.equal(AkFunnel.setCampaignGroup('holdout'), true);
+  assert.equal(AkFunnel.setCampaignGroup('evil'), false);
+  assert.deepEqual(sent.filter((e) => e.kind === 'set').map((e) => e.params), [{ ak_cmp_group: 'holdout' }]);
+});

@@ -58,6 +58,7 @@ function world({ fields = { 'プラン': 'Free', Email: 'a+card-e2e@example.com'
     assert.ok(/sandbox-api\.paddle\.com|api\.paddle\.com/.test(u.host), `unexpected ${url}`);
     if (u.pathname === '/transactions' && init.method === 'POST') {
       const b = JSON.parse(init.body);
+      if (b.discount && st.rejectDiscount) { st.rejected = (st.rejected || 0) + 1; return res(400, { error: { code: 'invalid_field' } }); }
       const id = `txn_test${String(++st.n).padStart(10, '0')}`;
       st.creates.push(b);
       const page = origin === PRODUCTION_ORIGIN ? 'https://checkout.tirol.link/pay/' : `${origin}/checkout/paddle/`;
@@ -672,4 +673,32 @@ test('特別価格 委譲: 本番の intent は campaignId だけ（金額なし
     assert.equal(seen[0].campaignId, 'special-2026-11');
     for (const k of ['amount', 'discountYen', 'firstYen', 'price']) assert.equal(seen[0][k], undefined, `intent に ${k} を載せない`);
   }
+});
+
+test('特別価格 安全策: Paddle が値引き付きの取引を拒否 → 通常価格の取引で作り直し・申込画面は通常価格を案内（購入を止めない）', async () => {
+  const w = world();
+  w.rejectDiscount = true;
+  const r = await checkout(w, { planId: 'premium' });
+  assert.equal(r.ok, true);
+  assert.equal(w.rejected, 1);
+  assert.equal(w.creates.length, 1, '作り直した 1 件だけ（値引き付きは作られていない）');
+  assert.equal(w.creates[0].discount, undefined);
+  assert.deepEqual(r.price, { firstYen: 4980, regularYen: 4980, discountYen: 0, campaign: false });
+  assert.deepEqual(JSON.parse(w.redis.get(checkoutMarkKey(r.subscriptionId))), { recordId: REC, planId: 'premium', firstYen: 4980 });
+});
+
+test('特別価格 安全策: 中立サイトが古い（campaignApplied を返さない）→ 通常価格として案内', async () => {
+  const w = world({ origin: PRODUCTION_ORIGIN });
+  const oldSite = async (url, init) => {
+    if (!String(url).startsWith('https://checkout.tirol.link/')) return w.fetch(url, init);
+    // 旧版: campaignId を無視して通常価格の取引を作り、{ url, transactionId } だけを返す
+    const id = 'txn_oldsite00000000001';
+    return { ok: true, status: 200, text: async () => JSON.stringify({ url: `https://checkout.tirol.link/pay/?_ptxn=${id}`, transactionId: id }) };
+  };
+  const mod = await import('./paddleSubscriptionServer.js');
+  if (!mod.resolvePaddleSubscriptionMode({ env: PROD_ENV, origin: PRODUCTION_ORIGIN }).ok) return;
+  const r = await createPaddleSubscriptionCheckout({ env: PROD_ENV, origin: PRODUCTION_ORIGIN, recordId: REC, planId: 'premium-jra', entry: 'monthly', redis: w.redisCmd, fetchImpl: oldSite, now: NOW });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.price.campaign, false);
+  assert.equal(r.price.firstYen, 2980);
 });

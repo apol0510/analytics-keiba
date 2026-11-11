@@ -113,14 +113,14 @@ export async function idempotentCreateCheckout({
   // 1) 同一 intent（nonce）の完全な再送・リプレイ → 作り直さず同じ取引を返す
   if (nonce) {
     const hit = await store.get(nonceKey(nonce), ms);
-    if (isResult(hit)) return { ok: true, url: hit.url, transactionId: hit.transactionId, reused: 'nonce' };
+    if (isResult(hit)) return { ok: true, url: hit.url, transactionId: hit.transactionId, ...extra(hit), reused: 'nonce' };
   }
   const ik = (recordId && productId) ? idemKey(recordId, productId) : null;
 
   // 2) 同じ会員・同じ商品で、既に結果が確定していれば同じ取引を返す（二重クリックの後着など）
   if (ik) {
     const hit = await store.get(ik, ms);
-    if (isResult(hit)) { await alias(hit); return { ok: true, url: hit.url, transactionId: hit.transactionId, reused: 'idem' }; }
+    if (isResult(hit)) { await alias(hit); return { ok: true, url: hit.url, transactionId: hit.transactionId, ...extra(hit), reused: 'idem' }; }
   }
 
   // 3) 🛑 race を閉じる要: 作成の前に冪等キーを **原子的に** 予約する。
@@ -134,7 +134,7 @@ export async function idempotentCreateCheckout({
       await sleep(waitDelayMs);
       other = await store.get(ik, ms);
     }
-    if (isResult(other)) { await alias(other); return { ok: true, url: other.url, transactionId: other.transactionId, reused: 'idem' }; }
+    if (isResult(other)) { await alias(other); return { ok: true, url: other.url, transactionId: other.transactionId, ...extra(other), reused: 'idem' }; }
     // 待っても結果が無い（勝者がまだ create 中/失敗）→ 二重作成を避け、retry 可能な 409 を返す。
     return { ok: false, status: 409, code: 'checkout_in_progress' };
   }
@@ -145,8 +145,13 @@ export async function idempotentCreateCheckout({
     if (ik && reserved === 'won' && typeof store.release === 'function') await store.release(ik); // 予約を解放（次の試行を塞がない）
     return r;
   }
-  const cached = { url: r.url, transactionId: r.transactionId };
+  const cached = { url: r.url, transactionId: r.transactionId, ...extra(r) };
   if (ik) await store.set(ik, cached, idemTtlSec, ms); // 予約マーカを結果で上書き（確定）
   await alias(cached);
-  return { ok: true, url: r.url, transactionId: r.transactionId, ...(reserved === 'unavailable' ? { degraded: true } : {}) };
+  return { ok: true, url: r.url, transactionId: r.transactionId, ...extra(r), ...(reserved === 'unavailable' ? { degraded: true } : {}) };
+}
+
+/** 結果に付ける追加の事実（特別価格の値引きを実際に付けたか・2026-11-11）。使い回しでも同じ値を返す */
+function extra(r) {
+  return typeof r?.campaignApplied === 'boolean' ? { campaignApplied: r.campaignApplied } : {};
 }

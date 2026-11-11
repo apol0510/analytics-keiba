@@ -10,6 +10,7 @@ import { setPublicCdnCache } from '../../lib/cdnCache.mjs';
  * /free-prediction/ の役割（有料版プレビュー）は変更しない。ここは別ページ。
  */
 import BaseLayout from '../../layouts/BaseLayout.astro';
+import PremiumCampaignCard from '../../components/PremiumCampaignCard.astro';
 import NextRaceStrip from '../../components/NextRaceStrip.astro';
 import RaceViewpointsBoard from '../../components/RaceViewpointsBoard.astro';
 import ResultsShowcaseBanner from '../../components/ResultsShowcaseBanner.astro';
@@ -47,6 +48,8 @@ setPublicCdnCache(Astro);
         <a href="/free-prediction/nankan/">南関競馬 の有料版プレビューを見る →</a>
       </section>
     )}
+  {/* 特別価格の案内（1 日 1 回・2026-11-11 MK）。判定は dailyCampaignCard.js */}
+  <PremiumCampaignCard venue="nankan" />
 </BaseLayout>
 
 <style>

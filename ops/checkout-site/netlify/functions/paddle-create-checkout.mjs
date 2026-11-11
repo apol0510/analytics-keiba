@@ -74,7 +74,8 @@ export async function handleCreateCheckout({ request, env, store, now = new Date
   }
   // degraded: ストア不達で原子的予約を取れず fail-open で作成した稀路。無言にせず記録する。
   console.log(JSON.stringify({ event: 'paddle_create_checkout_sep', product: productId, ...(r.reused ? { reused: r.reused } : {}), ...(r.degraded ? { degraded: true } : {}) }));
-  return resp(200, { url: r.url, transactionId: r.transactionId });
+  // campaignApplied: 特別価格の値引きを実際に付けたか（本番はこれが true のときだけ特別価格を案内する）
+  return resp(200, { url: r.url, transactionId: r.transactionId, ...(typeof r.campaignApplied === 'boolean' ? { campaignApplied: r.campaignApplied } : {}) });
 }
 
 // Netlify Blobs は実行時に Netlify が提供する。ローカル（テスト/esbuild）で解決できない場所に置くため遅延 import。

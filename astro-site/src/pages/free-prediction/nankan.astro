@@ -10,6 +10,7 @@
  */
 export const prerender = false;
 import BaseLayout from '../../layouts/BaseLayout.astro';
+import PremiumCampaignCard from '../../components/PremiumCampaignCard.astro';
 import PremiumRaceBoard from '../../components/acquisition/PremiumRaceBoard.astro';
 import ResultsShowcaseBanner from '../../components/ResultsShowcaseBanner.astro';
 import FreeLiveRaceBoard from '../../components/FreeLiveRaceBoard.astro';
@@ -50,6 +51,8 @@ setPublicCdnCache(Astro);
     </nav>
     <ResultsShowcaseBanner category="nankan" />
   </div>
+  {/* 特別価格の案内（1 日 1 回・2026-11-11 MK）。判定は dailyCampaignCard.js */}
+  <PremiumCampaignCard venue="nankan" />
 </BaseLayout>
 
 <style>

@@ -33,6 +33,8 @@ on:
       - 'astro-site/public/robots.txt'
       # 有料化ファネルの計測本体（src/** に入らないので明示する）
       - 'astro-site/public/js/funnel-analytics.js'
+      # 決済の中立サイト（checkout.tirol.link）の関数・ページは test:billing が検査する（2026-11-11 特別価格）
+      - 'ops/checkout-site/**'
       - 'astro-site/package.json'
       - 'astro-site/scripts/e2e-admin-plus.mjs'
       - 'astro-site/scripts/e2e-magic-link-verify.mjs'
@@ -79,6 +81,8 @@ on:
       - 'astro-site/public/robots.txt'
       # 有料化ファネルの計測本体（src/** に入らないので明示する）
       - 'astro-site/public/js/funnel-analytics.js'
+      # 決済の中立サイト（checkout.tirol.link）の関数・ページは test:billing が検査する（2026-11-11 特別価格）
+      - 'ops/checkout-site/**'
       - 'astro-site/package.json'
       - 'astro-site/scripts/e2e-admin-plus.mjs'
       - 'astro-site/scripts/e2e-magic-link-verify.mjs'
@@ -246,6 +250,14 @@ jobs:
       - name: Verify 無料「レースの見どころ」判定（しきい値凍結・有料値非露出・状態の分離）
         working-directory: astro-site
         run: npm run test:free-viewpoints
+
+      - name: Verify 決済（Paddle / PayPal の申込・反映・特別価格は初回だけ・更新は通常料金・中立サイト）
+        working-directory: astro-site
+        run: npm run test:billing
+
+      - name: Verify 料金ページの出し分け・有料予想の取得（見本は当日のレースを出さない）・訴求に使わない言い回し
+        working-directory: astro-site
+        run: npm run test:pricing-tiers && npm run test:acquisition && npm run test:copy && npm run test:free-live-board
 
       - name: Verify prune 後の SSR 成果物に実行時データが残っている
         working-directory: astro-site

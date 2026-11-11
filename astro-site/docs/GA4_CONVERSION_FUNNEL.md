@@ -119,6 +119,26 @@ URL で確実に判別できるからである。イベントを増やすと同�
 メール・金額・エラー本文は送らない。**どれも申込成功・購入ではない**（購入は `purchase` だけ）。
 段ごとにイベント名を分けているのは、カスタム ディメンションを足さずに標準レポートで数えられるようにするため。
 
+### 無料予想 → Premium の段・特別価格の案内（2026-11-11 追加・実験記録 `docs/measurements/PREMIUM_CAMPAIGN_2026_11.md`）
+
+送信は `funnel-analytics.js` の `AkFunnel.premiumStep(step, category, planId, group)` だけ（閉じた語彙・個人情報なし）。
+
+| イベント | 意味 | パラメータ |
+|---|---|---|
+| `free_premium_row_click` | 無料予想の各レースの「このレースの買い目は Premium で公開」を押した（→ 見本）| `category` |
+| `free_premium_detail_click` | 無料予想のレース詳細の有料案内（プレビュー・プラン）を押した | `category` |
+| `premium_sample_view` | Premium 画面の見本（`/free-prediction/sample/`）を開いた | `category` |
+| `premium_sample_cta_click` | 見本から「Premium のプランを見る」を押した | `category` |
+| `campaign_card_impression` | 特別価格の案内カードを表示した（1 日 1 回）| `category`, `plan`, `plan_type`, `campaign_group` |
+| `campaign_card_click` / `campaign_card_other_click` | 案内の「特別価格で見る」／「ほかのプランを見る」 | 同上 |
+| `campaign_card_dismiss` | 案内を閉じた | 同上 |
+| `campaign_card_holdout` | 非表示群で、表示するはずだった時点（比較用・表示はしない）| 同上 |
+
+- `category` は `jra` / `nankan` / `all`。`campaign_group` は `show` / `holdout`。
+- 比較群はユーザー プロパティ `ak_cmp_group`（`AkFunnel.setCampaignGroup`）。GA4 管理画面でユーザー スコープのカスタム ディメンション `ak_cmp_group` を登録して、購入率を群で比べる。
+- `begin_checkout` / `purchase` の `value` は**サーバーが返した実際の初回請求額**（特別価格なら値引き後）、`discount` は値引き額。
+  `begin_checkout` / `purchase` は**本番ホスト（analytics.keiba.link）以外からは送らない**（Deploy Preview の Sandbox 購入・ローカル E2E を売上に混ぜない。2026-10-22 の E2E 53 件の混入の再発防止）。
+
 ### `plan`（閉じた語彙。これ以外は出ない）
 
 `Premium Plus` / `Premium Sanrenpuku` / `Premium` / `Light` / `other`

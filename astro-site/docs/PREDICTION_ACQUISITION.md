@@ -96,6 +96,13 @@
 - 取得履歴 `/predictions/history/`: 各予想に同じ結果チップ＋先頭に「取得した予想の成績」（的中数／結果が出た件数・的中率・最高払戻＝100円あたり）。分母は結果が出たものだけ。会員ごとに買い方が違うため**払戻合計・回収率は出さない**。レース日ごとにまとめ、右カラムは今月の活用状況だけ（直近 5 件の重複表示をしない）。結果の判定は新しい 60 件まで
 - 実装: `src/lib/acquisition/acquiredResults.js`（判定・索引）／`acquisitionServer.loadAcquiredResults`／`AcquisitionUsagePanel`（`results` prop）
 
+### 2-6. Premium 画面の見本（2026-11-11 MK 指示）
+
+- `/free-prediction/sample/?cat=nankan|jra`: **終了したレース 1 件**の Premium 画面を、取得後と同じ部品（`AcquiredPredictionBody`）・同じ組み立て（`buildPredictionContent`）で公開する。
+- レースの選び方は `src/lib/acquisition/premiumSample.js` だけ: **今日（JST）より前で予想がある直近の開催日の、最初の会場のメインレース**。結果を見ないので**的中したレースを選べない**。画面にも結果（的中・不的中・払戻）を出さない。URL でレースを選ばせない（当日の有料本文が見えないように）。
+- 既に公開している範囲（`/results-showcase/` = 直近の開催日のメインレースの買い目）と同じ日・同じレース。公開ページ（Cookie・会員判定なし）・SSR ＋ CDN 5 分・noindex。
+- 無料予想の各レースの「このレースの買い目は Premium で公開」（`RaceViewpointsBoard`）の行き先。
+
 ## 3. 判定の定義（単一源）
 
 | 項目 | 定義 | 単一源 |

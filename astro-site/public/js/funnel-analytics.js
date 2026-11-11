@@ -333,6 +333,58 @@
   }
 
   /**
+   * 無料予想 → Premium の段（2026-11-11 MK 指示・GA4_CONVERSION_FUNNEL §3-4）。
+   *
+   * - 無料予想の各レースの「このレースの買い目は Premium で公開」・詳細の有料案内のクリック
+   * - Premium 画面の見本（/free-prediction/sample/）の閲覧・見本からのプラン導線
+   * - 特別価格の案内カード（1 日 1 回）の表示・クリック・閉じた・非表示群（比較用に「出すはずだった」時点）
+   *
+   * ⚠️ イベント名を段ごとに分ける（cardCheckoutStep と同じ理由）。
+   * ⚠️ 送るのは閉じた語彙だけ: category（jra / nankan / all）・plan / plan_type（登録済みのカスタム ディメンション）・
+   *    campaign_group（show / holdout）。個人情報・金額は受け取らない。
+   * ⚠️ どれも申込・購入ではない（購入は `purchase` だけ）。
+   */
+  var PREMIUM_STEP_EVENTS = {
+    free_row_click: 'free_premium_row_click',
+    free_detail_click: 'free_premium_detail_click',
+    sample_view: 'premium_sample_view',
+    sample_cta_click: 'premium_sample_cta_click',
+    campaign_impression: 'campaign_card_impression',
+    campaign_click: 'campaign_card_click',
+    campaign_other_click: 'campaign_card_other_click',
+    campaign_dismiss: 'campaign_card_dismiss',
+    campaign_holdout: 'campaign_card_holdout'
+  };
+  var PREMIUM_CATEGORIES = { jra: 1, nankan: 1, all: 1 };
+  var CAMPAIGN_GROUPS = { show: 1, holdout: 1 };
+
+  function premiumStep(step, category, planId, group) {
+    var name = Object.prototype.hasOwnProperty.call(PREMIUM_STEP_EVENTS, step) ? PREMIUM_STEP_EVENTS[step] : null;
+    if (!name) return null;
+    var params = { category: PREMIUM_CATEGORIES[category] ? category : 'all' };
+    if (planId && (STRIPE_PLAN_LABELS[planId] || ANNUAL_PLAN_LABELS[planId])) {
+      var p = stripeParams(planId, 'paddle');
+      params.plan = p.plan;
+      params.plan_type = p.plan_type;
+    }
+    if (CAMPAIGN_GROUPS[group]) params.campaign_group = group;
+    if (!shouldSend(name + '|' + params.category + '|' + (params.plan || ''), Date.now())) return null;
+    try {
+      if (typeof global.gtag === 'function') global.gtag('event', name, params);
+    } catch (_) {}
+    return { event: name, params: params };
+  }
+
+  /** 特別価格の案内の比較群（show / holdout）を GA4 のユーザー プロパティに付ける（購入率を群で比べる）*/
+  function setCampaignGroup(group) {
+    if (!CAMPAIGN_GROUPS[group]) return false;
+    try {
+      if (typeof global.gtag === 'function') global.gtag('set', 'user_properties', { ak_cmp_group: group });
+    } catch (_) {}
+    return true;
+  }
+
+  /**
    * 無料会員登録ページ（/free-signup/）の途中の段（2026-10-27・GA4_CONVERSION_FUNNEL §3）。
    *
    * 28 日で /free-signup/ 到達 115 人 → `sign_up` 6 人。間の段が 1 つも無く、
@@ -402,6 +454,9 @@
     FREE_SIGNUP_STEP_EVENTS: FREE_SIGNUP_STEP_EVENTS,
     cardCheckoutStep: cardCheckoutStep,
     CARD_STEP_EVENTS: CARD_STEP_EVENTS,
+    premiumStep: premiumStep,
+    PREMIUM_STEP_EVENTS: PREMIUM_STEP_EVENTS,
+    setCampaignGroup: setCampaignGroup,
     checkoutStart: checkoutStart,
     purchaseCompleted: purchaseCompleted,
     PLAN_LABELS: PLAN_LABELS,
