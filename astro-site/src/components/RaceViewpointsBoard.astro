@@ -26,6 +26,9 @@ import { headlineMarksOf, isMainRaceIn, raceRangeLabel } from '../lib/freeViewpo
 
 interface Props { view: any; categoryLabel: string; freeUrl: string; }
 const { view, categoryLabel, freeUrl } = Astro.props;
+// Premium 画面の見本（終了したレース・/free-prediction/sample/）。会場は freeUrl から決める（ページ側の props は変えない）
+const sampleCat = /jra/.test(String(freeUrl)) ? 'jra' : 'nankan';
+const sampleUrl = `/free-prediction/sample/?cat=${sampleCat}`;
 
 const fmtDate = (d: string) => {
   const [y, m, day] = String(d).split('-');
@@ -362,8 +365,8 @@ const LEGEND = [
                   <p class="rvb-cta-head">{PAID_CTA.heading}</p>
                   <p class="rvb-cta-body">{PAID_CTA.body}</p>
                   <div class="rvb-cta-links">
-                    <a class="rvb-cta-a" href={freeUrl}>{PAID_CTA.linkLabel}</a>
-                    <a class="rvb-cta-b" href="/pricing/">{PAID_CTA.planLabel}</a>
+                    <a class="rvb-cta-a" href={freeUrl} data-premium-detail={sampleCat}>{PAID_CTA.linkLabel}</a>
+                    <a class="rvb-cta-b" href="/pricing/" data-premium-detail={sampleCat}>{PAID_CTA.planLabel}</a>
                   </div>
                 </div>
 
@@ -374,6 +377,8 @@ const LEGEND = [
                 </div>
               </div>
             </details>
+            {/* 2026-11-11 MK 指示: 詳細を開かなくても Premium の存在が分かる 1 行（印の表示は変えない・広告にしない＝控えめな文字リンク） */}
+            <a class="rvb-premium-row" href={sampleUrl} data-premium-row={sampleCat}>🔒 {PAID_CTA.rowLine}<span aria-hidden="true"> ›</span></a>
           </li>
         ))}
       </ol>
@@ -652,6 +657,15 @@ const LEGEND = [
     }, true);
   })();
 
+  // GA4: 無料予想 → Premium の導線（funnel-analytics.js の閉じた語彙・2026-11-11）
+  document.addEventListener('click', (e) => {
+    const a = e.target instanceof Element ? e.target.closest('[data-premium-row], [data-premium-detail]') : null;
+    if (!a) return;
+    const row = a.hasAttribute('data-premium-row');
+    const cat = a.getAttribute(row ? 'data-premium-row' : 'data-premium-detail');
+    try { if (window.AkFunnel && window.AkFunnel.premiumStep) window.AkFunnel.premiumStep(row ? 'free_row_click' : 'free_detail_click', cat); } catch (_) { /* 計測は遷移に影響させない */ }
+  }, true);
+
   // details の開閉状態を class でも持たせる（CSS だけでなく状態として識別できるように）
   document.addEventListener('toggle', (e) => {
     const el = e.target;
@@ -870,6 +884,10 @@ const LEGEND = [
   .rvb-cta-b { border: 1px solid #f59e0b; color: #fde68a; }
   .rvb-cta-a:hover { background: #fbbf24; }
   .rvb-cta-b:hover { background: rgba(245,158,11,.18); }
+
+  /* 各レースの Premium の 1 行（2026-11-11 MK）: 控えめな紫の文字リンク（紫 = Premium 導線）。印の行の直下 */
+  .rvb-premium-row { display: block; margin: 6px 2px 0; font-size: .85rem; color: #c4b5fd; text-decoration: none; line-height: 1.5; }
+  .rvb-premium-row:hover, .rvb-premium-row:focus-visible { color: #ddd6fe; text-decoration: underline; text-underline-offset: 3px; }
 
   .rvb-foot { margin-top: 32px; font-size: .78rem; color: #cbd5e1; line-height: 1.85; }
 

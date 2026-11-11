@@ -105,6 +105,18 @@
   // ⚠️ 「同じ人が 1 分後にもう一度モーダルを開いた」は**本物の再訪**なので
   //    捨てない。ここで潰すのは取りこぼしではなく**事故の重複**だけ。
   var DEDUPE_MS = 2000;
+
+  /**
+   * 本番のホストか（決済の begin_checkout / purchase だけに使う）。Deploy Preview（Sandbox 決済）・ローカルの試験購入を
+   * 本番 GA4 の売上・購入率に入れない。テストは global.__AK_FUNNEL_HOST で差し替える。
+   */
+  var PRODUCTION_HOSTS = { 'analytics.keiba.link': 1 };
+  function isProductionHost() {
+    try {
+      var h = global.__AK_FUNNEL_HOST || (global.location && global.location.hostname) || '';
+      return PRODUCTION_HOSTS[String(h)] === 1;
+    } catch (_) { return false; }
+  }
   var lastSent = {};
 
   function shouldSend(key, now) {
@@ -243,6 +255,16 @@
   var ANNUAL_PLAN_YEN = { 'premium-annual': 49800, 'premium-annual-light': 44820 };
   var PAYMENT_METHODS = { stripe: 'stripe', paypal: 'paypal', paddle: 'paddle' };
 
+  /** サーバーが返した実際の請求額（特別価格・2026-11-11）。整数の円で、表の通常価格を超えない値だけ使う（それ以外は表の値）*/
+  function withValue(params, valueYen) {
+    var v = Number(valueYen);
+    if (Number.isInteger(v) && v > 0 && (!params.value || v <= params.value)) {
+      if (v < params.value) params.discount = params.value - v;
+      params.value = v;
+    }
+    return params;
+  }
+
   function stripeParams(planId, method) {
     var m = PAYMENT_METHODS[method] || 'stripe';
     if (m !== 'stripe' && ANNUAL_PLAN_LABELS[planId]) {
@@ -252,17 +274,20 @@
     return { plan: label, plan_type: 'Monthly', payment_method: m, currency: 'JPY', value: STRIPE_PLAN_YEN[planId] || 0 };
   }
 
-  function checkoutStart(planId, method) {
+  function checkoutStart(planId, method, valueYen) {
     try {
-      if (typeof global.gtag === 'function') global.gtag('event', 'begin_checkout', stripeParams(planId, method));
+      if (!isProductionHost()) return;
+      if (typeof global.gtag === 'function') global.gtag('event', 'begin_checkout', withValue(stripeParams(planId, method), valueYen));
     } catch (_) {}
   }
 
-  function purchaseCompleted(planId, sessionId, method) {
+  function purchaseCompleted(planId, sessionId, method, valueYen) {
     try {
+      // 試験購入（Deploy Preview の Sandbox・ローカル E2E）を本番の売上・購入率に混ぜない（2026-11-11: 10/22 の E2E 53 件が混入していた）
+      if (!isProductionHost()) return;
       var key = 'ak_purchase_sent:' + String(sessionId || '').slice(0, 80);
       try { if (global.sessionStorage && global.sessionStorage.getItem(key)) return; } catch (_) {}
-      var params = stripeParams(planId, method);
+      var params = withValue(stripeParams(planId, method), valueYen);
       // transaction_id は Stripe の決済セッション ID / PayPal の購読 ID（個人情報ではない・重複計上の防止）
       params.transaction_id = String(sessionId || '').slice(0, 80);
       if (typeof global.gtag === 'function') global.gtag('event', 'purchase', params);
@@ -305,6 +330,58 @@
       if (typeof global.gtag === 'function') global.gtag('event', name, params);
     } catch (_) {}
     return { event: name, params: params };
+  }
+
+  /**
+   * 無料予想 → Premium の段（2026-11-11 MK 指示・GA4_CONVERSION_FUNNEL §3-4）。
+   *
+   * - 無料予想の各レースの「このレースの買い目は Premium で公開」・詳細の有料案内のクリック
+   * - Premium 画面の見本（/free-prediction/sample/）の閲覧・見本からのプラン導線
+   * - 特別価格の案内カード（1 日 1 回）の表示・クリック・閉じた・非表示群（比較用に「出すはずだった」時点）
+   *
+   * ⚠️ イベント名を段ごとに分ける（cardCheckoutStep と同じ理由）。
+   * ⚠️ 送るのは閉じた語彙だけ: category（jra / nankan / all）・plan / plan_type（登録済みのカスタム ディメンション）・
+   *    campaign_group（show / holdout）。個人情報・金額は受け取らない。
+   * ⚠️ どれも申込・購入ではない（購入は `purchase` だけ）。
+   */
+  var PREMIUM_STEP_EVENTS = {
+    free_row_click: 'free_premium_row_click',
+    free_detail_click: 'free_premium_detail_click',
+    sample_view: 'premium_sample_view',
+    sample_cta_click: 'premium_sample_cta_click',
+    campaign_impression: 'campaign_card_impression',
+    campaign_click: 'campaign_card_click',
+    campaign_other_click: 'campaign_card_other_click',
+    campaign_dismiss: 'campaign_card_dismiss',
+    campaign_holdout: 'campaign_card_holdout'
+  };
+  var PREMIUM_CATEGORIES = { jra: 1, nankan: 1, all: 1 };
+  var CAMPAIGN_GROUPS = { show: 1, holdout: 1 };
+
+  function premiumStep(step, category, planId, group) {
+    var name = Object.prototype.hasOwnProperty.call(PREMIUM_STEP_EVENTS, step) ? PREMIUM_STEP_EVENTS[step] : null;
+    if (!name) return null;
+    var params = { category: PREMIUM_CATEGORIES[category] ? category : 'all' };
+    if (planId && (STRIPE_PLAN_LABELS[planId] || ANNUAL_PLAN_LABELS[planId])) {
+      var p = stripeParams(planId, 'paddle');
+      params.plan = p.plan;
+      params.plan_type = p.plan_type;
+    }
+    if (CAMPAIGN_GROUPS[group]) params.campaign_group = group;
+    if (!shouldSend(name + '|' + params.category + '|' + (params.plan || ''), Date.now())) return null;
+    try {
+      if (typeof global.gtag === 'function') global.gtag('event', name, params);
+    } catch (_) {}
+    return { event: name, params: params };
+  }
+
+  /** 特別価格の案内の比較群（show / holdout）を GA4 のユーザー プロパティに付ける（購入率を群で比べる）*/
+  function setCampaignGroup(group) {
+    if (!CAMPAIGN_GROUPS[group]) return false;
+    try {
+      if (typeof global.gtag === 'function') global.gtag('set', 'user_properties', { ak_cmp_group: group });
+    } catch (_) {}
+    return true;
   }
 
   /**
@@ -377,6 +454,9 @@
     FREE_SIGNUP_STEP_EVENTS: FREE_SIGNUP_STEP_EVENTS,
     cardCheckoutStep: cardCheckoutStep,
     CARD_STEP_EVENTS: CARD_STEP_EVENTS,
+    premiumStep: premiumStep,
+    PREMIUM_STEP_EVENTS: PREMIUM_STEP_EVENTS,
+    setCampaignGroup: setCampaignGroup,
     checkoutStart: checkoutStart,
     purchaseCompleted: purchaseCompleted,
     PLAN_LABELS: PLAN_LABELS,

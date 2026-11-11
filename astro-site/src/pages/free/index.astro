@@ -16,6 +16,7 @@ import { setPublicCdnCache } from '../../lib/cdnCache.mjs';
  * 出さないもの: 買い目 / pt / AI総合指数 / 役割 / 特徴量（各ページと同じ制約）
  */
 import BaseLayout from '../../layouts/BaseLayout.astro';
+import PremiumCampaignCard from '../../components/PremiumCampaignCard.astro';
 import NextRaceStrip from '../../components/NextRaceStrip.astro';
 import { buildViewpoints } from '../../lib/freeViewpoints/loadRaceViewpoints.js';
 
@@ -127,6 +128,8 @@ setPublicCdnCache(Astro);
       </span>
     </div>
   </section>
+  {/* 特別価格の案内（1 日 1 回・2026-11-11 MK）。判定は dailyCampaignCard.js */}
+  <PremiumCampaignCard venue="all" />
 </BaseLayout>
 
 <style>

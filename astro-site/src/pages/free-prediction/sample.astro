@@ -1,0 +1,136 @@
+---
+/**
+ * /free-prediction/sample/?cat=nankan|jra — Premium 画面の見本（終了したレース・2026-11-11 MK 指示）
+ *
+ * MK 指示: 「鍵付きカードだけでは購入後に何が得られるか伝わらない。終了済みレースの Premium 画面を見本として 1 件公開する。
+ *          的中したレースだけを選んで強調しない」。
+ * - レースの選び方は premiumSample.pickSampleRace（今日より前の直近の開催日のメインレース・結果を見ない）だけ。
+ * - 本文は Premium の取得後と同じ部品（AcquiredPredictionBody）と同じ組み立て（buildPredictionContent）。結果欄は出さない。
+ * - 当日（発走前）のレースは出さない。公開ページ（Cookie・会員判定を使わない）→ SSR ＋ CDN 5 分。検索対象にしない。
+ * 正本: docs/PREDICTION_ACQUISITION.md §2-6。
+ */
+export const prerender = false;
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import AcquiredPredictionBody from '../../components/acquisition/AcquiredPredictionBody.astro';
+import '../../styles/acquisitionGlass.css';
+import { listDates, loadDay } from '../../lib/acquisition/raceSource.js';
+import { buildPredictionContent } from '../../lib/acquisition/predictionContent.js';
+import { pickSampleRace, jstToday } from '../../lib/acquisition/premiumSample.js';
+import { getMainRaceNumber } from '../../utils/mainRaceBetting.js';
+import { setPublicCdnCache } from '../../lib/cdnCache.mjs';
+
+const cat = Astro.url.searchParams.get('cat') === 'jra' ? 'jra' : 'nankan';
+let c = null;
+try {
+  const picked = pickSampleRace({
+    cat, todayJst: jstToday(), dates: listDates(cat, { limit: 14 }),
+    loadDay: (k, d) => loadDay(k, d), mainRaceNumber: getMainRaceNumber,
+  });
+  if (picked) c = buildPredictionContent({ product: 'premium', cat, venueName: picked.venue.venueName, race: picked.race, venueTotalRaces: picked.venue.totalRaces });
+} catch (error) {
+  console.error('[free-prediction/sample] build error:', error);
+}
+if (!c) Astro.response.status = 404;
+setPublicCdnCache(Astro);
+const suggest = cat === 'jra' ? 'premium-jra' : 'premium-nankan';
+const pricingHref = `/pricing/?suggest=${suggest}#credit-payment`;
+const wd = ['日', '月', '火', '水', '木', '金', '土'];
+const dateBlock = (ymd) => { const t = new Date(`${ymd}T00:00:00Z`); return Number.isNaN(t.getTime()) ? { md: '', wd: '' } : { md: `${t.getUTCMonth() + 1}/${t.getUTCDate()}`, wd: wd[t.getUTCDay()] }; };
+const distanceText = (d) => { const s = String(d || ''); return /^\d+$/.test(s) ? `${s}m` : s; };
+---
+<BaseLayout title="Premium 画面の見本（終了したレース）" description="終了したレースで、Premium の予想画面（馬単の買い目・AI 総合指数・全馬の過去走）をそのままご覧いただけます。" noindex>
+  <div class="ag-scene acq-view-bg">
+  <main class="acq-view-page" data-premium-sample={cat}>
+    <nav class="sample-tabs" aria-label="会場">
+      <a href="/free-prediction/sample/?cat=nankan" aria-current={cat === 'nankan' ? 'page' : undefined}>南関競馬</a>
+      <a href="/free-prediction/sample/?cat=jra" aria-current={cat === 'jra' ? 'page' : undefined}>中央競馬</a>
+    </nav>
+    <section class="ag-glass ag-tint-violet sample-note" aria-label="見本について">
+      <p class="ag-kicker">見本</p>
+      <p>終了したレースの <strong>Premium の予想画面</strong>です。Premium では、この画面を開催日のどのレースでも取得できます（追加料金なし・何レースでも）。</p>
+      <p class="sample-rule">見本のレースは、前日までの直近の開催日のメインレースを毎日自動で表示しています（予想の結果で選んでいません）。</p>
+    </section>
+    {c ? (
+      <>
+        <header class="ag-glass ag-tint-blue acq-hero" aria-label="レース情報">
+          <div class="acq-hero-top">
+            <div class="acq-date ag-inset"><strong>{dateBlock(c.date).md}</strong><span>({dateBlock(c.date).wd})</span></div>
+            <div class="acq-hero-main">
+              <p class="ag-kicker">{c.venueName} {c.raceNumber}R{c.isMainRace ? ' ・ メインレース' : ''}</p>
+              <h1>{c.raceName || `${c.venueName} ${c.raceNumber}R`}</h1>
+            </div>
+          </div>
+          <ul class="acq-meta">
+            {c.startTime && <li class="ag-pill">{c.startTime} 発走</li>}
+            {c.distance && <li class="ag-pill">{distanceText(c.distance)}</li>}
+            {c.horseCount > 0 && <li class="ag-pill">{c.horseCount}頭</li>}
+            <li class="ag-pill violet">見本（終了したレース）</li>
+          </ul>
+          <div class="acq-hero-state">
+            <a class="ag-cta ag-cta-premium" href={pricingHref} data-sample-cta>Premium のプランを見る</a>
+          </div>
+        </header>
+        <AcquiredPredictionBody content={c} />
+        <nav class="ag-glass ag-tint-violet acq-foot" aria-label="Premium">
+          <p>無料版で見られるのは印（◎○▲△）と近走の見どころまでです。馬単の買い目・AI 総合指数・連下／抑え・全馬の過去走と出走表は Premium でご覧いただけます。</p>
+          <div class="acq-foot-actions">
+            <a class="ag-cta ag-cta-premium" href={pricingHref} data-sample-cta>Premium のプランを見る</a>
+            <a class="ag-btn-ghost" href={`/free/${cat}/`}>無料予想に戻る</a>
+          </div>
+        </nav>
+      </>
+    ) : (
+      <section class="ag-glass ag-tint-blue acq-view-empty">
+        <h1>見本を準備しています</h1>
+        <p>前日までの開催の予想がそろうと、ここに Premium 画面の見本が表示されます。</p>
+        <a class="ag-cta ag-cta-premium" href={pricingHref}>Premium のプランを見る</a>
+      </section>
+    )}
+  </main>
+  </div>
+</BaseLayout>
+
+<script>
+  // GA4: 見本の閲覧・見本からのプラン導線（funnel-analytics.js の閉じた語彙。個人情報なし）
+  const root = document.querySelector('[data-premium-sample]');
+  const cat = root?.getAttribute('data-premium-sample') === 'jra' ? 'jra' : 'nankan';
+  const f = () => (window as any).AkFunnel;
+  try { f()?.premiumStep?.('sample_view', cat); } catch { /* 計測は表示に影響させない */ }
+  document.querySelectorAll('[data-sample-cta]').forEach((a) => a.addEventListener('click', () => {
+    try { f()?.premiumStep?.('sample_cta_click', cat); } catch { /* noop */ }
+  }));
+</script>
+
+<style>
+  .acq-view-page { max-width: 1200px; margin: 0 auto; padding: 16px 14px 56px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .acq-view-page > * { min-width: 0; }
+  .sample-tabs { display: flex; gap: 8px; }
+  .sample-tabs a { flex: 1; text-align: center; padding: 10px 12px; border-radius: 12px; text-decoration: none; font-weight: 700;
+    background: rgba(250, 204, 21, 0.08); border: 1px solid rgba(250, 204, 21, 0.3); color: #fef3c7; }
+  .sample-tabs a[aria-current='page'] { background: rgba(250, 204, 21, 0.22); border-color: rgba(250, 204, 21, 0.6); color: #fde68a; }
+  .sample-note { padding: 14px 16px; display: grid; gap: 6px; }
+  .sample-note p { margin: 0; line-height: 1.7; }
+  .sample-rule { color: var(--ag-text-2); font-size: 0.85rem; }
+  .acq-hero { display: grid; gap: 12px; padding: 16px; }
+  .acq-hero-top { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 12px; align-items: center; }
+  .acq-date { display: grid; justify-items: center; padding: 8px 12px; }
+  .acq-date strong { font-size: 1.35rem; line-height: 1.1; }
+  .acq-date span { color: var(--ag-text-2); font-size: 0.8rem; }
+  .acq-hero h1 { margin: 2px 0 0; font-size: clamp(1.2rem, 4.8vw, 1.9rem); line-height: 1.3; overflow-wrap: anywhere; }
+  .acq-meta { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+  .acq-meta .ag-pill { font-weight: 700; font-size: 0.8rem; }
+  .acq-hero-state { display: grid; gap: 6px; }
+  .acq-foot { padding: 18px 16px; display: grid; gap: 12px; text-align: center; }
+  .acq-foot p { margin: 0; color: var(--ag-text-2); font-size: 0.88rem; line-height: 1.7; }
+  .acq-foot-actions { display: grid; gap: 10px; }
+  .acq-view-empty { padding: 22px 18px; display: grid; gap: 10px; }
+  .acq-view-empty h1 { margin: 0; font-size: 1.15rem; }
+  @media (min-width: 760px) {
+    .acq-view-page { padding: 22px 20px 64px; gap: 18px; }
+    .acq-hero { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "top state" "meta state"; padding: 22px 24px; }
+    .acq-hero-top { grid-area: top; }
+    .acq-meta { grid-area: meta; }
+    .acq-hero-state { grid-area: state; justify-items: end; align-self: center; max-width: 260px; text-align: right; }
+    .acq-foot-actions { grid-auto-flow: column; justify-content: center; }
+  }
+</style>

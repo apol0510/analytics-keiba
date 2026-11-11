@@ -6,7 +6,8 @@ import { buildPlanTierByToken } from '../lib/pricing/planTiers.js';
 import { LIGHT_SWITCH_GRACE_DAYS } from '../lib/pricing/pricingEligibility.js';
 import { SUBSCRIPTION_SALES_OPEN, ACTIVE_SUBSCRIPTION_PROVIDER } from '../lib/billing/cardSales.js';
 import { STRIPE_PLANS } from '../lib/billing/stripePlans.js';
-import { PAYPAL_PLAN_IDS, ANNUAL_SUBSCRIPTION_PLANS } from '../lib/billing/paypal/paypalSubscriptionCore.js';
+import { PAYPAL_PLAN_IDS, ANNUAL_SUBSCRIPTION_PLANS, subscriptionPlanById } from '../lib/billing/paypal/paypalSubscriptionCore.js';
+import { SUBSCRIPTION_CAMPAIGN, campaignPriceFor } from '../lib/billing/subscriptionCampaign.js';
 import { subscriptionProviderCopy } from '../lib/billing/subscriptionProviderCopy.js';
 // 決済会社によって変わる説明（決済代行の名前・年払いの止め方・決済画面での操作）。受付先（ACTIVE）の行だけを出す
 const providerCopy = subscriptionProviderCopy();
@@ -27,7 +28,14 @@ const MONTHLY_COPY = {
 // Paddle（2026-11-02〜）は取引ごとに価格を渡す（Plan ID が無い）ので、受付の切替だけで表示する
 const annualLivePlans = ACTIVE_SUBSCRIPTION_PROVIDER === 'paddle' || ANNUAL_SUBSCRIPTION_PLANS.every((p) => Boolean(PAYPAL_PLAN_IDS.live?.[p.id]));
 const showAnnualSub = (SUBSCRIPTION_SALES_OPEN[ACTIVE_SUBSCRIPTION_PROVIDER] === true && annualLivePlans) || process.env.CONTEXT === 'deploy-preview';
-const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }));
+// 特別価格（2026-11-11 MK・単一源 subscriptionCampaign.js）。カード（Paddle）の新規定期課金だけ。銀行振込の価格は変えない。
+// 画面は campaignPriceFor の戻り値だけを使う（ここで引き算しない）。対象外の方の請求額はサーバーが返し、押した時点で案内する。
+const showCampaign = showMonthly && ACTIVE_SUBSCRIPTION_PROVIDER === 'paddle' && SUBSCRIPTION_CAMPAIGN.open === true;
+const cp = (plan) => (showCampaign ? campaignPriceFor(plan) : null);
+const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id], campaign: cp(p) }));
+const annualPlan = subscriptionPlanById('premium-annual');
+const annualCampaign = showAnnualSub ? cp(annualPlan) : null;
+const yen = (n) => `¥${Number(n).toLocaleString('ja-JP')}`;
 ---
 
 <BaseLayout title="料金プラン">
@@ -101,11 +109,31 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
     <div class="pricing-page">
         <!-- ヘッダー -->
         <div class="pricing-header">
+            {/* 2026-11-11 MK 指示: 抽象的な訴求より、実際に見られるものと無料版との違いを先に出す */}
             <h1 class="pricing-title">
-                🚀 <span class="gradient-text">AI予想で勝つ</span>
+                <span class="gradient-text">Premium なら、買い目まで</span>
             </h1>
+            <p class="pricing-lead">
+                無料の印（◎○▲△）に加えて、<strong>馬単の買い目</strong>・<strong>AI 総合指数</strong>・<strong>全馬の過去走</strong>まで。
+                気になるレースの予想を、追加料金なしで何レースでも取得できます。
+            </p>
+            {showCampaign && (
+                <p class="pricing-campaign-line" data-hide-for-premium>
+                    <span class="pricing-campaign-tag">今なら特別価格</span>
+                    {monthlyPlans.filter((p) => p.campaign?.specialYen && p.id !== 'premium-nankan').map((p, i) => <>{i > 0 && '／'}{p.id === 'premium-jra' ? '中央版・南関版' : '中央＋南関'} <strong>{p.campaign.discountYen.toLocaleString('ja-JP')}円OFF</strong></>)}{annualCampaign?.specialYen && <>／年額 <strong>{annualCampaign.discountYen.toLocaleString('ja-JP')}円OFF</strong></>}
+                </p>
+            )}
+            <table class="pricing-compare" aria-label="無料版と Premium の違い">
+                <thead><tr><th scope="col"></th><th scope="col">無料</th><th scope="col">Premium</th></tr></thead>
+                <tbody>
+                    <tr><th scope="row">印（◎○▲△）</th><td>全レース</td><td>全レース</td></tr>
+                    <tr><th scope="row">近走の見どころ</th><td>全レース</td><td>全馬の過去走・出走表</td></tr>
+                    <tr><th scope="row">AI 総合指数・連下／抑え</th><td>―</td><td>全馬</td></tr>
+                    <tr><th scope="row">馬単の買い目</th><td>―</td><td>通常の買い目＋点数を絞った買い目</td></tr>
+                </tbody>
+            </table>
             <p class="pricing-subtitle">
-                銀行振込（年払い・買い切り）は、ページ下の「銀行振込のプラン」からお申し込みいただけます。
+                Premium の画面は<a href="/free-prediction/sample/">見本（終了したレース）</a>でご確認いただけます。銀行振込（年払い・買い切り）は、ページ下の「銀行振込のプラン」からお申し込みいただけます。
             </p>
             {/* 2026-11-02 MK 指示: クレジット決済（月額）をページの先頭に置いたため、枠へのリンク（2026-10-22）は撤去 */}
             <!-- Light 会員のときだけ CSS で表示（上位プランのみに絞っている旨の説明） -->
@@ -132,13 +160,25 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
                 <p class="plans-lead plans-lead--sub">クレジット決済<br><span>クレジットカード決済はこちら</span></p>
                 <div class="plans-container plans-container--stripe">
                     {monthlyPlans.map((p) => (
-                        <div class="plan-card" data-plan-tier="2" data-monthly-plan={p.id}>
+                        <div class="plan-card" data-plan-tier="2" data-monthly-plan={p.id} data-campaign-first={p.campaign?.specialYen ?? ''}>
                             <div class="plan-header">
                                 <h3 class="plan-name">{p.copy.name}</h3>
-                                <div class="plan-price">
-                                    <span class="price-amount">¥{p.amountYen.toLocaleString('ja-JP')}</span>
-                                    <span class="price-period">/月</span>
-                                </div>
+                                {p.campaign?.specialYen ? (
+                                    <>
+                                        <p class="campaign-tag">今なら特別価格 {p.campaign.discountYen.toLocaleString('ja-JP')}円OFF</p>
+                                        <div class="plan-price">
+                                            <s class="price-regular">{yen(p.campaign.regularYen)}</s>
+                                            <span class="price-amount">{yen(p.campaign.specialYen)}</span>
+                                            <span class="price-period">/月</span>
+                                        </div>
+                                        <p class="campaign-terms">特別価格は最初のお支払いに適用されます。翌月からは {yen(p.campaign.regularYen)}/月 で自動更新されます。</p>
+                                    </>
+                                ) : (
+                                    <div class="plan-price">
+                                        <span class="price-amount">¥{p.amountYen.toLocaleString('ja-JP')}</span>
+                                        <span class="price-period">/月</span>
+                                    </div>
+                                )}
                                 <p class="plan-description" set:html={p.copy.desc} />
                             </div>
                             <div class="plan-venues" aria-label="対応会場">
@@ -148,7 +188,8 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
                             </div>
                             <ul class="plan-features">
                                 <li class="feature-item"><span class="check-icon">✓</span><span><strong>{p.copy.scope}の全レース、予想を取得し放題</strong></span></li>
-                                <li class="feature-item"><span class="check-icon">✓</span><span>高精度AI予想・詳細な投資戦略</span></li>
+                                <li class="feature-item"><span class="check-icon">✓</span><span>馬単の買い目（通常＋点数を絞った買い目）</span></li>
+                                <li class="feature-item"><span class="check-icon">✓</span><span>AI 総合指数・全馬の過去走・出走表</span></li>
                                 <li class="feature-item"><span class="check-icon">✓</span><span>優先サポート</span></li>
                             </ul>
                             <button type="button" class="plan-button plan-button-credit" data-monthly={p.id}>
@@ -156,7 +197,47 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
                             </button>
                         </div>
                     ))}
+                    {showAnnualSub && (
+                        <div class="plan-card" data-plan-tier="2" data-hide-for="light" data-annual-card-plan="premium-annual" data-campaign-first={annualCampaign?.specialYen ?? ''}>
+                            <div class="plan-header">
+                                <h3 class="plan-name">Premium 年額 中央＋南関</h3>
+                                {annualCampaign?.specialYen ? (
+                                    <>
+                                        <p class="campaign-tag">今なら特別価格 {annualCampaign.discountYen.toLocaleString('ja-JP')}円OFF</p>
+                                        <div class="plan-price">
+                                            <s class="price-regular">{yen(annualCampaign.regularYen)}</s>
+                                            <span class="price-amount">{yen(annualCampaign.specialYen)}</span>
+                                            <span class="price-period">/年</span>
+                                        </div>
+                                        <p class="campaign-terms">特別価格は最初のお支払いに適用されます。翌年からは {yen(annualCampaign.regularYen)}/年 で自動更新されます。</p>
+                                    </>
+                                ) : (
+                                    <div class="plan-price">
+                                        <span class="price-amount">{yen(annualPlan.amountYen)}</span>
+                                        <span class="price-period">/年</span>
+                                    </div>
+                                )}
+                                <p class="plan-description">1 年分をまとめてお支払い</p>
+                            </div>
+                            <div class="plan-venues" aria-label="対応会場">
+                                <span class="plan-venue-pill plan-venue-pill--jra">🏇 中央<small>JRA</small></span>
+                                <span class="plan-venue-pill plan-venue-pill--nankan">🏁 南関</span>
+                                <span class="plan-venue-note">両方</span>
+                            </div>
+                            <ul class="plan-features">
+                                <li class="feature-item"><span class="check-icon">✓</span><span><strong>中央・南関の全レース、予想を取得し放題</strong></span></li>
+                                <li class="feature-item"><span class="check-icon">✓</span><span>馬単の買い目（通常＋点数を絞った買い目）</span></li>
+                                <li class="feature-item"><span class="check-icon">✓</span><span>AI 総合指数・全馬の過去走・出走表</span></li>
+                            </ul>
+                            <button type="button" class="plan-button plan-button-credit" data-subscription="premium-annual">
+                                クレジットカードで申し込む
+                            </button>
+                        </div>
+                    )}
                 </div>
+                {showCampaign && (
+                    <p class="campaign-note">特別価格はクレジットカードでの新規のお申し込みが対象です（これまでにクレジット決済の定期購読をご利用の方は通常価格です）。お申し込みの金額は、決済画面で必ずご確認いただけます。</p>
+                )}
                 <div class="checkout-message" id="monthlyMessage" role="status" hidden></div>
             </section>
         )}
@@ -236,7 +317,7 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
                             <div class="annual-renewal-terms" data-annual-terms>
                                 <p><strong>{providerCopy.annualTitle}</strong></p>
                                 <ul>
-                                    <li>12 か月ごとに、お申し込み時と同じ金額で自動的に更新・請求されます（決済代行：{providerCopy.label}）。</li>
+                                    <li>12 か月ごとに、通常の年額（¥49,800。Light 会員さまの乗り換え特典は ¥44,820）で自動的に更新・請求されます（決済代行：{providerCopy.label}）。特別価格は最初のお支払いだけに適用されます。</li>
                                 </ul>
                             </div>
                         </>
@@ -367,7 +448,7 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
                 <div class="faq-item" data-hide-for="light">
                     <h3 class="faq-question">Q: 無料プランでも予想は見れますか？</h3>
                     <p class="faq-answer">
-                        はい。無料プランでも全レースの無料予想（AI指数・印・分析）をご覧いただけます。<br>
+                        はい。登録なしで、全レースの印（◎○▲△）と近走の見どころをご覧いただけます。AI 総合指数と買い目は Premium でのご提供です。<br>
                         買い目は有料プランでのご提供ですが、前日の有料メインレース買い目とその結果は「昨日の買い目」ページで公開しています。
                     </p>
                 </div>
@@ -379,6 +460,16 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
                         中央（JRA）・南関の両方のすべてのレースが対象です。
                     </p>
                 </div>
+
+                {showCampaign && (
+                    <div class="faq-item" data-hide-for="light">
+                        <h3 class="faq-question">Q: 特別価格の条件は？</h3>
+                        <p class="faq-answer">
+                            クレジットカードで新規にお申し込みの方が対象で、最初のお支払い 1 回に適用されます（{monthlyPlans.filter((p) => p.campaign?.specialYen).map((p) => `${p.copy.name} ${yen(p.campaign.specialYen)}（通常 ${yen(p.campaign.regularYen)}）`).join('、')}{annualCampaign?.specialYen && <>、Premium 年額 {yen(annualCampaign.specialYen)}（通常 {yen(annualCampaign.regularYen)}）</>}）。2 回目以降は通常料金で自動更新されます。<br>
+                            これまでにクレジット決済の定期購読をご利用の方、銀行振込のプラン、Light 会員さまの乗り換え特典は対象外です。お支払いの金額は決済画面に表示されます。
+                        </p>
+                    </div>
+                )}
 
                 <div class="faq-item">
                     <h3 class="faq-question">Q: 取得できる回数に上限はありますか？</h3>
@@ -641,9 +732,25 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
         });
         var data = await res.json().catch(function () { return {}; });
         if (res.ok && data.url) {
-          // GA4 begin_checkout: サーバーが決済画面の URL を返した後だけ（閉じた語彙・個人情報なし）
-          try { if (window.AkFunnel && window.AkFunnel.checkoutStart) window.AkFunnel.checkoutStart(planId, data.provider === 'paypal' || data.provider === 'paddle' ? data.provider : 'stripe'); } catch (_) {}
-          leaving = true; location.href = data.url; return;
+          var provider = data.provider === 'paypal' || data.provider === 'paddle' ? data.provider : 'stripe';
+          var go = function () {
+            // GA4 begin_checkout: サーバーが決済画面の URL を返した後だけ（閉じた語彙・個人情報なし）。金額はサーバーが返した初回の請求額
+            try { if (window.AkFunnel && window.AkFunnel.checkoutStart) window.AkFunnel.checkoutStart(planId, provider, data.price && data.price.firstYen); } catch (_) {}
+            leaving = true; location.href = data.url;
+          };
+          // 特別価格（2026-11-11）: カードに特別価格を見せていたのに、この方は対象外（過去にカード定期課金あり等）だった
+          // → 決済画面へ移る前に、サーバーが返した請求額を案内する（見せた額と請求額をずらさない）
+          var priced = btn.closest('[data-campaign-first]');
+          if (priced && priced.getAttribute('data-campaign-first') && data.price && data.price.campaign === false) {
+            var per = /^premium-annual/.test(planId) ? '年' : '月';
+            show('このお申し込みは<strong>通常価格 ¥' + Number(data.price.firstYen).toLocaleString('ja-JP') + '/' + per + '</strong>になります。'
+              + '特別価格は、クレジット決済の定期購読を初めてご利用の方が対象です。'
+              + '<button type="button" class="checkout-continue">通常価格で決済へ進む</button>', btn);
+            var cont = msg.querySelector('.checkout-continue');
+            if (cont) cont.addEventListener('click', function () { cont.disabled = true; go(); });
+            return;
+          }
+          go(); return;
         }
         var err = data.error || '';
         // 未ログインはそのままログインへ（ログイン後はこのページへ戻る）
@@ -684,6 +791,22 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
         if (target) startMonthly(want, target);
       }
     } catch (_) { /* 自動で始めなくても、ボタンは押せる */ }
+    // 閲覧傾向に合ったプランを先頭に（2026-11-11 MK）: 無料予想の案内から ?suggest=<プラン>、
+    // または無料予想の閲覧記録（premium-campaign.js が localStorage に残す会場別の閲覧日）から決める。表示順だけで価格・申込は変えない
+    try {
+      var sug = new URLSearchParams(location.search).get('suggest') || '';
+      if (!/^premium(-jra|-nankan|-annual)?$/.test(sug)) {
+        var seen = JSON.parse(localStorage.getItem('ak:free-venue-days') || '{}');
+        var j = Array.isArray(seen.jra) ? seen.jra.length : 0;
+        var n = Array.isArray(seen.nankan) ? seen.nankan.length : 0;
+        sug = j && n ? 'premium' : (j ? 'premium-jra' : (n ? 'premium-nankan' : ''));
+      }
+      var card = sug && document.querySelector('[data-monthly-plan="' + sug + '"], [data-annual-card-plan="' + sug + '"]');
+      if (card && card.parentNode) {
+        card.parentNode.insertBefore(card, card.parentNode.firstElementChild);
+        card.classList.add('is-suggested');
+      }
+    } catch (_) { /* 既定の順のまま */ }
     // PayPal・ログインから「戻る」で帰ってきたとき（bfcache）に「移動しています…」のまま押せなくならないように
     window.addEventListener('pageshow', function (e) {
       if (!e.persisted) return;
@@ -1339,6 +1462,92 @@ const monthlyPlans = STRIPE_PLANS.map((p) => ({ ...p, copy: MONTHLY_COPY[p.id] }
     .price-period {
         color: #94a3b8;
         font-size: 1rem;
+    }
+
+    /* 特別価格（2026-11-11 MK）: 特別な案内 = 金（GLASS_DESIGN_RULES の役割表）。白抜き・グラデーション文字にしない */
+    .campaign-tag, .pricing-campaign-tag {
+        display: inline-block;
+        margin: 0 0 0.5rem;
+        padding: 0.2rem 0.7rem;
+        border-radius: 999px;
+        background: rgba(251, 191, 36, 0.14);
+        border: 1px solid rgba(251, 191, 36, 0.45);
+        color: #fcd34d;
+        font-size: 0.85rem;
+        font-weight: 700;
+    }
+    .price-regular {
+        display: block;
+        color: #94a3b8;
+        font-size: 1rem;
+    }
+    .campaign-terms {
+        margin: 0.25rem 0 0.75rem;
+        color: #cbd5e1;
+        font-size: 0.85rem;
+        line-height: 1.6;
+    }
+    .campaign-note {
+        max-width: 960px;
+        margin: 1rem auto 0;
+        color: #cbd5e1;
+        font-size: 0.85rem;
+        line-height: 1.7;
+        text-align: center;
+    }
+    .plan-card.is-suggested {
+        border-color: rgba(167, 139, 250, 0.7);
+        box-shadow: 0 0 0 1px rgba(167, 139, 250, 0.35), 0 8px 28px rgba(139, 92, 246, 0.18);
+    }
+    .checkout-continue {
+        display: block;
+        margin: 0.75rem auto 0;
+        padding: 0.6rem 1.2rem;
+        border-radius: 10px;
+        background: rgba(96, 165, 250, 0.16);
+        border: 1px solid rgba(96, 165, 250, 0.5);
+        color: #bfdbfe;
+        font-weight: 700;
+        cursor: pointer;
+    }
+    .pricing-lead {
+        color: #e2e8f0;
+        font-size: 1.05rem;
+        line-height: 1.8;
+        margin: 0 auto 1rem;
+    }
+    .pricing-campaign-line {
+        color: #fde68a;
+        font-size: 0.95rem;
+        line-height: 1.8;
+        margin: 0 auto 1.25rem;
+    }
+    :global(:root[data-premium-active="1"]) [data-hide-for-premium] { display: none; }
+    .pricing-compare {
+        width: 100%;
+        max-width: 560px;
+        margin: 0 auto 1rem;
+        border-collapse: separate;
+        border-spacing: 0;
+        font-size: 0.9rem;
+        background: rgba(139, 92, 246, 0.08);
+        border: 1px solid rgba(167, 139, 250, 0.3);
+        border-radius: 12px;
+        overflow: hidden;
+    }
+    .pricing-compare th, .pricing-compare td {
+        padding: 0.55rem 0.6rem;
+        border-bottom: 1px solid rgba(167, 139, 250, 0.15);
+        text-align: center;
+        color: #e2e8f0;
+    }
+    .pricing-compare tbody th { text-align: left; font-weight: 600; color: #ddd6fe; }
+    .pricing-compare thead th { color: #c4b5fd; font-weight: 700; }
+    .pricing-compare tbody tr:last-child th, .pricing-compare tbody tr:last-child td { border-bottom: 0; }
+    .pricing-compare td:last-child { color: #ede9fe; font-weight: 600; }
+    @media (max-width: 480px) {
+        .pricing-compare { font-size: 0.85rem; }
+        .pricing-compare th, .pricing-compare td { padding: 0.5rem 0.35rem; }
     }
 
     .price-period-lifetime {

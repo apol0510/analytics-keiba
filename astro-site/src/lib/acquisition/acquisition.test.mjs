@@ -75,8 +75,12 @@ test('本文部品を使うのは取得済み確認後の閲覧ページだけ',
   const { readdirSync } = await import('node:fs');
   const out = readdirSync(`${ROOT}src/pages`, { recursive: true })
     .filter((f) => /\.(astro|js|ts)$/.test(f) && read(`src/pages/${f}`).includes('AcquiredPredictionBody'));
-  // 本番の閲覧（取得済み確認後）と、Preview 詳細（buildPreviewContent＝公開範囲だけ）
-  assert.deepEqual(out.sort(), ['free-prediction/view.astro', 'predictions/view.astro']);
+  // 本番の閲覧（取得済み確認後）と、Preview 詳細（buildPreviewContent＝公開範囲だけ）と、
+  // 見本（2026-11-11 MK 指示: 終了したレースの Premium 画面を 1 件公開・premiumSample.js が当日のレースを選ばないことを検査）
+  assert.deepEqual(out.sort(), ['free-prediction/sample.astro', 'free-prediction/view.astro', 'predictions/view.astro']);
+  const sp = read('src/pages/free-prediction/sample.astro');
+  assert.match(sp, /pickSampleRace\(\{[\s\S]*todayJst: jstToday\(\)/, '見本は premiumSample の選び方（今日より前・メインレース）だけ');
+  assert.equal(/parsePredictionKey|searchParams\.get\('key'\)|searchParams\.get\('date'\)|searchParams\.get\('race/.test(sp), false, '見本でレースを URL から選ばせない（任意のレース・当日の有料本文が見えてしまう）');
   const pv = read('src/pages/free-prediction/view.astro');
   assert.match(pv, /content=\{c\}/);
   assert.ok(pv.indexOf('buildPreviewContent(') > -1 && !pv.includes('buildPredictionContent'), 'Preview 詳細が有料本文を組み立てている');

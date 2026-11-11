@@ -11,7 +11,7 @@
 export const PUBLIC_JS_VERSION = Object.freeze({
   'submission-result': 'c5092cb092',
   'campaign-price': 'dcbfb242cc',
-  'funnel-analytics': '232b895341',
+  'funnel-analytics': '4fcddcd95b',
 });
 
 /** `/js/<name>.js?v=<hash>`。未登録の名前は例外（版なしで配信しない）。 */

@@ -156,7 +156,7 @@ test('料金ページ: 買い切りのカードは銀行振込だけ（カード
   assert.match(annual, /data-only-for="light" data-subscription="premium-annual-light"/);
   // 決済会社によって変わる部分（名前・止め方）は受付先の行（subscriptionProviderCopy）。PayPal の行は従来の掲載文と同一
   const pc = subscriptionProviderCopy();
-  for (const w of ['自動更新です', '12 か月ごとに、お申し込み時と同じ金額で自動的に更新・請求されます', `決済代行：${pc.label}`]) {
+  for (const w of ['自動更新です', '12 か月ごとに、通常の年額（¥49,800。Light 会員さまの乗り換え特典は ¥44,820）で自動的に更新・請求されます', '特別価格は最初のお支払いだけに適用されます', `決済代行：${pc.label}`]) {
     assert.ok(annual.includes(w), `年払いの自動更新の条件に「${w}」が無い`);
   }
   // 2026-11-02 MK 確定: 販売ページで退会・解約の方法を案内しない（条件は FAQ・規約）

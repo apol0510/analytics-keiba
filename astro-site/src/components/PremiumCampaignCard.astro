@@ -1,0 +1,162 @@
+---
+/**
+ * PremiumCampaignCard — 無料予想に 1 日 1 回出す「特別価格」の小型カード（2026-11-11 MK 指示）
+ *
+ * 判定（1 日 1 回・JST・有料会員/決済中は出さない・閲覧に合わせたプラン・比較群）は src/lib/promotions/dailyCampaignCard.js。
+ * 金額は subscriptionCampaign.campaignPriceFor の値だけ（ここで計算・直書きしない）。受付が閉じていれば何も描かない。
+ * 開いた瞬間には出さない: DELAY_MS 経過、またはページの半分まで読んだ・レース詳細を 2 つ開いた時点。
+ * 置くのは無料予想（/free/・/free/{jra,nankan}/・/free-prediction/{jra,nankan}/）だけ。料金・決済・有料ページには置かない。
+ * 公開ページ（CDN キャッシュ）なので Cookie・会員判定は使わない（表示の出し分けは端末の user-plan だけ・権利には使わない）。
+ */
+import { SUBSCRIPTION_CAMPAIGN, campaignPriceFor } from '../lib/billing/subscriptionCampaign.js';
+import { SUBSCRIPTION_SALES_OPEN, ACTIVE_SUBSCRIPTION_PROVIDER } from '../lib/billing/cardSales.js';
+import { subscriptionPlanById } from '../lib/billing/paypal/paypalSubscriptionCore.js';
+
+interface Props { venue: 'jra' | 'nankan' | 'all' }
+const { venue } = Astro.props;
+const open = SUBSCRIPTION_CAMPAIGN.open === true && ACTIVE_SUBSCRIPTION_PROVIDER === 'paddle' && SUBSCRIPTION_SALES_OPEN.paddle === true;
+const NAMES = { premium: 'Premium 中央＋南関', 'premium-jra': 'Premium 中央版', 'premium-nankan': 'Premium 南関版' };
+const SCOPE = { premium: '中央・南関の全レース', 'premium-jra': '中央の全レース', 'premium-nankan': '南関の全レース' };
+const yen = (n) => `¥${Number(n).toLocaleString('ja-JP')}`;
+const plans = open ? Object.keys(NAMES).map((id) => ({ id, p: campaignPriceFor(subscriptionPlanById(id)) })).filter((x) => x.p?.specialYen) : [];
+const annual = open ? campaignPriceFor(subscriptionPlanById('premium-annual')) : null;
+---
+{plans.length > 0 && (
+  <aside class="pcc" data-pcc data-venue={venue} hidden aria-label="Premium の特別価格のご案内">
+    <button type="button" class="pcc-close" data-pcc-close aria-label="閉じる">×</button>
+    <p class="pcc-tag">今なら特別価格</p>
+    {plans.map(({ id, p }) => (
+      <div class="pcc-plan" data-pcc-plan={id} hidden>
+        <p class="pcc-name">{NAMES[id]}</p>
+        <p class="pcc-price"><s>{yen(p.regularYen)}</s> → <strong>{yen(p.specialYen)}</strong><span>/月</span> <em>{p.discountYen.toLocaleString('ja-JP')}円OFF</em></p>
+        <p class="pcc-what">{SCOPE[id]}の買い目・AI 総合指数・全馬の過去走</p>
+        <p class="pcc-terms">翌月から {yen(p.regularYen)}/月 で自動更新{annual?.specialYen ? <>・年額なら {yen(annual.specialYen)}（{annual.discountYen.toLocaleString('ja-JP')}円OFF）も</> : null}</p>
+        <div class="pcc-actions">
+          <a class="pcc-cta" href={`/pricing/?suggest=${id}#credit-payment`} data-pcc-cta>特別価格で見る</a>
+          <a class="pcc-other" href="/pricing/#credit-payment" data-pcc-other>ほかのプランを見る</a>
+        </div>
+      </div>
+    ))}
+  </aside>
+)}
+
+<script>
+  import {
+    decideCampaignCard, markShown, assignGroup, recordVenueDay, pickCampaignPlan,
+    CARD_STATE_KEY, GROUP_KEY, VENUE_DAYS_KEY, DELAY_MS, SCROLL_RATIO, OPENED_DETAILS,
+  } from '../lib/promotions/dailyCampaignCard.js';
+
+  const get = (s: Storage | undefined, k: string) => { try { return s ? s.getItem(k) : null; } catch { return null; } };
+  const set = (s: Storage | undefined, k: string, v: string) => { try { s?.setItem(k, v); } catch { /* 表示だけ */ } };
+  const ls = (() => { try { return window.localStorage; } catch { return undefined; } })();
+  const ss = (() => { try { return window.sessionStorage; } catch { return undefined; } })();
+  const funnel = () => (window as any).AkFunnel;
+  const track = (step: string, cat: string, plan?: string, group?: string) => { try { funnel()?.premiumStep?.(step, cat, plan, group); } catch { /* 計測は表示に影響させない */ } };
+
+  const box = document.querySelector<HTMLElement>('[data-pcc]');
+  const venueAttr = box?.getAttribute('data-venue') || document.querySelector('[data-pcc-venue]')?.getAttribute('data-pcc-venue') || 'all';
+  const cat = venueAttr === 'jra' || venueAttr === 'nankan' ? venueAttr : 'all';
+
+  // 閲覧傾向（会場別の閲覧日）。料金ページのプランの並びにも使う（表示だけ）
+  if (cat === 'jra' || cat === 'nankan') set(ls, VENUE_DAYS_KEY, JSON.stringify(recordVenueDay(get(ls, VENUE_DAYS_KEY), cat)));
+
+  const inCheckout = (() => {
+    try {
+      if (/[?&]from=(purchase|paypal)/.test(location.search)) return true;
+      for (let i = 0; ss && i < ss.length; i++) if (String(ss.key(i)).startsWith('ak_purchase_sent:')) return true;
+    } catch { /* noop */ }
+    return false;
+  })();
+
+  const d = box ? decideCampaignCard({ stateRaw: get(ls, CARD_STATE_KEY), userPlanRaw: get(ls, 'user-plan'), inCheckout, campaignOpen: true }) : { show: false };
+  if (box && d.show) {
+    const group = assignGroup(get(ls, GROUP_KEY));
+    set(ls, GROUP_KEY, group);
+    try { funnel()?.setCampaignGroup?.(group); } catch { /* noop */ }
+    const planId = pickCampaignPlan({ pageVenue: cat, venueDays: JSON.parse(get(ls, VENUE_DAYS_KEY) || 'null') });
+    let fired = false;
+    const fire = () => {
+      if (fired) return;
+      if (document.visibilityState === 'hidden') { document.addEventListener('visibilitychange', fire, { once: true }); return; }
+      fired = true;
+      cleanup();
+      // 別タブ・別ページで今日すでに出していれば出さない（再判定）
+      if (!decideCampaignCard({ stateRaw: get(ls, CARD_STATE_KEY), userPlanRaw: get(ls, 'user-plan'), inCheckout, campaignOpen: true }).show) return;
+      set(ls, CARD_STATE_KEY, markShown());
+      if (group === 'holdout') { track('campaign_holdout', cat, planId, group); return; }
+      const plan = box.querySelector<HTMLElement>(`[data-pcc-plan="${planId}"]`) || box.querySelector<HTMLElement>('[data-pcc-plan]');
+      if (!plan) return;
+      plan.hidden = false;
+      box.hidden = false;
+      requestAnimationFrame(() => box.classList.add('is-in'));
+      const shownPlan = plan.getAttribute('data-pcc-plan') || planId;
+      track('campaign_impression', cat, shownPlan, group);
+      plan.querySelector('[data-pcc-cta]')?.addEventListener('click', () => track('campaign_click', cat, shownPlan, group));
+      plan.querySelector('[data-pcc-other]')?.addEventListener('click', () => track('campaign_other_click', cat, shownPlan, group));
+      box.querySelector('[data-pcc-close]')?.addEventListener('click', () => {
+        box.hidden = true;
+        set(ls, CARD_STATE_KEY, markShown(Date.now(), { dismissed: true }));
+        track('campaign_dismiss', cat, shownPlan, group);
+      });
+    };
+    const timer = window.setTimeout(fire, DELAY_MS);
+    const onScroll = () => {
+      const h = document.documentElement.scrollHeight - window.innerHeight;
+      if (h > 0 && window.scrollY / h >= SCROLL_RATIO) fire();
+    };
+    let opened = 0;
+    const onToggle = (e: Event) => {
+      const t = e.target as HTMLDetailsElement;
+      if (t && t.tagName === 'DETAILS' && t.open && ++opened >= OPENED_DETAILS) fire();
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    document.addEventListener('toggle', onToggle, true);
+    function cleanup() {
+      window.clearTimeout(timer);
+      window.removeEventListener('scroll', onScroll);
+      document.removeEventListener('toggle', onToggle, true);
+    }
+  }
+</script>
+
+<style>
+  /* 特別な案内 = 金の目印＋Premium 導線 = 紫（GLASS_DESIGN_RULES の役割表）。閲覧を妨げない小型カード */
+  .pcc {
+    position: fixed; z-index: 900; right: 12px; bottom: 12px; left: 12px;
+    max-width: 380px; margin-left: auto;
+    padding: 12px 14px 12px; border-radius: 16px;
+    background: rgba(30, 27, 75, 0.88);
+    border: 1px solid rgba(167, 139, 250, 0.45);
+    box-shadow: 0 10px 30px rgba(15, 23, 42, 0.45);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    color: #ede9fe; font-size: 0.88rem; line-height: 1.5;
+    transform: translateY(16px); opacity: 0; transition: transform .25s ease, opacity .25s ease;
+  }
+  .pcc.is-in { transform: none; opacity: 1; }
+  .pcc[hidden] { display: none; }
+  @media (prefers-reduced-motion: reduce) { .pcc { transition: none; } }
+  .pcc-close { position: absolute; top: 4px; right: 6px; width: 36px; height: 36px; border: 0; background: transparent; color: #c4b5fd; font-size: 1.2rem; cursor: pointer; }
+  .pcc-tag { display: inline-block; margin: 0 0 4px; padding: 1px 10px; border-radius: 999px; font-size: 0.78rem; font-weight: 700;
+    background: rgba(251, 191, 36, 0.14); border: 1px solid rgba(251, 191, 36, 0.45); color: #fcd34d; }
+  .pcc-plan[hidden] { display: none; }
+  .pcc-name { margin: 0; font-weight: 700; color: #f5f3ff; padding-right: 28px; }
+  .pcc-price { margin: 2px 0; }
+  .pcc-price s { color: #a5b4fc; }
+  .pcc-price strong { font-size: 1.15rem; color: #f5f3ff; }
+  .pcc-price span { color: #c4b5fd; font-size: 0.85rem; }
+  .pcc-price em { font-style: normal; color: #fcd34d; font-weight: 700; font-size: 0.85rem; margin-left: 4px; }
+  .pcc-what { margin: 0; color: #ddd6fe; font-size: 0.85rem; }
+  .pcc-terms { margin: 2px 0 8px; color: #c4b5fd; font-size: 0.78rem; }
+  .pcc-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .pcc-cta { display: inline-flex; align-items: center; min-height: 40px; padding: 0 14px; border-radius: 10px; font-weight: 700; text-decoration: none;
+    background: linear-gradient(135deg, rgba(139, 92, 246, 0.9), rgba(99, 102, 241, 0.9)); color: #fff; border: 1px solid rgba(221, 214, 254, 0.5); }
+  /* スマホ: 閲覧を妨げないよう高さを抑える（説明の 1 行を省く・余白を詰める）*/
+  @media (max-width: 480px) {
+    .pcc { left: 8px; right: 8px; bottom: 8px; padding: 10px 12px; font-size: 0.85rem; }
+    .pcc-what { display: none; }
+    .pcc-price strong { font-size: 1.05rem; }
+    .pcc-terms { margin-bottom: 6px; }
+    .pcc-cta, .pcc-other { min-height: 38px; }
+  }
+  .pcc-other { color: #c4b5fd; font-size: 0.85rem; text-decoration: underline; text-underline-offset: 3px; min-height: 40px; display: inline-flex; align-items: center; }
+</style>

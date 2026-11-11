@@ -24,9 +24,9 @@ const SRC = readFileSync(
  * 公開 JS を偽の window で動かす。
  * `setInterval` は**何もしない**もので渡す（待ちループでテストが終わらなくなる）。
  */
-function load({ openBankModal, SubmissionResult, withGtag = true } = {}) {
+function load({ openBankModal, SubmissionResult, withGtag = true, host = 'analytics.keiba.link' } = {}) {
   const sent = [];
-  const win = {};
+  const win = { location: { hostname: host } };
   if (openBankModal) win.openBankModal = openBankModal;
   if (SubmissionResult) win.SubmissionResult = SubmissionResult;
   if (withGtag) {
@@ -430,4 +430,51 @@ test('配線: /contact/ は受理後だけ contact_submit を送り、本文・�
   const okAt = page.indexOf('if (response.ok)');
   const submitAt = page.indexOf("trackContact('submit'");
   assert.ok(okAt > 0 && submitAt > okAt, 'contact_submit は response.ok の後');
+});
+
+
+// ---- 特別価格（2026-11-11）: 金額はサーバーが返した初回の請求額・試験購入は本番 GA4 へ送らない
+test('purchase / begin_checkout carry the server-returned first charge (special price) and the discount', () => {
+  const { AkFunnel, sent } = load();
+  AkFunnel.checkoutStart('premium-jra', 'paddle', 2480);
+  AkFunnel.purchaseCompleted('premium-jra', 'txn_campaign00000001', 'paddle', 2480);
+  const begin = sent.find((e) => e.name === 'begin_checkout').params;
+  const buy = sent.find((e) => e.name === 'purchase').params;
+  for (const p of [begin, buy]) {
+    assert.equal(p.value, 2480);
+    assert.equal(p.discount, 500);
+    assert.equal(p.plan, 'Premium JRA');
+    assert.equal(p.payment_method, 'paddle');
+  }
+  // 通常価格（値なし・不正値・通常価格超え）は表の値のまま
+  const r = load();
+  r.AkFunnel.purchaseCompleted('premium', 'txn_regular000000001', 'paddle');
+  r.AkFunnel.purchaseCompleted('premium-annual', 'txn_regular000000002', 'paddle', 999999);
+  r.AkFunnel.purchaseCompleted('premium-nankan', 'txn_regular000000003', 'paddle', 'x');
+  assert.deepEqual(r.sent.filter((e) => e.name === 'purchase').map((e) => [e.params.value, e.params.discount]), [[4980, undefined], [49800, undefined], [2980, undefined]]);
+});
+
+test('test purchases on Deploy Preview / localhost are not sent to production GA4', () => {
+  for (const host of ['deploy-preview-9--analytics-keiba.netlify.app', 'localhost', '127.0.0.1', '']) {
+    const { AkFunnel, sent } = load({ host });
+    AkFunnel.checkoutStart('premium', 'paddle', 3980);
+    AkFunnel.purchaseCompleted('premium', 'txn_e2e0000000000001', 'paddle', 3980);
+    assert.deepEqual(sent.filter((e) => e.name === 'purchase' || e.name === 'begin_checkout'), [], host);
+  }
+});
+
+// ---- 無料予想 → Premium の段（2026-11-11）
+test('premiumStep: closed vocabulary, per-step event names, no PII, campaign group', () => {
+  const { AkFunnel, sent } = load();
+  assert.equal(AkFunnel.premiumStep('free_row_click', 'nankan').event, 'free_premium_row_click');
+  assert.deepEqual(AkFunnel.premiumStep('campaign_impression', 'jra', 'premium-jra', 'show').params,
+    { category: 'jra', plan: 'Premium JRA', plan_type: 'Monthly', campaign_group: 'show' });
+  assert.deepEqual(AkFunnel.premiumStep('campaign_click', 'all', 'premium-annual', 'show').params,
+    { category: 'all', plan: 'Premium Annual', plan_type: 'Annual', campaign_group: 'show' });
+  assert.equal(AkFunnel.premiumStep('unknown_step', 'jra'), null);
+  assert.deepEqual(AkFunnel.premiumStep('sample_view', 'a@b.example', 'me@x.example', 'x').params, { category: 'all' }, '語彙外は捨てる');
+  for (const e of sent) assert.doesNotMatch(JSON.stringify(e.params), /@/);
+  assert.equal(AkFunnel.setCampaignGroup('holdout'), true);
+  assert.equal(AkFunnel.setCampaignGroup('evil'), false);
+  assert.deepEqual(sent.filter((e) => e.kind === 'set').map((e) => e.params), [{ ak_cmp_group: 'holdout' }]);
 });

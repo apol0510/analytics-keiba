@@ -205,6 +205,23 @@ Sandbox の Product `PROD-1DB142038K1860725`／Plan: premium `P-67290333XA263552
 
 **検証**: `paddle/paddleSubscription.test.mjs`（偽の Paddle / Airtable / Redis・23 件: 商品と名前・Light 資格・ログイン済み／未ログイン・二重クリック・通知の重複／順不同／同時・更新成功／失敗・月末／JST・即時退会／解約失敗・Paddle 側の解約・返金・誤付与防止・二重契約・買い切り拒否・一回払いと混ざらない・切替と rollback・委譲（本番↔中立サイト）・署名）。`checkoutSite.guard.test.mjs`（中立サイトの定期課金の版）・`subscriptionProviderCopy.test.mjs`・`memberWithdrawal.test.mjs`（kind paddle）・`revenueMonthly.test.mjs`（Paddle）。
 
+## 3.9 Premium 新規カード契約の特別価格（2026-11-11 MK 指示）
+
+根拠 `docs/decisions.md` 2026-11-11。単一源 `src/lib/billing/subscriptionCampaign.js`（`SUBSCRIPTION_CAMPAIGN`）。
+
+| 項目 | 仕様 | 実装 |
+|---|---|---|
+| 価格 | 中央版・南関版 ¥2,980 → ¥2,480／中央＋南関 ¥4,980 → ¥3,980／年額 ¥49,800 → ¥44,800。**最初の決済 1 回だけ**。Light 乗り換え特典（¥44,820）・銀行振込・PayPal は対象外 | `discountYen` の表 |
+| 仕組み | 購読の単価（`unit_price`）は**通常料金のまま**。取引に非カタログの一回限りの値引き `discount: { type:'flat', amount, recur:false }` を付ける → 更新は通常料金・反映時の価格検査（amount_mismatch）は不変。`custom_data.ak_cmp` に campaign ID（継続率の集計用・判定には使わない）| `buildSubscriptionTransactionBody({ campaignId })` |
+| 対象 | これまでにカードの定期課金を持ったことがない会員: Redis の `ak:paddle:sub:member:*`・`ak:paypal:sub:member:*` が無く、`StripeSubscriptionId` が無く、`PaymentMethod` が Paddle / PayPal / Stripe でない。読めなければ付けない | `decideCampaignForCheckout`・`readHadCardSubscription` |
+| 委譲 | 本番 → 中立サイトの intent は `campaignId` だけ（金額なし）。中立サイトは受付中の ID か確かめ、値引き額を表から引き直す（不正な ID・Light は 400 `invalid_campaign`）。冪等キーは `sub:<plan>:<campaignId>` で通常価格の申込と分ける | `paddle-create-checkout.mjs` |
+| 画面 | 料金ページの金額は `campaignPriceFor` の戻り値だけ。申込の応答 `price`（`firstYen`・`regularYen`・`campaign`）で、特別価格を見せたのに対象外だった方には決済画面の前に通常価格を案内する。戻り先の `firstYen` を GA4 `purchase` の value に使う | `pricing.astro`・`confirmPaddleSubscription` |
+| 二重クリック | 30 分の使い回しは特別価格の有無が同じときだけ | `openCheckoutKey` の値に `campaignId` |
+| 閉じる | `SUBSCRIPTION_CAMPAIGN.open=false` の PR（表示・案内カード・値引きが同時に消える）。始まった購読は影響なし | — |
+| 中立サイトの順序 | **中立サイトの deploy を本番の merge より先に**（古い中立サイトは `campaignId` を無視して通常価格の取引を作る＝見せた額と請求額がずれる）| §7.1 |
+
+**検証**: `subscriptionCampaign.test.mjs`（価格表・Light 除外・判定）、`paddle/paddleSubscription.test.mjs` の「特別価格」4 件（新規 4 プランで値引き・単価は通常・反映が通る・更新は通常料金／Paddle・PayPal・Stripe・PaymentMethod の履歴と読み出し失敗では付けない／使い回し／委譲で金額を渡さず引き直す）。Sandbox の実取引での確認は §4 の実施記録。
+
 ## 4. Sandbox E2E 手順（Deploy Preview）
 
 **MK の操作（アカウント開設は本人しかできない）**

@@ -46,7 +46,11 @@ export async function handleCreateCheckout({ request, env, store, now = new Date
   // 冪等化のキーは一回払いの商品 ID と混ざらないよう `sub:<planId>`（同じ会員の同じ申込の二重クリックだけを束ねる）
   const isSub = intent.kind === 'subscription';
   const planId = String(intent.planId || '');
-  const productId = isSub ? `sub:${planId}` : String(intent.productId || '');
+  // 特別価格（2026-11-11 MK）: 本番が対象と判定した申込だけ campaignId が付く。金額は受け取らず、表から引き直す
+  // （subscriptionCampaign.paddleCampaignDiscount・受付中でない ID は 400 invalid_campaign）。
+  // 冪等化のキーも分ける（特別価格の有無が違う取引を使い回さない）
+  const campaignId = isSub && intent.campaignId ? String(intent.campaignId) : null;
+  const productId = isSub ? `sub:${planId}${campaignId ? `:${campaignId}` : ''}` : String(intent.productId || '');
   const entry = isSub ? (intent.entry === 'monthly' ? 'monthly' : 'direct') : (intent.entry === 'card' ? 'card' : 'direct');
   let r;
   try {
@@ -57,7 +61,7 @@ export async function handleCreateCheckout({ request, env, store, now = new Date
       productId,
       now,
       create: () => (isSub
-        ? createSubscriptionTransaction({ env, origin, recordId, planId, entry })
+        ? createSubscriptionTransaction({ env, origin, recordId, planId, entry, campaignId })
         : createTransaction({ env, origin, recordId, productId, entry, now })),
     });
   } catch (e) {
@@ -70,7 +74,8 @@ export async function handleCreateCheckout({ request, env, store, now = new Date
   }
   // degraded: ストア不達で原子的予約を取れず fail-open で作成した稀路。無言にせず記録する。
   console.log(JSON.stringify({ event: 'paddle_create_checkout_sep', product: productId, ...(r.reused ? { reused: r.reused } : {}), ...(r.degraded ? { degraded: true } : {}) }));
-  return resp(200, { url: r.url, transactionId: r.transactionId });
+  // campaignApplied: 特別価格の値引きを実際に付けたか（本番はこれが true のときだけ特別価格を案内する）
+  return resp(200, { url: r.url, transactionId: r.transactionId, ...(typeof r.campaignApplied === 'boolean' ? { campaignApplied: r.campaignApplied } : {}) });
 }
 
 // Netlify Blobs は実行時に Netlify が提供する。ローカル（テスト/esbuild）で解決できない場所に置くため遅延 import。
