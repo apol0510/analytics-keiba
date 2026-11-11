@@ -150,5 +150,13 @@ const annual = open ? campaignPriceFor(subscriptionPlanById('premium-annual')) :
   .pcc-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
   .pcc-cta { display: inline-flex; align-items: center; min-height: 40px; padding: 0 14px; border-radius: 10px; font-weight: 700; text-decoration: none;
     background: linear-gradient(135deg, rgba(139, 92, 246, 0.9), rgba(99, 102, 241, 0.9)); color: #fff; border: 1px solid rgba(221, 214, 254, 0.5); }
+  /* スマホ: 閲覧を妨げないよう高さを抑える（説明の 1 行を省く・余白を詰める）*/
+  @media (max-width: 480px) {
+    .pcc { left: 8px; right: 8px; bottom: 8px; padding: 10px 12px; font-size: 0.85rem; }
+    .pcc-what { display: none; }
+    .pcc-price strong { font-size: 1.05rem; }
+    .pcc-terms { margin-bottom: 6px; }
+    .pcc-cta, .pcc-other { min-height: 38px; }
+  }
   .pcc-other { color: #c4b5fd; font-size: 0.85rem; text-decoration: underline; text-underline-offset: 3px; min-height: 40px; display: inline-flex; align-items: center; }
 </style>

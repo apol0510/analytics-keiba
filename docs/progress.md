@@ -1,3 +1,16 @@
+# 💳 無料予想 → Premium 導線・特別価格（2026-11-11 MK 指示 / **PR 作成・merge 待ち**）
+
+| 項目 | 状態 |
+|---|---|
+| 目的 | 無料ユーザーの満足を保ったまま Premium の新規購入・月額継続売上を増やす（KPI: 実購入数・月額新規契約数・翌月継続率・無料予想の再訪率）|
+| 正本 | `docs/decisions.md` 2026-11-11・`CARD_PAYMENT_PROVIDERS.md` §3.9・`PREDICTION_ACQUISITION.md` §2-6・`GA4_CONVERSION_FUNNEL.md`・実験記録 `docs/measurements/PREMIUM_CAMPAIGN_2026_11.md`（基準値 28 日）|
+| 実装 | 特別価格（Paddle の初回だけの値引き・更新は通常料金）・料金ページ 1 画面目／比較表／年額カード／FAQ・各レースの Premium 1 行・見本 `/free-prediction/sample/`・1 日 1 回の案内カード（非表示群 10%）・GA4 の段と実請求額・試験購入を本番 GA4 に入れない・CI に billing ほか |
+| 検証（済み）| `check:safety` 全 pass・build pass・ローカル実画面（PC・375px）: 行の 1 行・案内は 18 秒後に南関版／両方閲覧でセット・閉じた後は別ページでも出ない・有料会員（user-plan）には出ない・見本（南関 11/10 川崎 11R・中央 11/8 福島 11R）・料金ページの並び替え |
+| 未検証（理由）| Paddle が「非カタログ価格＋非カタログ値引き」を受け付けるかの実取引（Sandbox 鍵が env に無い・本番鍵の取り出しは harness が拒否）→ 拒否されたら通常価格で作り直して決済前に通常価格を案内する安全策を実装・テスト済み。本番反映後に実画面の決済ページ（未払い）で値引き表示を確認する |
+| 反映の順序 | ① 中立サイト `tirol-checkout` を deploy（`campaignId` 対応・旧版は値引きを付けない＝本番は通常価格として案内するので順序が逆でも請求額はずれない）② 本 PR を merge ③ 本番 smoke（料金ページ・案内カード・見本・決済ページの金額・GA4 リアルタイム）|
+| GA4 管理画面 | ユーザー スコープのカスタム ディメンション `ak_cmp_group` の登録（群別の購入率に必要）|
+| rollback | `subscriptionCampaign.js` の `open:false`（表示・案内・値引きが同時に消える）／ PR の revert（サーバー・会員データの変更なし）|
+
 # 💬 お問い合わせページのリニューアル（2026-11-09 MK 指示 / **PR 作成・merge 待ち**）
 
 - 届いていないのではなく、/contact/ 到達と送信が 9 月から減っていた（本番の運用テスト 1 件が受信トレイに到着・Cloudflare 30 日で Dropped 0）。詳細と数値は [CONTACT_RENEWAL.md](CONTACT_RENEWAL.md)。

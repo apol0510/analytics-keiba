@@ -100,7 +100,7 @@
 
 - `/free-prediction/sample/?cat=nankan|jra`: **終了したレース 1 件**の Premium 画面を、取得後と同じ部品（`AcquiredPredictionBody`）・同じ組み立て（`buildPredictionContent`）で公開する。
 - レースの選び方は `src/lib/acquisition/premiumSample.js` だけ: **今日（JST）より前で予想がある直近の開催日の、最初の会場のメインレース**。結果を見ないので**的中したレースを選べない**。画面にも結果（的中・不的中・払戻）を出さない。URL でレースを選ばせない（当日の有料本文が見えないように）。
-- 既に公開している範囲（`/results-showcase/` = 直近の開催日のメインレースの買い目）と同じ日・同じレース。公開ページ（Cookie・会員判定なし）・SSR ＋ CDN 5 分・noindex。
+- 対象は `/results-showcase/`（直近の開催日のメインレースの買い目・抑えは出さない）と同じ日・同じレースだが、見本は MK 指示どおり**実際の Premium 画面そのもの**（抑え・点数を絞った買い目・AI 総合指数・連下／抑え／評価外・出走表・過去走）を出す。公開ページ（Cookie・会員判定なし）・SSR ＋ CDN 5 分・noindex。
 - 無料予想の各レースの「このレースの買い目は Premium で公開」（`RaceViewpointsBoard`）の行き先。
 
 ## 3. 判定の定義（単一源）
