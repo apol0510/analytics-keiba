@@ -105,6 +105,18 @@
   // ⚠️ 「同じ人が 1 分後にもう一度モーダルを開いた」は**本物の再訪**なので
   //    捨てない。ここで潰すのは取りこぼしではなく**事故の重複**だけ。
   var DEDUPE_MS = 2000;
+
+  /**
+   * 本番のホストか（決済の begin_checkout / purchase だけに使う）。Deploy Preview（Sandbox 決済）・ローカルの試験購入を
+   * 本番 GA4 の売上・購入率に入れない。テストは global.__AK_FUNNEL_HOST で差し替える。
+   */
+  var PRODUCTION_HOSTS = { 'analytics.keiba.link': 1 };
+  function isProductionHost() {
+    try {
+      var h = global.__AK_FUNNEL_HOST || (global.location && global.location.hostname) || '';
+      return PRODUCTION_HOSTS[String(h)] === 1;
+    } catch (_) { return false; }
+  }
   var lastSent = {};
 
   function shouldSend(key, now) {
@@ -243,6 +255,16 @@
   var ANNUAL_PLAN_YEN = { 'premium-annual': 49800, 'premium-annual-light': 44820 };
   var PAYMENT_METHODS = { stripe: 'stripe', paypal: 'paypal', paddle: 'paddle' };
 
+  /** サーバーが返した実際の請求額（特別価格・2026-11-11）。整数の円で、表の通常価格を超えない値だけ使う（それ以外は表の値）*/
+  function withValue(params, valueYen) {
+    var v = Number(valueYen);
+    if (Number.isInteger(v) && v > 0 && (!params.value || v <= params.value)) {
+      if (v < params.value) params.discount = params.value - v;
+      params.value = v;
+    }
+    return params;
+  }
+
   function stripeParams(planId, method) {
     var m = PAYMENT_METHODS[method] || 'stripe';
     if (m !== 'stripe' && ANNUAL_PLAN_LABELS[planId]) {
@@ -252,17 +274,20 @@
     return { plan: label, plan_type: 'Monthly', payment_method: m, currency: 'JPY', value: STRIPE_PLAN_YEN[planId] || 0 };
   }
 
-  function checkoutStart(planId, method) {
+  function checkoutStart(planId, method, valueYen) {
     try {
-      if (typeof global.gtag === 'function') global.gtag('event', 'begin_checkout', stripeParams(planId, method));
+      if (!isProductionHost()) return;
+      if (typeof global.gtag === 'function') global.gtag('event', 'begin_checkout', withValue(stripeParams(planId, method), valueYen));
     } catch (_) {}
   }
 
-  function purchaseCompleted(planId, sessionId, method) {
+  function purchaseCompleted(planId, sessionId, method, valueYen) {
     try {
+      // 試験購入（Deploy Preview の Sandbox・ローカル E2E）を本番の売上・購入率に混ぜない（2026-11-11: 10/22 の E2E 53 件が混入していた）
+      if (!isProductionHost()) return;
       var key = 'ak_purchase_sent:' + String(sessionId || '').slice(0, 80);
       try { if (global.sessionStorage && global.sessionStorage.getItem(key)) return; } catch (_) {}
-      var params = stripeParams(planId, method);
+      var params = withValue(stripeParams(planId, method), valueYen);
       // transaction_id は Stripe の決済セッション ID / PayPal の購読 ID（個人情報ではない・重複計上の防止）
       params.transaction_id = String(sessionId || '').slice(0, 80);
       if (typeof global.gtag === 'function') global.gtag('event', 'purchase', params);

@@ -35,7 +35,7 @@ test('料金ページ（FAQ より前）に退会・解約の方法や支払い�
   assert.ok(beforeFaq.length > 1000);
   assert.doesNotMatch(beforeFaq, /annualStop|確認メール[^。]*解約|支払い済み[^。]*(終わる|まで)|「退会する」でも止められます/);
   // 購入時の料金・請求周期・自動更新の条件は出し続ける
-  assert.match(beforeFaq, /12 か月ごとに、お申し込み時と同じ金額で自動的に更新・請求されます/);
+  assert.match(beforeFaq, /12 か月ごとに、通常の年額（¥49,800。Light 会員さまの乗り換え特典は ¥44,820）で自動的に更新・請求されます/);
 });
 
 test('料金ページは ACTIVE の行だけを使い、決済会社名を直書きしない', () => {

@@ -281,7 +281,7 @@ test('配線: purchase は active の分岐だけ・1 か所・401 / 404 / 処�
   const page = readFileSync(fileURLToPath(new URL('../../../pages/checkout/paypal-subscription-return.astro', import.meta.url)), 'utf8');
   assert.equal(page.split('purchaseCompleted(').length - 1, 1, '呼び出しは 1 か所だけ');
   // 決済会社は戻り先の URL で決まる（PayPal ?subscription_id= / Paddle ?provider=paddle&order=・2026-11-02）
-  const call = page.indexOf('window.AkFunnel.purchaseCompleted(x.d.plan, subscription, provider)');
+  const call = page.indexOf('window.AkFunnel.purchaseCompleted(x.d.plan, subscription, provider, x.d.firstYen)');
   assert.match(page, /const provider = isPaddle \? 'paddle' : 'paypal';/);
   assert.ok(call > 0);
   const activeAt = page.indexOf("if (st === 'active') {");

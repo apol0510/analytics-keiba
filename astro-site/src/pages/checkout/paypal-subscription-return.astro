@@ -55,7 +55,7 @@ const confirmQuery = isPaddle ? 'provider=paddle&order=' : 'subscription=';
           if (st === 'active') {
             var t = copy[x.d.plan] || FALLBACK;
             // GA4 purchase: サーバーが反映済み（active）を返したときだけ。同じ購読は AkFunnel 側で 1 回だけ
-            if (copy[x.d.plan] && window.AkFunnel && window.AkFunnel.purchaseCompleted) window.AkFunnel.purchaseCompleted(x.d.plan, subscription, provider);
+            if (copy[x.d.plan] && window.AkFunnel && window.AkFunnel.purchaseCompleted) window.AkFunnel.purchaseCompleted(x.d.plan, subscription, provider, x.d.firstYen);
             // 決済完了 → 自動遷移（2026-10-22 MK 確定・postPurchaseLanding.js）。active＝サーバーが決済会社で照会して反映済みのときだけ
             if (asGuest) {
               // 未ログイン: 完了を読める時間を置いてからログイン画面へ。ログイン後はサーバーが Premium の利用画面へ送る

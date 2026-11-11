@@ -59,7 +59,7 @@ export const SUBSCRIPTION_SITE_PLANS = Object.freeze(SUBSCRIPTION_PLANS.filter((
   name: SUBSCRIPTION_PLAN_NAMES[p.id],
   priceYen: p.amountYen,
   period: p.interval === 'YEAR' ? 'year' : 'month',
-  term: `${SUB_SCOPE[p.id]} Renews automatically every ${p.interval === 'YEAR' ? '12 months' : 'month'} at the same price until cancelled.`,
+  term: `${SUB_SCOPE[p.id]} Renews automatically every ${p.interval === 'YEAR' ? '12 months' : 'month'} at the listed price until cancelled. An introductory discount, when offered to a new subscriber, applies to the first payment only.`,
 })));
 export const SUBSCRIPTION_MEMBER_PLAN = Object.freeze({
   name: SUBSCRIPTION_PLAN_NAMES['premium-annual-light'],
@@ -139,10 +139,10 @@ ${SUBSCRIPTION_SITE_PLANS.map((p) => `  <li><h3>${p.name}</h3><p class="price">$
   <li><h3>${PLANS[1].name}</h3><p class="price">${yen(PLANS[1].priceYen)} <span>JPY, tax included</span></p><p>Access for as long as the Service is operated. One-time payment by bank transfer only (not available by card); no further charges.</p></li>
 </ul>
 <p>Existing Light plan members can subscribe to the annual plan (${SUBSCRIPTION_MEMBER_PLAN.name}) for ${yen(SUBSCRIPTION_MEMBER_PLAN.priceYen)} per year (tax included),
-renewing every 12 months at the same price. This price is shown only to eligible members on the member site.</p>
+renewing every 12 months at that price. This price is shown only to eligible members on the member site.</p>
 <ul>
   <li>All prices are in Japanese yen and include Japanese consumption tax.</li>
-  <li>Monthly and annual plans are subscriptions paid by card. They renew automatically at the same price until you cancel.</li>
+  <li>Monthly and annual plans are subscriptions paid by card. They renew automatically at the listed price until you cancel. An introductory discount for new subscribers, when offered, applies to the first payment only and is shown on the payment page.</li>
   <li>Cancellation and refund terms are set out in the <a href="/refund/">Refund Policy</a>.</li>
   <li>Access starts once the payment is confirmed. See <a href="/billing/">Billing</a> for details.</li>
 </ul>` : `
@@ -172,8 +172,8 @@ eligible members on the member site.</p>
   <li>When the payment is confirmed, the plan is applied to your account automatically. The payment provider sends you a receipt.</li>
 </ol>
 <h2>Automatic renewal</h2>
-<p>Monthly plans are charged every month and annual plans every 12 months, on the same date as the first payment, at the same
-price, until you cancel. Each renewal is charged to the card used for the subscription and a receipt is sent for each payment.
+<p>Monthly plans are charged every month and annual plans every 12 months, on the same date as the first payment, at the listed
+price, until you cancel. An introductory discount, when offered, applies to the first payment only. Each renewal is charged to the card used for the subscription and a receipt is sent for each payment.
 If a renewal payment fails, access is not extended.</p>
 <h2>Who processes card payments</h2>
 <p>Card payments are processed by Paddle.com, which acts as our online reseller and Merchant of Record for card orders;
@@ -227,7 +227,7 @@ By purchasing a plan or using the Service you agree to these Terms. The Terms ar
 <p>Accounts are personal. Do not share your sign-in links or let others use your account. Keep your email address up to date.</p>
 <h2>4. Plans and payment</h2>
 ${o.subscriptions ? `<p>Plans and prices are listed on the <a href="/pricing/">Pricing</a> page. Monthly and annual plans are subscriptions
-that renew automatically at the same price, every month or every 12 months, until cancelled. Access is extended only when a
+that renew automatically at the listed price (an introductory discount, when offered, applies to the first payment only), every month or every 12 months, until cancelled. Access is extended only when a
 renewal payment succeeds. You can cancel at any time as described in the <a href="/refund/">Refund Policy</a>. The Lifetime plan
 is a one-time payment by bank transfer and gives access for as long as the Service is operated. Card orders are processed by
 our reseller, Paddle.com, as Merchant of Record (see <a href="/billing/">Billing</a>).</p>` : `<p>Plans and prices are listed on the <a href="/pricing/">Pricing</a> page. Each plan is a one-time payment and does not renew
