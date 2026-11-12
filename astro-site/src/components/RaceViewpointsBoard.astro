@@ -19,7 +19,7 @@
 import { RACE_STATE } from '../lib/freeViewpoints/raceViewpoints.js';
 import {
   TAG_LABEL, TAG_SENTENCE, TAG_ICON, STATE_LABEL, STATE_SENTENCE, STATE_ICON,
-  HIGHLIGHT_LABEL, HORSE_CHANGE_CHIP, PAID_CTA, HORSE_SECTION, MEMBER_EXTRAS, coverageNote,
+  HIGHLIGHT_LABEL, HORSE_CHANGE_CHIP, PAID_CTA, LOCKED_TEASER_DUMMY, HORSE_SECTION, MEMBER_EXTRAS, coverageNote,
   TERM_HELP, CHIP_HELP, INTERVAL_HELP, HOW_TO_USE, HELP_TOGGLE, LAYOFF_LABEL, LIST_COPY,
 } from '../lib/freeViewpoints/copy.js';
 import { headlineMarksOf, isMainRaceIn, raceRangeLabel } from '../lib/freeViewpoints/listView.js';
@@ -362,6 +362,15 @@ const LEGEND = [
                 )}
 
                 <div class="rvb-cta">
+                  {/* 2026-11-13 MK: 旧プレビューと同じ「開くとすぐ見える」鍵付きの買い目（固定のダミーの伏せ字・実データではない）*/}
+                  <a class="rvb-lockcard" href={sampleUrl} data-premium-detail={sampleCat}>
+                    <span class="rvb-lockcard-title">🎯 {PAID_CTA.detailTeaserTitle}</span>
+                    <span class="rvb-lockcard-lines" aria-hidden="true">
+                      {LOCKED_TEASER_DUMMY.map((d) => <span class="rvb-lockcard-line"><span class="rvb-blur">{d}</span><span class="rvb-lockcard-ic">🔒</span></span>)}
+                    </span>
+                    <span class="rvb-lockcard-note">{PAID_CTA.detailTeaserNote}</span>
+                    <span class="rvb-lockcard-btn">{PAID_CTA.detailTeaserButton}</span>
+                  </a>
                   <p class="rvb-cta-head">{PAID_CTA.heading}</p>
                   <p class="rvb-cta-body">{PAID_CTA.body}</p>
                   <div class="rvb-cta-links">
@@ -377,8 +386,13 @@ const LEGEND = [
                 </div>
               </div>
             </details>
-            {/* 2026-11-11 MK 指示: 詳細を開かなくても Premium の存在が分かる 1 行（印の表示は変えない・広告にしない＝控えめな文字リンク） */}
-            <a class="rvb-premium-row" href={sampleUrl} data-premium-row={sampleCat}>🔒 {PAID_CTA.rowLine}<span aria-hidden="true"> ›</span></a>
+            {/* 2026-11-13 MK: 印を見るたびに鍵付きの買い目が目に入る帯（旧プレビューの強みを戻す）。印の表示は変えない。
+                伏せ字は固定のダミー（実データ・馬番を使わない）。行き先は Premium 画面の見本。 */}
+            <a class="rvb-premium-row rvb-locked" href={sampleUrl} data-premium-row={sampleCat} aria-label={PAID_CTA.rowLine}>
+              <span class="rvb-locked-label">🎯 {PAID_CTA.teaserLabel}</span>
+              <span class="rvb-locked-blur" aria-hidden="true">{LOCKED_TEASER_DUMMY.map((d) => <span class="rvb-blur">{d}</span>)}</span>
+              <span class="rvb-locked-cta">🔒 {PAID_CTA.teaserCta}<span aria-hidden="true"> ›</span></span>
+            </a>
           </li>
         ))}
       </ol>
@@ -886,8 +900,28 @@ const LEGEND = [
   .rvb-cta-b:hover { background: rgba(245,158,11,.18); }
 
   /* 各レースの Premium の 1 行（2026-11-11 MK）: 控えめな紫の文字リンク（紫 = Premium 導線）。印の行の直下 */
-  .rvb-premium-row { display: block; margin: 6px 2px 0; font-size: .85rem; color: #c4b5fd; text-decoration: none; line-height: 1.5; }
-  .rvb-premium-row:hover, .rvb-premium-row:focus-visible { color: #ddd6fe; text-decoration: underline; text-underline-offset: 3px; }
+  /* 鍵付きの買い目の帯（各レースの行・常に見える）。Premium 導線 = 紫（GLASS_DESIGN_RULES の役割表）*/
+  .rvb-locked { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 6px 0 0; padding: 8px 12px;
+    border-radius: 12px; text-decoration: none; line-height: 1.4;
+    background: linear-gradient(135deg, rgba(109, 40, 217, 0.28), rgba(67, 56, 202, 0.22));
+    border: 1px solid rgba(167, 139, 250, 0.5); color: #ede9fe; }
+  .rvb-locked:hover, .rvb-locked:focus-visible { border-color: #c4b5fd; background: linear-gradient(135deg, rgba(109, 40, 217, 0.4), rgba(67, 56, 202, 0.32)); }
+  .rvb-locked-label { font-size: .85rem; font-weight: 700; color: #ddd6fe; white-space: nowrap; }
+  .rvb-locked-blur { display: inline-flex; gap: 8px; flex: 1 1 auto; min-width: 0; overflow: hidden; }
+  .rvb-blur { display: inline-block; padding: 1px 8px; border-radius: 8px; background: rgba(255, 255, 255, 0.12);
+    font-weight: 800; color: #f5f3ff; filter: blur(4px); user-select: none; white-space: nowrap; }
+  .rvb-locked-cta { margin-left: auto; font-size: .85rem; font-weight: 800; color: #fde68a; white-space: nowrap; }
+  @media (max-width: 480px) { .rvb-locked-blur .rvb-blur:nth-child(n+3) { display: none; } }
+  /* 詳細の中の鍵付きカード（開くとすぐ見える）*/
+  .rvb-lockcard { display: block; margin: 0 0 12px; padding: 12px 14px; border-radius: 14px; text-decoration: none; color: #ede9fe;
+    background: linear-gradient(135deg, rgba(109, 40, 217, 0.35), rgba(67, 56, 202, 0.28)); border: 1px solid rgba(167, 139, 250, 0.55); }
+  .rvb-lockcard-title { display: block; font-weight: 800; color: #f5f3ff; margin-bottom: 8px; }
+  .rvb-lockcard-lines { display: grid; gap: 6px; margin-bottom: 8px; }
+  .rvb-lockcard-line { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; border-radius: 10px; background: rgba(15, 23, 42, 0.35); }
+  .rvb-lockcard-line .rvb-blur { filter: blur(5px); font-size: 1.05rem; }
+  .rvb-lockcard-note { display: block; font-size: .8rem; color: #c4b5fd; margin-bottom: 10px; }
+  .rvb-lockcard-btn { display: inline-flex; align-items: center; min-height: 40px; padding: 0 16px; border-radius: 10px; font-weight: 800;
+    background: linear-gradient(135deg, #8b5cf6, #6366f1); color: #fff; }
 
   .rvb-foot { margin-top: 32px; font-size: .78rem; color: #cbd5e1; line-height: 1.85; }
 

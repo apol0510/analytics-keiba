@@ -97,3 +97,19 @@ test('照合注記は実数で出す（割合で全体を語らない）', () =>
   assert.ok(none.includes('近走なし'));
   assert.ok(!none.includes('照合できていません'), '未出走を照合失敗の文言で説明しない');
 });
+
+// 2026-11-13 MK: 鍵付きの買い目の伏せ字は固定のダミーだけ（実データ・馬番・組み合わせを出さない）
+test('鍵付きの買い目の伏せ字は固定のダミー（00 だけ）', async () => {
+  const { LOCKED_TEASER_DUMMY } = await import('./copy.js');
+  assert.ok(Array.isArray(LOCKED_TEASER_DUMMY) && LOCKED_TEASER_DUMMY.length > 0);
+  for (const d of LOCKED_TEASER_DUMMY) assert.match(d, /^00( → 00)*$/, `ダミー以外の値: ${d}`);
+  const { readFileSync } = await import('node:fs');
+  const board = readFileSync(new URL('../../components/RaceViewpointsBoard.astro', import.meta.url), 'utf8');
+  for (const cls of ['rvb-locked-blur', 'rvb-lockcard-lines']) {
+    const i = board.indexOf(`class="${cls}"`);
+    assert.ok(i > 0, `${cls} が無い`);
+    const seg = board.slice(i, i + 260);
+    assert.ok(seg.includes('LOCKED_TEASER_DUMMY'), `${cls} がダミー以外を描いている`);
+    assert.equal(/race\.|horse|marks|bet/i.test(seg.replace('LOCKED_TEASER_DUMMY', '')), false, `${cls} にレースのデータが入っている`);
+  }
+});
