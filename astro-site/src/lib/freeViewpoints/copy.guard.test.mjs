@@ -113,3 +113,15 @@ test('鍵付きの買い目の伏せ字は固定のダミー（00 だけ）', as
     assert.equal(/race\.|horse|marks|bet/i.test(seg.replace('LOCKED_TEASER_DUMMY', '')), false, `${cls} にレースのデータが入っている`);
   }
 });
+
+// 2026-11-13 MK: 詳細を開いてすぐ見えるよう、鍵付きの買い目カードは詳細の先頭（無料の分析より前）。計測の属性は維持
+test('鍵付きの買い目カードは詳細の先頭にあり、計測の属性を持つ', async () => {
+  const { readFileSync } = await import('node:fs');
+  const board = readFileSync(new URL('../../components/RaceViewpointsBoard.astro', import.meta.url), 'utf8');
+  const body = board.indexOf('<div class="rvb-detail-body">');
+  const card = board.indexOf('<a class="rvb-lockcard"');
+  const meta = board.indexOf('<p class="rvb-detail-meta">');
+  assert.ok(body > 0 && card > body && card < meta, '鍵付きカードが詳細の先頭に無い');
+  assert.ok(board.slice(card, card + 200).includes('data-premium-detail={sampleCat}'), '計測の属性が無い');
+  assert.ok(board.includes('<a class="rvb-premium-row rvb-locked"') && board.includes('data-premium-row={sampleCat}'), '一覧の帯の計測属性が無い');
+});

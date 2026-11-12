@@ -187,6 +187,15 @@ const LEGEND = [
                 })()}
               </summary>
               <div class="rvb-detail-body">
+                {/* 2026-11-13 MK: 鍵付きの買い目は詳細の先頭（開いてすぐ見える位置）。固定のダミーの伏せ字・実データではない。無料の分析はこの下にそのまま */}
+                <a class="rvb-lockcard" href={sampleUrl} data-premium-detail={sampleCat}>
+                  <span class="rvb-lockcard-title">🎯 {PAID_CTA.detailTeaserTitle}</span>
+                  <span class="rvb-lockcard-lines" aria-hidden="true">
+                    {LOCKED_TEASER_DUMMY.map((d) => <span class="rvb-lockcard-line"><span class="rvb-blur">{d}</span><span class="rvb-lockcard-ic">🔒</span></span>)}
+                  </span>
+                  <span class="rvb-lockcard-note">{PAID_CTA.detailTeaserNote}</span>
+                  <span class="rvb-lockcard-btn">{PAID_CTA.detailTeaserButton}</span>
+                </a>
                 <p class="rvb-detail-meta">
                   <span class="rvb-meta">
                     {race.distanceMeters ? `${race.distanceMeters}m` : '距離未取得'} ・ {race.entryCount}頭
@@ -362,15 +371,6 @@ const LEGEND = [
                 )}
 
                 <div class="rvb-cta">
-                  {/* 2026-11-13 MK: 旧プレビューと同じ「開くとすぐ見える」鍵付きの買い目（固定のダミーの伏せ字・実データではない）*/}
-                  <a class="rvb-lockcard" href={sampleUrl} data-premium-detail={sampleCat}>
-                    <span class="rvb-lockcard-title">🎯 {PAID_CTA.detailTeaserTitle}</span>
-                    <span class="rvb-lockcard-lines" aria-hidden="true">
-                      {LOCKED_TEASER_DUMMY.map((d) => <span class="rvb-lockcard-line"><span class="rvb-blur">{d}</span><span class="rvb-lockcard-ic">🔒</span></span>)}
-                    </span>
-                    <span class="rvb-lockcard-note">{PAID_CTA.detailTeaserNote}</span>
-                    <span class="rvb-lockcard-btn">{PAID_CTA.detailTeaserButton}</span>
-                  </a>
                   <p class="rvb-cta-head">{PAID_CTA.heading}</p>
                   <p class="rvb-cta-body">{PAID_CTA.body}</p>
                   <div class="rvb-cta-links">
