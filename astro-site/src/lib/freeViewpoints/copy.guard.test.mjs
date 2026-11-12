@@ -97,3 +97,31 @@ test('照合注記は実数で出す（割合で全体を語らない）', () =>
   assert.ok(none.includes('近走なし'));
   assert.ok(!none.includes('照合できていません'), '未出走を照合失敗の文言で説明しない');
 });
+
+// 2026-11-13 MK: 鍵付きの買い目の伏せ字は固定のダミーだけ（実データ・馬番・組み合わせを出さない）
+test('鍵付きの買い目の伏せ字は固定のダミー（00 だけ）', async () => {
+  const { LOCKED_TEASER_DUMMY } = await import('./copy.js');
+  assert.ok(Array.isArray(LOCKED_TEASER_DUMMY) && LOCKED_TEASER_DUMMY.length > 0);
+  for (const d of LOCKED_TEASER_DUMMY) assert.match(d, /^00( → 00)*$/, `ダミー以外の値: ${d}`);
+  const { readFileSync } = await import('node:fs');
+  const board = readFileSync(new URL('../../components/RaceViewpointsBoard.astro', import.meta.url), 'utf8');
+  for (const cls of ['rvb-locked-blur', 'rvb-lockcard-lines']) {
+    const i = board.indexOf(`class="${cls}"`);
+    assert.ok(i > 0, `${cls} が無い`);
+    const seg = board.slice(i, i + 260);
+    assert.ok(seg.includes('LOCKED_TEASER_DUMMY'), `${cls} がダミー以外を描いている`);
+    assert.equal(/race\.|horse|marks|bet/i.test(seg.replace('LOCKED_TEASER_DUMMY', '')), false, `${cls} にレースのデータが入っている`);
+  }
+});
+
+// 2026-11-13 MK: 詳細を開いてすぐ見えるよう、鍵付きの買い目カードは詳細の先頭（無料の分析より前）。計測の属性は維持
+test('鍵付きの買い目カードは詳細の先頭にあり、計測の属性を持つ', async () => {
+  const { readFileSync } = await import('node:fs');
+  const board = readFileSync(new URL('../../components/RaceViewpointsBoard.astro', import.meta.url), 'utf8');
+  const body = board.indexOf('<div class="rvb-detail-body">');
+  const card = board.indexOf('<a class="rvb-lockcard"');
+  const meta = board.indexOf('<p class="rvb-detail-meta">');
+  assert.ok(body > 0 && card > body && card < meta, '鍵付きカードが詳細の先頭に無い');
+  assert.ok(board.slice(card, card + 200).includes('data-premium-detail={sampleCat}'), '計測の属性が無い');
+  assert.ok(board.includes('<a class="rvb-premium-row rvb-locked"') && board.includes('data-premium-row={sampleCat}'), '一覧の帯の計測属性が無い');
+});

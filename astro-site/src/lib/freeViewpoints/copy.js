@@ -131,7 +131,17 @@ export const PAID_CTA = Object.freeze({
   planLabel: 'プランを見る →',
   // 各レースの行（詳細を開かなくても見える 1 行・2026-11-11 MK 指示）。行き先は Premium 画面の見本
   rowLine: 'このレースの買い目は Premium で公開',
+  // 2026-11-13 MK: 印を見るたびに「この先に買い目がある」と目に入る形（旧プレビューの強み）を戻す。
+  // 伏せ字は固定のダミー（実データ・馬番を使わない）。
+  teaserLabel: 'AI予測買い目',
+  teaserCta: 'Premium で公開',
+  detailTeaserTitle: 'このレースの AI予測買い目',
+  detailTeaserNote: '伏せ字は見本です。Premium では、このレースの買い目をそのまま公開しています。',
+  detailTeaserButton: '🚀 Premium の画面を見る',
 });
+
+/** 伏せ字の見本（固定・実データではない）。行は 3 つ、詳細は 3 行。 */
+export const LOCKED_TEASER_DUMMY = Object.freeze(['00 → 00', '00 → 00', '00 → 00']);
 
 /** 馬単位の内訳の見出し（仮）。 */
 export const HORSE_SECTION = Object.freeze({
@@ -264,5 +274,5 @@ export const HELP_TOGGLE = Object.freeze({
 
 export default {
   TAG_LABEL, TAG_SENTENCE, STATE_LABEL, STATE_SENTENCE, HIGHLIGHT_LABEL,
-  BANNED_WORDS, BANNED_JUDGEMENT_WORDS, BANNED_PAID_TERMS, coverageNote, MEMBER_EXTRAS, LIST_COPY, TERM_HELP, CHIP_HELP, LAYOFF_LABEL, INTERVAL_HELP, HOW_TO_USE, HELP_TOGGLE, HORSE_CHANGE_CHIP, TAG_ICON, STATE_ICON, PAID_CTA, HORSE_SECTION,
+  BANNED_WORDS, BANNED_JUDGEMENT_WORDS, BANNED_PAID_TERMS, coverageNote, MEMBER_EXTRAS, LIST_COPY, TERM_HELP, CHIP_HELP, LAYOFF_LABEL, INTERVAL_HELP, HOW_TO_USE, HELP_TOGGLE, HORSE_CHANGE_CHIP, TAG_ICON, STATE_ICON, PAID_CTA, LOCKED_TEASER_DUMMY, HORSE_SECTION,
 };
