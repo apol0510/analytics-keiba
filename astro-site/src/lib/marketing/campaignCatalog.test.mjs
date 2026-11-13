@@ -188,28 +188,28 @@ test('【version ロック】本文を変えたら version を上げる', () => 
   const LOCKED = {
     // v3（2026-08-09）: 本文は不変（hash 据え置き）。dormant-reactivation v2 の
     // 14,279 件配信前に、正規経路のカナリアを再実行するための版上げ。
-    'marketing-canary': { version: 3, hash: '162081596a79ea5a' },
-    'expired-comeback': { version: 2, hash: 'e6077db532e76564' },
-    'premium-renewal': { version: 2, hash: '1bfa299fb86a339c' },
+    'marketing-canary': { version: 3, hash: '7ae2a8c053a8bca3' },
+    'expired-comeback': { version: 2, hash: '0b24d6d9373bfd68' },
+    'premium-renewal': { version: 2, hash: 'f3372a9b410b9215' },
     // v2 → v3（2026-09-14）: CTA を `/sanrenpuku-demo/`（既存の公開案内先）にして再開。
     // 本文は 1 文字も変えていないが、CTA が変わるので版を上げた。
-    'sanrenpuku-offer': { version: 3, hash: '389ee30dbead8660' },
-    'premium-plus-offer': { version: 3, hash: '9bdc2b32b4aa546a' },
-    'dormant-reactivation': { version: 2, hash: '8bc34393b414464b' },
-    'general-announcement': { version: 1, hash: '7e6dc6ed7461489d' },
+    'sanrenpuku-offer': { version: 3, hash: 'dbeff5217501614a' },
+    'premium-plus-offer': { version: 3, hash: 'df9d80a67edaf3b7' },
+    'dormant-reactivation': { version: 2, hash: 'e6e26fc71e9bc35b' },
+    'general-announcement': { version: 1, hash: '5972fca73d871820' },
     // Light 永久無料 再スタート案内（2026-08-25 新規）。旧三連複会員 18 名の正規化に
     // 成功した相手だけへ送る。**期限が無いことが要点**なので、文面を変えるときは
     // 「期間限定」と読める表現が入っていないか lightLifetimeRestartNotice.test.mjs も見る。
-    'light-lifetime-restart': { version: 1, hash: '763f385268479701' },
+    'light-lifetime-restart': { version: 1, hash: '1a041a064a6eae74' },
     // カムバック割引案内。本文は offer カタログから自動生成する（comebackEmailTemplate.js）。
     // CTA は受信者ごとの申込 URL なので、ここでは差し込み印がハッシュに入る。
-    'comeback-offer': { version: 2, hash: '86774177e753b2d4' },
+    'comeback-offer': { version: 2, hash: 'fc6c05cc1ecbf2ec' },
     // v1 → v2: 共通 HTML シェルへ載せ替え、件名・プリヘッダー・特典カードを追加。
     // 見た目が大きく変わるので version を上げ、DeliveryKey を v1 と分けた。
-    'comeback-light-30d-granted': { version: 2, hash: '23e4b66cba221622' },
+    'comeback-light-30d-granted': { version: 2, hash: '6c9738ef2fcc2e9c' },
     // 無料会員 活性化（2026-08-09 新規）。無料で見られる範囲だけを案内し、
     // 価格・契約の勧誘は書かない。休眠再アプローチとは対象も入口も違う。
-    'free-member-activation': { version: 1, hash: '256dfcbb6c06209c' },
+    'free-member-activation': { version: 1, hash: 'dfa045a0bd8c5423' },
     // 連続配信は **ステップごと**にロックする（ステップ単位で DeliveryKey が分かれるため、
     // 1 ステップだけ文面を変えても、そのステップは既送信者へ届かない）。
     //
@@ -252,25 +252,25 @@ test('【version ロック】本文を変えたら version を上げる', () => 
       version: 1,
       delivered: [],
       steps: {
-        1: 'c70cf2831298104e',
-        2: '02090ad305bf1287',
-        3: '59e45de935761a24',
+        1: 'd3eeddec844b8d2b',
+        2: '286e328f464e091e',
+        3: '9150361cccb89319',
       },
     },
     'campaign-discount-light': {
       version: 1,
       delivered: [],
       steps: {
-        1: 'b3cc855b64928f6d',
-        2: 'a52338ee29cc8c7f',
+        1: 'ff5f30e66f44ec7f',
+        2: '647933a9cdaffd49',
       },
     },
     'campaign-discount-premium': {
       version: 1,
       delivered: [],
       steps: {
-        1: 'd5729f8a3f74e86d',
-        2: '45d4adc1cf072ab1',
+        1: '0bf9416d68d7e2f1',
+        2: '52b7148036eabb72',
       },
     },
     /**
@@ -288,14 +288,14 @@ test('【version ロック】本文を変えたら version を上げる', () => 
       delivered: [1],
       steps: {
         // 🔒 送信済み。ハッシュは移送時のまま
-        1: 'c721e9eaa8acee80',
+        1: '56a8eec9fb877407',
         // (B) 未送信 Step の修正（コピー基準の適用 / 2026-09-15）
-        2: '19b1a596f7609fd3',
-        3: '266693505f9ecaf2',
-        4: 'c6ade318fd2cc721',
-        5: '4e37b9c1e76618da',
+        2: 'b91987f6c6c95451',
+        3: 'f049136a56568e1d',
+        4: '24c0434006b22513',
+        5: '53e1f53020361ae7',
         // (B) 未送信 Step の修正（2026-10-03・三連複を「レース選別」の訴求へ。送信済みは step1〜5 と CampaignDeliveries で確認）
-        6: '89d8009c12d37eb3',
+        6: '43a3a7d33ccf1f7f',
       },
     },
     /**
@@ -312,10 +312,10 @@ test('【version ロック】本文を変えたら version を上げる', () => 
       version: 1,
       delivered: [],
       steps: {
-        1: 'be1b8eca848be23f',
-        2: 'b5c6f2a179f34d24',
-        3: '6ec09e3ffd5382fe',
-        4: 'b0fe78961b30f2f9',
+        1: 'a0754e5c27876ba1',
+        2: 'a90d16eb6645960c',
+        3: '85e09a56e4b91289',
+        4: '1084b58231e321e1',
       },
     },
     /**
@@ -334,10 +334,10 @@ test('【version ロック】本文を変えたら version を上げる', () => 
         //     読めるようにし、CTA を「押した先で何が見られるか」が分かる語へ直した。
         //     2026-10-03: 三連複を「点数を絞る」から「三連複で狙うべきレースを AI が選別」へ全 4 通を書き直し（未送信）。
         //     2026-10-05: Step3 から「取得した予想はいつでも見返せます。」を削除（MK: メリットに見えない・未送信）。
-        1: '04940eb22d68ad0b',
-        2: '129e07bc03902b96',
-        3: 'd8cc4f9448f08772',
-        4: 'd58573cefce85f44',
+        1: 'd3be934f1e13f3d2',
+        2: '7a54af6376d05c0e',
+        3: 'f30c7dc37cd9530a',
+        4: '9286d8a1aca7c8b8',
       },
     },
     'light-trial-to-premium-sequence': {
@@ -345,14 +345,14 @@ test('【version ロック】本文を変えたら version を上げる', () => 
       /** 本番で**実際に配信済み**の Step（変更禁止 / 下の専用テストが逐語で守る） */
       delivered: [1],
       steps: {
-        1: 'b7d45ce01bc4e686',
-        2: 'a40b36b71fdeee59',
-        3: '490be646ddf3f46b',
+        1: 'dd79522d63ec2f61',
+        2: 'e84d17413d024570',
+        3: 'd3ca0706ce2d29b5',
         // (B) 未送信 Step の修正。2026-08-15 に「今回で最後」を削除（続きがあるため）。
-        4: '06c2941d15072757',
+        4: '668b58d804168fb1',
         // (A) 末尾への追加（Step5〜6 / `lightTrialSteps.js`）。既存 Step の鍵を変えない
-        5: '31f6cae59a98a699',
-        6: '4acf2e87ffa15892',
+        5: 'bb767a3ea2994e68',
+        6: '71ce8c6fb6c40c17',
       },
     },
     /**
@@ -364,24 +364,24 @@ test('【version ロック】本文を変えたら version を上げる', () => 
       version: 1,
       delivered: [],
       steps: {
-        1: 'c2860342c2472c0b',
-        2: 'cf5858e24363b113',
-        3: '63d2e320fa3c3d07',
-        4: '338a6d1a2e0301db',
-        5: 'd85801d24ae4eb61',
-        6: 'a1860f80ac887463',
-        7: '139a0d9343ea46fc',
-        8: 'edfc4509ec10b929',
-        9: 'a930c75fa3cf0939',
-        10: '6548de5aa7f8e512',
-        11: '719460865a972ac7',
-        12: 'c6c6c20fb1135bc6',
-        13: 'c4ed8d7d97c8f48e',
-        14: '4ca02330b4b18e87',
-        15: 'a340270591ca0819',
-        16: 'fa6e65fa9d97a78a',
-        17: '8af4fe69a6089610',
-        18: '6fb8b4bb6567feef',
+        1: '120b129527fb5911',
+        2: 'b051b7f2616a8508',
+        3: '0b4b54f2fa233360',
+        4: '11fce3b420976e9f',
+        5: '52656964cdd06314',
+        6: '5dfc965e5bae3468',
+        7: '4d7d067d94414cc8',
+        8: 'e959a8e892af162d',
+        9: 'e4765d0e14d028ef',
+        10: '46532d22a7bb94d1',
+        11: '8598246a2c2c4960',
+        12: '469c5518944fb37a',
+        13: '4003ee537dfa6a5e',
+        14: '8a854f226eb45337',
+        15: '13a83c4ac5da73b9',
+        16: 'a7225d7eebabf396',
+        17: '8160eb21451afe64',
+        18: 'ff59a6c19e510698',
       },
     },
     /**
@@ -392,13 +392,13 @@ test('【version ロック】本文を変えたら version を上げる', () => 
     'campaign-prospect-phase2': {
       version: 1,
       steps: {
-        1: '2682fc5734473326',
-        2: '1c46e25480f67068',
-        3: '0c2950025aea9221',
-        4: '61f338de0e34712f',
-        5: '02a02e6d78bd53a8',
-        6: 'bf88a0b09e342efb',
-        7: '688241f50cc496f0',
+        1: '2962f7456025123e',
+        2: '0ede3a9ee2a64cd1',
+        3: '1555820576348696',
+        4: 'f6f87aca41816f14',
+        5: 'b806869521a695c1',
+        6: 'd49e42dbc61eee40',
+        7: 'aa7e4a790ecacfd5',
       },
     },
   };
@@ -459,7 +459,8 @@ test('【重要】送信済み Step1 は逐語で凍結（実送信済み・2026
   assert.equal(s1.ctaUrl, 'https://analytics.keiba.link/dashboard/');
   assert.equal(s1.ctaNote, 'お申し込み手続きは必要ありません。{{grantExpiry}}');
   // 内容ハッシュも当時のまま（DeliveryKey は version 由来だが、届く中身の同一性はこれで見る）
-  assert.equal(computeCampaignContentHash(s1), 'b7d45ce01bc4e686',
+  // 2026-11-13: MARKETING_EMAIL_SHELL_VERSION 1 → 3（CTA に utm）でハッシュだけ更新。上の各項目は逐語のまま・campaign version 1 のまま（再送なし）
+  assert.equal(computeCampaignContentHash(s1), 'dd79522d63ec2f61',
     'Step1 の文面が変わっています。**送信済みなので変更できません**');
 });
 

@@ -46,7 +46,7 @@
  *   2. 送信待ち（PENDING）のジョブは**古い版で作られている**ので、
  *      dispatcher が送信を拒否する。dry-run からやり直して積み直す
  */
-export const MARKETING_EMAIL_SHELL_VERSION = 1;
+export const MARKETING_EMAIL_SHELL_VERSION = 3; // v3（2026-11-13）: CTA に utm（ak_mail / email / campaign）を付ける。2 は campaign の version 2 と紛れるので飛ばした
 
 /** ジョブの Notes へ残す印（dispatcher がここから読んで照合する） */
 export const SHELL_VERSION_NOTE_PREFIX = 'shell:v';
@@ -180,14 +180,40 @@ export function renderBenefitCard({ title, items } = {}) {
 }
 
 /**
+ * メールの CTA に付ける流入元（2026-11-13・KAO docs/offsite-presence/README.md §6）。
+ *
+ * GA4 ではメールから来た訪問が Direct に数えられ、28 日の購入 54 件がすべて Direct だった
+ * （Email の経路が 0 件）。メールのリンクに utm を付け、メール経由の訪問・購入を Email として数える。
+ * 🔴 許可 origin の URL だけ。既に utm_ が付いている URL は変えない。campaign は短い英数字だけ（それ以外は既定値）。
+ * 🔴 個人を識別する値（宛先・会員 ID）は付けない。
+ */
+export const EMAIL_UTM = Object.freeze({ source: 'ak_mail', medium: 'email', defaultCampaign: 'ak_marketing' });
+const UTM_CAMPAIGN_RE = /^[a-z0-9_-]{1,40}$/i;
+
+export function withEmailUtm(url, campaign) {
+  const raw = str(url).trim();
+  if (!isAllowedLink(raw)) return raw;
+  try {
+    const u = new URL(raw);
+    if ([...u.searchParams.keys()].some((k) => k.startsWith('utm_'))) return raw;
+    u.searchParams.set('utm_source', EMAIL_UTM.source);
+    u.searchParams.set('utm_medium', EMAIL_UTM.medium);
+    u.searchParams.set('utm_campaign', UTM_CAMPAIGN_RE.test(str(campaign)) ? str(campaign) : EMAIL_UTM.defaultCampaign);
+    return u.toString();
+  } catch {
+    return raw;
+  }
+}
+
+/**
  * CTA ボタン。**table セルの背景色**で作る（Outlook でも塗りが出る）。
  * 角丸は非対応クライアントでは四角くなるだけで読める。
  * URL が許可 origin でなければ**ボタンを出さない**。
  */
-export function renderCta({ label, url } = {}) {
+export function renderCta({ label, url } = {}, utmCampaign) {
   const text = escapeHtml(str(label).trim() || '詳細を見る');
   if (!isAllowedLink(url)) return '';
-  const href = escapeHtml(str(url).trim());
+  const href = escapeHtml(withEmailUtm(url, utmCampaign));
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:6px 0 10px;">`
     + `<tr><td align="center">`
     + `<table role="presentation" cellpadding="0" cellspacing="0" border="0">`
@@ -256,7 +282,7 @@ export function describeGrantExpiry({ expiresAt, durationDays } = {}) {
 export function renderMarketingHtml(input = {}) {
   const {
     salutation, badge, headline, preheader, body, benefit, cta, ctaNote,
-    expiryNote, footerNote, unsubscribeUrl = UNSUBSCRIBE_PLACEHOLDER,
+    expiryNote, footerNote, unsubscribeUrl = UNSUBSCRIBE_PLACEHOLDER, utmCampaign,
   } = input;
 
   const inner = [
@@ -272,7 +298,7 @@ export function renderMarketingHtml(input = {}) {
     expiryNote
       ? `<p style="margin:0 0 18px;font-size:14px;line-height:1.8;color:${BRAND.textMuted};">${escapeHtml(expiryNote)}</p>`
       : '',
-    renderCta(cta || {}),
+    renderCta(cta || {}, utmCampaign),
     ctaNote
       ? `<p style="margin:4px 0 0;font-size:13px;line-height:1.8;color:${BRAND.textMuted};text-align:center;">${escapeHtml(ctaNote)}</p>`
       : '',
@@ -307,7 +333,7 @@ export function renderMarketingHtml(input = {}) {
 export function renderMarketingText(input = {}) {
   const {
     salutation, badge, headline, body, benefit, cta, ctaNote,
-    expiryNote, footerNote, unsubscribeUrl = UNSUBSCRIBE_PLACEHOLDER,
+    expiryNote, footerNote, unsubscribeUrl = UNSUBSCRIBE_PLACEHOLDER, utmCampaign,
   } = input;
 
   const lines = [];
@@ -327,7 +353,7 @@ export function renderMarketingText(input = {}) {
   }
   if (expiryNote) lines.push(str(expiryNote).trim(), '');
   if (cta && isAllowedLink(cta.url)) {
-    lines.push(`${str(cta.label).trim() || '詳細'}:`, str(cta.url).trim(), '');
+    lines.push(`${str(cta.label).trim() || '詳細'}:`, withEmailUtm(cta.url, utmCampaign), '');
   }
   if (ctaNote) lines.push(str(ctaNote).trim(), '');
   if (footerNote) lines.push(str(footerNote).trim(), '');

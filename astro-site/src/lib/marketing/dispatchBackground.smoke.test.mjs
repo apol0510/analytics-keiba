@@ -55,7 +55,7 @@ function fixture(n) {
         TargetPlan: 'campaign:expired-comeback',
         Recipients: people.map((p) => p.email).join(', '),
         Subject: 'テスト', Content: CONTENT, RecipientCount: n,
-        Notes: 'marketing campaign expired-comeback v2 shell:v1',
+        Notes: 'marketing campaign expired-comeback v2 shell:v3',
       },
     }],
     customers: people.map((p) => ({ id: p.cus, fields: { Email: p.email, 'プラン': 'Free' } })),
