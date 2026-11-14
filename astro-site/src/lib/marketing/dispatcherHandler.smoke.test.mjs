@@ -132,7 +132,7 @@ const job = (over = {}) => ({
     Subject: 'テスト', Content: '<p>本文</p>', RecipientCount: 1,
     // dispatcher は「どの組み立て方で作った HTML か」を Notes から読む。
     // 版が合わないジョブは送らないので、正常系の fixture には必ず入れる。
-    Notes: 'marketing campaign expired-comeback v2 shell:v1', ...over,
+    Notes: 'marketing campaign expired-comeback v2 shell:v3', ...over,
   },
 });
 

@@ -275,3 +275,32 @@ test('CTA は 1 つだけ（乱立させない）', () => {
   // CTA ボタン + フッターの配信停止 = 2
   assert.equal(anchors, 2, `リンクが ${anchors} 本ある（CTA と配信停止だけにする）`);
 });
+
+// ---------------------------------------------------------------- メールの流入元（utm・2026-11-13）
+import { withEmailUtm, EMAIL_UTM, renderCta as renderCtaUtm, renderMarketingText as renderTextUtm } from './marketingEmailShell.js';
+
+test('許可 origin の CTA に ak_mail / email / campaign を付ける', () => {
+  const u = new URL(withEmailUtm('https://analytics.keiba.link/pricing/', 'nov_offer'));
+  assert.equal(u.searchParams.get('utm_source'), EMAIL_UTM.source);
+  assert.equal(u.searchParams.get('utm_medium'), 'email');
+  assert.equal(u.searchParams.get('utm_campaign'), 'nov_offer');
+  assert.equal(u.pathname, '/pricing/');
+});
+
+test('既存のクエリは残し、utm 付きの URL は変えない', () => {
+  const u = new URL(withEmailUtm('https://analytics.keiba.link/login/?next=/pricing/'));
+  assert.equal(u.searchParams.get('next'), '/pricing/');
+  assert.equal(u.searchParams.get('utm_campaign'), EMAIL_UTM.defaultCampaign);
+  const tagged = 'https://analytics.keiba.link/?utm_source=x&utm_medium=y';
+  assert.equal(withEmailUtm(tagged, 'z'), tagged);
+});
+
+test('🔴 許可外の URL・形式外の campaign は付けない / 既定値にする', () => {
+  assert.equal(withEmailUtm('https://example.com/a', 'c'), 'https://example.com/a');
+  assert.equal(new URL(withEmailUtm('https://analytics.keiba.link/', 'x y@z')).searchParams.get('utm_campaign'), EMAIL_UTM.defaultCampaign);
+});
+
+test('HTML と text の CTA の両方に付く', () => {
+  assert.match(renderCtaUtm({ label: '見る', url: 'https://analytics.keiba.link/pricing/' }, 'c1'), /utm_medium=email/);
+  assert.match(renderTextUtm({ cta: { label: '見る', url: 'https://analytics.keiba.link/pricing/' }, utmCampaign: 'c1' }), /utm_campaign=c1/);
+});
