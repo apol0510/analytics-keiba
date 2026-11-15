@@ -14,7 +14,6 @@
 | MK の作業 | Paddle 管理画面で読み取り専用の API キー（transaction・adjustment・subscription の read）を作り、analytics-keiba の GitHub Actions secret（名前は上記の読み取り鍵）へ登録する。値はチャット・文書に貼らない |
 
 # 💳 無料予想 → Premium 導線・特別価格（2026-11-11 MK 指示 / **PR 作成・merge 待ち**）
-# 💳 無料予想 → Premium 導線・特別価格（2026-11-11 MK 指示 / **PR 作成・merge 待ち**）
 
 | 項目 | 状態 |
 |---|---|
