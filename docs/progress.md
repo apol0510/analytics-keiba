@@ -11,7 +11,7 @@
 | 無料予想（#892）との関係 | 未確認。GA4 の集計が終わる 11/16 以降に、`/free/` 経由か・中央／南関・`free_premium_row_click` / `detail_click`・見本・特別価格カード・`/pricing/`・`purchase` の `value` / `discount`・新規／既存・`ak_cmp_group` を `docs/measurements/PREMIUM_CAMPAIGN_2026_11.md` に記録する。1 件では因果を断定しない |
 | KAO | RESOLVED `8d76435b`（本番⑤ 初回実測）／ PARKED `2d05de6d`（GA4 経路・11/16 12:00 JST）・`77f1ba98`（11 月の売上ファイル）・`c3014a37`（11/26 中間評価）・`0b1b95ec`（12/10 評価）／ BLOCKED `8a06afc7`（`PADDLE_READ_KEY`）|
 | 次の監視 | 初回更新 `paddle-subscription-first-renewal-2026`（12/1 から毎日・期限の延長を read-only で確認）|
-| MK の作業 | Paddle の読み取り専用 API キー（transaction.read・adjustment.read・subscription.read）を作り、`gh secret set PADDLE_READ_KEY -R apol0510/analytics-keiba` で登録（値はチャットに貼らない）|
+| MK の作業 | Paddle 管理画面で読み取り専用の API キー（transaction・adjustment・subscription の read）を作り、analytics-keiba の GitHub Actions secret（名前は上記の読み取り鍵）へ登録する。値はチャット・文書に貼らない |
 
 # 💳 無料予想 → Premium 導線・特別価格（2026-11-11 MK 指示 / **PR 作成・merge 待ち**）
 
