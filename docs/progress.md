@@ -1,3 +1,19 @@
+# 🎉 Paddle 初の実購入（2026-11-15 MK 報告・#892 後）／ **成立を確認済み・金額と経路は確認待ち**
+
+| 項目 | 状態 |
+|---|---|
+| 決済日時 | 2026-11-15 05:57 JST（PaidAt 2026-11-14T20:57:50Z）|
+| 成立（確認済み）| read-only 監視 `paddle-subscription-first-purchase-2026` を手動実行 → Issue #895。Customers に Paddle 定期課金の会員 **1 件**（利用中 1・退会 0）。商品 **Premium 中央版 月額**（Monthly/jra）。権限の形の検査（Premium・active・期限が支払い日 + 1 か月以上）は合格。この値を書くのは Paddle の通知を中立サイトが照会した後の本番の内部付与だけなので、「決済 → 通知 → 照会 → 付与」が成立している |
+| 重複 | Paddle 定期課金の会員は 1 件だけ（同じ購入での二重付与の兆候なし）。取引単位の重複は下の鍵が入ってから確認 |
+| 請求額・値引き（未確認）| 特別価格 `special-2026-11` は受付中（中立サイトは 11/11 06:38Z に再 deploy・本番の料金ページに ¥2,480）。新規カード契約なら **初回 ¥2,480（500 円引き）・翌月から ¥2,980**。実際の請求額・値引き・購読状態・次回請求は Paddle で未確認（下記）|
+| 確認できなかったもの | Paddle 管理画面と Netlify 管理画面はブラウザが未ログイン（パスワードは Claude が入力しない）。Webhook の関数ログ・利用開始メールの送信受付／実配信も未確認。GA4 の標準レポートは前日分までで、当日の購入は未集計 |
+| 売上集計 | `revenueMonthly` は Paddle を `grand_total`（値引き後の実請求額・返金は adjustments）で数え、AK の PayPal 口座の取引とは別の経路（Paddle の決済画面の PayPal ボタンも Paddle の取引）なので二重計上しない。ただし GitHub secret `PADDLE_READ_KEY` が未登録のため、Paddle は現在「未計上」|
+| 無料予想（#892）との関係 | 未確認。GA4 の集計が終わる 11/16 以降に、`/free/` 経由か・中央／南関・`free_premium_row_click` / `detail_click`・見本・特別価格カード・`/pricing/`・`purchase` の `value` / `discount`・新規／既存・`ak_cmp_group` を `docs/measurements/PREMIUM_CAMPAIGN_2026_11.md` に記録する。1 件では因果を断定しない |
+| KAO | RESOLVED `8d76435b`（本番⑤ 初回実測）／ PARKED `2d05de6d`（GA4 経路・11/16 12:00 JST）・`77f1ba98`（11 月の売上ファイル）・`c3014a37`（11/26 中間評価）・`0b1b95ec`（12/10 評価）／ BLOCKED `8a06afc7`（`PADDLE_READ_KEY`）|
+| 次の監視 | 初回更新 `paddle-subscription-first-renewal-2026`（12/1 から毎日・期限の延長を read-only で確認）|
+| MK の作業 | Paddle 管理画面で読み取り専用の API キー（transaction・adjustment・subscription の read）を作り、analytics-keiba の GitHub Actions secret（名前は上記の読み取り鍵）へ登録する。値はチャット・文書に貼らない |
+
+# 💳 無料予想 → Premium 導線・特別価格（2026-11-11 MK 指示 / **PR 作成・merge 待ち**）
 # 💳 無料予想 → Premium 導線・特別価格（2026-11-11 MK 指示 / **PR 作成・merge 待ち**）
 
 | 項目 | 状態 |
