@@ -91,10 +91,13 @@ const event = ({ cookie = '', body = { confirm: true }, origin = ORIGIN, method 
   headers: { origin, host: 'analytics.keiba.link', ...(cookie ? { cookie } : {}) },
   body: JSON.stringify(body),
 });
-async function sessionCookie(recordId, plan = 'premium') {
+async function sessionCookie(recordId, plan = 'premium', issuedAt = Date.now()) {
   const issued = await issuePaidSessionCookie({
     membership: { memberType: MEMBER_TYPE.PAID, normalizedPlan: plan, venueAccess: ['jra', 'nankan'], sessionVersion: 0, recordId },
-    secret: SECRET, now: NOW.getTime(), subtle: globalThis.crypto.subtle,
+    // ⚠️ 発行時刻の既定は実時刻。handleWithdrawRequest はセッションを実時刻で検証する（readSessionRecordId・TTL 30 日）ため、
+    //    固定の NOW で発行すると NOW+30 日（2026-11-14）以降に全件 401 になる（2026-11-18 CI 失敗）。
+    //    検証側に now を渡せるテスト（gatePaidPage）だけ issuedAt に NOW を渡す。
+    secret: SECRET, now: issuedAt, subtle: globalThis.crypto.subtle,
   });
   assert.ok(issued.ok);
   return issued.cookie.split(';')[0];
@@ -148,7 +151,7 @@ test('退会後も別に持つ買い切りは残る: 月額＋三連複の買い
 
 // ── 退会直後の有料ページ・API・直 URL ─────────────────────────────
 test('退会直後: 退会前のセッションで有料ページ・API・直 URL を開いても拒否（キャッシュが古くても印で読み直す）', async () => {
-  const cookie = await sessionCookie(REC_A);
+  const cookie = await sessionCookie(REC_A, 'premium', NOW.getTime());
   const before = paypalMonthly();
   const after = withdrawn(before);
   // 権利判定のキャッシュは退会前の値を持っている。鮮度を指定したときだけ最新（退会後）を返す
