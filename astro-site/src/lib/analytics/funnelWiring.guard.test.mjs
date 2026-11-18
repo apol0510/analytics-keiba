@@ -68,6 +68,9 @@ test('申込フォームを持つページは、必ず申込成功を出せる�
   const missing = [];
   for (const p of PAGES) {
     if (!p.src.includes(APPLICATION_ENDPOINT)) continue;
+    // 確定画面（未ログインの申込を本人がメールのリンクから確定する・2026-11-18）は申込フォームではない。
+    // 申込成功は元の申込フォームで 1 回出ているので、ここで出すと二重に数える
+    if (p.rel === 'bank-transfer/confirm.astro') continue;
     // 経路 A: 共通の成功画面を通る（`funnel-analytics.js` が包んで拾う）
     const viaSuccessScreen = p.src.includes('showSuccessScreen')
       && /type:\s*'bank-transfer'/.test(p.src);

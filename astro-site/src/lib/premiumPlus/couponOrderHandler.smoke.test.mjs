@@ -17,6 +17,19 @@ const FN = fileURLToPath(new URL('../../../netlify/functions/bank-transfer-appli
 const { couponIdWithVersion, PP_REOPEN_COUPON_FIELDS } = await import('./premiumPlusReopenCoupon.js');
 const ID = couponIdWithVersion();
 
+// ⚠️ 2026-11-18（KAO registry 339e0bd2）: Premium Plus の申込は**ログイン中の本人だけ**。
+//    未ログインの申込はアドレスに関係なく 403 login_required で止まるので、合成会員のセッションを付けて呼ぶ。
+const { createSession } = await import('../auth/session.js');
+const { randomBytes } = await import('node:crypto');
+const SIGNING_KEY = randomBytes(32).toString('hex'); // 固定値をソースに置かない
+async function sessionHeaders(recordId) {
+  process.env.SESSION_SIGNING_SECRET = SIGNING_KEY;
+  const { token } = await createSession({
+    secret: SIGNING_KEY, sub: recordId, plan: 'premium', venueAccess: 'all', now: Date.now(), ttlMs: 3600_000,
+  });
+  return { 'content-type': 'application/json', cookie: `ak_session=${token}` };
+}
+
 const PAUSED_HELD = {
   'Email': 'synthetic@example.invalid', '氏名': 'テスト',
   'プラン': 'Premium Sanrenpuku', 'Status': 'active', '有効期限': '2099-12-31',
@@ -63,6 +76,11 @@ function stub(fields) {
     }
     if (u.includes('api.airtable.com')) {
       if (m !== 'GET') { calls.push('AIRTABLE_' + m); return new Response('{}', { status: 200 }); }
+      // セッションの解決（Customers/{recordId} の 1 件取得）
+      if (/\/Customers\/rec[^/?]+$/.test(u.split('?')[0])) {
+        return new Response(JSON.stringify({ id: 'recSYNTH000000010', fields }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
       return new Response(JSON.stringify({ records: [{ id: 'recSYNTH000000010', fields }] }),
         { status: 200, headers: { 'Content-Type': 'application/json' } });
     }
@@ -108,7 +126,7 @@ async function post(body) {
     const handler = globalThis.exports.handler;
     const res = await handler({
       httpMethod: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: await sessionHeaders('recSYNTH000000010'),
       body: JSON.stringify({
         fullName: 'テスト', email: 'synthetic@example.invalid',
         transferDate: '2026-08-19', transferTime: '10:00',
@@ -204,8 +222,9 @@ test('会員レコードを引けず判定不能 → 申込拒否・副作用ゼ
   };
   const r = await post({ transferAmount: 58000, couponId: ID });
   // 2026-09-29〜 会員を特定できない Plus 申込は、クーポン判定より前の購入可否ゲートで止まる（fail closed）
+  // 2026-11-18〜 会員レコードを読めないとセッションも本人と確かめられないので、その前のログイン必須で止まる
   assert.equal(r.status, 403);
-  assert.equal(r.body.code, 'plus_not_purchasable');
+  assert.equal(r.body.code, 'login_required');
   assert.deepEqual(calls, [], `副作用が出ている: ${calls.join(',')}`);
 });
 
