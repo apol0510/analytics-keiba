@@ -15,10 +15,12 @@
  */
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { randomBytes } from 'node:crypto';
 import { createSession } from '../auth/session.js';
 import { pendingApplicationKey } from './guestApplicationConfirm.js';
 
-const SECRET = 'test-signing-secret-0123456789abcdef-xyz';
+// 署名鍵はテストごとに乱数で作る（固定値をソースに置かない）
+const SIGNING_KEY = randomBytes(32).toString('hex');
 const REDIS_URL = 'https://redis.example.test';
 
 let db; // recordId -> fields
@@ -106,7 +108,7 @@ beforeEach(() => {
   resetWorld();
   for (const [k, v] of [
     ['AIRTABLE_API_KEY', 'dummy'], ['AIRTABLE_BASE_ID', 'appTEST'], ['SENDGRID_API_KEY', 'dummy'],
-    ['SESSION_SIGNING_SECRET', SECRET], ['UPSTASH_REDIS_REST_URL', REDIS_URL], ['UPSTASH_REDIS_REST_TOKEN', 'dummy'],
+    ['SESSION_SIGNING_SECRET', SIGNING_KEY], ['UPSTASH_REDIS_REST_URL', REDIS_URL], ['UPSTASH_REDIS_REST_TOKEN', 'dummy'],
   ]) process.env[k] = v;
   delete process.env.MAKE_MAILHOOK_EMAIL;
   delete process.env.URL;
@@ -128,7 +130,7 @@ function form(over = {}) {
 }
 async function cookieFor(recordId) {
   const { token } = await createSession({
-    secret: SECRET, sub: recordId, plan: 'premium', venueAccess: 'all', now: Date.now(), ttlMs: 3600_000,
+    secret: SIGNING_KEY, sub: recordId, plan: 'premium', venueAccess: 'all', now: Date.now(), ttlMs: 3600_000,
   });
   return `ak_session=${token}`;
 }

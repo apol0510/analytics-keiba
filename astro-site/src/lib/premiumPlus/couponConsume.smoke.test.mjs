@@ -30,11 +30,12 @@ const { couponIdWithVersion, PP_REOPEN_COUPON_FIELDS } = await import('./premium
 // ⚠️ 2026-11-18（KAO registry 339e0bd2）: Premium Plus の申込は**ログイン中の本人だけ**。
 //    未ログインの申込はアドレスに関係なく 403 login_required で止まるので、合成会員のセッションを付けて呼ぶ。
 const { createSession } = await import('../auth/session.js');
-const TEST_SESSION_SECRET = 'smoke-test-signing-secret-0123456789abcdef';
+const { randomBytes } = await import('node:crypto');
+const SIGNING_KEY = randomBytes(32).toString('hex'); // 固定値をソースに置かない
 async function sessionHeaders(recordId) {
-  process.env.SESSION_SIGNING_SECRET = TEST_SESSION_SECRET;
+  process.env.SESSION_SIGNING_SECRET = SIGNING_KEY;
   const { token } = await createSession({
-    secret: TEST_SESSION_SECRET, sub: recordId, plan: 'premium', venueAccess: 'all', now: Date.now(), ttlMs: 3600_000,
+    secret: SIGNING_KEY, sub: recordId, plan: 'premium', venueAccess: 'all', now: Date.now(), ttlMs: 3600_000,
   });
   return { 'content-type': 'application/json', cookie: `ak_session=${token}` };
 }
