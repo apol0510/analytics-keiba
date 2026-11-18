@@ -228,9 +228,19 @@ test('cursor は封がされている: 改ざん・別 phase・別 secret は拒
   const token = r.body.next;
   assert.ok(!/itr|rec[0-9]/.test(token), 'offset（recordId を含む）が素のまま出ない');
   assert.equal(openCursor(token, 'other-secret'), null);
-  const tampered = token.slice(0, -2) + (token.endsWith('A') ? 'BB' : 'AA');
-  const t = await runNativeMailAudit({ req: { phase: 'baseline', cursor: tampered }, deps: deps(world) });
-  assert.equal(t.body.code, NATIVE_AUDIT_FAIL.INVALID_CURSOR);
+  // 改ざんはバイト単位で行う。末尾の文字を置き換える方法は、base64url の最終文字の未使用ビットだけが
+  // 変わると復号後のバイト列が元と同じになり、確率的に「改ざんされていない」token になる（CI の flake の原因）。
+  const flip = (at) => {
+    const raw = Buffer.from(token, 'base64url');
+    raw[at < 0 ? raw.length + at : at] ^= 0x01;
+    const out = raw.toString('base64url');
+    assert.notEqual(out, token);
+    return out;
+  };
+  for (const [where, at] of [['本文', -1], ['認証 tag', 12], ['iv', 0]]) {
+    const t = await runNativeMailAudit({ req: { phase: 'baseline', cursor: flip(at) }, deps: deps(world) });
+    assert.equal(t.body.code, NATIVE_AUDIT_FAIL.INVALID_CURSOR, `${where}の改ざんは拒否`);
+  }
   const m = await runNativeMailAudit({ req: { phase: 'customers', cursor: token }, deps: deps(world) });
   assert.equal(m.body.code, NATIVE_AUDIT_FAIL.CURSOR_PHASE_MISMATCH);
 });
