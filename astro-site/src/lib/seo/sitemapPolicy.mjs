@@ -38,6 +38,7 @@ export const SITEMAP_EXCLUDE_EXACT = Object.freeze([
   '/welcome/',
   '/withdrawal-upsell/',
   '/withdrawal-complete/',
+  '/bank-transfer/confirm/', // 銀行振込の申込の本人確定（メールのリンク先・noindex）
 ]);
 
 /** 前方一致で除外するパス（配下すべてが対象のもの） */

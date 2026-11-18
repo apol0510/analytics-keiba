@@ -26,6 +26,19 @@ import { fileURLToPath } from 'node:url';
 const APPLY_FN = fileURLToPath(new URL('../../../netlify/functions/bank-transfer-application.js', import.meta.url));
 const CONFIRM_FN = fileURLToPath(new URL('../../../netlify/functions/confirm-bank-payment.js', import.meta.url));
 const { couponIdWithVersion, PP_REOPEN_COUPON_FIELDS } = await import('./premiumPlusReopenCoupon.js');
+
+// ⚠️ 2026-11-18（KAO registry 339e0bd2）: Premium Plus の申込は**ログイン中の本人だけ**。
+//    未ログインの申込はアドレスに関係なく 403 login_required で止まるので、合成会員のセッションを付けて呼ぶ。
+const { createSession } = await import('../auth/session.js');
+const { randomBytes } = await import('node:crypto');
+const SIGNING_KEY = randomBytes(32).toString('hex'); // 固定値をソースに置かない
+async function sessionHeaders(recordId) {
+  process.env.SESSION_SIGNING_SECRET = SIGNING_KEY;
+  const { token } = await createSession({
+    secret: SIGNING_KEY, sub: recordId, plan: 'premium', venueAccess: 'all', now: Date.now(), ttlMs: 3600_000,
+  });
+  return { 'content-type': 'application/json', cookie: `ak_session=${token}` };
+}
 const { OFFER_STATUS } = await import('../promotions/promotionalOffer.js');
 const ID = couponIdWithVersion();
 const REC = 'recSYNTH000000010';
@@ -126,9 +139,9 @@ async function runFn(file, event) {
   } finally { restore(); }
 }
 
-const apply = (over = {}) => runFn(APPLY_FN, {
+const apply = async (over = {}) => runFn(APPLY_FN, {
   httpMethod: 'POST',
-  headers: { 'content-type': 'application/json' },
+  headers: await sessionHeaders(REC),
   body: JSON.stringify({
     fullName: 'テスト', email: 'synthetic@example.invalid',
     transferDate: '2026-08-23', transferTime: '10:00', transferName: 'テスト',

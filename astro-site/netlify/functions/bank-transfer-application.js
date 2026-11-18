@@ -48,6 +48,14 @@ import { createOrderStore, recordOrderOnApplication } from '../../src/lib/premiu
 import { isRepeatEligible } from '../../src/lib/premiumPlus/premiumPlusPass.js';
 import { normalizeSalePaused, PP_SALE_PAUSE_FIELDS } from '../../src/lib/premiumPlus/premiumPlusRelease.js';
 import { resolveUpsellForCustomer } from '../../src/lib/upsell/upsellTarget.js';
+// 未ログインの申込で**既存のお客様のレコードを書き換えない**（KAO registry 339e0bd2・2026-11-18）
+import {
+  APPLICATION_WRITE, decideApplicationWrite, OWNER_ACTION, LOGIN_REQUIRED,
+  generateApplicationToken, isWellFormedToken, buildConfirmUrl, escapeHtml,
+  buildPendingApplication, describePendingForOwner,
+  savePendingApplication, readPendingApplication, takePendingApplication,
+  restorePendingApplication, deletePendingApplication,
+} from '../../src/lib/payments/guestApplicationConfirm.js';
 
 /**
  * 検証済みセッション（ak_session Cookie）から Customers の Email を引く。
@@ -118,6 +126,11 @@ exports.handler = async (event, context) => {
   try {
     // フォームデータ取得
     const formData = JSON.parse(event.body);
+
+    // 確定画面（/bank-transfer/confirm/）からの操作は別経路
+    if (formData && Object.values(OWNER_ACTION).includes(formData.action)) {
+      return await handleOwnerAction({ action: formData.action, token: formData.token, headers });
+    }
     const {
       fullName,
       email: rawEmail,
@@ -169,6 +182,21 @@ exports.handler = async (event, context) => {
           code: APPLICATION_EMAIL.MISMATCH,
           loginEmail: identity.sessionEmail,
         })
+      };
+    }
+    // 検証済みセッションのアドレスと申込アドレスが一致したときだけ「本人」。
+    // 未ログイン（セッションを読めない場合を含む）は、既存のお客様のレコードを**書き換えない**。
+    const authenticated = identity.reason === APPLICATION_EMAIL.MATCH;
+
+    // Premium Plus は会員ページ（ログイン必須）からだけ売る。未ログインの申込は
+    // 会員レコードを引く前に・アドレスの有無に関係なく同じ応答で止める（登録の有無を明かさない）
+    if (isPremiumPlusProductName(productName) && !authenticated) {
+      return {
+        statusCode: 403,
+        headers,
+        body: JSON.stringify({
+          success: false, error: LOGIN_REQUIRED.plusMessage, code: LOGIN_REQUIRED.code, sideEffects: 'none',
+        }),
       };
     }
 
@@ -572,7 +600,19 @@ exports.handler = async (event, context) => {
       const plan = String(d.planName || '').toLowerCase();
       let fields = null;
       let lookupFailed = false;
-      if (plan === 'light' || plan === 'standard' || plan === 'ライト') {
+      const isLightPlan = plan === 'light' || plan === 'standard' || plan === 'ライト';
+      // Light は既存の有料会員の更新だけ。未ログインでは会員かどうかを照会せず、
+      // アドレスの有無に関係なく同じ応答（ログインのお願い）で止める
+      if (isLightPlan && !authenticated) {
+        return {
+          statusCode: 403,
+          headers,
+          body: JSON.stringify({
+            success: false, error: LOGIN_REQUIRED.lightMessage, code: LOGIN_REQUIRED.code, sideEffects: 'none',
+          }),
+        };
+      }
+      if (isLightPlan) {
         try {
           const KEY = process.env.AIRTABLE_API_KEY;
           const BASE = process.env.AIRTABLE_BASE_ID;
@@ -607,6 +647,21 @@ exports.handler = async (event, context) => {
       throw new Error('SendGrid API key not configured');
     }
 
+    // 利用者の入力は HTML メールへ**エスケープして**差し込む（確定リンクの偽装・表示崩れを防ぐ）
+    const h = {
+      fullName: escapeHtml(fullName),
+      email: escapeHtml(email),
+      orderProductName: escapeHtml(orderProductName),
+      transferDate: escapeHtml(transferDate),
+      transferName: escapeHtml(transferName),
+      remarks: escapeHtml(remarks),
+    };
+    // 未ログインの申込は、既存のお客様なら本人が確定するまで Airtable に反映しない
+    const guestNotice = authenticated ? '' : `
+    <div class="alert" style="background:#e0f2fe;border-left-color:#0284c7;">
+      <h4 style="margin: 0 0 10px 0; color: #075985;">🔐 未ログインでの報告です</h4>
+      <div style="color:#0c4a6e;">このアドレスが既存のお客様の場合、お客様がメールのリンクから確定するまで Airtable の申込内容（Requested*）には反映されません。確定すると「本人確認済み」のメールが届きます。それまで PaymentConfirmed を押さないでください。</div>
+    </div>`;
     // 管理者向けメール内容
     const adminPersonalization = {
       to: [{ email: ADMIN_EMAIL }],
@@ -642,7 +697,7 @@ exports.handler = async (event, context) => {
   <div class="container">
     <div class="header">
       <h2 style="margin: 0;">🏦 入金完了報告</h2>
-      <p style="margin: 10px 0 0 0; font-size: 0.95rem;">${orderProductName} の入金完了報告が届きました</p>
+      <p style="margin: 10px 0 0 0; font-size: 0.95rem;">${h.orderProductName} の入金完了報告が届きました</p>
     </div>
 
     <div class="section">
@@ -653,15 +708,15 @@ exports.handler = async (event, context) => {
       </div>
       <div class="info-row">
         <span class="label">お名前:</span>
-        <span class="value">${fullName}</span>
+        <span class="value">${h.fullName}</span>
       </div>
       <div class="info-row">
         <span class="label">メールアドレス:</span>
-        <span class="value">${email}</span>
+        <span class="value">${h.email}</span>
       </div>
       <div class="info-row">
         <span class="label">商品:</span>
-        <span class="value">${orderProductName}</span>
+        <span class="value">${h.orderProductName}</span>
       </div>
     </div>
 
@@ -669,7 +724,7 @@ exports.handler = async (event, context) => {
       <h3 style="margin-top: 0; color: #1e293b;">💰 振込情報</h3>
       <div class="info-row">
         <span class="label">振込完了日:</span>
-        <span class="value">${transferDate}</span>
+        <span class="value">${h.transferDate}</span>
       </div>
       <div class="info-row">
         <span class="label">振込金額:</span>
@@ -677,15 +732,17 @@ exports.handler = async (event, context) => {
       </div>
       <div class="info-row">
         <span class="label">振込名義人:</span>
-        <span class="value">${transferName}</span>
+        <span class="value">${h.transferName}</span>
       </div>
       ${remarks ? `
       <div class="info-row" style="border-bottom: none;">
         <span class="label">備考:</span>
-        <div class="value" style="margin-top: 10px; white-space: pre-wrap;">${remarks}</div>
+        <div class="value" style="margin-top: 10px; white-space: pre-wrap;">${h.remarks}</div>
       </div>
       ` : ''}
     </div>
+
+    ${guestNotice}
 
     ${memberPricingWarning ? `
     <div class="alert" style="background:#fee2e2;border-left-color:#ef4444;">
@@ -698,8 +755,8 @@ exports.handler = async (event, context) => {
       <h4 style="margin: 0 0 10px 0; color: #92400e;">⚠️ 対応必要事項</h4>
       <ol style="margin: 0; padding-left: 20px; color: #78350f;">
         <li>振込確認（PayPay銀行 本店営業部 普通 8307337）</li>
-        <li>入金確認後、${email} へアクセス情報を送信</li>
-        <li>Airtableに顧客情報を登録（${orderProductName}）</li>
+        <li>入金確認後、${h.email} へアクセス情報を送信</li>
+        <li>Airtableに顧客情報を登録（${h.orderProductName}）</li>
       </ol>
     </div>
 
@@ -758,19 +815,19 @@ exports.handler = async (event, context) => {
       </div>
       <div class="info-row">
         <span class="label">お名前:</span>
-        <span class="value">${fullName}</span>
+        <span class="value">${h.fullName}</span>
       </div>
       <div class="info-row">
         <span class="label">メールアドレス:</span>
-        <span class="value">${email}</span>
+        <span class="value">${h.email}</span>
       </div>
       <div class="info-row">
         <span class="label">商品:</span>
-        <span class="value">${orderProductName}</span>
+        <span class="value">${h.orderProductName}</span>
       </div>
       <div class="info-row">
         <span class="label">振込完了日:</span>
-        <span class="value">${transferDate}</span>
+        <span class="value">${h.transferDate}</span>
       </div>
       <div class="info-row">
         <span class="label">振込金額:</span>
@@ -778,7 +835,7 @@ exports.handler = async (event, context) => {
       </div>
       <div class="info-row">
         <span class="label">振込名義人:</span>
-        <span class="value">${transferName}</span>
+        <span class="value">${h.transferName}</span>
       </div>
     </div>
 
@@ -797,7 +854,7 @@ exports.handler = async (event, context) => {
         </li>
         <li style="margin-bottom: 10px;">
           <strong>アクセス情報送付</strong><br>
-          ${orderProductName} のアクセス方法をメールでお送りいたします
+          ${h.orderProductName} のアクセス方法をメールでお送りいたします
         </li>
       </ol>
     </div>
@@ -1015,7 +1072,43 @@ exports.handler = async (event, context) => {
         //    案内は直したが、古い端末情報・古いタブから申込が飛ぶ経路は残る。
         //    **お金が動く側で止める**のが最後の砦。
         // ⚠️ 権利を確認できないときは止めない（fail open）。買えない方が気づけない。
-        {
+        // ⚠️ 未ログインの申込では、ここで断ると「そのアドレスが何を持っているか」を他人に明かす。
+        //    既存のお客様の未ログイン申込は本人の確定時（handleOwnerAction）に同じ判定をする。
+        const writePath = decideApplicationWrite({ authenticated, existingRecord: existingRecords.length > 0 });
+        /**
+         * 未ログインの申込で既存のお客様のレコードが見つかったとき: **レコードに触れない**。
+         * 申込内容を一時保存し、そのアドレス宛てに確定リンクを送る。申込者への応答は新規と同じ。
+         */
+        const deferToOwner = async (record) => {
+          const redisCmd = makeRedisCmd(process.env);
+          let outcome = 'store_unavailable';
+          if (redisCmd) {
+            const token = generateApplicationToken();
+            const saved = await savePendingApplication({
+              redisCmd,
+              token,
+              payload: buildPendingApplication({
+                recordId: record.id, email, fullName, planName, planType,
+                amount: Number.isFinite(requestedAmount) ? requestedAmount : null,
+                productName: orderProductName, transferDate, transferAmount, transferName,
+                nowMs: Date.now(),
+              }),
+            });
+            if (saved) {
+              await sendMail(buildOwnerConfirmationMail({
+                email,
+                confirmUrl: buildConfirmUrl(process.env.URL, token),
+                productName: orderProductName, transferDate, transferAmount,
+              }));
+              outcome = 'owner_confirmation_sent';
+            } else {
+              outcome = 'store_failed';
+            }
+          }
+          // ⚠️ 識別子（メール・recordId）を載せない
+          console.log('🔐 [bank-transfer] 未ログインの申込（既存のお客様）: レコードは更新せず本人の確定待ち', { outcome });
+        };
+        if (writePath !== APPLICATION_WRITE.OWNER_CONFIRMATION) {
           const ownedFields = existingRecords.length > 0 ? (existingRecords[0].fields || {}) : null;
           const ownedEnt = ownedFields
             ? resolveEntitlements(fromAirtableFields(ownedFields), Date.now())
@@ -1097,8 +1190,10 @@ exports.handler = async (event, context) => {
           }
         }
 
-        if (existingRecords.length > 0) {
-          // 既存顧客 - Update
+        if (writePath === APPLICATION_WRITE.OWNER_CONFIRMATION) {
+          await deferToOwner(existingRecords[0]);
+        } else if (existingRecords.length > 0) {
+          // 既存顧客 - Update（ログイン中の本人だけがここへ来る）
           const existingRecord = existingRecords[0];
           const recordId = existingRecord.id;
           // ⚠️ ここに決済開始の計測を置かないこと。
@@ -1172,7 +1267,10 @@ exports.handler = async (event, context) => {
           const reCheckData = reCheckResponse.ok ? await reCheckResponse.json() : { records: [] };
           const reCheckRecords = reCheckData.records || [];
 
-          if (reCheckRecords.length > 0) {
+          if (reCheckRecords.length > 0 && !authenticated) {
+            // 直前に作られたレコードも、未ログインの申込では書き換えない
+            await deferToOwner(reCheckRecords[0]);
+          } else if (reCheckRecords.length > 0) {
             // 直前に他リクエストが作成 → 新規作成せず、既存レコードを update する
             const raceRecord = reCheckRecords[0];
             const recordId = raceRecord.id;
@@ -1411,3 +1509,162 @@ exports.handler = async (event, context) => {
     };
   }
 };
+
+// ── 以下は handler から呼ぶ補助（関数宣言なので巻き上げられる）。
+// ⚠️ 申込の副作用（メール・Airtable 書込）は handler 内の販売可否判定より後にしか起きない。
+/** SendGrid で 1 通送る。失敗は例外 */
+async function sendMail(data) {
+  const res = await fetch('https://api.sendgrid.com/v3/mail/send', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${process.env.SENDGRID_API_KEY}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(data)
+  });
+  if (!res.ok) throw new Error(`sendgrid_${res.status}`);
+}
+
+function simpleMail({ to, subject, html }) {
+  return {
+    personalizations: [{ to: [{ email: to }], subject }],
+    from: { email: FROM_EMAIL, name: 'KEIBA Analytics' },
+    content: [{ type: 'text/html', value: html }],
+    tracking_settings: { click_tracking: { enable: false }, open_tracking: { enable: false } },
+  };
+}
+
+/**
+ * 未ログインの申込（既存のお客様）を、そのアドレスの持ち主に確定してもらうメール。
+ * ⚠️ リンクを開くだけでは確定しない（確定画面のボタンで POST する）。
+ */
+function buildOwnerConfirmationMail({ email, confirmUrl, productName, transferDate, transferAmount }) {
+  const amount = Number.parseInt(transferAmount, 10);
+  return simpleMail({
+    to: email,
+    subject: '【ご確認のお願い】お申し込み内容の確定 - KEIBA Analytics',
+    html: `<!DOCTYPE html><html><head><meta charset="UTF-8"></head>
+<body style="font-family:'Hiragino Sans','Yu Gothic',sans-serif;line-height:1.8;color:#333;">
+<div style="max-width:600px;margin:0 auto;padding:20px;">
+  <h2 style="margin:0 0 16px;">お申し込み内容の確定のお願い</h2>
+  <p>このメールアドレスで、銀行振込のお申し込み（入金完了のご報告）を受け付けました。</p>
+  <p>このメールアドレスはすでにご登録があるため、<strong>ご本人の確認がとれるまでご登録内容には反映していません</strong>。
+  下のボタンから内容をご確認のうえ「確定する」を押してください。</p>
+  <ul>
+    <li>商品: ${escapeHtml(productName)}</li>
+    <li>振込完了日: ${escapeHtml(transferDate)}</li>
+    <li>振込金額: ${Number.isFinite(amount) ? `¥${amount.toLocaleString()}` : '-'}</li>
+  </ul>
+  <p style="margin:24px 0;"><a href="${escapeHtml(confirmUrl)}" style="display:inline-block;padding:12px 24px;background:#3b82f6;color:#fff;border-radius:8px;text-decoration:none;">お申し込み内容を確認して確定する</a></p>
+  <p style="font-size:0.9rem;color:#475569;">このリンクの有効期限は 7 日間です。お心当たりがない場合は、このメールを破棄してください（ご登録内容は変更されません）。<br>
+  ログイン中にお申し込みいただくと、この確認は不要です。</p>
+  <p style="font-size:0.9rem;color:#475569;">ご不明な点は <a href="mailto:${SUPPORT_EMAIL}">${SUPPORT_EMAIL}</a> までお問い合わせください。</p>
+</div></body></html>`,
+  });
+}
+
+/**
+ * 確定画面（/bank-transfer/confirm/）からの操作。トークンを持つ人＝そのアドレスの受信者だけが行える。
+ * 応答に顧客のメールアドレス・recordId を含めない。
+ */
+async function handleOwnerAction({ action, token, headers }) {
+  const respond = (statusCode, body) => ({ statusCode, headers, body: JSON.stringify(body) });
+  const EXPIRED = {
+    success: false, code: 'expired',
+    error: 'このリンクは有効期限が切れたか、すでに確定済みです。お手数ですがお問い合わせください。',
+  };
+  const UNAVAILABLE = {
+    success: false, code: 'unavailable',
+    error: 'ただいま確定できませんでした。時間をおいてもう一度お試しください。',
+  };
+  if (!isWellFormedToken(token)) return respond(404, EXPIRED);
+  const redisCmd = makeRedisCmd(process.env);
+  const KEY = process.env.AIRTABLE_API_KEY;
+  const BASE = process.env.AIRTABLE_BASE_ID;
+  if (!redisCmd || !KEY || !BASE) return respond(503, UNAVAILABLE);
+
+  try {
+    if (action === OWNER_ACTION.PREVIEW) {
+      const p = await readPendingApplication({ redisCmd, token });
+      if (!p) return respond(404, EXPIRED);
+      return respond(200, { success: true, application: describePendingForOwner(p) });
+    }
+    if (action === OWNER_ACTION.CANCEL) {
+      await deletePendingApplication({ redisCmd, token });
+      return respond(200, { success: true, cancelled: true });
+    }
+
+    // ── 確定 ── 1 回限り（GETDEL）。反映に失敗したときだけ戻す
+    const p = await takePendingApplication({ redisCmd, token });
+    if (!p) return respond(404, EXPIRED);
+    const restore = async () => {
+      try { await restorePendingApplication({ redisCmd, token, payload: p }); } catch { /* 戻せないだけ */ }
+    };
+
+    const recUrl = `https://api.airtable.com/v0/${BASE}/Customers/${encodeURIComponent(p.recordId)}`;
+    const recRes = await fetch(recUrl, { headers: { Authorization: `Bearer ${KEY}` } });
+    if (!recRes.ok) { await restore(); return respond(503, UNAVAILABLE); }
+    const rec = await recRes.json();
+    const fields = rec?.fields || {};
+    // 申込後にレコードのアドレスが変わっていたら反映しない（別の方のレコードになっている）
+    if (String(fields.Email || '').trim().toLowerCase() !== p.email) {
+      console.warn('🚫 [bank-transfer confirm] レコードのアドレスが申込時と異なるため反映しません');
+      return respond(409, EXPIRED);
+    }
+    // すでにお持ちの商品は確定時点の権利で判定する（申込時には申込者へ明かさない）
+    const dup = resolveDuplicatePurchase({
+      planName: p.planName, planType: p.planType,
+      entitlements: resolveEntitlements(fromAirtableFields(fields), Date.now()),
+    });
+    if (dup.blocked) {
+      return respond(409, { success: false, code: dup.reason, error: dup.message });
+    }
+
+    const updateFields = buildApplicationFields({
+      currentStatus: fields.Status || null,
+      fullName: p.fullName,
+      planName: p.planName,
+      planType: p.planType,
+      amount: p.amount,
+    });
+    const patchRes = await fetch(recUrl, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fields: updateFields, typecast: true }),
+    });
+    if (!patchRes.ok) {
+      console.error('❌ [bank-transfer confirm] Airtable update failed:', patchRes.status);
+      await restore();
+      return respond(503, UNAVAILABLE);
+    }
+    console.log('✅ [bank-transfer confirm] 本人の確定により申込内容を反映');
+
+    const fm = await recordPaymentApplication({
+      recordId: p.recordId, planName: p.planName, planType: p.planType, env: process.env, nowMs: Date.now(),
+    });
+    console.log('📊 [bank-transfer confirm] 決済ファネル（申込受理）:', { counted: fm.counted, reason: fm.reason });
+
+    // 管理者へ「本人確認済み・入金確認できる状態」を知らせる（失敗しても確定は戻さない）
+    if (process.env.SENDGRID_API_KEY) {
+      try {
+        await sendMail(simpleMail({
+          to: ADMIN_EMAIL,
+          subject: `【本人確認済み】入金完了報告 ${p.email} - ${p.productName}`,
+          html: `<p>未ログインで届いた入金完了報告を、お客様がメールのリンクから確定しました。Airtable の申込内容（Requested*）へ反映済みです。入金を確認のうえ PaymentConfirmed を押してください。</p>
+<ul><li>メール: ${escapeHtml(p.email)}</li><li>お名前: ${escapeHtml(p.fullName)}</li><li>商品: ${escapeHtml(p.productName)}</li>
+<li>振込完了日: ${escapeHtml(p.transferDate)}</li><li>振込金額: ${escapeHtml(p.transferAmount)}</li><li>振込名義人: ${escapeHtml(p.transferName)}</li>
+<li>申込金額（サーバー確定）: ${Number.isFinite(p.amount) ? p.amount : '-'}</li></ul>`,
+        }));
+      } catch (e) {
+        console.warn('⚠️ [bank-transfer confirm] 管理者通知に失敗:', String(e && e.message).slice(0, 60));
+      }
+    }
+    return respond(200, {
+      success: true,
+      message: 'お申し込み内容を確定しました。入金を確認でき次第、ご案内のメールをお送りします。',
+    });
+  } catch (e) {
+    console.error('❌ [bank-transfer confirm] error:', String(e && e.message).slice(0, 120));
+    return respond(503, UNAVAILABLE);
+  }
+}
