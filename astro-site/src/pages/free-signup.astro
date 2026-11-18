@@ -51,6 +51,14 @@ import CampaignBanner from '../components/CampaignBanner.astro';
 
                 <div id="success-message" class="success-message" style="display: none;"></div>
                 <div id="error-message" class="error-message" style="display: none;"></div>
+                <!-- 既に有料会員のメールが入力されたとき（auth-user が requiresMagicLink を返す）。
+                     エラーではなく、ログインページ（ログインリンクをメールで送る）へ案内する。
+                     ⚠️ メールアドレスを URL に載せない（GA4 の page_location に PII が乗るため）。 -->
+                <div id="member-login-guide" class="member-login-guide" style="display: none;">
+                    <p>このメールアドレスは<strong>有料会員として登録済み</strong>です。新しい登録は不要です。</p>
+                    <p>ログインページでメールアドレスを入力すると、ログインリンクをメールでお送りします。</p>
+                    <a href="/login/" class="member-login-btn">ログインページへ進む</a>
+                </div>
 
                 <!-- 特典説明 -->
                 <div class="benefits-section">
@@ -274,6 +282,27 @@ import CampaignBanner from '../components/CampaignBanner.astro';
         padding: 1rem;
         border-radius: 0.5rem;
         margin: 1rem 0;
+    }
+
+    .member-login-guide {
+        background: rgba(59, 130, 246, 0.15);
+        border: 1px solid rgba(59, 130, 246, 0.5);
+        color: #e5e7eb;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        margin: 1rem 0;
+        line-height: 1.7;
+    }
+
+    .member-login-btn {
+        display: inline-block;
+        margin-top: 0.5rem;
+        padding: 0.6rem 1.2rem;
+        background: #3b82f6;
+        color: #fff;
+        border-radius: 0.5rem;
+        font-weight: bold;
+        text-decoration: none;
     }
 
     .error-message {
@@ -626,6 +655,16 @@ import CampaignBanner from '../components/CampaignBanner.astro';
                 trackSignupStep(data.requiresMagicLink === true ? 'paid_member'
                     : data.denied === true ? 'denied' : 'error');
                 resultTracked = true;
+                // 有料会員: 登録の失敗ではない。行き止まりにせず、ログインへ案内する。
+                if (data.requiresMagicLink === true) {
+                    showMemberLoginGuide();
+                    return;
+                }
+                // 拒否（退会/停止/期限切れ等）: サーバーの文言をそのまま出す（「登録に失敗」と書かない）
+                if (data.denied === true) {
+                    showError(data.message || 'このメールアドレスではご利用いただけません。サポートにお問い合わせください。');
+                    return;
+                }
                 throw new Error(data.message || 'サーバーエラー');
             }
             
@@ -636,6 +675,12 @@ import CampaignBanner from '../components/CampaignBanner.astro';
         }
     }
 
+    function showMemberLoginGuide() {
+        document.getElementById('success-message').style.display = 'none';
+        document.getElementById('error-message').style.display = 'none';
+        document.getElementById('member-login-guide').style.display = 'block';
+    }
+
     function showSuccess(message) {
         const successDiv = document.getElementById('success-message');
         const errorDiv = document.getElementById('error-message');
@@ -643,6 +688,7 @@ import CampaignBanner from '../components/CampaignBanner.astro';
         successDiv.textContent = message;
         successDiv.style.display = 'block';
         errorDiv.style.display = 'none';
+        document.getElementById('member-login-guide').style.display = 'none';
     }
 
     function showError(message) {
@@ -652,6 +698,7 @@ import CampaignBanner from '../components/CampaignBanner.astro';
         errorDiv.textContent = message;
         errorDiv.style.display = 'block';
         successDiv.style.display = 'none';
+        document.getElementById('member-login-guide').style.display = 'none';
     }
 
     function isValidEmail(email) {
