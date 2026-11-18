@@ -1,3 +1,13 @@
+# 🔐 銀行振込の申込: 未ログインで他のお客様の申込情報を上書きできた問題（2026-11-18 MK 優先指示・KAO registry 339e0bd2 / **PR 作成・merge 待ち**）
+
+| 項目 | 状態 |
+|---|---|
+| 問題 | 公開 Function `bank-transfer-application` が未ログインでも body の email で Customers を引き、既存レコードの `氏名`・`Requested*`・`PaymentConfirmed`・`Status` を PATCH していた（2026-11-05 監査の未対応欄） |
+| 修正 | 未ログイン × 既存レコードは書き換えず、そのアドレス宛ての確定リンク（32 バイト乱数・Redis は SHA-256 だけ・7 日・1 回限り）で本人が `/bank-transfer/confirm/` から確定した時だけ反映。応答は登録の有無で同じ。Light / Premium Plus の未ログイン申込はアドレスに関係なく `login_required`。メールの利用者入力をエスケープ。正本 `astro-site/docs/BANK_TRANSFER_FLOW.md` |
+| test | `bankTransferGuestOverwrite.test.mjs`（Function 実行 12 件・旧コードで 9 件落ちる）・`guestApplicationConfirm.test.mjs`・Plus の smoke 2 本はセッション付きへ・実ブラウザ `npm run e2e:bank-transfer-confirm` 18 件 |
+| 範囲外（記録）| `test:light-renewal` / `test:premium-renewal` / `test:premium-annual-renewal` は main でも落ちる（CI では未実行・日付依存の疑い）。申込 Function はレート制限なし（任意のアドレスへ受付メールを送れる・従来から） |
+| 残り | merge → 本番 deploy → production smoke（未ログイン・ダミーアドレスの新規申込は送らない。`/bank-transfer/confirm/` の表示と不正トークン 404、Function の preview 404 だけを確認） |
+
 # 🎉 Paddle 初の実購入（2026-11-15 MK 報告・#892 後）／ **成立・請求額・売上計上を確認済み。値引きなしは仕様どおり（既存会員）・経路は GA4 待ち**
 
 | 項目 | 状態 |

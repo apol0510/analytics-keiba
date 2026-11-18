@@ -1,0 +1,108 @@
+---
+// 会員情報を読まない静的ページ（判定はすべて Function 側）
+export const prerender = true;
+/**
+ * 銀行振込のお申し込み内容の確定（未ログインで既存のお客様のアドレスから届いた報告）。
+ *
+ * - トークンはメールのリンクの `#t=` にだけ載る（サーバー・計測へ送らない）。
+ * - 開いただけでは確定しない（メールのリンク先読みで確定させない）。ボタンで POST する。
+ * - 判定・反映は `bank-transfer-application`（action=preview/confirm/cancel_application）。
+ *   単一源は src/lib/payments/guestApplicationConfirm.js。
+ */
+import BaseLayout from '../../layouts/BaseLayout.astro';
+---
+<BaseLayout title="お申し込み内容の確定 | KEIBA Analytics" description="銀行振込のお申し込み内容を確定します。" noindex={true}>
+  <section class="bt-confirm" data-state="loading">
+    <h1>お申し込み内容の確定</h1>
+    <p class="bt-status" id="bt-status" role="status">お申し込み内容を読み込んでいます…</p>
+    <dl class="bt-detail" id="bt-detail" hidden>
+      <dt>商品</dt><dd data-k="productName"></dd>
+      <dt>お名前</dt><dd data-k="fullName"></dd>
+      <dt>振込完了日</dt><dd data-k="transferDate"></dd>
+      <dt>振込金額</dt><dd data-k="transferAmount"></dd>
+      <dt>振込名義人</dt><dd data-k="transferName"></dd>
+    </dl>
+    <p class="bt-actions" id="bt-actions" hidden>
+      <button type="button" class="btn" id="bt-confirm">この内容で確定する</button>
+      <button type="button" class="btn secondary" id="bt-cancel">心当たりがない</button>
+    </p>
+    <p class="bt-note">ご不明な点は <a href="mailto:support@keiba.link">support@keiba.link</a> までお問い合わせください。</p>
+  </section>
+</BaseLayout>
+
+<script is:inline>
+  (function () {
+    var ENDPOINT = '/.netlify/functions/bank-transfer-application';
+    var m = /(?:^#|&)t=([A-Za-z0-9_-]{43})(?:&|$)/.exec(location.hash || '');
+    var token = m ? m[1] : '';
+    var root = document.querySelector('.bt-confirm');
+    var statusEl = document.getElementById('bt-status');
+    var detail = document.getElementById('bt-detail');
+    var actions = document.getElementById('bt-actions');
+    function show(state, text) {
+      root.setAttribute('data-state', state);
+      statusEl.textContent = text;
+    }
+    function post(action) {
+      return fetch(ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: action, token: token }),
+      }).then(function (r) { return r.json().catch(function () { return {}; }); });
+    }
+    if (!token) { show('error', 'リンクが正しくありません。メールのリンクをもう一度開いてください。'); return; }
+    post('preview_application').then(function (res) {
+      if (!res || !res.success) { show('error', (res && res.error) || '読み込めませんでした。'); return; }
+      var a = res.application || {};
+      detail.querySelectorAll('dd').forEach(function (dd) {
+        var k = dd.getAttribute('data-k');
+        var v = a[k];
+        if (k === 'transferAmount' && typeof v === 'number') v = '¥' + v.toLocaleString();
+        dd.textContent = v == null || v === '' ? '-' : String(v);
+      });
+      detail.hidden = false;
+      actions.hidden = false;
+      show('ready', '内容をご確認のうえ「この内容で確定する」を押してください。');
+    }).catch(function () { show('error', '読み込めませんでした。時間をおいてもう一度お試しください。'); });
+
+    function run(action, button) {
+      var buttons = actions.querySelectorAll('button');
+      buttons.forEach(function (b) { b.disabled = true; });
+      show('loading', '送信しています…');
+      post(action).then(function (res) {
+        if (res && res.success) {
+          actions.hidden = true;
+          if (action === 'cancel_application') {
+            detail.hidden = true;
+            show('cancelled', 'お申し込みを取り消しました。ご登録内容は変更されていません。');
+          } else {
+            show('done', res.message || 'お申し込み内容を確定しました。');
+          }
+        } else {
+          buttons.forEach(function (b) { b.disabled = false; });
+          show('error', (res && res.error) || '確定できませんでした。');
+        }
+      }).catch(function () {
+        buttons.forEach(function (b) { b.disabled = false; });
+        show('error', '確定できませんでした。時間をおいてもう一度お試しください。');
+      });
+    }
+    document.getElementById('bt-confirm').addEventListener('click', function () { run('confirm_application'); });
+    document.getElementById('bt-cancel').addEventListener('click', function () { run('cancel_application'); });
+  })();
+</script>
+
+<style>
+  .bt-confirm { max-width: 640px; margin: 48px auto; padding: 0 16px; color: #e2e8f0; line-height: 1.8; }
+  .bt-confirm h1 { font-size: 1.6rem; margin-bottom: 1rem; }
+  .bt-detail { display: grid; grid-template-columns: 8em 1fr; gap: 6px 12px; background: rgba(30, 41, 59, 0.7); padding: 16px; border-radius: 8px; margin: 1rem 0; }
+  .bt-detail dt { color: #94a3b8; }
+  .bt-detail dd { margin: 0; word-break: break-all; }
+  .bt-actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 1.5rem; }
+  .btn { display: inline-block; padding: 0.75rem 1.25rem; border-radius: 8px; background: #3b82f6; color: #fff; border: 0; font-size: 1rem; cursor: pointer; }
+  .btn.secondary { background: #334155; }
+  .btn:disabled { opacity: 0.6; cursor: default; }
+  .bt-note { margin-top: 2rem; font-size: 0.9rem; color: #94a3b8; }
+  [data-state="error"] .bt-status { color: #fca5a5; }
+  [data-state="done"] .bt-status { color: #86efac; }
+</style>

@@ -19,6 +19,31 @@
 - 新規 / 非 active のみ `Status='pending'`（`auth-user.js` の pending ガードで Free 扱い）
 - 退会フラグのリセットは**承認時**（未入金の申込で退会申請が消えないように）
 
+### 🔐 未ログインの申込は既存のお客様のレコードを書き換えない（2026-11-18・KAO registry 339e0bd2）
+
+旧実装は、未ログインでも body の `email` で Customers を引き、**見つかればそのレコードを PATCH** していた。
+他人のアドレスを入れるだけで、その方の `氏名`・申込内容（`Requested*`）・`PaymentConfirmed`・`Status` を上書きできた
+（本物の申込の内容を差し替えると、入金確認で別の内容のまま昇格する）。
+
+| 申込者 | レコード | 扱い |
+|---|---|---|
+| ログイン中（セッションのアドレス＝申込アドレス） | あり | 従来どおり本人のレコードを更新 |
+| ログイン中・別のアドレス | — | 403（従来どおり） |
+| 未ログイン | なし | 従来どおり新規作成（`Status='pending'`） |
+| 未ログイン | **あり** | **レコードに触れない**。申込内容を Redis に 7 日保存し、そのアドレス宛てに確定リンクを送る。お客様が `/bank-transfer/confirm/` で「この内容で確定する」を押した時点で初めて `buildApplicationFields()` を PATCH する |
+| 未ログイン・Light / Premium Plus | — | アドレスに関係なく 403 `login_required`（会員にしか売らない商品。会員かどうかを照会しない） |
+
+- 申込者への応答は**レコードがある / ない で同じ**（アドレスの登録有無・保有商品を明かさない）。
+  「すでにお持ちの商品」（三連複）の判定は、未ログインの申込では本人の確定時に行う。
+- 確定トークンは 32 バイト乱数。Redis の鍵は**トークンの SHA-256**（`ak:bank-app-pending:v1:<sha256>`）。
+  リンクは `#t=` に載せる（サーバーログ・GA4 の `page_location` に残さない）。開いただけでは確定しない（メールのリンク先読み対策）。1 回限り（GETDEL）。
+- 確定時にレコードの `Email` が申込時と違えば反映しない。反映に失敗したときだけトークンを戻す。
+- 管理者メール: 未ログインの報告には「お客様が確定するまで反映されない・それまで `PaymentConfirmed` を押さない」を表示。
+  お客様が確定すると「【本人確認済み】」メールが届く。届かない（お客様が確定しない）場合は、お客様に確認のうえ代理入金連絡（下記）で扱う。
+- 利用者の入力は HTML メールへエスケープして入れる（確定リンクの偽装を防ぐ）。
+- 単一源 `src/lib/payments/guestApplicationConfirm.js`。検証: `bankTransferGuestOverwrite.test.mjs`（Function を実際に呼ぶ）・
+  `npm run build && npm run e2e:bank-transfer-confirm`（実ブラウザ）。
+
 ### 判定の単一源
 
 `astro-site/src/lib/payments/bankPaymentFlow.js`（純粋関数・Airtable 非依存）

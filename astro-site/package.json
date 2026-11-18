@@ -131,6 +131,7 @@
     "check:cdn-cache": "node scripts/check-cdn-cache-safety.mjs",
     "test:archive-redirect": "node --test src/lib/archiveRedirect.test.mjs",
     "e2e:proxy-notice": "node scripts/e2e-admin-proxy-notice.mjs",
+    "e2e:bank-transfer-confirm": "node scripts/e2e-bank-transfer-confirm.mjs",
     "test:unsubscribe": "node --test src/lib/unsubscribe/*.test.mjs"
   },
   "dependencies": {
