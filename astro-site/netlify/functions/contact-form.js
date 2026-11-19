@@ -8,6 +8,8 @@ installAirtableCallMeter({ source: 'contact-form' });
 import { SUPPORT_EMAIL, ADMIN_EMAIL } from './config/email-config.js';
 import { formatJst } from '../../src/lib/datetime/jstTimestamp.js';
 import { normalizeContactInput, escapeHtml } from '../../src/lib/contact/contactForm.js';
+// 送信回数の上限（IP ごと・宛先メールごと・2026-11-19・KAO 5cd50962）
+import { checkContactRateLimit, createBlobsRateStore, clientIp, rateLimitedResponse } from '../../src/lib/contact/contactRateLimit.js';
 
 export const handler = async (event, context) => {
     const headers = {
@@ -52,6 +54,17 @@ export const handler = async (event, context) => {
             return { statusCode: 200, headers, body: JSON.stringify({ success: true, message: 'お問い合わせを送信しました' }) };
         }
         const v = parsed.value;
+        // 受付の控えは入力されたアドレスへ送るため、短時間の連続送信は止める（踏み台にさせない）
+        const rate = await checkContactRateLimit({
+            store: await createBlobsRateStore(event),
+            scope: 'contact-form',
+            ip: clientIp(event.headers),
+            email: v.email,
+        });
+        if (!rate.allowed) {
+            console.log('[contact-form] rate_limited', { reason: rate.reason });
+            return rateLimitedResponse(headers);
+        }
         // HTML へ入れる値はすべて無害化する（自動返信は入力されたアドレスへ届くため）
         const h = {
             name: escapeHtml(v.name),

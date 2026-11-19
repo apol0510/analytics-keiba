@@ -10,6 +10,9 @@ import Airtable from 'airtable';
 import { SUPPORT_EMAIL, ADMIN_EMAIL, FROM_EMAIL } from './config/email-config.js';
 import { buildAdminContactSubject } from '../../src/lib/contact/contactSubject.js';
 import { formatJst } from '../../src/lib/datetime/jstTimestamp.js';
+// 入力の検査・HTML の無害化・送信回数の上限（2026-11-19・KAO 5cd50962）
+import { normalizePremiumContactInput, escapeHtml } from '../../src/lib/contact/contactForm.js';
+import { checkContactRateLimit, createBlobsRateStore, clientIp, rateLimitedResponse } from '../../src/lib/contact/contactRateLimit.js';
 
 /**
  * email から Airtable Customers の会員種別（プラン）を引く。fail-open:
@@ -58,25 +61,38 @@ exports.handler = async (event, context) => {
   }
 
   try {
-    // フォームデータ取得
-    const formData = JSON.parse(event.body);
-    const {
-      name,
-      email,
-      subject,
-      message,
-      formType,
-      timestamp
-    } = formData;
-
-    // 必須項目チェック
-    if (!name || !email || !subject || !message) {
-      return {
-        statusCode: 400,
-        headers,
-        body: JSON.stringify({ error: '必須項目が入力されていません' })
-      };
+    // フォームデータ取得（検査・整形は単一源 src/lib/contact/contactForm.js）
+    let formData;
+    try {
+      formData = JSON.parse(event.body || '{}');
+    } catch {
+      return { statusCode: 400, headers, body: JSON.stringify({ error: '送信内容を読み取れませんでした' }) };
     }
+    const parsed = normalizePremiumContactInput(formData);
+    if (!parsed.ok) {
+      return { statusCode: 400, headers, body: JSON.stringify({ error: parsed.error }) };
+    }
+    const { name, email, subject, message, formType, timestamp } = parsed.value;
+
+    // 送信回数の上限（IP ごと・宛先メールごと）。受付の控えは入力されたアドレスへ送るため、踏み台にさせない。
+    const rate = await checkContactRateLimit({
+      store: await createBlobsRateStore(event),
+      scope: 'premium-plus-contact',
+      ip: clientIp(event.headers),
+      email,
+    });
+    if (!rate.allowed) {
+      console.log('[premium-plus-contact] rate_limited', { reason: rate.reason });
+      return rateLimitedResponse(headers);
+    }
+
+    // HTML へ入れる値はすべて無害化する（自動返信は入力されたアドレスへ届くため）
+    const h = {
+      name: escapeHtml(name),
+      email: escapeHtml(email),
+      subject: escapeHtml(subject),
+      message: escapeHtml(message),
+    };
 
     // 日本時間表示用（表記の単一源は src/lib/datetime/jstTimestamp.js）
     const japanTime = formatJst(timestamp);
@@ -102,7 +118,7 @@ exports.handler = async (event, context) => {
         subject: adminSubject
       }],
       from: { email: FROM_EMAIL, name: 'KEIBA Analytics サポート' },
-      reply_to: { email: email, name: name },  // 🔧 2025-11-26追加: ユーザーへの返信設定
+      reply_to: { email: email, name: name.replace(/[\r\n]/g, ' ') },  // 🔧 2025-11-26追加: ユーザーへの返信設定
       content: [{
         type: 'text/html',
         value: `
@@ -125,7 +141,7 @@ exports.handler = async (event, context) => {
 <body>
   <div class="container">
     <div class="header">
-      <h2 style="margin: 0;">📧 ${memberHeading}</h2>
+      <h2 style="margin: 0;">📧 ${escapeHtml(memberHeading)}</h2>
       <p style="margin: 10px 0 0 0; font-size: 0.95rem;">新しいお問い合わせが届きました</p>
     </div>
 
@@ -137,21 +153,21 @@ exports.handler = async (event, context) => {
       </div>
       <div class="info-row">
         <span class="label">お名前:</span>
-        <span class="value">${name}</span>
+        <span class="value">${h.name}</span>
       </div>
       <div class="info-row">
         <span class="label">メールアドレス:</span>
-        <span class="value">${email}</span>
+        <span class="value">${h.email}</span>
       </div>
       <div class="info-row">
         <span class="label">件名:</span>
-        <span class="value">${subject}</span>
+        <span class="value">${h.subject}</span>
       </div>
     </div>
 
     <div class="section">
       <h3 style="margin-top: 0; color: #1e293b;">💬 お問い合わせ内容</h3>
-      <div class="message-box">${message}</div>
+      <div class="message-box">${h.message}</div>
     </div>
 
     <div class="footer">
@@ -211,19 +227,19 @@ exports.handler = async (event, context) => {
       </div>
       <div class="info-row">
         <span class="label">お名前:</span>
-        <span class="value">${name}</span>
+        <span class="value">${h.name}</span>
       </div>
       <div class="info-row">
         <span class="label">メールアドレス:</span>
-        <span class="value">${email}</span>
+        <span class="value">${h.email}</span>
       </div>
       <div class="info-row">
         <span class="label">件名:</span>
-        <span class="value">${subject}</span>
+        <span class="value">${h.subject}</span>
       </div>
       <div style="margin-top: 15px;">
         <span class="label">お問い合わせ内容:</span>
-        <div class="message-box">${message}</div>
+        <div class="message-box">${h.message}</div>
       </div>
     </div>
 
@@ -287,12 +303,8 @@ exports.handler = async (event, context) => {
       throw new Error(`Failed to send user email: ${userResponse.status}`);
     }
 
-    console.log('✅ Premium Plus contact form submitted:', {
-      email,
-      name,
-      subject,
-      timestamp: japanTime
-    });
+    // 件数を後から数えられるように残す（個人情報は出さない・フォームの種類だけ）
+    console.log('[premium-plus-contact] accepted', { formType });
 
     return {
       statusCode: 200,
@@ -304,13 +316,13 @@ exports.handler = async (event, context) => {
     };
 
   } catch (error) {
-    console.error('Premium Plus contact form error:', error);
+    // 例外の本文（SendGrid の応答等）は返さない・ログにも名前だけ
+    console.error('Premium Plus contact form error:', (error && error.name) || 'Error', (error && error.message) || '');
     return {
       statusCode: 500,
       headers,
       body: JSON.stringify({
-        error: 'サーバーエラーが発生しました。時間をおいて再度お試しください。',
-        details: error.message
+        error: 'サーバーエラーが発生しました。時間をおいて再度お試しください。'
       })
     };
   }

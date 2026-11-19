@@ -94,3 +94,43 @@ export function normalizeContactInput(input) {
     value: { name, email, topic, topicLabel: CONTACT_TOPICS[topic], message },
   };
 }
+
+export const MAX_SUBJECT_LENGTH = 200;
+export const MAX_FORM_TYPE_LENGTH = 64;
+
+/**
+ * 有料会員のお問い合わせ（premium-plus-contact）の入力を検査・整形する。
+ * 必須はお名前・メール・件名・本文（従来どおり）。長さとメール形式を検査し、
+ * HTML へ入れる前の無害化は Function 側で escapeHtml を通す。
+ * @returns {{ok:true, value:{name:string,email:string,subject:string,message:string,formType:string|null,timestamp:unknown}}
+ *          | {ok:false, error:string}}
+ */
+export function normalizePremiumContactInput(input) {
+  const body = input && typeof input === 'object' ? input : {};
+  const str = (v) => (typeof v === 'string' ? v.trim() : '');
+  const name = str(body.name);
+  const email = str(body.email);
+  const subject = str(body.subject);
+  const message = str(body.message);
+  if (!name || !email || !subject || !message) {
+    return { ok: false, error: '必須項目が入力されていません' };
+  }
+  if (!EMAIL_RE.test(email) || email.length > 254) {
+    return { ok: false, error: '返信先のメールアドレスを正しく入力してください' };
+  }
+  if (message.length > MAX_MESSAGE_LENGTH) {
+    return { ok: false, error: `お問い合わせ内容は ${MAX_MESSAGE_LENGTH} 文字以内でお願いします` };
+  }
+  const formType = str(body.formType).slice(0, MAX_FORM_TYPE_LENGTH) || null;
+  return {
+    ok: true,
+    value: {
+      name: name.slice(0, MAX_NAME_LENGTH),
+      email,
+      subject: subject.slice(0, MAX_SUBJECT_LENGTH),
+      message,
+      formType,
+      timestamp: body.timestamp,
+    },
+  };
+}
