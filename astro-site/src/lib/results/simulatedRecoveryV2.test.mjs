@@ -58,18 +58,20 @@ test('実データ: 固定した範囲で v2 の値を再現する', () => {
   const n = summarizeSimulationV2(nankan);
   const j = summarizeSimulationV2(jra);
   const all = summarizeSimulationV2([...nankan, ...jra]);
-  assert.equal(n.weightedRate, 146.2);
-  assert.equal(j.weightedRate, 156.9);
-  assert.equal(all.weightedRate, 153.2);
-  assert.equal(all.meanDailyRate, 150.1);
+  // 2026-11-19 同着の再精算（払戻表の全組で判定・src/lib/results/payoutHit.js）で更新: 146.2→146.6 / 156.9→157.3 / 153.2→153.5 / 150.1→150.6 / 10,701,720→10,725,810
+  assert.equal(n.weightedRate, 146.6);
+  assert.equal(j.weightedRate, 157.3);
+  assert.equal(all.weightedRate, 153.5);
+  assert.equal(all.meanDailyRate, 150.6);
   assert.equal(all.races, 4368);
-  assert.equal(all.payout, 10701720);
+  assert.equal(all.payout, 10725810);
 });
 
 test('実データ: 旧 4 段階方式の値は v2 の追加で変わらない', () => {
   const old = summarizeLegacySimulation([...nankan, ...jra]);
-  assert.equal(old.weightedRate, 211.5);
-  assert.equal(old.meanDailyRate, 193.7);
+  // 2026-11-19 同着の再精算で更新: 211.5→211.8 / 193.7→194 / 中央 235.8→236.3（南関は変化なし）
+  assert.equal(old.weightedRate, 211.8);
+  assert.equal(old.meanDailyRate, 194);
   assert.equal(summarizeLegacySimulation(nankan).weightedRate, 175.2);
-  assert.equal(summarizeLegacySimulation(jra).weightedRate, 235.8);
+  assert.equal(summarizeLegacySimulation(jra).weightedRate, 236.3);
 });

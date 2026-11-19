@@ -15,6 +15,7 @@ import { createSharedClient, resolveSharedToken } from './lib/sharedFetch.mjs';
 import { exitDeferredOrFatal } from './lib/sharedCheckerSupport.mjs';
 import { buildAiBet } from '../src/lib/results/aiBetPoints.js';
 import { checkUmatanHit, checkUmatanHitWithOsae } from '../src/lib/results/umatanHit.js';
+import { settleUmatanRace } from '../src/lib/results/payoutHit.js';
 
 const LABEL = 'importResults.js';
 
@@ -237,16 +238,16 @@ function verifyResults(prediction, results) {
     }
 
     const bettingLines = predRace.bettingLines?.umatan || [];
-    const hits = bettingLines.filter(line => checkUmatanHitWithOsae(line, race));
+    // 的中は確定払戻の組で判定（同着の全組を合算）。払戻表が無いときだけ着順で判定（src/lib/results/payoutHit.js）
+    const settled = settleUmatanRace(bettingLines, race, checkUmatanHitWithOsae);
+    const hits = settled.hitLines;
 
     const first = race.results[0];
     const second = race.results[1];
     const third = race.results[2];
 
-    // 馬単払戻金を取得
-    const umatanPayout = race.payouts?.umatan?.[0] || null;
-    const payoutAmount = umatanPayout?.payout || null;
-    const payoutCombination = umatanPayout?.combination || null;
+    // 馬単払戻金（的中した組の合計。外れは払戻表の先頭の組）
+    const payoutAmount = settled.umatan.payout;
 
     raceResults.push({
       raceNumber,
@@ -264,12 +265,9 @@ function verifyResults(prediction, results) {
         const aiBet = buildAiBet(predRace.horses, bettingLines, { cat: 'nankan', horseCount: predRace.raceInfo?.horseCount });
         return aiBet ? { aiBet } : {};
       })(),
-      isHit: hits.length > 0,
+      isHit: settled.isHit,
       hitLines: hits,
-      umatan: {
-        combination: payoutCombination,
-        payout: payoutAmount
-      }
+      umatan: settled.umatan
     });
 
     if (hits.length > 0) {
