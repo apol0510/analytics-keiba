@@ -15,6 +15,7 @@ import { createSharedClient, resolveSharedToken } from './lib/sharedFetch.mjs';
 import { exitDeferredOrFatal } from './lib/sharedCheckerSupport.mjs';
 import { buildAiBet } from '../src/lib/results/aiBetPoints.js';
 import { checkUmatanHitWithOsae } from '../src/lib/results/umatanHit.js';
+import { settleUmatanRace } from '../src/lib/results/payoutHit.js';
 
 const LABEL = 'importResultsJra.js';
 
@@ -379,7 +380,9 @@ function verifyResults(prediction, results) {
     }
 
     const bettingLines = predRace.bettingLines?.umatan || [];
-    const hits = bettingLines.filter(line => checkUmatanHitWithOsae(line, race));
+    // 的中は確定払戻の組で判定（同着の全組を合算）。払戻表が無いときだけ着順で判定（src/lib/results/payoutHit.js）
+    const settled = settleUmatanRace(bettingLines, race, checkUmatanHitWithOsae);
+    const hits = settled.hitLines;
 
     // 買い目点数を計算（全ラインの本線合計 / 最大12点に cap）
     // 運用ルール: お客向け表示は 1レースあたり最大12点
@@ -390,10 +393,8 @@ function verifyResults(prediction, results) {
     const second = race.results[1];
     const third = race.results[2];
 
-    // 馬単払戻金を取得
-    const umatanPayout = race.payouts?.umatan?.[0] || null;
-    const payoutAmount = umatanPayout?.payout || null;
-    const payoutCombination = umatanPayout?.combination || null;
+    // 馬単払戻金（的中した組の合計。外れは払戻表の先頭の組）
+    const payoutAmount = settled.umatan.payout;
 
     // displayName: 特別競走名 > master > raceSubtitle > raceConditionName > 「{venue}{number}R」
     const displayName = buildDisplayName(race, raceVenue, normalizedRaceNumber);
@@ -421,12 +422,9 @@ function verifyResults(prediction, results) {
         return aiBet ? { aiBet } : {};
       })(),
       bettingPoints: totalPoints,
-      isHit: hits.length > 0,
+      isHit: settled.isHit,
       hitLines: hits,
-      umatan: {
-        combination: payoutCombination,
-        payout: payoutAmount
-      }
+      umatan: settled.umatan
     });
 
     if (hits.length > 0) {

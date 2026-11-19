@@ -21,6 +21,7 @@ import {
   checkSanrenpukuHit,
   formatSanrenpukuLine,
 } from '../src/utils/sanrenpukuBetting.js';
+import { settleSanrenpukuByPayout } from '../src/lib/results/payoutHit.js';
 import { resolveSharedToken } from './lib/sharedFetch.mjs';
 import { fetchSharedResults } from './importResultsJra.js';
 import { exitDeferredOrFatal } from './lib/sharedCheckerSupport.mjs';
@@ -134,10 +135,24 @@ function buildVenueDayData(predVenue, resultRaces) {
     const top3 = getTop3(resultRace);
     const sanrenpukuPayout = getSanrenpukuPayout(resultRace);
 
-    const hitNarrow = built.narrow ? checkSanrenpukuHit(top3, built.narrow.lines) : false;
-    const hitHonmei = built.normalHonmeiAxis ? checkSanrenpukuHit(top3, built.normalHonmeiAxis.lines) : false;
-    const hitTaikou = built.normalTaikouAxis ? checkSanrenpukuHit(top3, built.normalTaikouAxis.lines) : false;
+    // 的中は確定払戻の組で判定（同着で組が 2 つ以上あるときは買っていた組の全部を合算）。
+    // 払戻表が無いときだけ従来どおり着順の先頭 3 頭で判定する（src/lib/results/payoutHit.js）
+    const payoutList = resultRace?.payouts?.sanrenpuku || resultRace?.payouts?.['三連複'];
+    const judge = (spec) => {
+      if (!spec) return { hit: false, payout: 0 };
+      const byPayout = settleSanrenpukuByPayout(spec.lines, payoutList);
+      if (byPayout) return byPayout;
+      const hit = checkSanrenpukuHit(top3, spec.lines);
+      return { hit, payout: hit ? sanrenpukuPayout : 0 };
+    };
+    const hitNarrow = judge(built.narrow).hit;
+    const hitHonmei = judge(built.normalHonmeiAxis).hit;
+    const hitTaikou = judge(built.normalTaikouAxis).hit;
     const hitNormal = hitHonmei || hitTaikou;
+    // 通常買い目（本命軸＋対抗軸）の払戻。両軸に同じ組があっても 1 組として数える
+    const normalPayout = hitNormal
+      ? judge({ lines: [...(built.normalHonmeiAxis?.lines || []), ...(built.normalTaikouAxis?.lines || [])] }).payout
+      : 0;
 
     const hitTypes = [];
     if (hitNarrow) hitTypes.push('narrow');
@@ -146,7 +161,7 @@ function buildVenueDayData(predVenue, resultRaces) {
 
     if (hitNormal) {
       hitRaces++;
-      totalPayout += sanrenpukuPayout;
+      totalPayout += normalPayout;
     }
     if (hitNarrow) narrowHits++;
 
@@ -155,7 +170,7 @@ function buildVenueDayData(predVenue, resultRaces) {
       raceName: predRace.raceInfo?.raceName || '-',
       betType: '三連複',
       hit: hitNormal,
-      payout: hitNormal ? sanrenpukuPayout : 0,
+      payout: normalPayout,
       hitTypes,
       narrow: specToSummary(built.narrow),
       normalHonmeiAxis: specToSummary(built.normalHonmeiAxis),

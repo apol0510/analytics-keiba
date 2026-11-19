@@ -8221,7 +8221,17 @@
         "hitLines": [],
         "umatan": {
           "combination": "9-2",
-          "payout": 1040
+          "payout": 1040,
+          "payoutTable": [
+            {
+              "combination": "9-2",
+              "payout": 1040
+            },
+            {
+              "combination": "9-4",
+              "payout": 410
+            }
+          ]
         },
         "betType": "馬単",
         "betPoints": 5
@@ -8264,7 +8274,7 @@
         "betPoints": 5
       }
     ],
-    "verifiedAt": "2026-10-26T13:34:18.579Z"
+    "verifiedAt": "2026-11-19T04:31:52.185Z"
   },
   {
     "date": "2026-10-23",
@@ -9800,7 +9810,17 @@
         ],
         "umatan": {
           "combination": "3-2",
-          "payout": 27270
+          "payout": 27270,
+          "payoutTable": [
+            {
+              "combination": "3-2",
+              "payout": 27270
+            },
+            {
+              "combination": "3-9",
+              "payout": 21480
+            }
+          ]
         },
         "betType": "馬単",
         "betPoints": 5
@@ -10058,7 +10078,7 @@
         "betPoints": 5
       }
     ],
-    "verifiedAt": "2026-10-20T09:44:39.590Z"
+    "verifiedAt": "2026-11-19T04:31:50.097Z"
   },
   {
     "date": "2026-10-19",
@@ -14140,9 +14160,9 @@
     "betPointsPerRace": 5,
     "totalBetPoints": 60,
     "totalInvestment": 6000,
-    "totalPayout": 22180,
-    "returnRate": 369.7,
-    "recoveryRate": 369.7,
+    "totalPayout": 22420,
+    "returnRate": 373.7,
+    "recoveryRate": 373.7,
     "races": [
       {
         "raceNumber": 1,
@@ -14209,11 +14229,22 @@
         },
         "isHit": true,
         "hitLines": [
+          "2↔1.3.4.5.7",
           "1↔2.3.4.5.7"
         ],
         "umatan": {
           "combination": "1-2",
-          "payout": 260
+          "payout": 500,
+          "payoutTable": [
+            {
+              "combination": "1-2",
+              "payout": 260
+            },
+            {
+              "combination": "2-1",
+              "payout": 240
+            }
+          ]
         },
         "betType": "馬単",
         "betPoints": 5
@@ -14587,7 +14618,7 @@
         "betPoints": 5
       }
     ],
-    "verifiedAt": "2026-10-06T12:10:52.830Z"
+    "verifiedAt": "2026-11-19T04:31:48.221Z"
   },
   {
     "date": "2026-10-05",
@@ -30483,9 +30514,9 @@
     "betPointsPerRace": 5,
     "totalBetPoints": 50,
     "totalInvestment": 5000,
-    "totalPayout": 15090,
-    "returnRate": 301.8,
-    "recoveryRate": 301.8,
+    "totalPayout": 15950,
+    "returnRate": 319,
+    "recoveryRate": 319,
     "races": [
       {
         "raceNumber": 1,
@@ -30775,7 +30806,17 @@
         ],
         "umatan": {
           "combination": "12-9",
-          "payout": 330
+          "payout": 1190,
+          "payoutTable": [
+            {
+              "combination": "12-9",
+              "payout": 330
+            },
+            {
+              "combination": "12-10",
+              "payout": 860
+            }
+          ]
         },
         "betType": "馬単",
         "betPoints": 5,
@@ -30856,7 +30897,7 @@
         }
       }
     ],
-    "verifiedAt": "2026-08-17T12:08:31.667Z"
+    "verifiedAt": "2026-11-19T04:31:46.722Z"
   },
   {
     "date": "2026-08-16",
@@ -62035,16 +62076,16 @@
       "大井"
     ],
     "totalRaces": 12,
-    "hitRaces": 7,
-    "missRaces": 5,
-    "hitRate": 58.3,
+    "hitRaces": 8,
+    "missRaces": 4,
+    "hitRate": 66.7,
     "betAmount": 6000,
     "betPointsPerRace": 5,
     "totalBetPoints": 60,
     "totalInvestment": 6000,
-    "totalPayout": 7680,
-    "returnRate": 128,
-    "recoveryRate": 128,
+    "totalPayout": 13300,
+    "returnRate": 221.7,
+    "recoveryRate": 221.7,
     "races": [
       {
         "raceNumber": 1,
@@ -62286,11 +62327,23 @@
           "6↔2.3.4.8.10(抑え5.9)",
           "8↔2.3.4.6.10(抑え5.9)"
         ],
-        "isHit": false,
-        "hitLines": [],
+        "isHit": true,
+        "hitLines": [
+          "6↔2.3.4.8.10(抑え5.9)"
+        ],
         "umatan": {
           "combination": "3-6",
-          "payout": 3860
+          "payout": 5620,
+          "payoutTable": [
+            {
+              "combination": "3-6",
+              "payout": 3860
+            },
+            {
+              "combination": "6-3",
+              "payout": 1760
+            }
+          ]
         },
         "betType": "馬単",
         "betPoints": 5,
@@ -62480,7 +62533,7 @@
         }
       }
     ],
-    "verifiedAt": "2026-05-24T08:07:38.020Z"
+    "verifiedAt": "2026-11-19T04:31:45.130Z"
   },
   {
     "date": "2026-05-21",
@@ -73955,9 +74008,9 @@
     "betPointsPerRace": 5,
     "totalBetPoints": 60,
     "totalInvestment": 6000,
-    "totalPayout": 18540,
-    "returnRate": 309,
-    "recoveryRate": 309,
+    "totalPayout": 20270,
+    "returnRate": 337.8,
+    "recoveryRate": 337.8,
     "races": [
       {
         "raceNumber": 1,
@@ -74314,11 +74367,22 @@
         ],
         "isHit": true,
         "hitLines": [
+          "8-1.9.2.4.7.3(抑え11.12)",
           "1-8.9.2.4.7.3(抑え11.12)"
         ],
         "umatan": {
           "combination": "4-1",
-          "payout": 1390
+          "payout": 3120,
+          "payoutTable": [
+            {
+              "combination": "4-1",
+              "payout": 1390
+            },
+            {
+              "combination": "4-8",
+              "payout": 1730
+            }
+          ]
         },
         "betType": "馬単",
         "betPoints": 5,
@@ -74398,7 +74462,7 @@
         }
       }
     ],
-    "verifiedAt": "2026-04-23T05:49:58.513Z"
+    "verifiedAt": "2026-11-19T04:31:43.671Z"
   },
   {
     "date": "2026-04-14",

@@ -10,6 +10,7 @@ import { readFileSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { checkUmatanHitWithOsae } from '../src/lib/results/umatanHit.js';
+import { settleUmatanByPayout } from '../src/lib/results/payoutHit.js';
 
 const DATA_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'data');
 const round1 = (v) => +v.toFixed(1);
@@ -19,6 +20,12 @@ export function recomputeEntryWithOsae(entry) {
   const races = entry.races || [];
   if (!races.length || !races.every(decidable)) return entry;
   const newRaces = races.map((r) => {
+    // 同着（払戻表が 2 組以上）は着順でなく保存した払戻表で判定する（着順の 2 着は同着で落ちた馬の次の馬になっている）
+    const byTable = r.umatan?.payoutTable ? settleUmatanByPayout(r.bettingLines, r.umatan.payoutTable) : null;
+    if (byTable) {
+      const umatan = byTable.isHit ? { ...r.umatan, combination: byTable.matched[0].combination, payout: byTable.payout } : r.umatan;
+      return { ...r, isHit: byTable.isHit, hitLines: byTable.hitLines, umatan };
+    }
     const placed = { results: [{ number: r.result.first.number }, { number: r.result.second.number }] };
     const hitLines = r.bettingLines.filter((l) => checkUmatanHitWithOsae(l, placed));
     return { ...r, isHit: hitLines.length > 0, hitLines };
