@@ -294,12 +294,11 @@ async function handleNewFreeRegistration(base, email, jsonHeaders, authLib) {
     console.error('⚠️ [auth-user] step enroll 失敗（継続）:', e.message);
   }
   try {
-    const notificationUrl = `${process.env.NETLIFY_DEV ? 'http://localhost:8888' : 'https://analytics.keiba.link'}/.netlify/functions/user-notification`;
-    await fetch(notificationUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, isNewUser: true }),
-    });
+    // 2026-11-20: 公開 Function user-notification を HTTP で呼ばず、送信関数を直接呼ぶ
+    //（公開 URL は誰でも任意のアドレスへ送れたため閉じた）
+    const { sendWelcomeEmail } = await import('../../src/lib/membership/welcomeEmail.js');
+    const r = await sendWelcomeEmail({ email });
+    if (!r.sent) console.error(`⚠️ [auth-user] ウェルカム通知未送信（継続）: ${r.reason}`);
   } catch (e) {
     console.error('⚠️ [auth-user] ウェルカム通知失敗（継続）:', e.message);
   }
