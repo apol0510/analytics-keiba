@@ -132,7 +132,8 @@ test('本文: 価格・手順は /pricing/ の Premium 年払い（銀行振込�
   assert.match(m.text, /「銀行振込で申し込む」から、再度お振込みいただくことで延長できます/);
   assert.match(m.text, /①お振込み → ②振込完了後、報告フォームをご送信 → ③入金確認後、ご利用開始です。/);
   assert.equal(/44,820|4,980|2,980|78,000|18,000|割引|特典|OFF|月額|自動更新|PayPal|Stripe|クレジット|Light/.test(all), false, '書いていない価格・特典・別の経路を書いている');
-  assert.ok(m.html.includes(PREMIUM_ANNUAL_RENEWAL_CTA_URL) && m.text.includes(PREMIUM_ANNUAL_RENEWAL_CTA_URL));
+  const tagged = 'https://analytics.keiba.link/login/?next=%2Fpricing%2F&utm_source=ak_mail&utm_medium=email&utm_campaign=premium-annual-renewal';
+  assert.ok(m.html.includes(`href="${tagged.replace(/&/g, '&amp;')}"`) && m.text.includes(tagged), 'CTA は utm（premium-annual-renewal）付きのログイン経由 /pricing/（#893）');
   assert.equal(PREMIUM_ANNUAL_RENEWAL_CTA_URL, 'https://analytics.keiba.link/login/?next=/pricing/');
   assert.match(m.html, /\{\{unsubscribeUrl\}\}/);
   assert.throws(() => renderPremiumAnnualRenewalEmail({ stage: STAGE.POST, cycle: '2026-10-05' }), /unknown_stage/, '期限前以外の本文は無い');

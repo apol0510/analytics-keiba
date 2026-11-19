@@ -164,7 +164,8 @@ test('Premium 更新メール: 3 プラン（中央版・南関版・Premium）�
     const all = `${subject}\n${text}`;
     assert.match(all, /¥4,980／月・中央＋南関/, stage);
     assert.match(all, /中央版・南関版（各 ¥2,980／月）/, stage);
-    assert.match(all, /\/login\/\?next=\/pricing\//, stage);
+    // CTA はログイン経由の /pricing/（utm 付きでは next が %2Fpricing%2F に符号化される・#893）
+    assert.match(all, /\/login\/\?next=(\/|%2F)pricing(\/|%2F)/, stage);
     assert.equal(/Light|ライト|18,000/.test(all), false, stage);
   }
 });
