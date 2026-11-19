@@ -11,9 +11,9 @@
  * 本文に書くのは spec にある事実だけ（価格・期限・手続き方法）。煽らない。
  * 配信停止リンクは本文に書かない（共通シェルのフッターが付ける）。
  */
-import { renderMarketingHtml, renderMarketingText, renderCta, escapeHtml } from '../marketingEmailShell.js';
+import { renderMarketingHtml, renderMarketingText, renderCta, escapeHtml, withEmailUtm } from '../marketingEmailShell.js';
 import {
-  STAGE, SWITCH_PRICE_YEN, REGULAR_PREMIUM_ANNUAL_YEN, LIGHT_MONTHLY_YEN, switchDeadlineFor, addDays,
+  STAGE, SWITCH_PRICE_YEN, REGULAR_PREMIUM_ANNUAL_YEN, LIGHT_MONTHLY_YEN, switchDeadlineFor, addDays, LIGHT_RENEWAL_CAMPAIGN_ID,
 } from './lightRenewalPolicy.js';
 import { planById } from '../../billing/stripePlans.js';
 import { ACTIVE_SUBSCRIPTION_PROVIDER } from '../../billing/cardSales.js';
@@ -96,9 +96,9 @@ export function renderLightRenewalEmail({ stage, cycle, name }) {
   // 共通シェルの CTA は 1 つ。ボタンは「Premium へ変更」だけ（Light 更新・年払いは本文の補足）
   const baseHtml = renderMarketingHtml({
     salutation: c.salutation, headline: c.headline, preheader: c.preheader, body: c.body,
-    cta: premiumCta, ctaNote: c.ctaNote, footerNote: c.footerNote,
+    cta: premiumCta, ctaNote: c.ctaNote, footerNote: c.footerNote, utmCampaign: LIGHT_RENEWAL_CAMPAIGN_ID,
   });
-  const button = renderCta(premiumCta);
+  const button = renderCta(premiumCta, LIGHT_RENEWAL_CAMPAIGN_ID);
   const block = [
     optionHeading(c.premium.title), optionDetail(c.premium.detail), button,
     optionDetail(c.annual), optionDetail(c.lightLine),
@@ -109,7 +109,7 @@ export function renderLightRenewalEmail({ stage, cycle, name }) {
     salutation: c.salutation, headline: c.headline,
     body: [
       c.body, '',
-      c.premium.title, c.premium.detail, `${c.premium.cta}:`, LIGHT_RENEWAL_CTA_URL, '',
+      c.premium.title, c.premium.detail, `${c.premium.cta}:`, withEmailUtm(LIGHT_RENEWAL_CTA_URL, LIGHT_RENEWAL_CAMPAIGN_ID), '',
       c.annual, c.lightLine,
     ].join('\n'),
     ctaNote: c.ctaNote, footerNote: c.footerNote,

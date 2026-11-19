@@ -6,8 +6,8 @@
  * 対象は銀行振込で月払いを契約していた会員（Stripe 会員は自動更新なので対象外・premiumRenewalPolicy）。
  * ボタンは `/login/?next=/pricing/`（ログイン後に料金ページ）。配信停止リンクは共通シェルのフッター。
  */
-import { renderMarketingHtml, renderMarketingText } from '../marketingEmailShell.js';
-import { STAGE, PREMIUM_MONTHLY_YEN } from './premiumRenewalPolicy.js';
+import { renderMarketingHtml, renderMarketingText, withEmailUtm } from '../marketingEmailShell.js';
+import { STAGE, PREMIUM_MONTHLY_YEN, PREMIUM_RENEWAL_CAMPAIGN_ID } from './premiumRenewalPolicy.js';
 import { planById } from '../../billing/stripePlans.js';
 import { ACTIVE_SUBSCRIPTION_PROVIDER } from '../../billing/cardSales.js';
 import { MONTHLY_PROVIDER_LABEL } from '../../billing/monthlySalesChannel.js';
@@ -59,11 +59,11 @@ export function renderPremiumRenewalEmail({ stage, cycle, name }) {
   const c = contentFor({ stage, cycle, name });
   const html = renderMarketingHtml({
     salutation: c.salutation, headline: c.headline, preheader: c.preheader, body: c.body,
-    cta: c.cta, ctaNote: c.ctaNote, footerNote: c.footerNote,
+    cta: c.cta, ctaNote: c.ctaNote, footerNote: c.footerNote, utmCampaign: PREMIUM_RENEWAL_CAMPAIGN_ID,
   });
   const text = renderMarketingText({
     salutation: c.salutation, headline: c.headline,
-    body: [c.body, '', `${c.cta.label}:`, c.cta.url].join('\n'),
+    body: [c.body, '', `${c.cta.label}:`, withEmailUtm(c.cta.url, PREMIUM_RENEWAL_CAMPAIGN_ID)].join('\n'),
     ctaNote: c.ctaNote, footerNote: c.footerNote,
   });
   return { subject: subjectFor({ stage, cycle }), html, text };

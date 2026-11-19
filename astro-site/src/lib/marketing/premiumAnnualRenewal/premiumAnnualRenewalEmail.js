@@ -8,8 +8,8 @@
  * 割引・特典・カード（PayPal）の年額は書かない（年額のカード申込は表示条件付きのため・案内は銀行振込の更新だけ）。
  * ボタンは `/login/?next=/pricing/`（ログイン後に料金ページ）。配信停止リンクは共通シェルのフッター。
  */
-import { renderMarketingHtml, renderMarketingText } from '../marketingEmailShell.js';
-import { STAGE, PREMIUM_ANNUAL_YEN } from './premiumAnnualRenewalPolicy.js';
+import { renderMarketingHtml, renderMarketingText, withEmailUtm } from '../marketingEmailShell.js';
+import { STAGE, PREMIUM_ANNUAL_YEN, PREMIUM_ANNUAL_RENEWAL_CAMPAIGN_ID } from './premiumAnnualRenewalPolicy.js';
 import { jpDate } from '../lightRenewal/lightRenewalEmail.js';
 
 export const PREMIUM_ANNUAL_RENEWAL_CTA_URL = 'https://analytics.keiba.link/login/?next=/pricing/';
@@ -45,11 +45,11 @@ export function renderPremiumAnnualRenewalEmail({ stage, cycle, name }) {
   const c = contentFor({ stage, cycle, name });
   const html = renderMarketingHtml({
     salutation: c.salutation, headline: c.headline, preheader: c.preheader, body: c.body,
-    cta: c.cta, ctaNote: c.ctaNote, footerNote: c.footerNote,
+    cta: c.cta, ctaNote: c.ctaNote, footerNote: c.footerNote, utmCampaign: PREMIUM_ANNUAL_RENEWAL_CAMPAIGN_ID,
   });
   const text = renderMarketingText({
     salutation: c.salutation, headline: c.headline,
-    body: [c.body, '', `${c.cta.label}:`, c.cta.url].join('\n'),
+    body: [c.body, '', `${c.cta.label}:`, withEmailUtm(c.cta.url, PREMIUM_ANNUAL_RENEWAL_CAMPAIGN_ID)].join('\n'),
     ctaNote: c.ctaNote, footerNote: c.footerNote,
   });
   return { subject: subjectFor({ cycle }), html, text };

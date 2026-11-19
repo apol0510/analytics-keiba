@@ -101,7 +101,8 @@ test('本文: 価格は /pricing/ の Premium 月額（Stripe）と同じ・割�
     assert.match(m.text, /中央版・南関版（各 ¥2,980／月）/);
     assert.equal(/Light/.test(m.text), false, 'Premium 会員向けに Light を案内している');
     assert.equal(/18,000|銀行振込で/.test(m.text), false, '販売終了した月払いの案内が残っている');
-    assert.ok(m.html.includes(PREMIUM_RENEWAL_CTA_URL) && m.text.includes(PREMIUM_RENEWAL_CTA_URL));
+    const tagged = 'https://analytics.keiba.link/login/?next=%2Fpricing%2F&utm_source=ak_mail&utm_medium=email&utm_campaign=premium-renewal';
+    assert.ok(m.html.includes(`href="${tagged.replace(/&/g, '&amp;')}"`) && m.text.includes(tagged), 'CTA は utm（premium-renewal）付きのログイン経由 /pricing/（#893）');
     assert.equal(/44,820|49,800|割引|特典|OFF/.test(m.text + m.subject), false, '書いていない価格・特典を書いている');
     assert.match(m.html, /\{\{unsubscribeUrl\}\}/);
   }

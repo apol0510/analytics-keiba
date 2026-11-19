@@ -113,9 +113,11 @@ test('期限前: 主な案内は同額の Premium ¥4,980/月（ボタンはこ�
   assert.match(m.subject, /有効期限が近づいています（10月5日まで）— 同じ ¥4,980\/月で Premium に変更できます/);
   assert.match(m.html, /Premium へ変更する手続きへ/);
   assert.match(m.text, /中央＋南関の全レース/);
-  // ボタン（リンク）は 1 つだけ＝Premium への変更
-  assert.equal((m.html.match(/href="https:\/\/analytics\.keiba\.link\/login\/\?next=\/pricing\/"/g) || []).length, 1);
-  assert.match(m.text, /Premium へ変更する手続きへ:\nhttps:\/\/analytics\.keiba\.link\/login\/\?next=\/pricing\//);
+  // ボタン（リンク）は 1 つだけ＝Premium への変更。HTML・text とも utm（ak_mail / email / light-renewal）付き（#893）
+  const tagged = 'https://analytics.keiba.link/login/?next=%2Fpricing%2F&utm_source=ak_mail&utm_medium=email&utm_campaign=light-renewal';
+  assert.equal(m.html.split(`href="${tagged.replace(/&/g, '&amp;')}"`).length - 1, 1);
+  assert.equal((m.html.match(/href="https:\/\/analytics\.keiba\.link\//g) || []).length, 1, 'AK へのリンクは Premium への変更だけ');
+  assert.ok(m.text.includes(`Premium へ変更する手続きへ:\n${tagged}`));
   // Light の更新は権利として 1 行だけ（勧める文言・ボタンは無い）
   assert.match(m.text, /Light（¥4,980／30日・メインレースのみ）の更新も、料金ページ下部の「銀行振込」から/);
   assert.equal(/Light を続ける|Light をそのまま続ける|Light を続ける手続き/.test(m.html + m.text), false, 'Light 継続を勧めている');
