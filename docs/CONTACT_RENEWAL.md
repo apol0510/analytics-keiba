@@ -39,3 +39,11 @@ MK「以前は問い合わせがあったが、今はない」。
 - 見る指標: `contact_submit` / `/contact/` 到達、`contact_help_click`、月の問い合わせ件数。
 - 期間: 本番反映から 28 日。件数が少ないため短期の増減で仕様を変えない。
 - 次の仮説（未着手）: /contact/ への到達が減っている。ログイン画面・決済後画面・マイページなど「詰まる場所」から `/contact/?topic=…` へ直接案内する。
+
+## 送信回数の上限と premium-plus-contact の無害化（2026-11-19・KAO 5cd50962）
+
+- `contact-form` と `premium-plus-contact` は、メールを送る前に `src/lib/contact/contactRateLimit.js` で回数を確かめる。
+  1 時間の固定窓で **送信元 IP ごと 5 件**（Function ごと）・**宛先メールごと 3 件**（2 つの Function で共有）。超えたら 429 と案内文を返し、メールは送らない。
+- 保存先は Netlify Blobs の `ak-contact-rate`。キーは IP / メールの sha256 だけで、生の値は保存しない。Blobs が使えないときは送信を止めない（fail-open・ログに `degraded`）。
+- `premium-plus-contact` も入力を `normalizePremiumContactInput` で検査（必須・メール形式・本文 5,000 字・件名 200 字）し、HTML へ入れる値はすべて `escapeHtml` を通す。成功ログは `formType` だけ（メール・氏名を出さない）。500 応答に例外の本文を返さない。
+- 検証: `npm run test:contact-subject`（`check:safety` に組込済み）。
