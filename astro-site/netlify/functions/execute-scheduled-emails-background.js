@@ -22,6 +22,7 @@ import {
 } from '../../src/lib/newsletter/audience-resolver.js';
 import { canSharedExecutorSend } from '../../src/lib/marketing/marketingDispatchGate.js';
 import { buildListUnsubscribeHeaders, buildUnsubscribeUrl } from '../../src/lib/unsubscribe/listUnsubscribeHeaders.js';
+import { addEmailUtmToHtml } from '../../src/lib/marketing/emailHtmlUtm.js';
 
 // ScheduledEmails は AK 専用経路。LAZY_LOAD で受信者を解決する時の brand 既定値。
 const DEFAULT_BRAND = 'analytics-keiba';
@@ -132,7 +133,9 @@ export default async function handler(request, context) {
     // 各メールを順次実行
     for (const emailRecord of emailsToSend) {
       const { id: recordId, fields } = emailRecord;
-      const { Subject, Content, Recipients, JobId } = fields;
+      const { Subject, Content: rawContent, Recipients, JobId } = fields;
+      // 本文中の AK へのリンクに utm（メール経由の訪問・購入を GA4 で Email として数える・emailHtmlUtm.js）
+      const Content = addEmailUtmToHtml(rawContent);
 
       try {
         // 🛡️ マーケティングキャンペーンのジョブは **env に関係なく常にここでスキップ**する。
