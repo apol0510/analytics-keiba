@@ -2,6 +2,7 @@ import { installAirtableCallMeter } from '../../src/lib/ops/airtableCallMeter.js
 // Airtable API の呼び出し回数を Function 別に数える（月 100,000 回の上限管理 / docs/AIRTABLE_CAPACITY.md）
 installAirtableCallMeter({ source: 'send-newsletter-worker-background' });
 import { buildUnsubscribeUrl } from '../../src/lib/unsubscribe/listUnsubscribeHeaders.js';
+import { addEmailUtmToHtml } from '../../src/lib/marketing/emailHtmlUtm.js';
 // Queue方式メルマガ配信システム - 送信ワーカー（Background Functions）
 // 専門家推奨修正版：10件バッチ更新 + LeaseId二重起動ガード
 // PayPal Webhook Phase 7の冪等性設計応用
@@ -90,7 +91,9 @@ export default async function handler(request, context) {
     }
 
     const job = jobData.records[0];
-    const { Subject, Content } = job.fields;
+    const { Subject, Content: rawContent } = job.fields;
+    // 本文中の AK へのリンクに utm（メール経由の訪問・購入を GA4 で Email として数える・emailHtmlUtm.js）
+    const Content = addEmailUtmToHtml(rawContent);
 
     console.log('📋 ジョブ情報:', Subject);
 

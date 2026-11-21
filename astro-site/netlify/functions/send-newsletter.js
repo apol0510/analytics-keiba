@@ -17,6 +17,7 @@ import {
 import { emailTraceId as emailTraceIdRaw } from '../../src/lib/newsletter/test-recipients.js';
 import { withUnverifiedCheckoutExcluded } from '../../src/lib/marketing/unverifiedCheckoutRecord.js';
 import { listUnsubscribeHeadersFor, buildUnsubscribeUrl } from '../../src/lib/unsubscribe/listUnsubscribeHeaders.js';
+import { addEmailUtmToHtml } from '../../src/lib/marketing/emailHtmlUtm.js';
 
 // 旧 admin UI は brand を渡さない。AK 専用 function なので analytics-keiba を既定値とする。
 const DEFAULT_BRAND = 'analytics-keiba';
@@ -416,7 +417,9 @@ async function getRecipientsList(targetPlan, targetMailingList = 'all') {
 
 
 // SendGrid APIでメール送信
-async function sendNewsletterViaSendGrid({ recipients, subject, htmlContent, includeUnsubscribe = true }) {
+async function sendNewsletterViaSendGrid({ recipients, subject, htmlContent: rawHtmlContent, includeUnsubscribe = true }) {
+  // 本文中の AK へのリンクに utm（メール経由の訪問・購入を GA4 で Email として数える・emailHtmlUtm.js）
+  const htmlContent = addEmailUtmToHtml(rawHtmlContent);
   const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY;
 
   if (!SENDGRID_API_KEY) {
