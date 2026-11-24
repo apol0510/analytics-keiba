@@ -348,6 +348,13 @@ CLAUDE.md 再編（2026-08-13）で旧セクションがどこへ行ったかの
 
 破ると本番事故になるものだけを並べる。**変更したくなったら、まず正本を読むこと。**
 
+### 📈 事業の主軸は月額継続課金（2026-11-24 MK 確定）
+
+正本は [`docs/decisions.md`](./docs/decisions.md) 2026-11-24。
+
+- 評価は **新規月額契約数・継続率・解約率・MRR**。銀行振込（年払い・買い切り）を目立たなくした料金ページの配置（#854）は意図的な事業判断で、**維持する**
+- 銀行振込の件数・金額の減少だけを理由に、配置を戻す・目立たせる提案をしない。分析・提案では確定した事実と推測を分けて書く
+
 ### 🧱 Netlify Functions の env は AWS Lambda の 4KB 上限ぎりぎり（2026-10-05 実測）
 
 - production の env に **1 つ（約 60 バイト）足しただけで全 Function の作成が失敗し、本番 deploy が止まった**（`Your environment variables exceed the 4KB limit imposed by AWS Lambda`。ビルドログは `netlify logs -s deploy -f -u https://<deploy_id>--analytics-keiba.netlify.app` で取得）
