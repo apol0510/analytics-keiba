@@ -91,6 +91,11 @@ test('決済会社の戻り先・Webhook の中継（2026-10-15 MK 確定）: �
     '/r/paddle/complete  https://analytics.keiba.link/checkout/card-complete/  302!',
     '/r/paddle/subscription-complete  https://analytics.keiba.link/checkout/paypal-subscription-return/  302!',
     '/hooks/paddle  /.netlify/functions/paddle-webhook  200!',
+    // KL・HIBI の Paddle 決済の戻り先（2026-11-24・ops/checkout-site/services.mjs）
+    '/r/kl/complete  https://keiba-live.com/checkout/success  302!',
+    '/r/kl/cancel  https://keiba-live.com/pricing?checkout=canceled  302!',
+    '/r/hibi/complete  https://apolon.keibanahibi.com/checkout/success  302!',
+    '/r/hibi/cancel  https://apolon.keibanahibi.com/pricing?checkout=canceled  302!',
     '',
   ].join('\n'));
   // 中継先は会員サイトの本番だけ（他のホストへ転送しない）。
@@ -98,6 +103,9 @@ test('決済会社の戻り先・Webhook の中継（2026-10-15 MK 確定）: �
   for (const l of files._redirects.trim().split('\n').slice(1)) {
     const target = l.split(/\s+/)[1];
     if (l.startsWith('/hooks/paddle ')) { assert.equal(target, '/.netlify/functions/paddle-webhook'); continue; }
+    // 例外: /r/kl/*・/r/hibi/* は各サービスの本番だけ（services.mjs）
+    if (l.startsWith('/r/kl/')) { assert.match(target, /^https:\/\/keiba-live\.com\//); continue; }
+    if (l.startsWith('/r/hibi/')) { assert.match(target, /^https:\/\/apolon\.keibanahibi\.com\//); continue; }
     assert.match(target, /^https:\/\/analytics\.keiba\.link\//);
   }
   // 決済会社に渡すパス自体に禁止語が無い
@@ -161,6 +169,10 @@ test('決済ページ /pay/: 定期課金の申込（ak=s）は定期課金の�
   assert.match(open, /paddle\.js/);
   assert.match(open, /q\.get\("ak"\) === "s" \? '\/r\/paddle\/subscription-complete' : '\/r\/paddle\/complete'/);
   assert.match(open, /\?provider=paddle&order=/);
-  assert.doesNotMatch(renderPayPage({ paddleClientToken: TOKEN, subscriptions: false }), /paddle\.js/);
+  assert.doesNotMatch(renderPayPage({ paddleClientToken: TOKEN, subscriptions: false, services: false }), /paddle\.js/);
+  // KL・HIBI（2026-11-24）: AK の受付を閉じていても svc 付きの決済は開く。svc の無い（AK の）決済は開かない
+  const svcOnly = renderPayPage({ paddleClientToken: TOKEN, subscriptions: false });
+  assert.match(svcOnly, /paddle\.js/);
+  assert.match(svcOnly, /if \(svc\) \{[\s\S]*return;\n  \}\n  return;\n  var done/);
   assert.doesNotMatch(renderPayPage({ paddleClientToken: 'test_abc', subscriptions: true }), /paddle\.js/, 'live の token のときだけ');
 });
