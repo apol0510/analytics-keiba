@@ -94,12 +94,13 @@ export function nonCatalogPrice(plan) {
 }
 
 /** 取引の本文。🛑 checkout.url は入れない（Default payment link に任せる） */
-export function buildServiceTransactionBody({ svc, plan, memberId, discountId = null }) {
+export function buildServiceTransactionBody({ svc, plan, memberId, discountId = null, offer = null }) {
   return {
     items: [{ quantity: 1, price: nonCatalogPrice(plan) }],
     currency_code: plan.currency,
     collection_mode: 'automatic',
-    custom_data: { svc, member_id: memberId, plan_code: plan.planCode },
+    // offer: 特典を付けた取引だけ（HIBI の webhook が売上台帳の区分に使う・購読へ引き継がれる）
+    custom_data: { svc, member_id: memberId, plan_code: plan.planCode, ...(discountId && offer ? { offer } : {}) },
     // 初回特典（offer）: 単価は通常料金のまま、Paddle の discount（recur false）で初回の請求だけ値引きする
     ...(discountId ? { discount_id: discountId } : {}),
   };
@@ -199,7 +200,7 @@ const KIND_HANDLERS = Object.freeze({
       discountId = typeof env?.[o.discountEnv] === 'string' && DISCOUNT_RE.test(env[o.discountEnv].trim()) ? env[o.discountEnv].trim() : null;
       if (!discountId) return no(503, 'offer_not_configured');
     }
-    const body = buildServiceTransactionBody({ svc, plan, memberId, discountId });
+    const body = buildServiceTransactionBody({ svc, plan, memberId, discountId, offer: discountId ? offer : null });
     const create = async () => {
       const txn = await api.call('POST', '/transactions', body);
       if (!TXN_RE.test(String(txn?.id || ''))) return { ok: false, status: 502, code: 'checkout_failed' };

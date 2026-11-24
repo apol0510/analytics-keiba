@@ -485,11 +485,12 @@ test('HIBI のカムバック（offer:comeback）: HIBI・P-M だけ discount_id
   const posts = () => w.apiCalls().filter((c) => c.method === 'POST').map((c) => JSON.parse(c.body));
   assert.equal(posts()[0].discount_id, DSC);
   assert.equal(posts()[0].items[0].price.unit_price.amount, '5980', '単価は通常料金（2 回目以降 5,980 円）');
-  assert.deepEqual(posts()[0].custom_data, { svc: 'hibi', member_id: 'h1', plan_code: 'P-M' });
+  assert.deepEqual(posts()[0].custom_data, { svc: 'hibi', member_id: 'h1', plan_code: 'P-M', offer: 'comeback' }, 'HIBI の売上台帳が custom_data.offer で区分する');
   // 同じ会員・同じプランでも特典の有無が違えば別の取引（通常料金の取引を特典で使い回さない・逆も）
   const normal = await call('hibi', { kind: 'checkout', memberId: 'h1', planCode: 'P-M' }, w, { env, store });
   assert.notEqual(normal.body.transactionId, cb.body.transactionId);
   assert.equal('discount_id' in posts()[1], false);
+  assert.deepEqual(posts()[1].custom_data, { svc: 'hibi', member_id: 'h1', plan_code: 'P-M' }, '特典なしの取引に offer を付けない');
   assert.equal(normal.body.offerApplied, undefined);
   const again = await call('hibi', { kind: 'checkout', memberId: 'h1', planCode: 'P-M', offer: 'comeback' }, w, { env, store });
   assert.equal(again.body.transactionId, cb.body.transactionId, '特典付きの二重クリックは同じ取引');
