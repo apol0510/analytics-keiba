@@ -19,6 +19,7 @@ import { NEUTRAL_ROUTES, NEUTRAL_PATHS, SUBSCRIPTION_CHECKOUT_FLAG } from '../..
 import { SUBSCRIPTION_SALES_OPEN, ACTIVE_SUBSCRIPTION_PROVIDER } from '../../astro-site/src/lib/billing/cardSales.js';
 import { SUBSCRIPTION_PLANS } from '../../astro-site/src/lib/billing/paypal/paypalSubscriptionCore.js';
 import { SUBSCRIPTION_PLAN_NAMES } from '../../astro-site/src/lib/billing/paymentDisplayNames.js';
+import { SERVICE_IDS, SERVICE_ROUTES, servicePaths } from './services.mjs';
 
 export const BUSINESS = Object.freeze({
   name: 'TIROL DATA LABO',
@@ -403,11 +404,15 @@ const CLIENT_TOKEN_RE = /^live_[A-Za-z0-9]+$/;
  *   それ以外は案内だけ（Paddle.js を読まない）。取引は会員サイトの申込 API（受付中だけ）でしか作られない。
  * - 完了後は /r/paddle/complete（→ 会員サイトの完了画面へ 302）。付与は Webhook が正本（このページは何も書かない）。
  * - ナビ・sitemap に載せない（noindex）。
+ * - KL・HIBI（2026-11-24・services.mjs）: `?_ptxn=…&svc=kl|hibi` のときは完了後 /r/<svc>/complete・閉じたら /r/<svc>/cancel
+ *   （`_redirects` で各サービスへ 302）。各サービスの受付は各サービス側で開け閉めする（services=false で AK だけの版）。
+ *   AK の受付を閉じている間は、svc の無い（AK の）決済は開かない。
  */
-export function renderPayPage({ paddleClientToken = '', subscriptions = SUBSCRIPTION_PAYMENTS_AVAILABLE } = {}) {
+export function renderPayPage({ paddleClientToken = '', subscriptions = SUBSCRIPTION_PAYMENTS_AVAILABLE, services = true } = {}) {
   const token = CLIENT_TOKEN_RE.test(String(paddleClientToken)) ? String(paddleClientToken) : '';
   // 一回払い（CARD_PAYMENTS_AVAILABLE）か定期課金（SUBSCRIPTION_PAYMENTS_AVAILABLE）のどちらかを受け付けているときだけ開く
-  const open = (CARD_PAYMENTS_AVAILABLE || subscriptions) && Boolean(token);
+  const akOpen = Boolean(CARD_PAYMENTS_AVAILABLE || subscriptions);
+  const open = (akOpen || services) && Boolean(token);
   // 完了後の戻り先: 定期課金の申込（会員サイトが ak=s を付ける）は定期課金の戻り先、それ以外は一回払いの完了画面（このコメントは出力しない＝英語のページ）
   const body = open
     ? `<h1>Opening the secure payment form…</h1>
@@ -420,7 +425,23 @@ export function renderPayPage({ paddleClientToken = '', subscriptions = SUBSCRIP
 (function () {
   var q = new URLSearchParams(location.search);
   var txn = q.get('_ptxn') || '';
-  if (!window.Paddle || !/^txn_[a-z0-9]{10,40}$/.test(txn)) return;
+  if (!window.Paddle || !/^txn_[a-z0-9]{10,40}$/.test(txn)) return;${services ? `
+  var routes = ${JSON.stringify(Object.fromEntries(SERVICE_IDS.map((id) => [id, servicePaths(id)])))};
+  var sv = q.get('svc') || '';
+  var svc = Object.prototype.hasOwnProperty.call(routes, sv) ? routes[sv] : null;
+  if (svc) {
+    var completed = false;
+    window.Paddle.Initialize({
+      token: ${JSON.stringify(token)},
+      checkout: { settings: { displayMode: 'overlay', locale: 'ja', successUrl: location.origin + svc.complete } },
+      eventCallback: function (ev) {
+        if (ev && ev.name === 'checkout.completed') completed = true;
+        if (ev && ev.name === 'checkout.closed' && !completed) location.href = svc.cancel;
+      },
+    });
+    return;
+  }` : ''}${akOpen ? '' : `
+  return;`}
   var done = q.get(${JSON.stringify(SUBSCRIPTION_CHECKOUT_FLAG.name)}) === ${JSON.stringify(SUBSCRIPTION_CHECKOUT_FLAG.value)} ? '${NEUTRAL_PATHS.paddleSubscriptionComplete}' : '${NEUTRAL_PATHS.paddleComplete}';
   window.Paddle.Initialize({
     token: ${JSON.stringify(token)},
@@ -458,7 +479,9 @@ export function buildFiles({ paddleClientToken = '', subscriptions = SUBSCRIPTIO
   // Netlify の既定サブドメインは独自ドメインへ寄せる（重複掲載を防ぐ）
   // 決済会社の戻り先 → 会員サイト（302）、Webhook → 会員サイトの Function（200 プロキシ）
   files['_redirects'] = `https://tirol-checkout.netlify.app/* ${SITE_ORIGIN}/:splat 301!\n`
-    + NEUTRAL_ROUTES.map((r) => `${r.from}  ${r.to}  ${r.status}\n`).join('');
+    + NEUTRAL_ROUTES.map((r) => `${r.from}  ${r.to}  ${r.status}\n`).join('')
+    // KL・HIBI の Paddle 決済の戻り先（services.mjs・2026-11-24）。各サービスの実 URL へ 302
+    + SERVICE_ROUTES.map((r) => `${r.from}  ${r.to}  ${r.status}\n`).join('');
   if (INDEXABLE) files['sitemap.xml'] = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${PAGE_PATHS.map((p) => `  <url><loc>${SITE_ORIGIN}${p}</loc></url>`).join('\n')}\n</urlset>\n`;
   return files;
 }
