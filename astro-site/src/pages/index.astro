@@ -379,9 +379,9 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                 <div class="container" style="max-width: 1200px; margin: 0 auto;">
                     <!-- 大カード -->
                     <div class="results-glass-card results-glass-card--nankan">
-                        <div style="text-align: center; margin-bottom: 40px;">
+                        <div style="text-align: center; margin-bottom: 40px;" data-recency-date={latestResult.date}>
                             <h2 style="font-size: 2.5rem; font-weight: 800; background: linear-gradient(135deg, #10b981 0%, #3b82f6 50%, #8b5cf6 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; margin-bottom: 15px;">
-                                🏆 昨日の的中結果（南関競馬）
+                                🏆 <span data-recency-word>最新</span>の的中結果（南関競馬）
                             </h2>
                             <div style="display: flex; align-items: center; justify-content: center; gap: 15px; flex-wrap: wrap;">
                                 <p style="color: #fbbf24; font-size: 1.5rem; font-weight: 600; margin: 0;">
@@ -454,11 +454,11 @@ const raceTitle = `${formattedDate} ${track} ${enhancedRaceInfo?.raceNumber || '
                     </div>
 
                     {yesterdayJraResults && (
-                        <!-- JRA: 昨日の的中結果 -->
+                        <!-- JRA: 最新開催の的中結果（本日 / 昨日 は閲覧時に置き換え） -->
                         <div class="results-glass-card results-glass-card--jra">
-                            <div style="text-align: center; margin-bottom: 40px;">
+                            <div style="text-align: center; margin-bottom: 40px;" data-recency-date={latestJraResult.date}>
                                 <h2 style="font-size: 2.5rem; font-weight: 800; background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 50%, #f59e0b 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; margin-bottom: 15px;">
-                                    🏆 昨日の的中結果（中央競馬）
+                                    🏆 <span data-recency-word>最新</span>の的中結果（中央競馬）
                                 </h2>
                                 <div style="display: flex; align-items: center; justify-content: center; gap: 15px; flex-wrap: wrap;">
                                     <p style="color: #fbbf24; font-size: 1.5rem; font-weight: 600; margin: 0;">
