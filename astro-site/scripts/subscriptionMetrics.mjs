@@ -261,6 +261,7 @@ export async function fetchPaypalSubscriptions({ clientId, clientSecret, nowMs, 
   if (!access) throw new RevenueError('paypal token: unexpected response');
   const auth = { Authorization: `Bearer ${access}` };
   const ids = new Set();
+  const seen = { payments: 0, refTypes: new Map() };
   const iso = (t) => new Date(t).toISOString().replace(/\.\d{3}Z$/, 'Z');
   for (let from = PAYPAL_SEARCH_FROM; from < nowMs; from += PAYPAL_WINDOW_MS) {
     const to = Math.min(from + PAYPAL_WINDOW_MS, nowMs) - 1000;
@@ -273,6 +274,11 @@ export async function fetchPaypalSubscriptions({ clientId, clientSecret, nowMs, 
       if (!body || !Array.isArray(body.transaction_details)) throw new RevenueError('paypal transactions: unexpected response');
       for (const d of body.transaction_details) {
         const t = d?.transaction_info || {};
+        if (Number(t.transaction_amount?.value) > 0 && t.transaction_status === 'S') {
+          seen.payments += 1;
+          const k = `${String(t.transaction_event_code || '?').slice(0, 5)}/${String(t.paypal_reference_id_type || '-').slice(0, 3)}`;
+          seen.refTypes.set(k, (seen.refTypes.get(k) || 0) + 1);
+        }
         if (t.paypal_reference_id_type === 'SUB' && !blank(t.paypal_reference_id)) ids.add(String(t.paypal_reference_id));
       }
       if (page >= (Number(body.total_pages) || 1)) break;
@@ -285,7 +291,12 @@ export async function fetchPaypalSubscriptions({ clientId, clientSecret, nowMs, 
     if (!res.ok) throw new RevenueError(`paypal subscription: HTTP ${res.status}`);
     details.push(await res.json());
   }
-  return normalizePaypal(details);
+  const subs = normalizePaypal(details);
+  // 診断用の件数だけ（識別子は出さない）: 入金の種類（event code / 参照の種類）・購読 ID・AK の Plan・支払い済み
+  const akPlan = details.filter((o) => planFromPaypalPlanId(o?.plan_id, 'live')).length;
+  const kinds = [...seen.refTypes].sort().map(([k, n]) => `${k}=${n}`).join(' ');
+  subs.diagnostic = `PayPal: 入金 ${seen.payments} 件（${kinds || 'なし'}）・購読 ID ${ids.size} 件・AK の Plan ${akPlan} 件・支払い済み ${subs.length} 件`;
+  return subs;
 }
 
 export async function fetchStripeSubscriptions({ key, fetchImpl = fetch }) {
@@ -307,14 +318,19 @@ export async function buildSubscriptionMetrics({ env, period, nowMs = Date.now()
   };
   const subs = [];
   const providers = {};
+  const diagnostics = [];
   for (const p of PROVIDERS) {
     if (!jobs[p]) continue;
     try {
-      subs.push(...await jobs[p]());
+      const got = await jobs[p]();
+      subs.push(...got);
+      if (got.diagnostic) diagnostics.push(got.diagnostic);
       providers[p] = true;
     } catch (e) {
       providers[p] = `取得失敗: ${e instanceof RevenueError ? e.message : 'unexpected'}`;
     }
   }
-  return computeSubscriptionMetrics({ subs, period, nowMs, providers });
+  const metrics = computeSubscriptionMetrics({ subs, period, nowMs, providers });
+  metrics.data_quality.push(...diagnostics);
+  return metrics;
 }
