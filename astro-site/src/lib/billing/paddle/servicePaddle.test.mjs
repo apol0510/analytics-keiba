@@ -472,3 +472,39 @@ test('ログ・応答に secret・会員のメールを出さない', async () =
   const sig = signTsBody({ rawBody: raw, secret: KL_SECRET, nowSec: 1764000000 });
   assert.equal(sig, `ts=1764000000;h1=${createHmac('sha256', KL_SECRET).update(`1764000000:${raw}`).digest('hex')}`);
 });
+
+test('HIBI のカムバック（offer:comeback）: HIBI・P-M だけ discount_id を付ける（単価は 5,980 のまま）・他のサービス / プラン / 知らない offer は 400・env なしは 503（通常料金で黙って請求しない）・冪等化のキーを分ける', async () => {
+  const DSC = 'dsc_01comeback000000000000';
+  const env = { ...ENV, HIBI_PADDLE_DISCOUNT_COMEBACK: DSC };
+  const gs = fakeGetStore();
+  const store = makeBlobStore(gs);
+  const w = world();
+  const cb = await call('hibi', { kind: 'checkout', memberId: 'h1', planCode: 'P-M', offer: 'comeback' }, w, { env, store });
+  assert.equal(cb.status, 200);
+  assert.equal(cb.body.offerApplied, true);
+  const posts = () => w.apiCalls().filter((c) => c.method === 'POST').map((c) => JSON.parse(c.body));
+  assert.equal(posts()[0].discount_id, DSC);
+  assert.equal(posts()[0].items[0].price.unit_price.amount, '5980', '単価は通常料金（2 回目以降 5,980 円）');
+  assert.deepEqual(posts()[0].custom_data, { svc: 'hibi', member_id: 'h1', plan_code: 'P-M' });
+  // 同じ会員・同じプランでも特典の有無が違えば別の取引（通常料金の取引を特典で使い回さない・逆も）
+  const normal = await call('hibi', { kind: 'checkout', memberId: 'h1', planCode: 'P-M' }, w, { env, store });
+  assert.notEqual(normal.body.transactionId, cb.body.transactionId);
+  assert.equal('discount_id' in posts()[1], false);
+  assert.equal(normal.body.offerApplied, undefined);
+  const again = await call('hibi', { kind: 'checkout', memberId: 'h1', planCode: 'P-M', offer: 'comeback' }, w, { env, store });
+  assert.equal(again.body.transactionId, cb.body.transactionId, '特典付きの二重クリックは同じ取引');
+  assert.ok(gs._map.has('idem:hibi:h1:P-M:comeback') && gs._map.has('idem:hibi:h1:P-M'));
+  // 取り消せば特典付きの予約も外れる
+  await call('hibi', { kind: 'checkout_cancel', transactionId: cb.body.transactionId }, w, { env, store });
+  assert.equal(gs._map.has('idem:hibi:h1:P-M:comeback'), false);
+  const n = posts().length;
+  for (const [svc, planCode, offer] of [['kl', 'P-M', 'comeback'], ['kl', 'PL-M', 'comeback'], ['hibi', 'P-M', 'other'], ['hibi', 'P-M', '__proto__'], ['hibi', 'P-M', ''], ['hibi', 'P-M', 1]]) {
+    const r = await call(svc, { kind: 'checkout', memberId: 'h1', planCode, offer }, w, { env: { ...env, KL_PADDLE_DISCOUNT_COMEBACK: DSC } });
+    assert.deepEqual([r.status, r.body.error], [400, 'invalid_offer'], `${svc} ${planCode} ${offer}`);
+  }
+  for (const e of [{ ...ENV }, { ...ENV, HIBI_PADDLE_DISCOUNT_COMEBACK: '' }, { ...ENV, HIBI_PADDLE_DISCOUNT_COMEBACK: 'not-a-discount' }]) {
+    const r = await call('hibi', { kind: 'checkout', memberId: 'h1', planCode: 'P-M', offer: 'comeback' }, w, { env: e });
+    assert.deepEqual([r.status, r.body.error], [503, 'offer_not_configured']);
+  }
+  assert.equal(posts().length, n, '拒否した offer では取引を作らない');
+});

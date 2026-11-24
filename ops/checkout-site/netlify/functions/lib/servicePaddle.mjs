@@ -20,7 +20,7 @@
 import { verifyPaddleSignature, signTsBody, keyMode, PADDLE_API } from '../../../../../astro-site/src/lib/billing/paddle/paddleCore.js';
 import { PADDLE_LIVE_PAYMENT_LINK } from '../../../../../astro-site/src/lib/billing/neutralCheckoutHost.js';
 import { idempotentCreateCheckout } from './checkoutIdempotency.mjs';
-import { serviceById, planFor } from '../../../services.mjs';
+import { serviceById, planFor, offerFor } from '../../../services.mjs';
 
 export const INTENT_TTL_SEC = 120;
 export const MIN_SECRET_LENGTH = 32;
@@ -32,6 +32,7 @@ const SUB_RE = /^sub_[a-z0-9]{10,40}$/;
 const CTM_RE = /^ctm_[a-z0-9]{10,40}$/;
 const MEMBER_RE = /^[A-Za-z0-9_-]{1,100}$/;
 const NONCE_RE = /^[A-Za-z0-9-]{16,80}$/;
+const DISCOUNT_RE = /^dsc_[a-z0-9]{10,40}$/;
 const OPEN_TXN = Object.freeze(['draft', 'ready']);
 const CHECKOUT_STATUS = Object.freeze({ draft: 'open', ready: 'open', completed: 'complete', billed: 'complete', paid: 'complete', canceled: 'expired' });
 
@@ -93,12 +94,14 @@ export function nonCatalogPrice(plan) {
 }
 
 /** 取引の本文。🛑 checkout.url は入れない（Default payment link に任せる） */
-export function buildServiceTransactionBody({ svc, plan, memberId }) {
+export function buildServiceTransactionBody({ svc, plan, memberId, discountId = null }) {
   return {
     items: [{ quantity: 1, price: nonCatalogPrice(plan) }],
     currency_code: plan.currency,
     collection_mode: 'automatic',
     custom_data: { svc, member_id: memberId, plan_code: plan.planCode },
+    // 初回特典（offer）: 単価は通常料金のまま、Paddle の discount（recur false）で初回の請求だけ値引きする
+    ...(discountId ? { discount_id: discountId } : {}),
   };
 }
 
@@ -113,7 +116,8 @@ export function isDefaultPaymentLink(url, transactionId) {
 export const servicePayUrl = (transactionId, svc) => `${PADDLE_LIVE_PAYMENT_LINK}?_ptxn=${encodeURIComponent(transactionId)}&svc=${encodeURIComponent(svc)}`;
 
 const idemRecord = (svc, memberId) => `${svc}:${memberId}`;
-const idemKeyFor = (svc, memberId, planCode) => `idem:${idemRecord(svc, memberId)}:${planCode}`;
+const idemProduct = (planCode, offer) => (offer ? `${planCode}:${offer}` : planCode);
+const idemKeyFor = (svc, memberId, planCode, offer = null) => `idem:${idemRecord(svc, memberId)}:${idemProduct(planCode, offer)}`;
 
 /**
  * intent を受けて kind ごとに処理する（`<svc>-paddle` function の本体・テスト可能）。
@@ -141,7 +145,7 @@ export async function handleServiceIntent({ request, env, svc, store, fetchImpl,
   // このサイトは本番（Live）専用。Sandbox の鍵・鍵なしは受けない（fail closed）
   if (!api || api.mode !== 'live') return fail(503, 'paddle_not_configured');
 
-  const ctx = { service, svc: service.svc, intent, api, store, now };
+  const ctx = { service, svc: service.svc, intent, api, store, now, env };
   try {
     const r = await KIND_HANDLERS[intent.kind](ctx);
     log({ event: 'svc_paddle_intent', svc: service.svc, kind: intent.kind, status: r.status, ...(r.reason ? { reason: r.reason } : {}) });
@@ -178,14 +182,24 @@ async function ownedTransaction({ api, svc, intent }) {
 }
 
 const KIND_HANDLERS = Object.freeze({
-  async checkout({ svc, intent, api, store, now }) {
+  async checkout({ svc, intent, api, store, now, env }) {
     const memberId = String(intent.memberId || '');
     if (!MEMBER_RE.test(memberId)) return no(400, 'invalid_member');
     const plan = planFor(svc, intent.planCode);
     if (!plan) return no(400, 'unknown_plan');
     const nonce = String(intent.nonce || '');
     if (!NONCE_RE.test(nonce)) return no(400, 'invalid_nonce');
-    const body = buildServiceTransactionBody({ svc, plan, memberId });
+    // 初回特典: 表にある offer だけ（他のサービス・他のプラン・知らない offer は 400）。discount の ID が env に無ければ
+    // 503（🛑 黙って通常料金で請求しない）。冪等化のキーも分ける（特典の有無が違う取引を使い回さない）
+    const offer = intent.offer === undefined || intent.offer === null ? null : intent.offer;
+    let discountId = null;
+    if (offer !== null) {
+      const o = offerFor(plan, offer);
+      if (!o) return no(400, 'invalid_offer');
+      discountId = typeof env?.[o.discountEnv] === 'string' && DISCOUNT_RE.test(env[o.discountEnv].trim()) ? env[o.discountEnv].trim() : null;
+      if (!discountId) return no(503, 'offer_not_configured');
+    }
+    const body = buildServiceTransactionBody({ svc, plan, memberId, discountId });
     const create = async () => {
       const txn = await api.call('POST', '/transactions', body);
       if (!TXN_RE.test(String(txn?.id || ''))) return { ok: false, status: 502, code: 'checkout_failed' };
@@ -194,19 +208,19 @@ const KIND_HANDLERS = Object.freeze({
       return { ok: true, transactionId: txn.id, url: servicePayUrl(txn.id, svc) };
     };
     // 冪等化（AK と同じ checkoutIdempotency・キーはサービスで名前空間を分ける: nonce:<svc>:…・idem:<svc>:<member>:<plan>）
-    const run = (n) => idempotentCreateCheckout({ store, nonce: n, recordId: idemRecord(svc, memberId), productId: plan.planCode, now, create });
+    const run = (n) => idempotentCreateCheckout({ store, nonce: n, recordId: idemRecord(svc, memberId), productId: idemProduct(plan.planCode, offer), now, create });
     let r = await run(`${svc}:${nonce}`);
     if (r.ok && r.reused) {
       // 使い回す取引がもう開けない（支払い済み・取消し済み）なら、予約を外して作り直す
       let still = false;
       try { still = OPEN_TXN.includes(String((await api.call('GET', `/transactions/${encodeURIComponent(r.transactionId)}`))?.status || '')); } catch { still = true; }
       if (!still) {
-        if (typeof store?.release === 'function') await store.release(idemKeyFor(svc, memberId, plan.planCode));
+        if (typeof store?.release === 'function') await store.release(idemKeyFor(svc, memberId, plan.planCode, offer));
         r = await run('');
       }
     }
     if (!r.ok) return no(r.status || 502, r.code || 'checkout_failed');
-    return { status: 200, body: { ok: true, transactionId: r.transactionId, url: r.url }, ...(r.degraded ? { reason: 'degraded' } : {}) };
+    return { status: 200, body: { ok: true, transactionId: r.transactionId, url: r.url, ...(offer ? { offerApplied: true } : {}) }, ...(r.degraded ? { reason: 'degraded' } : {}) };
   },
 
   async checkout_status(ctx) {
@@ -226,6 +240,7 @@ const KIND_HANDLERS = Object.freeze({
     // 取り消した取引を 30 分の冪等化で使い回さない（同じプランへ戻ったときに新しい取引を作る）
     if (MEMBER_RE.test(String(o.cd.member_id || '')) && typeof o.cd.plan_code === 'string' && typeof ctx.store?.release === 'function') {
       await ctx.store.release(idemKeyFor(ctx.svc, o.cd.member_id, o.cd.plan_code));
+      for (const offer of Object.keys(planFor(ctx.svc, o.cd.plan_code)?.offers || {})) await ctx.store.release(idemKeyFor(ctx.svc, o.cd.member_id, o.cd.plan_code, offer));
     }
     return ok({ canceled });
   },

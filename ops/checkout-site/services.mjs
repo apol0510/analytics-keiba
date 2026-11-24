@@ -39,7 +39,10 @@ export const SERVICES = Object.freeze({
     cancelUrl: 'https://apolon.keibanahibi.com/pricing?checkout=canceled',
     // カードの継続課金は月額だけ（6 か月・12 か月は銀行振込のみ・HIBI tiers.js）
     plans: Object.freeze([
-      Object.freeze({ planCode: 'P-M', name: 'Daily Analytics Premium (Monthly)', amount: '5980', currency: 'JPY', interval: 'month', frequency: 1 }),
+      // offers: 初回の請求だけの値引き（Paddle の discount を env の ID で付ける）。対象の判定（カムバックの資格）は HIBI が済ませてから intent に offer を付ける。
+      //   comeback = 初月 1,000 円（Paddle の discount: flat 4,980 JPY・recur false → 初回 1,000 円・2 回目以降 5,980 円・HIBI §6.6）
+      Object.freeze({ planCode: 'P-M', name: 'Daily Analytics Premium (Monthly)', amount: '5980', currency: 'JPY', interval: 'month', frequency: 1,
+        offers: Object.freeze({ comeback: Object.freeze({ discountEnv: 'HIBI_PADDLE_DISCOUNT_COMEBACK' }) }) }),
     ]),
   }),
 });
@@ -56,4 +59,6 @@ export const SERVICE_ROUTES = Object.freeze(SERVICE_IDS.flatMap((id) => [
 ]));
 
 export const serviceById = (svc) => (typeof svc === 'string' && Object.prototype.hasOwnProperty.call(SERVICES, svc) ? SERVICES[svc] : null);
+/** プランの初回特典（offer）。表に無い offer は null（拒否する側が判定する） */
+export const offerFor = (plan, offer) => (plan?.offers && typeof offer === 'string' && Object.prototype.hasOwnProperty.call(plan.offers, offer) ? plan.offers[offer] : null);
 export const planFor = (svc, planCode) => serviceById(svc)?.plans.find((p) => p.planCode === planCode) || null;
