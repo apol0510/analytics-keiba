@@ -146,6 +146,7 @@ test('PayPal の取得: 31 日ごとに Transaction Search で購読 ID を集�
   assert.ok(calls.every((c) => c.method === 'GET' || c.path === '/v1/oauth2/token'));
   assert.equal(m.renewals_due, 1);
   assert.equal(m.churned, 1); // 11/20 の更新が支払われていない
-  assert.ok(m.data_quality.includes('PayPal: 入金 1 件（T0002/RP=1）・購読 ID 1 件・AK の Plan 1 件・支払い済み 1 件'));
+  const n = searches.length; // 偽の API は窓ごとに同じ入金を返す
+  assert.ok(m.data_quality.includes(`PayPal: 入金 ${n} 件（T0002/RP=${n}）・購読 ID 1 件・AK の Plan 1 件・支払い済み 1 件`));
   assert.ok(!JSON.stringify(m).includes('I-AAA'));
 });
