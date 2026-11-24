@@ -10,7 +10,7 @@
  * 読むもの（GET のみ・revenueMonthly と同じ読み取り専用の鍵）:
  *   - Paddle: GET /transactions（completed / paid）。AK の購読は custom_data.ak_sub を持ち、KL・HIBI（custom_data.svc）は除く。
  *     支払い済み期間 = 取引の billing_period、更新額 = 取引の明細の unit_price × 数量（値引き前の通常料金）。
- *   - PayPal: Transaction Search（GET）で購読 ID（paypal_reference_id_type = SUB）を集め、GET /v1/billing/subscriptions/{id}。
+ *   - PayPal: Transaction Search（GET）で購読 ID（購読の入金 T0002 の paypal_reference_id・種類 RP / SUB）を集め、GET /v1/billing/subscriptions/{id}。
  *     支払い済み期間 = start_time から暦の周期 × 完了した周期数、更新額・周期 = Plan ID に対応する AK の商品。
  *   - Stripe: GET /v1/subscriptions（status=all）と支払い済みの請求書（GET /v1/invoices?status=paid）の明細の期間。
  *   鍵が無い・取得に失敗した決済会社は 0 件として数えず、subscriptions.data_quality に「未計上」と書く。
@@ -279,7 +279,8 @@ export async function fetchPaypalSubscriptions({ clientId, clientSecret, nowMs, 
           const k = `${String(t.transaction_event_code || '?').slice(0, 5)}/${String(t.paypal_reference_id_type || '-').slice(0, 3)}`;
           seen.refTypes.set(k, (seen.refTypes.get(k) || 0) + 1);
         }
-        if (t.paypal_reference_id_type === 'SUB' && !blank(t.paypal_reference_id)) ids.add(String(t.paypal_reference_id));
+        // 購読の入金は T0002・参照の種類 RP（実測 2026-11-24）。SUB も購読 ID として受ける
+        if (['RP', 'SUB'].includes(t.paypal_reference_id_type) && !blank(t.paypal_reference_id)) ids.add(String(t.paypal_reference_id));
       }
       if (page >= (Number(body.total_pages) || 1)) break;
       if (page === MAX_PAGES) throw new RevenueError('paypal transactions: too many pages');

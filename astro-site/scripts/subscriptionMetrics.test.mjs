@@ -129,7 +129,7 @@ test('PayPal の取得: 31 日ごとに Transaction Search で購読 ID を集�
     if (u.pathname === '/v1/oauth2/token') return { ok: true, status: 200, json: async () => ({ access_token: 'tok' }) };
     if (u.pathname === '/v1/reporting/transactions') {
       return { ok: true, status: 200, json: async () => ({ total_pages: 1, transaction_details: [
-        { transaction_info: { paypal_reference_id: 'I-AAA', paypal_reference_id_type: 'SUB' } },
+        { transaction_info: { paypal_reference_id: 'I-AAA', paypal_reference_id_type: 'RP', transaction_event_code: 'T0002', transaction_status: 'S', transaction_amount: { value: '4980', currency_code: 'JPY' } } },
         { transaction_info: { paypal_reference_id: 'O-1', paypal_reference_id_type: 'ODR' } },
       ] }) };
     }
@@ -146,4 +146,6 @@ test('PayPal の取得: 31 日ごとに Transaction Search で購読 ID を集�
   assert.ok(calls.every((c) => c.method === 'GET' || c.path === '/v1/oauth2/token'));
   assert.equal(m.renewals_due, 1);
   assert.equal(m.churned, 1); // 11/20 の更新が支払われていない
+  assert.ok(m.data_quality.includes('PayPal: 入金 1 件（T0002/RP=1）・購読 ID 1 件・AK の Plan 1 件・支払い済み 1 件'));
+  assert.ok(!JSON.stringify(m).includes('I-AAA'));
 });
