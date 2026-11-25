@@ -1,0 +1,141 @@
+---
+/**
+ * Premium Plus 配信実績（全件）
+ *
+ * MK 2026-11-25・共通 A-2: 販売ページ /premium-plus-v2/ は的中した回だけを出す。
+ * 配信した全件の結果と算定ルールは、この実績ページにだけ置く。
+ *
+ * ⚠️ Premium Plus は商品の存在自体を対象会員以外に見せない（販売ページと同じ存在秘匿）。
+ *    このページも販売ページと同じ条件（SSR 認可 + 販売導線 PLUS + showProductPage）を満たす人にだけ出し、
+ *    それ以外は 404。CDN に載せない（private, no-store）。
+ */
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import ppResultsRaw from '../../data/premiumPlusResults.json';
+import { normalizeResult, sortResults, computeStats, formatYen, STATS_WINDOW } from '../../lib/premiumPlusResults.js';
+import { verifyPlanAccess, PREMIUM_PLUS_CANDIDATE_PLANS } from '../../lib/auth/index.js';
+import { lookupCustomerFields } from '../../lib/premiumPlus/purchaseAnchorLookup.js';
+import { resolveUpsellForCustomer, UPSELL_CHANNEL } from '../../lib/upsell/upsellTarget.js';
+
+export const prerender = false;
+
+const notFound = () => new Response('Not Found', {
+  status: 404,
+  headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'private, no-store' },
+});
+const access = await verifyPlanAccess({
+  cookieHeader: Astro.request.headers.get('cookie') || '',
+  secret: process.env.SESSION_SIGNING_SECRET,
+  now: Date.now(),
+  allowedPlans: PREMIUM_PLUS_CANDIDATE_PLANS,
+});
+if (!access.ok) return notFound();
+const ppNow = Date.now();
+const ppFields = await lookupCustomerFields({ recordId: access.payload?.sub || null, env: process.env, now: ppNow });
+const ppUpsell = resolveUpsellForCustomer({
+  fields: ppFields,
+  nowMs: ppNow,
+  fallbackAnchor: process.env.PREMIUM_PLUS_FUNNEL_ANCHOR,
+});
+if (ppUpsell.channel !== UPSELL_CHANNEL.PLUS || !ppUpsell.plusRelease.showProductPage) return notFound();
+Astro.response.headers.set('Cache-Control', 'private, no-store');
+Astro.response.headers.set('Vary', 'Cookie');
+Astro.response.headers.set('X-Robots-Tag', 'noindex, nofollow');
+
+const WD = ['日', '月', '火', '水', '木', '金', '土'];
+const fmtDate = (d) => {
+  const [y, m, day] = String(d).split('-').map(Number);
+  return `${y}/${m}/${day}(${WD[new Date(Date.UTC(y, m - 1, day)).getUTCDay()]})`;
+};
+
+const rows = sortResults((ppResultsRaw || []).map(normalizeResult).filter(Boolean)).map((e) => ({
+  date: fmtDate(e.date),
+  circuit: e.circuit === 'chuo' ? '中央' : '南関',
+  race: `${e.venue}${e.raceNumber ? `${e.raceNumber}R` : ''}`,
+  bet: `${e.first.join('・')} → ${e.second.join('・')} → ${e.third.join('・')}`,
+  points: e.points,
+  result: e.hitCombo,
+  isHit: e.isHit,
+  payout: e.isHit ? formatYen(e.payout) : '—',
+}));
+const stats = computeStats(ppResultsRaw);
+---
+
+<BaseLayout
+  title="Premium Plus 配信実績（三連単フォーメーション・1 日 1 鞍）"
+  description="Premium Plus で配信した 1 日 1 鞍の三連単フォーメーションの買い目と結果。"
+  noindex={true}
+>
+  <main class="pp-results">
+    <header class="hero">
+      <div class="badge">💎 PREMIUM PLUS 配信実績</div>
+      <h1>配信した 1 鞍の買い目と結果</h1>
+      <p>締切前に確定して配信した三連単フォーメーションの買い目を、結果とともに掲載しています。</p>
+      {stats.payout.available && (
+        <div class="stats">
+          {stats.rate.available && <div><b>{stats.rate.hitRate}%</b><span>的中率</span></div>}
+          <div><b>{formatYen(stats.payout.max)}</b><span>最高払戻</span></div>
+          <div><b>{formatYen(stats.payout.avg)}</b><span>的中時の平均払戻</span></div>
+        </div>
+      )}
+    </header>
+
+    {rows.length === 0 ? (
+      <p class="empty">配信実績を準備中です。</p>
+    ) : (
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr><th>開催日</th><th>レース</th><th>買い目（1着 → 2着 → 3着）</th><th>点数</th><th>着順</th><th>払戻</th></tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr class={r.isHit ? 'hit' : ''}>
+                <td>{r.date}</td>
+                <td><span class="cc">{r.circuit}</span> {r.race}</td>
+                <td>{r.bet}</td>
+                <td>{r.points}</td>
+                <td>{r.result}</td>
+                <td class="pay">{r.isHit ? `✅ ${r.payout}` : r.payout}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )}
+
+    <section class="rules">
+      <h2>算定ルール</h2>
+      <ul>
+        <li>的中率は、直近 {STATS_WINDOW} 鞍（記録開始前の参考掲載分を除く）で算定します。</li>
+      </ul>
+    </section>
+
+    <div class="cta">
+      <a href="/premium-plus-v2/" class="btn">💎 Premium Plus のページへ</a>
+    </div>
+  </main>
+</BaseLayout>
+
+<style>
+  .pp-results { max-width: 960px; margin: 0 auto; padding: 1rem 1rem 3rem; }
+  .hero { text-align: center; padding: 2rem 1.25rem 1.75rem; background: linear-gradient(135deg, #1a1440 0%, #3a1e6e 100%); border-radius: 20px; color: #fff; margin-bottom: 1.5rem; }
+  .badge { display: inline-block; font-size: .8rem; font-weight: 700; letter-spacing: .06em; padding: .35rem .9rem; border-radius: 999px; background: linear-gradient(135deg, #f5c542, #e08f1e); color: #2a1a00; margin-bottom: 1rem; }
+  .hero h1 { font-size: clamp(1.3rem, 4vw, 1.8rem); margin: 0 0 .6rem; }
+  .hero p { margin: 0; opacity: .9; line-height: 1.7; }
+  .stats { display: flex; justify-content: center; gap: 1.5rem; flex-wrap: wrap; margin-top: 1.2rem; }
+  .stats div { display: flex; flex-direction: column; }
+  .stats b { font-size: 1.4rem; color: #f5c542; }
+  .stats span { font-size: .78rem; opacity: .85; }
+  .table-scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: .86rem; font-variant-numeric: tabular-nums; }
+  th, td { padding: .55rem .6rem; border-bottom: 1px solid rgba(127,127,127,.25); text-align: left; white-space: nowrap; }
+  th { font-size: .76rem; opacity: .8; }
+  tr.hit td { background: rgba(52,211,153,.08); }
+  tr.hit .pay { color: #059669; font-weight: 700; }
+  .cc { font-size: .7rem; font-weight: 700; padding: .05em .4em; border-radius: 5px; background: rgba(127,127,127,.15); }
+  .rules { margin-top: 2rem; font-size: .86rem; line-height: 1.8; }
+  .rules h2 { font-size: 1rem; margin-bottom: .4rem; }
+  .empty { text-align: center; padding: 2rem 0; }
+  .cta { text-align: center; margin-top: 2rem; }
+  .btn { display: inline-block; padding: .8rem 1.6rem; border-radius: 999px; background: linear-gradient(135deg, #f5c542, #e08f1e); color: #2a1a00; font-weight: 700; text-decoration: none; }
+</style>
