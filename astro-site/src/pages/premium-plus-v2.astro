@@ -28,7 +28,7 @@ import AccessControl from '../components/AccessControl.astro';
 import SessionKeepAlive from '../components/SessionKeepAlive.astro';
 import { verifyPlanAccess, PREMIUM_PLUS_CANDIDATE_PLANS } from '../lib/auth/index.js';
 import ppResultsRaw from '../data/premiumPlusResults.json';
-import { computeStats, latestCards, sortResults, formatYen, formatYenShort, LEDGER_LIMIT } from '../lib/premiumPlusResults.js';
+import { computeStats, latestCards, sortResults, hitResults, formatYen, formatYenShort, LEDGER_LIMIT } from '../lib/premiumPlusResults.js';
 import PremiumPlusReceiptCardV2 from '../components/premium-plus/PremiumPlusReceiptCardV2.astro';
 import { PP_RELEASE_COPY, intakeCopy } from '../lib/premiumPlus/premiumPlusRelease.js';
 // 「いま売っているのは何日分か」の単一源。表示・注文はここだけを使う
@@ -211,7 +211,9 @@ const ppFmtDate = (d) => {
 // カード描画は本番検証済みの自己完結コンポーネント PremiumPlusReceiptCardV2 に委譲
 // （受付日時整形・勝ち馬ハイライト・防御正規化はコンポーネント側）。ここでは台帳を read-only で渡すだけ。
 // 掲載枚数の単一源は premiumPlusResults.js の CARD_LIMIT（現在 7 枚）。ここに数字を書かない
-const ppCards = latestCards(ppResultsRaw);
+// 販売ページは的中した回だけを出す（MK 2026-11-25・共通 A-2）。全件は /results-showcase/premium-plus/
+const ppHits = hitResults(ppResultsRaw);
+const ppCards = latestCards(ppHits);
 
 // --- 本日の1鞍ティザー（購入導線・買い目はロック） ---
 // 会場サーキットは曜日から導出（平日=南関/SPAT4 ・ 土日=中央/JRA）。特定会場は伏せる（推測で会場名を書かない）。
@@ -255,14 +257,13 @@ const ppTeaser = (() => {
 const ppTeaserEyebrow = ppTeaser.isToday ? '本日の 1 鞍' : `${ppTeaser.m}月${ppTeaser.d}日の 1 鞍`;
 const ppTeaserCta = ppTeaser.isToday ? '🔓 本日の1鞍を抽出する' : `🔓 ${ppTeaser.m}月${ppTeaser.d}日の1鞍を抽出する`;
 
-// --- 連勝レジャー帯（最新 LEDGER_LIMIT 件・古いものから落ちる）---
+// --- 直近の的中帯（的中した回の最新 LEDGER_LIMIT 件まで・古いものから落ちる）---
 // 数値は台帳の実データのみ（手書き禁止）。payout は formatYenShort で短縮表示。
 // ⚠️ 件数は LEDGER_LIMIT が単一源。ここにも見出しにも数字を書かない
 //    （かつて slice(0,14) に対し見出しが「すべて掲載」で、15 件目から黙って嘘になる状態だった）。
-const ppLedger = sortResults(ppResultsRaw).slice(0, LEDGER_LIMIT).map((e) => ({
+const ppLedger = sortResults(ppHits).slice(0, LEDGER_LIMIT).map((e) => ({
   short: ppFmtDate(e.date).short,
-  isHit: !!e.isHit,
-  payoutShort: e.isHit ? formatYenShort(e.payout) : '—',
+  payoutShort: formatYenShort(e.payout),
   isChuo: e.circuit === 'chuo',
   hasImage: !!e.imageFile,
 }));
@@ -603,7 +604,7 @@ import BankApplicationEmailLock from '../components/BankApplicationEmailLock.ast
     .why-punch { margin: 0; font-size: clamp(1.02rem,2.7vw,1.2rem); line-height: 1.75; font-weight: 700; border-left: 3px solid var(--gold); padding-left: 1.1rem; }
     .why-punch .accent { color: var(--gold); }
 
-    /* ===== 連勝レジャー帯（直近の1鞍・最新 LEDGER_LIMIT 件） ===== */
+    /* ===== 直近の的中帯（最新 LEDGER_LIMIT 件まで） ===== */
     .ledger-h { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin: clamp(24px,4vw,32px) 0 14px; }
     .ledger-h h3 { margin: 0; font-size: 1.02rem; font-weight: 700; }
     .ledger-sub { color: #6f819c; font-size: .76rem; }
@@ -614,10 +615,8 @@ import BankApplicationEmailLock from '../components/BankApplicationEmailLock.ast
     .ledger .day .cam { position: absolute; top: 5px; right: 6px; font-size: .6rem; opacity: .5; }
     .ledger .day .ic { font-size: 1.05rem; line-height: 1.3; margin: .05em 0; }
     .ledger .day.h .ic { color: var(--green); }
-    .ledger .day.m .ic { color: #6f819c; }
     .ledger .day .p { font-size: .72rem; font-weight: 700; font-variant-numeric: tabular-nums; }
     .ledger .day.h .p { color: var(--gold); }
-    .ledger .day.m .p { color: #6f819c; }
     .ledger .day .cc { display: inline-block; margin-top: 3px; font-size: .58rem; font-weight: 700; padding: .05em .4em; border-radius: 5px; }
     .ledger .day .cc.nk { color: #38bdf8; background: rgba(56,189,248,.1); }
     .ledger .day .cc.ch { color: #c084fc; background: rgba(192,132,252,.1); }
@@ -1038,7 +1037,7 @@ import BankApplicationEmailLock from '../components/BankApplicationEmailLock.ast
         </div>
       )}
       {ppStats.payout.available && !ppStats.rate.available && (
-        <p class="stats-note">※ 的中率は不的中を含む記録が 10 鞍たまり次第、自動掲載します。上記は的中した回の払戻実績です。</p>
+        <p class="stats-note">※ 的中率は記録が 10 鞍たまり次第、自動掲載します。上記は的中した回の払戻実績です。</p>
       )}
     </header>
 
@@ -1163,15 +1162,15 @@ import BankApplicationEmailLock from '../components/BankApplicationEmailLock.ast
       {ppLedger.length > 0 && (
         <>
           <div class="ledger-h">
-            <h3>直近の 1 鞍（最新 {LEDGER_LIMIT} 件）</h3>
-            <span class="ledger-sub">✅的中 ／ ×不的中 ・ 📷=実スクショ有</span>
+            <h3>直近の的中（最新 {ppLedger.length} 件）</h3>
+            <span class="ledger-sub">📷=実スクショ有 ・ <a href="/results-showcase/premium-plus/">全件の結果</a></span>
           </div>
           <div class="ledger">
             {ppLedger.map((e) => (
-              <div class={e.isHit ? 'day h' : 'day m'}>
+              <div class="day h">
                 {e.hasImage && <span class="cam">📷</span>}
                 <div class="d">{e.short}</div>
-                <div class="ic">{e.isHit ? '✅' : '×'}</div>
+                <div class="ic">✅</div>
                 <div class="p">{e.payoutShort}</div>
                 <span class={e.isChuo ? 'cc ch' : 'cc nk'}>{e.isChuo ? '中央' : '南関'}</span>
               </div>
@@ -1357,13 +1356,6 @@ import BankApplicationEmailLock from '../components/BankApplicationEmailLock.ast
           </p>
           <span class="who">— 50代男性・自営業（Premium Sanrenpuku 会員）</span>
         </div>
-        <div class="voice">
-          <p>
-            「不的中の日の画像もそのまま出しているのを見て、信用できると思いました。
-            都合のいい日だけ見せる予想サイトとは違う。」
-          </p>
-          <span class="who">— 30代男性・会社員（Premium Sanrenpuku 会員）</span>
-        </div>
       </div>
     </section>
 
@@ -1406,12 +1398,11 @@ import BankApplicationEmailLock from '../components/BankApplicationEmailLock.ast
         </details>
 
         <details>
-          <summary>不的中だった場合、返金はありますか？</summary>
+          <summary>返金はありますか？</summary>
           <div class="answer-body">
             <p>
-              <strong>返金制度はございません。</strong>競馬に確実はなく、外れる日は必ずあります。
-              そのため当ページでは<strong>不的中の投票控えもそのまま公開</strong>しています。
-              都合のいい日だけをお見せするつもりはありません。
+              <strong>返金制度はございません。</strong>
+              配信した 1 鞍の買い目と結果は、<a href="/results-showcase/premium-plus/">配信実績</a>ですべてご覧いただけます。
             </p>
           </div>
         </details>

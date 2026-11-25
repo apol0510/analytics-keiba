@@ -20,6 +20,9 @@
  *   任意の手段は、鍵が無い・取得に失敗した場合 **0 円として数えず**「未計上」と data_quality に明記する
  *   （KAO では「一部推定値」と表示される）。
  *
+ * 5. subscriptions（任意）: 月額継続課金の 4 指標（新規月額契約数・継続率・解約率・MRR）を同じ鍵で数える（scripts/subscriptionMetrics.mjs・
+ *    定義は docs/decisions.md 2026-11-24）。売上の合計・判定・data_quality には影響しない（失敗は subscriptions 側に書く）。
+ *
  * 🔴 read-only。決済会社へ書き込まない（課金・返金・購読変更・顧客連絡をしない）。PayPal の OAuth は token 取得のみ。
  * 🔴 集計値だけを出す（顧客・メール・charge / 取引 ID・明細を出さない）。例外文に鍵を含めない。
  * ⚠️ 当月（JST）を指定したときは月途中の速報値として `partial: true`・`period_end` を付け、data_quality に明記する
@@ -32,6 +35,7 @@
  */
 import { readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { buildSubscriptionMetrics } from './subscriptionMetrics.mjs';
 
 export const SCHEMA = 'kao.revenue-month/v1';
 export const TARGET_JPY = 1_000_000;
@@ -222,7 +226,7 @@ export function summarizePaddle({ transactions = [], adjustments = [], period })
   return { gross, refunds: refunded, payments };
 }
 
-async function paddleList({ key, url, fetchImpl, label }) {
+export async function paddleList({ key, url, fetchImpl, label }) {
   const out = [];
   let next = url;
   for (let page = 1; page <= MAX_PAGES && next; page += 1) {
@@ -357,14 +361,21 @@ export async function buildRevenueMonth({ month, env, fetchImpl = fetch, previou
     paypal: await optionalChannel(Boolean(ppId && ppSecret), () => fetchPaypalMonth({ clientId: ppId, clientSecret: ppSecret, period, fetchImpl })),
     paddle: await optionalChannel(Boolean(paddleKey), () => fetchPaddleMonth({ key: paddleKey, period, fetchImpl })),
   };
-  return buildDoc({ month, summary, channels, period, previous, nowMs });
+  const doc = buildDoc({ month, summary, channels, period, previous, nowMs });
+  // 月額継続課金の 4 指標（docs/decisions.md 2026-11-24）。売上の判定・data_quality には影響させない（失敗しても売上は書く）
+  try {
+    doc.subscriptions = await buildSubscriptionMetrics({ env, period, nowMs, fetchImpl });
+  } catch (e) {
+    doc.subscriptions = { measured: false, reason: e instanceof RevenueError ? e.message : 'unexpected' };
+  }
+  return doc;
 }
 
 /** dry-run 用の 1 行（集計値だけ）。 */
 export function summaryLine(doc) {
   const ch = Object.fromEntries(Object.entries(doc.by_channel).map(([k, v]) => [k, v.measured === false ? 'unmeasured' : { net_jpy: v.net_jpy, payments: v.payments }]));
   return { status: 'ok', month: doc.month, partial: Boolean(doc.partial), net_jpy: doc.net_jpy, gross_jpy: doc.gross_jpy, refunds_jpy: doc.refunds_jpy,
-    by_channel: ch, data_quality: doc.data_quality };
+    by_channel: ch, data_quality: doc.data_quality, ...(doc.subscriptions ? { subscriptions: doc.subscriptions } : {}) };
 }
 
 async function main(argv) {

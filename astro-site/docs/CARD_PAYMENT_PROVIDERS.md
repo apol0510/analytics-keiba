@@ -13,7 +13,7 @@
 | 本番受付 | 一回払いは**閉じている**（`CARD_SALES_OPEN.paddle=false`）。**新規の月額・年額は Paddle へ一本化（2026-11-02 MK 確定・§3.8）**。切替前は `SUBSCRIPTION_SALES_OPEN.paddle=false`（PayPal で受付中）| 一回払いは**閉じている**（`.paypal=false`）。**月額の定期課金は PayPal で受ける方針**（2026-10-15 MK 決定・§3.5）。**2026-10-15 受付開始**（`SUBSCRIPTION_SALES_OPEN.paypal=true`）|
 | 取扱可否（一次情報）| ⚠️ 禁止リストに「Betting-related products」「Sports forecasting/odds making where monetary or material prizes are involved」。**書面確認が要る** | 利用規定で「競馬またはドッグレース」は**事前承認**区分 → 審査通過 |
 
-- 売るのは銀行振込と同じ一回払い（Premium 年払い ¥49,800／Light 会員 ¥44,820・買い切り ¥78,000）だけ。**月払い・定期課金は作らない**（Paddle の定期価格・PayPal Subscriptions は使わない。guard で固定）。
+- 新規の月額・年額の定期課金は **Paddle** で受ける（2026-11-02 MK 確定・`decisions.md`「Paddle へ一本化」・§3.8。`SUBSCRIPTION_SALES_OPEN.paddle=true`・`ACTIVE_SUBSCRIPTION_PROVIDER='paddle'`）。既存の PayPal 定期課金契約は PayPal のまま（§3.5・§3.6）。カードの一回払いは閉じている（`CARD_SALES_OPEN`）。買い切りは銀行振込だけ。
 - 本番受付は、その決済会社が AK の取扱商品を承認したあと、MK の明示決定で `src/lib/billing/cardSales.js` の値を変える PR だけで開く。env では開かない。
 
 ## 0.5 冗長化の方針（2026-10-13 MK 確定・`decisions.md` 2026-10-13）
@@ -112,9 +112,9 @@ env（Deploy Preview の Sandbox 用だけ。production には入れない）: `
   - ⚠️ **fail-open の範囲を限定・可視化**: 通常の防御は上の原子的予約。ストア自体が不達で予約が取れないときだけ fail-open で作成を通し、結果に `degraded:true` を立てて handler がログする（無言の fail-open を廃止）。作成は課金前の非 charge 操作で、fail-closed にすると Blobs 障害中は全 checkout が止まるため。障害中の残余リスクは「未払い取引の重複」だけで、課金はカード入力時のみ・付与は transactionId で冪等＝**二重課金・二重付与は起きない**（監査 2026-10-24 ＝nonce 単回使用が無い・transactionId 冪等は別取引の二重決済を防がない、への対応を含む）。
 - 検証: `paddleCheckoutDelegation.test.mjs`（委譲＝直接と同一本文・改ざん不可・署名/期限/資格のガード・実関数の 405/401/503/400）/ `paddleCheckoutIdempotency.test.mjs`（nonce・二重クリックの冪等／別商品・TTL 経過・作成失敗は作り直す／**reserve の CAS・同時 2 リクエストで create は 1 回・競合時 409・create 失敗で予約解放・ストア不達は degraded**／実 handler の署名→冪等→作成の配線）/ `paddleDelegation.test.mjs`（Webhook 委譲の冪等・署名）。
 
-### 2.3 KL・HIBI の Paddle 決済を中立サイトで受ける（2026-11-24 MK 決定・AK は不変）
+### 2.3 KL・HIBI の既存 Paddle 契約を中立サイトで受ける（2026-11-24 実装・2026-11-25 MK 決定で新規は Stripe・AK は不変）
 
-KEIBA LIVE（KL・`keiba-live.com`）と 上部 圭の競馬な日々（HIBI・`apolon.keibanahibi.com`）の Stripe アカウントが入金を受けられなくなったため、両サービスのカード継続課金を Paddle へ移す。Paddle Live は承認ドメイン（`checkout.tirol.link`）でしか決済画面を開かないので、AK と同じ中立サイトで取引を作り・決済画面を開き・通知を受けて、各サービスへ署名付きで渡す。プロトコルの正本は apol0510/keiba-live PR #57（`web/src/lib/billing/paddleProvider.js` の delegated・`paddleWebhook.js`・`pages/api/billing/paddle-grant.js`・`docs/web.md` §12.3.1）。
+KEIBA LIVE（KL・`keiba-live.com`）と 上部 圭の競馬な日々（HIBI・`apolon.keibanahibi.com`）の**新規カード決済は Stripe**（共用アカウント tirol data labo・2026-11-25 MK 決定・正本は各サービスの repo）。この節の委任経路は、11-24 に Paddle で作られた KL・HIBI の**既存の Paddle 契約だけ**のために残す（既存の契約は今の決済会社のまま）。2026-11-25 時点で KL・HIBI の Paddle の完了取引・購読は 0 件。AK 自身の Paddle（§2.1・§2.2・§3.8）は変えない。仕組みは、AK と同じ中立サイト（`checkout.tirol.link`）で取引・ポータル・解約を扱い・通知を受けて、各サービスへ署名付きで渡す。プロトコルの正本は apol0510/keiba-live PR #57（`web/src/lib/billing/paddleProvider.js` の delegated・`paddleWebhook.js`・`pages/api/billing/paddle-grant.js`・`docs/web.md` §12.3.1）。
 
 | 項目 | 内容 | 単一源 |
 |---|---|---|
@@ -129,14 +129,14 @@ KEIBA LIVE（KL・`keiba-live.com`）と 上部 圭の競馬な日々（HIBI・`
 | 決済ページ | `/pay/?_ptxn=…&svc=kl`（または `hibi`） は完了後 `/r/<svc>/complete`・閉じたら `/r/<svc>/cancel`（`_redirects` で 302）。KL / HIBI = `/checkout/success`・`/pricing?checkout=canceled`。ページの文言は増やさない（英語の最小ページのまま）。AK の受付を閉じている間も svc 付きの決済は開く（svc なし＝AK は開かない） | `site.mjs renderPayPage`・`services.mjs SERVICE_ROUTES` |
 | 商品名 | 決済会社に見せる名前は表の中立名だけ（競馬関連語なし） | `servicePaddle.test.mjs` |
 
-**本番化に要るもの（このサイト・Paddle・各サービス）**
+**本番の構成（2026-11-24 設定済み・既存の Paddle 契約のため残す）**
 
 - 中立サイト（Netlify site `tirol-checkout`）の env（名前だけ・値は各サービスの値と同じものを両側に）: `KL_GRANT_INTERNAL_SECRET`（= KL の `PADDLE_DELEGATE_SECRET`・32 文字以上）・`HIBI_GRANT_INTERNAL_SECRET`（= HIBI 側の同等の secret・32 文字以上）。どちらも AK の `CARD_GRANT_INTERNAL_SECRET` とは別の値。既存の `PADDLE_API_KEY`・`PADDLE_WEBHOOK_SECRET` はそのまま共用
 - HIBI のカムバック特典を使うなら env `HIBI_PADDLE_DISCOUNT_COMEBACK`（Paddle の discount ID `dsc_…`・秘密ではないが env で持つ）。discount の作り方（Sandbox・Live とも同じ・Live の ID をこのサイトへ、Sandbox の ID は Sandbox の検証環境へ）: Paddle の管理画面 Catalog → Discounts → New discount で **Type = Flat amount・Amount = 4,980・Currency = JPY**（JPY 固定。percentage にしない）・**Recurring（Apply to recurring payments）= off（recur false＝初回だけ）**・Restrict to = なし（非カタログ価格の取引に付けるため商品で絞らない）・Code = 空（お客様に入力させない・API で付ける）・有効期限 / 使用回数は MK の運用方針どおり（上限を付けるなら資格のある人数以上）。API で作るなら `POST /discounts` `{ "type": "flat", "amount": "4980", "currency_code": "JPY", "description": "Comeback first month", "recur": false, "enabled_for_checkout": false }`（`discount.write` 権限が要る・このサイトの鍵には付けない）。作成後、Sandbox で通常の申込と特典付きの申込をそれぞれ 1 件作り、決済画面の初回額が ¥5,980 / ¥1,000 になることを確認する
 - Paddle Live の API 鍵の権限（既存の取引に加えて）: `transaction.read`・`transaction.write`（既存）・**`subscription.read`・`subscription.write`**・**`customer.read`**・**`customer_portal_session.write`**（`adjustment.read` は AK の返金で既存）
 - Paddle Live の通知先 `https://checkout.tirol.link/hooks/paddle` に追加するイベント: `transaction.completed`（既存）・`subscription.created`・`subscription.updated`・`subscription.activated`・`subscription.past_due`・`subscription.canceled`・`subscription.paused`・`subscription.resumed`（AK の §3.8 で追加済みなら変更なし）
 - 中立サイトの deploy（`kl-paddle`・`hibi-paddle` の追加・`paddle-webhook` の振り分け・`_redirects` の `/r/kl/*`・`/r/hibi/*`・live client token 付きの `/pay/`）
-- 各サービス側: KL は PR #57（`PADDLE_DELEGATE_SECRET`・`LIVE_BILLING_PROVIDER=paddle`）。HIBI は `/api/billing/paddle-grant`（KL と同じ方式）と委譲 provider（`hibi-paddle` へ）を別 PR で
+- 各サービス側: 新規の申込は Stripe（2026-11-25〜・KL・HIBI の正本）。既存の Paddle 契約の通知の受け口（KL PR #57 の `PADDLE_DELEGATE_SECRET`・`/api/billing/paddle-grant`、HIBI の同等の受け口）は残す
 
 **rollback**: この PR の revert（`kl-paddle`・`hibi-paddle` が消え、通知は全て従来の AK の処理へ）。サービス側の provider を Stripe / 停止へ戻せば新規の申込は来ない。既に作られた KL / HIBI の Paddle 購読の通知は、revert 後は AK の処理で ak_* の印が無いため付与されない（戻すならサービス側で停止を先に）。
 

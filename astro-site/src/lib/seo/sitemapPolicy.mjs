@@ -30,6 +30,7 @@ export const SITEMAP_EXCLUDE_EXACT = Object.freeze([
   '/results-jra/',
   '/today/',
   '/free-prediction/archive/', // 2026-09-28 から /archive/nankan/ へ 301
+  '/spring-campaign/', // 2026-03-18 終了。2026-11-25 から /pricing/ へ 301
   '/free-prediction/view/', // Premium 詳細のプレビュー（?key= 必須・noindex。キー無しは 404）
   // noindex / 個人向け（検索者に意味が無い）
   '/offer/',
