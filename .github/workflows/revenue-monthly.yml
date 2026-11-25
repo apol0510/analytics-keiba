@@ -1,6 +1,8 @@
 # 月間売上の measurement（KAO D-158・kao.revenue-month/v1）
 #
 # - 毎月 1 日 09:30 JST に前月分を集計し、docs/measurements/revenue-YYYY-MM-01.json を main へ commit する。
+# - 毎週月曜 09:30 JST に当月分（月途中の速報値・partial: true）を同じ file へ commit する。月 100 万円に対する当月の伸び・停滞を
+#   月末を待たずに KAO の MK report で見るため。1 日の確定値（partial なし）が同じ file を上書きする。月曜が 1 日なら速報は出さない。
 # - KAO はこの file を canon（origin/main）から読み、MK report の「事業成果」節に出す。
 # - 読むのは 銀行振込 = admin-payment-funnel `revenueMonth`（入金確認の件数と金額の合計・識別子なし）・
 #   Stripe = charges / refunds の一覧（GET）・PayPal = Transaction Search（GET）。いずれも読み取り専用の鍵だけを使う。
@@ -12,6 +14,7 @@ name: Revenue monthly measurement
 on:
   schedule:
     - cron: '30 0 1 * *'   # 毎月 1 日 00:30 UTC = 09:30 JST
+    - cron: '30 0 * * 1'   # 毎週月曜 00:30 UTC = 09:30 JST（当月の速報値）
   workflow_dispatch:
     inputs:
       month:
@@ -48,8 +51,19 @@ jobs:
           PADDLE_READ_KEY: ${{ secrets.PADDLE_READ_KEY }}
           MONTH_INPUT: ${{ github.event.inputs.month }}
           DRY_RUN: ${{ github.event.inputs.dry_run == 'true' && 'true' || 'false' }}
+          SCHEDULE: ${{ github.event.schedule }}
         run: |
-          MONTH="${MONTH_INPUT:-$(TZ=Asia/Tokyo date -d "$(TZ=Asia/Tokyo date +%Y-%m-01) -1 day" +%Y-%m)}"
+          if [ "$SCHEDULE" = "30 0 * * 1" ]; then
+            # 週次の速報: 1 日は月次の確定値の日なので出さない（当月はまだ 0 時間分しか無い）
+            if [ "$(TZ=Asia/Tokyo date +%d)" = "01" ]; then
+              echo "⏭️  1 日は月次の確定値だけを出す"
+              echo "SKIP=true" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            MONTH="$(TZ=Asia/Tokyo date +%Y-%m)"
+          else
+            MONTH="${MONTH_INPUT:-$(TZ=Asia/Tokyo date -d "$(TZ=Asia/Tokyo date +%Y-%m-01) -1 day" +%Y-%m)}"
+          fi
           if [ "$DRY_RUN" = "true" ]; then
             node scripts/revenueMonthly.mjs --month "$MONTH" > "$RUNNER_TEMP/revenue.json"
             node -e 'process.stdout.write(JSON.stringify(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))) + "\n")' "$RUNNER_TEMP/revenue.json"
@@ -59,7 +73,7 @@ jobs:
           echo "MONTH=$MONTH" >> "$GITHUB_ENV"
 
       - name: Commit measurement
-        if: github.event.inputs.dry_run != 'true'
+        if: github.event.inputs.dry_run != 'true' && env.SKIP != 'true'
         run: |
           git add "docs/measurements/revenue-${MONTH}-01.json"
           if git diff --staged --quiet; then
