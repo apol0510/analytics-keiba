@@ -1,8 +1,9 @@
 ---
 /**
- * FreeLiveRaceBoard.astro — 無料予想ページの「次のレースの締切まで」＋「有料版の的中 ✅/✗」
+ * FreeLiveRaceBoard.astro — 無料予想ページの「次のレースの締切まで」＋「有料版の的中 ✅」
  *
  * 単一源: src/lib/freeLiveBoard.js（2026-11-03 MK 確定の公開範囲・メインレースを特別扱いしない）
+ * 2026-11-25 MK 決定（共通 A-2）: 的中だけを ✅ で出す。外れの印・分母（◯ / ◯ レース）・0 件は出さない。
  * 🛑 買い目・払戻・印・指数は出さない。ブラウザへ渡すのは venueName / raceNumber / startAt / hit だけ。
  *
  * props:
@@ -11,7 +12,7 @@
  */
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { BET_CUTOFF_NOTE, RESULT_NOTE, buildFreeLiveBoard, headline, nextRace, raceStatus, ringModel } from '../lib/freeLiveBoard.js';
+import { BET_CUTOFF_NOTE, RESULT_NOTE, buildFreeLiveBoard, headline, hitTallyText, nextRace, raceStatus, ringModel } from '../lib/freeLiveBoard.js';
 import CountdownRing from './CountdownRing.astro';
 
 const { cat, model } = Astro.props as { cat: 'jra' | 'nankan'; model: any };
@@ -34,6 +35,7 @@ const venues = [...new Set(board.races.map((r) => r.venueName))].map((name) => (
 }));
 const ring = head.state === 'countdown' ? ringModel(head.startAt, nowMs) : null;
 const next = nextRace(board.races, nowMs);
+const hitTally = hitTallyText(board.tally);
 const json = JSON.stringify(board).replace(/</g, '\\u003c');
 ---
 
@@ -56,8 +58,8 @@ const json = JSON.stringify(board).replace(/</g, '\\u003c');
       </div>
     </div>
 
-    <p class="flb-tally" data-flb-tally hidden={!board.tally}>
-      有料版の的中 <b>{board.tally?.hit ?? 0}</b> / {board.tally?.total ?? 0} レース
+    <p class="flb-tally" data-flb-tally hidden={!hitTally}>
+      {hitTally && <Fragment>{hitTally.lead}<b>{hitTally.count}</b>{hitTally.tail}</Fragment>}
     </p>
 
     <div class="flb-venues">
@@ -80,14 +82,14 @@ const json = JSON.stringify(board).replace(/</g, '\\u003c');
     </div>
 
     <p class="flb-note">
-      ✅/✗ は有料版の予想が的中したかどうかです（買い目は有料版で公開）。{RESULT_NOTE}。{BET_CUTOFF_NOTE}発走時刻は予定で、遅れることがあります。
+      ✅ は有料版の予想が的中したレースです（買い目は有料版で公開）。{RESULT_NOTE}。{BET_CUTOFF_NOTE}発走時刻は予定で、遅れることがあります。
     </p>
     <a class="ag-cta flb-cta" href="/pricing/" data-flb-cta>Premiumで次のレースの予想を見る</a>
   </section>
 )}
 
 <script>
-  import { LIVE_POLL_MS, LIVE_URL, applyLive, headline, nextRace, paintRing, raceStatus, ringModel, tallyOf } from '../lib/freeLiveBoard.js';
+  import { LIVE_POLL_MS, LIVE_URL, applyLive, headline, hitTallyText, nextRace, paintRing, raceStatus, ringModel, tallyOf } from '../lib/freeLiveBoard.js';
   import { jstDate } from '../lib/ailab/aiLab.js';
 
   for (const root of document.querySelectorAll<HTMLElement>('[data-free-live-board]')) {
@@ -137,7 +139,7 @@ const json = JSON.stringify(board).replace(/</g, '\\u003c');
     render();
     setInterval(render, 1000);
 
-    // 南関の当日だけ、取得できたレースから ✅/✗ と変更後の発走時刻を反映する
+    // 南関の当日だけ、取得できたレースから的中（✅）と変更後の発走時刻を反映する
     if (board.cat === 'nankan' && board.date === jstDate(Date.now())) {
       const tallyEl = root.querySelector<HTMLElement>('[data-flb-tally]');
       const poll = async () => {
@@ -150,10 +152,11 @@ const json = JSON.stringify(board).replace(/</g, '\\u003c');
         }
         board.tally = tallyOf(board.races);
         board.resultsIn = board.tally !== null;
-        if (tallyEl && board.tally) {
+        const t = hitTallyText(board.tally);
+        if (tallyEl && t) {
           tallyEl.hidden = false;
-          tallyEl.textContent = '有料版の的中 ';
-          tallyEl.append(Object.assign(document.createElement('b'), { textContent: String(board.tally.hit) }), ` / ${board.tally.total} レース`);
+          tallyEl.textContent = t.lead;
+          tallyEl.append(Object.assign(document.createElement('b'), { textContent: t.count }), t.tail);
         }
         lastKey = '';
         render();
@@ -188,7 +191,7 @@ const json = JSON.stringify(board).replace(/</g, '\\u003c');
   .flb-races { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 6px; }
   .flb-race { display: grid; gap: 2px; padding: 6px 8px; border-radius: 10px; background: var(--ag-glass); border: 1px solid var(--ag-border); font-size: 0.8rem; color: var(--ag-text-3); }
   .flb-rn { font-weight: 700; color: var(--ag-text); }
-  .flb-race.is-result { color: var(--ag-text); }
+  .flb-race.is-result { color: var(--ag-text); border-color: rgba(134, 239, 172, 0.5); background: rgba(34, 197, 94, 0.16); font-weight: 700; }
   .flb-race.is-past { background: transparent; border-color: transparent; opacity: 0.6; }
   .flb-race.is-past .flb-rn { color: var(--ag-text-3); }
   .flb-race.is-next { color: var(--ag-text); border-color: #60a5fa; background: rgba(96, 165, 250, 0.16); font-weight: 700; }

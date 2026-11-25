@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { nextRaceAtText, buildFreeLiveBoard, dayPrefix, headline, hitMapFor, jstToIso, nextRace, nextRacesByCat, raceStatus, ringModel, currentRace, applyLive, tallyOf, DUE_HOLD_SEC, RESULT_NOTE } from './freeLiveBoard.js';
+import { nextRaceAtText, buildFreeLiveBoard, dayPrefix, headline, hitMapFor, hitTallyText, jstToIso, nextRace, nextRacesByCat, raceStatus, ringModel, currentRace, applyLive, tallyOf, DUE_HOLD_SEC, RESULT_NOTE } from './freeLiveBoard.js';
 import { buildNextRaceFeed } from './nextRaceFeed.js';
 
 const model = {
@@ -43,12 +43,36 @@ test('🛑 買い目・払戻・メイン判定をブラウザ向けモデルへ
   for (const r of b.races) assert.deepEqual(Object.keys(r).sort(), ['hit', 'raceNumber', 'startAt', 'venueName']);
 });
 
-test('結果が入った日は ✅/✗ を全部出し、累計は正直に数える', () => {
+test('結果が入った日は的中だけ ✅ を出し、外れたレースは ✗ を付けず予定時刻だけ（2026-11-25 MK・共通 A-2）', () => {
   const b = buildFreeLiveBoard({ cat: 'nankan', model, archiveArray: archive });
   assert.deepEqual(b.races.map((r) => r.hit), [true, false, true, null]);
-  assert.deepEqual(b.tally, { hit: 2, total: 3 });
-  assert.equal(raceStatus(b.races[0], at('21:30')).text, '的中');
-  assert.equal(raceStatus(b.races[1], at('21:30')).text, '不的中');
+  assert.deepEqual(b.tally, { hit: 2 }, '分母（結果が出たレース数）を持たない');
+  assert.deepEqual(raceStatus(b.races[0], at('21:30')), { state: 'result', mark: '✅', text: '的中' });
+  const miss = raceStatus(b.races[1], at('21:30'));
+  assert.equal(miss.state, 'past');
+  assert.equal(miss.mark, '');
+  assert.equal(miss.text, '12:45', '外れは発走予定時刻だけ');
+  for (const r of b.races) {
+    const s = raceStatus(r, at('21:30'));
+    assert.ok(!/✗|不的中/.test(`${s.mark}${s.text}`), `${r.raceNumber}R に ✗ / 不的中`);
+  }
+  assert.deepEqual(hitTallyText(b.tally), { lead: '有料版の的中 ', count: '2', tail: ' レース' });
+});
+
+test('的中 0 件の間は累計の行を出さない（0 件を見せない）', () => {
+  const zero = [{ date: '2026-11-03', venue: '船橋', races: [{ venue: '船橋', raceNumber: 1, isHit: false }] }];
+  const b = buildFreeLiveBoard({ cat: 'nankan', model, archiveArray: zero });
+  assert.deepEqual(b.tally, { hit: 0 });
+  assert.equal(b.resultsIn, true);
+  assert.equal(hitTallyText(b.tally), null);
+  assert.equal(hitTallyText(null), null);
+});
+
+test('guard: 部品に ✗・分母・不的中の表示が無い（2026-11-25 MK・共通 A-2）', () => {
+  const src = readFileSync(new URL('../components/FreeLiveRaceBoard.astro', import.meta.url), 'utf-8');
+  for (const banned of ['✗', '不的中', 'tally.total', '✅/✗']) assert.ok(!src.includes(banned), banned);
+  const lib = readFileSync(new URL('./freeLiveBoard.js', import.meta.url), 'utf-8');
+  assert.ok(!/text:\s*'不的中'/.test(lib), 'raceStatus が 不的中 を返している');
 });
 
 test('結果が無い日は ✅/✗ を付けない（推測しない）', () => {
@@ -231,8 +255,16 @@ test('applyLive: 順次反映するが archive の確定値は上書きしない
   assert.equal(applyLive(races, '2026-11-04', live), true);
   assert.deepEqual(races.map((r) => r.hit), [true, false, null]);
   assert.equal(races[2].startAt, '2026-11-04T06:45:00.000Z');
-  assert.deepEqual(tallyOf(races), { hit: 1, total: 2 });
+  assert.deepEqual(tallyOf(races), { hit: 1 });
   // 変更が取り消されたら元の時刻へ戻す
   applyLive(races, '2026-11-04', { date: '2026-11-04', hits: {}, times: {} });
   assert.equal(races[2].startAt, '2026-11-04T06:40:00.000Z');
+});
+
+test('guard: 無料予想に埋め込む実績バナーも的中だけ（分母・0 件を出さない・2026-11-25 MK・共通 A-2）', () => {
+  const src = readFileSync(new URL('../components/ResultsShowcaseBanner.astro', import.meta.url), 'utf-8');
+  const markup = src.split('---').slice(2).join('---');
+  assert.ok(!markup.includes('totalRaces'), '分母（totalRaces）を出している');
+  assert.ok(!/hitRaces\}\s*\//.test(markup), '的中数 / 総数 の形が残っている');
+  assert.match(markup, /Number\(view\.hitRaces\) > 0 &&/, '的中 0 件でも件数を出している');
 });

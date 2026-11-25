@@ -78,7 +78,7 @@ test('【重要】数え切れないとき touches / totals を返さない（�
   assert.equal('touches' in r.body, false, '部分集計の touches を返している');
   assert.equal('totals' in r.body, false, '部分集計の totals を返している');
   assert.equal('measurementAvailable' in r.body, false, '部分結果を計測済みとして返している');
-  // 何ページ見たかは正直に出す（黙って打ち切らない）
+  // 何ページ見たかはそのまま出す（黙って打ち切らない）
   assert.equal(r.body.scannedPages, MEASUREMENT_INLINE_MAX_PAGES);
   assert.equal(r.body.budgetPages, MEASUREMENT_INLINE_MAX_PAGES);
 });
