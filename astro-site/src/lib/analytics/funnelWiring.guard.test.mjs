@@ -100,7 +100,8 @@ test('申込成功はサーバーの受理を確かめた分岐からしか呼�
 
 test('モーダルを開く関数は global のまま（包み込みが効く形）', () => {
   const pagesWithModal = PAGES.filter((p) => /function openBankModal/.test(p.src));
-  assert.ok(pagesWithModal.length >= 12, `申込モーダルのページが少なすぎる: ${pagesWithModal.length}`);
+  // 2026-11-25: 終了済みの /spring-campaign/ を /pricing/ への 301 にしたため 12 → 11
+  assert.ok(pagesWithModal.length >= 11, `申込モーダルのページが少なすぎる: ${pagesWithModal.length}`);
   for (const p of pagesWithModal) {
     const idx = p.src.indexOf('function openBankModal');
     const before = p.src.slice(0, idx);
