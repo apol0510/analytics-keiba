@@ -9,6 +9,7 @@
  *                                        返す必要があるのでこのガードの対象に残す）。旧経緯:
  *                                          非公開のまま残置。導線からは切り離し済み）
  *   - src/pages/premium-plus-v2.astro   … 新しい正式商品ページ（本番検証済みの新モジュール経路）
+ *   - src/pages/results-showcase/premium-plus.astro … Premium Plus の全件実績（販売ページと同じ存在秘匿・MK 2026-11-25 A-2）
  *
  * 検知内容（いずれか欠けたら fail）:
  *   - prerender=false（静的化＝ビルド時 HTML 露出への逆戻り禁止）
@@ -23,7 +24,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-const PAGES = ['../../pages/premium-plus.astro', '../../pages/premium-plus-v2.astro'];
+const PAGES = ['../../pages/premium-plus.astro', '../../pages/premium-plus-v2.astro', '../../pages/results-showcase/premium-plus.astro'];
 
 for (const rel of PAGES) {
   const label = rel.split('/').pop();
