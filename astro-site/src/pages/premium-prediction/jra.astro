@@ -503,7 +503,6 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
                  取得前は本文を出さない。旧「全レース一括表示」と会場別の傾向分析はここから外した。 */}
             <PremiumRaceBoard mode="premium" venue="jra" model={acqModel} value={acqValue} basePath="/premium-prediction/jra/" canAcquire={acqCan} acquiredUnknown={acqList === null} headingTag="h2" />
 
-            <!-- 免責事項（free 版に揃えてシンプル化） -->
             <!-- 中央（JRA）三連複 予告カード（段階表示: 2〜3日目は予告のみ。JRA は的中結果セクションを新設しない） -->
             <div class="sanrenpuku-teaser-section" id="sanrenpuku-teaser-section-jra" style="display: none;">
               <div class="sanrenpuku-teaser-card">
@@ -662,10 +661,6 @@ const totalAnalyzedRaces = (venues || []).reduce((sum, v) => sum + (v.prediction
               })();
             </script>
 
-            <div class="disclaimer-box">
-              <h3 class="disclaimer-title">⚠️ 免責事項</h3>
-              <p class="disclaimer-text">競馬予想は投資の一種です。必ず余裕資金の範囲内で楽しみ、自己責任でご利用ください。当予想による損失については一切の責任を負いません。</p>
-            </div>
           </>
         )}
 
