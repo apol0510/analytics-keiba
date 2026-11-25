@@ -97,7 +97,7 @@ function json(status, body) {
 
 /**
  * Customers の 1 レコードへ**クーポンフィールドだけ**を PATCH する。
- * 失敗は例外を投げずに false（呼び出し側は「取得できなかった」と正直に返す）。
+ * 失敗は例外を投げずに false（呼び出し側は「取得できなかった」とそのまま返す）。
  */
 async function patchCouponFields({ recordId, fields, env }) {
   if (!assertOnlyCouponFields(fields)) return false;

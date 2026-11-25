@@ -185,6 +185,15 @@ test('【version ロック】本文を変えたら version を上げる', () => 
   //       DeliveryKey は campaignId × version × 受信者なので、再送は増えない）
   // version を据え置いたまま本文を変えると DeliveryKey が変わらず、
   // 既送信者へ修正版が二度と届かない。
+  // ── (D) 2026-11-25 MK 決定（共通 A-2）の差し替え ─────────────────────
+  //   育成・販促メールを「的中・好走が主役」へ書き直した（外れを前に出す書き方をやめた）。
+  //   **version は全 campaign で据え置き**。DeliveryKey は本文を含まない
+  //   （`computeCampaignDeliveryKey`・`emailCopyStandard.test.mjs` の専用 test）ので、既に受け取った人へ再送されない。
+  //   新しい受信者と、まだ届いていない step にだけ新しい文面が届く（MK の決定どおり）。
+  //   ハッシュを更新したもの: dormant-reactivation / free-member-activation / light-lifetime-restart /
+  //   comeback-offer / free-signup-onboarding 3・4 / light-trial-to-premium-sequence 1・2 /
+  //   light-trial-post-expiry-sequence 2・4・9・10・13・16 / light-to-premium-sequence 1〜4 /
+  //   campaign-discount-free 2 / campaign-prospect-phase2 3・6
   const LOCKED = {
     // v3（2026-08-09）: 本文は不変（hash 据え置き）。dormant-reactivation v2 の
     // 14,279 件配信前に、正規経路のカナリアを再実行するための版上げ。
@@ -195,21 +204,21 @@ test('【version ロック】本文を変えたら version を上げる', () => 
     // 本文は 1 文字も変えていないが、CTA が変わるので版を上げた。
     'sanrenpuku-offer': { version: 3, hash: 'dbeff5217501614a' },
     'premium-plus-offer': { version: 3, hash: 'df9d80a67edaf3b7' },
-    'dormant-reactivation': { version: 2, hash: 'e6e26fc71e9bc35b' },
+    'dormant-reactivation': { version: 2, hash: '30b2553fdd7338ee' },
     'general-announcement': { version: 1, hash: '5972fca73d871820' },
     // Light 永久無料 再スタート案内（2026-08-25 新規）。旧三連複会員 18 名の正規化に
     // 成功した相手だけへ送る。**期限が無いことが要点**なので、文面を変えるときは
     // 「期間限定」と読める表現が入っていないか lightLifetimeRestartNotice.test.mjs も見る。
-    'light-lifetime-restart': { version: 1, hash: '1a041a064a6eae74' },
+    'light-lifetime-restart': { version: 1, hash: '4e79ea94221b8164' },
     // カムバック割引案内。本文は offer カタログから自動生成する（comebackEmailTemplate.js）。
     // CTA は受信者ごとの申込 URL なので、ここでは差し込み印がハッシュに入る。
-    'comeback-offer': { version: 2, hash: 'fc6c05cc1ecbf2ec' },
+    'comeback-offer': { version: 2, hash: 'b8ea3dbf4a356741' },
     // v1 → v2: 共通 HTML シェルへ載せ替え、件名・プリヘッダー・特典カードを追加。
     // 見た目が大きく変わるので version を上げ、DeliveryKey を v1 と分けた。
     'comeback-light-30d-granted': { version: 2, hash: '6c9738ef2fcc2e9c' },
     // 無料会員 活性化（2026-08-09 新規）。無料で見られる範囲だけを案内し、
     // 価格・契約の勧誘は書かない。休眠再アプローチとは対象も入口も違う。
-    'free-member-activation': { version: 1, hash: 'dfa045a0bd8c5423' },
+    'free-member-activation': { version: 1, hash: 'ff838d30ebc801b3' },
     // 連続配信は **ステップごと**にロックする（ステップ単位で DeliveryKey が分かれるため、
     // 1 ステップだけ文面を変えても、そのステップは既送信者へ届かない）。
     //
@@ -253,7 +262,7 @@ test('【version ロック】本文を変えたら version を上げる', () => 
       delivered: [],
       steps: {
         1: 'd3eeddec844b8d2b',
-        2: '286e328f464e091e',
+        2: '8a211cfb6a8ce942',
         3: '9150361cccb89319',
       },
     },
@@ -291,8 +300,8 @@ test('【version ロック】本文を変えたら version を上げる', () => 
         1: '56a8eec9fb877407',
         // (B) 未送信 Step の修正（コピー基準の適用 / 2026-09-15）
         2: 'b91987f6c6c95451',
-        3: 'f049136a56568e1d',
-        4: '24c0434006b22513',
+        3: '1f4b3543f1a07b48',
+        4: 'c277943df9148cac',
         5: '53e1f53020361ae7',
         // (B) 未送信 Step の修正（2026-10-03・三連複を「レース選別」の訴求へ。送信済みは step1〜5 と CampaignDeliveries で確認）
         6: '43a3a7d33ccf1f7f',
@@ -312,10 +321,10 @@ test('【version ロック】本文を変えたら version を上げる', () => 
       version: 1,
       delivered: [],
       steps: {
-        1: 'a0754e5c27876ba1',
-        2: 'a90d16eb6645960c',
-        3: '85e09a56e4b91289',
-        4: '1084b58231e321e1',
+        1: '59f8e3e2046b10e9',
+        2: '274bb483ec167e2b',
+        3: '2258ed1d6f3514bd',
+        4: 'c05ea36309dce98e',
       },
     },
     /**
@@ -345,8 +354,8 @@ test('【version ロック】本文を変えたら version を上げる', () => 
       /** 本番で**実際に配信済み**の Step（変更禁止 / 下の専用テストが逐語で守る） */
       delivered: [1],
       steps: {
-        1: 'dd79522d63ec2f61',
-        2: 'e84d17413d024570',
+        1: 'f3bfdc379e84af6b',
+        2: 'e8d02f03da1ebd09',
         3: 'd3ca0706ce2d29b5',
         // (B) 未送信 Step の修正。2026-08-15 に「今回で最後」を削除（続きがあるため）。
         4: '668b58d804168fb1',
@@ -365,21 +374,21 @@ test('【version ロック】本文を変えたら version を上げる', () => 
       delivered: [],
       steps: {
         1: '120b129527fb5911',
-        2: 'b051b7f2616a8508',
+        2: '6be309aa1d42436b',
         3: '0b4b54f2fa233360',
-        4: '11fce3b420976e9f',
+        4: '71f9dc957c78d797',
         5: '52656964cdd06314',
         6: '5dfc965e5bae3468',
         7: '4d7d067d94414cc8',
         8: 'e959a8e892af162d',
-        9: 'e4765d0e14d028ef',
-        10: '46532d22a7bb94d1',
+        9: '13bf4fb4370cea2b',
+        10: '75c0805702238db8',
         11: '8598246a2c2c4960',
         12: '469c5518944fb37a',
-        13: '4003ee537dfa6a5e',
+        13: '9784d1b1ca33a686',
         14: '8a854f226eb45337',
         15: '13a83c4ac5da73b9',
-        16: 'a7225d7eebabf396',
+        16: '0452199f992473ba',
         17: '8160eb21451afe64',
         18: 'ff59a6c19e510698',
       },
@@ -394,10 +403,10 @@ test('【version ロック】本文を変えたら version を上げる', () => 
       steps: {
         1: '2962f7456025123e',
         2: '0ede3a9ee2a64cd1',
-        3: '1555820576348696',
+        3: '0a81ffcfe5872961',
         4: 'f6f87aca41816f14',
         5: 'b806869521a695c1',
-        6: 'd49e42dbc61eee40',
+        6: '7b89a893276abce9',
         7: 'aa7e4a790ecacfd5',
       },
     },
@@ -452,7 +461,8 @@ test('【重要】送信済み Step1 は逐語で凍結（実送信済み・2026
   assert.equal(s1.benefitTitle, '無料期間中にご覧いただけるもの');
   assert.deepEqual(s1.benefitItems, [
     '各開催のメインレース買い目',
-    '買い目に対する結果（当たった日も外した日も）',
+    // (D) 2026-11-25 MK 決定（共通 A-2）: 「（当たった日も外した日も）」→ 的中と払戻。version 1 のまま＝送信済みの 10 名へ再送しない
+    '買い目の的中と払戻',
     'AI総合指数と役割（本命 / 対抗 / 単穴 など）',
   ]);
   assert.equal(s1.ctaLabel, 'ログインして使いはじめる');
@@ -460,8 +470,8 @@ test('【重要】送信済み Step1 は逐語で凍結（実送信済み・2026
   assert.equal(s1.ctaNote, 'お申し込み手続きは必要ありません。{{grantExpiry}}');
   // 内容ハッシュも当時のまま（DeliveryKey は version 由来だが、届く中身の同一性はこれで見る）
   // 2026-11-13: MARKETING_EMAIL_SHELL_VERSION 1 → 3（CTA に utm）でハッシュだけ更新。上の各項目は逐語のまま・campaign version 1 のまま（再送なし）
-  assert.equal(computeCampaignContentHash(s1), 'dd79522d63ec2f61',
-    'Step1 の文面が変わっています。**送信済みなので変更できません**');
+  assert.equal(computeCampaignContentHash(s1), 'f3bfdc379e84af6b',
+    'Step1 の文面が変わっています。送信済みの step は MK 決定の (D) 以外で変えない');
 });
 
 test('【重要】末尾への追加は version を上げずに許可（既存 Step の鍵を変えない）', () => {

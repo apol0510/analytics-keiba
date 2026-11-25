@@ -358,3 +358,74 @@ test('【重要】無料会員向けの本文に Premium Plus（三連単の個�
     }
   }
 });
+
+// ── 10. 的中・好走を主役にする（2026-11-25 MK 決定・共通 A-2）──────────────
+
+import { findNegativeFraming, NEGATIVE_FRAMING_PHRASES } from './emailCopyStandard.js';
+import { isSequenceCampaign } from './campaignSequence.js';
+import { computeCampaignDeliveryKey } from './campaignSend.js';
+import { buildWeeklyContent } from './weeklyNewsletterContent.js';
+import { buildShowcaseDay } from '../resultsShowcase.js';
+
+/** 全 campaign（停止中を含む）の、実際に届く形の step */
+function everyEffectiveStep() {
+  const out = [];
+  for (const c of CAMPAIGNS) {
+    if (isSequenceCampaign(c)) {
+      for (const s of getSequenceSteps(c)) out.push({ id: `${c.campaignId} step${s.stepNumber}`, step: resolveSequenceStep(c, s.stepNumber) });
+    } else {
+      out.push({ id: c.campaignId, step: c });
+    }
+  }
+  return out;
+}
+
+test('【A-2】全 campaign・全 step に、的中・好走を打ち消す書き方が無い（adopt の有無に関係なく）', () => {
+  const bad = everyEffectiveStep()
+    .map(({ id, step }) => ({ id, hits: findNegativeFraming(step) }))
+    .filter((x) => x.hits.length);
+  assert.deepEqual(bad, []);
+});
+
+test('【A-2】検査は外れを前に出す書き方を実際に見つける', () => {
+  assert.deepEqual(findNegativeFraming({ body: '当たった日も外した日も、そのまま掲載しています。' }), ['外した日', '当たった日も']);
+  assert.deepEqual(findNegativeFraming({ preheader: '当たれば元が取れる、という書き方はしません。' }), ['元が取れる', 'という書き方はしません']);
+  assert.deepEqual(findNegativeFraming({ benefitItems: ['的中・不的中'] }), ['不的中']);
+  assert.deepEqual(findNegativeFraming({ body: '実績を正直にお見せします。' }), ['正直']);
+  assert.deepEqual(findNegativeFraming({ body: '有料版が的中したレースは、払戻とあわせて毎日公開しています。' }), []);
+  const v = evaluateCopyStandard({ body: '外した日もそのまま' });
+  assert.ok(v.issues.some((i) => i.code === 'negative_framing'));
+  assert.ok(NEGATIVE_FRAMING_PHRASES.length > 0);
+});
+
+test('【A-2】週次の自動文面は的中が主役・分母と的中率を書かない', () => {
+  const day = {
+    date: '2026-10-06', venue: '大井', venues: ['大井'],
+    races: Array.from({ length: 12 }, (_, i) => ({
+      raceNumber: i + 1, venue: '大井', bettingLines: ['4→2.5.8.10.11'], isHit: i % 3 === 0,
+      umatan: { combination: '4-2', payout: 1200 }, betPoints: 5,
+    })),
+  };
+  const c = buildWeeklyContent({ dateKey: '2026-10-07', showcase: buildShowcaseDay(day) });
+  assert.equal(c.ok, true);
+  assert.deepEqual(findNegativeFraming(c.step), []);
+  const text = [c.step.subject, c.step.preheader, c.step.headline, c.step.body].join('\n');
+  assert.doesNotMatch(text, /\d+\s*\/\s*\d+|レース中|鞍中|的中率/);
+  assert.match(c.step.headline, /4 レース的中/);
+  // 的中 0 件の日は件数を出さない（0 件を見せない）
+  const none = { ...day, races: day.races.map((r) => ({ ...r, isHit: false, umatan: null })) };
+  const z = buildWeeklyContent({ dateKey: '2026-10-07', showcase: buildShowcaseDay(none) });
+  if (z.ok) assert.doesNotMatch([z.step.subject, z.step.preheader, z.step.headline, z.step.body].join('\n'), /0 レース|0レース/);
+});
+
+test('【重要・(D)】DeliveryKey は本文を含まない＝文面を差し替えても既受信者へ再送されない', () => {
+  for (const { id, step } of everyEffectiveStep()) {
+    const k1 = computeCampaignDeliveryKey({ campaign: step, recipientEmail: 'a@example.com', brand: 'analytics-keiba', fromEmail: 'f@example.com' });
+    const k2 = computeCampaignDeliveryKey({
+      campaign: { ...step, subject: 'x', preheader: 'x', body: 'x', headline: 'x', benefitItems: ['x'], ctaLabel: 'x', ctaNote: 'x' },
+      recipientEmail: 'a@example.com', brand: 'analytics-keiba', fromEmail: 'f@example.com',
+    });
+    assert.ok(k1, `${id}: 鍵が作れない`);
+    assert.equal(k1, k2, `${id}: 本文で DeliveryKey が変わる（差し替えると再送になる）`);
+  }
+});

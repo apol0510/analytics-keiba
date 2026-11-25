@@ -23,6 +23,13 @@
  *    登録済みのものだけを検査する。未登録の理由は
  *    `COPY_STANDARD_NOT_ADOPTED` に**理由つきで**必ず書く（黙って外せない）。
  *
+ * ── 的中・好走を主役にする（2026-11-25 MK 決定・共通 A-2 / v2）──────────
+ * 育成メール・販促メールでは的中と好走を主役にする。外れや弱みを前に出す書き方
+ * （「外した日もそのまま」「当たれば元が取れる、という書き方はしません」「結果は保証できない」
+ * 「不的中」の列挙など）は使わない。全件の結果と算定ルールは実績ページだけに置く。
+ * `findNegativeFraming()` は adopt の有無に関係なく**全 campaign・全 step** に課す
+ * （`emailCopyStandard.test.mjs`）。週次の自動文面も同じ検査を通す。
+ *
  * ── 書き換えてよいかの判断は**このモジュールの外**────────────────
  * 送信済みかどうかの正本は `campaignCatalog.test.mjs` の `LOCKED`（`delivered`）と
  * `docs/progress.md` の実測。ここでは「基準を満たすか」だけを見る。
@@ -30,8 +37,8 @@
 
 const str = (v) => (typeof v === 'string' ? v.trim() : '');
 
-/** 基準の版。判定を変えたら上げる（docs の版と合わせる） */
-export const COPY_STANDARD_VERSION = 1;
+/** 基準の版。判定を変えたら上げる（docs の版と合わせる）。v2 = 2026-11-25 MK 決定（共通 A-2）の検査を追加 */
+export const COPY_STANDARD_VERSION = 2;
 
 // ── しきい値 ────────────────────────────────────────────────
 //
@@ -69,6 +76,27 @@ export const INTERNAL_AFFAIRS_PHRASES = Object.freeze([
   '正本', 'メールには書いていません', 'メールには書き写していません',
   'DeliveryKey', 'カタログ',
 ]);
+
+/**
+ * ⛔ 的中・好走を打ち消す書き方（2026-11-25 MK 決定・共通 A-2）。
+ * 事実の正確さは前提で、それを理由に外れや弱みを前に出さない。
+ * 全件の結果は実績ページ（`/results-showcase/`・`/archive/`）に置き、メールでは的中を主役にする。
+ */
+export const NEGATIVE_FRAMING_PHRASES = Object.freeze([
+  '外した日', '外れた日', '外れた回', '当たった日も', '不的中', '✗',
+  '元が取れる', '保証できない', 'という書き方はしません',
+  '選んで載せることはしていません', '選んで出すことはしていません', '都合のよい日',
+  '当たりやすく見せる', '正直',
+]);
+
+/** 文面の各面（件名〜特典欄・CTA）から A-2 に反する語を返す。無ければ空配列 */
+export function findNegativeFraming(step) {
+  const s = step || {};
+  const text = [s.subject, s.preheader, s.badge, s.headline, s.body, s.benefitTitle,
+    Array.isArray(s.benefitItems) ? s.benefitItems.join('\n') : '', s.ctaLabel, s.ctaNote, s.footerNote]
+    .map((v) => (typeof v === 'string' ? v : '')).join('\n');
+  return NEGATIVE_FRAMING_PHRASES.filter((p) => text.includes(p));
+}
 
 /**
  * 冒頭で受信者との関係を作れているか（MK 基準 1）。
@@ -289,6 +317,11 @@ export function evaluateCopyStandard(step, opts = {}) {
   }
   for (const bad of INTERNAL_AFFAIRS_PHRASES) {
     if (all.includes(bad)) add('internal_affairs', `顧客向けの文面に内部運用の語「${bad}」がある`);
+  }
+
+  // 10. 的中・好走を主役にする（2026-11-25 MK 決定・共通 A-2）
+  for (const bad of findNegativeFraming(s)) {
+    add('negative_framing', `的中・好走を打ち消す書き方「${bad}」がある（全件の結果は実績ページに置く）`);
   }
 
   return { ok: issues.length === 0, issues };
