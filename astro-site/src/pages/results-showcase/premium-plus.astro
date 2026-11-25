@@ -10,6 +10,7 @@
  *    それ以外は 404。CDN に載せない（private, no-store）。
  */
 import BaseLayout from '../../layouts/BaseLayout.astro';
+import SessionKeepAlive from '../../components/SessionKeepAlive.astro';
 import ppResultsRaw from '../../data/premiumPlusResults.json';
 import { normalizeResult, sortResults, computeStats, formatYen, STATS_WINDOW } from '../../lib/premiumPlusResults.js';
 import { verifyPlanAccess, PREMIUM_PLUS_CANDIDATE_PLANS } from '../../lib/auth/index.js';
@@ -114,6 +115,8 @@ const stats = computeStats(ppResultsRaw);
       <a href="/premium-plus-v2/" class="btn">💎 Premium Plus のページへ</a>
     </div>
   </main>
+  {/* ak_session の idle TTL 延長。実装は SessionKeepAlive.astro が単一源 */}
+  <SessionKeepAlive />
 </BaseLayout>
 
 <style>
