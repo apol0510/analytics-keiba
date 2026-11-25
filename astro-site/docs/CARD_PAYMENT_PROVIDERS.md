@@ -13,7 +13,7 @@
 | 本番受付 | 一回払いは**閉じている**（`CARD_SALES_OPEN.paddle=false`）。**新規の月額・年額は Paddle へ一本化（2026-11-02 MK 確定・§3.8）**。切替前は `SUBSCRIPTION_SALES_OPEN.paddle=false`（PayPal で受付中）| 一回払いは**閉じている**（`.paypal=false`）。**月額の定期課金は PayPal で受ける方針**（2026-10-15 MK 決定・§3.5）。**2026-10-15 受付開始**（`SUBSCRIPTION_SALES_OPEN.paypal=true`）|
 | 取扱可否（一次情報）| ⚠️ 禁止リストに「Betting-related products」「Sports forecasting/odds making where monetary or material prizes are involved」。**書面確認が要る** | 利用規定で「競馬またはドッグレース」は**事前承認**区分 → 審査通過 |
 
-- 売るのは銀行振込と同じ一回払い（Premium 年払い ¥49,800／Light 会員 ¥44,820・買い切り ¥78,000）だけ。**月払い・定期課金は作らない**（Paddle の定期価格・PayPal Subscriptions は使わない。guard で固定）。
+- 新規の月額・年額の定期課金は **Paddle** で受ける（2026-11-02 MK 確定・`decisions.md`「Paddle へ一本化」・§3.8。`SUBSCRIPTION_SALES_OPEN.paddle=true`・`ACTIVE_SUBSCRIPTION_PROVIDER='paddle'`）。既存の PayPal 定期課金契約は PayPal のまま（§3.5・§3.6）。カードの一回払いは閉じている（`CARD_SALES_OPEN`）。買い切りは銀行振込だけ。
 - 本番受付は、その決済会社が AK の取扱商品を承認したあと、MK の明示決定で `src/lib/billing/cardSales.js` の値を変える PR だけで開く。env では開かない。
 
 ## 0.5 冗長化の方針（2026-10-13 MK 確定・`decisions.md` 2026-10-13）
