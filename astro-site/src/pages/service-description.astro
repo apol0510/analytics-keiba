@@ -1,5 +1,10 @@
 ---
-export const prerender = true;const pageTitle = "KEIBA Analytics - サービス内容説明資料";
+import { subscriptionProviderCopy } from '../lib/billing/subscriptionProviderCopy.js';
+
+export const prerender = true;
+const pageTitle = "KEIBA Analytics - サービス内容説明資料";
+// 月額のカード決済の決済会社名は料金ページと同じ単一源（cardSales.ACTIVE_SUBSCRIPTION_PROVIDER）から出す
+const providerCopy = subscriptionProviderCopy();
 ---
 
 <!DOCTYPE html>
@@ -354,19 +359,19 @@ export const prerender = true;const pageTitle = "KEIBA Analytics - サービス�
                 <tr>
                     <td><strong>Premium 中央＋南関</strong></td>
                     <td>4,980円／月</td>
-                    <td>クレジット決済（PayPal・自動継続）</td>
+                    <td>クレジット決済（{providerCopy.label}・自動継続）</td>
                     <td>中央・南関の全レース</td>
                 </tr>
                 <tr>
                     <td><strong>Premium 中央版</strong></td>
                     <td>2,980円／月</td>
-                    <td>クレジット決済（PayPal・自動継続）</td>
+                    <td>クレジット決済（{providerCopy.label}・自動継続）</td>
                     <td>中央の全レース</td>
                 </tr>
                 <tr>
                     <td><strong>Premium 南関版</strong></td>
                     <td>2,980円／月</td>
-                    <td>クレジット決済（PayPal・自動継続）</td>
+                    <td>クレジット決済（{providerCopy.label}・自動継続）</td>
                     <td>南関の全レース</td>
                 </tr>
             </tbody>
@@ -374,7 +379,7 @@ export const prerender = true;const pageTitle = "KEIBA Analytics - サービス�
 
         <div class="highlight-box">
             <strong>銀行振込：</strong>Premium 年払い・買い切り。お振込み後に報告フォームをご送信いただき、入金確認後にご利用開始となります。自動更新・継続課金はありません。<br>
-            <strong>クレジット決済：</strong>月額プラン。決済代行は PayPal で、PayPal に登録したクレジットカード等でお支払いいただけます。お申し込み日から毎月同じ日に自動で継続課金され、お支払いの承認後すぐにご利用いただけます。カード情報は当サービスのサーバーを経由しません。<br>
+            <strong>クレジット決済：</strong>月額プラン。決済代行は {providerCopy.label} で、決済画面でクレジットカードをご入力いただくだけでお申し込みいただけます。お申し込み日から毎月同じ日に自動で継続され、お支払いが確認でき次第すぐにご利用いただけます。カード情報は当サービスのサーバーを経由しません。<br>
             <strong>その他：</strong>Light プランは新規募集を停止しています（ご利用中の方の更新のみ）。クレジットカード（Stripe）によるお支払いは既存のご契約のみで、新規のお申し込みは受け付けていません。最新の料金は<a href="/pricing/">料金プラン</a>のページをご確認ください。
         </div>
     </section>
@@ -394,7 +399,7 @@ export const prerender = true;const pageTitle = "KEIBA Analytics - サービス�
                 <div class="flow-number">2</div>
                 <div>
                     <strong>プランのお申し込み</strong><br>
-                    年払い・買い切りは銀行振込、月額はクレジット決済（PayPal）でお申し込みいただけます。
+                    年払い・買い切りは銀行振込、月額はクレジット決済（{providerCopy.label}）でお申し込みいただけます。
                 </div>
             </div>
             <div class="flow-step">
@@ -429,7 +434,7 @@ export const prerender = true;const pageTitle = "KEIBA Analytics - サービス�
         <h3>📈 実績</h3>
         <div class="highlight-box">
             <strong>的中率：</strong>約70%（代表値）<br>
-            日別・月別の実績は、サイトの的中実績ページで公開しています。予想は的中を保証するものではありません。
+            日別・月別の実績は、サイトの的中実績ページで公開しています。
         </div>
     </section>
 
@@ -447,7 +452,7 @@ export const prerender = true;const pageTitle = "KEIBA Analytics - サービス�
 
         <h3>💳 決済セキュリティ</h3>
         <div class="highlight-box">
-            クレジット決済は PayPal の決済画面で行われ、カード情報は当サービスのサーバーを経由せず、当サービスでは保存しません。
+            クレジット決済は {providerCopy.label} の決済画面で行われ、カード情報は当サービスのサーバーを経由せず、当サービスでは保存しません。
         </div>
     </section>
 
@@ -459,7 +464,7 @@ export const prerender = true;const pageTitle = "KEIBA Analytics - サービス�
         <div class="tech-stack">
             <span class="tech-badge">Astro 5.x</span>
             <span class="tech-badge">Netlify</span>
-            <span class="tech-badge">PayPal API</span>
+            <span class="tech-badge">{providerCopy.label}</span>
         </div>
 
         <h3>システム構成</h3>
@@ -468,7 +473,7 @@ export const prerender = true;const pageTitle = "KEIBA Analytics - サービス�
             <li>サーバー処理：Netlify Functions</li>
             <li>会員管理：クラウド型データベース</li>
             <li>メール配信：メール配信サービス</li>
-            <li>決済：PayPal（月額）・銀行振込（年払い・買い切り）</li>
+            <li>決済：{providerCopy.label}（月額）・銀行振込（年払い・買い切り）</li>
             <li>ホスティング：Netlify</li>
         </ul>
     </section>
@@ -545,22 +550,16 @@ export const prerender = true;const pageTitle = "KEIBA Analytics - サービス�
             <li>退会は即時で、残りの期間はご利用いただけません（日割りでの返金はありません）</li>
             <li>別にお持ちの買い切りの権利は退会しても消えません</li>
             <li>銀行振込のプラン（年払い・買い切り）には退会の手続きはありません</li>
-            <li>PayPal 側で直接解約した場合は、以降の請求はなく、支払い済みの期間の終わりまでご利用いただけます</li>
+            <li>決済会社（PayPal・Paddle）側で直接解約した場合は、以降の請求はなく、支払い済みの期間の終わりまでご利用いただけます</li>
             <li>退会の取り消しはできません。再びご利用の場合は新しくお申し込みいただけます</li>
         </ul>
     </section>
 
     <!-- 法的事項 -->
     <section class="section">
-        <h2>9. 法的事項・注意事項</h2>
-        
-        <div class="highlight-box" style="background: #fef2f2; border-left-color: #dc2626;">
-            <strong>⚠️ 重要な注意事項</strong><br>
-            • 当サービスは情報提供を目的としており、的中を保証するものではありません<br>
-            • 馬券の購入は自己責任で行ってください<br>
-            • 20 歳未満の方は勝馬投票券を購入できません（競馬法）<br>
-            • ギャンブル依存症にご注意ください
-        </div>
+        <h2>9. 規約・表記</h2>
+
+        <p>20 歳未満の方は勝馬投票券を購入できません（競馬法）。</p>
 
         <h3>関連する規約・表記</h3>
         <ul class="feature-list">
@@ -577,8 +576,7 @@ export const prerender = true;const pageTitle = "KEIBA Analytics - サービス�
         <p>URL: https://analytics.keiba.link</p>
         <p>メール: support@keiba.link（お問い合わせはメールのみ）</p>
         <p style="margin-top: 20px; font-size: 14px;">
-            本資料は2026年10月時点の内容です。<br>
-            サービス内容は予告なく変更される場合があります。
+            本資料は2026年11月時点の内容です。
         </p>
     </div>
 </body>
