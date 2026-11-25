@@ -209,6 +209,15 @@ export function deriveCard(entry) {
   };
 }
 
+/**
+ * 的中した回だけ（正規化済み・最新順）。販売ページの実績カードと「直近の的中」帯に使う
+ * （MK 2026-11-25・共通 A-2: 販売ページは的中が主役。全件は /results-showcase/premium-plus/）。
+ * isHit は normalizeResult の判定（isHit 指定 または payout > 0）に従う。
+ */
+export function hitResults(entries) {
+  return sortResults((entries || []).map(normalizeResult).filter((e) => e && e.isHit));
+}
+
 /** 実績カードに出す直近件数分（最新順）。 */
 export function latestCards(entries, { limit = CARD_LIMIT } = {}) {
   return sortResults(entries).slice(0, Math.max(0, limit)).map(deriveCard).filter(Boolean);
