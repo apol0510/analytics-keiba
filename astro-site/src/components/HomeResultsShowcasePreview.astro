@@ -8,13 +8,13 @@ import { publicRate } from '../lib/results/recoveryVisibility.js';
 //   詳細は astro-site/docs/RESULTS_SHOWCASE.md。
 // - データが無いカテゴリはカードごと非表示。両方無ければセクション自体を描画しない。
 //
-// 構成（2026-08-18 改訂）:
-//   ① 当日の全体実績（的中数 / 総レース数・回収率）
-//   ② 全会場・全レースの ✅/✗（メインも含めて同列。強調しない）
-//   ③ /results-showcase/{jra,nankan} への導線
+// 構成（2026-08-18 改訂・2026-11-25 MK 決定で的中だけに）:
+//   ① 当日の的中数（分母＝総レース数は出さない）・回収率
+//   ② 的中したレースの ✅（メインも含めて同列。強調しない）。不的中のレースは出さない
+//   ③ /results-showcase/{jra,nankan} への導線（外れも含めた全件の記録はこの先）
 //
 //   **トップでは買い目・払戻を一切出さない**。メインが不的中の日に当日全体まで
-//   悪く見えるのを避けるため、主役を「全レースの実績」に寄せた。
+//   悪く見えるのを避けるため、主役を「当日の的中レース」に寄せた。
 //   メインレースの実際の配信買い目は /results-showcase/ 側だけで見せる（そちらは不変）。
 //
 // props:
@@ -38,9 +38,9 @@ const cards = [
   <section class="rsp" aria-labelledby="rsp-title">
     <div class="rsp__inner">
       <header class="rsp__header">
-        <h2 class="rsp__title" id="rsp-title">💎 有料版の当日実績（全レース）</h2>
+        <h2 class="rsp__title" id="rsp-title">💎 有料版の当日の的中</h2>
         <p class="rsp__lead">
-          有料会員に配信した全レースの結果を、その日のうちに公開しています（毎日自動更新）
+          有料会員に配信した予想の的中レースを、その日のうちに公開しています（毎日自動更新）
         </p>
       </header>
 
@@ -53,11 +53,11 @@ const cards = [
               <span class="rsp__meta">{c.dateLabel}・{c.venueLabel}</span>
             </div>
 
-            {/* ① 当日の全体実績 */}
+            {/* ① 当日の的中数（分母を出さない） */}
             <div class="rsp__summary">
               <span class="rsp__sum">
-                <b class="rsp__sum-value">{c.hitRaces}<i>/{c.totalRaces}</i></b>
-                <i class="rsp__sum-label">当日の的中レース</i>
+                <b class="rsp__sum-value">{c.hitRaces}<i>レース</i></b>
+                <i class="rsp__sum-label">当日の的中</i>
               </span>
               {publicRate(c.recoveryRate) != null && (
                 <span class={`rsp__sum ${c.recoveryRate >= 100 ? 'is-profit' : ''}`}>
@@ -67,19 +67,16 @@ const cards = [
               )}
             </div>
 
-            {/* ② 全会場・全レースの ✅/✗（全レース同列・強調なし） */}
+            {/* ② 的中したレースの ✅（同列・強調なし。外れたレースはデータに無い） */}
             <div class="rsp__races">
               {c.venueGroups.map((g: any) => (
                 <div class="rsp__venue">
-                  <span class="rsp__venue-name">{g.venue}<i>全{g.totalRaces}R</i></span>
+                  <span class="rsp__venue-name">{g.venue}</span>
                   <div class="rsp__strip">
                     {g.races.map((r: any) => (
-                      <span
-                        class={`rsp__chip ${r.isHit ? 'is-hit' : 'is-miss'}`}
-                        title={`${r.raceNumber}R ${r.isHit ? '的中' : '不的中'}`}
-                      >
+                      <span class="rsp__chip is-hit" title={`${r.raceNumber}R 的中`}>
                         <i class="rsp__chip-r">{r.raceNumber}R</i>
-                        <i class="rsp__chip-mark">{r.isHit ? '✅' : '✗'}</i>
+                        <i class="rsp__chip-mark">✅</i>
                       </span>
                     ))}
                   </div>
@@ -225,7 +222,7 @@ const cards = [
     color: #94a3b8;
   }
 
-  /* ② 全会場・全レースの ✅/✗（全レース同列・メインも強調しない） */
+  /* ② 的中したレースの ✅（同列・メインも強調しない） */
   .rsp__races {
     display: flex;
     flex-direction: column;
@@ -238,12 +235,6 @@ const cards = [
     font-weight: 700;
     color: #cbd5e1;
     margin-bottom: 4px;
-  }
-  .rsp__venue-name i {
-    margin-left: 6px;
-    font-style: normal;
-    font-weight: 500;
-    color: #94a3b8;
   }
   .rsp__strip {
     display: flex;
@@ -276,10 +267,6 @@ const cards = [
   }
   .rsp__chip.is-hit .rsp__chip-r {
     color: #6ee7b7;
-  }
-  .rsp__chip.is-miss .rsp__chip-mark {
-    color: #94a3b8;
-    font-weight: 700;
   }
 
   .rsp__cta {
@@ -333,11 +320,6 @@ const cards = [
       flex: 0 0 auto;
       margin: 2px 0 0;
       min-width: 3.2em;
-    }
-    .rsp__venue-name i {
-      display: block;
-      margin: 0;
-      font-size: 0.62rem;
     }
     .rsp__races {
       gap: 6px;

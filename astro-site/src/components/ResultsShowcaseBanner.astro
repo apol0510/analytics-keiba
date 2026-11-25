@@ -5,6 +5,10 @@ import { publicRate } from '../lib/results/recoveryVisibility.js';
 // 既存の結果アーカイブ（最新日 index 0）を読み、有料実績ショーケースへ誘導する。
 // データが無い場合は何も描画しない。
 //
+// 2026-11-25 MK 決定（共通 A-2）: 販売導線なので的中を主役にする。
+//   的中数だけを出し、分母（◯ / ◯）は出さない。的中が 0 件の日は件数を出さない。
+//   全件の結果（✅/✗）はリンク先の /results-showcase/ に置く。
+//
 // props:
 //   category: 'jra' | 'nankan'
 import { readFileSync, existsSync } from 'fs';
@@ -47,7 +51,9 @@ const teaserMain = view?.venueGroups?.map((g: any) => g.mainRace).find(Boolean) 
         有料版で提供の<strong>買い目</strong>を公開中
       </div>
       <div class="scb-stats">
-        <span class="scb-stat">的中 <b>{view.hitRaces}/{view.totalRaces}</b></span>
+        {Number(view.hitRaces) > 0 && (
+          <span class="scb-stat hit">的中 <b>{view.hitRaces}</b> レース</span>
+        )}
         {publicRate(view.recoveryRate) != null && (
           <span class={`scb-stat ${Number(view.recoveryRate) >= 100 ? 'profit' : ''}`}>
             回収率 <b>{view.recoveryRate}%</b>

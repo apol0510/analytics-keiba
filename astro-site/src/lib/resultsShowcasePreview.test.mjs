@@ -5,9 +5,11 @@
 //   - 単一源 buildLatestShowcase() の結果から選ぶだけで、独自集計をしない
 //   - **トップでは買い目・払戻を一切出さない**（戻り値にも markup にも含めない）。
 //     メインの実際の配信買い目は /results-showcase/{jra,nankan} 側だけで見せる
-//   - 全レースは ✅/✗ のみを同列で出す（メインを強調しない）
-//   - JRA の複数会場開催は全会場ぶん出す
-//   - データが無いカテゴリは null（＝カードごと非表示）
+//   - **的中したレースだけを出す**（2026-11-25 MK 決定）。不的中のレース・分母（総レース数・
+//     「全12R」）・0 件のカードを出さない（戻り値にも markup にも含めない）
+//   - 的中レースは ✅ を同列で出す（メインを強調しない）
+//   - JRA の複数会場開催は全会場ぶん出す（的中が無い会場は出さない）
+//   - データが無い・的中 0 件のカテゴリは null（＝カードごと非表示）
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -140,11 +142,10 @@ test('公開キーは固定（増やすときは意図的に）', () => {
     'hitRaces',
     'href',
     'recoveryRate',
-    'totalRaces',
     'venueGroups',
     'venueLabel',
   ].sort());
-  assert.deepEqual(Object.keys(p.venueGroups[0]).sort(), ['races', 'totalRaces', 'venue']);
+  assert.deepEqual(Object.keys(p.venueGroups[0]).sort(), ['races', 'venue']);
 });
 
 test('コンポーネントに買い目・払戻のマークアップが無い', () => {
@@ -173,16 +174,52 @@ test('メインレースを視覚的に強調しない（全レース同列）',
   const tpl = componentTemplate();
   assert.equal(tpl.includes('is-main'), false, 'メイン強調クラスが残っている');
   assert.equal(tpl.includes('（メイン）'), false, 'メインだけ別扱いのラベルが残っている');
-  // chip のクラスは的中/不的中の 2 値だけ
-  const chipClass = /class={`rsp__chip \$\{r\.isHit \? 'is-hit' : 'is-miss'\}`}/;
-  assert.ok(chipClass.test(tpl), 'chip のクラスが is-hit / is-miss の 2 値になっていない');
+});
+
+// ─────────────────────────────────────────────────────────────
+// 不的中・分母を出さない（2026-11-25 MK 決定）
+// ─────────────────────────────────────────────────────────────
+
+test('コンポーネントに不的中・分母のマークアップが無い', () => {
+  const tpl = componentTemplate();
+  for (const banned of ['不的中', 'is-miss', '✗', 'totalRaces', '全{', '全レース', '/{c.']) {
+    assert.equal(tpl.includes(banned), false, `トップに ${banned} が残っている`);
+  }
+});
+
+test('戻り値は的中したレースだけ（不的中のレース・総レース数を持たない）', () => {
+  const p = buildShowcasePreview([makeDay({ hitRaces: 3 })], 'jra');
+  const races = p.venueGroups.flatMap((g) => g.races);
+  assert.deepEqual(races.map((r) => r.raceNumber), [1, 2, 3]);
+  assert.ok(races.every((r) => r.isHit === true));
+  assert.equal('totalRaces' in p, false);
+  assert.equal(p.venueGroups.some((g) => 'totalRaces' in g), false);
+});
+
+test('的中が無い会場は出さない', () => {
+  const a = makeDay({ venue: '中京', hitRaces: 2 });
+  const b = makeDay({ venue: '新潟', hitRaces: 0 });
+  const merged = {
+    date: '2026-08-16',
+    venues: ['中京', '新潟'],
+    totalRaces: 24,
+    hitRaces: 2,
+    races: [...a.races, ...b.races],
+  };
+  const p = buildShowcasePreview([merged], 'jra');
+  assert.deepEqual(p.venueGroups.map((g) => g.venue), ['中京']);
+});
+
+test('的中 0 件の日はカードごと出さない（null）', () => {
+  const day = makeDay({ hitRaces: 0, mainHit: false });
+  assert.equal(buildShowcasePreview([day], 'jra'), null);
 });
 
 // ─────────────────────────────────────────────────────────────
 // 全レース一覧
 // ─────────────────────────────────────────────────────────────
 
-test('全会場・全レースを venueGroups で返す（JRA 複数会場も全会場ぶん）', () => {
+test('的中レースを全会場ぶん venueGroups で返す（JRA 複数会場）', () => {
   const a = makeDay({ venue: '中京' });
   const b = makeDay({ venue: '新潟', mainLine: '1→2.3.4.5.6' });
   const c = makeDay({ venue: '札幌', mainLine: '3→1.2.4.5.6' });
@@ -200,13 +237,12 @@ test('全会場・全レースを venueGroups で返す（JRA 複数会場も全
     ['中京', '新潟', '札幌']
   );
   for (const g of p.venueGroups) {
-    assert.equal(g.totalRaces, 12);
     assert.deepEqual(
       g.races.map((r) => r.raceNumber),
-      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+      [1, 2, 3]
     );
   }
-  assert.equal(p.venueGroups.reduce((n, g) => n + g.races.length, 0), 36);
+  assert.equal(p.venueGroups.reduce((n, g) => n + g.races.length, 0), 9);
 });
 
 test('各レースは raceNumber / isHit / isMain の 3 キーのみ', () => {
@@ -216,7 +252,7 @@ test('各レースは raceNumber / isHit / isMain の 3 キーのみ', () => {
   }
 });
 
-test('10R 開催（南関）は全 10 レースが出る', () => {
+test('10R 開催（南関）は的中した 5 レースだけが出る', () => {
   const races = Array.from({ length: 10 }, (_, i) => ({
     raceNumber: i + 1,
     venue: '大井',
@@ -238,16 +274,16 @@ test('10R 開催（南関）は全 10 レースが出る', () => {
     'nankan'
   );
   assert.equal(p.venueGroups.length, 1);
-  assert.equal(p.venueGroups[0].races.length, 10);
+  assert.deepEqual(p.venueGroups[0].races.map((r) => r.raceNumber), [1, 3, 5, 7]);
   assert.equal(JSON.stringify(p).includes('7820'), false);
 });
 
-test('メイン買い目が取れない日でも全レース一覧は出す', () => {
+test('メイン買い目が取れない日でも的中レースは出す', () => {
   const day = makeDay();
   day.races[10] = { raceNumber: 11, venue: '中京', bettingLines: [], isHit: false };
   const p = buildShowcasePreview([day], 'jra');
   assert.notEqual(p, null);
-  assert.equal(p.venueGroups[0].races.length, 12);
+  assert.equal(p.venueGroups[0].races.length, 3);
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -259,7 +295,6 @@ test('集計は単一源の値をそのまま使う（一覧から数え直さ�
   const p = buildShowcasePreview([day], 'jra');
   const view = buildLatestShowcase([day]);
   assert.equal(p.hitRaces, view.hitRaces);
-  assert.equal(p.totalRaces, view.totalRaces);
   // 2026-10-06: 回収率は本線＋抑えの全組が分母（買い目行が無い日は null）。単一源の値をそのまま使うことだけを見る
   assert.equal(p.recoveryRate, view.recoveryRate == null ? null : Number(view.recoveryRate));
 });
@@ -284,16 +319,16 @@ test('データ無し・不正カテゴリ・レース 0 件は null（安全に
 });
 
 // ─────────────────────────────────────────────────────────────
-// 表示順（全体実績 → 全レース一覧 → 導線）
+// 表示順（的中数 → 的中レース → 導線）
 // ─────────────────────────────────────────────────────────────
 
-test('全体実績 → 全レース一覧 → CTA の順で描画する', () => {
+test('的中数 → 的中レース → CTA の順で描画する', () => {
   const tpl = componentTemplate();
   const iSummary = tpl.indexOf('class="rsp__summary"');
   const iRaces = tpl.indexOf('class="rsp__races"');
   const iCta = tpl.indexOf('class="rsp__cta"');
-  assert.ok(iSummary > 0, '全体実績ブロックが無い');
-  assert.ok(iRaces > 0, '全レース一覧ブロックが無い');
+  assert.ok(iSummary > 0, '的中数ブロックが無い');
+  assert.ok(iRaces > 0, '的中レースブロックが無い');
   assert.ok(iCta > 0, 'CTA が無い');
   assert.ok(
     iSummary < iRaces && iRaces < iCta,
@@ -305,7 +340,7 @@ test('全体実績 → 全レース一覧 → CTA の順で描画する', () => 
 // 実データ
 // ─────────────────────────────────────────────────────────────
 
-test('本物のアーカイブでも全レースが出る／買い目は漏れない（両カテゴリ）', async () => {
+test('本物のアーカイブでも的中レースだけが出る／買い目は漏れない（両カテゴリ）', async () => {
   const [{ default: nankan }, { default: jra }] = await Promise.all([
     import('../data/archiveResults.json', { with: { type: 'json' } }),
     import('../data/archiveResultsJra.json', { with: { type: 'json' } }),
@@ -316,9 +351,10 @@ test('本物のアーカイブでも全レースが出る／買い目は漏れ�
   ]) {
     const p = buildShowcasePreview(arr, category);
     if (p === null) continue; // データ端境期は非表示が正しい挙動
-    const total = p.venueGroups.reduce((n, g) => n + g.races.length, 0);
-    assert.equal(total, p.totalRaces, `${category}: 一覧の件数が totalRaces と一致しない`);
-    assert.ok(p.hitRaces <= p.totalRaces);
+    const races = p.venueGroups.flatMap((g) => g.races);
+    assert.ok(races.length > 0, `${category}: 的中レースが空のカードを返した`);
+    assert.ok(races.every((r) => r.isHit === true), `${category}: 不的中のレースが混ざっている`);
+    assert.ok(p.hitRaces > 0);
     const serialized = JSON.stringify(p);
     for (const leak of ['payout', 'combination', 'bettingLines', '抑え', 'honmei']) {
       assert.equal(serialized.includes(leak), false, `${category}: ${leak} が漏れている`);

@@ -171,10 +171,13 @@ test('出力は集計値だけ（識別子・明細の key を持たない）', 
   const d = await buildRevenueMonth({ month: '2026-10', fetchImpl, nowMs: Date.parse('2026-11-01T01:00:00Z'),
     env: { PAYMENT_FUNNEL_READ_SECRET: 's', STRIPE_READ_KEY: 'rk', PAYPAL_READ_CLIENT_ID: 'id', PAYPAL_READ_CLIENT_SECRET: 'sec' } });
   assert.deepEqual(Object.keys(d).sort(), ['achieved', 'by_channel', 'currency', 'data_quality', 'generatedAt', 'gross_jpy', 'month', 'net_jpy', 'next_tasks',
-    'refunds_jpy', 'repo', 'schema', 'sustained_months', 'target_jpy'].sort());
+    'refunds_jpy', 'repo', 'schema', 'subscriptions', 'sustained_months', 'target_jpy'].sort());
   for (const ch of Object.values(d.by_channel)) {
     for (const k of Object.keys(ch)) assert.ok(['gross_jpy', 'refunds_jpy', 'net_jpy', 'payments', 'measured'].includes(k), k);
   }
+  // 月額の 4 指標は売上の data_quality に混ぜない（KAO の「一部推定値」表示を変えない）
+  assert.ok(!d.data_quality.some((q) => /購読|再開|MRR/.test(q)));
+  assert.equal(typeof d.subscriptions.new_subscriptions, 'number');
 });
 
 test('既存の measurement を読む（壊れた file・速報値は連続月数に数えない）', () => {

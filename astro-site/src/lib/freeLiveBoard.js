@@ -1,10 +1,14 @@
 /**
- * freeLiveBoard.js — 無料予想ページ（/free-prediction/{jra,nankan}/）の「次のレース発走まで」＋「有料版の的中 ✅/✗」
+ * freeLiveBoard.js — 無料予想ページ（/free-prediction/{jra,nankan}/）の「次のレース発走まで」＋「有料版の的中 ✅」
  *
  * 2026-11-03 MK 確定:
  *   - カウントダウンは全レース共通（メインレースを特別扱いしない）
- *   - 公開してよいのは「有料版がそのレースを的中したかどうか（✅/✗）」だけ。買い目・払戻・印・指数は出さない
- *   - 的中・不的中は正直に全部出す（当日の累計は 的中数 / 結果が出たレース数）
+ *   - 公開してよいのは「有料版がそのレースを的中したかどうか」だけ。買い目・払戻・印・指数は出さない
+ *
+ * 2026-11-25 MK 決定（共通 A-2・11-03 の「的中・不的中を全部出す（累計は 的中数 / 結果が出たレース数）」を置き換え）:
+ *   - 的中を主役にする。的中したレースだけ ✅ 的中を出し、外れたレースは ✗ を付けず発走予定時刻だけを出す
+ *   - 当日の累計は的中数だけ（分母＝結果が出たレース数は出さない）。的中が 0 件の間は累計の行ごと出さない
+ *   - 全件の結果（✅/✗）は実績ページ（/results-showcase/・/archive/）にそのまま置く
  *
  * 結果は当日の全レース終了後にまとめて取り込まれる（中央 17 時台・南関 21 時台 / aiLab.js RESULT_ETA）。
  * 結果が無いレースは発走予定時刻だけを出す（推測で ✅/✗ を付けない）。
@@ -61,8 +65,8 @@ export function hitMapFor(archiveArray, date) {
 
 /**
  * listModel（buildListModel の戻り値）と結果 archive から表示モデルを作る。
- * @returns {{ cat, date, races: Array<{venueName, raceNumber, startAt, hit}>, resultsIn: boolean, tally: null|{hit,total} }}
- *   hit: true（✅）/ false（✗）/ null（結果がまだ無い）
+ * @returns {{ cat, date, races: Array<{venueName, raceNumber, startAt, hit}>, resultsIn: boolean, tally: null|{hit} }}
+ *   hit: true（的中・✅）/ false（外れ・表示は予定時刻だけ）/ null（結果がまだ無い）
  */
 export function buildFreeLiveBoard({ cat, model, archiveArray }) {
   const date = model?.date || null;
@@ -125,8 +129,8 @@ export function nextRace(races, nowMs) {
 
 /**
  * 1 レースの状態表示。next は nextRace の戻り値（同じオブジェクトなら「次」として強調する）。
- *   result  … ✅ 的中 / ✗ 不的中（有料版の結果）
- *   past    … 予定時刻を過ぎて結果が無い（予定時刻だけを控えめに出す）
+ *   result  … ✅ 的中（有料版の結果）
+ *   past    … 予定時刻を過ぎて結果が無い・外れた（予定時刻だけを控えめに出す。✗ は付けない）
  *   due     … 予定時刻を過ぎた直後（遅れの可能性があるので控えめにしない）
  *   next    … 次のレース
  *   upcoming… 予定時刻前
@@ -134,10 +138,11 @@ export function nextRace(races, nowMs) {
  */
 export function raceStatus(race, nowMs, next = null) {
   if (race?.hit === true) return { state: 'result', mark: '✅', text: '的中' };
-  if (race?.hit === false) return { state: 'result', mark: '✗', text: '不的中' };
   const t = Date.parse(race?.startAt || '');
   if (!Number.isFinite(t)) return { state: 'unknown', mark: '', text: '発走時刻未定' };
   const hm = jstHm(race.startAt);
+  // 外れたレース（hit === false）は ✗ を付けず、終わったレースと同じく発走予定時刻だけ（2026-11-25 MK・共通 A-2）
+  if (race?.hit === false) return { state: 'past', mark: '', text: hm };
   if (t - CUTOFF_MS > nowMs) return next && race === next ? { state: 'next', mark: '', text: `次 ${hm}` } : { state: 'upcoming', mark: '', text: `${hm} 予定` };
   return t + DUE_HOLD_SEC * 1000 > nowMs ? { state: 'due', mark: '', text: `${hm} 予定` } : { state: 'past', mark: '', text: hm };
 }
@@ -164,10 +169,19 @@ export function applyLive(races, date, live) {
   return changed;
 }
 
-/** 当日累計（的中数 / 結果が出たレース数）。無ければ null */
+/**
+ * 当日に結果が出たか（見出しの「すべて終了しました」の判定に使う）。表示には使わない。
+ * 結果が無ければ null。
+ */
 export function tallyOf(races) {
   const settled = (races || []).filter((r) => typeof r?.hit === 'boolean');
-  return settled.length ? { hit: settled.filter((r) => r.hit).length, total: settled.length } : null;
+  return settled.length ? { hit: settled.filter((r) => r.hit).length } : null;
+}
+
+/** 当日の的中の表示（「有料版の的中 N レース」）。的中が 0 件なら null（0 件を見せない・2026-11-25 MK・共通 A-2） */
+export function hitTallyText(tally) {
+  const n = Number(tally?.hit) || 0;
+  return n > 0 ? { lead: '有料版の的中 ', count: String(n), tail: ' レース' } : null;
 }
 
 /** 発走日の表示。今日は ''・翌日は '明日 '・それ以外は 'M/D '（前日夜に翌日分を出すときに時刻だけだと今日に読める） */
