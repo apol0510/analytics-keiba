@@ -18,7 +18,7 @@
 export const WEEKLY_CTA = Object.freeze({
   url: 'https://analytics.keiba.link/results-showcase/nankan/',
   label: '昨日の買い目と結果を見る',
-  note: '有料版で実際に配信したメインレースの買い目と、その結果をそのまま公開しています。',
+  note: '有料版で実際に配信したメインレースの買い目と、的中の払戻を公開しています。',
 });
 
 export const CONTENT_FAIL = Object.freeze({
@@ -43,29 +43,33 @@ export function buildWeeklyContent({ dateKey, showcase } = {}) {
   const total = Number(showcase.totalRaces) || groups.reduce((a, g) => a + (Number(g.totalRaces) || 0), 0);
   const hits = Number(showcase.hitRaces) || 0;
   if (total <= 0) return { ok: false, reason: CONTENT_FAIL.NO_RESULTS };
-  /** ⚠️ **数字を作らない。** 的中率・回収率は showcase が出したものだけを使う */
-  const hitRate = Number.isFinite(Number(showcase.hitRate)) ? Number(showcase.hitRate) : null;
-  const mainHits = mains.filter((m) => m && m.isHit === true).length;
+  const mainHits = mains.filter((m) => m && m.isHit === true);
   const venueLabel = String(showcase.venueLabel || groups.map((g) => g.venue).filter(Boolean).join('・'));
   const day = String(showcase.date || dateKey || '');
   if (!day || !venueLabel) return { ok: false, reason: CONTENT_FAIL.NO_RESULTS };
 
-  const headline = `${day} の結果：メイン ${mainHits}/${mains.length} 的中`;
-  const rateText = hitRate === null ? '' : `（的中率 ${hitRate}%）`;
+  // 2026-11-25 MK 決定（共通 A-2）: 的中を主役にする。分母（◯レース中・◯鞍中）・的中率・0 件は書かない。
+  //   全件の結果は着地先の実績ページ（/results-showcase/）にある。数字は渡された実績だけを使う。
+  const mainPayout = mainHits.map((m) => Number(m.payout)).find((v) => Number.isFinite(v) && v > 0) || null;
+  const headline = hits > 0 ? `${day} の有料版：${hits} レース的中` : `${day} の有料版の買い目`;
   const body = [
     'いつも KEIBA Analytics の無料予想をご覧いただきありがとうございます。',
     '前回ご覧いただいた無料予想の続きとして、有料版で実際に配信した買い目の結果をお届けします。',
     '',
-    `${day} は ${venueLabel} の ${total} レースを配信し、${hits} レースが的中しました${rateText}。`,
-    `メインレースは ${mains.length} 鞍中 ${mainHits} 鞍が的中しています。`,
+    hits > 0
+      ? `${day} は ${venueLabel} で、有料版の ${hits} レースが的中しました。`
+      : `${day} は ${venueLabel} のレースで有料版の買い目を配信しました。`,
+    ...(mainPayout ? [`メインレースでは ${mainPayout.toLocaleString('ja-JP')} 円の払戻が出ています。`] : []),
     '',
-    '買い目は「本命 → 相手 5 頭」の一方向馬単 5 点だけです。点数を増やして当てにいく作りにはしていません。',
-    '実際に配信した買い目と払戻は、下のページでそのまま公開しています。当たった日も外した日も同じ形で出しています。',
+    '買い目は「本命 → 相手 5 頭」の一方向馬単 5 点。軸を決めて絞った買い目です。',
+    '実際に配信した買い目と払戻は、下のページで公開しています。「買っていたらいくらになったか」をご覧ください。',
   ].join('\n');
 
   const step = {
-    subject: `【KEIBA Analytics】${day} メインレースの結果と買い目`,
-    preheader: `${total} レース中 ${hits} レース的中。買い目は 5 点のまま公開しています。`,
+    subject: `【KEIBA Analytics】${day} 有料版の買い目、どのレースで的中したか`,
+    preheader: hits > 0
+      ? `有料版の ${hits} レースが的中。実際の買い目と払戻を公開しています。`
+      : '有料版で配信した買い目と払戻を公開しています。',
     headline,
     body,
     /**
@@ -76,7 +80,7 @@ export function buildWeeklyContent({ dateKey, showcase } = {}) {
     benefitTitle: 'このページで確認できること',
     benefitItems: [
       '有料版で実際に配信したメインレースの買い目（本命 → 相手 5 頭）',
-      '全レースの的中・不的中（外した日も同じ形で出しています）',
+      '有料版が的中したレース',
       '的中したレースの払戻',
     ],
     ctaUrl: WEEKLY_CTA.url,

@@ -277,7 +277,7 @@ test('ログイン中の申込は従来どおり（Cookie を出さない・戻�
 
 // ---- 戻り先の画面と GA4 purchase の配線 --------------------------------------------------------
 
-test('配線: purchase は active の分岐だけ・1 か所・401 / 404 / 処理中 / 要確認では送らない。未ログインには正直な案内', () => {
+test('配線: purchase は active の分岐だけ・1 か所・401 / 404 / 処理中 / 要確認では送らない。未ログインには事実どおりの案内', () => {
   const page = readFileSync(fileURLToPath(new URL('../../../pages/checkout/paypal-subscription-return.astro', import.meta.url)), 'utf8');
   assert.equal(page.split('purchaseCompleted(').length - 1, 1, '呼び出しは 1 か所だけ');
   // 決済会社は戻り先の URL で決まる（PayPal ?subscription_id= / Paddle ?provider=paddle&order=・2026-11-02）

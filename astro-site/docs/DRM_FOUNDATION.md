@@ -263,7 +263,7 @@ read-only API は `admin-marketing` の **`action: 'drm'`**（**送信面**に�
 | 何から読むか | **受信対象（Customers）から** | **配信台帳（`CampaignDeliveries`）から** |
 | 絞り込めない campaign | `audience_not_narrowable` で **400** | 台帳を campaignType で絞るので**関係ない** |
 | 母数が大きいとき | 配信履歴の突き合わせで **504** | 上限を超えたら**数字を出さずに 413** |
-| まだ誰も入っていない | 400 / 504 になり得る | `inSequence: 0` と**正直に返る** |
+| まだ誰も入っていない | 400 / 504 になり得る | `inSequence: 0` と**そのまま返る** |
 
 ⚠️ 進行と反応は **`buildSequenceProgress` / `loadResponseByEmail`**（実配信と同じ単一源）を通る。
 画面の人数と実際に送る人数がズレない。
@@ -299,7 +299,7 @@ read-only API は `admin-marketing` の **`action: 'drm'`**（**送信面**に�
 - `sent` と `delivered` を混同しない
 - 未計測を 0 にしない
 - 顧客 segment は**排他的**（1 人 1 state）
-- 帰属不能は正直に `unattributed`
+- 帰属不能は事実どおり `unattributed`
 - **Premium / Light の購入確定時刻から実 touch へ帰属できる**
 - **送信経路の決済フィールド guard を維持したまま**である
 - duplicate send なし

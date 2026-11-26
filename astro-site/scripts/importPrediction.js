@@ -35,6 +35,7 @@ const projectRoot = join(__dirname, '..');
 
 // src/utils から正規化関数をインポート
 import { normalizeAndAdjust } from '../src/utils/normalizePrediction.js';
+import { loadOwnIndexContext, applyOwnIndexLogged } from './lib/ownIndexApply.mjs';
 
 /**
  * 2026-05-20: pt 差別化（featureScore）を adjustPrediction 時点で有効化するため、
@@ -468,6 +469,7 @@ async function importPrediction(date, venue = 'nankan', client = sharedClient) {
   //   - 各馬に sourceComputerIndex フィールドを追加（normalizePrediction.js が COMPI_MIN=45 判定で使う）
   //   - 突合キー: 会場名 → (馬番, 馬名) 完全一致
   const computerSourceMap = await buildSourceComputerIndexMap(date, venue, client);
+  const ownIndexCtx = await loadOwnIndexContext(client, venue, date);
   if (computerSourceMap && computerSourceMap.size > 0) {
     injectSourceComputerIndex(sharedJSON, computerSourceMap);
   }
@@ -486,6 +488,7 @@ async function importPrediction(date, venue = 'nankan', client = sharedClient) {
       // adjust 前に過去走を付与（featureScore→pt 差別化を有効にする）
       attachRecentRacesBeforeScoring(venueData, horseDataMap);
       const normalizedAndAdjusted = normalizeAndAdjust(venueData);
+      applyOwnIndexLogged(normalizedAndAdjusted, ownIndexCtx);
 
       console.log(`✅ ${venueName} 正規化完了`);
       console.log(`   - 開催日: ${normalizedAndAdjusted.date}`);
@@ -521,6 +524,7 @@ async function importPrediction(date, venue = 'nankan', client = sharedClient) {
     // adjust 前に過去走を付与（featureScore→pt 差別化を有効にする）
     attachRecentRacesBeforeScoring(sharedJSON, horseDataMap);
     const normalizedAndAdjusted = normalizeAndAdjust(sharedJSON);
+    applyOwnIndexLogged(normalizedAndAdjusted, ownIndexCtx);
 
     console.log(`✅ 正規化完了`);
     console.log(`   - 開催日: ${normalizedAndAdjusted.date}`);
@@ -662,7 +666,9 @@ function convertToLegacyFormat(data, date, horseDataMap = null) {
             computerIndex: h.computerIndex != null ? h.computerIndex : null, // コンピ指数（admin 編集系の値）
             // 2026-05-14 追加: 元 racebook 指数（computer JSON 由来）。
             // pt 生成（rawScore 昇格判定）の正規ソース。
-            sourceComputerIndex: h.sourceComputerIndex != null ? h.sourceComputerIndex : null
+            sourceComputerIndex: h.sourceComputerIndex != null ? h.sourceComputerIndex : null,
+            // 独自指数（OWN_INDEX_V1・開催日 OWN_INDEX_START 以降だけ）。AI総合指数の表示はこの値（getHorseAiIndex）
+            ...(Number.isFinite(h.ownIndex) ? { ownIndex: h.ownIndex } : {})
           };
           // racebook由来の基本情報で補完
           if (horseDataMap && horseDataMap.has(h.name)) {

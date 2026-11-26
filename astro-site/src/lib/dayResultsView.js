@@ -3,8 +3,10 @@
  *
  * 日付別恒久ページ（`/free-prediction/{jra,nankan}/YYYY-MM-DD/`）に出す結果を組み立てる。
  * 公開範囲は `/results-showcase/` と同じ（`buildShowcaseDay()` を再利用）:
- *   - 各レースの着順 1〜3 着・的中 ✅✗
- *   - メインレースの買い目（本命→相手・抑えは伏せる）と結果・的中時の払戻
+ *   - 各レースの着順 1〜3 着・的中したレースの ✅
+ *   - 的中したメインレースの買い目（本命→相手・抑えは伏せる）と払戻
+ * 無料予想の面は的中が主役（MK 2026-11-25・共通 A-2）: 分母（例「14/24R」）・✗・不的中・0 件は出さない。
+ * 全件の結果と算定ルールは実績ページ（/archive/・/results-showcase/）にだけ置く。
  * メイン以外の買い目・払戻・抑えは出さない。
  *
  * 2026-09-28: 南関だけに結果を付けて中央に付けていなかった非対称を解消するため、
@@ -75,6 +77,16 @@ export function buildDayResultsView(entry) {
     totalRaces: venues.reduce((s, v) => s + v.totalRaces, 0),
     hitRaces: venues.reduce((s, v) => s + v.hitRaces, 0),
   };
+}
+
+/**
+ * 一覧・見出しに出す的中の表記。的中数だけ（分母なし）。0 件のときは null（呼び出し側で出さない）。
+ * @param {number|null|undefined} hitRaces
+ * @returns {string|null}
+ */
+export function hitCountLabel(hitRaces) {
+  const n = Number(hitRaces);
+  return Number.isFinite(n) && n > 0 ? `的中 ${n}R` : null;
 }
 
 /** 日付の日本語表記（2026-09-25 → 2026年9月25日） */

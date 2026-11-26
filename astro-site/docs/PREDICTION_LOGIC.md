@@ -172,6 +172,28 @@ keiba-intelligence との差別化は「pt のソース (sourceComputerIndex 優
 - `horse.customScore`（旧 UI 互換のため markScore と同値）
 - `race._analyticsRule`: `'close-call-prefer-computer'` / `'computer-top-mismatch'` / `null`
 
+## 独自指数 OWN_INDEX_V1（2026-11-28 の開催から・MK 2026-11-26）
+
+MK「能力差が小さいときは独自の評価で ◎○ を入れ替える・指数を独自算出に・精度は維持・大掛かりな仕様変更は不要」。
+取込（`scripts/importPrediction.js` / `importPredictionJra.js`）が `normalizeAndAdjust` の後に `scripts/lib/ownIndexApply.mjs` `applyOwnIndex` を当てる。
+
+- 独自指数 = 指数（computer JSON の computerIndex・45 以上）＋ 4 項目（`src/utils/ownIndex.js`）。各項目でレース内上位 3 分の 1 が +1・下位 3 分の 1 が −1（全頭同じ値の項目は使わない）
+  | 項目 | 値 | 記録なし |
+  |---|---|---|
+  | 先行力 | 近 3 走の 1 コーナーの平均（前ほど高い） | 6 番手 |
+  | 前走着順 | 1 着 100・2 着 85・3 着 70・5 着まで 55・8 着まで 35・他 15 | 40 |
+  | 騎手 | 開催日より前の確定結果での勝率 (勝ち + 1) / (騎乗 + 10)（予想ファイルの騎手 × 着順を馬番で照合・市場ごと） | 0 騎乗 |
+  | 上がり | 近 3 走の上がり 3F の最速 | 40.5 秒 |
+- 役割 = 独自指数の高い順 → 指数 → 馬番。指数の差が小さい 2 頭は独自評価で ◎○ が入れ替わる（主に指数差 1〜2）。pt（累積スコア）= 表示値 + 70
+- 表示値（AI総合指数）= round(1.15 × 独自指数 − 20)（[DISPLAY_INDEX_RULES.md](./DISPLAY_INDEX_RULES.md)）
+- 変えないもの: 買い目の作り方（メイン 5 点・通常の本命軸 / 対抗軸・G-CI・抑え）。相手を選ぶ同じ役割内の順は指数の高い順（`partnerPt`・JSON に出さない）
+- 🛑 新聞の印（marks）・本紙順位は使わない（中央の予想 JSON にも 11-28 以降は marks を書かない）。騎手成績は開催日より前の結果だけ
+- 入力を読めない日は fail-closed で従来の pt（下の「pt 算出」）のまま（ログ `[OWN_INDEX]`）
+- 検証（keiba-data-shared の予想と結果・南関 2,399R・中央 2,699R・2026-02〜11-26）: 指数順と比べて本命の単勝・複勝率、馬単の的中率・回収率は同等
+  （南関 40.5% / 70.6% / 62.7% / 70.0% 対 40.3% / 70.3% / 62.5% / 70.1%・中央 31.3% / 63.8% / 52.5% / 70.9% 対 31.3% / 63.9% / 52.3% / 71.3%・回収率差の 95% 区間は 0 を含む）。
+  中央は従来の AK（新聞の印で加点）より本命の単勝率 28.6% → 31.2%・複勝率 60.1% → 63.0%。通常レースの馬単は ◎○ が入れ替わっても買い目が同じ
+- 同じ評価順を HIBI・NANKAN PICKS も使う（AK 基準・MK 2026-11-19）。KI は別の独自指数 OWN_INDEX_KI_V1（下の共通化ルール）
+
 ## 🛡️ keiba-intelligence との共通化ルール（同一化バグ再発防止）
 
 AK と KI は同じ keiba-data-shared（race-data-importer の racebook ＋ computer-manager の指数）を
@@ -190,8 +212,11 @@ AK と KI は同じ keiba-data-shared（race-data-importer の racebook ＋ comp
 ### サイト別の主軸（意図的に違える）
 | サイト | pt / 役割の主軸 | 補助 |
 |---|---|---|
-| **analytics-keiba** | **computerIndex（computer-manager）** | 過去走・印（race-data-importer）を pt に加点 |
-| keiba-intelligence | 印・racebook（race-data-importer） | computerIndex を補助 |
+| **analytics-keiba** | **独自指数 OWN_INDEX_V1**（指数 ＋ 先行力・前走着順・騎手・上がり・2026-11-28〜） | — |
+| keiba-intelligence | 独自指数 OWN_INDEX_KI_V1（指数 ＋ 先行力・近 5 走・騎手・上がり・コース実績・2026-11-28〜） | — |
+
+2026-11-28 より前の開催は従来どおり（AK = computerIndex ＋ 過去走・印の加点、KI = 印・racebook ＋ computerIndex）。
+両者の一致（検証期間）: 本命 98〜99%・◎○▲ 89%・買い目 92〜94%（完全一致ではない）。
 
 ### 不一致の運用基準
 - 12R 全てが一致する必要は無い。computerIndex の差が大きい（明確な抜けた1頭がいる）レースは

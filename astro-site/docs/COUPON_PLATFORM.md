@@ -271,7 +271,7 @@ pause-notice|by=customer|at=2026-08-20T…|op=<OperationId>|why=
 - ⚠️ **Redis が使えないときは append しない**（fail closed）。
   状態変更は成功しているので、下の `op=` から後で repair できる
 
-**保証の範囲（正直に書く）**: 単発の create では exact-once を保証できない。
+**保証の範囲（事実どおりに書く）**: 単発の create では exact-once を保証できない。
 上の①②③ ＋ 収束 repair により、**結果として 1 行に収束する（exact-once 相当）**。
 Redis が落ちている最中は履歴が**遅れる**（欠落ではなく未記録として検出できる）。
 

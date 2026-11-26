@@ -13,7 +13,7 @@
  *   5. 新規のお客様は従来どおり新規作成
  *   6. Light / Premium Plus の未ログイン申込はアドレスに関係なく同じ応答
  */
-import { test, beforeEach } from 'node:test';
+import { test, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { createSession } from '../auth/session.js';
@@ -114,6 +114,14 @@ beforeEach(() => {
   delete process.env.URL;
   globalThis.fetch = fakeFetch;
 });
+
+// Function の console.log / info / warn は stderr へ回す（KAO registry 4f3e6f22）。
+// stdout は Node test runner の子プロセス → 親の IPC にも使われ、大量の出力と重なると
+// 親が『Unable to deserialize cloned data』で test file ごと落とす（CI で 11-19・11-20 に発生）。
+// premiumConversion.test.mjs と同じやり方。検証内容は変えない。
+const savedConsole = { log: console.log, warn: console.warn, info: console.info };
+console.log = console.warn = console.info = (...a) => console.error(...a);
+after(() => Object.assign(console, savedConsole));
 
 globalThis.exports = {};
 globalThis.module = { exports: globalThis.exports };

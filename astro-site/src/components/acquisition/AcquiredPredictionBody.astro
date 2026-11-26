@@ -2,7 +2,7 @@
 /**
  * 取得済み予想の本文（スナップショットから描画・ガラスモーフィズム・mobile-first）。
  * ⚠️ 取得済みと確認したページ（/predictions/view/）からだけ使う。一覧や取得前の画面で使わない。
- * 指数は保存時点で raw−1（getHorseAiIndex）済みの aiIndex だけを出す。
+ * 指数は保存時点で独自指数（getHorseAiIndex＝ownIndex）の aiIndex だけを出す（無ければ出さない）。
  *
  * 2026-10-03 MK 確定（docs/PREDICTION_ACQUISITION.md §2-1・§2-2）:
  *   - Premium は馬単専用（通常＋点数を絞った買い目）。三連複の買い目は出さない（v1 の保存データに残っていても描画しない）
