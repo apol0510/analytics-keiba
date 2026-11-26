@@ -3,7 +3,7 @@ import BaseLayout from '../../../layouts/BaseLayout.astro';
 import { readdirSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import DateArchiveHub from '../../../components/DateArchiveHub.astro';
-import { loadResultsByDate, weekdayJa } from '../../../lib/dayResultsView.js';
+import { loadResultsByDate, weekdayJa, hitCountLabel } from '../../../lib/dayResultsView.js';
 
 export const prerender = true;
 
@@ -39,7 +39,8 @@ const resultsByDate = loadResultsByDate('jra');
 for (const f of files) {
   const e = resultsByDate.get(f.date);
   f.hasResult = !!e;
-  f.hitStat = e ? `的中 ${e.races.filter((r) => r.isHit).length}/${e.races.length}R` : '結果待ち';
+  // 的中数だけ（分母なし・0 件は「結果を見る」・共通 A-2）
+  f.hitStat = e ? (hitCountLabel(e.races.filter((r) => r.isHit).length) || '結果を見る') : '結果待ち';
 }
 
 const byMonth = {};

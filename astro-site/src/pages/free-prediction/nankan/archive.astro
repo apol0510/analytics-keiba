@@ -6,7 +6,7 @@
 import BaseLayout from '../../../layouts/BaseLayout.astro';
 import DateArchiveHub from '../../../components/DateArchiveHub.astro';
 import { buildAllNankanDatePages, formatJpDate, nankanDatePath } from '../../../lib/nankanDateArchive.js';
-import { weekdayJa } from '../../../lib/dayResultsView.js';
+import { weekdayJa, hitCountLabel } from '../../../lib/dayResultsView.js';
 
 export const prerender = true;
 
@@ -34,7 +34,8 @@ const hubMonths = months.map(([ym, list]) => ({
     weekday: weekdayJa(p.date),
     venue: p.summary.venueLabel,
     races: `${p.summary.totalRaces}R`,
-    stat: p.summary.hasResults ? `的中 ${p.summary.hitRaces}/${p.summary.resultRaces}R` : '結果待ち',
+    // 的中数だけ（分母なし・0 件は「結果を見る」・共通 A-2）
+    stat: p.summary.hasResults ? (hitCountLabel(p.summary.hitRaces) || '結果を見る') : '結果待ち',
     hasResult: p.summary.hasResults,
   })),
 }));
