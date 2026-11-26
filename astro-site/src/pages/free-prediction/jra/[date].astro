@@ -232,7 +232,7 @@ const jpDate = formatJpDate(date);
 const venueLabel = venues.map(v => v.venue || v.eventInfo?.venue).filter(Boolean).join('・');
 const pageTitle = `${jpDate} 中央競馬（${venueLabel}）AI予想と結果`;
 const pageDescription = resultsView
-  ? `${jpDate}の中央競馬（${venueLabel}）のAI予想と結果（着順）。有料版の買い目で的中${resultsView.hitRaces}/${resultsView.totalRaces}レース。メインレースの買い目と結果も掲載。`
+  ? `${jpDate}の中央競馬（${venueLabel}）のAI予想と結果（着順）。${resultsView.hitRaces > 0 ? `有料版の買い目で${resultsView.hitRaces}レース的中。` : ''}`
   : `${jpDate}の中央競馬（${venueLabel}）のAI予想。結果は確定後にこのページへ反映します。`;
 const SITE = 'https://analytics.keiba.link';
 const breadcrumbLd = {
