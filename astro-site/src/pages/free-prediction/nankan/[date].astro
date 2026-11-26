@@ -29,7 +29,9 @@ const { summary } = page;
 
 const title = `${jpDate} ${summary.venueLabel}競馬 AI予想と結果（全${summary.totalRaces}R）`;
 const description = summary.hasResults
-  ? `${jpDate}の${summary.venueLabel}競馬 全${summary.totalRaces}レースのAI予想の印と結果（着順）。${summary.hitRaces > 0 ? `有料版の買い目で${summary.hitRaces}レース的中。` : ''}`
+  ? (summary.hitRaces > 0
+    ? `${jpDate}の${summary.venueLabel}競馬のAI予想の印と結果（着順）。有料版の買い目で${summary.hitRaces}レース的中。`
+    : `${jpDate}の${summary.venueLabel}競馬 全${summary.totalRaces}レースのAI予想の印と結果（着順）。`)
   : `${jpDate}の${summary.venueLabel}競馬 全${summary.totalRaces}レースのAI予想の印。結果は確定後にこのページへ反映します。`;
 
 const SITE = 'https://analytics.keiba.link';
@@ -57,11 +59,13 @@ const markRow = (marks) => marks.filter((m) => m.kind !== 'main');
     <header class="nda-hero">
       <p class="nda-kicker">南関競馬 AI予想アーカイブ</p>
       <h1 class="nda-title">{jpDate} {summary.venueLabel}競馬<br class="sp-only" /> AI予想と結果</h1>
+      {/* 的中がある日は的中数だけ（全レース数を並べると分母になる・共通 A-2） */}
       <p class="nda-summary">
-        全{summary.totalRaces}レース
-        {summary.hasResults
-          ? (summary.hitRaces > 0 && <> ／ 有料版の買い目（馬単）で<strong>{summary.hitRaces}レース的中</strong></>)
-          : <> ／ 結果は確定後にこのページへ反映します</>}
+        {summary.hasResults && summary.hitRaces > 0
+          ? <>有料版の買い目（馬単）で<strong>{summary.hitRaces}レース的中</strong></>
+          : summary.hasResults
+            ? <>全{summary.totalRaces}レースの印と着順</>
+            : <>全{summary.totalRaces}レース ／ 結果は確定後にこのページへ反映します</>}
       </p>
     </header>
 

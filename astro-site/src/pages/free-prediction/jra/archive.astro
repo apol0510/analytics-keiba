@@ -40,7 +40,8 @@ for (const f of files) {
   const e = resultsByDate.get(f.date);
   f.hasResult = !!e;
   // 的中数だけ（分母なし・0 件は「結果を見る」・共通 A-2）
-  f.hitStat = e ? (hitCountLabel(e.races.filter((r) => r.isHit).length) || '結果を見る') : '結果待ち';
+  f.hitCount = e ? e.races.filter((r) => r.isHit).length : 0;
+  f.hitStat = e ? (hitCountLabel(f.hitCount) || '結果を見る') : '結果待ち';
 }
 
 const byMonth = {};
@@ -61,7 +62,8 @@ const hubMonths = months.map((monthKey) => {
       dateLabel: `${parseInt(item.month)}/${parseInt(item.day)}`,
       weekday: weekdayJa(item.date),
       venue: item.venues.join('・') || 'JRA',
-      races: `${item.totalRaces}R`,
+      // 的中数を出す日はレース数を並べない（「24R 的中 14R」が分母に読める・共通 A-2）
+      races: item.hitCount > 0 ? undefined : `${item.totalRaces}R`,
       stat: item.hitStat,
       hasResult: item.hasResult,
     })),

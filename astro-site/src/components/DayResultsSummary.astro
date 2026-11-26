@@ -14,7 +14,12 @@ const { view, heading } = Astro.props;
 {view ? (
   <section class="drs" aria-label={heading}>
     <h2 class="drs-title">{heading}</h2>
-    <p class="drs-summary">全{view.totalRaces}レース{view.hitRaces > 0 && <> ／ 有料版の買い目（馬単）で<strong>{view.hitRaces}レース的中</strong></>}</p>
+    {/* 的中がある日は的中数だけ（全レース数を並べると分母になる・共通 A-2） */}
+    <p class="drs-summary">
+      {view.hitRaces > 0
+        ? <>有料版の買い目（馬単）で<strong>{view.hitRaces}レース的中</strong></>
+        : <>全{view.totalRaces}レースの着順</>}
+    </p>
     {view.venues.map((v) => (
       <div class="drs-venue">
         <h3 class="drs-venue-title">{v.venue}{v.hitRaces > 0 && <>　的中 {v.hitRaces}R</>}</h3>
