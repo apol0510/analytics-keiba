@@ -704,7 +704,7 @@ const yen = (n) => `¥${Number(n).toLocaleString('ja-JP')}`;
         + '<form class="checkout-email-form" novalidate>'
         + '<label class="form-label" for="monthlyEmail">ご利用になるメールアドレス</label>'
         + '<input type="email" id="monthlyEmail" class="form-input" required autocomplete="email" placeholder="example@email.com" value="' + esc(value || savedEmail()) + '">'
-        + '<small>お申し込み後のログインに使います。決済後にメールは自動では届きません（ログイン画面でこのアドレスを入力すると、ログインリンクが届きます）。</small>'
+        + '<small>お申し込み後は、このメールアドレスでログインしてすぐにご利用いただけます。</small>'
         + '<button type="submit">決済へ進む</button>'
         + '</form>', btn);
       var form = msg.querySelector('form');
