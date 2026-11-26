@@ -42,3 +42,16 @@ test('無料予想の一覧・日付ページに分母・✗・不的中を出�
 test('一覧の的中表記は hitCountLabel（0 件は「的中 0」を出さない）', () => {
   for (const f of FILES.slice(0, 2)) assert.match(read(f), /hitCountLabel\(/, f);
 });
+
+test('的中数の行に全レース数を並べない（「全24レース ／ 14レース的中」も分母）', () => {
+  for (const f of FILES) {
+    for (const line of stripComments(read(f)).split('\n')) {
+      if (line.includes('レース的中')) assert.ok(!/totalRaces/.test(line), `${f}: ${line.trim()}`);
+    }
+  }
+});
+
+test('一覧は的中数を出す日にレース数（races）を並べない', () => {
+  assert.match(read(FILES[0]), /races: item\.hitCount > 0 \? undefined :/);
+  assert.match(read(FILES[1]), /races: p\.summary\.hasResults && p\.summary\.hitRaces > 0 \? undefined :/);
+});
