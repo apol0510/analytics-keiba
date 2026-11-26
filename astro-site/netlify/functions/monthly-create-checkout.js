@@ -2,7 +2,7 @@
  * monthly-create-checkout — お客様向けの「月額で申し込む」共通入口（決済会社を選ばせない）
  *
  * POST { plan: 'premium'|'premium-jra'|'premium-nankan'|'premium-annual'|'premium-annual-light', email? }
- *   → 200 { url, subscription, provider }（未ログインの申込は戻り先の確認用 Cookie ak_pp_return も付ける・subscriptionReturnToken.js）
+ *   → 200 { url, subscription, provider, price? }（未ログインの申込は戻り先の確認用 Cookie ak_pp_return も付ける・subscriptionReturnToken.js）
  *   ログイン中（ak_session）はその会員。未ログイン（無料会員・初めての方）は入力メールの会員に固定する
  *   （2026-10-21: 無料会員はセッションを持たないため、ログイン必須では申し込めなかった。旧 Stripe 月額と同じ受付に戻す）
  *   → 400 invalid_plan / email_required / invalid_email / 401 login_required（ログイン中のレコードが読めない）
@@ -23,6 +23,7 @@ import { e2eCheck } from '../../src/lib/billing/cardE2E.js';
 import { makeRedisCmd } from '../../src/lib/premiumPlus/premiumPlusFunnelServer.js';
 import { returnCookieFor } from '../../src/lib/billing/paypal/subscriptionReturnToken.js';
 import { createPaddleSubscriptionCheckout, resolvePaddleSubscriptionMode } from '../../src/lib/billing/paddle/paddleSubscriptionServer.js';
+import { checkoutResponseBody } from '../../src/lib/billing/checkoutResponse.js';
 
 // 2026-11-02 MK 確定: 新規の月額・年額は Paddle へ一本化（ACTIVE_SUBSCRIPTION_PROVIDER を切り替える PR で受付先が変わる）。
 // Paddle の subscription は戻り先の確認に使う取引 ID（txn_…）。どちらも受け付けるのは 1 社だけ（自動フォールバックしない）
@@ -68,7 +69,8 @@ const makeHandler = (activeProvider = ACTIVE_SUBSCRIPTION_PROVIDER) => async (ev
     // 鍵を出せなくても申込は止めない（戻り先はログインの案内になるだけ）。会員 ID はお客様へ返さない
     const returnCookie = r.guest && !e2e ? returnCookieFor({ env, subscriptionId: r.subscriptionId, recordId: r.recordId }) : null;
     console.log(JSON.stringify({ event: 'monthly_checkout_created', provider: r.provider, plan: String(body.plan || ''), guest: r.guest === true, returnKey: Boolean(returnCookie) }));
-    return json(200, returnCookie ? { ...headers, 'Set-Cookie': returnCookie } : headers, { url: r.url, subscription: r.subscriptionId, provider: r.provider });
+    // price（請求される額・特別価格の有無）も返す: 料金ページの「通常価格になります」の案内と GA4 begin_checkout の金額に使う（2026-11-27）
+    return json(200, returnCookie ? { ...headers, 'Set-Cookie': returnCookie } : headers, checkoutResponseBody(r));
   } catch (e) {
     console.error(JSON.stringify({ event: 'monthly_checkout_failed', provider: activeProvider, message: String(e?.message || e).slice(0, 120) }));
     return json(502, headers, { error: 'checkout_failed' });
