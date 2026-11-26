@@ -270,11 +270,19 @@ test('レース選別: 本命が抜けた多頭数=A／拮抗=見送り／少頭
   assert.equal(day.skipped.length, 1);
 });
 
-test('表示指数は raw−1（getHorseAiIndex）だけを保存する', () => {
+test('表示指数は独自指数（getHorseAiIndex＝ownIndex）だけを保存する・外部の指数は保存しない', () => {
+  // 独自指数の無い予想（2026-11-28 より前の開催）は指数を保存しない（外部の指数やその加工値を出さない）
   const c = buildPredictionContent({ product: 'premium', cat: 'nankan', venueName: '船橋', race: race(1), venueTotalRaces: 12 });
   const honmei = c.horses.find((h) => h.number === 3);
-  assert.equal(honmei.aiIndex, 89);
+  assert.equal(honmei.aiIndex, null);
   assert.equal(JSON.stringify(c).includes('computerIndex'), false);
+  // 独自指数のある予想はその値を保存する
+  const r = race(1);
+  r.horses = r.horses.map((h) => ({ ...h, ownIndex: Number(h.computerIndex ?? h.sourceComputerIndex) + 2 }));
+  const own = buildPredictionContent({ product: 'premium', cat: 'nankan', venueName: '船橋', race: r, venueTotalRaces: 12 });
+  const h3 = own.horses.find((h) => h.number === 3);
+  assert.equal(h3.aiIndex, r.horses.find((h) => Number(h.horseNumber ?? h.number) === 3).ownIndex);
+  assert.equal(JSON.stringify(own).includes('computerIndex'), false);
 });
 
 // ── 利用状況 ──

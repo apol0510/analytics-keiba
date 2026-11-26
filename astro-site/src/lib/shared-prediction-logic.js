@@ -804,34 +804,25 @@ export function formatDisplayComputerIndex(rawIndex) {
 }
 
 /**
- * 【AI総合指数の唯一の正規取得ルート】(4 領域共通 / 2026-05-24 集約)
+ * 【AI総合指数の唯一の正規取得ルート】(4 領域共通 / 2026-05-24 集約 / 2026-11-26 独自指数へ)
  *
- * 4 領域 (JRA 無料 / JRA 有料 / NANKAN 無料 / NANKAN 有料) で
- * 「AI総合指数」として表示する数値はすべてこの関数経由で取得する。
+ * 4 領域 (JRA 無料 / JRA 有料 / NANKAN 無料 / NANKAN 有料) で「AI総合指数」として表示する数値は、
+ * すべてこの関数経由で取得する。
  *
- * 優先順位:
- *   1. horse.sourceComputerIndex （元 racebook 指数。injection 済み）
- *   2. horse.computerIndex        （fallback）
- *
- * 絶対に使ってはいけないフォールバック:
- *   - horse.pt / horse.totalScore / horse.displayScore / horse.rawScore
- *     これらは累積スコア・rawScore など別スケールの値。
- *     混在させると京都4R 案件 (2026-05-24 単穴 161 表示) が再発する。
- *
- * 上限ガード:
- *   - raw が 0-99 の範囲外（< 10 や > 99）なら null を返す。
- *     これは clamp ではなく「正規源が無い / 異常 → 表示しない」設計。
+ * 表示する値は horse.ownIndex（独自指数 OWN_INDEX_V1 = 指数 ＋ 先行力・前走着順・騎手・上がりの 4 項目を、独自の目盛り
+ *   round(1.15 × 独自指数 − 20) にした値）だけ。
+ *   - MK 2026-11-26「指数を独自算出に」。取込（scripts/lib/ownIndexApply.mjs）が開催日 2026-11-28 以降の予想に書く
+ *   - ownIndex の無い予想（それより前の開催）は null → 表示しない。🛑 外部の指数（computerIndex / sourceComputerIndex）や
+ *     その加工値（raw−1 など）を表示に使わない
+ *   - horse.pt / totalScore / displayScore / rawScore も使わない（別スケール・京都4R 案件の再発防止）
  *
  * @param {object} horse - 馬データ
- * @returns {number|null} 表示用指数 (raw-1) または null
+ * @returns {number|null} 表示用の独自指数、または null
  */
 export function getHorseAiIndex(horse) {
-    const raw = horse?.sourceComputerIndex ?? horse?.computerIndex;
-    const n = Number(raw);
-    if (!Number.isFinite(n)) return null;
-    if (n < 10) return null;
-    if (n > 99) return null;
-    return getDisplayComputerIndex(Math.round(n));
+    const n = Number(horse?.ownIndex);
+    if (horse?.ownIndex == null || !Number.isFinite(n)) return null;
+    return Math.round(n);
 }
 
 // データ整合性チェック

@@ -45,6 +45,9 @@ function horseNumber(h) {
 }
 
 function horsePt(h) {
+  // 独自指数（OWN_INDEX_V1・scripts/lib/ownIndexApply.mjs）の開催は、相手を選ぶときの同じ役割内の順を従来どおり指数の高い順にする（partnerPt = 指数 + 70）
+  const p = Number(h?.partnerPt);
+  if (Number.isFinite(p)) return p;
   const v = Number(h?.pt ?? h?.displayScore ?? h?.rawScore);
   return Number.isFinite(v) ? v : 0;
 }
