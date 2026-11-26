@@ -4,35 +4,29 @@
 > CI で強制している内容は [SAFETY_CHECKS.md](./SAFETY_CHECKS.md) も参照。
 
 
-analytics-keiba では、外部由来の元指数（racebook 系 `computerIndex` / `sourceComputerIndex`）を
-画面にそのまま表示してはならない。**ユーザー表示用の指数は必ず「元指数 − 1」** とする。
+analytics-keiba では、外部由来の元指数（racebook 系 `computerIndex` / `sourceComputerIndex`）と、その加工値（raw − 1 など）を
+**画面に表示してはならない**（MK 2026-11-26「指数を独自算出に」）。ユーザーに見せる指数は **独自指数（AI総合指数）だけ**。
 
 | 用途 | 値 | 関数 |
 |---|---|---|
-| 内部計算（pt / analyticsScore / 役割分類 / isOsaeCandidate / isIneligibleHorse / 買い目生成 / 特徴量重要度） | raw `computerIndex` をそのまま使用 | （関数ラップ不要） |
-| 画面表示（HTML / カード / 全レースプレビュー / 無料予想 / プレミアム予想 / 不要馬・抑え候補・連下） | raw − 1 | `getDisplayComputerIndex(raw)` / `formatDisplayComputerIndex(raw)` |
+| 内部計算（役割の基礎点 / isOsaeCandidate / isIneligibleHorse / 買い目の相手の順 / G-CI） | raw `computerIndex` | （関数ラップ不要） |
+| 画面表示（AI総合指数・指数） | `horse.ownIndex`（独自指数 OWN_INDEX_V1 の表示値） | `getHorseAiIndex(horse)` |
+
+### 独自指数（OWN_INDEX_V1・正本 [PREDICTION_LOGIC.md](./PREDICTION_LOGIC.md)「独自指数」）
+- 独自指数 = 指数 ＋ 先行力・前走着順・騎手・上がりの 4 項目（各項目でレース内上位 3 分の 1 が +1・下位 3 分の 1 が −1）
+- 表示値 `ownIndex` = round(1.15 × 独自指数 − 20)（独自の目盛り・27〜98・順位は独自指数と同じ）。取込（`scripts/lib/ownIndexApply.mjs`）が開催日 2026-11-28 以降の予想に書く
+- `ownIndex` の無い予想（それより前の開催）は指数を表示しない（`getHorseAiIndex` が null）
 
 ### 必須ルール
-- 個別ページで `{horse.computerIndex}` を直接 JSX に埋めるのは **禁止**。必ず共通関数経由。
-- 共通関数は `astro-site/src/lib/shared-prediction-logic.js` の
-  `getDisplayComputerIndex(raw)` / `formatDisplayComputerIndex(raw)` を使用。
-- JRA 側で `sourceComputerIndex` を選定してから表示する場合も、最終出力は同関数で `-1` する。
-- 新しい指数表示箇所を追加する場合も、必ず共通関数を使うこと。
+- 個別ページで `{horse.computerIndex}` / `{horse.sourceComputerIndex}` を JSX に埋めるのは **禁止**。指数は必ず `getHorseAiIndex(horse)` 経由。
+- `getDisplayComputerIndex(raw)` / `formatDisplayComputerIndex(raw)` は旧仕様（raw − 1）。新しい表示箇所に使わない。
 
-### 🎯 AI総合指数の正規取得ルート（2026-05-24 集約 / 4 領域共通）
+### 🎯 AI総合指数の正規取得ルート（2026-05-24 集約 / 2026-11-26 独自指数へ）
 
 **京都4R 案件**（無料 JRA 単穴の AI総合指数が `161` になった事故）の根本対応として、
 AI 総合指数として画面に出す数値は **`getHorseAiIndex(horse)` 1 関数に集約**する。
 
-| 用途 | 関数 |
-|---|---|
-| **AI総合指数（4 領域共通の表示用）** | `getHorseAiIndex(horse)` |
-| raw - 1 変換のみ | `getDisplayComputerIndex(raw)` |
-
-**`getHorseAiIndex` の挙動:**
-- 参照源: `horse.sourceComputerIndex ?? horse.computerIndex` の**この 2 つだけ**
-- 範囲ガード: raw が 10〜99 の範囲外なら `null` を返す（=表示しない）
-- 範囲内なら `getDisplayComputerIndex(raw)` を返す（= raw - 1）
+**`getHorseAiIndex` の挙動:** 参照源は `horse.ownIndex` だけ。数値でなければ `null`（= 表示しない）。
 
 **絶対に AI 総合指数として表示してはいけないフォールバック値**:
 - `horse.pt` / `horse.totalScore` / `horse.displayScore` / `horse.rawScore`

@@ -35,6 +35,7 @@ const projectRoot = join(__dirname, '..');
 
 // src/utils から正規化関数をインポート
 import { normalizeAndAdjust, isHorseNameBroken } from '../src/utils/normalizePrediction.js';
+import { loadOwnIndexContext, applyOwnIndexLogged, ownIndexOn } from './lib/ownIndexApply.mjs';
 // 2026-06-19: computer→racebook の真コンピ指数注入を race-scoped 馬番主キーで行う共通 helper
 import {
   buildRaceScopedComputerMap,
@@ -480,6 +481,8 @@ export async function importPrediction(date, venue = 'jra', client = sharedClien
     return null;
   }
   const sharedJSON = resolved.sharedJSON;
+  // 独自指数（OWN_INDEX_V1・開催日 OWN_INDEX_START 以降）: 新聞の印・本紙順位は使わない
+  const ownIndexCtx = await loadOwnIndexContext(client, venue, date);
   // 会場単位で除外した会場と理由（audit）。保存する予想 file の importAudit に残す
   const importAudit = resolved.excludedVenues?.length
     ? { excludedVenues: resolved.excludedVenues, rule: 'venue-scoped fail-closed (MK 2026-09-30)' }
@@ -500,6 +503,7 @@ export async function importPrediction(date, venue = 'jra', client = sharedClien
       };
 
       const normalized = normalizeAndAdjust(singleVenueData);
+      applyOwnIndexLogged(normalized, ownIndexCtx);
       normalizedVenues.push(normalized);
 
       console.log(`   ✅ ${normalized.venue}: ${normalized.totalRaces}レース`);
@@ -525,6 +529,7 @@ export async function importPrediction(date, venue = 'jra', client = sharedClien
   // 単一会場の場合（従来フォーマット）
   console.log(`⚙️  正規化 + 調整ルール適用中...`);
   const normalizedAndAdjusted = normalizeAndAdjust(sharedJSON);
+  applyOwnIndexLogged(normalizedAndAdjusted, ownIndexCtx);
   if (importAudit) normalizedAndAdjusted.importAudit = importAudit;
 
   console.log(`✅ 正規化完了`);
@@ -603,7 +608,9 @@ function convertToLegacyFormat(data, date) {
             ...(h.sourceComputerIndex != null ? { sourceComputerIndex: h.sourceComputerIndex } : {}),
             // 過去走（racebook由来 _pastRaces 優先 / computer由来 recentRaces をフォールバック）
             ...(recentRaces ? { recentRaces } : {}),
-            marks: h.marks || {}
+            // 独自指数（OWN_INDEX_V1）の開催: AI総合指数は独自指数・新聞の印は保存しない
+            ...(Number.isFinite(h.ownIndex) ? { ownIndex: h.ownIndex } : {}),
+            ...(ownIndexOn(date) ? {} : { marks: h.marks || {} })
           };
         })
         .sort((a, b) => {

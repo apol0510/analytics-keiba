@@ -2,7 +2,7 @@
  * predictionContent.js — 1 予想（1 レース）の本文スナップショットを組み立てる（純粋）
  *
  * 取得時にこの関数の結果を保存し、閲覧はスナップショットから描画する（予想データの保持期間に依存しない）。
- * 外部由来の指数は raw のまま入れない（getHorseAiIndex＝raw−1 だけを入れる）。正本 docs/PREDICTION_ACQUISITION.md
+ * 外部由来の指数は入れない（getHorseAiIndex＝独自指数 ownIndex だけを入れる・無ければ null）。正本 docs/PREDICTION_ACQUISITION.md
  */
 import { getMainRaceNumber, generateRaceUmatanLines, countPointsFromUmatanLine } from '../../utils/mainRaceBetting.js';
 import { umatanTickets } from '../results/umatanHit.js';
