@@ -32,6 +32,8 @@ const LIGHT = { 'プラン': 'Light', '有効期限': '2027-06-01', Status: 'act
 
 const mk = (fields) => resolveCustomerMarketing({ fields, nowMs: NOW });
 const NOT_STARTED = { status: SEQ_STATUS.DUE, currentStep: 0 };
+/** 自動開始の窓（14 日）を過ぎた古い会員（育成は始まらない）*/
+const OLD = { createdTimeMs: NOW - 400 * DAY, onboardingWithinDays: 14, nowMs: NOW };
 
 test('育成 campaign は DRM 第 1 段の nurture（free-signup-onboarding・全 6 通）', () => {
   assert.equal(ONBOARDING_CAMPAIGN_ID, 'free-signup-onboarding');
@@ -43,7 +45,7 @@ test('育成 campaign は DRM 第 1 段の nurture（free-signup-onboarding・�
 test('現役 Premium / Light は対象外（active_paid_member）', () => {
   for (const extra of [PREMIUM, LIGHT]) {
     const fields = { Email: EMAIL, ...extra };
-    const r = resolveNativeWeeklyEligibility({ fields, marketing: mk(fields), baseExclusion: null, onboardingProgress: NOT_STARTED });
+    const r = resolveNativeWeeklyEligibility({ fields, marketing: mk(fields), baseExclusion: null, onboardingProgress: NOT_STARTED, ...OLD });
     assert.deepEqual(r, { eligible: false, reason: NATIVE_WEEKLY_SKIP.ACTIVE_PAID_MEMBER });
   }
 });
@@ -51,17 +53,17 @@ test('現役 Premium / Light は対象外（active_paid_member）', () => {
 test('無料会員・期限切れは対象', () => {
   for (const extra of [{}, { 'プラン': 'Premium', '有効期限': '2026-01-01', Status: 'active' }]) {
     const fields = { Email: EMAIL, ...extra };
-    const r = resolveNativeWeeklyEligibility({ fields, marketing: mk(fields), baseExclusion: null, onboardingProgress: NOT_STARTED });
+    const r = resolveNativeWeeklyEligibility({ fields, marketing: mk(fields), baseExclusion: null, onboardingProgress: NOT_STARTED, ...OLD });
     assert.deepEqual(r, { eligible: true, reason: null });
   }
 });
 
 test('取り込み由来は元々の会員ではない / 基本的な送信可否の除外はそのまま理由に出す', () => {
   const imported = { Email: EMAIL, Source: `${IMPORT_SOURCE_PREFIX}x` };
-  assert.equal(resolveNativeWeeklyEligibility({ fields: imported, marketing: mk(imported), baseExclusion: null, onboardingProgress: NOT_STARTED }).reason,
+  assert.equal(resolveNativeWeeklyEligibility({ fields: imported, marketing: mk(imported), baseExclusion: null, onboardingProgress: NOT_STARTED, ...OLD }).reason,
     NATIVE_WEEKLY_SKIP.NOT_NATIVE);
   const fields = { Email: EMAIL };
-  const r = resolveNativeWeeklyEligibility({ fields, marketing: mk(fields), baseExclusion: 'unsubscribed', onboardingProgress: NOT_STARTED });
+  const r = resolveNativeWeeklyEligibility({ fields, marketing: mk(fields), baseExclusion: 'unsubscribed', onboardingProgress: NOT_STARTED, ...OLD });
   assert.deepEqual(r, { eligible: false, reason: NATIVE_WEEKLY_SKIP.BASE_EXCLUDED, detail: 'unsubscribed' });
 });
 
@@ -113,7 +115,7 @@ test('DRM 受信中（1 通目のあと）は対象外', () => {
   // campaign が使えない状態では進行が停止扱いになり、このテストの前提が崩れる（黙って通さない）
   assert.notEqual(progress.stopReason, 'campaign_disabled', '育成 campaign が停止中');
   assert.equal(isOnboardingActive(progress), true, JSON.stringify(progress));
-  assert.equal(resolveNativeWeeklyEligibility({ fields, marketing, baseExclusion: null, onboardingProgress: progress }).reason,
+  assert.equal(resolveNativeWeeklyEligibility({ fields, marketing, baseExclusion: null, onboardingProgress: progress, ...OLD }).reason,
     NATIVE_WEEKLY_SKIP.DRM_ONBOARDING_ACTIVE);
 });
 
@@ -122,7 +124,7 @@ test('DRM 6 通完了後は対象に戻る（受信歴だけで永久除外し�
   assert.notEqual(progress.status, SEQ_STATUS.DUE);
   assert.notEqual(progress.status, SEQ_STATUS.WAITING);
   assert.equal(isOnboardingActive(progress), false);
-  assert.deepEqual(resolveNativeWeeklyEligibility({ fields, marketing, baseExclusion: null, onboardingProgress: progress }),
+  assert.deepEqual(resolveNativeWeeklyEligibility({ fields, marketing, baseExclusion: null, onboardingProgress: progress, ...OLD }),
     { eligible: true, reason: null });
 });
 
@@ -130,6 +132,6 @@ test('DRM の既存停止条件で終わった人（購入して有料が切れ�
   // 停止（stopped）は受信中ではない。停止理由が何であっても週次の判定からは「終わった人」
   const fields = { Email: EMAIL };
   const stopped = { status: SEQ_STATUS.STOPPED, currentStep: 2, stopReason: 'purchased' };
-  assert.deepEqual(resolveNativeWeeklyEligibility({ fields, marketing: mk(fields), baseExclusion: null, onboardingProgress: stopped }),
+  assert.deepEqual(resolveNativeWeeklyEligibility({ fields, marketing: mk(fields), baseExclusion: null, onboardingProgress: stopped, ...OLD }),
     { eligible: true, reason: null });
 });
