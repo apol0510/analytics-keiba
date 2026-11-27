@@ -1,0 +1,243 @@
+---
+// 南関4場の横断比較（2026-11-27）。29 本のコース記事の表から、場・距離をまたいで比べられる一覧を作る。
+// 数字は src/lib/seo/nankanCourseCompare.mjs（記事の表と一致することを test で確認）。日付にも会員状態にも依存しない。
+export const prerender = true;
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import {
+  VENUES, COURSES, OTHER_COURSES, courseUrl, venueOf, fmt, distancesByVenue,
+  mostReliableFavorite, leastReliableFavorite, strongestGate,
+} from '../../lib/seo/nankanCourseCompare.mjs';
+
+const title = '南関4場コース比較｜大井・川崎・船橋・浦和の直線・1番人気の成績・勝率の高い馬番を一覧で';
+const description = '南関東4競馬場（大井・川崎・船橋・浦和）のコースを横断比較。ゴールまでの直線、距離別の1番人気の勝率・複勝率、勝率が最も高い馬番を1つの表にまとめました。';
+const canonical = 'https://analytics.keiba.link/course/compare/';
+
+const label = (c) => `${venueOf(c.venue).name}${c.distance}m`;
+const reliable = mostReliableFavorite();
+const upset = leastReliableFavorite();
+const gate = strongestGate();
+const byStraight = [...VENUES].sort((a, b) => b.straight - a.straight);
+
+const faq = [
+  {
+    q: '南関4場で直線が最も長い競馬場は？',
+    a: `${byStraight[0].name}競馬場です。ゴールまでの直線は${byStraight[0].straight}mで、${byStraight.slice(1).map((v) => `${v.name}${v.straight}m`).join('・')}と続きます。`,
+  },
+  {
+    q: '1番人気が最も堅い南関のコースは？',
+    a: `${label(reliable)}です。1番人気の勝率${fmt(reliable.favorite.win)}%・複勝率${fmt(reliable.favorite.top3)}%で、比較した${COURSES.length}コースの中で複勝率が最も高くなっています。`,
+  },
+  {
+    q: '1番人気の勝率が最も低い南関のコースは？',
+    a: `${label(upset)}です。1番人気の勝率は${fmt(upset.favorite.win)}%で、2番人気以下の馬が勝つ割合が比較した${COURSES.length}コースで最も高くなっています。`,
+  },
+];
+
+const jsonLd = [
+  {
+    '@context': 'https://schema.org',
+    '@type': 'Article',
+    headline: '南関4場コース比較｜大井・川崎・船橋・浦和',
+    description,
+    datePublished: '2026-11-27',
+    dateModified: '2026-11-27',
+    author: { '@type': 'Organization', name: 'KEIBA Analytics' },
+    publisher: { '@type': 'Organization', name: 'KEIBA Analytics', logo: { '@type': 'ImageObject', url: 'https://analytics.keiba.link/logo.png' } },
+    mainEntityOfPage: { '@type': 'WebPage', '@id': canonical },
+  },
+  {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: 'ホーム', item: 'https://analytics.keiba.link/' },
+      { '@type': 'ListItem', position: 2, name: 'コース攻略', item: 'https://analytics.keiba.link/course/' },
+      { '@type': 'ListItem', position: 3, name: '南関4場コース比較', item: canonical },
+    ],
+  },
+  {
+    '@context': 'https://schema.org',
+    '@type': 'FAQPage',
+    mainEntity: faq.map((f) => ({ '@type': 'Question', name: f.q, acceptedAnswer: { '@type': 'Answer', text: f.a } })),
+  },
+];
+---
+
+<BaseLayout title={title} description={description} canonical={canonical} type="article">
+  <script type="application/ld+json" slot="head" set:html={JSON.stringify(jsonLd)} />
+
+  <div class="container">
+    <nav class="breadcrumb">
+      <a href="/">ホーム</a> &gt; <a href="/course/">コース攻略</a> &gt; 南関4場コース比較
+    </nav>
+
+    <header class="page-header">
+      <h1>南関4場コース比較</h1>
+      <p class="lead">大井・川崎・船橋・浦和の{COURSES.length + OTHER_COURSES.length}コースを、直線・1番人気の成績・勝率の高い馬番で横断比較</p>
+    </header>
+
+    <section class="highlights" aria-label="比較の見どころ">
+      <a class="highlight" href={courseUrl(reliable)}>
+        <span class="hl-label">1番人気が最も堅い</span>
+        <span class="hl-course">{label(reliable)}</span>
+        <span class="hl-value">複勝率 {fmt(reliable.favorite.top3)}%</span>
+      </a>
+      <a class="highlight" href={courseUrl(upset)}>
+        <span class="hl-label">2番人気以下が勝ちやすい</span>
+        <span class="hl-course">{label(upset)}</span>
+        <span class="hl-value">1番人気の勝率 {fmt(upset.favorite.win)}%</span>
+      </a>
+      <a class="highlight" href={courseUrl(gate)}>
+        <span class="hl-label">馬番の勝率が最も高い</span>
+        <span class="hl-course">{label(gate)} {gate.bestGate.gate}番</span>
+        <span class="hl-value">勝率 {fmt(gate.bestGate.win)}%</span>
+      </a>
+    </section>
+
+    <section class="block">
+      <h2>4場の基本比較</h2>
+      <div class="table-wrap">
+        <table class="cmp">
+          <thead>
+            <tr><th>競馬場</th><th>回り</th><th>直線<br />（ゴールまで）</th><th>距離別の解説</th></tr>
+          </thead>
+          <tbody>
+            {VENUES.map((v) => (
+              <tr>
+                <th scope="row"><a href={`/course/${v.id}/`}>{v.name}</a><span class="vnote">{v.note}</span></th>
+                <td>{v.direction}</td>
+                <td class="num">{v.straight}m</td>
+                <td class="dists">
+                  {distancesByVenue(v.id).map((c) => (
+                    <a href={courseUrl(c)}>{c.distance}m</a>
+                  ))}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="block">
+      <h2>距離別：1番人気の成績と勝率の高い馬番</h2>
+      <p class="note">勝率の高い馬番は、出走数30以上の馬番の中で勝率が最も高いものです。各コースの詳しい表は記事へ。</p>
+      <div class="table-wrap">
+        <table class="cmp">
+          <thead>
+            <tr>
+              <th>コース</th>
+              <th>1番人気<br />勝率</th>
+              <th>1番人気<br />連対率</th>
+              <th>1番人気<br />複勝率</th>
+              <th>勝率の高い馬番</th>
+            </tr>
+          </thead>
+          <tbody>
+            {COURSES.map((c) => (
+              <tr class={c === reliable ? 'is-top' : ''}>
+                <th scope="row"><a href={courseUrl(c)}>{label(c)}</a></th>
+                <td class="num">{fmt(c.favorite.win)}%</td>
+                <td class="num">{fmt(c.favorite.top2)}%</td>
+                <td class="num">{fmt(c.favorite.top3)}%</td>
+                <td class="num">{c.bestGate.gate}番<span class="sub">勝率{fmt(c.bestGate.win)}%</span></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="block">
+      <h2>比較から分かること</h2>
+      <ul class="points">
+        <li><strong>直線の長さは{byStraight.map((v) => `${v.name}${v.straight}m`).join(' ＞ ')}。</strong>大井は差し・追込にも届く長さがあり、浦和は4コーナーまでの位置取りがそのまま結果につながりやすいコースです。</li>
+        <li><strong>1番人気が最も堅いのは{label(reliable)}。</strong>複勝率{fmt(reliable.favorite.top3)}%で、軸馬を1番人気から選びやすいコースです。</li>
+        <li><strong>{label(upset)}は1番人気の勝率が{fmt(upset.favorite.win)}%。</strong>比較したコースで最も低く、2番人気以下から勝ち馬を探す価値があります。</li>
+        <li><strong>{label(gate)}では{gate.bestGate.gate}番の勝率が{fmt(gate.bestGate.win)}%。</strong>馬番の有利不利はコースごとに違うため、距離別の記事で確認してから買い目を組むのが近道です。</li>
+      </ul>
+    </section>
+
+    <section class="block faq">
+      <h2>よくある質問</h2>
+      {faq.map((f) => (
+        <details>
+          <summary>{f.q}</summary>
+          <p>{f.a}</p>
+        </details>
+      ))}
+    </section>
+
+    <section class="cta">
+      <h2>コースの傾向は、当日の予想で使ってこそ</h2>
+      <p>KEIBA Analytics は南関4場の AI 予想を開催日ごとに公開しています。今日の南関の無料予想で、コースの傾向がどう生きるかを確かめてください。</p>
+      <div class="cta-buttons">
+        <a href="/free-prediction/nankan/" class="cta-button primary">南関の無料予想を見る</a>
+        <a href="/pricing/" class="cta-button secondary">全レースの予想プランを見る</a>
+      </div>
+      <p class="more"><a href="/course/">南関4場コース攻略ガイドへ</a> ・ <a href="/blog/">攻略記事一覧</a></p>
+    </section>
+  </div>
+
+  <style>
+    .container { max-width: 1100px; margin: 0 auto; padding: 0 1rem 3rem; }
+    .breadcrumb { margin: 1rem 0; font-size: 0.9rem; color: var(--accent-text-color); }
+    .breadcrumb a { color: var(--primary-color); text-decoration: none; }
+    .page-header {
+      text-align: center; margin: 1.5rem 0 2rem; padding: 2rem 1rem;
+      background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(139, 92, 246, 0.1) 100%);
+      border-radius: 12px; border: 2px solid rgba(59, 130, 246, 0.2);
+    }
+    .page-header h1 {
+      font-size: 2.2rem; font-weight: 800; margin: 0 0 0.75rem;
+      background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+    }
+    .lead { font-size: 1.1rem; margin: 0; color: var(--body-text-color); }
+    .highlights { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; margin-bottom: 2.5rem; }
+    .highlight {
+      display: flex; flex-direction: column; gap: 0.25rem; padding: 1.25rem; border-radius: 12px; text-decoration: none;
+      background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.3); color: var(--body-text-color);
+    }
+    .highlight:hover { border-color: #3b82f6; }
+    .hl-label { font-size: 0.85rem; color: var(--accent-text-color); }
+    .hl-course { font-size: 1.3rem; font-weight: 700; color: var(--heading-color); }
+    .hl-value { font-size: 1.1rem; font-weight: 700; color: #3b82f6; }
+    .block { margin-bottom: 2.5rem; }
+    .block h2 { font-size: 1.5rem; margin: 0 0 1rem; color: var(--heading-color); border-left: 5px solid #3b82f6; padding-left: 0.75rem; }
+    .note { font-size: 0.9rem; color: var(--accent-text-color); margin: 0 0 0.75rem; }
+    .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .cmp { width: 100%; border-collapse: collapse; min-width: 560px; }
+    .cmp th, .cmp td { padding: 0.6rem 0.7rem; border-bottom: 1px solid rgba(148, 163, 184, 0.3); text-align: left; vertical-align: middle; }
+    .cmp thead th { background: rgba(59, 130, 246, 0.12); font-size: 0.85rem; white-space: nowrap; }
+    .cmp tbody th a, .dists a { color: var(--primary-color); text-decoration: none; font-weight: 600; }
+    .cmp tbody th a:hover, .dists a:hover { text-decoration: underline; }
+    .cmp .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .cmp tr.is-top { background: rgba(59, 130, 246, 0.08); }
+    .dists a { display: inline-block; margin: 0 0.6rem 0.3rem 0; }
+    .vnote, .sub { display: block; font-size: 0.75rem; font-weight: 400; color: var(--accent-text-color); }
+    .points { padding-left: 1.2rem; line-height: 1.8; }
+    .points li { margin-bottom: 0.5rem; }
+    .faq details { border: 1px solid rgba(148, 163, 184, 0.35); border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 0.6rem; }
+    .faq summary { cursor: pointer; font-weight: 600; }
+    .faq p { margin: 0.6rem 0 0; line-height: 1.7; }
+    .cta {
+      text-align: center; padding: 2rem 1rem; border-radius: 16px;
+      background: linear-gradient(135deg, rgba(59, 130, 246, 0.15) 0%, rgba(139, 92, 246, 0.15) 100%);
+      border: 2px solid rgba(59, 130, 246, 0.3);
+    }
+    .cta h2 { font-size: 1.5rem; margin: 0 0 0.75rem; color: var(--heading-color); }
+    .cta p { margin: 0 0 1.25rem; line-height: 1.7; }
+    .cta-buttons { display: flex; flex-wrap: wrap; gap: 0.75rem; justify-content: center; margin-bottom: 1rem; }
+    .cta-button { display: inline-block; padding: 0.9rem 1.6rem; border-radius: 10px; font-weight: 700; text-decoration: none; }
+    .cta-button.primary { background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%); color: #fff; }
+    .cta-button.secondary { border: 2px solid #3b82f6; color: #3b82f6; }
+    .more a { color: var(--primary-color); }
+    @media (max-width: 640px) {
+      .cmp { min-width: 0; font-size: 0.85rem; }
+      .cmp th, .cmp td { padding: 0.45rem 0.25rem; }
+      .cmp .num { white-space: normal; }
+      .page-header h1 { font-size: 1.7rem; }
+      .block h2, .cta h2 { font-size: 1.25rem; }
+    }
+  </style>
+</BaseLayout>
