@@ -887,6 +887,8 @@ const fullTitle = buildFullTitle(title);
          （13 ページへコピペで散ると必ず直し漏れる）。
          仕様: astro-site/docs/GA4_CONVERSION_FUNNEL.md -->
     <script src={publicJsSrc('funnel-analytics')} is:inline></script>
+    <!-- ページ固有の構造化データ（slot="head"）。無いとページ側の JSON-LD が出力されない -->
+    <slot name="head" />
 </head>
 <body>
     <StaleFreeSessionCheck />

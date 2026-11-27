@@ -126,6 +126,7 @@
 |---|---|
 | 完了 | トップ・`/free-prediction/nankan/`・`/free/nankan/` の title と説明へ南関東と 4 場を追加。Organization の構造化データを追加 |
 | 完了（2026-11-27） | 南関 4 場の横断比較ページ `/course/compare/`（29 コース記事の表から・数字は `src/lib/seo/nankanCourseCompare.mjs` と記事の一致を test で固定）、ハブ・各場・ブログ一覧・29 記事からの内部リンク、コース記事と一覧の「【2025年最新版】」を削除 |
+| 完了（2026-11-28） | 構造化データの出力漏れを修正: `BaseLayout` に `<slot name="head" />` が無く、ページの `slot="head"`（比較ページ・4 場・コース記事 17 本の Article / BreadcrumbList / FAQPage）が本番で捨てられていた。slot を追加し、canonical・og を二重に出していた 2 記事は BaseLayout の props へ移した（`src/lib/seo/baseLayoutHeadSlot.test.mjs`） |
 | 未完了 | about での名称の似た別サービスの説明（事実を MK に確認してから） |
 | 測定 | `docs/measurements/AI_SEARCH_2026_11.md`。評価期間 2026-11-06〜12-03 |
 
