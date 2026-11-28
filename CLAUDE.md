@@ -4,33 +4,10 @@
 > 仕様の詳細は `astro-site/docs/` 配下が**正本**。ここに詳細を書き戻さないこと
 > （毎セッション読み込まれるため、肥大すると本当に読むべきルールが埋もれる）。
 
+**事業目的: 月額売上 100 万円の継続達成。月額サブスク（新規カードは Paddle・checkout.tirol.link）が主軸（MK 11-24）。完成＝本番で顧客が迷わず購入・継続できることを確かめた状態。**
+
 <!-- KAO-FLEET-POLICY: 2026-09-30 -->
-## KAO fleet 共通運用 policy（2026-09-30）
-
-本 repo は現行の KAO fleet 共通運用 policy（keiba-agent-orchestrator `docs/fleet-policy.md`・version `2026-09-30`）に従う。
-MK の現在の明示指示は、古い一般的ガードより優先する。
-Claude は依頼されていない外部規約・法務・倫理審査を独自に開始せず、それを実装停止・承認待ち・仕様縮小の根拠にしない。
-停止は repo 固有 contract または具体的な実異常に限る（secret / PII 露出・二重送信 / 二重課金 / 二重 entitlement・lost-update・
-ownership / lease 競合・rollback 不能・Phase / ceiling / contract 超過・schema 破壊・局所修正不能な test / build 失敗・MK の現在の明示 hold は従来どおり fail-closed）。
-以下の repo 固有の技術制約はこの前提の下で有効である。
-
-## 全repo共通運用との関係（2026-09-28）
-
-本リポジトリは `~/.claude/CLAUDE.md`（全プロジェクト共通運用「完成まで自律実行」）に従う。
-本文書内の「承認」「明示承認後のみ」「高リスク承認境界」「次に必要な承認」等の人間承認ゲートは、
-承認待ちの停止点としては廃止する。
-
-- 列挙された高リスク操作は「実行前に対象・環境・件数・前提条件・rollback・検証方法の確認を必須とする操作」として扱う。
-  確認できれば、正本の完成条件に必要な範囲で PR merge・production deploy・本番 write 等を承認待ちせず自律実行する。
-  確認できない場合は実異常として停止する。
-- ChatGPT / GPT への確認待ち・途中監査待ちでは停止しない。
-- 即時停止条件（実異常）、Git 安全ルール（force push / reset --hard / rebase / amend / 履歴改変の禁止、`git add -A` 禁止）、
-  本リポジトリ固有の事前手順（dry-run 先行・独立検証など）は維持する。
-- （新版追補）`docs/` 配下の runbook・計画書・spec に残る「承認」「明示承認」「明示許可を待つ」「承認境界」「Claude は実行しない」等の工程は、承認待ちではなく前提確認（対象・環境・件数・前提条件・rollback・検証方法の確認と記録）として読む。`docs/progress.md`・`docs/decisions.md` 等の履歴記録は書き換えない。事業判断（仕様・価格・顧客向け文言・配信方針等）は従来どおりユーザーが決める。
-- テスト・E2E は変更内容と影響範囲から Claude が自ら選んで実施する（指示を待たない）。本番反映後は production smoke・実利用フロー確認まで行って完了とする。
-- env・secret・API key・webhook・外部サービス設定は、CLI / API で安全に実行できる範囲を Claude が行う（値は表示・commit・記録しない）。OAuth consent・MFA・本人確認・契約など人しかできない操作だけを最小1操作としてユーザーへ依頼する。
-- 範囲外の不具合は同一差分に混ぜない。同じ目的の完成に必要なら別 branch / PR で対応し、無関係なら `docs/progress.md` に記録して最終報告に含める（指示待ちで停止しない）。
-- harness の安全機構（`.claude/settings.json` の deny / hard_deny、hooks 等）は変更・迂回しない。
+共通の運用は ~/.claude/CLAUDE.md（冒頭の行動原則・§3・§13・§14・§35）と KAO の docs/fleet-policy.md に従う。本ファイルには本 repo 固有の事実・MK の決定・contract だけを書く。
 
 ## プロジェクト識別
 
@@ -39,24 +16,8 @@ ownership / lease 競合・rollback 不能・Phase / ceiling / contract 超過�
 作業ディレクトリ: /Users/user/Projects/analytics-keiba/astro-site
 本番URL: https://analytics.keiba.link
 コンセプト: 南関競馬 + 中央（JRA）競馬 統合AI予想プラットフォーム
-前身: /Users/user/Projects/nankan-analytics
-参照: /Users/user/Projects/keiba-intelligence（先行実装・**独立運用**）
+参照: /Users/user/Projects/keiba-intelligence（別サービス・**独立運用**）
 ```
-
----
-
-# 実装担当としての責任
-
-Claudeは、ただのコード記述係ではなく、実装から検証まで担当するエンジニアとして行動する。
-
-- 変更前に既存仕様・関連コード・既存テストを確認する。
-- 変更には、必要なテストの追加または更新を含める。
-- 実装後は関連テスト、lint、型検査、build、safety checkを可能な範囲で自ら実行する。
-- 失敗した場合は報告だけで止まらず、原因を修正して再実行する。
-- テスト未実行、失敗中、未検証の状態を「完成」と報告しない。
-- 外部API・DB・ファイル操作は、失敗・空データ・タイムアウト・再実行を考慮し、エラーを握り潰さず安全側に処理する。
-- 重要な不具合修正では、先に再現テストを作り、修正後に再発しないことを確認する。
-- 完成条件は「コードを書いたこと」ではなく、要求された動作を検証できたこととする。
 
 ---
 
@@ -77,7 +38,7 @@ Claudeは、ただのコード記述係ではなく、実装から検証まで�
 3. **完了条件を満たさない完了宣言をしない**
 4. **数値修正は修正前後の比較を必ず出す**（表形式）
 5. **commit 前に `git diff` を確認する**
-6. **本番反映前に確認方法を示す**
+6. **本番反映後は Claude が本番 URL で動作を確かめる**
 7. **検証を「一時的に無効化」しない**（CI・safety check・guard すべて）
 8. **このファイル（CLAUDE.md）へ仕様の詳細を書き戻さない** — 下記「文書の置き場所」に従う
 
@@ -139,12 +100,6 @@ CLAUDE.md は**毎セッション全文が読み込まれる**。詳細を戻す
 - **新規 doc は必ず CLAUDE.md の「ドキュメント索引」へ 1 行追加**する（到達不能な doc を作らない）
 - 同じ規則を CLAUDE.md と doc の両方に**詳細まで**書かない（正本は 1 つ）
 
-### 前提確認してから実行する操作
-
-PR の merge / production deploy / 本番データ書込み / env の変更 / queue 登録 / 実送信 /
-実顧客レコードの変更。**これらは直前に対象・環境・件数・rollback・検証方法を確認・記録してから実行する
-（承認待ちでは停止しない）。確認できない場合だけ停止する。**
-
 ### merge 直前は必ず最新 `origin/main` を取り直す
 
 `git fetch origin` し、**PR の base 以降に同じ変更領域へ別セッションの変更が入っていないか**を
@@ -153,27 +108,10 @@ PR の merge / production deploy / 本番データ書込み / env の変更 / qu
 変更を含まない）。手順と過去 2 件の事故は [`docs/decisions.md`](./docs/decisions.md) の
 「2026-09-15 — PR は merge 直前に必ず最新 origin/main を取り直す」が正本。
 
-### 自律完遂の運用（**途中確認を挟まない**）
+### merge の経路（AK 固有）
 
-**停止条件に該当しない作業は、1 工程ごとに確認せず最後まで進める。**
-
-```text
-調査 → 同種問題をまとめて修正 → test / verify → 必要な正本 docs 更新
- → commit → 通常 push → Draft PR → CI green 確認 → 最新 origin/main 取り直し → **merge**
- → 本番反映・実運用確認 → cleanup → progress 更新
-```
-
-- 「これも直しますか？」「commit しますか？」「push しますか？」「PR を作りますか？」
-  「CI を確認しますか？」といった**途中確認は不要**
-- **同一原因・同種の軽微な不整合（stale docs の整合・関連テスト修正を含む）は
-  まとめて解消してよい**。無関係な既存バグは従来どおり記録して報告する
-- 停止するのは上の「前提確認してから実行する操作」の前提が確認できないとき ＋ 別 repo への変更 / 秘密情報露出 /
-  二重送信・二重課金 / 本番破損 / rollback 不能 に該当したときだけ
-- 最終報告の既定は **実施 / 現状 / 未完 / ユーザーの手動作業（不可避な最小1操作のみ）/ 次の自動作業 /
-  branch・commit・PR・CI**（末尾に「現在地 / 異常 / 残り」の3行）
-
-全文（**ツール非依存・そのまま貼れる共通ルール文**）と段取り・停止条件は
-[`docs/AUTONOMOUS_DELIVERY.md` §共通作業ルール](./astro-site/docs/AUTONOMOUS_DELIVERY.md)。
+無人 merge は KAO の MEDIUM handoff（`fleet-medium-handoff`）。経路と人が merge する範囲（billing の path）は
+[`astro-site/docs/AUTONOMOUS_DELIVERY.md`](./astro-site/docs/AUTONOMOUS_DELIVERY.md) が正本。
 
 ---
 
@@ -186,7 +124,7 @@ PR の merge / production deploy / 本番データ書込み / env の変更 / qu
 | **Netlify サブドメイン** | `https://*.netlify.app/` は **Deploy Preview 専用**。本番案内に使わない |
 
 **禁止**: 本番確認 URL を推測で生成しない。ドメインを記憶や雰囲気で補完しない。
-不明なら**ユーザー確認を取る**。PR 説明・本番反映確認の案内・目視確認の指示・
+URL が不明なら `netlify.toml` / `astro-site/astro.config.*` を読んで確かめる。PR 説明・本番反映確認の案内・目視確認の指示・
 外部ドキュメントの URL すべてに適用する。
 
 ---
@@ -239,20 +177,6 @@ PR の merge / production deploy / 本番データ書込み / env の変更 / qu
 - Airtable の読み取りは `AIRTABLE_READONLY_TOKEN`（トークン名 `ak-scheduled-checks-readonly`・analytics-keiba ベースの data.records:read のみ）。書き込み可能な鍵は GitHub に置かない。
 - GSC の読み取りはサービスアカウント `ak-gsc-readonly@analytics-keiba-ops.iam.gserviceaccount.com`（Search Console は制限付き・GCP ロールなし）と secret `GSC_SERVICE_ACCOUNT_JSON`。
 
-## ⏳ 待ち時間は止まらず並行する（恒久ルール / 2026-09-28 MK 確定）
-
-CI・deploy・外部 API・scheduled job・将来日付・長時間 run 等の**待ちが発生しても、単に待機・停止しない**。
-
-1. 現在の処理を壊さず並行できる未完了作業を、正本と PROGRESS から確認する。
-2. 優先順位が明確で安全に分離できる作業は、**別 branch / worktree** で自律的に並行実行する。
-3. 候補が複数あり事業優先順位・仕様判断が要る場合は、**何を待っているか / 待ち時間中に何ができるか / 最も価値が高い候補**を短く提案する。
-4. 「run 完了待ちなので停止」「○日まで待機」だけで終了しない。
-5. 次の並行は**禁止**（実異常につながる）: 同一 branch / worktree の競合、同一 production 状態への競合 write、別セッションの差分・branch・worktree への干渉。
-6. 明確な次作業が正本にある場合は、提案だけして承認待ちにせず**自律着手**する。
-
-待ち状態があるときは PROGRESS 先頭の「⏳ 待ち状態と並行作業」に
-**何を待っているか / 並行可能な未完了作業 / 着手中の並行作業 / 次の提案** を残す（ターミナルが閉じても再開できるように）。
-
 ## 📚 ドキュメント索引（**正本はこちら**）
 
 ### 予想・表示
@@ -294,7 +218,7 @@ CI・deploy・外部 API・scheduled job・将来日付・長時間 run 等の**
 | **会員が予想へ辿り着く導線（マイページ表示 / ナビの行き先）** | [`MEMBER_PREDICTION_FUNNEL.md`](./astro-site/docs/MEMBER_PREDICTION_FUNNEL.md) |
 | 管理画面の Basic 認証（`/admin/*`） | [`ADMIN_BASIC_AUTH.md`](./astro-site/docs/ADMIN_BASIC_AUTH.md) |
 | 銀行振込 入金確認フロー | [`BANK_TRANSFER_FLOW.md`](./astro-site/docs/BANK_TRANSFER_FLOW.md) |
-| Stripe 定期購読（Premium ¥4,980 / 中央版・南関版 ¥2,980） | [`STRIPE_BILLING.md`](./astro-site/docs/STRIPE_BILLING.md) |
+| カード定期課金（新規 = Paddle・`checkout.tirol.link`／既存 PayPal 契約は PayPal のまま／Stripe は停止） | [`CARD_PAYMENT_PROVIDERS.md`](./astro-site/docs/CARD_PAYMENT_PROVIDERS.md) / [`STRIPE_BILLING.md`](./astro-site/docs/STRIPE_BILLING.md)（Stripe 既存契約の互換・履歴） |
 | 入金確認メール v2 | [`PAYMENT_EMAIL_V2.md`](./astro-site/docs/PAYMENT_EMAIL_V2.md) |
 | 顧客マーケティング管理 | [`CUSTOMER_MARKETING.md`](./astro-site/docs/CUSTOMER_MARKETING.md) / [`CAMPAIGN_SEQUENCE.md`](./astro-site/docs/CAMPAIGN_SEQUENCE.md) / [`ENGAGEMENT_SUPPRESSION.md`](./astro-site/docs/ENGAGEMENT_SUPPRESSION.md) |
 | 大規模継続配信の運用（展開・停止・追跡） | [`MARKETING_ROLLOUT.md`](./astro-site/docs/MARKETING_ROLLOUT.md) |
@@ -352,7 +276,7 @@ CLAUDE.md 再編（2026-08-13）で旧セクションがどこへ行ったかの
 
 - production の env に **1 つ（約 60 バイト）足しただけで全 Function の作成が失敗し、本番 deploy が止まった**（`Your environment variables exceed the 4KB limit imposed by AWS Lambda`。ビルドログは `netlify logs -s deploy -f -u https://<deploy_id>--analytics-keiba.netlify.app` で取得）
 - 新しい秘密値は env に置かない（例: AI ラボの取込キーは SHA-256 だけをコード定数に置く）。env を足すときは、使っていない変数を先に消して枠を作ってから
-- ⚠️ Stripe 本番化（PR #677）で `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` を足す前に、同じ枠の確保が必要
+- ⚠️ 決済会社の鍵を env に足すときも同じ（先に使っていない変数を消して枠を作る）
 
 ### 🪟 見た目はガラスモーフィズムで統一（2026-10-05 MK 確定）
 
@@ -372,16 +296,14 @@ CLAUDE.md 再編（2026-08-13）で旧セクションがどこへ行ったかの
 - **訴求に使わない言い回し**（「いつでも見返せる」「月額の範囲で」等）は正本 §6-1 の表。MK に指摘された言い回しは表とテスト（`weakClaims.guard`）に足し、提案にも二度と出さない
 - 既存三連複購入者の権利・Premium Plus の判定は変えない
 
-### 💳 Stripe 定期購読（2026-10-02 MK 確定）
+### 💳 カード決済（2026-11-02 MK 確定）
 
-正本は [`STRIPE_BILLING.md`](./astro-site/docs/STRIPE_BILLING.md) / `docs/spec.md`「Stripe 定期購読」。
+正本は [`CARD_PAYMENT_PROVIDERS.md`](./astro-site/docs/CARD_PAYMENT_PROVIDERS.md) / `docs/spec.md` 冒頭「新規の月額・年額は Paddle の定期課金」。
 
-- 月額は **Stripe（カード・自動更新）だけ**。月払いの銀行振込（30 日 ¥18,000）は販売終了。**Light は新規募集停止**（既存の有料 Light 会員の更新・再開のみ）
+- 新規の月額・年額のカード決済は **Paddle の定期課金**（中立ホスト `checkout.tirol.link`・受付先は `cardSales.ACTIVE_SUBSCRIPTION_PROVIDER` の 1 社・決済会社の選択 UI は置かない）。**既存の PayPal 契約は PayPal のまま**（移行・再課金しない）。**Stripe は停止**（再開は MK の明示決定だけ・既存契約の互換コードは残す）。月払いの銀行振込は販売終了・**Light は新規募集停止**
 - 中央版・南関版は **プラン=Premium + `VenueAccess`（jra / nankan）**。新しいプラン値を作らない。空 = 両会場
 - 会場別ページの認可は `gatePaidPage({ requiredPlan: 'premium-jra' | 'premium-nankan' })`。ページで会場判定を書かない
-- 反映は Webhook と決済完了画面が**同じ判定**（`stripeSubscriptionSync.js`）。二重課金・買い切り・年払い残存は書かずに管理者通知
-- **Live の Price を編集しない**（新しい Price を作る）。KI とは**別アカウント**で、設定・顧客を混ぜない
-- 鍵・署名鍵・Price ID を docs / commit / ログに書かない（`scripts/stripe-setup.mjs` が Netlify env へ直接入れる）
+- 決済会社へ渡す名称は禁止語ルール（`paymentDisplayNames.js`）。鍵・署名鍵・Price / Plan ID を docs / commit / ログに書かない。KI とは別アカウントで、設定・顧客を混ぜない
 
 ### 🎟 クーポン（**Premium Plus 専用ではない** / 2026-08-20 MK 確定）
 
@@ -395,7 +317,7 @@ CLAUDE.md 再編（2026-08-13）で旧セクションがどこへ行ったかの
 - **付与と再発行は排他**（履歴なし → 付与 / 履歴あり → 再発行）。
   取得済み・利用予約中・使用済み・台帳確認不能は**どちらも不可**
 - **UI だけの制御にしない**。サーバーが必ず同じ判定を再実行する
-- 履歴は **append-only**（`CouponOperationHistory`・**本番テーブル未作成 / MK 判断待ち**）。
+- 履歴は **append-only**（`CouponOperationHistory`・本番稼働）。
   **`PromotionalOffers` に監査行を混ぜない**（価格の無い行が顧客分類を壊す）
 - 割引額 / 期限 / 配布条件 / 併用可否 / 自動付与条件は**商品ごとに MK が決める**。
   **決まっていない条件を既定値で埋めない**
@@ -546,7 +468,7 @@ CLAUDE.md 再編（2026-08-13）で旧セクションがどこへ行ったかの
 - **認証情報をソースへ書かない**（env にだけ置く）。env 未設定は「認証不要」ではなく
   **誰も通さない**（fail closed）。正本: [`ADMIN_BASIC_AUTH.md`](./astro-site/docs/ADMIN_BASIC_AUTH.md)
 
-### Customers の取得（15,962 件）
+### Customers の取得
 
 - **無フィルタの全件走査を作らない。** 用途別に `filterByFormula` で絞るか、
   絞れないなら **fail closed**（少ない件数を正しい件数として見せない）
@@ -556,7 +478,7 @@ CLAUDE.md 再編（2026-08-13）で旧セクションがどこへ行ったかの
 
 ### keiba-intelligence（AK と KI の分離）
 
-**`keiba-intelligence` 側を絶対に触らない。**
+**AK の作業として `keiba-intelligence` を変更しない。KI の作業は KI の正本で別 PR。**
 2026-05-23〜 AK と KI は**別サービスとして独立運用**する。両方とも稼働を続け、
 それぞれ独自の顧客へ予想を提供する。
 
@@ -625,7 +547,7 @@ feeder サイト（`utm_source=<site>&utm_medium=referral`）別の読み方・�
 - ページに `gtag(...)` を直接書かない（申込導線は 13 ページにコピペで散在。必ず直し漏れる）。
   計測は `astro-site/public/js/funnel-analytics.js` の 1 か所だけ。
 - ボタンのクリックを申込成功として送らない。
-- `application_submitted` を入金確認（課金確定）として読まない。GA4 の `purchase` は使わない。
+- `application_submitted` を入金確認（課金確定）として読まない。銀行振込の `application_submitted` を GA4 の `purchase` として送らない（`purchase` はカード決済の反映確認後だけ・正本 `GA4_CONVERSION_FUNNEL.md`）。
 - GA4 へ個人情報（氏名 / メール / 会員 ID / 金額 / 振込日）を送らない。
   送ってよいのは閉じた語彙 `plan` / `plan_type` のみ。
 - `openBankModal` を `is:inline` でない `<script>` へ移さない（global でなくなり
@@ -635,9 +557,8 @@ feeder サイト（`utm_source=<site>&utm_medium=referral`）別の読み方・�
 
 ## 📝 技術スタック
 
-Astro 5 + Sass（SSR）/ Netlify Pro（Functions・Blobs）/ Airtable Pro（顧客）/
 SendGrid（メール）/ Upstash Redis（計測・スナップショット）/ Gemini 2.5 Flash（AI解説）/
-Stripe + 銀行振込（決済）
+Paddle（新規カード定期課金）・PayPal（既存の月額契約）・銀行振込（決済）。Stripe は停止
 
 ### 特徴量システム
 
@@ -669,32 +590,9 @@ GITHUB_TOKEN / GITHUB_REPO_OWNER / GITHUB_REPO_NAME / GITHUB_BRANCH
 
 | プロジェクト | 役割 |
 |---|---|
-| `keiba-intelligence` | 先行実装。**独立運用・触らない** |
+| `keiba-intelligence` | 別サービス。**独立運用**（AK の作業として変更しない） |
 | `keiba-data-shared-admin` | データ入力管理ツール |
-| `nankan-analytics` | 旧実装（段階的に引退） |
 
 ---
 
-## 完了報告の簡潔化
-
-> ⚠️ **2026-09-18 既定変更。** 通常の最終報告は
-> **実施 / 現状 / 未完 / ユーザーの手動作業 / 次の自動作業 / branch・commit・PR・CI** の 6 項目
-> （[`AUTONOMOUS_DELIVERY.md` §共通作業ルール](./astro-site/docs/AUTONOMOUS_DELIVERY.md)）。
-> 末尾に「現在地 / 異常 / 残り」の3行を付ける（2026-09-28）。
-> 下の 7 項目書式は、ユーザーがそちらを求めた場合に使う。**二重に書かない。**
-
-各フェーズの完了報告は、原則として以下だけを簡潔に記載する。
-
-- 判定
-- 実施内容
-- 変更ファイル
-- テスト結果
-- Git状態（branch / commit / PR URL）
-- 異常・未確定事項（blocker を含む）
-- 次工程案
-
-成功したコマンドの全文、重複する説明、既知仕様の再掲は省略する。
-エラー、想定外差分、安全条件違反がある場合のみ、必要なログを提示する。
-
-**各リポジトリ固有の安全条件、伝播確認、本番確認、取得回数、rollback 条件など、
-既存の必須報告項目は省略しない。**
+報告の形式は `~/.claude/CLAUDE.md` §34。
