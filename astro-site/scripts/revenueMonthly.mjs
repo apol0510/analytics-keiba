@@ -17,6 +17,7 @@
  *   4. paddle（任意・2026-11-02〜 新規の月額・年額）: Paddle Billing の取引一覧（GET /transactions・GET /adjustments のみ・
  *      読み取り専用の鍵 PADDLE_READ_KEY＝transaction.read / adjustment.read）。
  *      gross = この月（JST）に請求された completed / paid の取引の grand_total、refunds = この月に作られた承認済み refund の total。
+ *      同じ Paddle で売る KL・HIBI（checkout.tirol.link・custom_data.svc 付き・2026-11-24〜）の取引とその返金は AK の売上に数えない。
  *   任意の手段は、鍵が無い・取得に失敗した場合 **0 円として数えず**「未計上」と data_quality に明記する
  *   （KAO では「一部推定値」と表示される）。
  *
@@ -200,17 +201,43 @@ export async function fetchPaypalMonth({ clientId, clientSecret, period, fetchIm
 
 // ---------------------------------------------------------------- paddle（GET のみ）
 
-/** 取引・返金の一覧 → 集計値（JPY 以外は fail-closed）。取引は billed_at、返金は created_at が期間内のものだけ。 */
-export function summarizePaddle({ transactions = [], adjustments = [], period }) {
+/** KL・HIBI（checkout.tirol.link の servicePaddle）の取引は custom_data.svc を持つ。AK の取引は持たない（ak_sub / ak_record）。 */
+export function isOtherServicePaddle(t) {
+  const cd = t?.custom_data;
+  return Boolean(cd && typeof cd === 'object' && String(cd.svc ?? '').trim() !== '');
+}
+
+/** 当月の返金のうち、対象取引が当月の取引一覧に無いものの取引 ID（KL・HIBI かを引くため）。 */
+export function refundTransactionIdsToLookup({ transactions = [], adjustments = [], period }) {
+  const known = new Set(transactions.map((t) => String(t?.id ?? '')));
+  const ids = new Set();
+  for (const a of adjustments) {
+    if (String(a?.action || '') !== 'refund' || String(a?.status || '') !== 'approved') continue;
+    const t = Date.parse(String(a.created_at || ''));
+    if (!(Number.isFinite(t) && t >= period.startMs && t < period.untilMs)) continue;
+    const id = String(a.transaction_id ?? '').trim();
+    if (id && !known.has(id)) ids.add(id);
+  }
+  return [...ids];
+}
+
+/**
+ * 取引・返金の一覧 → 集計値（JPY 以外は fail-closed）。取引は billed_at、返金は created_at が期間内のものだけ。
+ * KL・HIBI の取引（custom_data.svc）と、その取引への返金は数えない。返金の対象取引が当月の一覧に無いとき
+ * （前月以前の請求への返金）は refundedTransactions（GET /transactions?id=… で引いたもの）で判定する。
+ */
+export function summarizePaddle({ transactions = [], adjustments = [], period, refundedTransactions = [] }) {
   const inPeriod = (iso) => {
     const t = Date.parse(String(iso || ''));
     return Number.isFinite(t) && t >= period.startMs && t < period.untilMs;
   };
+  const otherService = new Set([...transactions, ...refundedTransactions].filter(isOtherServicePaddle).map((t) => String(t.id)));
   let gross = 0;
   let refunded = 0;
   let payments = 0;
   for (const t of transactions) {
     if (!['completed', 'paid'].includes(String(t?.status || '')) || !inPeriod(t.billed_at)) continue;
+    if (isOtherServicePaddle(t)) continue;
     if (String(t.currency_code || '').toUpperCase() !== 'JPY') throw new RevenueError('paddle: non-JPY transaction found');
     const v = Number(t?.details?.totals?.grand_total);
     if (!Number.isFinite(v) || v <= 0) continue;
@@ -219,6 +246,7 @@ export function summarizePaddle({ transactions = [], adjustments = [], period })
   }
   for (const a of adjustments) {
     if (String(a?.action || '') !== 'refund' || String(a?.status || '') !== 'approved' || !inPeriod(a.created_at)) continue;
+    if (otherService.has(String(a.transaction_id ?? ''))) continue;
     if (String(a.currency_code || '').toUpperCase() !== 'JPY') throw new RevenueError('paddle: non-JPY adjustment found');
     const v = Number(a?.totals?.total);
     if (Number.isFinite(v) && v > 0) refunded += Math.round(v);
@@ -247,7 +275,13 @@ export async function fetchPaddleMonth({ key, period, fetchImpl = fetch, apiBase
   const transactions = await paddleList({ key, url: `${apiBase}/transactions?${tq}`, fetchImpl, label: 'transactions' });
   const aq = new URLSearchParams({ action: 'refund', status: 'approved', per_page: '200' });
   const adjustments = await paddleList({ key, url: `${apiBase}/adjustments?${aq}`, fetchImpl, label: 'adjustments' });
-  return summarizePaddle({ transactions, adjustments, period });
+  const lookup = refundTransactionIdsToLookup({ transactions, adjustments, period });
+  const refundedTransactions = [];
+  for (let i = 0; i < lookup.length; i += 50) {
+    const rq = new URLSearchParams({ id: lookup.slice(i, i + 50).join(','), per_page: '200' });
+    refundedTransactions.push(...(await paddleList({ key, url: `${apiBase}/transactions?${rq}`, fetchImpl, label: 'refunded transactions' })));
+  }
+  return summarizePaddle({ transactions, adjustments, period, refundedTransactions });
 }
 
 // ---------------------------------------------------------------- 文書

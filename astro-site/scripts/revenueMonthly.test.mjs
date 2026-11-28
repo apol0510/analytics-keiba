@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   buildDoc, buildRevenueMonth, fetchPaypalMonth, fetchRevenueMonth, measurementPeriod, monthRangeJst, previousMonthJst, readPrevious,
-  summarizePaypal, summarizeStripe, summaryLine, sustainedMonths, RevenueError, TARGET_JPY, summarizePaddle, fetchPaddleMonth,
+  summarizePaypal, summarizeStripe, summaryLine, sustainedMonths, RevenueError, TARGET_JPY, summarizePaddle, fetchPaddleMonth, refundTransactionIdsToLookup,
 } from './revenueMonthly.mjs';
 
 const summary = (over = {}) => ({ month: '2026-10', confirmedCount: 3, pricedCount: 3, confirmedYen: 1_200_000, yenByPlan: {}, firstPricedDay: '20261001', ...over });
@@ -249,4 +249,37 @@ test('Paddle（2026-11-02〜）: 期間内の completed/paid の grand_total と
   const d = buildDoc({ month: '2026-11', summary: summary(), channels: {}, period: full, nowMs: 0 });
   assert.deepEqual(d.by_channel.paddle, { measured: false });
   assert.ok(d.data_quality.includes('Paddle: 未計上（読取り鍵が未設定）'));
+});
+
+test('Paddle: KL・HIBI（custom_data.svc・checkout.tirol.link）の取引とその返金は AK の売上に数えない（前月以前の請求への返金は id で引いて判定）', async () => {
+  const period = { startMs: Date.parse('2026-10-31T15:00:00Z'), untilMs: Date.parse('2026-11-30T15:00:00Z') };
+  const t = (id, total, custom_data, billed = '2026-11-25T00:00:00Z') => ({ id, status: 'completed', billed_at: billed, currency_code: 'JPY', custom_data, details: { totals: { grand_total: String(total) } } });
+  const refund = (transaction_id, total, created_at = '2026-11-26T00:00:00Z') => ({ action: 'refund', status: 'approved', transaction_id, created_at, currency_code: 'JPY', totals: { total: String(total) } });
+  const transactions = [
+    t('txn_ak', 4980, { ak_sub: '1', ak_record: 'rec' }),
+    t('txn_ak_once', 2980, null),
+    t('txn_kl', 5980, { svc: 'kl', member_id: 'm', plan_code: 'P-M' }),
+    t('txn_hibi', 29800, { svc: 'hibi', member_id: 'm', plan_code: 'P-6' }),
+  ];
+  const adjustments = [refund('txn_ak', 4980), refund('txn_hibi', 29800), refund('txn_kl_old', 5980), refund('txn_ak_old', 2980), refund('txn_hibi_prev_month', 100, '2026-10-20T00:00:00Z')];
+  assert.deepEqual(refundTransactionIdsToLookup({ transactions, adjustments, period }), ['txn_kl_old', 'txn_ak_old']);
+  const refundedTransactions = [t('txn_kl_old', 5980, { svc: 'kl' }, '2026-10-10T00:00:00Z'), t('txn_ak_old', 2980, { ak_sub: '1' }, '2026-10-10T00:00:00Z')];
+  assert.deepEqual(summarizePaddle({ period, transactions, adjustments, refundedTransactions }), { gross: 7960, refunds: 7960, payments: 2 });
+  // 空文字の svc は AK 扱い（AK の取引は svc を持たない）
+  assert.deepEqual(summarizePaddle({ period, transactions: [t('x', 1000, { svc: ' ' })] }), { gross: 1000, refunds: 0, payments: 1 });
+
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    const u = new URL(String(url));
+    calls.push({ path: u.pathname, id: u.searchParams.get('id'), method: init.method });
+    let data = [];
+    if (u.pathname.endsWith('/transactions') && !u.searchParams.get('id')) data = transactions;
+    else if (u.pathname.endsWith('/transactions')) data = refundedTransactions.filter((x) => u.searchParams.get('id').split(',').includes(x.id));
+    else if (u.pathname.endsWith('/adjustments')) data = adjustments;
+    return { ok: true, json: async () => ({ data, meta: { pagination: { has_more: false } } }) };
+  };
+  const r = await fetchPaddleMonth({ key: 'k', period, fetchImpl, apiBase: 'https://api.paddle.test' });
+  assert.deepEqual(r, { gross: 7960, refunds: 7960, payments: 2 });
+  assert.ok(calls.every((c) => c.method === 'GET'));
+  assert.deepEqual(calls.filter((c) => c.id).map((c) => c.id), ['txn_kl_old,txn_ak_old']);
 });
