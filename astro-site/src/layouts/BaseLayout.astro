@@ -349,7 +349,7 @@ const fullTitle = buildFullTitle(title);
             margin-left: 4px;
             opacity: 0.8;
         }
-        /* グループ見出し付きサブメニュー（実績: 的中実績 / 昨日の買い目） */
+        /* グループ見出し付きサブメニュー（実績: 的中実績 / 最新の買い目） */
         .submenu-grouped {
             min-width: 200px;
         }
@@ -963,7 +963,7 @@ const fullTitle = buildFullTitle(title);
                                 <li class="submenu-group-label">🏆 的中実績（アーカイブ）</li>
                                 <li><a href="/archive/jra/">中央競馬<span class="venue-tag">JRA</span></a></li>
                                 <li><a href="/archive/nankan/">南関競馬<span class="venue-tag">NANKAN</span></a></li>
-                                <li class="submenu-group-label">💎 昨日の買い目</li>
+                                <li class="submenu-group-label">💎 最新の買い目</li>
                                 <li><a href="/results-showcase/jra/">中央競馬<span class="venue-tag">JRA</span></a></li>
                                 <li><a href="/results-showcase/nankan/">南関競馬<span class="venue-tag">NANKAN</span></a></li>
                             </ul>
@@ -1014,8 +1014,8 @@ const fullTitle = buildFullTitle(title);
                     <li><a href="/archive/" onclick="document.getElementById('mobile-nav-menu').classList.remove('active')"><span class="mobile-nav-icon">🏆</span> 実績</a></li>
                     <li><a href="/archive/jra/" class="mobile-nav-sublink" onclick="document.getElementById('mobile-nav-menu').classList.remove('active')">┗ 的中実績・中央（JRA）</a></li>
                     <li><a href="/archive/nankan/" class="mobile-nav-sublink" onclick="document.getElementById('mobile-nav-menu').classList.remove('active')">┗ 的中実績・南関（NANKAN）</a></li>
-                    <li><a href="/results-showcase/jra/" class="mobile-nav-sublink" onclick="document.getElementById('mobile-nav-menu').classList.remove('active')">┗ 💎 昨日の買い目・中央（JRA）</a></li>
-                    <li><a href="/results-showcase/nankan/" class="mobile-nav-sublink" onclick="document.getElementById('mobile-nav-menu').classList.remove('active')">┗ 💎 昨日の買い目・南関（NANKAN）</a></li>
+                    <li><a href="/results-showcase/jra/" class="mobile-nav-sublink" onclick="document.getElementById('mobile-nav-menu').classList.remove('active')">┗ 💎 最新の買い目・中央（JRA）</a></li>
+                    <li><a href="/results-showcase/nankan/" class="mobile-nav-sublink" onclick="document.getElementById('mobile-nav-menu').classList.remove('active')">┗ 💎 最新の買い目・南関（NANKAN）</a></li>
                     <li><a href="/contact/" onclick="document.getElementById('mobile-nav-menu').classList.remove('active')"><span class="mobile-nav-icon">📧</span> ご質問</a></li>
                     <li id="mobile-nav-signup" class="nav-auth-item"><a href="/free-signup/" onclick="document.getElementById('mobile-nav-menu').classList.remove('active')"><span class="mobile-nav-icon">✨</span> 無料で始める</a></li>
                     <li class="mobile-nav-separator nav-auth-item" id="mobile-nav-separator"></li>
@@ -1132,6 +1132,9 @@ const fullTitle = buildFullTitle(title);
         //    何のお知らせかはマイページを開いて初めて分かる＝存在秘匿を壊さない。
         //    詳細と判定は `couponNotice.js`（サーバー応答から導出）にある。
         import { getCouponNotice } from '../lib/upsell/upsellClient.js';
+        // 結果見出しの「最新」を、閲覧日（JST）に合わせて「本日 / 昨日」へ（lib/results/recencyLabel.js）
+        import { applyRecencyLabels } from '../lib/results/recencyLabel.js';
+        applyRecencyLabels(document, Date.now());
         import { readNavAuthState } from '../lib/navigation/navAuthState.js';
 
         (async () => {

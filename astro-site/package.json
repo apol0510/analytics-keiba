@@ -88,7 +88,7 @@
     "test:entitlements": "node --test src/lib/entitlements/*.test.mjs",
     "test:netlify-deploy": "bash ../.github/actions/netlify-deploy/tests/run-tests.sh",
     "test:dedupe": "node --test scripts/dedupeCustomers.test.mjs",
-    "test:results-showcase": "node --test src/lib/resultsShowcasePreview.test.mjs",
+    "test:results-showcase": "node --test src/lib/resultsShowcasePreview.test.mjs src/lib/results/recencyLabel.test.mjs",
     "test:airtable-capacity": "node --test src/lib/ops/airtableCallMeter.test.mjs",
     "test:premium-plus": "node --test src/lib/premiumPlus/premiumPlusPass.test.mjs src/lib/premiumPlus/premiumPlusDelivery.test.mjs src/lib/premiumPlusShowcase.test.mjs src/lib/premiumPlusReceiptCardView.guard.test.mjs",
     "test:order-ux": "node --test src/lib/premiumPlus/orderCompletionUx.test.mjs src/lib/premiumPlus/couponUsedVisible.test.mjs src/lib/premiumPlus/couponRegrant.test.mjs src/lib/premiumPlus/couponNotice.test.mjs src/lib/premiumPlus/couponFreshness.test.mjs",

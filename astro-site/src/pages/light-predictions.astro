@@ -275,9 +275,9 @@ export const dailyResultsData = {
         <!-- 昨日の結果セクション（index.astroと統一デザイン） -->
         <section style="padding: 60px 20px; background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); margin-bottom: 60px;">
             <div class="container" style="max-width: 1200px; margin: 0 auto;">
-                <div style="text-align: center; margin-bottom: 40px;">
+                <div style="text-align: center; margin-bottom: 40px;" data-recency-date={latestResult?.date}>
                     <h2 style="font-size: 2.5rem; font-weight: 800; background: linear-gradient(135deg, #10b981 0%, #3b82f6 50%, #8b5cf6 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; margin-bottom: 15px;">
-                        🏆 昨日の的中結果
+                        🏆 <span data-recency-word>最新</span>の的中結果
                     </h2>
                     <div style="display: flex; align-items: center; justify-content: center; gap: 15px; flex-wrap: wrap;">
                         <p style="color: #fbbf24; font-size: 1.5rem; font-weight: 600; margin: 0;">
